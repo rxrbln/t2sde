@@ -23,11 +23,11 @@
 # [MAIN] 50 xorg X11 Configuration
 
 set_wm() {
-	echo "export WINDOWMANAGER=\"$@\"" > /etc/profile.d/windowmanager
+	echo "export WINDOWMANAGER=\"$*\"" > /etc/profile.d/windowmanager
 }
 
 set_xdm() {
-	echo "export XDM=\"$@\"" > /etc/conf/xdm
+	echo "export XDM=\"$*\"" > /etc/conf/xdm
 }
 
 main() {
