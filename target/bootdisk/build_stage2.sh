@@ -65,7 +65,7 @@ tar --use-compress-program=bzip2 -xf ../../pkgs/ncurses.tar.bz2	\
 #
 echo_status "Creating 2nd stage linuxrc."
 cp $base/target/$target/linuxrc2.sh linuxrc ; chmod +x linuxrc
-cp $base/target/$target/down sbin/down ; chmod +x sbin/down
+cp $base/target/$target/shutdown sbin/shutdown ; chmod +x sbin/shutdown
 echo '$STONE install' > etc/stone.d/default.sh
 #
 echo_status "Creating 2nd_stage.tar.gz archive."
