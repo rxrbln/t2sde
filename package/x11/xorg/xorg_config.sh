@@ -166,6 +166,5 @@ EOT
 #define		UseSeparateConfDir	NO
 
 EOT
-	fi
 }
 
