@@ -20,6 +20,8 @@
 # 
 # --- ROCK-COPYRIGHT-NOTE-END ---
 
+includedir=$includedir/db${ver:0:1}
+
 # oficial patches
 bdb_autopatch() {
 	local x=
@@ -34,7 +36,6 @@ configscript="../dist/configure"
 
 var_append confopt ' ' '--enable-compat185'
 var_append confopt ' ' '--enable-cxx'
-var_append confopt ' ' "--includedir=$root/$prefix/include/db${ver:0:1}"
 
 # we need the install-sh here, since our gnu-install does not
 # handle the transform-name ...
