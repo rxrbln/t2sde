@@ -11,7 +11,12 @@ public_nameserver() {
 }
 
 public_search() {
-	addcode up 4 4 "echo search $1 >> /etc/resolv.conf"
+	if ! isfirst "dns_search"; then
+		error "Keyword >>search<< not allowed multiple times."
+		return
+	fi
+
+	addcode up 4 4 "echo search $* >> /etc/resolv.conf"
 	dns_init
 }
 
