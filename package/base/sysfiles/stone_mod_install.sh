@@ -179,6 +179,8 @@ vg_add() {
 }
 
 main() {
+	$STONE general set_keymap
+
 	local cmd install_now=0
 	while
 		cmd="gui_menu install 'Partitioning your discs
