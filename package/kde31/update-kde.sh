@@ -5,7 +5,7 @@ if [ ! "$1" -o ! "$2" ] ; then
 	exit -1
 fi
 
-for x in arts* kde* ; do
+for x in arts* kde* quanta* ; do
 	echo "Updateing $x ..."
 	sed 	-e s/$1/$2/g \
 		-e s,unstable/kde-$1,stable/kde-$2, \
