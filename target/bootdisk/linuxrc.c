@@ -61,8 +61,16 @@ void doboot()
 	if ( mkdir("/mnt_root/old_root", 700) )
 		{ perror("Can't create /mnt_root/old_root"); exit_linuxrc=0; }
 
-	if (access("/mnt_root/linuxrc", R_OK))
+	if ( access("/mnt_root/linuxrc", R_OK) )
 		{ printf("Can't find /mnt_root/linuxrc!\n"); exit_linuxrc=0; }
+
+	if ( mount("/bin", "/mnt_root/usr/local/bin", NULL, MS_BIND, NULL) ) {
+		perror("Can't mount /mnt_root/usr/local/bin");
+		if (access("/mnt_root/bin/gzip", R_OK)) {
+			perror("Can't find /mnt_root/bin/gzip");
+			exit_linuxrc=0;
+		}
+	}
 
 	if ( exit_linuxrc ) {
 		if ( pivot_root("/mnt_root", "/mnt_root/old_root") )
