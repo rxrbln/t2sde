@@ -22,6 +22,26 @@
 #
 # [MAIN] 70 lilo LILO Boot Loader Setup
 
+create_kernel_list() {
+        first=1
+        for x in `(cd /boot/ ; ls vmlinux_* ) | sort -r` ; do
+                if [ $first = 1 ] ; then
+                        label=linux ; first=0
+                else
+                        label=linux-${x/vmlinux_/}
+                fi
+
+                cat << EOT
+
+image=/boot/$x
+        label=$label
+        append="root=$rootdev"
+        read-only
+
+EOT
+        done
+}
+
 create_lilo_conf() {
 	i=0 ; rootdev="`grep ' / ' /proc/mounts | tail -n 1 | \
 					awk '/\/dev\// { print $1; }'`"
@@ -38,12 +58,11 @@ create_lilo_conf() {
 boot=$bootdev
 delay=40
 lba32
+EOT
 
-image=/boot/vmlinuz
-	label=rock
-	append="root=$rootdev"
-	read-only
+	create_kernel_list >> /etc/lilo.conf
 
+	cat << EOT >> /etc/lilo.conf
 image=/boot/memtest86.bin
 	label=memtest
 	optional

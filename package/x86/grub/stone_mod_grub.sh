@@ -22,6 +22,24 @@
 #
 # [MAIN] 70 grub GRUB Boot Loader Setup
 
+create_kernel_list() {
+	first=1
+	for x in `(cd /boot/ ; ls vmlinux_* ) | sort -r` ; do
+		if [ $first = 1 ] ; then
+			label=linux ; first=0
+		else
+			label=linux-${x/vmlinux_/}
+		fi
+
+		cat << EOT
+
+title  $label
+kernel $bootdrive$bootpath/$x root=$rootdev ro
+initrd $bootdrive$bootpath/initrd.img
+EOT
+	done
+}
+
 create_device_map() {
 	gui_cmd '(Re-)Create GRUB Device Map' "$( cat << "EOT"
 rm -vf /boot/grub/device.map
@@ -72,12 +90,12 @@ create_boot_menu() {
 timeout 8
 default 0
 fallback 1
+EOT
+	create_kernel_list >> /boot/grub/menu.lst
 
-title  ROCK Linux
-kernel $bootdrive$bootpath/vmlinuz root=$rootdev ro
-initrd $bootdrive$bootpath/initrd.img
+	cat << EOT >> /boot/grub/menu.lst
 
-title  MemTest86 (SGI memory tester)
+title  MemTest86 (memory tester)
 kernel $bootdrive$bootpath/memtest86.bin
 EOT
 
