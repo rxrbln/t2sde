@@ -20,8 +20,23 @@
 # 
 # --- ROCK-COPYRIGHT-NOTE-END ---
 
+# extract and patch base
+xf_extract() {
+	echo "Extracting source (for package version $ver) ..."
+	for x in $xf_files ; do
+		tar $taropt $archdir/$x.tbz2
+	done
+
+	cd xc
+
+	for x in $xf_patches ; do
+		echo "Patching source ($x) ..."
+        	bunzip2 < $archdir/$x | patch -p1 -E
+	done
+}
+
 # extract additional gl* stuff
-	xf_extract_gl() {
+xf_extract_gl() {
 	mkdir release ; ln -s ../.. release/xc
 	tar xZf $archdir/mangl.tar.Z
 	tar xZf $archdir/manglu.tar.Z
@@ -91,11 +106,6 @@ xf_install() {
 	  programs/twm/sample-twmrc/original.twmrc
 	cp -v programs/twm/sample-twmrc/*.twmrc $root/usr/X11R6/lib/X11/twm/
 	register_wm twm TWM /usr/X11/bin/twm
-
-	echo "Copy X11 Documentation and creating X11 symlink ..."
-	rm -rf $root/usr/doc/X11
-	cp -rv doc/* $docdir
-	ln -s $docdir X11
 
 	echo "Copying default example configs ..."
 	cp -fv $base/package/x11/xfree86/XF86Config.data $root/etc/X11/XF86Config

@@ -7,7 +7,7 @@ grep -v "^rootfs " /proc/mounts > /etc/mtab
 freeramdisk /dev/rd/* 2> /dev/null
 
 mkdir -p /lib/modules/$( uname -r )
-touch /lib/modules/$( uname -r )/modules.dep
+echo -n >> /lib/modules/$( uname -r )/modules.dep
 
 cd /dev ; rm -f fd
 ln -sf /proc/kcore      core
