@@ -153,7 +153,7 @@ lx_grabextraversion () {
 	fi
 }
 lx_injectextraversion () {
-	lx_extraversion="${lx_extraversion}-rock"
+	lx_extraversion="${lx_extraversion}-dist"
 
 	# inject final EXTRAVERSION into Makefile
 	sed -i -e "s,^\([ \t]*EXTRAVERSION[ \t]*\)=.*,\1= ${lx_extraversion},g" Makefile
