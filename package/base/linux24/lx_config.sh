@@ -126,12 +126,21 @@ lx_config ()
 	# create a valid .config
 	yes '' | make ARCH=$lx_cpu oldconfig > /dev/null
 
+	# last disable broken crap
+	sh $base/package/base/linux24/disable-broken.sh \
+	$pkg_linux_brokenfiles < .config > config.new
+	mv config.new .config
+
+	# create a valid .config (dependencies might need to be disabled)
+	yes '' | make ARCH=$lx_cpu oldconfig > /dev/null
+
 	# save final config
 	cp .config .config_modules
 
 	echo "Creating config without modules ...."
 	sed "s,\(CONFIG_.*\)=m,# \1 is not set," .config > .config_new
 	mv .config_new .config
+	# create a valid .config (dependencies might need to be disabled)
 	yes '' | make ARCH=$lx_cpu oldconfig > /dev/null
 	mv .config .config_nomods
 
@@ -141,11 +150,6 @@ lx_config ()
 	else
 		cp .config_modules .config
 	fi
-
-	# last disable broken crap
-	sh $base/package/base/linux24/disable-broken.sh \
-		$pkg_linux_brokenfiles < .config > config.new
-	mv config.new .config
 
 	if [[ $treever = 25* ]] ; then
 		echo "Create symlinks and a few headers for <$lx_cpu> ... "
