@@ -60,7 +60,7 @@ public_drop() {
 public_clamp_mtu() {
 	addcode up 1 6 "iptables -A FORWARD -p tcp --tcp-flags SYN,RST SYN \
 	                -j TCPMSS --clamp-mss-to-pmtu"
-	addcode down 9 6  iptables -D FORWARD -p tcp --tcp-flags SYN,RST SYN \
+	addcode down 9 6 "iptables -D FORWARD -p tcp --tcp-flags SYN,RST SYN \
 	                  -j TCPMSS --clamp-mss-to-pmtu"
 }
 
