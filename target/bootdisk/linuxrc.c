@@ -40,6 +40,7 @@
 #include <fcntl.h>
 #include <errno.h>
 #include <stdarg.h>
+#include "libcheckisomd5.h"
 
 #ifndef MS_MOVE
 #  define MS_MOVE	8192
@@ -253,21 +254,23 @@ void load_modules(char * dir)
 	trywait(pid);
 }
 
-void load_ramdisk_file()
+int getdevice(char* devstr, int devlen, int cdroms, int floppies)
 {
 	char *devicelists[2] = { "/dev/cdroms/cdrom%d", "/dev/floppy/%d" };
 	char *devicenames[2] =
 	{ "CD-ROM #%d (IDE/ATAPI or SCSI)", "FDD (Floppy Disk Drive) #%d" };
 	char *devn[10], *desc[10];
 	char text[100], devicefile[100];
-	char filename[100];
 	int nr=0;
 	int i, tmp_nr;
-	int pid;
 
-	printf("Select a device for loading the 2nd stage system from: \n\n");
+	if (!cdroms && !floppies)
+		return -1;
 
 	for (i = 0; i < 2; i++) {
+		if ( (0 == i) && (!cdroms) ) continue;
+		if ( (1 == i) && (!floppies) ) continue;
+
 		for (tmp_nr = 0; tmp_nr < 10; ++tmp_nr) {
 			sprintf(devicefile, devicelists[i], tmp_nr);
 			sprintf(text, devicenames[i], tmp_nr+1);
@@ -279,6 +282,8 @@ void load_ramdisk_file()
 		}
 	}
 
+	if (!nr) return -1;
+	
 	desc[nr] = devn[nr] = NULL;
 
 	for (nr=0; desc[nr]; nr++) {
@@ -294,21 +299,35 @@ void load_ramdisk_file()
 
 	while (1) {
 		if ( ! access(text, R_OK) ) {
-			strcpy(devicefile, text);
+			strncpy(devstr, text, devlen);
 			break;
 		}
 
 		if (atoi(text) >= 0 && atoi(text) < nr) {
-			strcpy(devicefile, devn[atoi(text)]);
+			strncpy(devstr, devn[atoi(text)], devlen);
 			break;
 		}
 
 		printf("No such device found. Try again (enter=back): ");
 		fflush(stdout);
 	 	trygets(text, 100);
-		if (text[0] == 0) return;
+		if (text[0] == 0) return -1;
 	}
+	
+	return 1;
+}
 
+void load_ramdisk_file()
+{
+	char text[100], devicefile[100];
+	char filename[100];
+	int pid;
+
+	printf("Select a device for loading the 2nd stage system from: \n\n");
+
+	if (getdevice(devicefile, 100, 1, 1) <= 0)
+			return;
+	
 	printf("Select a stage 2 image file:\n\n"
 	       "     1. %s\n     2. %s\n\n"
 	       "Enter number or image file name (default=1): ",
@@ -457,6 +476,20 @@ void exec_sh()
 	trywait(rc);
 }
 
+void checkisomd5()
+{
+	char devicefile[100];
+
+	printf("Select a device for checking: \n\n");
+	
+	if (getdevice(devicefile, 100, 1, 0) <= 0)
+		return;
+
+	mediaCheckFile(devicefile, 0);
+	
+	printf("\nPress Return key to continue."); (void)getchar();
+}
+
 int main()
 {
 	char text[100];
@@ -495,8 +528,9 @@ drivers (if needed) and configure the installation source so the\n\
      5. Load kernel modules from another disk\n\
      6. Activate already formatted swap device\n\
      7. Execute a (kiss) shell if present (for experts!)\n\
+     8. Validate a CD/DVD against its embedded checksum\n\
 \n\
-What do you want to do [0-7] (default=0)? ");
+What do you want to do [0-8] (default=0)? ");
 		fflush(stdout);
 
 		trygets(text, 100);
@@ -543,6 +577,10 @@ What do you want to do [0-7] (default=0)? ");
 		  
 		case 7:
 		  exec_sh();
+		  break;
+		  
+		case 8:
+		  checkisomd5();
 		  break;
 		  
 		default:
