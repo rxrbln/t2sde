@@ -124,7 +124,7 @@ main() {
 		bootdrive='No Device Map found!'
 	fi
 
-	if [ "$grub_rootdrive" = "$grub_bootdrive" ]
+	if [ "$rootdrive" = "$bootdrive" ]
 	then bootpath="/boot" ; else bootpath="" ; fi
 
         gui_menu grub 'GRUB Boot Loader Setup' \
