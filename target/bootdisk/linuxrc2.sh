@@ -25,11 +25,11 @@ cd /
 
 echo
 echo '  ******************************************************************'
-echo '  *         Welcome to the ROCK Linux 2nd stage boot disk.         *'
+echo '  *         Welcome to the T2 Linux 2nd stage boot disk.           *'
 echo '  ******************************************************************'
 echo
-echo "This is a small linux distribution, loaded into your computer's memory."
-echo "It has everything needed to install ROCK Linux, restore an old installation"
+echo "This is a small Linux distribution, loaded into your computer's memory."
+echo "It has everything needed to install T2 Linux, restore an old installation"
 echo "or perform some administrative tasks."
 
 for x in /etc/setup-*.sh /setup/setup.sh ; do
@@ -47,7 +47,7 @@ read ttydevs
 [ -z "$ttydevs" ] && ttydevs="vc/1 vc/2 vc/3 vc/4 vc/5 vc/6"
 
 echo
-echo 'Just type "stone" now if you want to make a normal installation of a ROCK'
+echo 'Just type "stone" now if you want to make a normal installation of a T2'
 echo -n 'Linux build '
 if type -p dialog > /dev/null ; then
 	echo '(or type "stone -text" if you prefer non-dialog based menus).'
