@@ -124,7 +124,7 @@ xf_install() {
 
 	echo "Installing XFree86 Setup Script ..."
 	cp -fv $base/package/x11/xfree86/stone_mod_xfree86.sh $root/etc/stone.d/mod_xfree86.sh
-	echo "export WINDOWMANAGER=gnome" > $root/etc/profile.d/windowmanager
+	echo "export WINDOWMANAGER=kde" > $root/etc/profile.d/windowmanager
 
 	echo "Installing XFree86 Cron Script ..."
 	cp -fv $base/package/x11/xfree86/xfree86.cron $root/etc/cron.d/80-xfree86
