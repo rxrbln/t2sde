@@ -56,7 +56,7 @@ do
 done
 #
 echo_status "Saving boot/* - we do not need this on the 2nd stage ..."
-rm -rf ../boor ; mkdir ../boot
+rm -rf ../boot ; mkdir ../boot
 mv -v boot/* ../boot/
 #
 echo_status "Remove the stuff we don't need ..."
