@@ -44,14 +44,14 @@ main() {
 
 		cmd="gui_menu x 'X11 Configuration Menu'
 
-		'Run xf86cfg (recommended, new interactive config)'
-			'gui_cmd xf86ccfg xf86cfg -xf86config /etc/X11/XF86Config'
+		'Run xorgcfg (recommended, new interactive config)'
+			'gui_cmd xorgcfg xorgcfg -config /etc/X11/xorg'
 
 		'Run X -configure (automated config)'
-			'gui_cmd XFree86 XFree86 -configure ; mv /root/XF86Config.new /etc/X11/XF86Config'
+			'gui_cmd Xorg Xorg -configure ; mv /root/xorg.conf.new /etc/X11/xorg.conf'
 
-		'Run xf86config (old textual config)'
-			'gui_cmd xf86config xf86config'"
+		'Run xorgconfig (old textual config)'
+			'gui_cmd xorgconfig xorgconfig'"
 
 		cmd="$cmd '' ''"
 
