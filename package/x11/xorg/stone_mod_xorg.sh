@@ -48,7 +48,7 @@ main() {
 			'gui_cmd xorgcfg xorgcfg -config /etc/X11/xorg'
 
 		'Run X -configure (automated config)'
-			'gui_cmd Xorg Xorg -configure ; mv /root/xorg.conf.new /etc/X11/xorg.conf'
+			'gui_cmd Xorg Xorg -configure ; mv -v /root/xorg.conf.new /etc/X11/xorg.conf'
 
 		'Run xorgconfig (old textual config)'
 			'gui_cmd xorgconfig xorgconfig'"
@@ -88,8 +88,8 @@ main() {
 		cmd="$cmd '' ''"
 
 		cmd="$cmd
-		'Edit/View /etc/X11/XF86Config'
-			'gui_edit XF86config /etc/X11/XF86Config'
+		'Edit/View /etc/X11/xorg.conf'
+			'gui_edit xorg.conf /etc/X11/xorg.conf'
 		'Edit/View /etc/profile.d/windowmanager'
 			'gui_edit WINDOWMANAGER /etc/profile.d/windowmanager'"
 
