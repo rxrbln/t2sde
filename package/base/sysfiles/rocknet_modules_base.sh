@@ -26,6 +26,7 @@ public_interface() {
 
 	if [ "$if" = "$prof" ]; then
 		ignore=0
+		prof="default"
 	else
 		for x in $prof; do
 			[ "$x" = "$profile" ] && ignore=0
