@@ -11,7 +11,7 @@ package_map='       +00-dirtree
 +glibc	            -gcc                -linux-header
 +linux24            +linux26            +linux24benh
 -binutils           -bin86              -nasm               -dietlibc
-+yaboot             +aboot
++lilo               +yaboot             +aboot
 +silo               +parted             +mac-fdisk          +pdisk
 +xfsprogs           +mkdosfs            +jfsutils
 +e2fsprogs          +reiserfsprogs      +reiser4progs       +genromfs
@@ -38,8 +38,6 @@ package_map='       +00-dirtree
 +sysfiles           +libpcap            +iptables           +tcp_wrappers
 -kiss               +kbd		-syslinux           +ntfsprogs
 -ethtool            -uml_utilities      -bdb'
-
-# Needed? -ReneR: +grub               +lilo
 
 if [ -f ../../pkgs/bize.tar.bz2 -a ! -f ../../pkgs/mine.tar.bz2 ] ; then
 	packager=bize
