@@ -8,19 +8,19 @@ pkgloop
 echo_header "Finishing build."
 
 echo_status "Creating package database ..."
-admdir="build/${ROCKCFG_ID}/root/var/adm"
-create_package_db $admdir build/${ROCKCFG_ID}/pkgs \
-		  build/${ROCKCFG_ID}/packages.db
+admdir="build/${ROCKCFG_ID}/var/adm"
+create_package_db $admdir build/${ROCKCFG_ID}/ROCK/pkgs \
+		  build/${ROCKCFG_ID}/ROCK/packages.db
 
 echo_status "Creating isofs.txt file .."
-cat << EOT > build/${ROCKCFG_ID}/isofs.txt
-DISK1   $admdir/cache/                  ${ROCKCFG_SHORTID}/info/cache/
-DISK1   $admdir/cksums/                 ${ROCKCFG_SHORTID}/info/cksums/
-DISK1   $admdir/dependencies/           ${ROCKCFG_SHORTID}/info/dependencies/
-DISK1   $admdir/descs/                  ${ROCKCFG_SHORTID}/info/descs/
-DISK1   $admdir/flists/                 ${ROCKCFG_SHORTID}/info/flists/
-DISK1   $admdir/md5sums/                ${ROCKCFG_SHORTID}/info/md5sums/
-DISK1   $admdir/packages/               ${ROCKCFG_SHORTID}/info/packages/
-EVERY   build/${ROCKCFG_ID}/packages.db ${ROCKCFG_SHORTID}/packages.db
-SPLIT   build/${ROCKCFG_ID}/pkgs/       ${ROCKCFG_SHORTID}/pkgs/
+cat << EOT > build/${ROCKCFG_ID}/ROCK/isofs.txt
+DISK1   $admdir/cache/                       ${ROCKCFG_SHORTID}/info/cache/
+DISK1   $admdir/cksums/                      ${ROCKCFG_SHORTID}/info/cksums/
+DISK1   $admdir/dependencies/                ${ROCKCFG_SHORTID}/info/dependencies/
+DISK1   $admdir/descs/                       ${ROCKCFG_SHORTID}/info/descs/
+DISK1   $admdir/flists/                      ${ROCKCFG_SHORTID}/info/flists/
+DISK1   $admdir/md5sums/                     ${ROCKCFG_SHORTID}/info/md5sums/
+DISK1   $admdir/packages/                    ${ROCKCFG_SHORTID}/info/packages/
+EVERY   build/${ROCKCFG_ID}/ROCK/packages.db ${ROCKCFG_SHORTID}/packages.db
+SPLIT   build/${ROCKCFG_ID}/ROCK/pkgs/       ${ROCKCFG_SHORTID}/pkgs/
 EOT

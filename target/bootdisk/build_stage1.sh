@@ -50,7 +50,7 @@ rm -f lib/modules/[0-9]*/kernel/drivers/net/{dummy,ppp*}.{o,ko}
 #
 if [ "$ROCKCFG_BOOTDISK_USEKISS" = 1 ]; then
 	echo_status "Adding kiss shell for expert use of the initrd image."
-	cp $build_dir/root/bin/kiss bin/
+	cp $build_root/bin/kiss bin/
 	#mv linuxrc bin/; ln -s bin/kiss linuxrc
 	#rm -f lib/modules/[0-9]*/kernel/drivers/net/{dgrx,acenic}.o
 	#rm -f lib/modules/[0-9]*/kernel/drivers/scsi/{advansys,qla1280}.o
