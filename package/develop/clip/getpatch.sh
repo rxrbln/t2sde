@@ -14,9 +14,11 @@ else
 	fi
 fi
 
-release=$( tar zOxf $tempfile ./clip-prg/clip/release_version )
+release=$( tar zOxf $tempfile ./clip-prg/clip/release_version 2> /dev/null )
 [ -z "$release" ] && release=$( grep -e '^\[V\]' clip.desc | cut -d' ' -f2- | cut -d'-' -f1)
-seqno=$( tar zOxf $tempfile ./clip-prg/clip/seq_no.txt )
+seqno=$( tar zOxf $tempfile ./clip-prg/clip/seq_no.txt 2> /dev/null )
+
+echo "$release-$seqno"
 
 if [ -n "$release" -a -n "$seqno" ]; then
 	archdir=../../../download/mirror/c/
