@@ -185,6 +185,23 @@ expert_begin
 		editfile ROCKCFG_PKGSEL_FILE config/$config/pkgsel \
 		         'Package selection rules'
 
+# Create an awk program from the list of package selection rules stored in 
+# config/$config/pkgsel which is applied to the list of packages stored in 
+# config/$config/packages.
+# Syntax for package selection rules is:
+# <action> <patternlist>
+# <action> is a single character: x or X enables the packages matching 
+# <patternlist>, o or O disables them, - omits them in the packages list.
+# Any other character exits the awk program, resulting in an empty list.
+# <patternlist> consists of one or more white-space separated <pattern>s.
+# <pattern> consists of letters, numbers, and characters _ * + . = -
+# <action> is performed on every line in the list matching all <pattern>s of a rule.
+# If the first <pattern> of a rule is a !, <action> is performed on every line 
+# _not_ matching _any_ <pattern> of a rule.
+# A <pattern> of the form <base-pkg>=<derived-pkg> denotes a pkgforked package;
+# such a <pattern> will duplicate the line of the <base-pkg> and substitute its
+# package name with the name of the pkgforked package, that is, the <pattern>.
+
 		echo "# created from 'pkgsel'" > config/$config/pkgsel.awk
 		while read action patternlist ; do
 			case "$action" in
@@ -205,12 +222,16 @@ expert_begin
 					address="! " ; others="||"
 				else
 					pattern="$( echo "$pattern" | sed \
-						-e 's,[^a-zA-Z0-9_/\*+\.-],,g' \
+						-e 's,[^a-zA-Z0-9_/\*+\.=-],,g' \
 						-e 's,[/\.\+],\\&,g' \
 						-e 's,\*,[^ ]*,g' )"
 					[ "$pattern" ] || continue
-					address="$address$first"
-					address="$address / $pattern /"
+# check if pattern describes a pkgforked package
+					if [ "$pattern" != "${pattern%=*}" ] ; then
+						action="print; $action; \$5=\"$pattern\""
+						pattern=${pattern%=*}
+					fi
+					address="$address$first / $pattern /"
 					first=" $others"
 				fi
 			done < <( echo "$patternlist" | tr '\t ' '\n\n' )
