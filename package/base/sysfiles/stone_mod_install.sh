@@ -173,6 +173,8 @@ EOT
 		echo "	umount -arv"
 		echo "	reboot -f"
 		echo
+		echo "Or by executing 'down' which will run the above commands."
+		echo
 	fi
 }
 
