@@ -189,7 +189,7 @@ This dialog allows you to modify your discs parition layout and to create filesy
 		# protect for the case no discs are present ...
 		if [ -e /dev/discs ] ; then
 		  for x in $( cd /dev/discs
-		            ls -l * | grep ' -> ' | cut -f2- -d/ ; )
+		            ls -l * | grep ' -> ' | cut -f2- -d/ | sort )
 		  do
 			disk_add $x
 		  done
