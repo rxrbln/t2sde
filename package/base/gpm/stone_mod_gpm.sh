@@ -61,6 +61,12 @@ set_buttons() {
 	write_config
 }
 
+set_args() {
+	gui_input "Extra options for the gpm daemon (Current: $GPM_ARGS)" \
+		"$GPM_ARGS" "GPM_ARGS"
+	write_config
+}
+
 main() {
     while
 	GPM_MOUSE="/dev/misc/psaux" ; GPM_ARGS="-t ms -2"
@@ -68,16 +74,12 @@ main() {
 
 	set -- $GPM_ARGS ; GPM_ARGS=""
 	while [ "$1" ] ; do
-		if
-		    [ "$1" = "-t" ]
-		then
+		if [ "$1" = "-t" ] ; then
 			GPM_TYPE="$2" ; shift
-		elif
-		    [ -z "${1#-[23]}" ]
-		then
+		elif [ -z "${1#-[23]}" ] ; then
 			GPM_BUTTONS="${1#-}"
 		else
-			GPM_ARGS="`echo $GPM_ARGS $1`"
+			GPM_ARGS="$GPM_ARGS $1"
 		fi
 		shift
 	done
@@ -87,7 +89,7 @@ Select an item to change the value:' \
 		"Mouse Port ........ $GPM_MOUSE"   'set_port' \
 		"Mouse Type ........ $GPM_TYPE"    'set_type' \
 		"Mouse Buttons ..... $GPM_BUTTONS" 'set_buttons' \
-		"Extra Options ..... $GPM_ARGS"    '' \
+		"Extra Options ..... $GPM_ARGS"    'set_args' \
 		'' '' \
 		'Edit the /etc/conf/gpm file'				\
 			"gui_edit 'GPM Config File' /etc/conf/gpm"	\
