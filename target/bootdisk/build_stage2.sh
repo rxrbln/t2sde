@@ -127,6 +127,8 @@ done
 #
 echo_status "Copy linuxrc."
 cp ../2nd_stage/linuxrc .
+echo_status "Copy /etc/fstab."
+cp ../2nd_stage/etc/fstab etc
 #
 echo_status "Creating links for identical files."
 while read ck fn
