@@ -42,9 +42,9 @@ then
 	#
 	echo_status "Extracting isolinux boot loader."
 	mkdir -p isolinux
-	tar --use-compress-program=bzip2 \
+	tar --use-compress-program=bzip2 -O\
 	    -xf $base/download/mirror/s/syslinux-$syslinux_ver.tar.bz2 \
-	    syslinux-$syslinux_ver/isolinux.bin -O > isolinux/isolinux.bin
+	    syslinux-$syslinux_ver/isolinux.bin > isolinux/isolinux.bin
 	#
 	echo_status "Copy images to isolinux directory."
 	cp boot/memtest86.bin isolinux/memtest86
