@@ -61,15 +61,19 @@ if [ "$filter" != " " ]; then
 	destination="$( eval "echo \"$destination\" $filter" )"
 fi
 
-if [ $sources_counter -eq 0 ]; then
+if [ -z "$destination" ]; then
+	: do nothing
+elif [ $sources_counter -eq 0 ]; then
 	echo "+ $newcommand $destination" >> $logfile
 	$newcommand "$destination" || error=$?
 elif [ -d "$destination" ]; then
 	for source in "${sources[@]}"; do
 		thisdest="$destination/${source##*/}"; thisdest="${thisdest//\/\///}"
 		[ "$filter" != " " ] && thisdest="$( eval "echo \"$thisdest\" $filter" )"
-		echo "+ $newcommand $source $thisdest" >> $logfile
-		$newcommand "$source" "$thisdest" || error=$?
+		if [ ! -z "$thisdest" ]; then
+			echo "+ $newcommand $source $thisdest" >> $logfile
+			$newcommand "$source" "$thisdest" || error=$?
+		fi
 	done
 else
 	echo "+ $newcommand ${sources[*]} $destination" >> $logfile
@@ -77,6 +81,5 @@ else
 fi
 
 echo "===> Returncode: $error" >> $logfile
-
 exit $error
 
