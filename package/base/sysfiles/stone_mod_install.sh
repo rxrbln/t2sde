@@ -120,7 +120,7 @@ main() {
 	while
 		cmd="gui_menu install 'Installing ROCK Linux
 
-Note: Everythign you can do using this tool can also be done manualy
+Note: Everything you can do using this tool can also be done manualy
 on the command line.'"
 
 		# protect for the case no discs where found ...
