@@ -24,10 +24,8 @@ treever=${pkg/linux/} ; treever=${treever/-*/}
 archdir="$base/download/$repository/linux$treever"
 srctar="linux-${vanilla_ver}.tar.bz2"
 
-lx_cpu=`echo "$arch" | sed -e s/x86/i386/ -e s/powerpc/ppc/`
-
-# lx_cpu overrides due to multi architecture arch defines in ROCK Linux
-[ "$lx_cpu" = i386 -a "$arch_machine" = x86_64 ] && lx_cpu=x86_64 
+lx_cpu=`echo "$arch_machine" | sed -e s/x86/i386/ \
+  -e s/i.86/i386/ -e s/powerpc/ppc/`
 
 MAKE="$MAKE ARCH=$lx_cpu CROSS_COMPILE=$archprefix KCC=$KCC"
 
