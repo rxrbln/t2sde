@@ -20,7 +20,7 @@ package_map='       +00-dirtree         +glibc22            +glibc23
 +popt               +raidtools          +mdadm
 +dump               +eject              +disktype
 +hdparm             +memtest86          +cpuburn            +bonnie++
-+mine               -termcap            +ncurses
+-mine               -bize               -termcap            +ncurses
 +readline           -strace             -ltrace             -perl5
 -m4                 -time               -gettext            -zlib
 +bash               +attr               +acl                +findutils
@@ -40,7 +40,13 @@ package_map='       +00-dirtree         +glibc22            +glibc23
 +sysfiles           +libpcap            +iptables           +tcp_wrappers
 -kiss               +kbd		-syslinux           +ntfsprogs'
 
-package_map="+$ROCKCFG_DEFAULT_KERNEL $package_map"
+if [ -f ../../pkgs/bize.tar.bz2 -a ! -f ../../pkgs/mine.tar.bz2 ] ; then
+	packager=bize
+else
+	packager=mine
+fi
+
+package_map="+$ROCKCFG_DEFAULT_KERNEL +$packager $package_map"
 
 echo_status "Extracting the packages archives."
 for x in $( ls ../../pkgs/*.tar.bz2 | tr . / | cut -f8 -d/ )
@@ -102,7 +108,7 @@ ln -s bin sbin ; ln -s . usr
 
 #
 
-progs="agetty bash cat cp date dd df ifconfig ln ls mine mkdir mke2fs \
+progs="agetty bash cat cp date dd df ifconfig ln ls $packager mkdir mke2fs \
        mkswap mount mv rm reboot route sleep swapoff swapon sync umount \
        eject chmod chroot grep halt rmdir sh shutdown uname killall5 \
        stone mktemp sort fold sed mkreiserfs cut head tail disktype"
@@ -111,6 +117,10 @@ progs="$progs fdisk sfdisk"
 
 if [ $arch = ppc ] ; then
 	progs="$progs mac-fdisk pdisk"
+fi
+
+if [ $packager = bize ] ; then
+	progs="$progs bzip2 md5sum"
 fi
 
 echo_status "Copy the most important programs ..."
