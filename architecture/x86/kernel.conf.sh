@@ -67,6 +67,11 @@
 		include(`kernel-scsi.conf')
 		include(`kernel-net.conf')
 		include(`kernel-fs.conf')
+
+		dnl NTFS for installation on esoteric notebooks where the user
+		dnl might have the ISOs on an NTFS partition due to unsupported
+		dnl floppy, CD, ... drives
+		CONFIG_NTFS_FS=y
 	EOT
 } | m4 -I $base/architecture/$arch -I $base/architecture/share
 
