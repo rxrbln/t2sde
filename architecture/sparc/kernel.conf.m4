@@ -21,3 +21,8 @@ include(`kernel-scsi.conf')
 include(`kernel-net.conf')
 include(`kernel-fs.conf')
 
+dnl LSI Logic / Symbios Logic (formerly NCR) 53c810 (rev 01)
+dnl does not work reliable with MMIO on my Ultra SPARC 5
+dnl Rene Rebe <rene@rocklinux.org>
+# CONFIG_SCSI_SYM53C8XX_IOMAPPED is not set
+
