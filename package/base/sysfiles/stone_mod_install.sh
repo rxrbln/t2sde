@@ -65,7 +65,7 @@ part_mkfs() {
 
 	if type -p mkfs.xfs > /dev/null ; then
 		cmd="$cmd 'SGI XFS  (journaling filesystem)'"
-		cmd="$cmd 'mkfs.xfs /dev/$1/$2'"
+		cmd="$cmd 'mkfs.xfs -f /dev/$1/$2'"
 	fi
 
 	eval "$cmd" && part_mount $1 $2
