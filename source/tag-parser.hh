@@ -15,6 +15,12 @@ public:
   }
   
   virtual ~Tag(){};
+
+  void Clear ()
+  {
+    value.clear();
+    ClearImpl ();
+  }
   
   virtual std::istream& Read(std::istream& is)
   {
@@ -24,6 +30,8 @@ public:
   {
     return os;
   }
+
+  virtual void ClearImpl() {}
   
   std::string short_name;
   std::string name;
@@ -46,7 +54,7 @@ public:
   void Clear() {
     for (std::vector<Tag*>::size_type i = 0;
 	 i < tags.size(); ++i)
-	tags[i]->value.clear();
+	tags[i]->Clear();
   }
 
   bool Parse(const std::string& file)
