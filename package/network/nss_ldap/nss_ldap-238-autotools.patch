@@ -1,0 +1,84 @@
+## nss_ldap-238-autotools.patch by Peter Marschall <peter@adpm.de>
+##
+## update auto* files to
+## - install config & password file with the names chosen
+## - create directories before copying files into them
+## - use $(mkinstalldirs) for AIX 
+
+--- ./configure.in
++++ ./configure.in	2005-03-28 12:56:49.265906300 +0200
+@@ -17,11 +17,20 @@
+ AC_ARG_ENABLE(configurable-krb5-ccname-gssapi, [  --enable-configurable-krb5-ccname-gssapi   enable configurable Kerberos V credentials cache name (gssapi method)], [AC_DEFINE(CONFIGURE_KRB5_CCNAME) AC_DEFINE(CONFIGURE_KRB5_CCNAME_GSSAPI)])
+ AC_ARG_WITH(ldap-lib, [  --with-ldap-lib=type      select ldap library [auto|netscape5|netscape4|netscape3|umich|openldap]])
+ AC_ARG_WITH(ldap-dir, [  --with-ldap-dir=DIR       base directory of LDAP SDK])
+-AC_ARG_WITH(ldap-conf-file, [  --with-ldap-conf-file     path to LDAP configuration file], [AC_DEFINE_UNQUOTED(NSS_LDAP_PATH_CONF, "$with_ldap_conf_file")])
+-AC_ARG_WITH(ldap-secret-file, [  --with-ldap-secret-file   path to LDAP root secret file], [AC_DEFINE_UNQUOTED(NSS_LDAP_PATH_ROOTPASSWD, "$with_ldap_secret_file")])
++AC_ARG_WITH(ldap-conf-file, [  --with-ldap-conf-file     path to LDAP configuration file],
++	    [ NSS_LDAP_PATH_CONF="$with_ldap_conf_file" ],
++	    [ NSS_LDAP_PATH_CONF="/etc/ldap.conf" ])
++AC_ARG_WITH(ldap-secret-file, [  --with-ldap-secret-file   path to LDAP root secret file],
++	    [ NSS_LDAP_PATH_ROOTPASSWD="$with_ldap_secret_file" ],
++	    [ NSS_LDAP_PATH_ROOTPASSWD="/etc/ldap.secret" ])
+ AC_ARG_WITH(gssapi-dir, [  --with-gssapi-dir=DIR     base directory of gssapi SDK])
+ AC_ARG_WITH(ngroups, [  --with-ngroups=num        average group size hint, experts only], [AC_DEFINE_UNQUOTED(LDAP_NSS_NGROUPS, $with_ngroups)])
+ 
++AC_DEFINE_UNQUOTED(NSS_LDAP_PATH_CONF, "$NSS_LDAP_PATH_CONF")
++AC_DEFINE_UNQUOTED(NSS_LDAP_PATH_ROOTPASSWD, "$NSS_LDAP_PATH_ROOTPASSWD")
++AC_SUBST(NSS_LDAP_PATH_CONF)
++AC_SUBST(NSS_LDAP_PATH_ROOTPASSWD)
++
+ if test "$ac_cv_prog_gcc" = "yes"; then CFLAGS="$CFLAGS -Wall -fPIC"; fi
+ 
+ dnl This is needed for the native Solaris LDAP SDK and
+--- ./Makefile.am
++++ ./Makefile.am	2005-03-28 12:56:49.266906109 +0200
+@@ -26,6 +26,9 @@
+ 
+ nss_ldap_so_LDFLAGS = @nss_ldap_so_LDFLAGS@
+ 
++NSS_LDAP_PATH_CONF = @NSS_LDAP_PATH_CONF@
++NSS_LDAP_PATH_ROOTPASSWD = @NSS_LDAP_PATH_ROOTPASSWD@
++
+ NSS_LDAP_SOURCES = ldap-nss.c ldap-grp.c ldap-pwd.c ldap-netgrp.c ldap-schema.c \
+ 	util.c ltf.c snprintf.c resolve.c dnsconfig.c \
+ 	irs-nss.c pagectrl.c aix_authmeth.c
+@@ -57,9 +60,9 @@
+ # AIX install instructions per doc/README.AIX
+ 
+ install-exec-local: nss_ldap.so NSS_LDAP
+-	mkdir -p $(DESTDIR)$(libdir)/netsvc/dynload
++	$(mkinstalldirs) $(DESTDIR)$(libdir)/netsvc/dynload
+ 	$(INSTALL_PROGRAM) -o $(INST_UID) -g $(INST_GID) nss_ldap.so $(DESTDIR)$(libdir)/netsvc/dynload/nss_ldap.so
+-	mkdir -p $(DESTDIR)$(libdir)/security
++	$(mkinstalldirs) $(DESTDIR)$(libdir)/security
+ 	$(INSTALL_PROGRAM) -o $(INST_UID) -g $(INST_GID) NSS_LDAP $(DESTDIR)$(libdir)/security/NSS_LDAP
+ 
+ else
+@@ -70,12 +73,13 @@
+ 	@$(NORMAL_INSTALL)
+ if GLIBC
+ 	-rm -f $(DESTDIR)$(libdir)/$(NSS_LDAP_LIBC_VERSIONED)
+-	$(INSTALL_PROGRAM) -o $(INST_UID) -g $(INST_GID) nss_ldap.so $(DESTDIR)$(libdir)/$(NSS_LDAP_LIBC_VERSIONED)
+ 	$(mkinstalldirs) $(DESTDIR)$(libdir)
++	$(INSTALL_PROGRAM) -o $(INST_UID) -g $(INST_GID) nss_ldap.so $(DESTDIR)$(libdir)/$(NSS_LDAP_LIBC_VERSIONED)
+ 	(cd $(DESTDIR)$(libdir); ln -sf $(NSS_LDAP_LIBC_VERSIONED) $(NSS_LDAP_NSS_VERSIONED))
+ 	$(mkinstalldirs) $(DESTDIR)/usr$(libdir)
+ 	(cd $(DESTDIR)/usr$(libdir); ln -sf ../..$(libdir)/$(NSS_LDAP_NSS_VERSIONED) .)
+ else
++	$(mkinstalldirs) $(DESTDIR)$(libdir)
+ if HPUX
+ 	$(INSTALL_PROGRAM) -o $(INST_UID) -g $(INST_GID) nss_ldap.so $(DESTDIR)$(libdir)/libnss_ldap.1
+ else
+@@ -88,9 +92,9 @@
+ 
+ install-data-local:
+ 	@$(NORMAL_INSTALL)
+-	@if test ! -f $(DESTDIR)$(sysconfdir)/ldap.conf; then \
+-		$(mkinstalldirs) $(DESTDIR)$(sysconfdir); \
+-		$(INSTALL_DATA) -o $(INST_UID) -g $(INST_GID) $(srcdir)/ldap.conf $(DESTDIR)$(sysconfdir)/ldap.conf; \
++	@if test ! -f $(DESTDIR)$(NSS_LDAP_PATH_CONF); then \
++		$(mkinstalldirs) $(DESTDIR)$(dir $(NSS_LDAP_PATH_CONF)); \
++		$(INSTALL_DATA) -o $(INST_UID) -g $(INST_GID) $(srcdir)/ldap.conf $(DESTDIR)$(NSS_LDAP_PATH_CONF); \
+ 	fi
+ 	$(INSTALL_DATA) -o $(INST_UID) -g $(INST_GID) $(srcdir)/nsswitch.ldap $(DESTDIR)$(sysconfdir)/nsswitch.ldap; 
+ 
