@@ -53,9 +53,10 @@ do
 done
 #
 echo_status "Remove the stuff we don't need ..."
-rm -rf usr/doc usr/man usr/info usr/share/* var/adm/*
+rm -rf home usr/{local,doc,man,info,games} var/adm/*
 rm -rf usr/{include,src} usr/*-linux-gnu usr/lib/*.{a,la,o}
 rm -rf usr/lib/*/ boot/*-rock boot/System.map
+ls -d usr/share/* | grep -v pci.ids | xargs rm -rf
 #
 echo_status "Installing some terminfo databases ..."
 tar --use-compress-program=bzip2 -xf ../../pkgs/ncurses.tar.bz2	\

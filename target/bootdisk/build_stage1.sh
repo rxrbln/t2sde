@@ -1,6 +1,4 @@
 
-set | grep STRIP
-
 echo_header "Creating initrd data:"
 rm -rf $disksdir/initrd
 mkdir -p $disksdir/initrd/{dev,proc,tmp,scsi,net,bin}
