@@ -263,11 +263,10 @@ int module_filter(const struct dirent *entry) {
 /* this starts the module loading shell */
 void load_modules(char* directory){
 	struct dirent **namelist;
-	int cnt, n, len, needmodhdr = 1, needdirhdr = 1;
+	int cnt = 0, n, len, needmodhdr = 1, needdirhdr = 1;
 	int loader_res=0;
 	char filename[256], input[256];
 	char *execargs[100];
-	int pid;
 
 	printf("Module loading shell\n\n");
 	printf("You can navigate through the filestem with 'cd'. For loading a module\n");
@@ -378,8 +377,8 @@ int getdevice(char* devstr, int devlen, int cdroms, int floppies)
 		if ( (1 == i) && (!floppies) ) continue;
 
 		for (tmp_nr = 0; tmp_nr < 10; ++tmp_nr) {
-			sprintf(devicefile, devicelists[i], tmp_nr);
-			sprintf(text, devicenames[i], tmp_nr+1);
+			snprintf(devicefile, 100,devicelists[i], tmp_nr);
+			snprintf(text, 100, devicenames[i], tmp_nr+1);
 
 			if ( access (devicefile, R_OK) ) break;
 			
@@ -600,7 +599,7 @@ void checkisomd5()
 	printf("\nPress Return key to continue."); (void)getchar();
 }
 
-stage1()
+int stage1()
 {
 	char text[100];
 	int input=1;
@@ -701,7 +700,6 @@ int load_one_module (const char *file, const struct stat *sb, int flag)
 int main(int argc, char* argv[])
 {
 	char* root = 0;
-	int i;
 
 	char cmdline[1024];
 
