@@ -28,6 +28,8 @@ if [ $use_yaboot -eq 1 ]; then
 	# Apple New World
 	echo "device=cd:" > boot/yaboot.conf
 	#
+	echo -e "\nmessage=/boot/boot.msg\n" > X
+	#
 	for x in `egrep 'X .* KERNEL .*' $base/config/$config/packages |
 	          cut -d ' ' -f 5-6 | tr ' ' '_'` ; do
 		kernel=${x/_*/}
