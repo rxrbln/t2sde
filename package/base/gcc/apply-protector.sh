@@ -1,10 +1,9 @@
 
 # only try to apply protector if available
-pfile="$( echo "$desc_D" | tr ' ' '\n' | grep protector )"
+pfile=`match_source_file -p protector`
 if [ "$pfile" ] ; then
 	echo "Inserting SPP ..."
-	tar --use-compress-program=bzip2 \
-	  -xf $archdir/${pfile/.gz/.bz2}
+	tar $taropt $pfile
 
 	if [ -f protector.dif ] ; then
 		patch -p0 < protector.dif
