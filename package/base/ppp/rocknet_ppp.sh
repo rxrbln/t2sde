@@ -1,10 +1,7 @@
 
-# FIXME: /tmp/.rocknet or such a directory should go to base.sh?
 ppp_config_path=/tmp/.rocknet/ppp
 [ -d $ppp_config_path ] || mkdir -p $ppp_config_path
 
-# ppp_option <file> ppp-option [...] - add "ppp-option [...]" to the config file 
-#                                      specified by <file>
 ppp_option() {
 	local optfile=$1
 	local opt=$2 ; shift 2
@@ -48,73 +45,100 @@ ppp_option() {
 	fi
 }
 
-# pppoe_config_defaults - create default settings, the respective config file
-#                         is \$ppp_${if}_config
-pppoe_config_defaults() {
-	local each
-	for each in noipdefault noauth default-asyncmap hide-password noaccomp nobsdcomp \
-		    ipcp-accept-local ipcp-accept-remote \
-		    nodeflate nopcomp novj novjccomp ktune; do
-		 addcode up 4 4 "ppp_option \$ppp_${if}_config $each"
-	done
-	addcode up 4 5 "ppp_option \$ppp_${if}_config mru 1492"
-	addcode up 4 5 "ppp_option \$ppp_${if}_config mtu 1492"
-	addcode up 4 5 "ppp_option \$ppp_${if}_config lcp-echo-interval 20"
-	addcode up 4 5 "ppp_option \$ppp_${if}_config lcp-echo-failure 3"
-	addcode up 4 6 "ppp_option \$ppp_${if}_config ipcp-accept-remote"
-	addcode up 4 6 "ppp_option \$ppp_${if}_config ipcp-accept-local"
+chat_init_if() {
+    if isfirst "chat_$if" ; then
+	addcode up 4 1 "echo -n > \$ppp_${if}_chat"
+	addcode up 4 6 "ppp_option \$ppp_${if}_config \
+	                connect chat -v -f \$ppp_${if}_chat"
+    fi
 }
 
 # PUBLIC COMMANDS ###########################################################
 # pppoe ppp-interface [config file|auto] [ppp-command-line-arg [...]]
-public_pppoe() {
-	# default config file
-	eval "ppp_${if}_config=$ppp_config_path/option.$if"	
-	addcode up 4 3 "echo -n > \$ppp_${if}_config"
+public_ppp() {
+	# config file
+	eval "ppp_${if}_config=$ppp_config_path/${if}_options"
+	eval "ppp_${if}_chat=$ppp_config_path/${if}_chat"
 
 	# get unit from $if
 	ppp_unit=${if#ppp}
 
 	# parse args
 	local ppp_if=$1 ; shift
-	local ppp_args=
+	local ppp_args="file \$ppp_${if}_config\""
 
-	# <config file> or "auto" present?
-	case $1 in
-	auto)
-		pppoe_config_defaults
-		eval "ppp_args=\"$ppp_args${ppp_args+ }file \$ppp_${if}_config\""
-		shift
-		;;
-	/*)
-		eval "ppp_${if}_config=$1"
-		eval "ppp_args=\"$ppp_args${ppp_args+ }file \$ppp_${if}_config\""
-		shift
-		;;
-	esac
+	ppp_args="`echo $* | sed 's,",\\\\",g'`"
 
-	# user or password info should not be world readable...
-	addcode up 4 3 "chmod 0600 \$ppp_${if}_config"
+	addcode up 4 1 "echo -n > \$ppp_${if}_config"
+	addcode up 4 2 "chmod 0600 \$ppp_${if}_config"
+	addcode up 5 2 "/usr/sbin/pppd $ppp_if unit $ppp_unit $ppp_args"
 
-	ppp_args="$ppp_args${ppp_args+ }`echo $* | sed 's,",\\\\",g'`"
-
-	# final config codes
-	addcode up 5 1 "ip link set $ppp_if down up"
-	addcode up 5 2 "/usr/sbin/pppd plugin rp-pppoe.so $ppp_if unit $ppp_unit $ppp_args"
-	addcode down 5 2 "[ -f /var/run/$if.pid ] && kill -TERM \`head -n 1 /var/run/$if.pid\`"
-	addcode down 5 1 "[ -f /var/run/$if.pid ] && rm -f /var/run/$if.pid"
+	addcode down 6 1 "[ -f /var/run/$if.pid ] && kill -TERM \`head -n 1 /var/run/$if.pid\`" 
+	addcode down 6 2 "[ -f /var/run/$if.pid ] && rm -f /var/run/$if.pid"
 }
 
-# ppp-option ppp-option [...]
+public_pppoe() {
+	addcode up 4 5 "ppp_option \$ppp_${if}_config plugin rp-pppoe.so"
+	addcode up 4 5 "ppp_option \$ppp_${if}_config mru 1492"
+	addcode up 4 5 "ppp_option \$ppp_${if}_config mtu 1492"
+
+	addcode up 5 1 "ip link set $ppp_if up"
+	addcode down 5 5 "ip link set $ppp_ip down"
+}
+
+public_ppp_defaults() {
+        local each
+        for each in noipdefault noauth hide-password \
+	            ipcp-accept-local ipcp-accept-remote \
+	            defaultroute usepeerdns ; do
+		addcode up 4 4 "ppp_option \$ppp_${if}_config $each"
+	done
+}
+
+public_ppp_speed_defaults() {
+	local each
+	for each in default-asyncmap noaccomp nobsdcomp nodeflate nopcomp \
+	            novj novjccomp ktune ; do
+		addcode up 4 4 "ppp_option \$ppp_${if}_config $each"
+	done
+
+        addcode up 4 5 "ppp_option \$ppp_${if}_config lcp-echo-interval 20"
+        addcode up 4 5 "ppp_option \$ppp_${if}_config lcp-echo-failure 3"
+}
+
 public_ppp_option() {
 	local param="`echo $* | sed 's,",\\\\",g'`"
 	addcode up 4 6 "ppp_option \$ppp_${if}_config $param"
 }
 
-# ppp-on-demand <idle time in seconds>
 public_ppp_on_demand() {
 	addcode up 4 6 "ppp_option \$ppp_${if}_config demand"
 	addcode up 4 6 "ppp_option \$ppp_${if}_config idle $1"
 	addcode up 4 6 "ppp_option \$ppp_${if}_config persist"
+}
+
+public_chat_defaults() {
+	chat_init_if
+
+	addcode up 4 1 "echo 'ABORT \"NO CARRIER\"
+ABORT \"NO DIALTONE\"
+ABORT \"ERROR\"
+ABORT \"NO ANSWER\"
+ABORT \"BUSY\"
+\"\" \"AT\"' >> \$ppp_${if}_chat"
+}
+
+public_chat_init() {
+	chat_init_if
+	# don't ask and count ...
+	opts="`echo "$@" | sed 's/"/\\\\\\\\\\\\\"/g'`"
+	addcode up 4 3 "echo '\"OK\" \"$opts\"' >> \$ppp_${if}_chat"
+}
+
+public_chat_dial() {
+	chat_init_if
+	# don't ask and count ...
+	opts="`echo "$@" | sed 's/"/\\\\\\\\\\\\\"/g'`"
+	addcode up 4 5 "echo '\"OK\" \"$opts\"' >> \$ppp_${if}_chat"
 }
 
