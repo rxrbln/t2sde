@@ -32,7 +32,8 @@ part_swap_action() {
 
 part_mount() {
 	local dir
-	gui_input "Mount device $1/$2 on directory" '' dir
+	gui_input "Mount point device $1/$2 will be mounted inside the \
+target system (e.g. '/' or '/home'):" '' dir
 	if [ "$dir" ] ; then
 		dir="$( echo $dir | sed 's,^/*,,; s,/*$,,' )"
 		if [ -z "$dir" ] || grep -q " /mnt/target " /proc/mounts
@@ -45,24 +46,37 @@ part_mount() {
 	fi
 }
 
+create_fs() {
+	gui_cmd "Creating filesystem ..." $@
+}
+
 part_mkfs() {
 	cmd="gui_menu part_mkfs 'Create filesystem on $1/$2'"
 
-	cmd="$cmd 'ext2fs   (non-journaling fs)'"
-	cmd="$cmd 'mke2fs /dev/$1/$2'"
-
-	cmd="$cmd 'ext3fs   (journaling filesystem)'"
-	cmd="$cmd 'mke2fs -j /dev/$1/$2'"
-
-	cmd="$cmd 'reiserfs (journaling filesystem)'"
-	cmd="$cmd 'mkreiserfs /dev/$1/$2'"
-
-	cmd="$cmd 'IBM JFS  (journaling filesystem)'"
-	cmd="$cmd 'jfs_mkfs /dev/$1/$2'"
-
-	cmd="$cmd 'SGI XFS  (journaling filesystem)'"
-	cmd="$cmd 'mkfs.xfs /dev/$1/$2'"
-
+	while read fs ; do
+		case "$fs" in
+		  ext2)
+			cmd="$cmd 'ext2fs   (non-journaling fs)'"
+			cmd="$cmd 'create_fs mke2fs /dev/$1/$2'"
+			;;
+		  ext3)
+			cmd="$cmd 'ext3fs   (journaling filesystem)'"
+			cmd="$cmd 'create_fs mke2fs -j /dev/$1/$2'"
+			;;
+		  reiserfs)
+			cmd="$cmd 'reiserfs (journaling filesystem)'"
+			cmd="$cmd 'create_fs mkreiserfs /dev/$1/$2'"
+			;;
+		  jfs)
+			cmd="$cmd 'IBM JFS  (journaling filesystem)'"
+			cmd="$cmd 'create_fs jfs_mkfs /dev/$1/$2'"
+			;;
+		  xfs)
+			cmd="$cmd 'SGI XFS  (journaling filesystem)'"
+			cmd="$cmd 'create_fs mkfs.xfs /dev/$1/$2'"
+			;;
+		esac
+	done < <( sed 's/[^\t]*\t//' /proc/filesystems )
 	eval "$cmd" && part_mount $1 $2
 }
 
