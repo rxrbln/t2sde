@@ -19,7 +19,7 @@ perl -e '
 		next unless /(.*): [0-9]* [0-9]* (.*)/;
 		my ($pkg, $deps) = ($1, '');
 		foreach (split /\s+/, $2) {
-			next if /^(linux26|alsa|rpm|pam|gcc2)([^a-z]|$)/;
+			next if /^(alsa|rpm|pam)([^a-z]|$)/;
 			next unless -d "../../package/base/$_";
 			$deps .= " $_"; $b{$_} = 1;
 		}
