@@ -66,10 +66,22 @@ public_ppp() {
 
 	addcode up 4 1 "echo -n > \$ppp_${if}_config"
 	addcode up 4 2 "chmod 0600 \$ppp_${if}_config"
-	addcode up 6 2 "/usr/sbin/pppd file \$ppp_${if}_config $ppp_if unit $ppp_unit $ppp_args"
 
-	addcode down 5 5 "[ -f /var/run/$if.pid ] && kill -TERM \`head -n 1 /var/run/$if.pid\`" 
-	addcode down 5 4 "[ -f /var/run/$if.pid ] && rm -f /var/run/$if.pid"
+	ppp_command="/usr/sbin/pppd file \$ppp_${if}_config $ppp_if"
+	ppp_command="$ppp_command unit $ppp_unit"
+	ppp_command="$ppp_command $ppp_args"
+
+	if [ "$CANUSESERVICE" == "1" ]; then
+		addcode up 5 1 "service_create $if 'ip link set $ppp_if down up
+`eval echo $ppp_command` nodetach' \
+			'[ -f /var/run/$if.pid ] && rm -f /var/run/$if.pid'"
+		addcode down 5 1 "service_destroy $if"
+	else
+		addcode up 6 2 "$ppp_command"
+
+		addcode down 5 5 "[ -f /var/run/$if.pid ] && kill -TERM \`head -n 1 /var/run/$if.pid\`" 
+		addcode down 5 4 "[ -f /var/run/$if.pid ] && rm -f /var/run/$if.pid"
+	fi
 }
 
 public_pppoe() {
@@ -77,7 +89,9 @@ public_pppoe() {
 	addcode up 4 5 "ppp_option \$ppp_${if}_config mru 1492"
 	addcode up 4 5 "ppp_option \$ppp_${if}_config mtu 1492"
 
-	addcode up 5 1 "ip link set $ppp_if up"
+	if [ "$CANUSESERVICE" != "1" ]; then
+		addcode up 5 1 "ip link set $ppp_if up"
+	fi
 }
 
 public_ppp_defaults() {
