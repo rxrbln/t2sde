@@ -24,7 +24,10 @@ var_append confopt " " "--with-qt-dir=$QTDIR \
 
 # some feature and optimization settings ...
 
-pkginstalled openldap && var_append confopt " " "--with-ldap=$root/$pkg_openldap_prefix"
+if pkginstalled openldap; then
+	pkgprefix -t openldap
+	var_append confopt " " "--with-ldap=$root/$( pkgprefix openldap )"
+fi
 var_append confopt " " "--with-xinerama --enable-dnotify"
 var_append confopt " " "--enable-final"
 [ $arch = x86 ] && var_append confopt " " "--enable-fast-malloc=full"
