@@ -126,7 +126,7 @@ cat >>$package.desc <<EEE
 [L] TODO: License
 [S] TODO: Status
 [V] TODO: Version
-[P] O -----5---9 800.000
+[P] X -----5---9 800.000
 
 EEE
 
