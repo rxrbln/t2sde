@@ -256,7 +256,7 @@ void load_ramdisk_file()
 		printf("     %d. %s\n", nr, desc[nr]);
 	}
 
-	printf("\nEnter number or device file name: ");
+	printf("\nEnter number or device file name (default=0): ");
 	fflush(stdout);
 
 	while (1) {
@@ -492,7 +492,7 @@ drivers (if needed) and configure the installation source so the\n\
      5. Load kernel modules from another disk\n\
      6. Activate already formatted swap device\n\
 \n\
-What do you want to do [1-7]? ");
+What do you want to do [0-6] (default=0)? ");
 		fflush(stdout);
 
 		text[0]=0; fgets(text, 100, stdin); text[99]=0;
