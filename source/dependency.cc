@@ -165,8 +165,7 @@ public:
 
 std::string PkgName (const std::string& file)
 {
-  //std::cout << Utility::File(file).Basename() << std::endl;
-  return Utility::File(file).Basename();
+  return Utility::File(file).BasenameWOExtension();
 }
 
 
