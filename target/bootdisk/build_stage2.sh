@@ -6,9 +6,9 @@ mkdir -p mnt/source mnt/target
 #
 package_map='       +00-dirtree         +glibc22            +glibc23
 -gcc2               -gcc3               -gcc33              -gccx
--linux24-src        -linux25-src        -linux24benh-src
--linux24-header     -linux25-header     -linux24benh-header
--linux24            -linux25            -linux24benh
+-linux24-src        -linux26-src        -linux24benh-src
+-linux24-header     -linux26-header     -linux24benh-header
+-linux24            -linux26            -linux24benh
 -binutils           -bin86              -nasm               -dietlibc
 +grub               +lilo               +yaboot             +aboot
 +silo               +parted             +mac-fdisk          +pdisk
