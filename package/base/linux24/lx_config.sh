@@ -32,7 +32,6 @@ lx_cpu=`echo "$arch_machine" | sed -e s/x86/i386/ \
 
 MAKE="$MAKE ARCH=$lx_cpu CROSS_COMPILE=$archprefix KCC=$KCC"
 
-set -x
 # correct the abolute path for patchfiles supplied in the .conf file
 for x in $patchfiles ; do
 	if [ ! -e $x ] ; then
@@ -41,7 +40,6 @@ for x in $patchfiles ; do
 		var_append patchfiles " " "$x"
 	fi
 done
-set +x
 
 lx_config ()
 {
