@@ -23,6 +23,7 @@
  * --- ROCK-COPYRIGHT-NOTE-END ---
  *
  * linuxrc.c is Copyright (C) 2003, 2004 Cliford Wolf and Rene Rebe
+ *   T2 work is Copyright (C) 2004 Rene Rebe
  *
  */
 
@@ -42,6 +43,8 @@
 #include <fcntl.h>
 #include <errno.h>
 #include <stdarg.h>
+#include <ftw.h>
+
 #include "libcheckisomd5.h"
 
 #ifndef MS_MOVE
@@ -76,11 +79,11 @@ int  mod_suffix_len=0;
 void mod_load_info(char *mod_loader, char *mod_dir, char *mod_suffix) {
 	struct utsname uts_name;
 
-	if(uname(&uts_name) < 0) {
-		perror("unable to perform uname syscall correctly");
+	if (uname(&uts_name) < 0) {
+		perror("Error during uname syscall");
 		return;
-	} else if(strcmp(uts_name.sysname, "Linux") != 0) {
-		printf("Your operating system is not supported ?!\n");
+	} else if (strcmp(uts_name.sysname, "Linux") != 0) {
+		printf("Your operating system is not yet supported!\n");
 		return;
 	}
 
@@ -89,7 +92,7 @@ void mod_load_info(char *mod_loader, char *mod_dir, char *mod_suffix) {
 	strcat(mod_dir, uts_name.release);
 
 	/* kernel module suffix for <= 2.4 is .o, .ko if above */
-	if(uts_name.release[2] > '4') {
+	if (uts_name.release[2] > '4') {
 		strcpy(mod_suffix, ".ko");
 	} else {
 		strcpy(mod_suffix, ".o");
@@ -239,20 +242,23 @@ int is_dir(const struct dirent *entry) {
 
 /* this is used in the module loading shell for sorting dirs before files */
 int dirs_first_sort(const struct dirent **a, const struct dirent **b) {
-	if(is_dir(*a)) {
-		if(is_dir(*b)) return 0;
+	if (is_dir(*a)) {
+		if (is_dir(*b)) return 0;
 		else return 1;
-	} else if(is_dir(*b)) {
+	} else if (is_dir(*b)) {
 		return -1;
 	} else return 0;
 }
 
 /* this is used in the modules loading shell to filter out kernel objects */
 int module_filter(const struct dirent *entry) {
-	if(is_dir(entry)) {
-		if(!strcmp(entry->d_name, ".") || !strcmp(entry->d_name, "..")) return 0;
-		else return 1;
-	} else if (!strcmp(entry->d_name+(strlen(entry->d_name) - mod_suffix_len), mod_suffix)) return 1;
+	if (is_dir(entry)) {
+		if (!strcmp(entry->d_name, ".") || !strcmp(entry->d_name, ".."))
+			return 0;
+		else
+			return 1;
+	} else if (!strcmp(entry->d_name+(strlen(entry->d_name) - mod_suffix_len), mod_suffix))
+		return 1;
 	return 0;
 }
 
@@ -265,12 +271,12 @@ void load_modules(char* directory){
 	char *execargs[100];
 	int pid;
 
-	printf("module loading shell\n\n");
-	printf("you can navigate through the filestem with 'cd'. for loading a module\n");
-	printf("simply enter the shown name, to exit press enter on a blank line.\n\n");
+	printf("Module loading shell\n\n");
+	printf("You can navigate through the filestem with 'cd'. For loading a module\n");
+	printf("simply enter it's name, to exit press enter on a blank line.\n\n");
 
 	while(1) {
-		if(chdir(directory)) {
+		if (chdir(directory)) {
 			perror("chdir");
 		}
 
@@ -284,25 +290,25 @@ void load_modules(char* directory){
 			strcpy(filename, namelist[n]->d_name);
 			len = strlen(filename);
 	
-			if(is_dir(namelist[n])) {
+			if (is_dir(namelist[n])) {
 				/* first visit to this function, show header */
-				if(needdirhdr == 1) {
+				if (needdirhdr == 1) {
 					printf("directories:\n	");
 					needdirhdr = 0; cnt = 1;
 				}
 				printf("[%-15s]",filename);
-				if(cnt % 4 == 0) printf("\n	");
+				if (cnt % 4 == 0) printf("\n	");
 				cnt++;
 			} else { 
 				/* finished directories, show module header */
-				if(needmodhdr == 1) {
-					if(needdirhdr == 0) printf("\n");
+				if (needmodhdr == 1) {
+					if (needdirhdr == 0) printf("\n");
 					printf("kernel modules:\n	");
 					needmodhdr = 0; cnt = 1;
 				}
 				filename[len-mod_suffix_len] = 0;
 				printf("%-15s",filename);
-				if(cnt % 4 == 0) printf("\n	");
+				if (cnt % 4 == 0) printf("\n	");
 				cnt++;
 			}
 	
@@ -318,9 +324,9 @@ void load_modules(char* directory){
 		if (strlen(input) > 0) input[strlen(input)-1]=0;
 		if (input[0] == 0) return;
 	
-		if(!strncmp(input, "cd ", 3)) {
+		if (!strncmp(input, "cd ", 3)) {
 			/* absolute or relative pathname? */
-			if(input[3] == '/') {
+			if (input[3] == '/') {
 				strcpy(filename, input+3);
 			} else {
 				strcpy(filename, directory);
@@ -342,7 +348,7 @@ void load_modules(char* directory){
 					exit(1);
 				}
 				wait(&loader_res);
-				if(WEXITSTATUS(loader_res) != 0)
+				if (WEXITSTATUS(loader_res) != 0)
 					printf("error: module loader finished unsuccesfully!\n");
 				else 
 					printf("module loader finished succesfully.\n");
@@ -427,9 +433,11 @@ void load_ramdisk_file()
 
 	printf("Select a device for loading the 2nd stage system from: \n\n");
 
-	if (getdevice(devicefile, 100, 1, 1) <= 0)
-			return;
-	
+	if (getdevice(devicefile, 100, 1, 1) <= 0) {
+		printf ("No device detected!\n");
+		return;
+	}
+
 	printf("Select a stage 2 image file:\n\n"
 	       "     1. %s\n     2. %s\n\n"
 	       "Enter number or image file name (default=1): ",
@@ -572,7 +580,7 @@ void exec_sh()
 	printf ("Quit the shell to return to the stage 1 loader!\n");
 	if ( (rc = fork()) == 0 ) {
 	        execl("/bin/kiss", "kiss", "-E", NULL);
-		perror("kiss");
+		perror("Can't execute kiss");
 		_exit(1);
 	}
 	trywait(rc);
@@ -583,28 +591,21 @@ void checkisomd5()
 	char devicefile[100];
 
 	printf("Select a device for checking: \n\n");
-	
-	if (getdevice(devicefile, 100, 1, 0) <= 0)
+
+	if (getdevice(devicefile, 100, 1, 0) <= 0) {
+		printf ("No device detected!\n");
 		return;
+	}
 
 	mediaCheckFile(devicefile, 0);
 	
 	printf("\nPress Return key to continue."); (void)getchar();
 }
 
-int main()
+stage1()
 {
 	char text[100];
 	int input=1;
-
-	if ( mount("none", "/dev", "devfs", 0, NULL) && errno != EBUSY )
-		perror("Can't mount /dev");
-
-	if ( mount("none", "/proc", "proc", 0, NULL) && errno != EBUSY )
-		perror("Can't mount /proc");
-
-	/* Only print important stuff to console */
-	klogctl(8, NULL, 3);
 
 	mod_load_info(mod_loader, mod_dir, mod_suffix);
 	mod_suffix_len = strlen(mod_suffix);
@@ -616,11 +617,10 @@ int main()
      ===   1st stage boot system   ===\n\
      =================================\n\
 \n\
-The T2 / ROCK install / rescue system boots up in two stages. You\n\
-are now in the first of this two stages and if everything goes right\n\
-you will not spend much time here. Just load your SCSI and networking\n\
-drivers (if needed) and configure the installation source so the\n\
-2nd stage boot system can be loaded and you can start the installation.\n");
+The T2 rescue system boots up in two stages. You are now in the first stage\n\
+and if everything goes right, you will not spend much time here. Just load\n\
+your SATA, SCSI or networking drivers and configure the installation source\n\
+so the 2nd stage boot system can be loaded and you can start the installation.\n");
 
 	while (exit_linuxrc == 0)
 	{
@@ -691,6 +691,91 @@ What do you want to do [0-8] (default=0)? ");
 	sleep(1);
 	execl("/linuxrc", "/linuxrc", NULL);
 	printf("\nCan't start /linuxrc!! Life sucks.\n\n");
+	return 0;
+}
+
+int load_one_module (const char *file, const struct stat *sb, int flag)
+{
+	if ( flag == FTW_F ) {
+		printf("Module to load: %s\n", file);
+		// TODO
+	}
+	return 0;
+}
+
+int main(int argc, char* argv[])
+{
+	char* root = 0;
+	int i;
+
+	char cmdline[1024];
+
+	printf("T2 early userspace environment.\n");
+
+	if ( mount("none", "/dev", "devfs", 0, NULL) && errno != EBUSY )
+		perror("Can't mount /dev");
+
+	if ( mount("none", "/proc", "proc", 0, NULL) && errno != EBUSY )
+		perror("Can't mount /proc");
+
+	/* Only print important stuff to console */
+	klogctl(8, NULL, 3);
+
+	/* since only the unrecognized command line arguements are passed
+	   to linuxrc/init, we need to re-generate a nice list out of /proc */
+	{
+	  cmdline[0] = 0;
+	  int i = open ("/proc/cmdline", O_RDONLY);
+	  if (i) {
+		int ret = read (i, cmdline, 1024-2);
+		if (ret > 0)
+		  cmdline[ret+1] = 0;
+	  } else
+		perror("Can't open /proc/cmdline");
+	  close (i);
+
+	  /* seperate the options with 0, 00 terminated */
+	  for (i = 0; i < 1024; ++i) {
+		if (cmdline[i] == ' ')
+			cmdline[i] = 0;
+		else if (cmdline[i] == 0) {
+			cmdline[i+1] = 0;
+			break;
+		}
+	  }
+	}
+
+	/* Extract the root= kernel argument. Run the stage1 shell when a
+	   ramdisk or no argument is specified */
+	root = cmdline;
+	while (1) {
+		printf("checking: %s\n", root);
+		if ( *root == 0 ) {
+			root = 0;
+			break;
+		}
+		if ( !strncmp("root=", root, 5) ) {
+			root += 5;
+			break;
+		}
+		root += strlen (root) + 1;
+	}
+
+	/* if we later need to use /dev/ram for real systems, we need to
+	   introduce some other magic commnd line arg to flag the stage2 */
+	printf("root: %s\n", root);
+	if ( root && !strncmp("/dev/ram", root, 8) )
+		stage1(); /* never returns */
+
+	/* normal in-sytem linuxrc */
+
+	printf("Loading all embedded modules ...\n");
+	ftw("/lib/modules/", *load_one_module, 16);
+
+	printf("Mounting real-root device and continue to boot the system.\n");
+
+	// TODO and reuse code above
+
 	return 0;
 }
 
