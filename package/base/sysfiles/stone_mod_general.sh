@@ -126,15 +126,28 @@ set_con_blank() {
 }
 
 set_tmzone() {
-	tz="$( ls -l /etc/localtime | cut -f7- -d/ )"
+	tz="$( ls -l /etc/localtime | cut -f8 -d/ )"
 	cmd="gui_menu 'general_tmzone' 'Select one of the"
 	cmd="$cmd following time zones. (Current: $tz)'"
 
-	cmd="$cmd $( grep '^[^#]' /usr/share/zoneinfo/zone.tab | \
-		cut -f3 | sort -u | tr '\n' ' ' | sed 's,[^ ]\+,& '`
-		`'"ln -sf ../usr/share/zoneinfo/& /etc/localtime",g' )"
+	cmd="$cmd $( grep "$1/" /usr/share/zoneinfo/zone.tab | cut -f3 | \
+		cut -f2 -d/ | sort -u | tr '\n' ' ' | sed 's,[^ ]\+,& '`
+		`'"ln -sf ../usr/share/zoneinfo/$1/& /etc/localtime",g' )"
 
 	eval "$cmd"
+}
+
+set_tmarea() {
+	tz="$( ls -l /etc/localtime | cut -f7 -d/ )"
+	cmd="gui_menu 'general_tmarea' 'Select one of the"
+	cmd="$cmd following time areas. (Current: $tz)'"
+
+	cmd="$cmd $( grep '^[^#]' /usr/share/zoneinfo/zone.tab | cut -f3 | \
+		cut -f1 -d/ | sort -u | tr '\n' ' ' | sed 's,[^ ]\+,& '`
+		`'"if set_tmzone & ; then tzset=1 ; fi",g' )"
+
+	tzset=0
+	while eval "$cmd" && [ $tzset = 0 ] ; do : ; done
 }
 
 set_dtime() {
@@ -189,7 +202,7 @@ main() {
 	gui_menu general 'Various general system configurations' \
 		"Set console keyboard mapping ....... $keymap" "set_keymap" \
 		"Set console screen font ............ $vcfont" "set_vcfont" \
-		"Set system-wide time zone .......... $tz"     "set_tmzone" \
+		"Set system-wide time zone .......... $tz"     "set_tmarea" \
 		"Set date and time (localtime) ...... $dtime"  "set_dtime"  \
 		"Set system-wide locale (language) .. $locale" "set_locale" \
 		"Set console keyboard repeat rate ... $kbd_rate" "set_kbd_rate" \
