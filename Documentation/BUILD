@@ -68,7 +68,8 @@ The resulting distribution is stored in the build/ directory.
 	=====================
 
 To create a CD-Image to install from you can use './scripts/Create-ISO'.
-Create-ISO takes at least one argument: the name of the configuration you
+Create-ISO takes at least two arguments: a name used as prefix for the
+filename of the ISO images and the name of the configuration you
 just built (usually 'default' or whatever you choose after -cfg).
 
 Optionally you can use -size <MB> to specify the size of your CD-Rs.
