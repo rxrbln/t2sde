@@ -44,7 +44,7 @@ main() {
 
 		cmd="gui_menu x 'X11 Configuration Menu'
 
-		'Run xf86cfg (recommended, new interactve config)'
+		'Run xf86cfg (recommended, new interactive config)'
 			'gui_cmd xf86ccfg xf86cfg -xf86config /etc/X11/XF86Config'
 
 		'Run X -configure (automated config)'
