@@ -3,6 +3,7 @@
 config=default
 repositories=
 VERBOSE=
+HTML=
 
 show_usage() {
 	cat<<-EOT
@@ -14,6 +15,7 @@ while [ $# -gt 0 ]; do
 	case "$1" in
 		-cfg)	config="$2"; shift	;;
 		-v)	VERBOSE=1		;;
+		-w)	HTML=1			;;
 		--help)	show_usage; exit 1	;;
 		-repository)
 			shift; repositories="$*"
@@ -82,9 +84,31 @@ audit_package() {
 		1)	lstatus=SUCCESSFUL	;;
 		*)	lstatus=PENDING		;;
 	esac
-	echo -e "package/$repo/$pkg\t$lchanges\t($ver)\t$lbuild\t$lstatus"
+	if [ "$HTML" == "1" ]; then
+		cat <<EOT
+<tr><td>package/$repo/$pkg</td><td>$lchanges</td><td>(${ver//>/&gt;})</td><td>$lbuild</td><td>$lstatus</td></tr>
+EOT
+	else
+		echo -e "package/$repo/$pkg\t$lchanges\t($ver)\t$lbuild\t$lstatus"
+	fi
 }
 
+if [ "$HTML" == "1" ]; then
+	cat <<EOT
+<html>
+<head><title>Audit Build $config over revision $( svn info | grep Revision | cut -d' ' -f2 )</title>
+<body>
+$( [ "$repositories" ] && echo "<h3>$repositories</h3>" )
+<table><tr>
+	<th>Package</th>
+	<th>SVN Status</th>
+	<th>Version</th>
+	<th>Build Status</th>
+	<th>Result</th>
+</tr>
+EOT
+
+fi
 if [ "$repositories" ]; then
 	for repo in $repositories; do
 		repo=${repo#package/}; repo=${repo%/}
@@ -100,4 +124,8 @@ else
 		read x stages x repo pkg ver x; do
 			audit_package $pkg $repo $ver `expand_stages $stages`
 	done
+fi
+
+if [ "$HTML" == "1" ]; then
+	echo "<body><html>"
 fi
