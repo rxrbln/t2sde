@@ -29,10 +29,10 @@ x_extract() {
 
 	cd xc
 
-	for x in $x_patches ; do
-		echo "Patching source ($x) ..."
-        	bunzip2 < $archdir/$x | patch -p1 -E
-	done
+	if [ -n "$x_patches" ]; then
+	    local patchfiles="$x_patches"
+	    apply_patchfiles
+	fi
 }
 
 # extract additional gl* stuff
@@ -48,8 +48,12 @@ x_extract_gl() {
 x_extract_hallib() {
 	echo "Extracting mgaHALlib (For Matrox (>G400) cards) ..."
 	tar $taropt $archdir/mgadrivers-$mga_version-src.tbz2
-	cp mgadrivers-$mga_version-src/4.2.0/drivers/src/HALlib/mgaHALlib.a \
+
+	mga_compat_version=4.3.0
+	cp mgadrivers-$mga_version-src/$mga_compat_version/drivers/src/HALlib/mgaHALlib.a \
 	  programs/Xserver/hw/xfree86/drivers/mga/HALlib/mgaHALlib.a
+	cp mgadrivers-$mga_version-src/$mga_compat_version/drivers/src/HALlib/binding.h \
+	  programs/Xserver/hw/xfree86/drivers/mga/HALlib/binding.h
 	rm -rf mgadrivers-$mga_version-src 
 
 	if [ $arch == "x86" ] ; then
@@ -65,11 +69,7 @@ EOT
 # apply the patches
 x_patch() {
 	cp -v programs/twm/system.twmrc programs/twm/system.twmrc.orig
-	for x in $patchfiles ; do
-	  if [ -f $x ] ; then
-		echo "Apply patch $x ..."
-		patch -Nf -p1 < $x
-	fi ; done
+	apply_patchfiles
 	find \( -name 'config.guess' -o -name 'config.sub' \) \
 		-exec chmod +x '{}' ';'
 }
