@@ -49,16 +49,31 @@ public:
     class subversion {
     public:
       
-      std::string::size_type read (const std::string& s,
-				   std::string::size_type i)
+      std::string::size_type next_part (const std::string& s,
+					std::string::size_type i)
       {
-	val.clear();;
-	//std::cout << i << ": " << s[i] << std::endl;
-	for (;i < s.size() && (isdigit(s[i]) || isalpha(s[i])); ++i) {
-	  val += s[i];
-	  // std::cout << "  " << val << std::endl;
+	val.clear();
+	std::locale loc;
+	const std::ctype<char>& ct = std::use_facet<std::ctype<char> >(loc);
+	
+	// catch range exceptions
+	try {
+	  // type to search for transition
+	  int type_mask = std::ctype<char>::alpha;
+	  if (isdigit(s[i]))
+	    type_mask = std::ctype<char>::digit;
+	  
+	  for (; i < s.size() && ct.is(type_mask, s[i]); ++i) {
+	    val += s[i];
+	  }
+	  
+	  if (!(ct.is((std::ctype<char>::alpha | std::ctype<char>::digit),
+		      s[i])))
+	    ++i;
 	}
-	return ++i;
+	catch (...){}
+	return i;
+	std::cout << "extracted part: " << val << std::endl;
       }
 
       std::string::size_type size() const {
@@ -84,21 +99,40 @@ public:
       }
       
       bool operator< (const subversion& other) const {
-	// catch range exceptions ;-)
-	try {
+	// special case for char < number
+	try { // catch range exceptions ;-)
 	  if (!same_cclass(val[0], other.val[0]))
 	    return (isalpha(val[0]));
+	  
+	  // special case for numbers only, so real values are compared
+	  if (isdigit(val[0]) && isdigit(other.val[0])) {
+	    int int_val, other_int_val;
+	    int_val = atoi(val.c_str());
+	    other_int_val = atoi(other.val.c_str());
+	    std::cout << "Intergers only: " << int_val << " " << other_int_val
+		      << std::endl;
+	    return int_val < other_int_val;
+	  }
 	}
-	catch (...) {
-	}
+	catch (...) {}
 	return val < other.val;
       }
 
       bool operator> (const subversion& other) const {
-	// catch range exceptions ;-)
-	try {
+	// special case for char < number
+	try { // catch range exceptions ;-)
 	  if (!same_cclass(val[0], other.val[0]))
 	    return (isalpha(other.val[0]));
+	  
+	  // special case for numbers only, so real values are compared
+	  if (isdigit(val[0]) && isdigit(other.val[0])) {
+	    int int_val, other_int_val;
+	    int_val = atoi(val.c_str());
+	    other_int_val = atoi(other.val.c_str());
+	    std::cout << "Intergers only: " << int_val << " " << other_int_val
+		      << std::endl;
+	    return int_val > other_int_val;
+	  }
 	}
 	catch (...) {
 	}
@@ -115,8 +149,8 @@ public:
     subversion subv_a, subv_b;
     for (i = j = 0; i < a.size() && j < b.size();) {
       
-      i = subv_a.read(a.str(), i);
-      j = subv_b.read(b.str(), j);
+      i = subv_a.next_part(a.str(), i);
+      j = subv_b.next_part(b.str(), j);
       
       std::cout << subv_a.str() << " vs " << subv_b.str() << ": ";
       
@@ -132,8 +166,8 @@ public:
       std::cout << "=,  " << std::endl;
     }
 
-    i = subv_a.read(a.str(), i);
-    j = subv_b.read(b.str(), j);
+    i = subv_a.next_part(a.str(), i);
+    j = subv_b.next_part(b.str(), j);
     
     std::cout << "Final: " << subv_a.str() << " vs " << subv_b.str() << ": ";
     
@@ -296,6 +330,7 @@ int main (int argc, char* argv[])
   
   std::vector<Version> versions;
   versions.push_back(Version("1.2.2"));
+  versions.push_back(Version("1.2.12"));
   versions.push_back(Version("1.2.4"));
   versions.push_back(Version("1.2.3"));
   versions.push_back(Version("1.2.3b"));
