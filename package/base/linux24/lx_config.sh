@@ -15,8 +15,8 @@
 
 treever=${pkg/linux/} ; treever=${treever/-*/}
 
-lx_cpu=`echo "$arch_machine" | sed -e s/x86$/i386/ \
-  -e s/i.86/i386/ -e s/powerpc/ppc/ -e s/hppa/parisc/`
+lx_cpu=`echo "$arch_machine" | sed -e s/i.86/i386/ -e s/powerpc/ppc/ \
+        -e s/sh.$/sh/ -e s/hppa/parisc/`
 lx_extraversion=""
 lx_kernelrelease=""
 
