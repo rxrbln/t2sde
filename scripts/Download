@@ -405,13 +405,13 @@ download_file() {
 
 			if ! download_file_now "!$mirror/${bzfile#download/mirror/}" $bzfile $bzfile; then
 				echo "INFO: download from mirror failed, trying original URL."
-				download_file_now $location $gzfile $bzfile
+				download_file_now "$location" $gzfile $bzfile
 			else
 				gzfile="$bzfile"
 			fi
 		    else
 			# don't want to use mirror
-			download_file_now $location $gzfile $bzfile
+			download_file_now "$location" $gzfile $bzfile
 		    fi
 		fi
 
@@ -487,36 +487,22 @@ download_file_now() {
 	#
 	if [[ $url = cvs://* ]] ; then
 
-		# cvs://mode:[login[:password]@]server[:port]:/path::module!revision/
-		# btw, at least current cvs supports password at CVSROOT.
-
-		url="${url#cvs://}"; url="${url%/*}"
-
-		# cvs://mode:loc::module!date/
-		#
-		mode="${url%%:*}"; loc="${url#*:}"
-		module="${loc##*::}"; loc="${loc%%::*}"
-		revision="${module#*!}"; module="${module%%!*}"
-		[[ $loc != *@* ]] && loc="anonymous@$loc"
-
-		# everything after the first 'bang' (!) is analysed here
-		# someday we could add more cvs options.
-		#
-
-		dat="$( echo $revision | \
-			sed -n -e 's,\([0-9]\{4\}-[0-9]\{2\}-[0-9]\{2\}\),-D \1,p' )"
+		# we need to use $location - $url is already mangled above -ReneR
+		module="`echo "$location" | sed 's,cvs://[^ ]* \([^ ]*\).*,\1,'`"
+		url="`echo "$location" | sed 's,cvs://\([^ ]*\) [^ ]*\(.*\),\1 co -P \2,'`"
+		mode="$url"
 
 		cvsdir="src/down.cvsdir.`echo $bzfile | tr / -`"
 		saved_pwd=$PWD ; mkdir -p $cvsdir ; cd $cvsdir
 
-		echo CVS $mode $loc $dat $module
-		{ [ $mode = ssh ] && export CVS_RSH=ssh
-		  [ $mode = pserver ] && loc=":pserver:$loc"
+		echo CVS $url
+		{ # [ $mode = ssh ] && export CVS_RSH=ssh
+		  # [ $mode = pserver ] && loc=":pserver:$loc"
 		  # sometimes cvs wants to read ~/.cvspass just for fun ..
 		  touch $HOME/.cvspass
 		  # for ssh we need some way to quitely accept the key ...
-		  echo cvs -z9 -Q -d $loc checkout $dat -P $module
-		  if ! cvs -z9 -Q -d $loc checkout $dat -P $module
+		  echo cvs -z9 -Q -d $url $module
+		  if ! cvs -z9 -Q -d $url $module
 		  then touch .cvs_error ; fi
 		} &> .cvs_output &
 
@@ -529,23 +515,20 @@ download_file_now() {
 			'CVS archive (download finished).'
 
 		if [ ! -f .cvs_error ] ; then
+			set -x
 			cd `dirname $module`
-			dir="`echo "$bzfile" | sed s/\.tar\.bz2$//`"
-			dir="`basename $dir`"
-
-			mv `basename $module` $dir
-
+			tarname="`basename $bzfile`"
 			tar --owner root --group root \
 			    --use-compress-program=bzip2 \
-			    -cf $dir.tar.bz2 $dir
-			mv $dir.tar.bz2 $saved_pwd/$bzfile
+			    -cf $tarname `basename $module`
+			mv $tarname $saved_pwd/$bzfile
 
 			cd $saved_pwd ; rm -rf $cvsdir
+			set +x
 		else
 			cat .cvs_output
 			cd $saved_pwd ; rm -rf $cvsdir
-			echo ERROR: CVS $dat $loc $module \
-			            returned an error.
+			echo ERROR: CVS $url returned an error.
 			echo "0 $gzfile $url" >> src/Download-Errors
 		fi
 	else
@@ -690,8 +673,8 @@ required() {
 
 	if [ "$on" = "X" ] ; then
 	    grep -H '^\[D\] ' package/$repo/$pkg/$pkg.desc > src/down.$$.lst
-	    while read tag cksum file url flags ; do
-		download_file "`source_file cksum $file url $flags`" "$url" "$cksum" "$repo" "$pkg"
+	    while read tag cksum file url ; do
+		download_file "`source_file cksum $file`" "$url" "$cksum" "$repo" "$pkg"
 	    done < src/down.$$.lst ; rm -f src/down.$$.lst
 	fi
     done < config/$config/packages
@@ -699,8 +682,8 @@ required() {
     target=`grep '^export ROCKCFG_TARGET=' config/$config/config | \
 						cut -f2 -d= | tr -d "'"`
     if [ -f target/$target/download.txt ] ; then
-	while read cksum file url flags ; do
-	    download_file "`source_file cksum $file url $flags`" "$url" "$cksum" "$target"
+	while read cksum file url ; do
+	    download_file "`source_file cksum $file`" "$url" "$cksum" "$target"
 	done < target/$target/download.txt
     fi
 }
@@ -712,16 +695,16 @@ all() {
 	pkg="`echo $each | cut -f3 -d/`"
 	repo="`echo $each | cut -f2 -d/`"
 
-	while read tag cksum file url flags ; do
-	    download_file "`source_file cksum $file url $flags`" "$url" "$cksum" "$repo" "$pkg"
+	while read tag cksum file url ; do
+	    download_file "`source_file cksum $file`" "$url" "$cksum" "$repo" "$pkg"
 	done < <(grep -H '^\[D\] ' package/$repo/$pkg/$pkg.desc)
     done
     
     for each in target/*/download.txt; do
 	target="`echo $each | cut -f2 -d/`"
 
-	while read cksum file url flags ; do
-	    download_file "`source_file cksum $file url $flags`" "$url" "$cksum" "$target"
+	while read cksum file url ; do
+	    download_file "`source_file cksum $file`" "$url" "$cksum" "$target"
 	done < <(cat $each)
     done
 }
@@ -738,9 +721,8 @@ packages() {
 
 			target="`echo $arg | cut -f2 -d/`"
 
-			while read cksum file url flags ; do
-			    download_file "`source_file cksum $file url $flags`" \
-				"$url" "$cksum" "$target"
+			while read cksum file url ; do
+			    download_file "`source_file cksum $file`" "$url" "$cksum" "$target"
 			done < <(cat $arg)
 			;;
 		*)
@@ -758,9 +740,8 @@ packages() {
 			pkg="`echo $descfile | cut -f3 -d/`"
 			repo="`echo $descfile | cut -f2 -d/`"
 			
-			while read tag cksum file url flags ; do
-			    download_file "`source_file cksum $file url $flags`" \
-				"$url" "$cksum" "$repo" "$pkg"
+			while read tag cksum file url ; do
+			    download_file "`source_file cksum $file`" "$url" "$cksum" "$repo" "$pkg"
 			done < <(grep -H '^\[D\] ' package/$repo/$pkg/$pkg.desc)
 			;;
 		esac
