@@ -26,7 +26,7 @@ function test_pkgselfile() {
 		buffer=$( gawk "`pkgsel_init`$line" < config/$config/packages | tr '\n' ' ' )
 		count=$( echo "$buffer" | wc -w )
 
-		echo -n "rule: $rule "
+		echo -n " rule: $rule "
 		if [ $count -gt 0 ]; then
 			echo "($buffer)"
 		else	
