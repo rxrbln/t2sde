@@ -74,7 +74,7 @@ else
 	mke2fs -m 0 -N 180 -F /boot/initrd-${kernel}.img.tmp &> /dev/null
 	mntpoint="`mktemp -d`"
 	mount -o loop /boot/initrd-${kernel}.img.tmp $mntpoint
-	rdir $mntpoint/lost+found/
+	rmdir $mntpoint/lost+found/
 	cp -a $tmpdir/* $mntpoint/
 	umount $mntpoint
 	rmdir $mntpoint
