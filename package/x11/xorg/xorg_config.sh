@@ -23,8 +23,8 @@
 # extract and patch base
 x_extract() {
 	echo "Extracting source (for package version $ver) ..."
-	for x in `eval echo $x_files`; do
-		tar $taropt $archdir/$x
+	for x in `match_source_file -p X11R6`; do
+		tar $taropt $x
 	done
 
 	cd xc
@@ -47,14 +47,14 @@ x_extract_gl() {
 # extract the Matrox HALlib (additional TV/DVI out support on x86)
 x_extract_hallib() {
 	echo "Extracting mgaHALlib (For Matrox (>G400) cards) ..."
-	tar $taropt $archdir/mgadrivers-$mga_version-src.tbz2
+	tar $taropt `match_source_file -p mga`
 
 	mga_compat_version=4.3.0
-	cp mgadrivers-$mga_version-src/$mga_compat_version/drivers/src/HALlib/mgaHALlib.a \
+	cp mgadrivers-*-src/$mga_compat_version/drivers/src/HALlib/mgaHALlib.a \
 	  programs/Xserver/hw/xfree86/drivers/mga/HALlib/mgaHALlib.a
-	cp mgadrivers-$mga_version-src/$mga_compat_version/drivers/src/HALlib/binding.h \
+	cp mgadrivers-*-src/$mga_compat_version/drivers/src/HALlib/binding.h \
 	  programs/Xserver/hw/xfree86/drivers/mga/HALlib/binding.h
-	rm -rf mgadrivers-$mga_version-src 
+	rm -rf mgadrivers-*-src 
 
 	if [ "$arch" = "x86" -a "$ROCKCFG_X86_BITS" != "64" ] ; then
 		echo "Enabling Matrox HALlib (since this is x86) ..."
