@@ -7,20 +7,20 @@
 	===============
 
 For building ROCK Linux you need a good internet connection for downloading the
-sources, a lot on disk space, a fast computer and some time. Depending on the
-configuration you are going to choose and your hardware a build of ROCK Linux
+sources, a lot of disk space, a fast computer and some time. Depending on the
+configuration you are going to choose and your hardware, a build of ROCK Linux
 can take some days to complete. You also need root permissions to build ROCK
 Linux.
 
-The distribution you are building ROCK Linux on should also be a ROCK Linux.
-It is possible to build ROCK Linux on other distributions too, but don't expect
+The distribution you are building ROCK Linux on should also be ROCK Linux.
+It is also possible to build ROCK Linux on other distributions, but don't expect
 it to work without some hacking ...
 
 
 	2. Extracting the sources
 	=========================
 
-Download the ROCK Linux sources (a few MB big tar.bz2 file) from
+Download the ROCK Linux sources (a tar.bz2 file of a few MB) from
 www.rocklinux.org and extract it somewhere as root. The resulting directory
 is the ROCK Linux 'base' directory.
 
@@ -39,7 +39,7 @@ for your configuration, you need to pass the '-cfg config-name' option as
 first parameter to all the other scripts too - so they know which
 configuration to read.
 
-The default configuration name (when no -cfg option in passed) is 'default'.
+The default configuration name (when no -cfg option is passed) is 'default'.
 The configuration is stored in the 'config/config-name' directory.
 
 
@@ -66,13 +66,13 @@ The resulting distribution is stored in the build/ directory.
 
 To create a CD-Image to install from you can use './scripts/Create-ISO'.
 Create-ISO takes at least one argument: the name of the configuration you
-just built (usually 'default' or wahtever you choose after -cfg).
+just built (usually 'default' or whatever you choose after -cfg).
 
 Optionally you can use -size <MB> to specify the size of your CD-Rs.
 Another optional parameter is -mkdebug which will create a VMWare-Config
 to be used with your newly created iso.
 
-The iso will, however, not be bootable, unless you you configured and built
+The iso will, however, not be bootable, unless you configured and built
 a 'bootdisk'-Target. This configuraton has to be the first configuration to
 be passed to './scripts/Create-ISO'.
 
@@ -80,9 +80,9 @@ So, a complete call might look like this:
 
 # ./scripts/Create-ISO -size 700 -mkdebug bootdisk athlon pentium4 generic
 
-This would create a CD-Set of iso which are at most 700 MB big, the first CD
-would be bootable and the set would contain the builds 'athlon', 'pentium4'
-and 'generic'.
+This would create a CD-Set of iso images which are at most 700 MB big, the
+first CD would be bootable and the set would contain the builds 'athlon',
+'pentium4' and 'generic'.
 
 You see, it's perfectly possible to have several optimised or just different
 builds on one CD-Set. So you would only need one set to install different
@@ -95,7 +95,7 @@ on a DVD. That would make approx. 5 to 6 builds on one DVD.
 	==============================
 
 Simply type './scripts/Cleanup' to remove the src* directories. DO NOT REMOVE
-THEM BY HAND! This directories may contain bind mounts to the rest of the
+THEM BY HAND! These directories may contain bind mounts to the rest of the
 source tree and it is possible that you are going to remove everything in the
 ROCK Linux base directory if you make a simple 'rm -rf' to remove them ..
 

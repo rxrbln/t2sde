@@ -383,145 +383,154 @@ create_package_db() {
 # Main program for building a package
 #
 build_this_package() {
-	if [ $autoextract = 1 ] ; then
-
+	if [ ".$desc_SRC" == "." ] ; then
 		# Autodetect source tar and extract it
 		#
 		if [ $srctar = auto ] ; then
-			xsrctar=$(echo "$desc_D" | head -1 | \
-				tr ' ' '\t' | tr -s '\t' | cut -f2 | \
-				sed 's,.\(t\?\)gz$,.\1bz2,')
-			if [ -z "$xsrctar" ] ; then
-				echo "Can't auto-detect srctar for" \
-				     "package '$pkg'!" ; exit 1
+			xsourceballs=$( echo "$desc_D" | head -1 | tr ' ' '\t' | tr -s '\t' | \
+				cut -f2 | sed 's,.\(t\?\)gz$,.\1bz2,' )
+			if [ -z "$xsourceballs" ] ; then
+				echo "Can't auto-detect srctar for package '$pkg'!"
+				false
 			fi
 		else
-			xsrctar="$srctar"
+			xsourceballs="$srctar"
 		fi
-		#
-		echo "Extracting $xsrctar ($taropt) ... "
-		cd $builddir ; tar -v $taropt $archdir/$xsrctar |
-			cut -f1 -d/ | sort -u > xsrcdir.txt
-		#
-		if [ $srcdir = auto ] ; then
-			xsrcdir=${xsrctar%.tar.bz2}
-			xsrcdir=${xsrcdir%.tbz2}
-			if [ ! -d $xsrcdir ] ; then
-				for x in $pkg-$ver $pkg_$ver $pkg \
-				                   "`cat xsrcdir.txt`" ; do
-					[ -d "$x" ] && xsrcdir="$x"
+	else
+		sourceballs=$( echo "$desc_D" | tr ' ' '\t' | tr -s '\t' | \
+			cut -f2 | sed 's,.\(t\?\)gz$,.\1bz2,' )
+		xsrcpattern=$( echo "$desc_SRC" | tr ' ' '\t' | tr -s '\t' | tr '\t' '\n' )
+		xsourceballs=$( echo "$sourceballs" | grep -F "$xsrcpattern" )
+	fi
+	for xsrctar in $xsourceballs; do
+		if [ $autoextract = 1 ]; then
+			echo "Extracting $xsrctar ($taropt) ... "
+			cd $builddir
+			tar -v $taropt $archdir/$xsrctar |
+				cut -f1 -d/ | sort -u > xsrcdir.txt
+			#
+			if [ $srcdir = auto ]; then
+				xsrcdir=${xsrctar%.tar.bz2}
+				xsrcdir=${xsrcdir%.tbz2}
+				if [ ! -d $xsrcdir ] ; then
+					for x in $pkg-$ver $pkg_$ver $pkg \
+							   "`cat xsrcdir.txt`" ; do
+						[ -d "$x" ] && xsrcdir="$x"
+					done
+				fi
+			else
+				xsrcdir="$srcdir"
+			fi
+			#
+			echo "Changeing into $builddir/$xsrcdir ..."
+			[ "$chownsrcdir" = 1 ] && chown -R 0.0 $builddir/$xsrcdir
+			cd $builddir/$xsrcdir
+
+			# Apply patches
+			#		
+			if [ $autopatch = 1 ]; then
+				hook_eval prepatch
+				for x in $patchfiles; do
+					echo "Apply patch $x ..."
+					eval "patch $patchopt < $x"
 				done
+				hook_eval postpatch
 			fi
+
 		else
-			xsrcdir="$srcdir"
+			cd $builddir
 		fi
-		#
-		echo "Changeing into $builddir/$xsrcdir ..."
-		[ "$chownsrcdir" = 1 ] && chown -R 0.0 $builddir/$xsrcdir
-		cd $builddir/$xsrcdir
 
-		# Apply patches
-		#		
-		if [ $autopatch = 1 ] ; then
-			hook_eval prepatch
-			for x in $patchfiles ; do
-				echo "Apply patch $x ..."
-				eval "patch $patchopt < $x"
+		if [ "$createprefix" = 1 ]; then
+			echo "Creating $root/$prefix/<..> if required ..."
+			for x in $docdir $root/$prefix/bin $root/$prefix/lib \
+				 $root/$prefix/share $sysconfdir $localstatedir
+			do
+				if [ ! -e $x ]; then
+					mkdir -p $x
+					rmemptydir="$rmemptydir $x"
+				fi
 			done
-			hook_eval postpatch
 		fi
-
-	else
-		cd $builddir
-	fi
-
-	if [ "$createprefix" = 1 ] ; then
-		echo "Creating $root/$prefix/<..> if required ..."
-		for x in $docdir $root/$prefix/bin $root/$prefix/lib \
-		         $root/$prefix/share $sysconfdir $localstatedir
-		do
-			if [ ! -e $x ] ; then
-				mkdir -p $x
-				rmemptydir="$rmemptydir $x"
-			fi
-		done
-	fi
-	
-	if [ ".$custmain" = "." ]
-	then
-
-		# Run configure scripts etc.
-		#
-		hook_eval preconf
-		#
-		if [ $runconf = 1 -a -f $configscript ]
+		
+		if [ ".$custmain" = "." ]
 		then
-			eval_config_command $( eval echo $confopt )
-		fi
-		#
-		if [ ! -f Makefile -a ! -f makefile -a \
-		     -f Makefile.PL -a $runmkpl = 1 ] ; then
-			perl Makefile.PL
-		fi
-		#
-		if [ ! -f Makefile -a ! -f makefile -a \
-		     -f Imakefile -a $runxmkmf = 1 ] ; then
-			xmkmf -a
-		fi
 
-		# Build it
-		#		
-		hook_eval premake
-		if [ "$makeopt"     ] ; then eval "$MAKE $makeopt"     ; fi
-		hook_eval inmake
-		if [ "$makeinstopt" ] ; then eval "$MAKE $makeinstopt" ; fi
-		hook_eval postmake
-
-	else
-		eval "$custmain"
-		for x in preconf premake inmake postmake; do
-			if eval "[ -n \"\$hookdirty_$x\" ]"; then
-				echo "Hook $x is still marked as dirty ..."
-				hook_eval $x
+			# Run configure scripts etc.
+			#
+			hook_eval preconf
+			#
+			if [ $runconf = 1 ]; then 
+			  if [ -f $configscript -o $autogen = 1 ]
+			  then
+				eval_config_command $( eval echo $confopt )
+			  fi
 			fi
-		done
-	fi
+			#
+			if [ ! -f Makefile -a ! -f makefile -a \
+			     -f Makefile.PL -a $runmkpl = 1 ]; then
+				perl Makefile.PL
+			fi
+			#
+			if [ ! -f Makefile -a ! -f makefile -a \
+			     -f Imakefile -a $runxmkmf = 1 ]; then
+				xmkmf -a
+			fi
 
-	if [ "$createdocs" != 0 ] ; then
-		if [ ! -e $docdir ] ; then
-			mkdir -p $docdir
-			rmemptydir="$rmemptydir $docdir"
+			# Build it
+			#		
+			hook_eval premake
+			if [ "$makeopt"     ]; then eval "$MAKE $makeopt"; fi
+			hook_eval inmake
+			if [ "$makeinstopt" ]; then eval "$MAKE $makeinstopt"; fi
+			hook_eval postmake
+
+		else
+			eval "$custmain"
+			for x in preconf premake inmake postmake; do
+				if eval "[ -n \"\$hookdirty_$x\" ]"; then
+					echo "Hook $x is still marked as dirty ..."
+					hook_eval $x
+				fi
+			done
 		fi
-		[ -z "$createdocs" ] && createdocs="$ROCKCFG_CREATE_DOCS"
-	fi
 
-	if [ "$createdocs" = 1 ] ; then
-		echo "Trying to copy the default documentation ..."
-		[ -d $builddir/$xsrcdir ] && cd $builddir/$xsrcdir
-		for x in `find -type d \( -name 'doc' -o -name 'docs' -o \
-		               -name '[Dd]ocumentation' \) ! -empty`
-		do
-			if [ -d "$x" -a "`echo $x/*`" != "$x/*" ]
-			then cp -rLv $x/* $docdir || true ; fi
-		done
-		for x in [A-Z][A-Z]* *.lsm ChangeLog* ; do
-			[ "${x#*.[cho0-9]}" ] || continue
-			[ "${x#*.info*}"    ] || continue
-			if [ -f $x ] ; then cp -v $x $docdir/$x ; fi
-		done
-		for x in $confdir/*.doc ; do
-			if [ -f $x ] ; then cp -v $x $docdir/${x%.doc} ; fi
-		done
-		find $docdir/ -name '*.[0-9]' -o -name '*.info*' \
-			-o -name '[Mm]akefile*' | \
-			xargs -r rm -f 2> /dev/null || true
-		find $docdir/* -type d -empty 2> /dev/null | \
-			xargs -r rmdir 2> /dev/null || true
-	fi
+		if [ "$createdocs" != 0 ]; then
+			if [ ! -e $docdir ]; then
+				mkdir -p $docdir
+				rmemptydir="$rmemptydir $docdir"
+			fi
+			[ -z "$createdocs" ] && createdocs="$ROCKCFG_CREATE_DOCS"
+		fi
 
-	hook_eval postdoc
+		if [ "$createdocs" = 1 ]; then
+			echo "Trying to copy the default documentation ..."
+			[ -d $builddir/$xsrcdir ] && cd $builddir/$xsrcdir
+			for x in `find -type d \( -name 'doc' -o -name 'docs' -o \
+				       -name '[Dd]ocumentation' \) ! -empty`
+			do
+				if [ -d "$x" -a "`echo $x/*`" != "$x/*" ]
+				then cp -rLv $x/* $docdir || true ; fi
+			done
+			for x in [A-Z][A-Z]* *.lsm ChangeLog*; do
+				[ "${x#*.[cho0-9]}" ] || continue
+				[ "${x#*.info*}"    ] || continue
+				if [ -f $x ] ; then cp -v $x $docdir/$x ; fi
+			done
+			for x in $confdir/*.doc; do
+				if [ -f $x ]; then cp -v $x $docdir/${x%.doc}; fi
+			done
+			find $docdir/ -name '*.[0-9]' -o -name '*.info*' \
+				-o -name '[Mm]akefile*' | \
+				xargs -r rm -f 2> /dev/null || true
+			find $docdir/* -type d -empty 2> /dev/null | \
+				xargs -r rmdir 2> /dev/null || true
+		fi
 
-	if [ "$rmemptydir" ] ; then
+		hook_eval postdoc
+	done
+  
+	if [ "$rmemptydir" ]; then
 		rmdir $rmemptydir 2> /dev/null || true
 	fi
 
