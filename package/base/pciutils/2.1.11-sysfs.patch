@@ -1,0 +1,392 @@
+diff -u pciutils-2.1.11/lib/configure pciutils-2.1.11/lib/configure
+--- pciutils-2.1.11/lib/configure
++++ pciutils-2.1.11/lib/configure
+@@ -33,7 +33,8 @@
+ case $sys in
+ 	Linux)
+ 		case $rel in
+-			2.[1-9]*|[3-9]*)	echo_n " proc"
++			2.[1-9]*|[3-9]*)	echo_n "sysfs proc"
++						echo >>$c '#define HAVE_PM_LINUX_SYSFS'
+ 						echo >>$c '#define HAVE_PM_LINUX_PROC'
+ 						echo >>$c '#define HAVE_LINUX_BYTEORDER_H'
+ 						echo >>$c '#define PATH_PROC_BUS_PCI "/proc/bus/pci"'
+unchanged:
+--- pciutils-2.1.11.orig/lib/Makefile
++++ pciutils-2.1.11/lib/Makefile
+@@ -9,6 +9,10 @@
+ 
+ PCILIB=libpci.a
+ 
++ifdef HAVE_PM_LINUX_SYSFS
++OBJS += sysfs.o
++endif
++
+ ifdef HAVE_PM_LINUX_PROC
+ OBJS += proc.o
+ endif
+unchanged:
+--- pciutils-2.1.11.orig/lib/access.c
++++ pciutils-2.1.11/lib/access.c
+@@ -17,6 +17,11 @@
+ 
+ static struct pci_methods *pci_methods[PCI_ACCESS_MAX] = {
+   NULL,
++#ifdef HAVE_PM_LINUX_SYSFS
++  &pm_linux_sysfs,
++#else
++  NULL,
++#endif
+ #ifdef HAVE_PM_LINUX_PROC
+   &pm_linux_proc,
+ #else
+unchanged:
+--- pciutils-2.1.11.orig/lib/internal.h
++++ pciutils-2.1.11/lib/internal.h
+@@ -91,4 +91,5 @@
+ int pci_link_dev(struct pci_access *, struct pci_dev *);
+ 
+ extern struct pci_methods pm_intel_conf1, pm_intel_conf2, pm_linux_proc,
+-  pm_syscalls, pm_fbsd_device, pm_aix_device, pm_nbsd_libpci, pm_dump;
++	pm_linux_sysfs, pm_syscalls, pm_fbsd_device, pm_aix_device,
++	pm_nbsd_libpci, pm_dump;
+unchanged:
+--- pciutils-2.1.11.orig/lib/pci.h
++++ pciutils-2.1.11/lib/pci.h
+@@ -74,6 +74,7 @@
+ enum pci_access_type {
+   /* Known access methods, remember to update access.c as well */
+   PCI_ACCESS_AUTO,			/* Autodetection (params: none) */
++  PCI_ACCESS_SYSFS_BUS_PCI,		/* Linux /sys/bus/pci (params: none) */
+   PCI_ACCESS_PROC_BUS_PCI,		/* Linux /proc/bus/pci (params: path) */
+   PCI_ACCESS_I386_TYPE1,		/* i386 ports, type 1 (params: none) */
+   PCI_ACCESS_I386_TYPE2,		/* i386 ports, type 2 (params: none) */
+@@ -127,6 +128,7 @@
+ 
+ struct pci_dev {
+   struct pci_dev *next;			/* Next device in the chain */
++  int domain;				/* domains can have the same bus #s */
+   word bus;				/* Higher byte can select host bridges */
+   byte dev, func;			/* Device and function */
+ 
+unchanged:
+--- pciutils-2.1.11.orig/lib/sysfs.c
++++ pciutils-2.1.11/lib/sysfs.c
+@@ -0,0 +1,292 @@
++/*
++ *	$Id: 2.1.11-sysfs.patch,v 1.2 2004/01/24 18:25:47 plasmaroo Exp $
++ *
++ *	The PCI Library -- Configuration Access via /sys/bus/pci
++ *
++ * 	Copyrigh  (c) 2003 Matthew Wilcox <willy@fc.hp.com>
++ *	Copyright (c) 1997--1999 Martin Mares <mj@ucw.cz>
++ *
++ *	Can be freely distributed and used under the terms of the GNU GPL.
++ */
++
++#define _GNU_SOURCE
++
++#include <stdio.h>
++#include <stdlib.h>
++#include <string.h>
++#include <unistd.h>
++#include <errno.h>
++#include <dirent.h>
++#include <fcntl.h>
++#include <sys/types.h>
++#include <sys/utsname.h>
++
++#include "internal.h"
++
++#define SYSFS_PATH_ROOT "/sys"
++#define SYSFS_PATH SYSFS_PATH_ROOT "/bus/pci/devices"
++
++/*
++ *  We'd like to use pread/pwrite for configuration space accesses, but
++ *  unfortunately it isn't simple at all since all libc's until glibc 2.1
++ *  don't define it.
++ */
++
++#if defined(__GLIBC__) && __GLIBC__ == 2 && __GLIBC_MINOR__ > 0
++/* glibc 2.1 or newer -> pread/pwrite supported automatically */
++
++#elif defined(i386) && defined(__GLIBC__)
++/* glibc 2.0 on i386 -> call syscalls directly */
++#include <asm/unistd.h>
++#include <syscall-list.h>
++#ifndef SYS_pread
++#define SYS_pread 180
++#endif
++static int pread(unsigned int fd, void *buf, size_t size, loff_t where)
++{ return syscall(SYS_pread, fd, buf, size, where); }
++#ifndef SYS_pwrite
++#define SYS_pwrite 181
++#endif
++static int pwrite(unsigned int fd, void *buf, size_t size, loff_t where)
++{ return syscall(SYS_pwrite, fd, buf, size, where); }
++
++#elif defined(i386)
++/* old libc on i386 -> call syscalls directly the old way */
++#include <asm/unistd.h>
++static _syscall5(int, pread, unsigned int, fd, void *, buf, size_t, size, u32, where_lo, u32, where_hi);
++static _syscall5(int, pwrite, unsigned int, fd, void *, buf, size_t, size, u32, where_lo, u32, where_hi);
++static int do_read(struct pci_dev *d UNUSED, int fd, void *buf, size_t size, int where) { return pread(fd, buf, size, where, 0); }
++static int do_write(struct pci_dev *d UNUSED, int fd, void *buf, size_t size, int where) { return pwrite(fd, buf, size, where, 0); }
++#define HAVE_DO_READ
++
++#else
++/* In all other cases we use lseek/read/write instead to be safe */
++#define make_rw_glue(op) \
++	static int do_##op(struct pci_dev *d, int fd, void *buf, size_t size, int where)	\
++	{											\
++	  struct pci_access *a = d->access;							\
++	  int r;										\
++	  if (a->fd_pos != where && lseek(fd, where, SEEK_SET) < 0)				\
++	    return -1;										\
++	  r = op(fd, buf, size);								\
++	  if (r < 0)										\
++	    a->fd_pos = -1;									\
++	  else											\
++	    a->fd_pos = where + r;								\
++	  return r;										\
++	}
++make_rw_glue(read)
++make_rw_glue(write)
++#define HAVE_DO_READ
++#endif
++
++#ifndef HAVE_DO_READ
++#define do_read(d,f,b,l,p) pread(f,b,l,p)
++#define do_write(d,f,b,l,p) pwrite(f,b,l,p)
++#endif
++
++static void
++sysfs_config(struct pci_access *a)
++{
++#if 0
++	a->method_params[PCI_ACCESS_PROC_BUS_PCI] = PATH_PROC_BUS_PCI;
++#endif
++}
++
++static int sysfs_detect(struct pci_access *a)
++{
++	struct utsname buf;
++	int major, minor, patch;
++	if(uname(&buf) != 0 || sscanf(buf.release, "%d.%d.%d", &major, &minor, &patch) < 3)
++	{
++		a->warning("Cannot determine kernel version; attempting sysfs support...");
++		return 1;
++	}
++	if(major < 2 || (( major == 2 ) && ( minor < 6 )))
++		return 0;
++
++	if (access(SYSFS_PATH_ROOT, R_OK))
++		return 0;
++	if (access(SYSFS_PATH, R_OK)) {
++		a->warning("Cannot open %s", SYSFS_PATH);
++		return 0;
++	}
++	a->debug("...using %s", SYSFS_PATH);
++	return 1;
++}
++
++static void sysfs_init(struct pci_access *a)
++{
++	a->fd = -1;
++}
++
++static void sysfs_cleanup(struct pci_access *a)
++{
++	if (a->fd >= 0) {
++		close(a->fd);
++		a->fd = -1;
++	}
++}
++
++static int sysfs_get_value(char *name, char *object)
++{
++	int fd, len;
++	char buf[256];
++	sprintf(buf, "%s/%s/%s", SYSFS_PATH, name, object);
++	fd = open(buf, O_RDONLY);
++	if (fd < 0)
++		return 0;
++	len = read(fd, buf, 256);
++	close(fd);
++	buf[len] = '\0';
++	return strtol(buf, NULL, 0);
++}
++
++static int sysfs_get_resources(char *name, struct pci_dev *d)
++{
++	char buf[256];
++	FILE *file;
++	int i;
++	sprintf(buf, "%s/%s/%s", SYSFS_PATH, name, "resource");
++	file = fopen(buf, "r");
++	if (!file)
++		return errno;
++	for (i = 0; i < 8; i++) {
++		unsigned long long start, end, size = 0;
++		if (!fgets(buf, 256, file))
++			break;
++		sscanf(buf, "%llx %llx", &start, &end);
++		if (start)
++			size = end - start + 1;
++		if (i < 7) {
++			d->base_addr[i] = start;
++			d->size[i] = size;
++		} else {
++			d->rom_base_addr = start;
++			d->rom_size = size;
++		}
++	}
++	fclose(file);
++	return 0;
++}
++
++static void sysfs_scan(struct pci_access *a)
++{
++	DIR *dir;
++	struct dirent *entry;
++
++	dir = opendir(SYSFS_PATH);
++	if (!dir)
++		a->error("Cannot open %s", SYSFS_PATH);
++	while ((entry = readdir(dir))) {
++		struct pci_dev *d;
++		unsigned int dev, func;
++
++		/* ".", ".." or a special non-device perhaps */
++		if (entry->d_name[0] == '.')
++			continue;
++
++		d = pci_alloc_dev(a);
++		if (sscanf(entry->d_name, "%04x:%02hx:%02x.%d",
++				&d->domain, &d->bus, &dev, &func) < 4) {
++			a->error("Couldn't parse %s", entry->d_name);
++			pci_free_dev(d);
++			continue;
++		}
++		d->dev = dev;
++		d->func = func;
++		d->vendor_id = sysfs_get_value(entry->d_name, "vendor");
++		d->device_id = sysfs_get_value(entry->d_name, "device");
++		d->irq = sysfs_get_value(entry->d_name, "irq");
++		d->hdrtype = pci_read_byte(d, PCI_HEADER_TYPE);
++
++		if (sysfs_get_resources(entry->d_name, d) != 0)
++			a->error("when reading resources");
++		d->known_fields = PCI_FILL_IDENT;
++		if (!a->buscentric) {
++			d->known_fields |= PCI_FILL_IRQ | PCI_FILL_BASES |
++					PCI_FILL_ROM_BASE | PCI_FILL_SIZES;
++		}
++		pci_link_dev(a, d);
++	}
++	closedir(dir);
++}
++
++static int
++sysfs_setup(struct pci_dev *d, int rw)
++{
++	struct pci_access *a = d->access;
++
++	if (a->cached_dev != d || a->fd_rw < rw) {
++		char buf[256];
++		if (a->fd >= 0)
++			close(a->fd);
++		if (snprintf(buf, sizeof(buf), "%s/%04x:%02x:%02x.%d/config",
++					SYSFS_PATH, d->domain, d->bus, d->dev,
++					d->func) == sizeof(buf))
++			a->error("File name too long");
++		a->fd_rw = a->writeable || rw;
++		a->fd = open(buf, a->fd_rw ? O_RDWR : O_RDONLY);
++		if (a->fd < 0)
++			a->warning("Cannot open %s", buf);
++		a->cached_dev = d;
++		a->fd_pos = 0;
++	}
++	return a->fd;
++}
++
++static int sysfs_read(struct pci_dev *d, int pos, byte *buf, int len)
++{
++	int fd = sysfs_setup(d, 0);
++	int res;
++
++	if (fd < 0)
++		return 0;
++	res = do_read(d, fd, buf, len, pos);
++	if (res < 0) {
++		d->access->warning("sysfs_read: read failed: %s", strerror(errno));
++		return 0;
++	} else if (res != len) {
++		d->access->warning("sysfs_read: tried to read %d bytes at %d, but got only %d", len, pos, res);
++		return 0;
++	}
++	return 1;
++}
++
++static int sysfs_write(struct pci_dev *d, int pos, byte *buf, int len)
++{
++	int fd = sysfs_setup(d, 1);
++	int res;
++
++	if (fd < 0)
++		return 0;
++	res = do_write(d, fd, buf, len, pos);
++	if (res < 0) {
++		d->access->warning("sysfs_write: write failed: %s", strerror(errno));
++		return 0;
++	} else if (res != len) {
++		d->access->warning("sysfs_write: tried to write %d bytes at %d, but got only %d", len, pos, res);
++		return 0;
++	}
++	return 1;
++}
++
++static void sysfs_cleanup_dev(struct pci_dev *d)
++{
++	if (d->access->cached_dev == d)
++		d->access->cached_dev = NULL;
++}
++
++struct pci_methods pm_linux_sysfs = {
++	SYSFS_PATH,
++	sysfs_config,
++	sysfs_detect,
++	sysfs_init,
++	sysfs_cleanup,
++	sysfs_scan,
++	pci_generic_fill_info,
++	sysfs_read,
++	sysfs_write,
++	NULL,					/* init_dev */
++	sysfs_cleanup_dev
++};
+unchanged:
+--- pciutils-2.1.11.orig/lspci.c
++++ pciutils-2.1.11/lspci.c
+@@ -188,6 +188,10 @@
+   const struct pci_dev *a = (*(const struct device **)A)->dev;
+   const struct pci_dev *b = (*(const struct device **)B)->dev;
+ 
++  if (a->domain < b->domain)
++    return -1;
++  if (a->domain > b->domain)
++    return 1;
+   if (a->bus < b->bus)
+     return -1;
+   if (a->bus > b->bus)
+@@ -239,7 +243,8 @@
+   struct pci_dev *p = d->dev;
+   byte classbuf[128], devbuf[128];
+ 
+-  printf("%02x:%02x.%x %s: %s",
++  printf("%04x:%02x:%02x.%x %s: %s",
++	 p->domain,
+ 	 p->bus,
+ 	 p->dev,
+ 	 p->func,
+-
