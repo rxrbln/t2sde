@@ -173,6 +173,6 @@ gui_edit() {
 # Use: gui_cmd "Title" "Command"
 # (Title isn't used in this GUI type)
 gui_cmd() {
-	eval "$2"
+	shift ; eval "$@"
 	read -p "Press ENTER to continue."
 }
