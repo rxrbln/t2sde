@@ -1,9 +1,9 @@
 
 T2 SDE - System Development Environment
 
-  http://www.exactcode.de/t2
+  http://www.t2-project.org/
 
-T2 on Apple, PReP and IBM RS/6k PowerPC hardware was primarily sponsored by
+T2 on Apple, PReP and IBM RS/6k PowerPC hardware was primarily developed by
 Rene Rebe - ExactCode.
 
 So you are going to install T2 Linux ...
