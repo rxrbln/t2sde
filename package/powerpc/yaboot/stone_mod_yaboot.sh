@@ -80,8 +80,29 @@ EOT
 $( cat /etc/yaboot.conf )"
 }
 
-yaboot_install() {
-	gui_cmd 'Installing Yaboot' "ybin"
+yaboot_install()
+{
+	# format the boostrap if not already done	
+	if hmount /dev/ide/host0/bus0/target0/lun0/part$bootstrappart > /dev/null ; then
+		humount
+	else
+		if gui_yesno "The boostrap device \
+/dev/ide/host0/bus0/target0/lun0/part$bootstrappart is not yet HFS formated. \
+Format now?" ; then
+			hformat /dev/ide/host0/bus0/target0/lun0/part$bootstrappart
+		else
+			return
+		fi
+	fi
+
+	# maybe an unpatched yaboot and no devfsd (e.g. during install)
+	[ ! -c /dev/nvram ] && ln -s /dev/misc/nvram /dev/nvram
+
+	yaboot_install_doit
+}
+
+yaboot_install_doit() {
+	gui_cmd 'Installing Yaboot' "echo 'calling ybin' ; ybin"
 }
 
 device4()
