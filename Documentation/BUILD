@@ -33,7 +33,7 @@ your configuration (or simply leave the default values untouched). You need to
 start the Config tool - even if you don't want to change anything.
 
 It's also possible to have multiple configurations. Use the command
-'./scripts/Config -cfg config-name' (where config name can be any text not
+'./scripts/Config -cfg config-name' (where config-name can be any text not
 containing whitespaces or any special characters). If you have choosen a name
 for your configuration, you need to pass the '-cfg config-name' option as
 first parameter to all the other scripts too - so they know which
@@ -91,13 +91,13 @@ machines.
 If you have a DVD-Writer, you could also pass '-size 4300' and write that iso
 on a DVD. That would make approx. 5 to 6 builds on one DVD.
 
+
 	7. Cleaning up the source tree
 	==============================
 
 Simply type './scripts/Cleanup' to remove the src* directories. DO NOT REMOVE
 THEM BY HAND! These directories may contain bind mounts to the rest of the
 source tree and it is possible that you are going to remove everything in the
-ROCK Linux base directory if you make a simple 'rm -rf' to remove them ..
+ROCK Linux base directory if you execute a simple 'rm -rf' to remove them ..
 
-Type './scripts/Cleanup --full' to also remove the build/ directory.
-
+If you also want to remove the build/ directory type './scripts/Cleanup --full'.
