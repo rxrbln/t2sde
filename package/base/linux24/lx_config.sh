@@ -22,14 +22,10 @@
 
 treever=${pkg/linux/} ; treever=${treever/-*/}
 
-[ "$vanilla_ver" ] || vanilla_ver="$ver"
-srctar="linux-${vanilla_ver}.tar.bz2"
-
 lx_cpu=`echo "$arch_machine" | sed -e s/x86$/i386/ \
   -e s/i.86/i386/ -e s/powerpc/ppc/ -e s/hppa/parisc/`
 lx_extraversion=""
 lx_kernelrelease=""
-lx_tempdir=""
 
 [ $arch = sparc -a "$ROCKCFG_SPARC_64BIT_KERNEL" = 1 ] && \
         lx_cpu=sparc64
@@ -172,19 +168,6 @@ lx_injectextraversion () {
                     > conftest.c &&	\
                     gcc -E -I./include conftest.c | tail -n 1	\
                     | cut -d '"' -f 2 && rm -f conftest.c )"
-
-	# rename temp directory 
-	if [ "${lx_tempdir}" ]; then
-		cd ..
-		rm -rf linux-${lx_kernelrelease} ; mv ${lx_tempdir} linux-${lx_kernelrelease}
-		ln -sf $PWD/linux-${lx_kernelrelease} $builddir/linux-${vanilla_ver}
-
-		if [ "${pkg%-src}" = "$ROCKCFG_DEFAULT_KERNEL" ] ; then
-			rm -f linux
-			ln -svf linux-${lx_kernelrelease} linux
-		fi
-		cd linux-${lx_kernelrelease}
-	fi
 }
 
 lx_patch ()
@@ -193,6 +176,9 @@ lx_patch ()
 
 	# grab extraversion from vanilla
 	lx_grabextraversion
+
+	# inject a possible prerelease patch
+	var_insert patchfiles " " "`match_source_file patch-*.bz2`"
 
 	hook_eval prepatch
 	apply_patchfiles "lx_grabextraversion"
