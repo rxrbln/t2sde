@@ -38,6 +38,7 @@ do_config_cycle=0
 delete_mode=0
 oldconfig=''
 nobashmod=''
+cfgtmpdir=''
 profile=""
 
 while [ "$1" ] ; do
@@ -66,12 +67,12 @@ if [ $delete_mode = 1 ] ; then
 	exit $?
 fi
 
+cfgtmpdir=src/$config
+
 if [ $do_config_cycle = 0 ] ; then
 
-	rm -f config.data config.dialog config.out config.help
-	rm -f config.pcache.data config.pcache.cmd
-	rm -f rockdialog.scrltmp # src/rockdialog.bin
-	mkdir -p src
+	rm -rf $cfgtmpdir
+	mkdir -p $cfgtmpdir	# src
 
 	if [ -z "$oldconfig" -a ! -f src/rockdialog.bin ] ; then
 		echo "Creating rockdialog tool."
@@ -134,7 +135,8 @@ else
 	fi
 	enable -f src/bash_profiler.so bprof || exit 1
 	bprof_print() {
-		bprof all print >> config.profile
+		local cprof=$cfgtmpdir/config.profile
+		bprof all print >> $cprof
 		awk '
 			$4 == "profiled" { next; }
 			$4 != "main" { count["profiled"]+=$1; time["profiled"]+=$2; }
@@ -143,8 +145,8 @@ else
 				for (id in count)
 					printf "%7d %7Ld %10.3f %s\n", count[id], time[id], time[id]/count[id], id;
 			}
-		' < config.profile | sort -n -k2 > config.profile.new
-		mv config.profile.new config.profile
+		' < $cprof | sort -n -k2 > $cprof.new
+		mv $cprof.net $cprof
 	}
 fi
 
@@ -162,7 +164,7 @@ menu_this=0 ; menu_current=0 ; menu_counter=0
 menu_stack=x ; menu_back=-1 ; menu_backpos=-1
 
 mkdir -p config/$config
-touch config/$config/config config/$config/packages
+touch config/$config/{config,packages}
 
 configtitle="$(printf ' %-50s %6s active packages ]' \
 	"T2 $rockver Configuration - $config" \
@@ -172,8 +174,8 @@ bprof main stop
 . ./config/$config/config
 bprof main start
 
-rm -f config.dialog config.data config.help
-touch config.dialog config.data config.help
+rm -f $cfgtmpdir/config.{dialog,data,help}
+touch $cfgtmpdir/config.{dialog,data,help}
 echo -e "#\n# T2 $rockver Config File\n#" > config/$config/config
 spacer="" ; expert=0 ; tabspace="5" ; tabspace_list=""
 commentnr=0 ; editfilenr=0
@@ -183,20 +185,20 @@ cmd="./scripts/Create-PkgList"
 [ "$ROCKCFG_DISABLE_BROKEN" = 1 ] && cmd="$cmd -nobroken"
 cmd="$cmd $ROCKCFG_ARCH"
 
-if [ "$cmd" != "`cat config.pcache.cmd 2> /dev/null`" ] ; then
-	eval "$cmd" | tee config.pcache.data > config/$config/packages
-	echo "$cmd" > config.pcache.cmd
+if [ "$cmd" != "`cat $cfgtmpdir/config.pcache.cmd 2> /dev/null`" ] ; then
+	eval "$cmd" | tee $cfgtmpdir/config.pcache.data > config/$config/packages
+	echo "$cmd" > $cfgtmpdir/config.pcache.cmd
 else
-	cat config.pcache.data > config/$config/packages
+	cat $cfgtmpdir/config.pcache.data > config/$config/packages
 fi
 bprof mkpkglist stop
 
 export ROCKCFG_ID="$rockver"; pkgin; . src/rockconfig.in; pkgout
 echo "export ROCKCFG_ID='$ROCKCFG_ID'" >> config/$config/config
-rm -f config/$config/*.tmp
+rm -f $cfgtmpdir/*.tmp
 
 cut -f1,2,4,5,8- -d' ' config/$config/packages | sed 's, [^ ]*$,,' | \
-tr ' ' '\t' | expand -t2,15,35, > config/$config/packages.txt
+tr ' ' '\t' | expand -t2,15,35, > $cfgtmpdir/packages.txt
 
 configtitle="$(printf ' %-50s %6s active packages ]' \
 	"T2 $rockver Configuration - $config" \
@@ -209,8 +211,8 @@ if [ -z "$oldconfig" ] ; then
 	--backtitle '$configtitle' \
 	--menu 'Arrow keys navigate the menu.  Press <Enter> to activate menu items.  Highlighted letters are hotkeys.' \
 	$(( $lines - 4 )) $(( $columns - 5 )) $(( $lines - 12 )) \
-	'$current' `tr '\n' ' ' < config.dialog`" 2> config.out
-    returncode=$? ; item="`cat config.out`"
+	'$current' `tr '\n' ' ' < $cfgtmpdir/config.dialog`" 2> $cfgtmpdir/config.out
+    returncode=$? ; item="`cat $cfgtmpdir/config.out`"
 else
     returncode=1
 fi
@@ -221,7 +223,7 @@ bprof main start
 
 case "$returncode" in
 	0|6)
-		command="`grep "^$item	" config.data | cut -f2-`"
+		command="`grep "^$item	" $cfgtmpdir/config.data | cut -f2-`"
 		{ echo -e "\n# Remember menu position:\ncurrent='$item'"
 		echo -e "\n# Remember sub-menu:\nmenu_current='$menu_current'"
 		echo -e "\n# Execute this config command:\n$command"
@@ -233,9 +235,7 @@ case "$returncode" in
 		} >> config/$config/config
 		;;
 	1|255)
-		rm -f config.data config.dialog config.out config.help
-		rm -f config.pcache.data config.pcache.cmd
-		rm -f rockdialog.scrltmp # src/rockdialog.bin
+		rm -rf $cfgtmpdir
 		echo "New config written to config/$config/*."
 		echo "Cleaning up. Configuration finished."
 		bprof main stop
@@ -248,12 +248,12 @@ case "$returncode" in
 		echo -e "\n# Remember sub-menu:\nmenu_current='$menu_current'"
 		} >> config/$config/config
 
-		get_help $item > config.dialog
+		get_help $item > $cfgtmpdir/config.dialog
 
 		bprof main stop
 		./src/rockdialog.bin --title 'T2 Config - Help' \
 			--backtitle "T2 $rockver Configuration" \
-			--textbox config.dialog \
+			--textbox $cfgtmpdir/config.dialog \
 			$(( $lines - 4 )) $(( $columns - 5 ))
 		bprof main start
 		;;
