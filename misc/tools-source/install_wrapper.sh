@@ -16,21 +16,29 @@ if [ "$INSTALL_WRAPPER_NOLOOP" = 1 ]; then
 fi
 export INSTALL_WRAPPER_NOLOOP=1
 
-echo "" >> "${INSTALL_WRAPPER_LOGFILE:-.install_wrapper_log}"
-echo "$PWD:" >> "${INSTALL_WRAPPER_LOGFILE:-.install_wrapper_log}"
-echo "* ${INSTALL_WRAPPER_FILTER:-No Filter.}" >> "${INSTALL_WRAPPER_LOGFILE:-.install_wrapper_log}"
-echo "- $( basename $0 ) $*" >> "${INSTALL_WRAPPER_LOGFILE:-.install_wrapper_log}"
+logfile="${INSTALL_WRAPPER_LOGFILE:-/dev/null}"
+[ -z "${logfile##*/*}" -a ! -d "${logfile%/*}" ] && logfile=/dev/null
 
-command="$( basename $0 )"
+command="${0##*/}"
 destination=""
 declare -a sources
 newcommand="$command"
 sources_counter=0
 error=0
 
+echo ""						>> $logfile
+echo "$PWD:"					>> $logfile
+echo "* ${INSTALL_WRAPPER_FILTER:-No Filter.}"	>> $logfile
+echo "- $command $*"				>> $logfile
+
+if [ "${*/--target-directory//}" != "$*" ]; then
+	echo "= $command $*" >> $logfile
+	$command "$@"; exit $?
+fi
+
 while [ $# -gt 0 ]; do
 	case "$1" in
-		-g|-m|-o|-S)
+		-g|-m|-o|-S|--group|--mode|--owner|--suffix)
 			newcommand="$newcommand $1 $2"
 			shift 1
 			;;
@@ -47,27 +55,28 @@ while [ $# -gt 0 ]; do
 	shift 1
 done
 
-destination="$( eval "echo \"$destination\" $filter" )"
+[ -z "${destination##/*}" ] || destination="$PWD/$destination"
+
+if [ "$filter" != " " ]; then
+	destination="$( eval "echo \"$destination\" $filter" )"
+fi
 
 if [ $sources_counter -eq 0 ]; then
-	echo "+ $newcommand $destination" \
-		>> "${INSTALL_WRAPPER_LOGFILE:-.install_wrapper_log}"
+	echo "+ $newcommand $destination" >> $logfile
 	$newcommand "$destination" || error=$?
 elif [ -d "$destination" ]; then
 	for source in "${sources[@]}"; do
-		echo "+ $newcommand $source $( eval \
-			"echo \"$destination/$(basename $source)\" $filter" )" \
-				>> "${INSTALL_WRAPPER_LOGFILE:-.install_wrapper_log}"
-		$newcommand "$source" "$( eval \
-			"echo \"$destination/$(basename $source)\" $filter" )" || error=$?
+		thisdest="$destination/${source##*/}"; thisdest="${thisdest//\/\///}"
+		[ "$filter" != " " ] && thisdest="$( eval "echo \"$thisdest\" $filter" )"
+		echo "+ $newcommand $source $thisdest" >> $logfile
+		$newcommand "$source" "$thisdest" || error=$?
 	done
 else
-	echo "+ $newcommand ${sources[*]} $destination" \
-		>> "${INSTALL_WRAPPER_LOGFILE:-.install_wrapper_log}"
+	echo "+ $newcommand ${sources[*]} $destination" >> $logfile
 	$newcommand "${sources[@]}" "$destination" || error=$?
 fi
 
-echo "===> Returncode: $error" >> "${INSTALL_WRAPPER_LOGFILE:-.install_wrapper_log}"
+echo "===> Returncode: $error" >> $logfile
 
 exit $error
 
