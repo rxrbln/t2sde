@@ -12,19 +12,22 @@ if [ ! -d $LOGSDIR ]; then
 	exit 1
 fi
 
-( cd package; svn st | cut -d'/' -f2 | sort -u) | while read pkg; do
-	status=
-	for file in $( ls -1 $LOGSDIR/[0-9]-$pkg.{out,err,log} 2> /dev/null ); do
-		case $file in
+for repo in package/*; do
+	svn st $repo | cut -d'/' -f3 | sort -u | \
+	while read pkg; do
+		status=
+		for file in $( ls -1 $LOGSDIR/[0-9]-${pkg}.{out,err,log} 2> /dev/null ); do
+			case $file in
 			*.err)	status=2	;;
 			*.log)	[ "$status" ] || status=1	;;
-		esac
+			esac
+		done
+		if [ -z "$status" ]; then
+			[ "$VERBOSE" ] && echo "$pkg PENDING"
+		elif [ "$status" == 2 ]; then
+			echo "$pkg FAILED"
+		else
+			echo "$pkg OK"
+		fi
 	done
-	if [ -z "$status" ]; then
-		[ "$VERBOSE" ] && echo "$pkg PENDING"
-	elif [ "$status" == 2 ]; then
-		echo "$pkg FAILED"
-	else
-		echo "$pkg OK"
-	fi
 done
