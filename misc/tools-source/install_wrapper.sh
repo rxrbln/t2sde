@@ -58,7 +58,7 @@ done
 [ -z "${destination##/*}" ] || destination="$PWD/$destination"
 
 if [ "$filter" != " " ]; then
-	destination="$( eval "echo \"$destination\" $filter" )"
+	destination="$( eval "echo \"$destination\" | tr -s '/' $filter" )"
 fi
 
 if [ -z "$destination" ]; then
