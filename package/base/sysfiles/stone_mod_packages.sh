@@ -22,20 +22,29 @@
 #
 # [MAIN] 90 packages Package Management (Install, Update and Remove)
 
-if [ -z "$ROCK_INSTALL_SOURCE_DEV" ] ; then
-	dev="/dev/cdroms/cdrom0"
-	dir="/mnt/cdrom" ; root="/"
-	gasguiopt=""
-
-	ROCKCFG_SHORTID="$( grep '^export ROCKCFG_SHORTID=' \
-		$root/etc/ROCK-CONFIG/config 2> /dev/null | cut -f2- -d= )"
-	ROCKCFG_SHORTID="${ROCKCFG_SHORTID//\'/}"
-else
+if [ -n "$ROCK_INSTALL_SOURCE_DEV" ] ; then
 	dev="$ROCK_INSTALL_SOURCE_DEV"
 	dir="/mnt/source" ; root="/mnt/target"
 	gasguiopt="-F"
 
 	ROCKCFG_SHORTID="Automatically choose first"
+elif [ -n "$ROCK_INSTALL_SOURCE_URL" ] ; then
+	dev="NETWORK INSTALL"
+	dir="$ROCK_INSTALL_SOURCE_URL"
+	root="/mnt/target"
+	gasguiopt="-F"
+
+	ROCKCFG_SHORTID="$( grep '^export ROCKCFG_SHORTID=' \
+		/etc/ROCK-CONFIG/config 2> /dev/null | cut -f2- -d= )"
+	ROCKCFG_SHORTID="${ROCKCFG_SHORTID//\'/}"
+else
+	dev="/dev/cdroms/cdrom0"
+	dir="/mnt/cdrom" ; root="/"
+	gasguiopt=""
+
+	ROCKCFG_SHORTID="$( grep '^export ROCKCFG_SHORTID=' \
+		/etc/ROCK-CONFIG/config 2> /dev/null | cut -f2- -d= )"
+	ROCKCFG_SHORTID="${ROCKCFG_SHORTID//\'/}"
 fi
 
 startgas() {
