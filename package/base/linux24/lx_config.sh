@@ -118,11 +118,11 @@ lx_config ()
 	         $base/target/$target/kernel.conf ; do
 	   if [ -f $x ] ; then
 		echo "  merging: 'config/$config/linux.cfg'"
-		x="$(sed '/CONFIG_/ ! d; s,.*CONFIG_\([^ =]*\).*,\1,' \
-			$base/config/$config/linux.cfg | tr '\n' '|')"
-		egrep -v "\bCONFIG_($x)\b" < .config > .config.4
+		tag="$(sed '/CONFIG_/ ! d; s,.*CONFIG_\([^ =]*\).*,\1,' \
+			$x | tr '\n' '|')"
+		egrep -v "\bCONFIG_($tag)\b" < .config > .config.4
 		sed 's,\(CONFIG_.*\)=n,# \1 is not set,' \
-			$base/config/$config/linux.cfg >> .config.4
+			$x >> .config.4
 		cp .config.4 .config
 	   fi
 	done
