@@ -32,38 +32,43 @@ main() {
 		if [ -f /etc/profile.d/windowmanager ]; then
 			. /etc/profile.d/windowmanager
 		fi
-		for x in gnome kde twm; do
-			if [ "$WINDOWMANAGER" = $x ]; then
-				eval "wm_$x='[*]'"
-			else
-				eval "wm_$x='[ ]'"
-			fi
+
+		cmd="gui_menu xfree86 'XFree86 Configuration Menu'
+
+		'Run xf86cfg (recommended, new interactve config)'
+			'gui_cmd xf86cfg'
+
+		'Run X -configure (automated config)'
+			'X -configure ; mv /root/XF86Config.new /etc/X11/XF86Config.new'
+
+		'Run xf86config (old textual config)'
+			'gui_cmd xf86config xf86config'"
+
+		cmd="$cmd '' ''"
+
+		for x in /usr/share/rock-registry/wm/* ; do
+		  if [ -f $x ] ; then
+			. $x
+
+			if [ "$WINDOWMANAGER" = "$exec" ]; then
+			pre='[*]' ; else
+			pre='[ ]' ; fi
+
+			cmd="$cmd
+			    '$pre Use $name as default Windowmanager'
+			    'set_wm $exec'"
+		  fi
 		done
 
-		gui_menu xfree86 'XFree86 Configuration Menu'		\
-									\
-		'Run "xf86cfg" (recommended, new interactve config)'	\
-			'gui_cmd xf86cfg'				\
-									\
-		'Run "X -configure" (automated config)'			\
-			'X -configure ; mv /root/XF86Config.new /etc/X11/XF86Config.new'	\
-									\
-		'Run "xf86config" (old interactve config)'              \
-			'gui_cmd xf86config xf86config'                 \
-									\
-		"$wm_gnome Use GNOME as default Windowmanager"		\
-			'set_wm gnome'					\
-									\
-		"$wm_kde Use KDE   as default Windowmanager"		\
-			'set_wm kde'					\
-									\
-		"$wm_twm Use TWM   as default Windowmanager"		\
-			'set_wm twm' '' ''				\
-									\
-		'Edit/View /etc/X11/XF86Config'				\
-			"gui_edit XF86config /etc/X11/XF86Config"	\
-		'Edit/View /etc/profile.d/windowmanager'		\
-			"gui_edit WINDOWMANAGER /etc/profile.d/windowmanager"
+		cmd="$cmd '' ''"
+
+		cmd="$cmd
+		'Edit/View /etc/X11/XF86Config'
+			'gui_edit XF86config /etc/X11/XF86Config'
+		'Edit/View /etc/profile.d/windowmanager'
+			'gui_edit WINDOWMANAGER /etc/profile.d/windowmanager'"
+
+		eval $cmd
 	do : ; done
 }
 
