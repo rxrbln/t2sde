@@ -71,10 +71,12 @@ if [ "$forgotten_packages" ]; then
 	done
 fi
 #
-echo_status "Saving boot/* - we do not need this on the 2nd stage ..."
+echo_status "Saving boot/ lib/modules/ - for the 2nd stage ..."
 rm -rf ../boot ; mkdir ../boot
 mv boot/* ../boot/
-#
+rm -rf ../lib ; mkdir ../lib
+mv lib/modules ../lib/
+
 echo_status "Remove the stuff we do not need ..."
 rm -rf home usr/{local,doc,man,info,games,share}
 rm -rf var/adm/* var/games var/adm var/mail var/opt

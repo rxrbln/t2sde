@@ -48,25 +48,29 @@ for x in `egrep 'X .* KERNEL .*' $base/config/$config/packages |
 
   kernel=${x/_*/}
   kernelver=${x/*_/}
+  moduledir="`grep lib/modules  $build_root/var/adm/flists/$kernel |
+              cut -d ' ' -f 2 | cut -d / -f 1-3 | uniq | head -n 1`"
   initrd="initrd${kernel/linux/}.gz"
 
   pushd . 2>&1 > /dev/null
 
-  echo_status "Creating linuxrc for $kernel ($kernelver) ..."
+  echo_header "Creating linuxrc for $kernel ($kernelver) ..."
   rm -rf lib/modules/ # remove stuff from the last loop
 
-  echo_status "  Copy scsi and network kernel modules."
-  for x in ../2nd_stage/lib/modules/$kernelver*/kernel/drivers/{scsi,net}/*.{ko,o} ; do
+  echo_status "Copy scsi and network kernel modules."
+  for x in ../$moduledir/kernel/drivers/{scsi,net}/*.{ko,o} \
+      ../$moduledir/kernel/fs/nls/nls_{utf8,iso8859-{1,15}}.{ko,o}
+  do
 	# this test is needed in case there are no .o or only .ko files
 	if [ -f $x ]; then
-		xx=${x#../2nd_stage/}
+		xx=${x#../}
 		mkdir -p $( dirname $xx ) ; cp $x $xx
 		$STRIP --strip-debug $xx # stripping more breaks the object
 	fi
   done
 
-  for x in ../2nd_stage/lib/modules/$kernelver*/modules.{dep,pcimap,isapnpmap} ; do
-	cp $x ${x#../2nd_stage/} || echo "not found: $x" ;
+  for x in ../$moduledir/modules.{dep,pcimap,isapnpmap} ; do
+	cp $x ${x#../} || echo "not found: $x" ;
   done
 
   for x in lib/modules/*/kernel/drivers/{scsi,net}; do
@@ -77,7 +81,7 @@ for x in `egrep 'X .* KERNEL .*' $base/config/$config/packages |
 
   cd ..
 
-  echo_header "Creating initrd filesystem image: $initrd"
+  echo_status "Creating initrd filesystem image: $initrd"
 
   ramdisk_size=8192
   #[ $arch = x86 ] && ramdisk_size=4096
@@ -85,21 +89,10 @@ for x in `egrep 'X .* KERNEL .*' $base/config/$config/packages |
   echo_status "Creating temporary files."
   tmpdir=initrd_$$.dir; mkdir -p $disksdir/$tmpdir; cd $disksdir
   dd if=/dev/zero of=initrd.img bs=1024 count=$ramdisk_size &> /dev/null
-  tmpdev=""
-  for x in /dev/loop/* ; do
-        if losetup $x initrd.img 2> /dev/null ; then
-                tmpdev=$x ; break
-        fi
-  done
-  if [ -z "$tmpdev" ] ; then
-        echo_error "No free loopback device found!"
-        rm -f $tmpfile ; rmdir $tmpdir; exit 1
-  fi
-  echo_status "Using loopback device $tmpdev."
 
   echo_status "Writing initrd image file."
-  mke2fs -m 0 -N 180 -q $tmpdev &> /dev/null
-  mount -t ext2 $tmpdev $tmpdir
+  mke2fs -m 0 -N 180 -qF initrd.img &> /dev/null
+  mount -t ext2 initrd.img $tmpdir -o loop
   rmdir $tmpdir/lost+found/
   cp -a initrd/* $tmpdir
   umount $tmpdir
@@ -109,7 +102,6 @@ for x in `egrep 'X .* KERNEL .*' $base/config/$config/packages |
   mv initrd.img.gz $initrd
 
   echo_status "Removing temporary files."
-  losetup -d $tmpdev
   rm -rf $tmpdir
 
   popd 2>&1 > /dev/null

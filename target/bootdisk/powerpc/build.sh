@@ -4,7 +4,7 @@ use_yaboot=1
 cd $disksdir
 
 echo_header "Creating cleaning boot directory:"
-rm -rfv boot/*-dist boot/System.map boot/kconfig*
+rm -rfv boot/initrd* boot/System.map boot/kconfig*
 
 if [ $use_yaboot -eq 1 ]
 then
@@ -13,27 +13,44 @@ then
 	echo_status "Extracting yaboot boot loader images."
 	mkdir -p boot etc
 	tar --use-compress-program=bzip2 \
-	    -xf $base/build/${ROCKCFG_ID}/TOOLCHAIN/pkgs/yaboot.tar.bz2 \
-	    usr/lib/yaboot/yaboot -O > boot/yaboot
+	    -x -O -f $base/build/${ROCKCFG_ID}/TOOLCHAIN/pkgs/yaboot.tar.bz2 \
+	    usr/lib/yaboot/yaboot > boot/yaboot
 	tar --use-compress-program=bzip2 \
-	    -xf $base/build/${ROCKCFG_ID}/TOOLCHAIN/pkgs/yaboot.tar.bz2 \
-            usr/lib/yaboot/yaboot.rs6k -O > boot/yaboot.rs6k
+	    -x -O -f $base/build/${ROCKCFG_ID}/TOOLCHAIN/pkgs/yaboot.tar.bz2 \
+            usr/lib/yaboot/yaboot.rs6k > boot/yaboot.rs6k
 	cp boot/yaboot.rs6k install.bin
 	#
 	echo_status "Creating yaboot config files."
 	cp -v $base/target/$target/powerpc/{boot.msg,ofboot.b} \
 	  boot
-	(
-		echo "device=cdrom:" 
-		cat $base/target/$target/powerpc/yaboot.conf
-	) > etc/yaboot.conf
-	(
-		echo "device=cd:"
-		cat $base/target/$target/powerpc/yaboot.conf
-	) > boot/yaboot.conf
 	#
-	echo_status "Moving image (initrd) to boot directory."
-	mv -v initrd.gz boot/
+	# IBM RS/6000
+	echo "device=cdrom:" > etc/yaboot.conf
+	# Apple New World
+	echo "device=cd:" > boot/yaboot.conf
+	#
+	for x in `egrep 'X .* KERNEL .*' $base/config/$config/packages |
+	          cut -d ' ' -f 5-6 | tr ' ' '_'` ; do
+		kernel=${x/_*/}
+                kernelimg="`grep boot/vmlinux \
+		            $build_root/var/adm/flists/$kernel |
+		            cut -d ' ' -f 2 | cut -d / -f 1-3 |
+	                    uniq | head -n 1`"
+                initrd="initrd${kernel/linux/}.gz"
+		mv $initrd boot/
+                cat >> X << EOT
+       
+image=/$kernelimg
+    label=$kernel
+    initrd=/boot/$initrd
+    initrd-size=8192
+    append="root=/dev/ram devfs=nocompat init=/linuxrc rw"
+EOT
+        done
+	cat X >> etc/yaboot.conf
+	cat X >> boot/yaboot.conf
+	rm X
+
 	#
 	echo_status "Copy more config files."
 	cp -v $base/target/$target/powerpc/mapping .
