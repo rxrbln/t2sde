@@ -53,10 +53,10 @@ device=hd:
 partition=$yabootpart
 
 # Initial mutli-boot menu delay
-delay=10
+delay=5
 
 # Second yaboot image chooser delay
-timeout=4
+timeout=80
 
 install=$yabootpath/lib/yaboot/yaboot
 magicboot=$yabootpath/lib/yaboot/ofboot
