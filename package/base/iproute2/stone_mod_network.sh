@@ -121,6 +121,28 @@ edit_global_tag() {
 	write_section ""
 }
 
+add_tag() {
+	tta=""
+	cmd="gui_menu add_tag 'Add tag of type'"
+
+	while read tag module ; do
+		cmd="$cmd '$tag ($module)' 'tta=$tag'"
+	done < <( cd /etc/network/modules/ ; grep public_ * | sed -e \
+	          's/\([a-zA-Z0-9_-]*\).sh:public_\([a-zA-Z0-9_-]*\).*/\2 \1/' \
+	          | sort)
+	eval $cmd
+	if [ "$tta" ] ; then
+		tagno=${#tags[@]}
+		tags[$tagno]="$tta"
+		edit_tag $tagno
+	fi
+}
+
+add_global_tag() {
+	add_tag $@
+	write_section ""
+}
+
 edit_if() {
 	read_section "$1"
 	while
@@ -128,6 +150,9 @@ edit_if() {
 		for (( i=0 ; $i < ${#tags[@]} ; i=i+1 )) ; do
 			cmd="$cmd '${tags[$i]}' 'edit_tag $i'"
 		done
+
+		cmd="$cmd '' '' 'Add new tag' 'add_tag'"
+
 		eval "$cmd"
 	do : ; done
 	write_section "$1"
@@ -149,6 +174,8 @@ rocknet is executed.'"
 	for (( i=0 ; $i < ${#tags[@]} ; i=i+1 )) ; do
 		cmd="$cmd '${tags[$i]}' 'edit_global_tag $i'"
 	done
+
+	cmd="$cmd ''' '' Add new tag' 'add_global_tag'"
 
 	cmd="$cmd '' ''"
 
