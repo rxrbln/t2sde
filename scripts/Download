@@ -48,7 +48,7 @@ if [ "$1" = '--help' ] ; then
 	echo "    [ -cfg <config> ] [ -nock ]  [ -alt-dir <AlternativeDirectory> ]"
 	echo "    [ -mirror <URL> | -check ]  [ -try-questionable ]  [ -notimeout ]"
 	echo "    [ -longtimeout ]  [ -curl-opt <curl-option>[:<curl-option>[:..]] ]"
-	echo "    [ -proxy <server>[:<port>] ]"
+	echo "    [ -proxy <server>[:<port>] ] [ -proxy-auth <username>[:<password>] ]"
 	echo
 	echo " On default, this script auto-detects the best ROCK Linux mirror."
 	echo
@@ -89,12 +89,17 @@ fi
 # Handle options passed on the command line
 #
 mkdir -p src/ download/ ; config=default
+this_is_the_2nd_run=0
 mirror='' ; checkonly=0 ; altdir='' ; loop=1
-tryques=0 ; nocheck=0 ; options=''
+tryques=0 ; nocheck=0 ; options='-this_is_the_2nd_run '
 notimeout=0 ; curl_options='--disable-epsv'
 #
 while [ $loop -eq 1 ] ; do
 	case "$1" in
+
+	    -this_is_the_2nd_run)
+		this_is_the_2nd_run=1 
+		shift ;;
 
 	    -cfg)
 		options="$options -cfg $2"
@@ -118,6 +123,7 @@ while [ $loop -eq 1 ] ; do
 			echo
 			exit 1;
 		else
+			mkdir -p download
 			echo "$2" > download/Mirror
 			options="$options -mirror $2"
 			mirror="$2"
@@ -147,8 +153,17 @@ while [ $loop -eq 1 ] ; do
 
 	    -proxy)
 		# proxy option for curl
+		mkdir -p download
 		echo -n "$2" > download/Proxy
 		options="$options -proxy $2"
+		shift ; shift ;;
+
+	    -proxy-auth)
+		# proxy authentication for curl - can be seen with ps!
+		mkdir -p download
+		echo -n "$2" > download/Proxy-auth
+		chmod 600 download/Proxy-auth
+		options="$options -proxy-auth $2"
 		shift ; shift ;;
 
 	    -alt-dir)
@@ -177,13 +192,25 @@ fi
 if [ -f download/Proxy ]; then
 	proxy="`cat download/Proxy`"
 	if [ "$proxy" ]; then
-		echo "INFO: Setting proxy to $proxy."
+		test $this_is_the_2nd_run -eq 0 && \
+			echo "INFO: Setting proxy to $proxy."
 		curl_options="$curl_options --proxy $proxy"
 	else
 		echo "INFO: Empty proxy definition... removing download/Proxy."
 		rm download/Proxy
 	fi
 fi
+if [ -f download/Proxy-auth ]; then
+	proxyauth="`cat download/Proxy-auth`"
+	if [ "$proxyauth" ]; then
+		test $this_is_the_2nd_run -eq 0 && \
+			echo "INFO: Setting proxy authentication information."
+		curl_options="$curl_options --proxy-user $proxyauth"
+	else
+		echo "INFO: No proxy-auth information... removing download/Proxy-auth."
+		rm download/Proxy-auth
+ 	fi
+ fi
 
 # cksum_chk filename cksum origfile
 #
@@ -206,6 +233,14 @@ cksum_chk() {
 	fi
 	return 0
 }
+
+# Choosen config must exist
+#
+if [ ! -f config/$config/packages ]; then
+	echo "ERROR: Config $config doesn't exist."
+	echo "ERROR: try ./scripts/Config -cfg $config first."
+	exit 1
+fi
 
 # Autodetect best Mirror and safe url in $mirror
 #
@@ -255,7 +290,9 @@ detect_mirror() {
 
 # download_file local-filename download-location cksum
 #
-# This function executes the actual download using curl.
+# This function decides if download directly or from a mirror,
+# validates checksum, etc.
+# Calls download_file_now to do the actual download.
 #
 download_file() {
 
@@ -370,159 +407,20 @@ download_file() {
 
 		    # Mirroring
 		    #
-		    [ -z "$mirror" ] && detect_mirror
+		    mirror="$( cat download/Mirror )"
+
 		    if [ "$mirror" -a "$mirror" != "none" ] ; then
-			location="!$mirror/${bzfile#download/}"
-			gzfile="$bzfile"
-		    fi
-		
-		    # Create URL
-		    #
-		    if [ "${location#!}" != "$location" ] ; then
-			url="`echo "$location" | sed 's,!,,'`"
-		    else
-			url="`echo "$location" | \
-			     sed 's,/[^/]*$,,'`/`echo $gzfile | sed 's,.*/,,'`"
-		    fi
-
-		    # Check for existing Error Log
-		    #
-		    if test -s src/Download-Errors &&
-		       grep -q " $url\$" src/Download-Errors ; then
-			    echo "ERROR: According to src/Download-Errors" \
-			         "we had already an error for that URL."
-			    echo "ERROR: So I'm not trying to download" \
-			         "it again (remove src/Download-Errors"
-			    echo "ERROR: if you want to force a retry)."
-			    rm -f "$lkfile" ; trap INT ; return 1
-		    fi
-
-		    # Download
-		    #
-		    if [[ $url = cvs://* ]] ; then
-
-			url="`dirname $url`"
-			mode="`echo $url | sed -e s,^cvs://,, -e 's,:.*,,'`"
-			
-			if [ "${url##*\!*}" ] ; then dat=""
-			else dat="-D ${url##*\!}" ; dat="${dat//_/ }" ; fi
-
-			loc="`echo $url | \
-			  sed 's,^cvs://[a-z,A-Z]*:,,; s,::.*$,,'`"
-			module="`echo $url | sed 's/^.*:://;   s,!.*$,,'`"
-
-			cvsdir="src/down.cvsdir.`echo $bzfile | tr / -`"
-			saved_pwd=$PWD ; mkdir -p $cvsdir ; cd $cvsdir
-
-			echo CVS $mode $loc $dat $module
-			{ [ $mode = ssh ] && export CVS_RSH=ssh
-			  [ $mode = pserver ] && loc=":pserver:$loc"
-			  # for ssh we need some way to quitely accept
-			  # the key ...
-			  echo cvs -z9 -Q -d $loc checkout $dat -P $module
-			  if ! cvs -z9 -Q -d $loc checkout $dat -P $module
-			  then touch .cvs_error ; fi
-			} &> .cvs_output &
-
-			while fuser .cvs_output &> /dev/null ; do
-				echo -ne `nice du -sh 2> /dev/null | cut -f1` 'downloaded from' \
-					'CVS archive so far...\r'
-				sleep 3
-			done
-			echo `du -sh 2> /dev/null | cut -f1` 'downloaded from' \
-				'CVS archive (download finished).'
-
-			if [ ! -f .cvs_error ] ; then
-				cd `dirname $module`
-				dir="`echo "$bzfile" | sed s/\.tar\.bz2$//`"
-				dir="`basename $dir`"
-
-				mv `basename $module` $dir
-
-				tar --owner root --group root \
-				    --use-compress-program=bzip2 \
-				    -cf $dir.tar.bz2 $dir
-				mv $dir.tar.bz2 $saved_pwd/$bzfile
-
-				cd $saved_pwd ; rm -rf $cvsdir
+			# try to use mirror
+			if ! download_file_now "!$mirror/${bzfile#download/}" $bzfile $bzfile; then
+				# oops... so try direct
+				echo "INFO: download from mirror failed, trying direct."
+				download_file_now $location $gzfile $bzfile
 			else
-				cat .cvs_output
-				cd $saved_pwd ; rm -rf $cvsdir
-				echo ERROR: CVS $dat $loc $module \
-				            returned an error.
-				echo "0 $gzfile $url" >> src/Download-Errors
+				gzfile="$bzfile"
 			fi
 		    else
-			if [ -s "$gzfile.incomplete" ] ; then
-			    echo "INFO: Trying to resume previous download .."
-			    resume="-C -"
-			else
-			    resume=""
-			fi
-
-			curl -w '\rFinished downloading %{size_download} bytes in %{time_total} seconds (%{speed_download} bytes/sec). \n' -f --progress-bar $resume $curl_options "$url" -o "$gzfile.incomplete"
-			curlret="$?"
-
-			if [ "$resume" ] && \
-			   [ $curlret -eq 33 -o $curlret -eq 36 ] ; then
-			    echo "INFO: Resuming download not possible. ->" \
-			         "Overwriting old file."
-			    rm -f "$gzfile.incomplete"
-			    curl -w '\rFinished downloading %{size_download} bytes in %{time_total} seconds (%{speed_download} bytes/sec). \n' -f --progress-bar $curl_options "$url" -o "$gzfile.incomplete"
-			    curlret="$?"
-			fi
-
-			if [ $curlret -ne 0 ] ; then
-			    rm -f "$lkfile" ; trap INT
-			    case "$curlret" in
-			      18)
-			      echo "WARNING: Got only some of the" \
-				   "file. A re-run of $0"
-			      echo "WARNING: is required to complete" \
-				   "the download." ;;
-			      130)
-			      echo -e '\rWARNING: CURL got a SIGINT' \
-				   "(someone pressed Ctrl-C). A re-run of"
-			      echo "WARNING: $0 is required to complete" \
-				   "the download." ; sleep 1 ;;
-			      *)
-			      echo "$curlret $gzfile $url" \
-						>> src/Download-Errors
-			      echo -e '\rERROR: CURL Returned Error' \
-				   "$curlret. Please read" \
-				   "the curl manpage." ;;
-			    esac
-			    return 1
-			elif [ ! -s "$gzfile.incomplete" ] ; then
-			    echo "0 $gzfile $url" >> src/Download-Errors
-			    echo "ERROR: CURL returned success but" \
-			         "we have no data!"
-			    curlret=1
-			else
-			    case "$gzfile" in
-			      *.gz|*.tgz)
-				  typeexpr="gzip compressed data" ;;
-			      *.bz2|*.tbz2)
-				  typeexpr="bzip2 compressed data" ;;
-			      *.Z|*.tZ)
-				  typeexpr="compress'd data" ;;
-			      *.zip|*.jar)
-				  typeexpr="Zip archive data" ;;
-			      *.tar)
-				  typeexpr="tar archive" ;;
-			      *)
-				  echo "WARNING: Unkown file extension: $gzfile"
-				  typeexpr="." ;;
-			    esac
-			    if file "$gzfile.incomplete" | grep -v "$typeexpr"
-			    then
-				echo "ERROR: File type does not match" \
-				     "filename ($typeexpr)!"
-				mv "$gzfile.incomplete" "$gzfile.extck-err"
-			    else
-				mv "$gzfile.incomplete" "$gzfile"
-			    fi
-		        fi
+			# don't want to use mirror
+			download_file_now $location $gzfile $bzfile
 		    fi
 		fi
 
@@ -564,6 +462,179 @@ download_file() {
 	#
 	rm -f "$lkfile" ; trap INT ; return 0
 }
+
+# download_file_now location remote_filename local_filename
+#
+# This function executes the actual download using curl.
+#
+download_file_now() {
+	local location="$1" gzfile="$2" bzfile="$3"
+
+	# Create URL
+	#
+	if [ "${location#!}" != "$location" ] ; then
+		url="`echo "$location" | sed 's,!,,'`"
+	else
+		url="`echo "$location" | \
+			sed 's,/[^/]*$,,'`/`echo $gzfile | sed 's,.*/,,'`"
+	fi
+
+	# Check for existing Error Log
+	#
+	if test -s src/Download-Errors &&
+ 	   grep -q " $url\$" src/Download-Errors ; then
+		echo "ERROR: According to src/Download-Errors" \
+		     "we had already an error for that URL."
+		echo "ERROR: So I'm not trying to download" \
+		     "it again (remove src/Download-Errors"
+		echo "ERROR: if you want to force a retry)."
+		rm -f "$lkfile" ; trap INT ; return 1
+	fi
+
+	# Download
+	#
+	if [[ $url = cvs://* ]] ; then
+
+		# cvs://mode:[login[:password]@]server[:port]:/path::module!revision/
+		# btw, at least current cvs supports password at CVSROOT.
+
+		url="${url#cvs://}"; url="${url%/*}"
+		echo "cvs://$url/"
+
+		# cvs://mode:loc::module!date/
+		#
+		mode="${url%%:*}"; loc="${url#*:}"
+		module="${loc##*::}"; loc="${loc%%::*}"
+		revision="${module#*!}"; module="${module%%!*}"
+		[[ $loc != *@* ]] && loc="anonymous@$loc"
+		echo "mode: $mode"
+		echo "loc : $loc"
+		echo "mod : $module"
+		echo "rev : $revision"
+
+		# everything after the first 'bang' (!) is analysed here
+		# someday we could add more cvs options.
+		#
+
+		dat="$( echo $revision | \
+			sed -n -e 's,\([0-9]\{4\}-[0-9]\{2\}-[0-9]\{2\}\),-D \1,p' )"
+		echo "date: $dat"
+
+		cvsdir="src/down.cvsdir.`echo $bzfile | tr / -`"
+		saved_pwd=$PWD ; mkdir -p $cvsdir ; cd $cvsdir
+
+		echo CVS $mode $loc $dat $module
+		{ [ $mode = ssh ] && export CVS_RSH=ssh
+		  [ $mode = pserver ] && loc=":pserver:$loc"
+		  # for ssh we need some way to quitely accept
+		  # the key ...
+		  echo cvs -z9 -Q -d $loc checkout $dat -P $module
+		  if ! cvs -z9 -Q -d $loc checkout $dat -P $module
+		  then touch .cvs_error ; fi
+		} &> .cvs_output &
+
+		while fuser .cvs_output &> /dev/null ; do
+			echo -ne `nice du -sh 2> /dev/null | cut -f1` 'downloaded from' \
+				'CVS archive so far...\r'
+			sleep 3
+		done
+		echo `du -sh 2> /dev/null | cut -f1` 'downloaded from' \
+			'CVS archive (download finished).'
+
+		if [ ! -f .cvs_error ] ; then
+			cd `dirname $module`
+			dir="`echo "$bzfile" | sed s/\.tar\.bz2$//`"
+			dir="`basename $dir`"
+
+			mv `basename $module` $dir
+
+			tar --owner root --group root \
+			    --use-compress-program=bzip2 \
+			    -cf $dir.tar.bz2 $dir
+			mv $dir.tar.bz2 $saved_pwd/$bzfile
+
+			cd $saved_pwd ; rm -rf $cvsdir
+		else
+			cat .cvs_output
+			cd $saved_pwd ; rm -rf $cvsdir
+			echo ERROR: CVS $dat $loc $module \
+			            returned an error.
+			echo "0 $gzfile $url" >> src/Download-Errors
+		fi
+	else
+		if [ -s "$gzfile.incomplete" ] ; then
+		    echo "INFO: Trying to resume previous download .."
+		    resume="-C -"
+		else
+		    resume=""
+		fi
+
+		curl -w '\rFinished downloading %{size_download} bytes in %{time_total} seconds (%{speed_download} bytes/sec). \n' -f --progress-bar $resume $curl_options "$url" -o "$gzfile.incomplete"
+		curlret="$?"
+
+		if [ "$resume" ] && \
+		   [ $curlret -eq 33 -o $curlret -eq 36 ] ; then
+		    echo "INFO: Resuming download not possible. ->" \
+		         "Overwriting old file."
+		    rm -f "$gzfile.incomplete"
+		    curl -w '\rFinished downloading %{size_download} bytes in %{time_total} seconds (%{speed_download} bytes/sec). \n' -f --progress-bar $curl_options "$url" -o "$gzfile.incomplete"
+		    curlret="$?"
+		fi
+
+		if [ $curlret -ne 0 ] ; then
+		    rm -f "$lkfile" ; trap INT
+		    case "$curlret" in
+		      18)
+		      echo "WARNING: Got only some of the" \
+			   "file. A re-run of $0"
+		      echo "WARNING: is required to complete" \
+			   "the download." ;;
+		      130)
+		      echo -e '\rWARNING: CURL got a SIGINT' \
+			   "(someone pressed Ctrl-C). A re-run of"
+		      echo "WARNING: $0 is required to complete" \
+			   "the download." ; sleep 1 ;;
+		      *)
+		      echo "$curlret $gzfile $url" \
+					>> src/Download-Errors
+		      echo -e '\rERROR: CURL Returned Error' \
+			   "$curlret. Please read" \
+			   "the curl manpage." ;;
+		    esac
+		    return 1
+		elif [ ! -s "$gzfile.incomplete" ] ; then
+		    echo "0 $gzfile $url" >> src/Download-Errors
+		    echo "ERROR: CURL returned success but" \
+		         "we have no data!"
+		    curlret=1
+		else
+		    case "$gzfile" in
+		      *.gz|*.tgz)
+			  typeexpr="gzip compressed data" ;;
+		      *.bz2|*.tbz2)
+			  typeexpr="bzip2 compressed data" ;;
+		      *.Z|*.tZ)
+			  typeexpr="compress'd data" ;;
+		      *.zip|*.jar)
+			  typeexpr="Zip archive data" ;;
+		      *.tar)
+			  typeexpr="tar archive" ;;
+		      *)
+			  echo "WARNING: Unkown file extension: $gzfile"
+			  typeexpr="." ;;
+		    esac
+		    if file "$gzfile.incomplete" | grep -v "$typeexpr"
+		    then
+			echo "ERROR: File type does not match" \
+			     "filename ($typeexpr)!"
+			mv "$gzfile.incomplete" "$gzfile.extck-err"
+		    else
+			mv "$gzfile.incomplete" "$gzfile"
+		    fi
+		fi
+	fi
+}
+
 
 # handle_file filename
 #
@@ -719,6 +790,12 @@ all() {
 	while read fn ; do single_files $fn ; done < src/down.$$.lst
 	rm -f src/down.$$.lst
 }
+
+# Do mirror detection only once
+#
+if [ $this_is_the_2nd_run = 0 ]; then
+	detect_mirror
+fi
 
 case "$1" in
 	-list)		list ;;
