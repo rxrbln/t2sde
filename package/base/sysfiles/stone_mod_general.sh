@@ -71,9 +71,9 @@ store_kbd(){
 		sed -e "s/kbd_rate=.*/kbd_rate=$kbd_rate/" \
 		    -e "s/kbd_delay=.*/kbd_delay=$kbd_delay/" < /etc/conf/kbd \
 		  > /etc/conf/kbd.tmp
-		grep kbd_rate= /etc/conf/kbd.tmp || echo kbd_rate=$kbd_rate \
+		grep -q kbd_rate= /etc/conf/kbd.tmp || echo kbd_rate=$kbd_rate \
 		  >> /etc/conf/kbd.tmp
-		grep kbd_delay= /etc/conf/kbd.tmp || echo kbd_delay=$kbd_delay \
+		grep -q kbd_delay= /etc/conf/kbd.tmp || echo kbd_delay=$kbd_delay \
 		  >> /etc/conf/kbd.tmp
 		mv /etc/conf/kbd.tmp /etc/conf/kbd
 	else
@@ -100,9 +100,9 @@ store_con(){
 		sed -e "s/con_term=.*/con_term=$con_term/" \
 		    -e "s/con_blank=.*/con_blank=$con_blank/" \
 		  < /etc/conf/console > /etc/conf/console.tmp
-		grep con_term= /etc/conf/console.tmp || \
+		grep -q con_term= /etc/conf/console.tmp || \
 		  echo con_term=$con_term >> /etc/conf/console.tmp
-		grep con_blank= /etc/conf/console.tmp || \
+		grep -q con_blank= /etc/conf/console.tmp || \
 		  echo con_blank=$con_blank >> /etc/conf/console.tmp
 		mv /etc/conf/console.tmp /etc/conf/console
 	else
@@ -144,7 +144,9 @@ set_dtime() {
 	if [ "$dtime" != "$newdtime" ] ; then
 		echo "Setting new date and time ($newdtime) ..."
 		date "$( echo $newdtime | sed 's,[^0-9],,g' )"
-		hwclock --systohc --utc
+		[ -f /etc/conf/clock ] && . /etc/conf/clock
+		[ "$clock_tz" != localtime ] && clock_tz=utc
+		hwclock --systohc --$clock_tz
 	fi
 }
 
