@@ -142,6 +142,10 @@ xf_config() {
 /* Disable the internal zlib to use the system installed one */
 #define		HasZlib			YES
 
+/* Disable some internal libraries - we (normally) ship a newer one */
+#define		BuildFontconfig		NO
+#define		BuildXftLibrary		NO
+
 /* Less warnings with recent gccs ... */
 #define		DefaultCCOptions	-ansi GccWarningOptions
 
