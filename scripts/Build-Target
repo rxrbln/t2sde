@@ -71,29 +71,22 @@ fi
 # Package Build loop - executed by build-target
 #
 pkgloop() {
-	local x= y=
-
 	if [ "$ROCKCFG_NOBROKENDEPS" = 1 ]; then
 		nobrokendeps="-nobrokendeps"
 	else
 		nobrokendeps=""
 	fi
-	if [ -z "$build_only_this_job" ]; then
-
-	if [ "`ls ${build_root}/var/adm/logs/*.err 2> /dev/null`" ] ; then
+	if [ "$ROCKCFG_RETRY_BROKEN" -eq 1 -a \
+	     -z "$build_only_this_job" -a \
+	     "`ls ${build_root}/var/adm/logs/*.err 2> /dev/null`" ] ; then
 		echo_header "Removing old error logs ..."
-		for y in 0 1 2 3 4 5 6 7 8 9; do
-			if [ "$ROCKCFG_RETRY_BROKEN" -eq 1 -o $y -le "$ROCKCFG_ABORT_ON_ERROR_STAGE" ]; then
-				for x in ${build_root}/var/adm/logs/$y-*.err ; do
-					if [ -f $x ]; then
-						echo_status "Removing ${x#$build_root/} ..."
-						rm -f $x
-					fi
-				done
-			fi
+		for x in ${build_root}/var/adm/logs/*.err ; do
+			echo_status "Removing ${x#$build_root/} ..."
+			rm -f $x
 		done
 	fi
-	if [ "`ls ${build_root}/var/adm/logs/*.out 2> /dev/null`" ] ; then
+	if [ -z "$build_only_this_job" -a \
+	     "`ls ${build_root}/var/adm/logs/*.out 2> /dev/null`" ] ; then
 		echo_header "Removing old output logs ..."
 		for x in ${build_root}/var/adm/logs/*.out ; do
 			echo_status "Removing ${x#$build_root/} ..."
@@ -101,7 +94,7 @@ pkgloop() {
 		done
 	fi
 
-	if [ "$ROCKCFG_PARALLEL" = 1 ]
+	if [ "$ROCKCFG_PARALLEL" = 1 -a -z "$build_only_this_job" ]
 	then
 		qdir="$base/build/$ROCKCFG_ID/TOOLCHAIN/queue"
 		mkdir -p $qdir
@@ -195,16 +188,7 @@ fi
 		echo "All packages build."
 		sleep 2 ; rm -rf $qdir ; trap - SIGINT
 	else
-		while
-		    next="`./scripts/Create-PkgQueue \
-				-cfg "$config" -single $nobrokendeps`"
-		    [ "$next" ]
-		do
-		    pkgloop_package $next
-		done
-	fi
-
-	else
+	    if [ "$build_only_this_job" ] ; then
 		rm -f "${build_root}"/var/adm/logs/${build_only_this_job}.log"
 		rm -f "${build_root}"/var/adm/logs/${build_only_this_job}.err"
 		next="$( awk 'BEGIN { FS=" "; }
@@ -214,6 +198,15 @@ fi
 		              print; exit; }' < config/$config/packages )"
 		[ "$next" ] && pkgloop_package $next
 		exit 0
+	    else
+		while
+		    next="`./scripts/Create-PkgQueue \
+				-cfg "$config" -single $nobrokendeps`"
+		    [ "$next" ]
+		do
+		    pkgloop_package $next
+		done
+	    fi
 	fi
 
 	local pkglst=`mktemp` errors=0; rm -f src/invalid-files.lst
@@ -297,10 +290,7 @@ pkgloop_package() {
 	cmd_buildpkg="$cmd_buildpkg $cmd_root $cmd_prefix $pkg_name"
 
 	# Execute action handler
-	if ! pkgloop_action && \
-	   [ $stagelevel -le "$ROCKCFG_ABORT_ON_ERROR_STAGE" ] ; then
-		exit 1
-	fi
+	pkgloop_action || [ $stagelevel -gt "$ROCKCFG_ABORT_ON_ERROR_STAGE" ] || exit 1
 
 	if [ ! -f ${build_root}/var/adm/logs/$stagelevel-$pkg_name.log -a \
 	     ! -f ${build_root}/var/adm/logs/$stagelevel-$pkg_name.err ]
