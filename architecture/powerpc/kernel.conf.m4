@@ -23,6 +23,7 @@ CONFIG_PPC32=y
 # CONFIG_40x is not set
 # CONFIG_POWER3 is not set
 
+CONFIG_ALTIVEC=y
 
 include(`kernel-common.conf')
 include(`kernel-scsi.conf')
@@ -32,9 +33,9 @@ include(`kernel-fs.conf')
 dnl macs need a special RTC ... (this need to be fixed in the kernel so we
 dnl can have generic support for the rs6k and mac support at the same time
 dnl
-# CONFIG_GEN_RTC is not set
-CONFIG_PPC_RTC=m
 # CONFIG_RTC is not set
+# CONFIG_GEN_RTC is not set
+CONFIG_PPC_RTC=y
 
 dnl macs need an FB
 dnl
