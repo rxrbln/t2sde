@@ -42,3 +42,4 @@ echo "DISK1	build/${ROCKCFG_ID}/TOOLCHAIN/bootdisk/isofs/ `
 	`${ROCKCFG_SHORTID}/" > ../isofs_generic.txt
 cat ../isofs_*.txt > ../isofs.txt
 
+echo_status "Done!"
