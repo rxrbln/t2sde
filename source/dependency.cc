@@ -2,6 +2,7 @@
 #include "utility/src/File.cc"
 #include <map>
 #include <sstream>
+#include <algorithm>
 
 // todo: const correctness
 
@@ -24,6 +25,8 @@ public:
 
   const std::string& Name () {return name;}
 
+  int Priority () {return priority;}
+
 private:
   friend class PkgGraph;
 
@@ -36,6 +39,8 @@ class PkgGraph : public std::map <std::string, PkgNode*>
 {
 public: // TODO: duplication checking !!
   void AddPkg (PkgNode* pkg) { (*this)[pkg-> Name()] = pkg; }
+
+  typedef std::map <std::string, PkgNode*>::iterator iterator;
 
   int GetPriority (const std::string& pkgname)
   {
@@ -168,10 +173,164 @@ std::string PkgName (const std::string& file)
   return Utility::File(file).BasenameWOExtension();
 }
 
+class PriorityCmp
+{
+public:
+  bool operator() (PkgNode* a, PkgNode* b)
+  {
+    return a->Priority() < b->Priority();
+  }
+};
+
+class DownArrow
+{
+public:
+  DownArrow (unsigned int pkg_priority)
+  {
+    start = pkg_priority;
+    end = pkg_priority; 
+  }
+
+  void SetNeed (unsigned int by_priority)
+  {
+    end = std::max(end, by_priority);
+  }
+
+  // returns true iff a and this arrow can be drawn in the same column
+  bool Compatible (const DownArrow& a)
+  {
+    return (a.start > end || a.end < start);
+  }
+
+  unsigned int start;
+  unsigned int end;
+  unsigned int h_pos;
+};
+
+std::map <std::string, DownArrow*> down_arrows;
+typedef std::map <std::string, DownArrow*>::iterator arrow_iterator;
+
+void InsertAt(std::string& s, unsigned int char_pos, char c)
+{
+  while (s.length() <= char_pos)
+    s += " ";
+  s[char_pos] = c;
+}
+
+std::string Template (unsigned int v_pos)
+{
+  arrow_iterator arr_end = down_arrows.end ();
+  std::string ret = "";
+
+  for (arrow_iterator i = down_arrows.begin(); i != arr_end; i++) {
+    if (i -> second -> start <= v_pos && i -> second -> end > v_pos)
+      InsertAt(ret, 2*(i -> second -> h_pos), '|');
+  }
+
+  return ret;
+}
+
+std::string HRef (PkgNode& node, unsigned int v_pos)
+{
+  std::string tmpl = Template(v_pos);
+  arrow_iterator arr_end = down_arrows.end ();
+  
+  unsigned int h_min = ((unsigned int) ((int) -1));
+
+  // comparism (1) is a workaround for those cross references
+
+  for (PkgNode::iterator dep_on = node.Begin(); dep_on != node.End(); dep_on++) {
+    arrow_iterator arrow = down_arrows.find(*dep_on);
+    if (arrow != arr_end && arrow -> second -> start < v_pos /* (1) */) {
+      h_min = std::min (h_min, arrow -> second -> h_pos);
+      InsertAt(tmpl, 2*(arrow -> second -> h_pos), '+');
+    }
+  }
+
+  arrow_iterator arrow = down_arrows.find(node.Name());
+  if (arrow != arr_end) {
+    h_min = std::min (h_min, arrow -> second -> h_pos);
+    InsertAt(tmpl, 2*(arrow -> second -> h_pos), 'v');
+  }
+
+  for (unsigned int i = 2*h_min; i < tmpl.length(); i++)
+    if (tmpl[i] != 'v' && tmpl[i] != '+')
+      tmpl[i]='-';
+
+  return tmpl;
+}
+
+
+void PrintGraph ()
+{
+  std::vector <PkgNode*> needed;
+
+  for (PkgGraph::iterator i = pkg_graph.begin(); i != pkg_graph.end(); i++) {
+    if (i -> second -> Priority () >= 0)
+      needed.push_back (i -> second);
+  }
+
+  // sort after priority
+  std::sort (needed.begin(), needed.end(), PriorityCmp ());
+
+  arrow_iterator arr_end = down_arrows.end ();
+
+
+
+  // compute DownArrow lengh
+  for (unsigned int i = 0; i < needed.size(); i++) {
+    PkgNode& current = *(needed[i]);
+    down_arrows[current.Name()] = new DownArrow (i);
+    for (PkgNode::iterator dep_on = current.Begin(); dep_on != current.End(); dep_on++) {
+      arrow_iterator arrow = down_arrows.find(*dep_on);
+      if (arrow != arr_end)
+	arrow -> second -> SetNeed(i);
+    }
+  }
+
+  // greedyly arrange DownArrows horizontaly
+  for (unsigned int i = 0; i < needed.size(); i++) {
+    arrow_iterator cur_assign = down_arrows.find(needed[i] -> Name());
+
+    unsigned int h_pos = 0;
+    bool pos_found;  
+
+    do {
+      pos_found = true;
+
+      for (unsigned int j = 0; j < i ; j++) {
+	arrow_iterator assigned = down_arrows.find(needed[j] -> Name());
+	if (assigned -> second -> h_pos == h_pos)
+	  if (!(assigned -> second -> Compatible(*(cur_assign -> second))))
+	    pos_found = false;
+      }
+
+      if (pos_found)
+	cur_assign -> second -> h_pos = h_pos;
+      else
+	h_pos++;
+    } while (!pos_found);
+
+  }
+
+  // Print the graph
+  for (unsigned int i = 0; i < needed.size(); i++) {
+    std::cout << HRef (*(needed[i]),i) << "---" << needed[i] -> Name() << std::endl
+	      << Template(i) << std::endl; 
+  }
+}
+
+
 
 int main (int argc, char** argv)
 {
-  argv ++;
+  if (argc < 3) {
+    std::cerr << argv[0] << " <pkgs> <cachefile>+" << std::endl;
+    exit (-1);
+  }
+
+  std::string package(argv[1]);
+  argv += 2;
   while (*argv) {
     pkg_graph.AddPkg(
 	  cache_file.DepsFromFile(
@@ -179,5 +338,7 @@ int main (int argc, char** argv)
     argv ++;
   }
 
-  std::cout << pkg_graph.GetPriority ("flex") << std::endl;
+  pkg_graph.GetPriority (package);
+
+  PrintGraph();
 }
