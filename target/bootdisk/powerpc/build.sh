@@ -4,10 +4,9 @@ use_yaboot=1
 cd $disksdir
 
 echo_header "Creating cleaning boot directory:"
-rm -rfv boot/initrd* boot/System.map boot/kconfig*
+rm -rfv boot/initrd* boot/System.map* boot/kconfig* boot/zImage*
 
-if [ $use_yaboot -eq 1 ]
-then
+if [ $use_yaboot -eq 1 ]; then
 	echo_header "Creating yaboot setup:"
 	#
 	echo_status "Extracting yaboot boot loader images."
