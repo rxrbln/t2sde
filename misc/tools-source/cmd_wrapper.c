@@ -51,6 +51,7 @@
 #include <sys/wait.h>
 #include <libgen.h>
 #include <fnmatch.h>
+#include <errno.h>
 
 #ifndef ENVPREFIX
 #    error You must use -DENVPREFIX=".." when compiling this tool.
@@ -348,7 +349,7 @@ reread_file_finished:
 	
 	if ( (delim=getenv(ENVPREFIX "_WRAPPER_NOLOOP")) != NULL &&
 					delim[0] && delim[0] != '0') {
-		return 250;
+		return 251;
 	}
 	setenv(ENVPREFIX "_WRAPPER_NOLOOP", "1", 1);
 
@@ -381,7 +382,7 @@ reread_file_finished:
 		if (debug) fprintf(stderr, "New PATH: %s\n", optbuf);
 #endif
 	} else {
-		return 250;
+		return 252;
 	}
 
 	/*
@@ -407,8 +408,12 @@ reread_file_finished:
 			fprintf(logfile, "\n");
 			fclose(logfile);
 		}
+		newargv[c1] = NULL;
 		execvp(newargv[0], newargv);
-		return 250;
+		fprintf(stderr, "cmd_wrapper: execvp(%s,...) - %s\n", 
+			newargv[0], strerror(errno));
+
+		return 253;
 	}
 
 	/*
@@ -432,6 +437,8 @@ reread_file_finished:
 
 	newargv[c1]=NULL;
 	execvp(newargv[0], newargv);
+	fprintf(stderr, "cmd_wrapper: execvp(%s,...) - %s\n", 
+		newargv[0], strerror(errno));
 	
-	return 250;
+	return 254;
 }
