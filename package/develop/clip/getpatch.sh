@@ -1,13 +1,21 @@
 #!/bin/sh
 tempfile=clip-patch.tar.gz.$$
+#location=ftp://ftp.linux.ru.net/mirrors/clip
+location=ftp://ftp.itk.ru/pub/clip/
 
-curl -v ftp://ftp.linux.ru.net/mirrors/clip/patch.tgz -o $tempfile
-if [ $? -ne 0 ]; then
-	rm -f $tempfile
-	exit
+echo "get: $location/patch.tgz"
+if [ -f patch.tgz ]; then
+	mv patch.tgz $tempfile
+else
+	curl -v $location/patch.tgz -o $tempfile
+	if [ $? -ne 0 ]; then
+		rm -f $tempfile
+		exit
+	fi
 fi
 
 release=$( tar zOxf $tempfile ./clip-prg/clip/release_version )
+[ -z "$release" ] && release=$( grep -e '^\[V\]' clip.desc | cut -d' ' -f2- | cut -d'-' -f1)
 seqno=$( tar zOxf $tempfile ./clip-prg/clip/seq_no.txt )
 
 if [ -n "$release" -a -n "$seqno" ]; then
