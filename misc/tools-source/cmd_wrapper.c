@@ -31,9 +31,7 @@
  *      prefix_WRAPPER_DEBUG		0
  *      prefix_WRAPPER_BYPASS		0
  *
- * 	prefix_WRAPPER_APPEND_PO	"-1st-opt -2nd-opt"
- * 
- *	prefix_WRAPPER_OTHERS		"wrapper1:wrapper2:..."
+ *	prefix_WRAPPER_OTHERS		"other_cmd"
  *
  *	prefix_WRAPPER_INSERT		"-1st-opt -2nd-opt"
  *	prefix_WRAPPER_REMOVE		"-del-this-opt -this-also [!-]*"
@@ -66,13 +64,13 @@
 int debug=1;
 
 /*
- *  Clean config vars before using them  (ugh!)
+ *  Clean config vars before using them
  */
 void cleanenv(const char * name, const char ch) {
 	int pos1=0, pos2=0, delim=1;
 	char *tmp1, *tmp2;
 
-	setenv(name, "", 0);
+	setenv(name, "", 0); /* no overwrite - make sure it is defined */
 	tmp1 = getenv(name);
 	tmp2 = malloc(strlen(tmp1)+1);
 
@@ -97,8 +95,9 @@ void cleanenv(const char * name, const char ch) {
  */
 int main(int argc, char ** argv) {
 	char **newargv;
+	char *other;
 	int c1,c2,c3;
-	char *delim, *delim1, *optbuf, *wrdir;
+	char *delim, *optbuf, *wrdir;
 	FILE *logfile = NULL;
 
 	/* Calling the wrapper with an absolute path results in an
@@ -128,14 +127,6 @@ int main(int argc, char ** argv) {
 		free(delim);
 	}
 
-	/* Others loop */
-	if ( (delim = getenv(ENVPREFIX "_WRAPPER_OTHERS_TMP")) != NULL )
-		setenv(ENVPREFIX "_WRAPPER_OTHERS", delim, 1);
-
-	/* Has to be solved that way ... do not ask my why >_< */
-	if ( (delim = getenv(ENVPREFIX "_WRAPPER_APPEND_PO_CLEAR")) != NULL )
-		setenv(ENVPREFIX "_WRAPPER_APPEND_PO", "", 1);
-
 	/*
 	 *  Read prefix_WRAPPER_DEBUG and prefix_WRAPPER_BYPASS
 	 */
@@ -149,7 +140,6 @@ int main(int argc, char ** argv) {
 		if (debug) fprintf(stderr, "Bypassing cmd_wrapper by "
 		                           "clearing all config variables.\n");
 #endif
-		setenv(ENVPREFIX "_WRAPPER_APPEND_PO", "", 1);
 		setenv(ENVPREFIX "_WRAPPER_OTHERS", "", 1);
 		setenv(ENVPREFIX "_WRAPPER_INSERT", "", 1);
 		setenv(ENVPREFIX "_WRAPPER_REMOVE", "", 1);
@@ -157,7 +147,6 @@ int main(int argc, char ** argv) {
 		setenv(ENVPREFIX "_WRAPPER_FILTER", "", 1);
 	}
 
-	cleanenv(ENVPREFIX "_WRAPPER_APPEND_PO", ' ');
 	cleanenv(ENVPREFIX "_WRAPPER_OTHERS", ':');
 	cleanenv(ENVPREFIX "_WRAPPER_INSERT", ' ');
 	cleanenv(ENVPREFIX "_WRAPPER_REMOVE", ' ');
@@ -170,8 +159,6 @@ int main(int argc, char ** argv) {
 		for (c3=0; c3<argc; c3++) fprintf(stderr, " %s", argv[c3]);
 		fprintf(stderr, "\n");
 		fprintf(stderr, "ENVPREFIX = '%s'\n", ENVPREFIX);
-		fprintf(stderr, "APPEND_PO = '%s'\n",
-				getenv(ENVPREFIX "_WRAPPER_APPEND_PO"));
 		fprintf(stderr, "OTHERS = '%s'\n",
 				getenv(ENVPREFIX "_WRAPPER_OTHERS"));
 		fprintf(stderr, "INSERT = '%s'\n",
@@ -185,131 +172,22 @@ int main(int argc, char ** argv) {
 	}
 #endif
 
-	/*
-	 * Run other wrappers first. They will re-start us.
-	 */
+	/* extract the next other wrapper */
+	other = strdup(getenv(ENVPREFIX "_WRAPPER_OTHERS"));
+	other = strtok(other, ":");
 
-	if ( (delim=getenv(ENVPREFIX "_WRAPPER_OTHERS")) != NULL &&
-								delim[0] ) {
-		
-		c1=argc;
-		
-		/*
-		 * If prefix__WRAPPER_APPEND_PO we need to add the count of
-		 * spaces in that variable
-		 */
-
-		if ( (delim1=getenv(ENVPREFIX "_WRAPPER_APPEND_PO")) != NULL &&
-								delim1[0] ) {
-			while (*delim1) { if (*delim1==' ') c1++; delim1++; }
-		}
-
-		newargv=malloc( sizeof(char*) * (c1+10) );
-	
-		newargv[0] = malloc(strlen(delim) + 1);
-		strcpy(newargv[0], delim);
-		delim = strchr(newargv[0], ':');
-		if ( delim == NULL ) delim = "";
-		else { *delim = 0; delim++; }
-		setenv(ENVPREFIX "_WRAPPER_OTHERS_TMP", delim, 1);
-		
-		for (c1=0; c1 < argc; c1++)
-			newargv[c1+1] = argv[c1];
-
-		/*
-		 * Append prefix_WRAPPER_APPEND_PO contents
-		 */
-
-		if ( (delim1=getenv(ENVPREFIX "_WRAPPER_APPEND_PO")) != NULL &&
-								delim1[0] ) {
-			optbuf = malloc( strlen(delim1) + 1 );
-			strcpy(optbuf, delim1);
-
-			delim1 = strtok(optbuf, " ");
-			c1=argc+1;
-			while (delim1 != NULL) {
-				if (delim1[0]) {
-#if VERBOSE_DEBUG
-					if (debug) fprintf(stderr, 
-						"Append PreOthers: %s\n",
-						delim1);
-#endif
-					newargv[c1++] = delim1;
-				}
-				delim1 = strtok(NULL, " ");
-			}
-			/* Telling next instance of the wrapper to clean
-			 * prefix_WRAPPER_APPEND_PO_RUN (argh!)
-			 */
-			setenv(ENVPREFIX "_WRAPPER_APPEND_PO_CLEAR", "1", 1);
-		}
-		
-
-#if VERBOSE_DEBUG
-		if (debug) fprintf(stderr,
-			"Running external wrapper: %s\n", newargv[0]);
-#endif
-
-		if (logfile) {
-			fprintf(logfile, "+");
-			for (c3=0; c3<=c1; c3++)
-					fprintf(logfile, " %s", newargv[c3]);
-			fprintf(logfile, "\n");
-			fclose(logfile);
-		}
-
-		execvp(newargv[0], newargv);
-		fprintf(stderr, ENVPREFIX "_WRAPPER: Can't execute "
-				"'%s' -> abort.\n", newargv[0]);
-		return 250;
-	}
-	
-	
-	/*
-	 *  Detect loops
-	 */
-	
-	if ( (delim=getenv(ENVPREFIX "_WRAPPER_NOLOOP")) != NULL &&
-					delim[0] && delim[0] != '0') {
-		fprintf(stderr, ENVPREFIX
-				"_WRAPPER: Detected loop! -> abort.\n");
-		return 250;
-	}
-	setenv(ENVPREFIX "_WRAPPER_NOLOOP", "1", 1);
-
-	
-	/*
-	 *  Remove the wrapper dir from PATH
-	 */
-
-	if ( (delim=getenv("PATH")) != NULL && delim[0] &&
-	     (wrdir=getenv(ENVPREFIX "_WRAPPER_MYPATH")) != NULL &&
-								wrdir[0] ) {
-		optbuf = malloc( strlen(delim) + 1 );
-		optbuf[0] = 0;
-	
-#if VERBOSE_DEBUG
-		if (debug)
-			fprintf(stderr, "Old PATH: %s\n", delim);
-#endif
-	
-		delim = strtok(delim, ":");
-		while ( delim != NULL ) {
-			if (strcmp(delim, wrdir)) {
-				if (optbuf[0]) strcat(optbuf, ":");
-				strcat(optbuf, delim);
-			}
-			delim = strtok(NULL, ":");
-		}
-		setenv("PATH", optbuf, 1);
-
-#if VERBOSE_DEBUG
-		if (debug) fprintf(stderr, "New PATH: %s\n", optbuf);
-#endif
-	} else {
-		fprintf(stderr, ENVPREFIX "_WRAPPER: $PATH or $" ENVPREFIX
-		                "_WRAPPER_MYPATH is not set! -> abort.\n");
-		return 250;
+	fprintf(stderr, "other %s\n", other);
+	if (other != NULL) {
+		/* if we have other wrappers remove the current one from the list */
+		char *newothers = getenv(ENVPREFIX "_WRAPPER_OTHERS");
+		newothers += strlen (other);
+		fprintf(stderr, "others env. %s\n", newothers);
+		if (*newothers == ':')
+			newothers++;
+		fprintf(stderr, "others env. %s\n", newothers);
+		setenv (ENVPREFIX "_WRAPPER_OTHERS", newothers, 1);
+		fprintf(stderr, "others env. %s\n",
+		        getenv(ENVPREFIX "_WRAPPER_OTHERS"));
 	}
 
 	/*
@@ -318,6 +196,10 @@ int main(int argc, char ** argv) {
 	
 	/* start with argc */
 	c1 = argc;
+
+	/* other wrapper */
+	if (other)
+		c1++;
 
 	/* add numbers of blanks in prefix_WRAPPER_INSERT */
 	if ( (delim=getenv(ENVPREFIX  "_WRAPPER_INSERT")) != NULL )
@@ -331,7 +213,10 @@ int main(int argc, char ** argv) {
 	newargv=malloc( sizeof(char*) * (c1+10) );
 	
 	/* init newargv[], c1 and c2 */
-	newargv[0]=argv[0]; c1=1; c2=1;
+	c1 = c2 = 0;
+	if (other)
+		newargv[c1++] = other;
+	newargv[c1++] = argv[c2++];
 
 	/*
 	 *  Copy options from prefix_WRAPPER_INSERT to newargv[]
@@ -465,6 +350,80 @@ reread_file_finished:
 		close(infd);  unlink(infn);
 	}
 
+	/*
+	 *  Detect loops
+	 */
+	
+	if ( (delim=getenv(ENVPREFIX "_WRAPPER_NOLOOP")) != NULL &&
+					delim[0] && delim[0] != '0') {
+		fprintf(stderr, ENVPREFIX
+				"_WRAPPER: Detected loop! -> abort.\n");
+		return 250;
+	}
+	setenv(ENVPREFIX "_WRAPPER_NOLOOP", "1", 1);
+
+	/*
+	 *  Remove the wrapper dir from PATH
+	 */
+
+	if ( (delim=getenv("PATH")) != NULL && delim[0] &&
+	     (wrdir=getenv(ENVPREFIX "_WRAPPER_MYPATH")) != NULL &&
+								wrdir[0] ) {
+		optbuf = malloc( strlen(delim) + 1 );
+		optbuf[0] = 0;
+	
+#if VERBOSE_DEBUG
+		if (debug)
+			fprintf(stderr, "Old PATH: %s\n", delim);
+#endif
+	
+		delim = strtok(delim, ":");
+		while ( delim != NULL ) {
+			if (strcmp(delim, wrdir)) {
+				if (optbuf[0]) strcat(optbuf, ":");
+				strcat(optbuf, delim);
+			}
+			delim = strtok(NULL, ":");
+		}
+		setenv("PATH", optbuf, 1);
+
+#if VERBOSE_DEBUG
+		if (debug) fprintf(stderr, "New PATH: %s\n", optbuf);
+#endif
+	} else {
+		fprintf(stderr, ENVPREFIX "_WRAPPER: $PATH or $" ENVPREFIX
+		                "_WRAPPER_MYPATH is not set! -> abort.\n");
+		return 250;
+	}
+
+	/*
+	 * Run other wrappers first. They will re-start us.
+	 */
+
+	if (other != NULL) {
+
+#if VERBOSE_DEBUG
+		if (debug) fprintf(stderr,
+			"Running external wrapper: %s\n", newargv[0]);
+		        for (c3=0; c3<c1; c3++)
+			         fprintf(stderr, " %s", newargv[c3]);
+		        fprintf(stderr, "\n");
+#endif
+
+		if (logfile) {
+			fprintf(logfile, "+");
+			for (c3=0; c3<=c1; c3++)
+					fprintf(logfile, " %s", newargv[c3]);
+			fprintf(logfile, "\n");
+			fclose(logfile);
+		}
+		fprintf (stderr, "wrapper others env: %s\n",
+		         getenv(ENVPREFIX "_WRAPPER_OTHERS"));
+		execvp(newargv[0], newargv);
+		fprintf(stderr, ENVPREFIX "_WRAPPER: Can't execute "
+				"'%s' -> abort.\n", newargv[0]);
+		return 250;
+	}
 
 	/*
 	 *  Run the new command
