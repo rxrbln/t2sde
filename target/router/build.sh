@@ -1,5 +1,5 @@
 syslinux_ver="`sed -n 's,.*syslinux-\(.*\).tar.*,\1,p' \
-               base/target/router/download.txt`"
+               $base/target/router/download.txt`"
 
 pkgloop
 
