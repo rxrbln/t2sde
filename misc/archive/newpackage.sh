@@ -39,7 +39,20 @@ if [ "$1" == "-main" ] ; then
 	shift
 fi
 dir=$1 ; shift
-package=`echo $dir | sed 's,^.*/,,g'`
+
+package=${dir##*/}
+if [ "$package" = "$dir" ]; then
+	echo "failed"
+	echo -e "\t$dir must be <rep>/<pkg>!\n"
+	exit
+fi
+
+rep="$( echo package/*/$package | cut -d'/' -f 2 )"
+if [ "$rep" != "*" ]; then
+	echo "failed"
+	echo -e "\tpackage $package belongs to $rep!\n"
+	exit
+fi
 
 echo -n "Creating package/$dir ... "
 if [ -e package/$dir ] ; then
