@@ -107,10 +107,21 @@ auto_config ()
 	# create a valid .config
 	yes '' | eval $MAKE oldconfig > /dev/null ; cp .config .config.5
 
-	# last disable broken crap
-	sh $base/package/base/linux24/disable-broken.sh \
-	$pkg_linux_brokenfiles < .config > config.6
-	cp config.6 .config
+	# last disable broken stuff
+	rm -f /tmp/$$.sed
+	list="CONFIG_THIS_DOES_NOT_EXIST"
+	for x in $pkg_linux_brokenfiles ; do
+	    if [ -f "$x" ] ; then
+		echo "Disable broken file: $x"
+		list="$list `tr ' ' '\t' < $x | cut -f1 | grep '^CONFIG_'`"
+            fi
+	done
+	for x in $list ; do
+		echo "s,^$x=.\$,# $x is not set,;" >> /tmp/$$.sed
+	done
+
+	sed -f /tmp/$$.sed < .config > .config.6
+	cp .config.6 .config ; rm -f /tmp/$$.sed
 
 	# create a valid .config (dependencies might need to be disabled)
 	yes '' | eval $MAKE oldconfig > /dev/null
@@ -183,3 +194,4 @@ pkg_linux_brokenfiles="$base/architecture/$arch/kernel-disable.lst \
 	$base/architecture/$arch/kernel$treever-disable.lst \
 	$base/package/base/linux$treever/disable-broken.lst \
 	$pkg_linux_brokenfiles"
+
