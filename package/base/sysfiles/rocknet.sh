@@ -66,7 +66,7 @@ do
 			error "Unknown statement in config file: $cmd"
 		fi
 	fi
-done < <( sed 's,#.*,,' < "$rocknet_base"/config )
+done < <( sed 's,\(^\|[ \t]\)#.*$,,' < "$rocknet_base"/config )
 
 while read id1 id2; do
 	if [ "$rocknet_debug" = 1 ]; then
