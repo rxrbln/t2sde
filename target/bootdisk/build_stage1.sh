@@ -78,8 +78,9 @@ fi
 echo_status "Using loopback device $tmpdev."
 #
 echo_status "Writing initrd image file."
-mke2fs -q $tmpdev &> /dev/null
+mke2fs -m 0 -N 180 -q $tmpdev &> /dev/null
 mount -t ext2 $tmpdev $tmpdir
+rmdir $tmpdir/lost+found/
 cp -a initrd/* $tmpdir
 umount $tmpdir
 #
