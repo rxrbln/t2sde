@@ -1,10 +1,10 @@
 
 use_isolinux=1
 syslinux_ver="`sed -n 's,.*syslinux-\(.*\).tar.*,\1,p' \
-               target/bootdisk/download.txt`"
+               $base/target/bootdisk/download.txt`"
 use_mdlbl=1
-mdlbl_ver="`sed -n 's,.*mdlbl-\(.*\).tar.*,\1,p'
-            target/bootdisk/download.txt`"
+mdlbl_ver="`sed -n 's,.*mdlbl-\(.*\).tar.*,\1,p' \
+            $base/target/bootdisk/download.txt`"
 
 cd $disksdir
 
@@ -45,7 +45,7 @@ then
 	mkdir -p isolinux
 	tar --use-compress-program=bzip2 \
 	    -xf $base/download/bootdisk/syslinux-$syslinux_ver.tar.bz2 \
-	    syslinux-2.02/isolinux.bin -O > isolinux/isolinux.bin
+	    syslinux-$syslinux_ver/isolinux.bin -O > isolinux/isolinux.bin
 	#
 	echo_status "Creating isolinux config file."
 	cp $base/target/$target/x86/isolinux.cfg isolinux/
