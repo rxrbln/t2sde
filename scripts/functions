@@ -433,6 +433,54 @@ pkginstalled() {
 	fi
 }
 
+# Convert a pkg selection rule into awk format
+#
+# Example:
+#   pkgsel X python
+#     Result: ( $4"/"$5 ~ /^[^/]*\/python$/ ) { $1="X"; }
+#   pkgsel "O perl/*" 
+#     Result: ( $4"/"$5 ~ /^perl\/[^/]*$/ ) { $1="O"; }
+#   pkgsel_parse < config/${config}/pkgsel
+#     Result: creates pkgsel.awk output WITHOUT the last "{ print; }" statement
+pkgsel_parse() {
+	local action patterlist pattern
+	local address first others
+	while read action patternlist ; do
+ 		case "$action" in
+		    [xX])
+			action='$1="X"' ;;
+		    [oO])
+			action='$1="O"' ;;
+		    -)
+			action='next'   ;;
+		    *)
+			echo '{ exit; }'
+			continue ;;
+		esac
+		address="" ; first="( \$4\"/\"\$5 ~" ; others="&& \$4\"/\"\$5 ~"
+		while read pattern ; do
+			if [ -z "$address" ] && \
+			   [ "$pattern" = "!" ] ; then
+				address="! " ; others="|| \$4\"/\"\$5 ~"
+			else
+				[ "${pattern}" = "${pattern//\//}" ] && pattern="*/$pattern"
+				pattern="$( echo "$pattern" | sed \
+					-e 's,[^a-zA-Z0-9_/\*+\.-],,g' \
+					-e 's,[/\.\+],\\&,g' \
+					-e 's,\*,[^/]*,g' )"
+				[ "$pattern" ] || continue
+				address="$address$first"
+				address="$address /^$pattern$/"
+				first=" $others"
+			fi
+		done < <( echo "$patternlist" | tr '\t ' '\n\n' )
+		echo "$address ) { $action; }"
+	done < <( if [ "$*" ]; then echo "$*"; else cat; fi)
+#	if ! [ "$*" ]; then 
+#		echo "{ print; }"
+#	fi
+}
+
 # Register a window-manager
 #
 register_wm() {
