@@ -132,12 +132,11 @@ disk_add() {
 main() {
 	local cmd install_now=0
 	while
-		cmd="gui_menu install 'Installing ROCK Linux
+		cmd="gui_menu install 'Partitioning your discs
 
-Note: Everything you can do using this tool can also be done manualy
-on the command line.'"
+This dialog allows you to modify your discs parition layout and to create filesystems and swap-space - as well as mouting / activating it. Everything you can do using this tool can also be done manually on the command line.'"
 
-		# protect for the case no discs where found ...
+		# protect for the case no discs are present ...
 		if [ -e /dev/discs ] ; then
 		  for x in $( cd /dev/discs
 		            ls -l * | grep ' -> ' | cut -f2- -d/ ; )
