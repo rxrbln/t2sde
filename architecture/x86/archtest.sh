@@ -10,5 +10,5 @@ case "$ROCKCFG_X86_OPT" in
 	arch_machine="i686" ;;
 esac
 
-arch_target="${arch_machine}-unknown-linux-gnu"
+arch_target="${arch_machine}-t2-linux-gnu"
 
