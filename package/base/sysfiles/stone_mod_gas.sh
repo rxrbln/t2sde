@@ -30,33 +30,33 @@ Note: any (un)installations are done immediately'"
 
 		installed=""
 		uninstalled=""
-		time for (( i=${#pkgs[@]} - 1; i >= 0; i-- )) ; do
+		for (( i=${#pkgs[@]} - 1; i >= 0; i-- )) ; do
 			if echo "${cats[$i]}" | grep -q -F "$5" ; then
 				namever="${pkgs[$i]}-${vers[$i]}"
 				if [ -f $2/var/adm/packages/${pkgs[$i]} ] ; then
-					cmd="$cmd '[*] $namever' 'mine -r -R $2 ${pkgs[$i]}'"
+					cmd="$cmd '[*] $namever' '$packager -r -R $2 ${pkgs[$i]}'"
 					installed="$installed ${pkgs[$i]}"
-				elif [ -f "$4/$1/pkgs/$namever.gem" ] ; then
-					cmd="$cmd '[ ] $namever' 'mine -i -R $2 $4/$1/pkgs/$namever.gem'"
-					uninstalled="$uninstalled $4/$1/pkgs/$namever.gem"
-				elif [ -f "$4/$1/pkgs/${pkgs[$i]}.gem" ] ; then
-					cmd="$cmd '[ ] $namever' 'mine -i -R $2 $4/$1/pkgs/${pkgs[$i]}.gem'"
-					uninstalled="$uninstalled $4/$1/pkgs/${pkgs[$i]}.gem"
+				elif [ -f "$4/$1/pkgs/$namever$ext" ] ; then
+					cmd="$cmd '[ ] $namever' '$packager -i -R $2 $4/$1/pkgs/$namever$ext'"
+					uninstalled="$uninstalled $namever$ext"
+				elif [ -f "$4/$1/pkgs/${pkgs[$i]}$ext" ] ; then
+					cmd="$cmd '[ ] $namever' '$packaher -i -R $2 $4/$1/pkgs/${pkgs[$i]}$ext'"
+					uninstalled="$uninstalled ${pkgs[$i]}$ext"
 				fi
 			fi
 		done
 		[ "$uninstalled$installed" ] && cmd="$cmd '' ''"
 		[ "$uninstalled" ] && \
-			cmd="$cmd 'Install all packages marked as [ ]' 'mine -i -R $2 $uninstalled'"
+			cmd="$cmd 'Install all packages marked as [ ]' '(cd $4/$1/pkgs ; $packager -i -R $2 $uninstalled)'"
 		[ "$installed" ] && \
-			cmd="$cmd 'Uninstall all packages marked as [*]' 'mine -r -R $2 $installed'"
+			cmd="$cmd 'Uninstall all packages marked as [*]' '$packager -r -R $2 $installed'"
 
 		eval "$cmd" || break
 	done
 }
 
 main() {
-	if ! [ -f $4/$1/packages.db ] ; then
+	if ! [ -f $4/$1/pkgs/packages.db ] ; then
 		gui_message "gas: package database not accessible."
 		return
 	fi
@@ -64,6 +64,21 @@ main() {
 	if ! [ -d $2 ] ; then
 		gui_message "gas: target directory not accessible."
 		return
+	fi
+
+	if [ $2 = "${2#/}" ] ; then
+		gui_message "gas: target directory not absolute."
+		return
+	fi
+
+	local packager ext
+
+	if type -p bize > /dev/null && ! type -p mine > /dev/null ; then
+		packager=bize
+		ext=.tar.bz2
+	else
+		packager=mine
+		ext=.gem
 	fi
 
 	declare -a pkgs vers cats
@@ -82,7 +97,7 @@ main() {
 			gui_message "gas: invalid package database input '$a $b'."
 			return
 		fi
-	done < <( gzip -d < $4/$1/packages.db | grep "^[a-zA-Z0-9_+.-]\+$\|^\[[CV]\]")
+	done < <( gzip -d < $4/$1/pkgs/packages.db | grep "^[a-zA-Z0-9_+.-]\+$\|^\[[CV]\]")
 	[ "$package" ] && pkgs[${#pkgs[@]}]="$package"
 
 	category="gui_menu category 'Select category'"
