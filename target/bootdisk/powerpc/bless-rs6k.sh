@@ -26,20 +26,26 @@
 # bless-rs6k is Copyright (C) 2003 Rene Rebe
 #
 
-yb_bin="boot/yaboot.rs6k"
+# $1: disk base dir
+# $2: cd number
+# $3: iso file
+
+yb_bin="${1}/boot/yaboot.rs6k"
+cd=$2
+iso=$3
 
 # function to return a 512 sized sector count
 sector_count() {
-	echo $((`ls -l $1 | sed 's/  */ /g' | cut -d ' ' -f5` / 512))
+	echo `du -B 512 --apparent-size $1 | -d ' ' -f1` 
 }
 
-if [ "$1" == 0 ] ; then
+if [ "$cd" == 0 ] ; then
 	echo "Not the first CD - not blessing ..."
 fi
 
 
 # test
-cd_sec=`sector_count $2`
+cd_sec=`sector_count $iso`
 
 # calculate the size for a 512 byte alligned yaboot binary, padded with zeros
 yb_sec=`sector_count $yb_bin`
@@ -47,8 +53,8 @@ yb_sec=$(( yb_sec + 1 ))
 
 echo "ISO sector count: $cd_sec Yaboot RS/6k binary sectors: $yb_sec"
 
-echo "RS/6k-blessing $2 ..."
-sfdisk -uS -f -q --no-reread $2 <<-EOT
+echo "RS/6k-blessing $iso ..."
+sfdisk -uS -f -q --no-reread $iso <<-EOT
 ;
 $cd_sec,$yb_sec,0x41,*
 ;
@@ -57,8 +63,6 @@ EOT
 
 echo "done"
 
-echo "Attaching Yaboot binary ..."
-cat yb.alligned >> $2
-cat $/usr/lib/yaboot/yaboot.rs6k /dev/zero | \
-        dd of=yb.alligned bs=512 count=$yb_sec
+echo "Attaching Yaboot binary with padded zeros ..."
+cat $yb_bin /dev/zero | dd bs=512 count=$yb_sec >> $iso 
 
