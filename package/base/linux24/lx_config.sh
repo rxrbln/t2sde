@@ -196,9 +196,9 @@ lx_injectextraversion () {
 	fi
 }
 
-lx_config ()
+lx_patch ()
 {
-	echo "Generic linux source patching and configuration ..."
+	echo "Generic linux patching ..."
 
 	# grab extraversion from vanilla
 	lx_grabextraversion
@@ -218,8 +218,19 @@ lx_config ()
 		eval $MAKE symlinks
 		cp $base/package/base/linux24/autoconf.h include/linux/
 		touch include/linux/modversions.h
+	else
+		echo "Create symlinks and a few headers for <$lx_cpu> ... "
+		eval $MAKE include/asm
 	fi
 
+	echo "Clean up the *.orig and *~ files ... "
+	rm -f .config.old `find -name '*.orig' -o -name '*~'`
+
+	echo "... linux source patching finished."
+}
+
+lx_config() {
+	echo "Generic linux configuration ..."
 	if [ "$ROCKCFG_PKG_LINUX_CONFIG_STYLE" = none ] ; then
 		echo "Using \$base/config/\$config/linux.cfg."
 		echo "Since automatic generation is disabled ..."
@@ -230,17 +241,6 @@ lx_config ()
 	fi
 
 	echo "... configuration finished!"
-
-	if [[ $treever != 24* ]] ; then
-		echo "Create symlinks and a few headers for <$lx_cpu> ... "
-		eval $MAKE include/asm
-		yes '' | eval $MAKE oldconfig > /dev/null
-	fi
-
-	echo "Clean up the *.orig and *~ files ... "
-	rm -f .config.old `find -name '*.orig' -o -name '*~'`
-
-	echo "Generic linux source configuration finished."
 }
 
 pkg_linux_brokenfiles="$base/architecture/$arch/kernel-disable.lst \
