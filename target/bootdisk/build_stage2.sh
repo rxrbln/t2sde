@@ -7,10 +7,9 @@ mkdir -p mnt/source mnt/target
 package_map='       +00-dirtree         +glibc22            +glibc23
 -gcc2               -gcc3               -gcc33              -gccx
 -linux24-src        -linux25-src        -linux24benh-src
-+linux24            +linux25            +linux24benh
 -linux24-header     -linux25-header     -linux24benh-header
+-linux24            -linux25            -linux24benh
 -binutils           -bin86              -nasm               -dietlibc
-
 +grub               +lilo               +yaboot             +aboot
 +silo               +parted             +mac-fdisk          +pdisk
 +xfsprogs           +mkdosfs            +mtools             +jfsutils
@@ -35,6 +34,8 @@ package_map='       +00-dirtree         +glibc22            +glibc23
 +sysklogd           +devfsd             +setserial          +iproute2
 +netkit-base        +netkit-ftp         +netkit-telnet      +netkit-tftp
 +sysfiles           +libpcap            +iptables           +tcp_wrappers'
+
+package_map="+$ROCKCFG_DEFAULT_KERNEL $package_map"
 
 echo_status "Extracting the packages archives."
 for x in $( ls ../../pkgs/*.tar.bz2 | tr . / | cut -f8 -d/ )
