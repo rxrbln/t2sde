@@ -45,19 +45,19 @@ else
 	packager=mine
 fi
 
-package_map="+$packager $package_map"
+package_map="+$packager $( echo "$package_map" | tr -s ' ' | tr ' ' '\n') "
 
 echo_status "Extracting the packages archives."
 for x in $( ls ../../pkgs/*.tar.bz2 | tr . / | cut -f8 -d/ )
 do
-	if echo "" $package_map "" | grep -q " +$x "
-	then
-		echo_status "\`- Extracting $x.tar.bz2 ..."
-		tar --use-compress-program=bzip2 -xpf ../../pkgs/$x.tar.bz2
-	elif ! echo "" $package_map "" | grep -q " -$x "
-	then
+	y=$( echo "$package_map" | sed -n -e "s,^\([-+]\)$x$,\1,p" )
+
+	if [ -z "$y" ]; then
 		echo_error "\`- Not found in \$package_map: $x"
-		echo_error "    ... fix target/$target/build.sh"
+		echo_error "    ... fix target/$target/build_stage2.sh"
+	elif [ "$y" == "+" ]; then
+		echo_status "\`- Extracting $x.tar.bz2 ..."
+		tar -p $taropt ../../pkgs/$x.tar.bz2
 	fi
 done
 #
