@@ -7,6 +7,8 @@
 #    or: sh misc/archive/catedit.sh -a
 #
 
+set -e
+
 item='' 
 tmp=$( mktemp )
 
@@ -47,14 +49,16 @@ do
 	done ) > $tmp
 
 	dialog --cancel-label Back --backtitle " categories for $item " \
-	       --checklist "$(grep "^\[I\]" $file)" 42 80 35 \
-	       $(cat $tmp) 2> $tmp
-	value=$( cat $tmp | tr -d '"' )
+	       --checklist "$(grep '^\[I\]' $file | sed 's/\[I\] //' )" \
+	       42 80 35 $(cat $tmp) 2> $tmp
+	value=$( cat $tmp | sed -e 's/"//g' -e 's/ $//' )
 
 	if [ "$value" ] ; then 
-		cat $file | sed -e "s,\[C\]\(.*\),\[C\] $value,g" > $tmp
+		cat $file | sed "s,^\[C\] .*,\[C\] $value,g" > $tmp
 		cat $tmp > $file
-		./scripts/Create-DescPatch $item | patch -p1
+		#grep -v '^\[C\]' "$file" >  $tmp
+		#echo -e '\n'"[C] $value" >> $tmp	
+		#./scripts/Create-DescPatch $item | patch -p1
 	fi
 done
 
