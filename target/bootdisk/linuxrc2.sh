@@ -28,9 +28,9 @@ echo '  ******************************************************************'
 echo '  *         Welcome to the ROCK Linux 2nd stage boot disk.         *'
 echo '  ******************************************************************'
 echo
-echo 'This is a small linux distribution, loaded into your PCs memory. It has'
-echo 'everything needed to install ROCK Linux, restore an old installation or'
-echo 'perform some administrative tasks.'
+echo "This is a small linux distribution, loaded into your computer's memory."
+echo "It has everything needed to install ROCK Linux, restore an old installation"
+echo "or perform some administrative tasks."
 
 for x in /etc/setup-*.sh /setup/setup.sh ; do
    if [ -f "$x" ] ; then
