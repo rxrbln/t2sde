@@ -36,10 +36,10 @@ main() {
 		cmd="gui_menu xfree86 'XFree86 Configuration Menu'
 
 		'Run xf86cfg (recommended, new interactve config)'
-			'gui_cmd xf86cfg'
+			'gui_cmd xf86ccfg xf86cfg -xf86config /etc/X11/XF86Config'
 
 		'Run X -configure (automated config)'
-			'gui_cmd xfree86 -configure ; mv /root/XF86Config.new /etc/X11/XF86Config.new'
+			'gui_cmd XFree86 XFree86 -configure ; mv /root/XF86Config.new /etc/X11/XF86Config'
 
 		'Run xf86config (old textual config)'
 			'gui_cmd xf86config xf86config'"
