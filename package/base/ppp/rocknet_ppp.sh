@@ -126,7 +126,8 @@ ABORT \"BUSY\"
 public_chat_init() {
 	chat_init_if
 	# don't ask and count ...
-	opts="`echo "$@" | sed 's/"/\\\\\\\\\\\\\"/g'`"
+	opts="`echo "$@" | sed -e 's/"/\\\\\\\\\\\\\"/g' \
+	                       -e 's/&/\\\\\\&/g'`"
 	addcode up 4 3 "echo '\"OK\" \"$opts\"' >> \$ppp_${if}_chat"
 }
 
@@ -134,6 +135,6 @@ public_chat_dial() {
 	chat_init_if
 	# don't ask and count ...
 	opts="`echo "$@" | sed 's/"/\\\\\\\\\\\\\"/g'`"
-	addcode up 4 5 "echo '\"OK\" \"$opts\"' >> \$ppp_${if}_chat"
+	addcode up 4 5 "echo -e '\"OK\" \"$opts\"\n\"CONNECT\" \"\"' >> \$ppp_${if}_chat"
 }
 
