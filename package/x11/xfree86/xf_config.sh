@@ -24,7 +24,7 @@
 xf_extract() {
 	echo "Extracting source (for package version $ver) ..."
 	for x in $xf_files ; do
-		tar $taropt $archdir/$x.tbz2
+		tar $taropt $archdir/$x
 	done
 
 	cd xc
