@@ -106,7 +106,7 @@ can't modify this disks partition table."
 		[ -f /usr/bin/$x ] && fn="/usr/bin/$x"
 		[ -f /usr/sbin/$x ] && fn="/usr/sbin/$x"
 		[ "$fn" ] && \
-		  cmd="$cmd \"Edit partition table using 'cfdisk'\" \"$x /dev/$1/disc\""
+		  cmd="$cmd \"Edit partition table using '$x'\" \"$x /dev/$1/disc\""
 	done
 
 	eval $cmd
