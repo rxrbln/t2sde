@@ -50,7 +50,8 @@ The configuration is stored in the 'config/config-name' directory.
 	==================================
 
 Now you need to download the sources for the packages which are build in the
-configuration you have choosen. Simply type './scripts/Download -required'.
+configuration you have choosen. Simply type: 
+'./scripts/Download -cfg config-name -required'
 If you want to download the sources for all packages (regardless if they are
 required for your configuration), type './scripts/Download -all'.
 
@@ -58,8 +59,8 @@ required for your configuration), type './scripts/Download -all'.
 	5. Building the distribution
 	============================
 
-Type './scripts/Build-Target'. As mentioned already, it may take multiple
-days for the build to complete.
+Type './scripts/Build-Target -cfg config-name'. As mentioned already, it may 
+take multiple days for the build to complete.
 
 The resulting distribution is stored in the build/ directory.
 
@@ -104,4 +105,4 @@ THEM BY HAND! These directories may contain bind mounts to the rest of the
 source tree and it is possible that you are going to remove everything in the
 ROCK Linux base directory if you execute a simple 'rm -rf' to remove them ..
 
-If you also want to remove the build/ directory type './scripts/Cleanup --full'.
+If you also want to remove the build/ directory type './scripts/Cleanup -full'.
