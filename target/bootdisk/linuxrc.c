@@ -764,10 +764,14 @@ int main(int argc, char* argv[])
 	if ( root && !strncmp("/dev/ram", root, 8) )
 		stage1(); /* never returns */
 
-	/* normal in-sytem linuxrc */
+	printf("You should not yet get here - please report!\n");
+	stage1(); /* never returns */
+
+	/* later normal in-sytem linuxrc */
 
 	printf("Loading all embedded modules ...\n");
-	ftw("/lib/modules/", *load_one_module, 4);
+	/* dietlibc implements nopenfd as depth :-( */
+	ftw("/lib/modules/", *load_one_module, 16);
 
 	printf("Mounting real-root device and continue to boot the system.\n");
 
