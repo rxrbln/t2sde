@@ -1,3 +1,6 @@
+/* Copyright (C) 2005 Juergen "George" Sawinski
+   Distributed under the terms of the GPL,
+   see LICENSE file of distribution. */
 #include <limits.h>
 #include <sys/types.h>
 #include <sys/stat.h>

@@ -1,5 +1,6 @@
 /* Copyright (C) 2005 Juergen "George" Sawinski
-   Distributed under the License: GPLv2 (or any later version) */
+   Distributed under the terms of the GPL,
+   see LICENSE file of distribution. */
 
 #include <stdio.h>
 #include <string.h>
@@ -9,12 +10,18 @@
 #include <unistd.h>
 #include <sys/mount.h>
 
-#include "cdrom.h"
-
 #ifdef DEBUG
 #define dbg(fmt, args...) printf(fmt, ## args)
 #else
 #define dbg(fmt, args...) struct swallow_semicolon
+#endif
+
+#ifdef USE_CDROM
+#include "cdrom.c"
+#endif
+
+#ifdef USE_HWDETECT
+#include "hardware.c"
 #endif
 
 int
@@ -42,7 +49,9 @@ main(int argc, char **argv)
 #endif
 
   /*****************************************************************/
-  /* FIXME what else??? */
+#ifdef USE_HWDETECT
+  hardware_auto_detect();
+#endif
 
   /* FIXME mount /dev, /proc etc. to new root */
 
@@ -57,7 +66,4 @@ main(int argc, char **argv)
   return 1;
 }
 
-#ifdef USE_CDROM
-#include "cdrom.c"
-#endif
 
