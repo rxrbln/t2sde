@@ -134,6 +134,10 @@ xf_config() {
 #define		InstallXinitConfig	YES
 #define		InstallXdmConfig	YES
 #define		InstallFSConfig		YES
+
+/* do not install duplicate crap in /etc/X11 */
+#define		UseSeparateConfDir	NO
+
 EOT
 	
 	if [ $arch == "x86" ] ; then
