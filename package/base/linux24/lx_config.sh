@@ -60,9 +60,11 @@ auto_config ()
 	fi
 
 	echo "  merging (system default): 'arch/$lx_cpu/defconfig'"
-	grep '^CONF.*=y' arch/$lx_cpu/defconfig | cut -f1 -d= | \
-	while read tag ; do egrep -q "(^| )$tag[= ]" .config || echo "$tag=y"
-	  done >> .config ; cp .config .config.1
+	grep -h '^CONF.*=y' arch/$lx_cpu/defconfig arch/$lx_cpu/configs/common_defconfig |
+	     cut -f1 -d= |
+	while read tag ; do
+		egrep -q "(^| )$tag[= ]" .config || echo "$tag=y"
+	done >> .config ; cp .config .config.1
 
 	# all modules needs to be first so modules can be disabled by i.e.
 	# the targets later
