@@ -14,7 +14,8 @@
 # --- T2-COPYRIGHT-NOTE-END ---
 
 rocknet_debug=0
-rocknet_base="/etc/network"
+rocknet_base="/lib/network"
+rocknet_config="/etc/conf"
 rocknet_tmp_base="/var/run/rocknet"
 
 [ -d $rocknet_tmp_base ] || mkdir -p $rocknet_tmp_base
@@ -89,7 +90,7 @@ unregister () {
 	echo -n "$active_interfaces" > $rocknet_tmp_base/active-interfaces
 }
 
-for x in "$rocknet_base"/modules/*.sh; do . "$x"; done
+for x in $rocknet_base/*.sh; do . "$x"; done
 
 while read cmd para
 do
@@ -111,7 +112,7 @@ do
 			error "Unknown statement in config file: $cmd"
 		fi
 	fi
-done < <( sed 's,\(^\|[ \t]\)#.*$,,' < "$rocknet_base"/config )
+done < <( sed 's,\(^\|[ \t]\)#.*$,,' < $rocknet_config/network )
 
 while read id1 id2; do
 	if [ "$rocknet_debug" = 1 ]; then
