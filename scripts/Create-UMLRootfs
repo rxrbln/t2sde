@@ -1,0 +1,142 @@
+#!/bin/bash
+
+#
+# Commands in isofs.txt files:
+#
+# EVERY		from	to		Put this on every disk
+# DISK1		from	to		Put this on the 1st disk
+# SINGLE	from	to		Put it on any disk
+# SPLIT		from	to		You may split it up over many disks
+#
+# BOOT		boot-options		Add this mkisofs options for 1st disk
+#
+# If you want to add multiple 'BOOT' lines, use the tag-name 'BOOTx' for
+# the 2nd and all further lines.
+#
+# SCRIPT	script-name	args	Run given script for each image
+#
+# Intended for image post-processing. The first attached argument is the CD
+# number and the second the image file.
+#
+cleanup () {
+	# Cleanup used for EXIT
+	umount $mountpoint
+	rmdir -p $mountpoint
+	losetup -d $loopdevice
+}
+
+eval `grep rockver scripts/parse-config`
+
+if [ $# -eq 0 ] ; then
+	echo
+	echo "Usage: $0 [ -size MB ] [ -mkdebug ] [-prefix FS-Prefix] [-fs filesystem] Config"
+	echo
+	echo "E.g.: $0  -prefix my myconfig"
+	echo "this will leave you with a file 'my_linux' (the kernel) and a file"
+	echo "'my_rootfs' (the file system). Just start it with ./linux"
+	echo
+	exit 1
+fi
+
+src=0; mkdebug=0; fssize=0; full=0;
+filesystem="reiserfs"
+
+while true ; do
+	case "$1" in
+		-size)
+			fssize=$2 ; shift ; shift ;;
+		-mkdebug)
+			mkdebug=1 ; shift ;;
+		-fs)
+			filesystem=$2; shift; shift ;;
+		-prefix)
+		 	 ufsprefix=$2; shift; shift ;;
+		-full)
+			 full=1; shift ;;
+		-* | '')
+			$0 ; exit 1 ;;
+		*)
+			cfg=$1 ; shift ; break ;;
+	esac
+done
+
+if [ ! "x$ufsprefix" = "x" ]; then fsprefix=${ufsprefix}_; else fsprefix=""; fi
+if [ -f ${fsprefix}rootfs -o -f ${fsprefix}linux ]; then
+	echo "Sorry, there exists a file with the same name, please make sure"
+	echo "that no ${fsprefix}linux and no ${fsprefix}rootfs exist here."
+	exit 1
+fi
+
+# get the build id
+if [ ! -d config/$cfg ]; then
+	echo "I cannot find the selected Config '$cfg'!"
+	exit 1
+fi
+buildid="`grep '^export ROCKCFG_ID=' config/$cfg/config | cut -f2 -d\'`"
+if [ ! -d build/$buildid ]; then 
+	echo "I cannot find the build for the Config '$cfg' (build/$buildid)"
+	exit 1; 
+fi
+
+# check if there is  a kernel executable 
+if [ ! -f build/$buildid/boot/linux -o "x" = "x$(grep UMLPATCH=\'1\' config/$cfg/config)" ]; then
+	echo "I cannot find the executable kernel, "
+	echo "or it seems that the UML Patch was not applied to the kernel."
+	exit 1;
+fi
+
+# calculate the default disk size as all packages of that config + 1/3 of the same
+if [ $fssize = 0 ]; then
+	echo "Calculating optimal image size, may take some time ..."
+	cfssize=$(cd build/$buildid; du -sm --exclude ROCK | awk '{print $1;}';cd $OLDPWD)
+	echo "All packages consume $cfssize MB"
+	freespace=$(( $cfssize / 3 ))
+	fssize=$(( $cfssize + $freespace ))
+	echo "Therefore I propose a fs size of $fssize, that leaves you $freespace MB of free space."
+fi
+
+# check if there is enough disk space
+hereiskbfree=$(df -P $PWD | tail -n 1 | awk '{ print $4; }')
+hereismbfree=$(( $hereiskbfree / 1024 ))
+if [ $hereismbfree -lt $fssize ]; then
+	echo "Sorry, you have only $hereismbfree MB free here, "
+	echo "that is not enough for a rootfs of $fssize MB."
+	exit 1
+fi
+
+# create the empty rootfs file
+dd if=/dev/zero of=${fsprefix}rootfs seek=${fssize} count=1 bs=1M 
+
+trap 'cleanup' EXIT
+
+# find a free loop device
+for i in `ls /dev/loop/*`; do 
+	echo $i
+	losetup $i ${fsprefix}rootfs
+	if [ $? = 0 ]; then
+		loopdevice=$i
+		break
+	fi
+done
+
+# make a filesystem
+yes | mkfs -t $filesystem $loopdevice 
+
+# loop-mount the file
+mountpoint=${fsprefix}rootfs_mnt
+mkdir -p $mountpoint
+mount -t $filesystem $loopdevice $mountpoint
+
+# install all
+echo "Installing files, may take some time..."
+if [ $full = 1 ]; then
+	for i in build/$buildid/*; do 
+		if [ $i = "build/$buildid/ROCK" ]; then continue; fi
+		cp -rp $i $mountpoint
+	done
+fi
+
+
+# Copy the executable kernel
+cp $mountpoint/boot/linux ${fsprefix}linux
+
