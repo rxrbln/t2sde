@@ -103,7 +103,7 @@ public_pppoe() {
 	# fire
 	addcode up 5 1 "ip link set $ppp_if down up"
 	addcode up 5 2 "/usr/sbin/pppd plugin rp-pppoe.so $ppp_if unit $ppp_unit $ppp_args"
-	addcode down 5 2 "[ -f /var/run/$if.pid ] && kill -TERM \`head -1 /var/run/$if.pid\`"
+	addcode down 5 2 "[ -f /var/run/$if.pid ] && kill -TERM \`head -n 1 /var/run/$if.pid\`"
 	addcode down 5 1 "[ -f /var/run/$if.pid ] && rm -f /var/run/$if.pid"
 }
 

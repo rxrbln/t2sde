@@ -33,7 +33,7 @@ fi
 egrep '^# +\[' $1.ext | sed 's,^# *,,' | \
 egrep -v '^\[(P|PRI|PRIORITY)\]' > $1.desc
 
-pri=`{ egrep '^# +\[(P|PRI|PRIORITY)\] +' $1.ext ; echo ". . 5" ; } | head -1 | tr -s ' ' | cut -f3 -d' '`
+pri=`{ egrep '^# +\[(P|PRI|PRIORITY)\] +' $1.ext ; echo ". . 5" ; } | head -n 1 | tr -s ' ' | cut -f3 -d' '`
 echo "[P] X ------6--9 300.$pri" >> $1.desc
 
 {

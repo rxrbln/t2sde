@@ -23,7 +23,7 @@
 # [MAIN] 70 lilo LILO Boot Loader Setup
 
 create_lilo_conf() {
-	i=0 ; rootdev="`grep ' / ' /proc/mounts | tail -1 | \
+	i=0 ; rootdev="`grep ' / ' /proc/mounts | tail -n 1 | \
 					awk '/\/dev\// { print $1; }'`"
 	rootdev="$( cd `dirname $rootdev` ; pwd -P )/$( basename $rootdev )"
 	while [ -L $rootdev ] ; do

@@ -92,9 +92,9 @@ grub_install() {
 
 main() {
     while
-	rootdev="`grep ' / ' /proc/mounts | tail -1 | \
+	rootdev="`grep ' / ' /proc/mounts | tail -n 1 | \
 				awk '/\/dev\// { print $1; }'`"
-	bootdev="`grep ' /boot ' /proc/mounts | tail -1 | \
+	bootdev="`grep ' /boot ' /proc/mounts | tail -n 1 | \
 				awk '/\/dev\// { print $1; }'`"
 	[ -z "$bootdev" ] && bootdev="$rootdev"
 
