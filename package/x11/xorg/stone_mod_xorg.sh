@@ -20,7 +20,7 @@
 # 
 # --- ROCK-COPYRIGHT-NOTE-END ---
 #
-# [MAIN] 50 x X11 Configuration
+# [MAIN] 50 xorg X11 Configuration
 
 set_wm() {
 	echo "export WINDOWMANAGER=$1" > /etc/profile.d/windowmanager
