@@ -152,13 +152,13 @@ set_tmarea() {
 
 set_dtime() {
 	dtime="`date '+%m-%d %H:%M %Y'`" ; newdtime="$dtime"
-	gui_input "Set new date and time (MM-DD hh:mm YYYY, localtime)" \
+	[ -f /etc/conf/clock ] && . /etc/conf/clock
+	[ "$clock_tz" != localtime ] && clock_tz=utc
+	gui_input "Set new date and time (MM-DD hh:mm YYYY, $clock_tz)" \
 	          "$dtime" "newdtime"
 	if [ "$dtime" != "$newdtime" ] ; then
 		echo "Setting new date and time ($newdtime) ..."
 		date "$( echo $newdtime | sed 's,[^0-9],,g' )"
-		[ -f /etc/conf/clock ] && . /etc/conf/clock
-		[ "$clock_tz" != localtime ] && clock_tz=utc
 		hwclock --systohc --$clock_tz
 	fi
 }
@@ -203,7 +203,7 @@ main() {
 		"Set console keyboard mapping ....... $keymap" "set_keymap" \
 		"Set console screen font ............ $vcfont" "set_vcfont" \
 		"Set system-wide time zone .......... $tz"     "set_tmarea" \
-		"Set date and time (localtime) ...... $dtime"  "set_dtime"  \
+		"Set date and time (utc/localtime) .. $dtime"  "set_dtime"  \
 		"Set system-wide locale (language) .. $locale" "set_locale" \
 		"Set console keyboard repeat rate ... $kbd_rate" "set_kbd_rate" \
 		"Set console keyboard repeat delay .. $kbd_delay" "set_kbd_delay" \

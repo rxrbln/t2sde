@@ -20,7 +20,7 @@
 # 
 # --- ROCK-COPYRIGHT-NOTE-END ---
 #
-# [MAIN] 20 hardware Kernel Drivers Configuration
+# [MAIN] 20 hardware Kernel Drivers and Hardware Configuration
 
 set_hw_setup() {
     echo "HARDWARE_SETUP=$1" > /etc/conf/hardware
@@ -116,7 +116,7 @@ main() {
 	    . /etc/conf/clock
 	fi
 
-	cmd="gui_menu hw 'Kernel Drivers Configuration'"
+	cmd="gui_menu hw 'Kernel Drivers and Hardware Configuration'"
 	if [ "$HARDWARE_SETUP" = rockplug ]; then
 	    cmd="$cmd \"$hw_rockplug Use ROCKPLUG to configure hardware.\""
 	    cmd="$cmd \"set_hw_setup rockplug\"";
@@ -167,6 +167,7 @@ main() {
 		fi
 	    done < /etc/conf/kernel
 	    [ -z "$id" ] || add_hw_config
+	    cmd="$cmd '' ''"
 	fi	   
 
 	if [ "$clock_tz" = localtime ] ; then
