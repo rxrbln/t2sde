@@ -1,0 +1,139 @@
+
+Fixed by tweaking copy_indirect_symbol.  I'm taking the opportunity
+to flush a few other minor changes.
+
+	* elf32-ppc.c: Formatting and comment fixes.
+	(ELIMINATE_COPY_RELOCS): Move before ppc_elf_copy_indirect_symbol.
+	(ppc_elf_copy_indirect_symbol): Copy flags here for weakdefs.
+
+Index: bfd/elf32-ppc.c
+===================================================================
+RCS file: /cvs/src/src/bfd/elf32-ppc.c,v
+retrieving revision 1.74
+diff -u -p -r1.74 elf32-ppc.c
+--- ./bfd/elf32-ppc.c	3 Apr 2003 04:02:02 -0000	1.74
++++ ./bfd/elf32-ppc.c	24 Apr 2003 13:27:06 -0000
+@@ -16,8 +16,9 @@
+    GNU General Public License for more details.
+ 
+    You should have received a copy of the GNU General Public License
+-   along with this program; if not, write to the Free Software
+-   Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.  */
++   along with this program; if not, write to the
++   Free Software Foundation, Inc., 59 Temple Place - Suite 330,
++   Boston, MA 02111-1307, USA.  */
+ 
+ /* This file is based on a preliminary PowerPC ELF ABI.  The
+    information may not match the final PowerPC ELF ABI.  It includes
+@@ -152,7 +153,7 @@ static bfd_boolean ppc_elf_grok_psinfo
+    function symbols not defined in an app are set to their .plt entry,
+    it's necessary for shared libs to also reference the .plt even
+    though the symbol is really local to the shared lib.  */
+-#define SYMBOL_REFERENCES_LOCAL(INFO, H) 				\
++#define SYMBOL_REFERENCES_LOCAL(INFO, H)				\
+   ((! INFO->shared							\
+     || INFO->symbolic							\
+     || H->dynindx == -1							\
+@@ -161,7 +162,7 @@ static bfd_boolean ppc_elf_grok_psinfo
+    && (H->elf_link_hash_flags & ELF_LINK_HASH_DEF_REGULAR) != 0)
+ 
+ /* Will _calls_ to this symbol always call the version in this object?  */
+-#define SYMBOL_CALLS_LOCAL(INFO, H)				\
++#define SYMBOL_CALLS_LOCAL(INFO, H)					\
+   ((! INFO->shared							\
+     || INFO->symbolic							\
+     || H->dynindx == -1							\
+@@ -198,7 +199,7 @@ struct ppc_elf_link_hash_entry
+   struct ppc_elf_dyn_relocs *dyn_relocs;
+ 
+   /* Contexts in which symbol is used in the GOT (or TOC).
+-     TLS_GD .. TLS_EXPLICIT bits are or'd into the mask as the
++     TLS_GD .. TLS_TLS bits are or'd into the mask as the
+      corresponding relocs are encountered during check_relocs.
+      tls_optimize clears TLS_GD .. TLS_TPREL when optimizing to
+      indicate the corresponding GOT entry type is not needed.  */
+@@ -319,6 +320,12 @@ ppc_elf_link_hash_table_create (abfd)
+   return &ret->elf.root;
+ }
+ 
++/* If ELIMINATE_COPY_RELOCS is non-zero, the linker will try to avoid
++   copying dynamic variables from a shared lib into an app's dynbss
++   section, and instead use a dynamic relocation to point into the
++   shared lib.  */
++#define ELIMINATE_COPY_RELOCS 1
++
+ /* Copy the extra info we tack onto an elf_link_hash_entry.  */
+ 
+ static void
+@@ -367,7 +374,16 @@ ppc_elf_copy_indirect_symbol (bed, dir, 
+ 
+   edir->tls_mask |= eind->tls_mask;
+ 
+-  _bfd_elf_link_hash_copy_indirect (bed, dir, ind);
++  if (ELIMINATE_COPY_RELOCS && ind->root.type != bfd_link_hash_indirect)
++    /* If called to transfer flags for a weakdef during processing
++       of elf_adjust_dynamic_symbol, don't copy ELF_LINK_NON_GOT_REF.
++       We clear it ourselves for ELIMINATE_COPY_RELOCS.  */
++    dir->elf_link_hash_flags |=
++      (ind->elf_link_hash_flags & (ELF_LINK_HASH_REF_DYNAMIC
++				   | ELF_LINK_HASH_REF_REGULAR
++				   | ELF_LINK_HASH_REF_REGULAR_NONWEAK));
++  else
++    _bfd_elf_link_hash_copy_indirect (bed, dir, ind);
+ }
+ 
+ static reloc_howto_type *ppc_elf_howto_table[(int) R_PPC_max];
+@@ -1613,10 +1629,14 @@ ppc_elf_howto_init ()
+ {
+   unsigned int i, type;
+ 
+-  for (i = 0; i < sizeof (ppc_elf_howto_raw) / sizeof (ppc_elf_howto_raw[0]); i++)
++  for (i = 0;
++       i < sizeof (ppc_elf_howto_raw) / sizeof (ppc_elf_howto_raw[0]);
++       i++)
+     {
+       type = ppc_elf_howto_raw[i].type;
+-      BFD_ASSERT (type < sizeof (ppc_elf_howto_table) / sizeof (ppc_elf_howto_table[0]));
++      if (type >= (sizeof (ppc_elf_howto_table)
++		   / sizeof (ppc_elf_howto_table[0])))
++	abort ();
+       ppc_elf_howto_table[type] = &ppc_elf_howto_raw[i];
+     }
+ }
+@@ -1630,7 +1650,8 @@ ppc_elf_howto_init ()
+    2/ The branch is predicted as not taken.
+    3/ The branch is taken.
+    4/ The branch is located in the last 5 words of a page.
+-      (The EOP limit is 5 by default but may be specified as any value from 1-10.)
++      (The EOP limit is 5 by default but may be specified as any value
++      from 1-10.)
+ 
+    Our software solution is to detect these problematic branches in a
+    linker pass and modify them as follows:
+@@ -2455,12 +2476,6 @@ ppc_elf_create_dynamic_sections (abfd, i
+   return bfd_set_section_flags (abfd, s, flags);
+ }
+ 
+-/* If ELIMINATE_COPY_RELOCS is non-zero, the linker will try to avoid
+-   copying dynamic variables from a shared lib into an app's dynbss
+-   section, and instead use a dynamic relocation to point into the
+-   shared lib.  */
+-#define ELIMINATE_COPY_RELOCS 1
+-
+ /* Adjust a symbol defined by a dynamic object and referenced by a
+    regular object.  The current definition is in some section of the
+    dynamic object, but we're not including those sections.  We have to
+@@ -2500,7 +2515,7 @@ ppc_elf_adjust_dynamic_symbol (info, h)
+       /* Clear procedure linkage table information for any symbol that
+ 	 won't need a .plt entry.  */
+       if (! htab->elf.dynamic_sections_created
+- 	  || SYMBOL_CALLS_LOCAL (info, h)
++	  || SYMBOL_CALLS_LOCAL (info, h)
+ 	  || h->plt.refcount <= 0)
+ 	{
+ 	  /* A PLT entry is not required/allowed when:
+
+-- 
+Alan Modra
+IBM OzLabs - Linux Technology Centre
+
