@@ -47,6 +47,24 @@ else
 	ROCKCFG_SHORTID="${ROCKCFG_SHORTID//\'/}"
 fi
 
+read_ids() {
+	mnt="`mktemp`"
+	rm -f $mnt ; mkdir $mnt
+
+	cmd="$cmd '' ''"
+
+	if mount $dev $mnt ; then
+		for x in `cd $mnt; ls -d */pkgs | cut -f1 -d/` ; do
+			cmd="$cmd '$x' 'ROCKCFG_SHORTID=\"$x\"'"
+		done
+		umount $dir
+	else
+		cmd="$cmd 'The medium could not be mounted!' ''"
+	fi
+
+	rmdir $mnt
+}
+
 startgas() {
 	[ -z "$( cd $dir; ls )" ] && mount -v -o ro $dev $dir
 	if [ "$ROCKCFG_SHORTID" = "Automatically choose first" ]; then
@@ -82,6 +100,8 @@ a simple frontend for the \"mine\" program.'"
 		cmd="$cmd 'ROCK Config ID: $ROCKCFG_SHORTID'"
 		cmd="$cmd 'gui_input \"ROCK Config ID\""
 		cmd="$cmd \"\$ROCKCFG_SHORTID\" ROCKCFG_SHORTID'"
+
+		read_ids
 
 		cmd="$cmd '' ''"
 		cmd="$cmd 'Start Package Manager' 'startgas=1'"
