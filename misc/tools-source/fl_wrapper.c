@@ -791,7 +791,7 @@ static void * get_dl_symbol(char * symname)
 	  libc_handle=dlopen(path_libc, RTLD_LAZY);
 	}
 	if (!libc_handle) {
-		printf("fl_wrapper.so: Can't dlopen libc: %s\n", dlerror());
+		fprintf(stderr, "fl_wrapper.so: Can't dlopen libc: %s\n", dlerror()); fflush(stderr);
 		abort();
 	}
 
@@ -809,8 +809,8 @@ static void * get_dl_symbol(char * symname)
 #  endif
 #endif
 	if (!rc) {
-		printf("fl_wrapper.so: Can't resolve %s: %s\n",
-		       symname, dlerror());
+		fprintf(stderr, "fl_wrapper.so: Can't resolve %s: %s\n",
+		       symname, dlerror()); fflush(stderr);
 		abort();
 	}
 
