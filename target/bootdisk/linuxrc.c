@@ -218,42 +218,29 @@ void load_modules(char * dir)
 
 void load_ramdisk_file()
 {
+	char *devicelists[2] = { "/dev/cdroms/cdrom%d", "/dev/floppy/%d" };
+	char *devicenames[2] =
+	{ "CD-ROM #%d (IDE/ATAPI or SCSI)", "FDD (Floppy Disk Drive) #%d" };
 	char *devn[10], *desc[10];
 	char text[100], devicefile[100];
 	char filename[100];
 	int nr=0;
-	int tmp_nr;
-	int found;
+	int i, tmp_nr;
 
 	printf("Select a device for loading the 2nd stage system from: \n\n");
-	
-	for (tmp_nr = 0, found = 1; found; ++tmp_nr) {
-		sprintf(devicefile, "/dev/cdroms/cdrom%d", tmp_nr);
-		sprintf(text, "CD-ROM #%d (IDE/ATAPI or SCSI)", tmp_nr+1);
 
-		if ( ! access (devicefile, R_OK) ) {
+	for (i = 0; i < 2; i++) {
+		for (tmp_nr = 0; ; ++tmp_nr) {
+			sprintf(devicefile, devicelists[i], tmp_nr);
+			sprintf(text, devicenames[i], tmp_nr+1);
+
+			if ( access (devicefile, R_OK) ) break;
+			
 			desc[nr] = strdup (text);
 			devn[nr++] = strdup (devicefile);
 		}
-		else {
-			found = 0;
-		}
 	}
 
-	tmp_nr = 0; found = 1;
-	for (tmp_nr = 0, found = 1; found; ++tmp_nr) {
-		sprintf(devicefile, "/dev/floppy/%d", tmp_nr);
-		sprintf(text, "FDD (Floppy Disk Drive) #%d", tmp_nr+1);
-
-		if ( ! access (devicefile, R_OK) ) {
-			desc[nr] = strdup (text);
-			devn[nr++] = strdup (devicefile);
-		}
-		else {
-			found = 0;
-		}
-	}
-	
 	desc[nr] = devn[nr] = NULL;
 
 	for (nr=0; desc[nr]; nr++) {
