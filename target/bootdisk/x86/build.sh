@@ -58,7 +58,7 @@ then
 	for x in `egrep 'X .* KERNEL .*' $base/config/$config/packages |
 	          cut -d ' ' -f 5-6 | tr ' ' '_'` ; do
 		kernel=${x/_*/}
-		kernelver=${x/*_/}
+		kernelver=${x/*_/}-dist
 		initrd="initrd${kernel/linux/}.gz"
 
 		if [ $first = 1 ] ; then
