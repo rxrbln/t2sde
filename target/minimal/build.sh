@@ -1,0 +1,3 @@
+
+. target/generic/build.sh
+
