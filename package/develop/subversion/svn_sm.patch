@@ -1,79 +1,6 @@
-diff -ur subversion-1.0.0/subversion/clients/cmdline/cl.h subversion-1.0.0_sm/subversion/clients/cmdline/cl.h
---- subversion-1.0.0/subversion/clients/cmdline/cl.h	2004-01-21 03:48:39.000000000 +0100
-+++ subversion-1.0.0_sm/subversion/clients/cmdline/cl.h	2004-02-26 21:56:45.163096472 +0100
-@@ -51,6 +51,7 @@
-   svn_cl__config_dir_opt,
-   svn_cl__diff_cmd_opt,
-   svn_cl__dry_run_opt,
-+  svn_cl__duplicate_opt,
-   svn_cl__editor_cmd_opt,
-   svn_cl__encoding_opt,
-   svn_cl__force_log_opt,
-@@ -119,6 +120,7 @@
-   svn_boolean_t ignore_ancestry; /* ignore ancestry for merge-y operations */
-   svn_boolean_t stop_on_copy;    /* don't cross copies during processing */
-   svn_boolean_t dry_run;         /* try operation but make no changes */
-+  svn_boolean_t duplicate;       /* simply duplicate copied files and dirs */
-   svn_boolean_t revprop;         /* operate on a revision property */
-   const char *diff_cmd;          /* the external diff command to use */
-   const char *merge_cmd;         /* the external merge command to use */
-diff -ur subversion-1.0.0/subversion/clients/cmdline/main.c subversion-1.0.0_sm/subversion/clients/cmdline/main.c
---- subversion-1.0.0/subversion/clients/cmdline/main.c	2004-02-19 03:49:12.000000000 +0100
-+++ subversion-1.0.0_sm/subversion/clients/cmdline/main.c	2004-02-26 21:58:47.786454888 +0100
-@@ -103,6 +103,8 @@
-                       "do no interactive prompting"},
-     {"dry-run",       svn_cl__dry_run_opt, 0,
-                       "try operation but make no changes"},
-+    {"duplicate",     svn_cl__duplicate_opt, 0,
-+                      "simply duplicate copied files and directories"},
-     {"no-diff-deleted", svn_cl__no_diff_deleted, 0,
-                        "do not print differences for deleted files"},
-     {"notice-ancestry", svn_cl__notice_ancestry_opt, 0,
-@@ -369,7 +371,7 @@
-     "  the sources have identical basenames that match a file within '.':\n"
-     "  in which case, the differences will be applied to that file.\n",
-     {'r', 'N', 'q', svn_cl__force_opt, svn_cl__dry_run_opt,
--     svn_cl__merge_cmd_opt, svn_cl__ignore_ancestry_opt, 
-+     svn_cl__duplicate_opt, svn_cl__merge_cmd_opt, svn_cl__ignore_ancestry_opt, 
-      SVN_CL__AUTH_OPTIONS, svn_cl__config_dir_opt} },
-   
-   { "mkdir", svn_cl__mkdir, {0},
-@@ -833,6 +835,9 @@
-       case svn_cl__dry_run_opt:
-         opt_state.dry_run = TRUE;
-         break;
-+      case svn_cl__duplicate_opt:
-+        opt_state.duplicate = TRUE;
-+        break;
-       case svn_cl__revprop_opt:
-         opt_state.revprop = TRUE;
-         break;
-diff -ur subversion-1.0.0/subversion/clients/cmdline/merge-cmd.c subversion-1.0.0_sm/subversion/clients/cmdline/merge-cmd.c
---- subversion-1.0.0/subversion/clients/cmdline/merge-cmd.c	2004-01-21 03:48:39.000000000 +0100
-+++ subversion-1.0.0_sm/subversion/clients/cmdline/merge-cmd.c	2004-02-26 21:56:45.165096168 +0100
-@@ -165,6 +165,7 @@
-                           opt_state->ignore_ancestry,
-                           opt_state->force,
-                           opt_state->dry_run,
-+                          opt_state->duplicate,
-                           ctx,
-                           pool); 
-   if (err)
-diff -ur subversion-1.0.0/subversion/include/svn_client.h subversion-1.0.0_sm/subversion/include/svn_client.h
---- subversion-1.0.0/subversion/include/svn_client.h	2004-01-24 18:06:20.000000000 +0100
-+++ subversion-1.0.0_sm/subversion/include/svn_client.h	2004-02-26 21:56:45.166096016 +0100
-@@ -848,6 +848,7 @@
-                   svn_boolean_t ignore_ancestry,
-                   svn_boolean_t force,
-                   svn_boolean_t dry_run,
-+                  svn_boolean_t duplicate,
-                   svn_client_ctx_t *ctx,
-                   apr_pool_t *pool);
- 
-diff -ur subversion-1.0.0/subversion/libsvn_client/diff.c subversion-1.0.0_sm/subversion/libsvn_client/diff.c
---- subversion-1.0.0/subversion/libsvn_client/diff.c	2004-01-24 17:52:15.000000000 +0100
-+++ subversion-1.0.0_sm/subversion/libsvn_client/diff.c	2004-02-26 21:56:45.169095560 +0100
-@@ -622,6 +622,7 @@
+--- ./subversion/libsvn_client/diff.c.orig	2004-06-25 15:27:54.000000000 +0200
++++ ./subversion/libsvn_client/diff.c	2004-09-02 18:01:49.000000000 +0200
+@@ -624,6 +624,7 @@
  struct merge_cmd_baton {
    svn_boolean_t force;
    svn_boolean_t dry_run;
@@ -81,7 +8,7 @@ diff -ur subversion-1.0.0/subversion/libsvn_client/diff.c subversion-1.0.0_sm/su
    const char *target;                 /* Working copy target of merge */
    const char *url;                    /* The second URL in the merge */
    const char *path;                   /* The wc path of the second target, this
-@@ -772,7 +773,7 @@
+@@ -776,7 +777,7 @@
    struct merge_cmd_baton *merge_b = baton;
    apr_pool_t *subpool = svn_pool_create (merge_b->pool);
    svn_node_kind_t kind;
@@ -90,7 +17,7 @@ diff -ur subversion-1.0.0/subversion/libsvn_client/diff.c subversion-1.0.0_sm/su
    const char *child;
  
    /* Easy out:  if we have no adm_access for the parent directory,
-@@ -804,8 +805,10 @@
+@@ -808,8 +809,10 @@
            {
              child = svn_path_is_child(merge_b->target, mine, merge_b->pool);
              assert (child != NULL);
@@ -103,7 +30,7 @@ diff -ur subversion-1.0.0/subversion/libsvn_client/diff.c subversion-1.0.0_sm/su
  
              /* Since 'mine' doesn't exist, and this is
                 'merge_file_added', I hope it's safe to assume that
-@@ -951,7 +954,8 @@
+@@ -955,7 +958,8 @@
    apr_pool_t *subpool = svn_pool_create (merge_b->pool);
    svn_node_kind_t kind;
    const svn_wc_entry_t *entry;
@@ -113,7 +40,7 @@ diff -ur subversion-1.0.0/subversion/libsvn_client/diff.c subversion-1.0.0_sm/su
  
    /* Easy out:  if we have no adm_access for the parent directory,
       then this portion of the tree-delta "patch" must be inapplicable.
-@@ -966,8 +970,10 @@
+@@ -970,8 +974,10 @@
  
    child = svn_path_is_child (merge_b->target, path, subpool);
    assert (child != NULL);
@@ -126,7 +53,7 @@ diff -ur subversion-1.0.0/subversion/libsvn_client/diff.c subversion-1.0.0_sm/su
  
    SVN_ERR (svn_io_check_path (path, &kind, subpool));
    switch (kind)
-@@ -1967,6 +1973,7 @@
+@@ -2234,6 +2240,7 @@
                    svn_boolean_t ignore_ancestry,
                    svn_boolean_t force,
                    svn_boolean_t dry_run,
@@ -134,7 +61,7 @@ diff -ur subversion-1.0.0/subversion/libsvn_client/diff.c subversion-1.0.0_sm/su
                    svn_client_ctx_t *ctx,
                    apr_pool_t *pool)
  {
-@@ -2014,6 +2021,7 @@
+@@ -2285,6 +2292,7 @@
  
    merge_cmd_baton.force = force;
    merge_cmd_baton.dry_run = dry_run;
@@ -142,3 +69,71 @@ diff -ur subversion-1.0.0/subversion/libsvn_client/diff.c subversion-1.0.0_sm/su
    merge_cmd_baton.target = target_wcpath;
    merge_cmd_baton.url = URL2;
    merge_cmd_baton.revision = revision2;
+--- ./subversion/include/svn_client.h.orig	2004-06-16 22:26:00.000000000 +0200
++++ ./subversion/include/svn_client.h	2004-09-02 18:01:49.000000000 +0200
+@@ -909,6 +909,7 @@
+                   svn_boolean_t ignore_ancestry,
+                   svn_boolean_t force,
+                   svn_boolean_t dry_run,
++                  svn_boolean_t duplicate,
+                   svn_client_ctx_t *ctx,
+                   apr_pool_t *pool);
+ 
+--- ./subversion/clients/cmdline/cl.h.orig	2004-05-19 23:32:54.000000000 +0200
++++ ./subversion/clients/cmdline/cl.h	2004-09-02 18:01:49.000000000 +0200
+@@ -51,6 +51,7 @@
+   svn_cl__config_dir_opt,
+   svn_cl__diff_cmd_opt,
+   svn_cl__dry_run_opt,
++  svn_cl__duplicate_opt,
+   svn_cl__editor_cmd_opt,
+   svn_cl__encoding_opt,
+   svn_cl__force_log_opt,
+@@ -120,6 +121,7 @@
+   svn_boolean_t ignore_ancestry; /* ignore ancestry for merge-y operations */
+   svn_boolean_t stop_on_copy;    /* don't cross copies during processing */
+   svn_boolean_t dry_run;         /* try operation but make no changes */
++  svn_boolean_t duplicate;       /* simply duplicate copied files and dirs */
+   svn_boolean_t revprop;         /* operate on a revision property */
+   const char *diff_cmd;          /* the external diff command to use */
+   const char *merge_cmd;         /* the external merge command to use */
+--- ./subversion/clients/cmdline/main.c.orig	2004-09-02 17:56:45.000000000 +0200
++++ ./subversion/clients/cmdline/main.c	2004-09-02 18:01:49.000000000 +0200
+@@ -112,6 +112,8 @@
+                       N_("do no interactive prompting")},
+     {"dry-run",       svn_cl__dry_run_opt, 0,
+                       N_("try operation but make no changes")},
++    {"duplicate",     svn_cl__duplicate_opt, 0,
++                      "simply duplicate copied files and directories"},
+     {"no-diff-deleted", svn_cl__no_diff_deleted, 0,
+                        N_("do not print differences for deleted files")},
+     {"notice-ancestry", svn_cl__notice_ancestry_opt, 0,
+@@ -412,7 +414,7 @@
+        "  the sources have identical basenames that match a file within '.':\n"
+        "  in which case, the differences will be applied to that file.\n"),
+     {'r', 'N', 'q', svn_cl__force_opt, svn_cl__dry_run_opt,
+-     svn_cl__merge_cmd_opt, svn_cl__ignore_ancestry_opt, 
++     svn_cl__duplicate_opt, svn_cl__merge_cmd_opt, svn_cl__ignore_ancestry_opt, 
+      SVN_CL__AUTH_OPTIONS, svn_cl__config_dir_opt} },
+   
+   { "mkdir", svn_cl__mkdir, {0},
+@@ -888,6 +890,9 @@
+       case svn_cl__dry_run_opt:
+         opt_state.dry_run = TRUE;
+         break;
++      case svn_cl__duplicate_opt:
++        opt_state.duplicate = TRUE;
++        break;
+       case svn_cl__revprop_opt:
+         opt_state.revprop = TRUE;
+         break;
+--- ./subversion/clients/cmdline/merge-cmd.c.orig	2004-09-02 17:57:41.000000000 +0200
++++ ./subversion/clients/cmdline/merge-cmd.c	2004-09-02 18:01:49.000000000 +0200
+@@ -190,6 +190,7 @@
+                               opt_state->ignore_ancestry,
+                               opt_state->force,
+                               opt_state->dry_run,
++                              opt_state->duplicate,
+                               ctx,
+                               pool);
+     }
