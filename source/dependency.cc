@@ -165,9 +165,8 @@ public:
 
 std::string PkgName (const std::string& file)
 {
-  //  std::cout << Utility::File(file).Basename() << std::endl;
-  // HACK
-  return std::string(basename(Utility::File(file).Basename().c_str()));
+  //std::cout << Utility::File(file).Basename() << std::endl;
+  return Utility::File(file).Basename();
 }
 
 
