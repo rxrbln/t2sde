@@ -55,7 +55,7 @@ EOT
 		sed 's,$, swap swap defaults 0 0,' >> $tmp2
 
 	cut -f2 -d' ' < $tmp2 | sort -u | while read dn ; do
-		grep " $dn " $tmp2 | tail -1; done > $tmp1
+		grep " $dn " $tmp2 | tail -n 1; done > $tmp1
 
 	cat << 'EOT' > $tmp2
 ARGIND == 1 {

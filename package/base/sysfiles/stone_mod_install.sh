@@ -98,7 +98,7 @@ part_add() {
 	disktype /dev/$1/$2 > /tmp/stone-install
 	type="`grep /tmp/stone-install -v -e '^  ' -e '^Block device' \
 	       -e '^Partition' -e '^---' | \
-	       sed -e 's/[,(].*//' -e '/^$/d' -e 's/ $//' | tail -1`"
+	       sed -e 's/[,(].*//' -e '/^$/d' -e 's/ $//' | tail -n 1`"
 	size="`grep 'Block device, size' /tmp/stone-install | \
 	       sed 's/.* size \(.*\) (.*/\1/'`"
 

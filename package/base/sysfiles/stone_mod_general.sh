@@ -46,7 +46,7 @@ set_keymap() {
 	cmd="$cmd following keyboard mappings. (Current: $keymap)'"
 	cmd="$cmd 'none (kernel defaults)' 'rm -f /etc/default.keymap ; loadkeys defkeymap'"
 
-	cmd="$cmd $( find $mapdir -type f ! -path '*/include/*' -name '*.map.gz' -printf '%P\n' | sed 's,\(.*\)/\(.*\).map.gz$,"\2	(\1)" "ln -sf '$mapdir'/& /etc/default.keymap ; loadkeys \2",' | expand -30 | sort | tr '\n' ' ')"
+	cmd="$cmd $( find $mapdir -type f ! -path '*/include/*' -name '*.map.gz' -printf '%P\n' | sed 's,\(.*\)/\(.*\).map.gz$,"\2	(\1)" "ln -sf '$mapdir'/& /etc/default.keymap ; loadkeys \2",' | expand -t30 | sort | tr '\n' ' ')"
 
 	eval "$cmd"
 }
@@ -61,7 +61,7 @@ set_vcfont() {
 	cmd="$cmd following console fonts. (Current: $vcfont)'"
 	cmd="$cmd 'none (kernel defaults)' 'rm -f /etc/default.vcfont ; setfont'"
 
-	cmd="$cmd $( find $fontdir -type f \( -name '*.fnt.gz' -or -name '*.psf*.gz' \) -printf '%P\n' | sed 's,\(.*\).\(fnt\|psf.*\)\.gz$,"\1" "ln -sf '$fontdir'/& /etc/default.vcfont ; setfont \1",' | expand -30 | sort | tr '\n' ' ')"
+	cmd="$cmd $( find $fontdir -type f \( -name '*.fnt.gz' -or -name '*.psf*.gz' \) -printf '%P\n' | sed 's,\(.*\).\(fnt\|psf.*\)\.gz$,"\1" "ln -sf '$fontdir'/& /etc/default.vcfont ; setfont \1",' | expand -t30 | sort | tr '\n' ' ')"
 
 	eval "$cmd"
 }
@@ -172,7 +172,7 @@ set_locale() {
 	unset LANG ; [ -f /etc/profile.d/locale ] && . /etc/profile.d/locale
 	locale="${LANG:-none}" ; cmd="gui_menu 'general_locale' 'Select one of the following locales. (Current: $locale)' 'none' 'set_locale_sub none'"
 
-	x="$( echo -e "POSIX\tC" | expand -52 )"
+	x="$( echo -e "POSIX\tC" | expand -t52 )"
 	cmd="$cmd '$x' 'set_locale_sub C' $(
 		grep -H ^title /usr/share/i18n/locales/* 2> /dev/null | \
 		awk -F '"' '{ sub(".*/", "", $1); sub("[\\.:].*", "", $1); '"

@@ -70,7 +70,7 @@ edit_srv() {
 	while
 		cmd="gui_menu $id 'Runlevel Editor - $srv'"
 		pri=`ls /etc/rc.d/rc?.d/[SX]??$srv 2> /dev/null | \
-		     cut -c18-19 | head -1`
+		     cut -c18-19 | head -n 1`
 		[ -z "$pri" ] && pri=99
 
 		for rl in 1 2 3 4 5 ; do
@@ -108,7 +108,7 @@ main() {
 			[ -f /etc/rc.d/init.d/$srv ] || continue
 
 			pri=`ls /etc/rc.d/rc?.d/[SX]??$srv \
-				2> /dev/null | cut -c18-19 | head -1`
+				2> /dev/null | cut -c18-19 | head -n 1`
 			[ -z "$pri" ] && pri=99
 
 			rlv=''
