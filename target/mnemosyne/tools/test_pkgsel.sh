@@ -1,5 +1,7 @@
 #!/bin/bash
 
+source ./scripts/functions
+
 config=default
 if [ "$1" == "-cfg" ]; then
 	config="$2"; shift
@@ -16,23 +18,20 @@ function test_pkgselfile() {
 	local count=
 	local buffer=
 	
-	while read action pattern; do
-		[ -z "$action" ] && continue
-		case "$action" in
-			[#]*)	;;
-			X|-)	pattern="$( echo "$pattern" | sed -e 's,\*,[.]*,g' )"
-				buffer="$( grep -e " $pattern " config/$config/packages | cut -d' ' -f5 | tr '\n' ' ' )"
-				count=$( echo "$buffer" | wc -w )
+	while read -r rule ; do
+		[ -z "$rule" -o "${rule:0:1}" == "#" ] && continue
+		line="$( ( echo "$rule" | pkgsel_parse ) \
+			| sed -e 's,$1=\".\",print \$5,')"
 
-				if [ $count -gt 0 ]; then
-					echo "  $action $pattern ($buffer)"
-				else
-					echo "  $action $pattern (no matches!)"
-				fi
-				;;
-			*)	echo "    unrecognized '$action'"
-				;;
-		esac
+		buffer=$( gawk "`pkgsel_init`$line" < config/$config/packages | tr '\n' ' ' )
+		count=$( echo "$buffer" | wc -w )
+
+		echo -n "rule: $rule "
+		if [ $count -gt 0 ]; then
+			echo "($buffer)"
+		else	
+			echo "no matches!"
+		fi
 	done < $file
 }
 
@@ -46,7 +45,7 @@ function test_pkgsel() {
 		if [ -d "$x" ]; then
 			test_pkgsel "$x" "$prefix$name"
 		else
-			echo " -> ${x##*/}"
+			echo "ruleset: ${x##*/}" 1>&2
 			test_pkgselfile "$x"
 		fi
 	done
