@@ -77,7 +77,7 @@
 		CONFIG_RTC=y
 
 		include(`kernel-common.conf.m4')
-		include(`kernel-scsi.conf.m4')
+		include(`kernel-block.conf.m4')
 
 		dnl SATA stuff that is mostly x86 right now
 		dnl we need a modular kernel anyway ... :-(
