@@ -27,7 +27,8 @@ x_extract() {
 		tar $taropt $archdir/$x
 	done
 
-	cd xc
+	# allow both, CVS and release builds ...
+	cd xc || cd X*$ver*
 
 	for x in $x_patches ; do
 		echo "Patching source ($x) ..."
@@ -45,7 +46,7 @@ x_extract_gl() {
 }
 
 # extract the Matrox HALlib (additional TV/DVI out support on x86)
-xf_extract_hallib() {
+x_extract_hallib() {
 	echo "Extracting mgaHALlib (For Matrox (>G400) cards) ..."
 	tar $taropt $archdir/mgadrivers-$mga_version-src.tbz2
 	cp mgadrivers-$mga_version-src/4.2.0/drivers/src/HALlib/mgaHALlib.a \
@@ -139,11 +140,18 @@ x_install() {
 # configure the World
 x_config() {
 	echo "Configuring X ..."
-	cat >> config/cf/host.def << EOT
+	pkginstalled zlib && cat >> config/cf/host.def << EOT
+
 /* Disable the internal zlib to use the system installed one */
 #define		HasZlib			YES
+EOT
+
+	pkginstalled expat && cat >> config/cf/host.def << EOT
+
 /* Disable the internal expat library to use the system installed one */
 #define		HasExpat		YES
+
+	cat >> config/cf/host.def << EOT
 
 /* Less warnings with recent gccs ... */
 #define		DefaultCCOptions	-ansi GccWarningOptions
