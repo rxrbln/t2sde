@@ -1,0 +1,222 @@
+#!/bin/bash
+bold="[1m"
+red="[31m"
+green="[32m"
+yellow="[33m"
+blue="[34m"
+normal="[0m"
+
+# {{{ usage_functions
+usage_functions(){
+	echo -n
+}
+# }}}
+# {{{ human readable
+human_readable() {
+	size=${1}
+	if [ ${size} -gt 1024 ] ; then
+		if [ ${size} -gt $(( 1024*1024 )) ] ; then
+			size="$(( ${size} / ( 1024*1024 ) )) MB"
+		else
+			size="$(( ${size} / 1024 )) kB"
+		fi
+	else
+		size="${size} Byte"
+	fi
+	echo "${size}"
+}
+# }}}
+# {{{ confirm
+function confirm {
+	unset yesno
+	while [ "${yesno}" != "yes" -a "${yesno}" != "no" ] ; do
+		echo -n "${@} [yes|no] ? "
+		read yesno
+	done
+	[ "${yesno}" = "yes" ] && return 0
+	return 1
+}
+# }}}
+
+# {{{ menu_init
+menu_init () {
+	block_level=0
+	items=0
+}
+# }}}
+# {{{ block_start
+block_start () {
+	block_level=$(( ${block_level} + 2 ))
+	echo "$@"
+}
+# }}}
+# {{{ block_end
+block_end () {
+	block_level=$(( ${block_level} - 2 ))
+}
+# }}}
+# {{{ bool
+bool () {
+# bool LVPCFG_FOO 1 "This is Option FOO"
+	items=$(( ${items} + 1 ))	
+	eval "type_${items}=\"bool\""
+	eval "option_${items}=\"${1}\""
+	eval "value=\${${1}}"
+	[ -z "${value}" ] && \
+		eval "${1}=\"${2}\""
+	eval "text_${items}=\"${3}\""
+}
+# }}}
+# {{{ multi
+multi () {
+# multi LVPCFG_FOO default "This is Multioption FOO" foo default bar
+	items=$(( ${items} + 1 ))
+	eval "type_${items}=\"multi\""
+	eval "option_${items}=\"${1}\""
+	eval "value=\${${1}}"
+	[ -z "${value}" ] && \
+		eval "${1}=\"${2}\""
+	eval "text_${items}=\"${3}\""
+	shift; shift; shift
+	eval "values_${items}=\"\""
+	while [ ! -z "${1}" ] ; do
+		eval "values_${items}=\"\${values_${items}} ${1}\""
+		shift
+	done
+}
+# }}}
+# {{{ text
+text () {
+# text LVPCFG_FOO "default text" "This is textoption FOO"
+	items=$(( ${items} + 1 ))
+	eval "type_${items}=\"text\""
+	eval "option_${items}=\"${1}\""
+	eval "value=\${${1}}"
+	[ -z "${value}" ] && \
+		eval "${1}=\"${2}\""
+	eval "text_${items}=\"${3}\""
+}
+# }}}
+# {{{ comment
+comment (){
+	items=$(( ${items} + 1 ))
+	eval "type_${items}=\"comment\""
+	eval "text_${items}=\"${@}\""
+}
+# }}}
+# {{{ display
+display () {
+	i=1
+	while [ ${i} -le ${items} ] ; do
+		eval "type=\${type_${i}}"
+		case "${type}" in
+			bool)
+				eval "option=\${option_${i}}"
+				eval "value=\${${option}}"
+				desc="X"
+				[ "${value}" == "0" ] && desc=" "
+				eval "echo \"${i} - [${desc}] \${text_${i}}\""
+				;;
+			multi)
+				eval "option=\${option_${i}}"
+				eval "value=\${${option}}"
+				eval "echo \"${i} - (${value}) \${text_${i}}\""
+				;;
+			text)
+				eval "option=\${option_${i}}"
+				eval "value=\${${option}}"
+				dots="..."
+				[ "${value:0:17}" == "${value}" ] && dots=""
+				eval "echo \"${i} - (${value:0:17}${dots}) \${text_${i}}\""
+				;;
+			comment)
+				eval "echo \"\${text_${i}}\""
+				;;
+			*)
+				echo "${type} NOT IMPLEMENTED"
+				;;
+		esac
+		i=$(( ${i} + 1 ))
+	done
+}
+# }}}
+# {{{ save
+save () {
+	i=1
+	echo "# LVP Configuration" > .config
+	while [ ${i} -le ${items} ] ; do
+		eval "option=\${option_${i}}"
+		eval "value=\${${option}}" 2>/dev/null
+		eval "type=\${type_${i}}"
+		case "${type}" in
+			bool)
+				echo "${option}=${value}" >>.config
+				;;
+			multi)
+				echo "${option}=\"${value}\"" >>.config
+				;;
+			text)
+				echo "${option}=\"${value}\"" >>.config
+				;;
+		esac
+		i=$(( ${i} + 1 ))
+	done
+}
+# }}}
+# {{{ load
+load () {
+	. .config
+}
+# }}}
+# {{{ get
+get () {
+# get 3
+	eval "option=\${option_${1}}"
+	if [ -z "${option}" ] ; then
+		echo "${bold}${red}No such option: ${1}${normal}"
+		sleep 1
+		return
+	fi
+	eval "type=\${type_${1}}"
+	case "${type}" in
+		text)
+			eval "value=\${${option}}"
+			read -erp "Enter new value for ${option} [${value}]> " new
+			[ ! -z "${new}" ] && eval "${option}=\"${new}\""
+			;;
+		multi)
+			eval "value=\${${option}}"
+			eval "values=\${values_${1}}"
+			x=1
+			for v in ${values} ; do
+				[ "${value}" == "${v}" ] && echo -n "${bold}"
+				echo "${x} - ${v}${normal}"
+				eval "nval_${1}_${x}=\"${v}\""
+				x=$(( ${x} + 1 ))
+			done
+			read -ep "Enter new value by number> " new
+			[ -z "${new}" ] && return
+			eval "new=\${nval_${1}_${new}}"
+			if [ -z "${new}" ] ; then
+				echo "${bold}${red}No such option!${normal}"
+				sleep 1
+				return
+			else
+				eval "${option}=\"${new}\""
+			fi
+			;;
+		bool)
+			eval "value=\${${option}}"
+			if [ "${value}" == "1" ] ; then
+				eval "${option}=0"
+			else
+				eval "${option}=1"
+			fi
+			;;
+		*)
+			echo "${bold}${red}NOT IMPLEMENTED${normal}"
+			sleep 1
+			;;
+	esac
+}
+# }}}

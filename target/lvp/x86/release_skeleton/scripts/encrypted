@@ -1,0 +1,187 @@
+#!/bin/bash
+
+type_encrypted="encrypted"
+entrosource="${LVP_ENTROPY_SOURCE}"
+
+process_encrypted(){
+	target="livesystem"
+
+	echo -n "Checking necessary filesystem size ... "
+	filesize=0
+
+	while read file ; do
+		[ ! -f "${file}" ] && continue
+		thisfilesize=`ls -l "${file}" | sed 's,[ \t][ \t]*, ,g' | cut -f5 -d' '`
+		filesize=$(( ${filesize} + ${thisfilesize} ))
+	done < ${moviefiles}
+
+	echo "${filesize} Byte (`human_readable ${filesize}`)"
+
+	echo -n "Checking Livesystem size ... "
+	livesize=`du -sb ${target} --exclude=lvp.data? | cut -f1`
+	echo "`human_readable ${livesize}`"
+	filesize=$(( $filesize + $livesize ))
+	echo
+	echo "Total space needed: $(( ${filesize} / 1024 / 1024 )) MB"
+
+	if [ $(( ${filesize} / 1024 / 1024 )) -gt $size ] ; then
+		echo
+		echo "This may be more than fits onto your medium."
+		echo "You specified ${size} MB to fit onto your medium."
+		echo "If you are sure that this is okay, please continue."
+		echo "If not, please truncate your filelist."
+		confirm "Continue"
+		[ ${?} -eq 1 ] && exit 1
+	fi
+
+	echo "Searching for free loopdevices ..."
+
+	filesize=$(( ( ${size} * 1048576 ) - ${livesize} ))
+	needed_pseudofs=$(( (${filesize} / 2147481600) + 1 ))
+	needed_loopdevices=${needed_pseudofs}
+	for loopdevice in /dev/loop/* ; do
+		[ ${needed_loopdevices} -eq 0 ] && continue
+		if losetup ${loopdevice} ${moviefiles} 2>/dev/null ; then
+			# I reuse the ${moviefiles} tmpfile here since associating it
+			# with a loopdevice doesn't do any harm
+			echo "Using ${loopdevice}"
+			eval "loopdevice_${needed_loopdevices}=\"${loopdevice}\""
+			losetup -d ${loopdevice}
+			needed_loopdevices=$(( ${needed_loopdevices} - 1 ))
+		fi
+	done
+
+	echo "Okay, Now creating files that will hold the pseudo filesystems"
+	unset ddparam
+	[ `dd --help | grep -c stat` -eq 1 ] && ddparam="conv=stat"
+
+	if [ -e livesystem/lvp.data1 ] ; then
+		for x in livesystem/lvp.data* ; do
+			if [ ${x##*lvp.data} -gt ${needed_pseudofs} ] ; then\
+				echo "Found ${x##*/}, but we don't need it. Deleting it."
+				rm -f ${x}
+			fi
+		done
+	fi
+
+	filesystem=0
+	while [ ${filesystem} -lt ${needed_pseudofs} ] ; do
+		filesystem=$(( ${filesystem} + 1 ))
+		echo "Filesystem ${filesystem} of ${needed_pseudofs}"
+		file="livesystem/lvp.data${filesystem}"
+
+		if [ ${filesystem} -lt ${needed_pseudofs} ] ; then
+			size=2147481600
+		else
+			size=$(( ${filesize} - ( ${filesystem} - 1 ) * 2147481600 ))
+			size=$(( ( ${size} / 2048 ) * 2048 ))
+		fi
+
+		if [ -f ${file} ] ; then
+			thisfilesize=`ls -l "${file}" | sed 's,  *, ,g' | cut -f5 -d' '`
+			if [ ${thisfilesize} -eq ${size} ] ; then
+				echo "lvp.data${filesystem} already exists and has correct filesize. Using it."
+			else	
+				echo "lvp.data${filesystem} already exists but has wrong filesize. Deleting it"
+				rm -f livesystem/lvp.data${filesystem}
+			fi
+		fi
+		[ -f livesystem/lvp.data${filesystem} ] && continue
+		dd if=/dev/${entrosource} of=livesystem/lvp.data${filesystem} \
+			bs=2k count=$(( $size / 2048 )) ${ddparam}
+	done
+
+	echo "Creating mountpoints"
+	rm -rf livesystem/mnt*
+	filesystem=1
+	while [ ${filesystem} -le ${needed_pseudofs} ] ; do
+		mkdir -p livesystem/mnt${filesystem}
+		filesystem=$(( ${filesystem} + 1 ))
+	done
+
+	echo "Using ${LVP_ENCRYPTION} encryption."
+
+	echo "Now I need a passphrase for encrypting the filesystems."
+	passphrase="MEEP"
+	passphrase_confirm="MOOP"
+	while [ "${passphrase}" != "${passphrase_confirm}" ] ; do
+		read -p "Enter passphrase: " -s passphrase
+		echo
+		read -p "Confirm: " -s passphrase_confirm
+		echo
+		if [ "${passphrase:20}" = "" ] ; then
+			echo "The Passphrase must be at lest 20 characters!"
+			passphrase="MEEP"
+			passphrase_confirm="MOOP"
+		fi
+		if [ "${passphrase}" != "${passphrase_confirm}" ] ; then
+			echo "The passphrases do not match."
+		fi
+	done
+
+	echo "Creating filesystems and mounting pseudo-filesystems"
+	lvpdata=1
+	while [ ${lvpdata} -le ${needed_pseudofs} ] ; do
+		eval "lodev=\${loopdevice_${lvpdata}}"
+		file="livesystem/lvp.data${lvpdata}"
+
+		echo "Setting up loopdevice ${lvpdata}"
+		echo "${passphrase}" | losetup -p 0 -e ${LVP_ENCRYPTION}256 ${lodev} ${file}
+
+		echo "Creating Filesystem ${lvpdata}"
+		mkfs.ext2 -m 0 ${lodev} >/dev/null 2>&1
+
+		echo "Mounting Filesystem ${lvpdata}"
+		mount ${lodev} livesystem/mnt${lvpdata}
+		rm -rf livesystem/mnt${lvpdata}/*
+
+		lvpdata=$(( ${lvpdata} + 1 ))
+	done
+
+	continue=0
+	while read file ; do
+		[ ! -f "${file}" ] && continue
+		[ ${continue} -eq 1 ] && continue
+
+		unset target
+		thisfile=`ls -l "${file}" | sed 's,  *, ,g' | cut -f5 -d' '`
+		for dir in livesystem/mnt? ; do
+			avail=`df -P ${dir} | grep / | sed 's,  *, ,g' | cut -f4 -d' '`
+			avail=$(( ${avail} * 1024 ))
+			[ -z "${target}" -a ${avail} -gt ${thisfile} ] && target=${dir}
+		done
+
+		if [ -z "${target}" ] ; then
+			echo "Not enough space available for ${file}. Skipping remaining files." >&2
+			continue=1
+		fi
+		[ ${continue} -eq 1 ] && continue
+
+		echo "Copying ${file} to ${target}/${file##*/}"
+		if [ -z "${ddparam}" ] ; then
+			cp "${file}" "${target}/${file##*/}"
+		else
+			dd "if=${file}" "of=${target}/${file##*/}" bs=1k ${ddparam}
+		fi
+
+		environment="`echo ${file} | tr '[. \-!]' '_'`"
+		eval "export file_${environment##*/}=\"${target#*livesystem}/${file##*/}\""
+	done < ${moviefiles}
+
+	lvpxml=livesystem/mnt1/lvp.xml
+	process_create_lvpxml
+
+	lvpdata=${needed_pseudofs}
+	while [ ${lvpdata} -ge 1 ] ; do
+		echo "Umounting Filesystem ${lvpdata}"
+		umount livesystem/mnt${lvpdata}
+
+		eval "lodev=\${loopdevice_${lvpdata}}"
+		echo "Shutting down loopdevice ${lodev}"
+		losetup -d ${lodev}
+
+		lvpdata=$(( ${lvpdata} - 1 ))
+	done
+
+	exit 0
+}
