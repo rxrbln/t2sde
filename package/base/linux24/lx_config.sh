@@ -22,6 +22,8 @@
 
 treever=${pkg/linux/} ; treever=${treever/-*/}
 archdir="$base/download/$repository/linux$treever"
+
+[ "$vanilla_ver" ] || vanilla_ver="$ver"
 srctar="linux-${vanilla_ver}.tar.bz2"
 
 lx_cpu=`echo "$arch_machine" | sed -e s/x86$/i386/ \
