@@ -186,7 +186,7 @@ add_interface() {
 	if gui_yesno "Use DHCP to obtain the configuration?" ; then
 		add_tag "dhcp"
 	else
-		add_tag "ip 192.168.5.1"
+		add_tag "ip 192.168.5.1/24"
 		add_tag "gw 192.168.5.1"
 		add_tag "nameserver 192.168.5.1"
 	fi
