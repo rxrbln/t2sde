@@ -40,7 +40,8 @@ gui_edit() {
 }
 
 gui_cmd() {
-	xterm -T "STONE - $1" -n "STONE" -e bash -c "$2
+	title="$1" ; shift
+	xterm -T "STONE - $title" -n "STONE" -e bash -c "$@
 			read -p 'Press ENTER to continue'"
 }
 
