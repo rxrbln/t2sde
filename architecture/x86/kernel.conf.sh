@@ -54,7 +54,7 @@
 		dnl Some AGP support not enabled by default
 		dnl
 		CONFIG_AGP_AMD_8151=y
-		CONFIG_AGP_SWORKS is not set
+		CONFIG_AGP_SWORKS=y
 
 		dnl PC Speaker for 2.5/6 kernel
 		CONFIG_INPUT_PCSPKR=y
