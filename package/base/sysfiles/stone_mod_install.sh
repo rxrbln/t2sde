@@ -141,7 +141,7 @@ on the command line.'"
 			disk_add $x
 		  done
 		else
-		  cmd="$cmd 'No disc found!' ''"
+		  cmd="$cmd 'No hard-disc found!' ''"
 		fi
 
 		cmd="$cmd 'Install the system ...'"
