@@ -48,11 +48,6 @@ help_msg() {
 	echo
 }
 
-dep4pkg()
-{
-	grep "$1:" scripts/dep_db.txt | cut -d ' ' -f 4-
-}
-
 #
 # ---- Parse options + config
 #
@@ -93,9 +88,6 @@ check4update()
         elif [ "$confdir" = X ] ; then
                 [ $debug = 1 ] && \
 		  echo "  $package: Package in multiple trees."
-	elif [ ! "`echo $alllist | grep +${package}+`" ] ; then
-		[ $debug = 1 ] && \
-		  echo "  $package: Package not in default package list." 
         elif [ ! -f /var/adm/packages/$package ] ; then
                 [ $debug = 1 ] && \
 		  echo "  $package: Not installed. Added."
@@ -138,12 +130,81 @@ check4update()
   deplist="$addlist"
 }
 
-alllist=`./scripts/Create-PkgList $arch | grep ^X | cut -d ' ' -f 5 | \
-        sed -e 's/$/+/' -e 's/^/+/'`
+dep4pkg() {
+    gawk -v package=$1 '
+function check_package() {
+
+	found_new = 0;
+
+	for ( package in build_list ) {
+		if ( debug )
+			print "#DEBUG PACKAGE: " package;
+
+		if ( ! package in database ) {
+			if (debug)
+				print "#  " package " not in database";
+		}
+		else {
+			if (debug)
+				print "#  " package " in database";
+
+			split(database[package], a);
+
+			for (d in a) {
+				# if ( a[c] == package  ) continue;
+				if ( strtonum(d) <= 3 ) continue;
+				dep = a[d];
+				if ( debug && 0)
+					print "#    dep: " dep;
+				if ( dep in build_list ) {
+					if ( debug && 0)
+					print "#    dep: " dep " already parsed";
+				}
+				else {
+					if (debug)
+						print "#    dep: " dep " now added";
+					build_list [ dep ] = (package);
+					found_new = 1;
+				}
+			}
+		}
+	}
+	if (found_new)
+		check_package();
+}
+
+BEGIN {
+	config="'$config'"; debug='$debug';
+	depdb_file = "scripts/dep_db.txt";
+
+	while ( (getline depline < depdb_file) > 0 )
+		{ $0 = depline; sub(/:/, "", $1); database[$1]=$0; }
+	close(depdb_file);
+
+	build_list [ package ] = 1;
+
+	check_package();
+
+	if (debug) {
+		for ( bp in build_list ) {
+			print "# " bp " (" build_list[bp] ")"
+		}
+	}
+	for ( bp in build_list ) {
+		print bp
+	}
+}
+
+'
+}
 
 if [ $builddep = 1 ] ; then
-        # we have a complete dependency graph cached ...
-        deplist="`dep4pkg $1`"
+        # we have to create a complete dependency graph ...
+	tmp="`mktemp`"
+        dep4pkg $1 > $tmp
+	[ "$debug" = 1 ] && grep '^#' $tmp
+	deplist="`grep -v '^#' $tmp`"
+	rm $tmp
         check4update
 else
         deplist=$1
@@ -157,7 +218,11 @@ echo "Packages scheduled to build: $deplist"
 [ $update = 1 ] && options="$options -update"
 
 for package in $deplist ; do
-	./scripts/Download -package $package
-	./scripts/Build-Pkg $options $package
+	if ./scripts/Download -package $package ; then
+		./scripts/Build-Pkg $options $package
+	else
+		echo "The download for package $package failed!"
+		exit -1
+	fi
 done
 
