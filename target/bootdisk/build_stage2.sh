@@ -99,7 +99,7 @@ for x in $progs ; do
 	[ -f ../2nd_stage/usr/sbin/$x ] && fn="usr/sbin/$x"
 
 	if [ "$fn" ] ; then
-		cp -d ../2nd_stage/$fn $fn
+		cp -v ../2nd_stage/$fn $fn
 	else
 		echo_error "\`- Program not found: $x"
 	fi
