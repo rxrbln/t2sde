@@ -110,7 +110,7 @@ done < <(
 	done | sort
 )
 
-[ "$pmatched" = 0 ] && \
+[ "$pmatched" = 0 -a "$profile" != "default" ] && \
 	error "Unknown profile: '$profile'"
 [ "$pmatched" = 1 -a "$imatched" = 0 ] && \
 	error "Unknown interface for profile: '$interface'"
