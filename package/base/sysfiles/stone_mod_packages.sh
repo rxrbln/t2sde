@@ -54,7 +54,8 @@ read_ids() {
 	cmd="$cmd '' ''"
 
 	if mount $opt $dev $mnt ; then
-		for x in `cd $mnt; ls -d */pkgs | cut -f1 -d/` ; do
+		for x in `cd $mnt; ls -d */{,ROCK/}pkgs 2> /dev/null | sed -e 's,/pkgs$,,'`
+		do
 			cmd="$cmd '$x' 'ROCKCFG_SHORTID=\"$x\"'"
 		done
 		umount $mnt
@@ -68,8 +69,8 @@ read_ids() {
 startgas() {
 	[ -z "$( cd $dir; ls )" ] && mount $opt -v -o ro $dev $dir
 	if [ "$ROCKCFG_SHORTID" = "Automatically choose first" ]; then
-		ROCKCFG_SHORTID="$( cd $dir; ls -d */pkgs | \
-					cut -f1 -d/ | head -n 1 )"
+		ROCKCFG_SHORTID="$( cd $dir; ls -d */{,ROCK/}pkgs 2> /dev/null | \
+					sed -e 's,/pkgs$,,' | head -n 1 )"
 		echo "Using Config-ID <${ROCKCFG_SHORTID:-None}> .."
 	fi
 	if [ $startgas = 1 ] ; then
