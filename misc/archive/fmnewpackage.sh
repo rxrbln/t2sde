@@ -79,11 +79,11 @@ read_fm_config() {
 # grep trove categories for status IDs
 	for trove_id in `grep '<trove_id>' $fmname.xml | sed 's,.*<trove_id>\(.*\)</trove_id>,\1,g'` ; do
 		case $trove_id in
-			3) status="Alpha"
+			9) status="Alpha"
 				;;
-    			4) status="Beta"
+    			10) status="Beta"
 				;;
-			[56]) status="Stable"
+			11,12) status="Stable"
 				;;
 			# there is no default
 		esac
