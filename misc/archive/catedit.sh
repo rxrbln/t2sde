@@ -35,7 +35,7 @@ do
 		[ "${file##*/}" = "$item.desc" ] && break
 	done
 	dialog 	--cancel-label Back \
-		--backtitle ' categories for $item ' \
+		--backtitle " categories for $item " \
 		--checklist "$(grep "^\[I\]" $file)" 42 80 35 \
 	    `for category in $(awk '/^[^# ]/ {print $1}' < Documentation/Developers/PKG-CATEGORIES); do 
 		echo -n $category $category

@@ -83,7 +83,7 @@ xf_install() {
 	cp -v programs/twm/system.twmrc.orig \
 	  programs/twm/sample-twmrc/original.twmrc
 	cp -v programs/twm/sample-twmrc/*.twmrc $root/usr/X11R6/lib/X11/twm/
-	register_wm twm TWM /$usr/X11/bin/twm
+	register_wm twm TWM /usr/X11/bin/twm
 
 	echo "Copy X11 Documentation and creating X11 symlink ..."
 	rm -rf $root/usr/doc/X11
