@@ -37,15 +37,17 @@ EOT
 
 	for x in /dev/cdroms/cdrom[0-9] ; do
 	    if [ -e $x ] ; then
-		mkdir -p /mnt/${x/*\//}
-		echo "$x /mnt/${x/*\//} iso9660 ro,noauto 0 0" >> $tmp2
+		trg=/mnt/${x/*\//} ; trg=${trg/cdrom0/cdrom}
+		mkdir -p $trg
+		echo "$x $trg iso9660 ro,noauto 0 0" >> $tmp2
 	    fi
 	done
 
 	for x in /dev/floppy/[0-9] ; do
 	    if [ -e $x ] ; then
-		mkdir -p /mnt/floppy${x/*\//}
-		echo "$x /mnt/floppy${x/*\//} auto sync,noauto 0 0" >> $tmp2
+		trg=/mnt/floppy${x/*\//} ; trg=${trg/floppy0/floppy}
+		mkdir -p $trg
+		echo "$x $trg auto sync,noauto 0 0" >> $tmp2
 	    fi
 	done
 
