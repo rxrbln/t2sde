@@ -96,8 +96,25 @@ add_wrapper()
 	for x ; do x="${x%%\[\]}" ; p2="$p2${x##* }, " ; done
 	p1="${p1%, }" ; p2="${p2%, }"
 
-	if [ "${function#exec}" = "${function}" ]
-	then
+	case ${function} in
+	exec*)
+		echo ; cat << EOT
+extern $ret_type $function($p1);
+$ret_type (*orig_$function)($p1) = 0;
+
+$ret_type $function($p1)
+{
+	int old_errno=errno;
+
+	handle_file_access_after("$function", f, 0);
+	if (!orig_$function) orig_$function = get_dl_symbol("$function");
+	errno=old_errno;
+
+	return orig_$function($p2);
+}
+EOT
+		;;
+	*)
 		echo ; cat << EOT
 extern $ret_type $function($p1);
 $ret_type (*orig_$function)($p1) = 0;
@@ -125,27 +142,12 @@ $ret_type $function($p1)
 	return rc;
 }
 EOT
-	else
-		echo ; cat << EOT
-extern $ret_type $function($p1);
-$ret_type (*orig_$function)($p1) = 0;
-
-$ret_type $function($p1)
-{
-	int old_errno=errno;
-
-	handle_file_access_after("$function", f, 0);
-	if (!orig_$function) orig_$function = get_dl_symbol("$function");
-	errno=old_errno;
-
-	return orig_$function($p2);
-}
-EOT
-	fi
+		;;
+	esac
 }
 
-add_wrapper 'int,   open,    const char* f, int a, int b'
-add_wrapper 'int,   open64,  const char* f, int a, int b'
+add_wrapper 'int,   open,    const char* f, int a, ...'
+add_wrapper 'int,   open64,  const char* f, int a, ...'
 
 add_wrapper 'FILE*, fopen,   const char* f, const char* g'
 add_wrapper 'FILE*, fopen64, const char* f, const char* g'
@@ -178,9 +180,15 @@ static void * get_dl_symbol(char * symname)
 #if DLOPEN_LIBC
 	static void * libc_handle = 0;
 
-	if (!libc_handle) libc_handle=dlopen("libc.so.6", RTLD_LAZY);
 	if (!libc_handle) {
-		printf("fl_wrapper.so: Can't dlopen libc: %s\n", dlerror());
+	  char *path_libc = getenv("FLWRAPPER_LIBC");
+	  if (!path_libc) 
+	    path_libc = "libc.so.6";
+
+	  libc_handle=dlopen(path_libc, RTLD_LAZY);
+	}
+	if (!libc_handle) {
+		fprintf(stderr, "fl_wrapper.so: Can't dlopen libc: %s\n", dlerror()); fflush(stderr);
 		abort();
 	}
 
@@ -198,8 +206,8 @@ static void * get_dl_symbol(char * symname)
 #  endif
 #endif
 	if (!rc) {
-		printf("fl_wrapper.so: Can't resolve %s: %s\n",
-		       symname, dlerror());
+		fprintf(stderr, "fl_wrapper.so: Can't resolve %s: %s\n",
+		       symname, dlerror()); fflush(stderr);
 		abort();
 	}
 
