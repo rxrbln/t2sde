@@ -82,12 +82,12 @@ audit_package() {
 		1)	lstatus=SUCCESSFUL	;;
 		*)	lstatus=PENDING		;;
 	esac
-	echo -e "$repo/$pkg\t$lchanges\t($ver)\t$lbuild\t$lstatus"
+	echo -e "package/$repo/$pkg\t$lchanges\t($ver)\t$lbuild\t$lstatus"
 }
 
 if [ "$repositories" ]; then
 	for repo in $repositories; do
-		repo=${repo#./package/}; repo=${repo#package/}; repo=${repo%/}
+		repo=${repo#package/}; repo=${repo%/}
 		if [ -d package/$repo/ ]; then
 			grep -e "^X.* $repo " config/$config/packages | while \
 				read x stages x repo pkg ver x; do
