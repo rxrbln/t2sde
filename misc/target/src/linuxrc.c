@@ -43,18 +43,17 @@ main(int argc, char **argv)
   }
   fprintf(stdout, " done\n");
 
-  /* Detetecting image *********************************************/
-#ifdef USE_CDROM
-  cdrom_detect();
-#endif
-
   /*****************************************************************/
 #ifdef USE_HWDETECT
   hardware_auto_detect();
 #endif
 
-  /* FIXME mount /dev, /proc etc. to new root */
+  /* Detetecting image *********************************************/
+#ifdef USE_CDROM
+  cdrom_detect();
+#endif
 
+  /* FIXME mount /dev, /proc etc. to new root */
   /* FIXME free ramdisk */
   /* FIXME pivot_root */
   chdir("/");

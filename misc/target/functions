@@ -6,64 +6,167 @@ source misc/target/functions.iso
 imagedir=$build_rock/$target
 topdir=$PWD
 
-# copy_from_pkg pkg-name destination [glob-match-1 [glob-match-2 [...]]]
+# copy_from_pkg [options] pkg-name destination [glob-match-1 [glob-match-2 [...]]]
 # 
 # Copy a file from the target into a specified destination.
+# The source path is kept unless -f or -s options are set.
+#
 # This should make unpacking/building e.g. syslinux in the
 # target/*/build.sh file superfluous.
 #
+# Options:
+#   -f            Copy file only (without tree)
+#   -s 'sed-expr' Sed expression for installation path
+#
 # Example: 
 # $ copy_from_pkg grub dest '/stage*' -*/share/* -*/doc/*
-# cp boot/grub/stage1 dest
-# cp boot/grub/stage2 dest
-# $ copy_from_pkg syslinux dest "isolinux.bin"
+# cp -a boot/grub/stage1 dest
+# cp -a boot/grub/stage2 dest
+# $ copy_from_pkg -f syslinux dest "isolinux.bin"
 # cp usr/lib/syslinux/isolinux.bin dest
 copy_from_pkg() {
-    local flist=$build_root/var/adm/flists/$1 ; shift
-    local dest=$1 ; shift
-    local dummy file sedexp list p tmp
-    local arg
+    local arg flist dest sedexpr
+    local match_del match_add
+    local src srcorig
+
+    # options
+    for arg in "$@"; do
+	case "$arg" in
+	    -f) sedexpr='s,.*/,,' ; shift ;;
+	    -s) sedexpr="$2" ; shift ; shift ;;
+	    *) break ;;
+	esac
+    done
+
+    flist=$build_root/var/adm/flists/$1 ; shift
+    dest=$1 ; shift
 
     # addiditve matches
     for arg in "$@"; do
+	arg="`echo "$arg" | sed 's,"\([^"]*\)",\1,'`"
+
 	case "$arg" in
 	    -*) continue ;;
-	    +*) arg="`echo $arg | sed 's,^+,,;'`" ;;
+	    +*) arg="`echo "$arg" | sed 's,^+,,;'`" ;;
 	esac
 	arg="`echo "$arg" | sed 's,[*],[^ ]*,g; s,[?],.,g;'`"
 
-	while read dummy file; do
-	    var_append list ' ' "$file"
-	done < <(egrep "$arg" $flist)
+	var_append match_add '|' "(^$arg\$)"
     done
 
     # subtractive matches
-    for arg in $* -var/adm/*; do
+    for arg in "$@"; do
+	arg="`echo "$arg" | sed 's,"\([^"]*\)",\1,'`"
+
 	case "$arg" in
-	    -*) arg="`echo $arg | sed 's,^-,,; s,[*],[^ ]*,g; s,[?],.,g;'`" ;;
+	    -*) arg="`echo "$arg" | sed 's,^-,,; s,[*],[^ ]*,g; s,[?],.,g;'`" ;;
 	    *) continue ;;
 	esac
 
-	#FIXME does not work due to '/' in $arg...: var_remove_regex list ' ' "$arg"
-	#HACK ALTER
-	dummy="$list" ; list=
-	for p in $dummy; do
-	    tmp="`echo $p | sed "s,$arg,,"`"
-	    [ -n "$tmp" ] && var_append list ' ' "$p"
-	done
+	var_append match_del '|' "(^$arg\$)"
     done
 
     # do the copy
-    for p in $list; do
-	if [ -f $build_root/$p ]; then
-	    mkdir -p $dest/`dirname $p`
-	    cp -a $build_root/$p $dest/$p
-#FIXME do I need this:
-	elif [ -d $build_root/$p ];  then
-	    mkdir -p $dest/$p
-	else
-	    echo_error "Unknown file type ($p)"
-	fi
+    for src in `awk '{ print "/" $2; }' < $flist | egrep "$match_add" | egrep -v "$match_del"`; do
+	srcorig="$src"
+	[ -n "$sedexpr" ] && src="`echo "$src" | sed "$sedexpr"`"
+
+	mkdir -p $dest/`dirname $src`
+	cp -a $build_root/$srcorig $dest/$src
+    done
+}
+
+# option_parser_skeleton config-file [option-definitions] -- see image_parse_cfg for usage
+option_parser_skeleton() {
+    local cfg=$1 ; shift
+    local arg case_def
+    local def fnc
+    local option args
+
+    # assemble switch statement
+    for arg in "$@"; do
+	def="${arg%%:*}"
+	fnc="${arg#*:}"
+	
+	var_append case_def ';; ' "$def) $fnc"
+    done
+
+    while read option args; do
+	eval "case "$option" in $case_def ;; esac"
+    done < <(egrep -v "^(#.*)?$" $cfg)
+}
+
+# image_parse_cfg config-file -- creates an image out a config file, see README
+image_parse_cfg() {
+    local cmd kver ktree
+
+    # parse options stage 1 (unpacking, adaption functions and per-image config)
+    option_parser_skeleton $1 \
+	'default: read cmd args < <(echo $args);
+                  if [ "$cmd" = "pkg" ]; then
+                      pkg_selection_defaults="$args";
+                  else
+                      echo_error "Error in config";
+                  fi' \
+        'initrd: image_name=$args ; var_append image_list " " "$args" ; echo "initrd $args" > $imagedir/$image_name.cfg' \
+	'title:  image_title="$args" ; echo "title $args" >> $imagedir/$image_name.cfg' \
+        'kernel: image_kernel=$args ; echo "kernel $args" >> $imagedir/$image_name.cfg' \
+	'init-flags:  echo "init-flags $args" >> $imagedir/$image_name.cfg' \
+	'init-srcs:  echo "init-srcs $args" >> $imagedir/$image_name.cfg' \
+	'type:   read cmd args < <(echo $args);
+                 image_type=$cmd;
+                 image_type_args="$args";
+                 echo "type $args" >> $imagedir/$image_name.cfg' \
+	'func:   eval "$args"' \
+	'pkg:    read cmd args < <(echo $args);
+                 copy_from_pkg $cmd $imagedir/$image_name $args $pkg_selection_defaults'
+
+    # parse options stage 2 (init and image creation)
+    for each in $image_list; do
+	# parse per image config
+	image_kernel=
+	image_init_flags=
+	image_init_srcs=
+	image_type=
+	image_type_args=
+
+	option_parser_skeleton $imagedir/$image_name.cfg \
+            'initrd: image_name=$args' \
+	    'title:  image_title="$args"' \
+            'kernel: image_kernel=$args' \
+            'init-flags: image_init_flags="$args"' \
+            'init-srcs: image_init_srcs="$args"' \
+	    'type:   read cmd args < <(echo $args);
+                 image_type=$cmd;
+                 image_type_args="$args"'
+
+        # kernel version and tree
+	kver="`grep lib/modules  $build_root/var/adm/flists/$image_kernel |
+              cut -d ' ' -f 2 | cut -d / -f 3 | head -n 1`"
+
+	case "$kver" in
+	    2.4.*) ktree=24 ;;
+	    2.6.*) ktree=26 ;;
+	esac
+
+	# Create init
+	echo_status "Creating init..."
+
+	# default flags
+	CFLAGS="-Os -s -I$topdir/misc/target/src -I$build_root/usr/include $image_init_flags"
+
+	# kernel related cflags
+	grep -q "CONFIG_DEVFS_FS=y" $build_root/boot/kconfig_$kver && CFLAGS="$CFLAGS -DWITH_DEVFS"
+	grep -q "CONFIG_DEVFS_FS=m" $build_root/boot/kconfig_$kver && CFLAGS="$CFLAGS -DWITH_DEVFS_MODULE"
+
+	# compile init
+	#FIXME handle init-srcs
+	eval "$CC -static $CFLAGS -o $imagedir/$image_name/linuxrc $topdir/misc/target/src/linuxrc.c"
+	
+	# image creation
+	if [ "$image_type" = "cramfs" ]; then mkcramfs $image_type_args $imagedir/$image_name $imagedir/$image_name.img; 
+	elif [ "$image_type" = "squashfs" ]; then mkcramfs $image_type_args $imagedir/$image_name $imagedir/$image_name.img; 
+	elif [ -n "$image_type" ]; then eval "$image_type $image_type_args"; fi
     done
 }
 
@@ -85,186 +188,4 @@ pkgsel_update_tmpl() {
 	    echo_status "Done."
 	fi
     fi
-}
-
-# initrd_parse_config -- create initrd tree's according to $target/initrd.cfg
-# 
-# Variables exported:
-#   initrd_name
-#   initrd_title
-#   initrd_kernel
-#   initrd_type initrd_type_args
-#   initrd_create_func
-initrd_parse_config() {
-    local option args cmd each swallow
-    local pkg_default_args pkg_name pkg_args
-
-    if [ ! -f "target/$target/initrd.cfg" ]; then
-	echo_error "No initrd.cfg in this target..."
-	return
-    fi
-
-    while read option args; do
-	case "$option" in
-	    # currently we only support a default for "pkg" selection
-	    default)		
-		read cmd args < <(echo $args)
-		case "$cmd" in
-		    pkg)
-			pkg_default_args="$pkg_default_args $args"
-			;;
-		    *)
-			echo_error "Error in target/$target/initrd.cfg"
-			exit -1
-			;;
-		esac
-		;;
-	    # the main line for creating an initrd
-	    initrd)
-		read initrd_name swallow < <(echo $args) ; export initrd_name
-		echo_header "Creating $initrd_name initrd..."
-		rm -rf $imagedir/$initrd_name
-		rm -rf $imagedir/$initrd_name.cfg
-		mkdir -p $imagedir/$initrd_name
-		mkdir -p $imagedir/$initrd_name/{dev,udev,sys,boot}
-		echo "initrd $initrd_name" >> $imagedir/$initrd_name.cfg
-		;;
-	    # unpacking and extra functions to call
-	    pkg)
-		read pkg_name pkg_args < <(echo $args)
-		echo_status "Copying files from $pkg_name..."
-		eval "copy_from_pkg $pkg_name $imagedir/$initrd_name $pkg_args $pkg_default_args"
-		;;
-	    func)
-		for each in $args; do
-		    eval "$each"
-		done
-		;;
-	    # following is only needed while the initrd creation, so
-	    # the info is only recorded in the respective .cfg file,
-	    # one exception, some variables my be need by the "func" 
-	    # function called
-	    title)  
-		export initrd_title="$args"
-		echo "title $args" >> $imagedir/$initrd_name.cfg 
-		;;
-	    kernel) 
-		export initrd_kernel="$args"
-		echo "kernel $args" >> $imagedir/$initrd_name.cfg 
-		;;
-	    type)   
-		read initrd_type initrd_type_args < <(echo $args) ; export initrd_type initrd_type_args
-		echo "type $args" >> $imagedir/$initrd_name.cfg 
-		;;
-	    create) 
-		export initrd_create_func="$args"
-		echo "create $args" >> $imagedir/$initrd_name.cfg 
-		;;
-	esac
-    done < <(egrep -v "^(#.*)?$" target/$target/initrd.cfg)
-}
-
-# initrd_get_configs -- list initrd configs
-initrd_get_configs() {
-    local option args
-
-    if [ ! -f "target/$target/initrd.cfg" ]; then
-	echo_error "No initrd.cfg in this target..."
-	return
-    fi
-
-    while read option args; do
-	case "$option" in
-	    initrd) echo "$args" ;;
-	esac
-    done < <(egrep -v "^(#.*)?$" target/$target/initrd.cfg)
-}
-
-# initrd_create -- create the initrd images
-#
-# Variables exported:
-#   initrd_name
-#   initrd_title
-#   initrd_kernel
-#   initrd_type
-#   initrd_type_args
-#   initrd_create_func
-initrd_create() {
-    local each swallow
-    local kver ktree
-
-    # parse config
-    for each in `initrd_get_configs`; do
-	# read single initrd config
-	while read option args; do
-	    case "$option" in
-		initrd) read initrd_name swallow < <(echo $args) ; export initrd_name ;;
-		title)  export initrd_title="$args" ;;
-		kernel) export initrd_kernel="$args" ;;
-		type)   read initrd_type initrd_type_args < <(echo $args) ; export initrd_type initrd_type_args ;;
-		create) export initrd_create_func="$args" ;;
-	    esac
-	done < <(egrep -v "^(#.*)?$" $imagedir/$each.cfg)
-	
-	echo_header "Creating initrd ($initrd_name)"
-
-        # kernel version and tree
-	kver="`grep lib/modules  $build_root/var/adm/flists/$initrd_kernel |
-              cut -d ' ' -f 2 | cut -d / -f 3 | head -n 1`" # FIXME check
-
-	case "$kver" in
-	    2.4.*) ktree=24 ;;
-	    2.6.*) ktree=26 ;;
-	esac
-
-	# check type of image to create
-	case "$initrd_type" in
-	    cramfs)
-		if ! grep -q "CONFIG_CRAMFS=y" $build_root/boot/kconfig_$kver; then
-		    echo_error "cramfs not supported by selected kernel"
-		    exit -1
-		fi
-		;;
-	    squashfs)
-		if ! grep -q "CONFIG_SQUASHFS=y" $build_root/boot/kconfig_$kver; then
-		    echo_error "squashfs not supported by selected kernel"
-		    exit -1
-		fi
-		;;
-	    *)
-		echo_error "Creating initrd with \"$initrd_type\" file system (currently) not supported"
-		exit -1
-		;;
-	esac
-
-	# Create init
-	echo_status "Creating init..."
-
-	# default flags
-	CFLAGS="-Os -s -I$topdir/misc/target/src -I$build_root/usr/include"
-
-	# devfs flags
-	grep -q "CONFIG_DEVFS_FS=y" $build_root/boot/kconfig_$kver && CFLAGS="$CFLAGS -DWITH_DEVFS"
-	grep -q "CONFIG_DEVFS_FS=m" $build_root/boot/kconfig_$kver && CFLAGS="$CFLAGS -DWITH_DEVFS_MODULE"
-
-	# FIXME should be configurable
-	CFLAGS="$CFLAGS -DUSE_CDROM"
-	CFLAGS="$CFLAGS -DUSE_HWDETECT"
-	CFLAGS="$CFLAGS -DDEBUG"
-	
-	# compile init
-	eval "$CC -static $CFLAGS -o $imagedir/$initrd_name/linuxrc $topdir/misc/target/src/linuxrc.c"
-
-	# Create image
-	if [ -n "$initrd_create_func" ]; then
-	    eval "$initrd_create_func"
-	else
-	    case "$initrd_type" in
-		cramfs)
-		    eval "mkcramfs $initrd_type_args $imagedir/$initrd_name $imagedir/$initrd_name.img"
-		    ;;
-		*)	echo_error "Image type \"$type\" currently not supported" ;;
-	    esac
-	fi
-    done
 }
