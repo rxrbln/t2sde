@@ -616,7 +616,11 @@ abort() {
 		fi
 		touch $root/var/adm/logs/$stagelevel-$xpkg.log
 	)
-	[ ! -f $root/var/adm/logs/$stagelevel-$xpkg.log ] && abort
+	if [ -f $root/var/adm/logs/$stagelevel-$xpkg.log ] ; then
+		found_errors=0
+	else
+		found_errors=1
+	fi
 
 	hook_eval postinstall
 
@@ -714,18 +718,6 @@ abort() {
 		sort -u $builddir/dependencies.txt > var/adm/dependencies/$xpkg
 	fi
 
-	echo -n "Creating md5sum and cksum files ..."
-	getfiles < var/adm/flists/$xpkg > $builddir/files.lst
-	if [ -s $builddir/files.lst ] ; then
-		cat $builddir/files.lst | \
-			grep -v '^var/adm/' | sed -e 's/ /\\ /g' | \
-			xargs -r md5sum > var/adm/md5sums/$xpkg
-		cat $builddir/files.lst | \
-			grep -v '^var/adm/' | sed -e 's/ /\\ /g' | \
-			xargs -r cksum > var/adm/cksums/$xpkg
-	fi
-	echo ' done.'
-
 	echo "Creating package description ..."
 	#
 	rocksrcck=$(cd $base; md5sum package/*/$pkg/* 2> /dev/null | \
@@ -771,11 +763,26 @@ EOT
 	    done < $base/Documentation/Developers/PKG-DESC-FORMAT
 	} > var/adm/descs/$xpkg
 
+	echo "Preparing to create md5sum and cksum files ..."
+	getfiles < var/adm/flists/$xpkg > $builddir/files.lst
+	if [ -s $builddir/files.lst ] ; then
+		echo "  creating md5sums ..."
+		( echo -e "var/adm/descs/$xpkg\nvar/adm/packages/$xpkg" ; \
+		  cat $builddir/files.lst | grep -v '^var/adm/' ) | \
+			sed -e 's/ /\\ /g' | \
+			xargs -r md5sum > var/adm/md5sums/$xpkg
+		echo "  creating cksums ..."
+		( echo -e "var/adm/descs/$xpkg\nvar/adm/packages/$xpkg" ; \
+		  cat $builddir/files.lst | grep -v '^var/adm/' ) | \
+			sed -e 's/ /\\ /g' | \
+			xargs -r cksum > var/adm/cksums/$xpkg
+	fi
+	echo 'done.'
+
 	echo "Making post-install adoptions."
 	if [ $stagelevel -ge 2 -a -f /sbin/ldconfig ] ; then ldconfig ; fi
 
 	if [ "$ROCKCFG_PARANOIA_CHECK" = 1 ] ; then
-		found_errors=0
 		found_dups=0
 
 		while read dummy file ; do
@@ -801,9 +808,8 @@ EOT
 		  done < <( sed "s,^$xpkg: ,/," $root/var/adm/flists/$xpkg | \
                   	    egrep "^/usr/local" )
 		fi
-
-		[ $found_errors != 0 ] && abort
 	fi
+	[ $found_errors != 0 ] && abort
 
 } 2>&1 | {
 
