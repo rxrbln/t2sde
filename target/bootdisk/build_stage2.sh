@@ -9,7 +9,7 @@ mkdir -p mnt/source mnt/target
 #
 package_map='       +00-dirtree         +glibc22            +glibc23
 -gcc2               -gcc3               -gcc33              -gccx
--linux24-src        -linux26-src        -linux24benh-src
+-linux24-source        -linux26-source        -linux24benh-src
 -linux24-header     -linux26-header     -linux24benh-header
 -linux24            -linux26            -linux24benh
 -binutils           -bin86              -nasm               -dietlibc
@@ -38,7 +38,8 @@ package_map='       +00-dirtree         +glibc22            +glibc23
 +sysklogd           +devfsd             +setserial          +iproute2
 +netkit-base        +netkit-ftp         +netkit-telnet      +netkit-tftp
 +sysfiles           +libpcap            +iptables           +tcp_wrappers
--kiss               +kbd		-syslinux           +ntfsprogs'
+-kiss               +kbd		-syslinux           +ntfsprogs
+-ethtool -uml_utilities'
 
 if [ -f ../../pkgs/bize.tar.bz2 -a ! -f ../../pkgs/mine.tar.bz2 ] ; then
 	packager=bize
@@ -46,7 +47,7 @@ else
 	packager=mine
 fi
 
-package_map="+$ROCKCFG_DEFAULT_KERNEL +$packager $package_map"
+package_map="+$ROCKCFG_PKG_LINUX_DEFAULT +$packager $package_map"
 
 echo_status "Extracting the packages archives."
 for x in $( ls ../../pkgs/*.tar.bz2 | tr . / | cut -f8 -d/ )
