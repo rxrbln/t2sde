@@ -31,7 +31,7 @@ EOT
 }
 
 set_enable() {
-	gui_menu gpm_buttons \
+	gui_menu machid_enable \
 	"Should the mouse emulation be activated. (Current: $mouse_button_emulation)" \
 	'enable emulation' 'mouse_button_emulation=1' \
 	'disable emulation' 'mouse_button_emulation=0'
@@ -51,7 +51,7 @@ main() {
 	mouse_button3_keycode=87 #125
 	[ -f /etc/conf/mac_hid ] && . /etc/conf/mac_hid
 
-	gui_menu gpm 'Macintosh mouse button emulation.
+	gui_menu machid 'Macintosh mouse button emulation.
 Select an item to change the value:\n(Example keys: F10:68, F11: 87, Apple: 125, KP_Return: 96 - others use showkey)' \
 		"Emulation enabled ........ $mouse_button_emulation"   'set_enable' \
 		"Mouse Button 2 keycode ... $mouse_button2_keycode" 'set_button 2 mouse_button2_keycode' \
