@@ -3,12 +3,10 @@
 pfile=`match_source_file -p protector`
 if [ "$pfile" ] ; then
 	echo "Inserting SPP ..."
-	tar $taropt $pfile
+	ppatch=`tar -v $taropt $pfile | grep 'dif\$' | head -n 1`
 
-	if [ -f protector.dif ] ; then
-		patch -p0 < protector.dif
-	elif [ -f gcc_*.dif ] ; then
-		patch -p0 < gcc_*.dif
+	if [ "$ppatch" -a -f $ppatch ]; then
+		patch -p0  < $ppatch
 	else
 		abort "Protector patch not found"
 	fi
