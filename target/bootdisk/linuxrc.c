@@ -69,10 +69,10 @@ void doboot()
 			{ perror("Can't call pivot_root"); exit_linuxrc=0; }
 		chdir("/");
 
-		if (mount("none", "/dev", "devfs", 0, NULL))
+		if ( mount("none", "/dev", "devfs", 0, NULL) )
 			perror("Can't mount /dev");
 
-		if (mount("none", "/proc", "proc", 0, NULL))
+		if ( mount("none", "/proc", "proc", 0, NULL) )
 			perror("Can't mount /proc");
 	} else {
 		if ( rmdir("/mnt_root/old_root") )
@@ -196,7 +196,7 @@ void load_modules(char * dir)
 		execargs[2] = "-f";     execargs[3] = filename;
 		for (n=4; (execargs[n] = strtok(NULL, " ")) != NULL; n++) ;
 
-		if (! access(filename, R_OK)) break;
+		if ( ! access(filename, R_OK) ) break;
 		printf("No such module found. Try again (enter=back): ");
 		fflush(stdout);
 	}
@@ -456,6 +456,7 @@ void autoload_modules()
 
 void exec_sh()
 {
+	printf ("Quit the shell to return to the stage 1 loader!\n");
 	if ( fork() == 0 ) {
 		execl("/bin/kiss", "kiss", NULL);
 		perror("kiss");
@@ -469,10 +470,10 @@ int main()
 	char text[100];
 	int input=1;
 
-	if (mount("none", "/dev", "devfs", 0, NULL) && errno != EBUSY)
+	if ( mount("none", "/dev", "devfs", 0, NULL) && errno != EBUSY )
 		perror("Can't mount /dev");
 
-	if (mount("none", "/proc", "proc", 0, NULL))
+	if ( mount("none", "/proc", "proc", 0, NULL) )
 		perror("Can't mount /proc");
 
 	/* Only print important stuff to console */
