@@ -20,8 +20,7 @@ lx_cpu=`echo "$arch_machine" | sed -e s/i.86/i386/ -e s/powerpc/ppc/ \
 lx_extraversion=""
 lx_kernelrelease=""
 lx_defconfig="arch/$lx_cpu/defconfig arch/$lx_cpu/configs/common_defconfig"
-
-lx_customconf=$base/config/$config/linux.cfg
+lx_customconf="\$base/config/$config/linux.cfg"
 
 [ $arch = sparc -a "$ROCKCFG_SPARC_64BIT_KERNEL" = 1 ] && \
         lx_cpu=sparc64
@@ -214,7 +213,7 @@ lx_config() {
 	if [ "$ROCKCFG_PKG_LINUX_CONFIG_STYLE" = none ] ; then
 		echo "Using $lx_customconf."
 		echo "Since automatic generation is disabled ..."
-		cp -v $lx_customconf .config || true
+		eval cp -v $lx_customconf .config || true
 	else
 		echo "Automatically creating default configuration ...."
 		auto_config
