@@ -64,7 +64,7 @@ cd ..
 echo_header "Creating initrd filesystem image: "
 
 ramdisk_size=8192
-[ $arch = x86 ] && ramdisk_size=4096
+#[ $arch = x86 ] && ramdisk_size=4096
 
 echo_status "Creating temporary files."
 tmpdir=initrd_$$.dir; mkdir -p $disksdir/$tmpdir; cd $disksdir
