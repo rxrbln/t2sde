@@ -1,0 +1,495 @@
+--- util-linux-2.12/mount/mount.8.orig	2003-09-21 18:14:26.000000000 -0400
++++ util-linux-2.12/mount/mount.8	2003-09-21 18:16:18.000000000 -0400
+@@ -1696,6 +1696,11 @@
+ .BR loop ", " offset " and " encryption ,
+ that are really options to
+ .BR losetup (8).
++You can also use the
++.BR keygen
++option to have mount call an external program from, which it will read the
++encryption key. Arguments to this program can be given, separated by semicolons.
++
+ If no explicit loop device is mentioned
+ (but just an option `\fB\-o loop\fP' is given), then
+ .B mount
+--- util-linux-2.12/mount/mount.c.orig	2003-09-21 18:14:27.000000000 -0400
++++ util-linux-2.12/mount/mount.c	2003-09-21 18:16:18.000000000 -0400
+@@ -195,7 +195,7 @@
+ };
+ 
+ static char *opt_loopdev, *opt_vfstype, *opt_offset, *opt_encryption,
+-  *opt_speed;
++  *opt_keygen, *opt_speed;
+ 
+ static struct string_opt_map {
+   char *tag;
+@@ -206,6 +206,7 @@
+   { "vfs=",	1, &opt_vfstype },
+   { "offset=",	0, &opt_offset },
+   { "encryption=", 0, &opt_encryption },
++  { "keygen=", 0, &opt_keygen },
+   { "speed=", 0, &opt_speed },
+   { NULL, 0, NULL }
+ };
+@@ -586,7 +587,7 @@
+       *type = opt_vfstype;
+   }
+ 
+-  *loop = ((*flags & MS_LOOP) || *loopdev || opt_offset || opt_encryption);
++  *loop = ((*flags & MS_LOOP) || *loopdev || opt_offset || opt_encryption || opt_keygen);
+   *loopfile = *spec;
+ 
+   if (*loop) {
+@@ -596,6 +597,11 @@
+ 	printf(_("mount: skipping the setup of a loop device\n"));
+     } else {
+       int loopro = (*flags & MS_RDONLY);
++      /* Extra args to the keygen program. Right now there are 2:	*
++       *   - the looped file						*
++       *   - the encryption type used					*/
++      char *keygen_args[] = {*loopfile, opt_encryption};
++      const int _n_keygen_args = 2;
+ 
+       if (!*loopdev || !**loopdev)
+ 	*loopdev = find_unused_loop_device();
+@@ -604,6 +610,8 @@
+       if (verbose)
+ 	printf(_("mount: going to use the loop device %s\n"), *loopdev);
+       offset = opt_offset ? strtoul(opt_offset, NULL, 0) : 0;
++      if (opt_keygen)
++	pfd = use_keygen_prog(opt_keygen, keygen_args, _n_keygen_args);
+       if (set_loop(*loopdev, *loopfile, offset,
+ 		   opt_encryption, pfd, &loopro)) {
+ 	if (verbose)
+--- util-linux-2.12/mount/lomount.c.orig	2003-09-21 18:14:26.000000000 -0400
++++ util-linux-2.12/mount/lomount.c	2003-09-21 18:43:27.000000000 -0400
+@@ -10,7 +10,6 @@
+  * 2000-09-24 Marc Mutz <Marc@Mutz.com>
+  * - added -p option to pass passphrases via fd's to losetup/mount.
+  *   Used for encryption in non-interactive environments.
+- *   The idea behind xgetpass() is stolen from GnuPG, v.1.0.3.
+  */
+ 
+ #define LOOPMAJOR	7
+@@ -24,12 +23,16 @@
+ #include <ctype.h>
+ #include <fcntl.h>
+ #include <errno.h>
++#include <limits.h>
+ #include <stdlib.h>
+ #include <unistd.h>
++#include <sys/types.h>
+ #include <sys/ioctl.h>
+ #include <sys/stat.h>
+ #include <sys/mman.h>
+ #include <sys/sysmacros.h>
++#include <regex.h>
++#include <signal.h>
+ 
+ #include "loop.h"
+ #include "lomount.h"
+@@ -38,6 +41,7 @@
+ 
+ extern int verbose;
+ extern char *xstrdup (const char *s);	/* not: #include "sundries.h" */
++extern void *xmalloc (size_t size);		/* idem */
+ extern void error (const char *fmt, ...);	/* idem */
+ 
+ #ifdef LOOP_SET_FD
+@@ -198,43 +202,113 @@
+ 	return 0;
+ }
+ 
+-/*
+- * A function to read the passphrase either from the terminal or from
+- * an open file descriptor.
+- */
+-static char *
+-xgetpass(int pfd, const char *prompt) {
+-	char *pass;
+-	int buflen, i;
+-
+-        if (pfd < 0) /* terminal */
+-		return getpass(prompt);
+-
+-	pass = NULL;
+-	buflen = 0;
+-	for (i=0; ; i++) {
+-		if (i >= buflen-1) {
+-				/* we're running out of space in the buffer.
+-				 * Make it bigger: */
+-			char *tmppass = pass;
+-			buflen += 128;
+-			pass = realloc(tmppass, buflen);
+-			if (pass == NULL) {
+-				/* realloc failed. Stop reading. */
+-				error("Out of memory while reading passphrase");
+-				pass = tmppass; /* the old buffer hasn't changed */
++/* A function to check the encryption parameters against /proc/crypto.	*
++ * Returns 1 if everything checks out, 0 if there's any problem.	*
++ * The purpose of this function is not so much to verify the parameters	*
++ * before setting up the loop device; that task is made difficult by	*
++ * the possibility of loadable encryption modules and the necessity of	*
++ * falling back to the old (kerneli.org) CryptoAPI. Rather the intent	*
++ * is to come up with a more useful error message after the setup	*
++ * fails. Thus we return 1 in the event that some system error prevents	*
++ * us from getting the info we want from /proc/crypto.			*/
++static int
++check_crypto(struct loop_info64 *loopinfo64) {
++	char *s = xmalloc(LINE_MAX), *name = xmalloc(LINE_MAX),
++		cipher_name[LO_NAME_SIZE+1];
++	int cipher_found = 0, min_size = 0, max_size = 0, retval;
++	FILE *fp;
++	struct stat st;
++
++	if (stat("/proc/crypto", &st) == -1) {
++		retval = 1;
++		goto end;
++	} else if (S_ISDIR(st.st_mode)) {
++		/* Hm... must be using the old CryptoAPI. */
++		retval = 1;
++		goto end;
++	} else if ((fp = fopen("/proc/crypto", "r")) == NULL) {
++		retval = 1;
++		goto end;
++	}
++
++	xstrncpy(cipher_name, loopinfo64->lo_crypt_name, LO_NAME_SIZE);
++	/* Chop off the cipher mode (ie. everything after the dash) */
++	cipher_name[strcspn(cipher_name, "-")] = '\0';
++
++	while (fgets(s, LINE_MAX, fp) != NULL) {
++		if (sscanf(s, "name : %s", name) > 0) {
++			if (strcmp(name, cipher_name) == 0)
++				cipher_found = 1;
++			else if (cipher_found)
+ 				break;
+-			}
++		} else {
++			sscanf(s, "min keysize : %d", &min_size);
++			sscanf(s, "max keysize : %d", &max_size);
+ 		}
+-		if (read(pfd, pass+i, 1) != 1 || pass[i] == '\n')
+-			break;
+-	}
+-	if (pass == NULL)
+-		return "";
+-	else {
+-		pass[i] = 0;
+-		return pass;
+ 	}
++	fclose(fp);
++
++	if (!cipher_found) {
++		fprintf(stderr, _("Invalid cipher \"%s\"\n"), cipher_name);
++		retval = 0;
++		goto end;
++	} else if (loopinfo64->lo_encrypt_key_size < min_size ||
++		   loopinfo64->lo_encrypt_key_size > max_size) {
++		fprintf(stderr, _("Invalid key length (%d) for %s cipher\n"),
++			loopinfo64->lo_encrypt_key_size, cipher_name);
++		retval = 0;
++		goto end;
++	}
++
++	retval = 1;
++end:
++	free(s);
++	free(name);
++	return retval;
++}
++
++/* Same thing, for the old CryptoAPI. */
++static int
++check_crypto_old(struct loop_info *loopinfo) {
++	char *s = xmalloc(LINE_MAX), *name = xmalloc(PATH_MAX+1),
++		cipher_name[LO_NAME_SIZE+1];
++	int mask = 0, retval;
++	FILE *fp;
++	struct stat st;
++
++	if (stat("/proc/crypto/cipher", &st) == -1) {
++		retval = 1;
++		goto end;
++	} else if (!S_ISDIR(st.st_mode)) {
++		retval = 1;
++		goto end;
++	}
++		
++	xstrncpy(cipher_name, loopinfo->lo_name, LO_NAME_SIZE);
++	snprintf(name, PATH_MAX+1, "/proc/crypto/cipher/%s", cipher_name);
++	if ((fp = fopen(name, "r")) == NULL) {
++		fprintf(stderr, _("Invalid cipher \"%s\"\n"), cipher_name);
++		retval = 0;
++		goto end;
++	}
++
++	while (fgets(s, LINE_MAX, fp) != NULL) {
++		sscanf(s, "keysize_mask : %i", &mask);
++	}
++	fclose(fp);
++
++	if (!(mask & (1 << (loopinfo->lo_encrypt_key_size - 1)))) {
++		fprintf(stderr, _("Invalid key length (%d) for %s cipher\n"),
++			loopinfo->lo_encrypt_key_size, cipher_name);
++		retval = 0;
++		goto end;
++	}
++
++	retval = 1;
++end:
++	free(s);
++	free(name);
++	return retval;
+ }
+ 
+ static int
+@@ -275,9 +349,40 @@
+ 		if (digits_only(encryption)) {
+ 			loopinfo64.lo_encrypt_type = atoi(encryption);
+ 		} else {
++			regex_t keysize_re;
++			regmatch_t keysize_rm;
++			int rerror;
++			char *rerror_buf, *encryption_dup = xstrdup(encryption);
++
+ 			loopinfo64.lo_encrypt_type = LO_CRYPT_CRYPTOAPI;
++
++			if ((rerror = regcomp(&keysize_re, "-[[:digit:]]+$",
++					      REG_EXTENDED)) != 0) {
++				fprintf(stderr, _("RE error: "));	
++				rerror_buf = xmalloc(LINE_MAX+1);
++				regerror(rerror, &keysize_re, rerror_buf, LINE_MAX);
++				fprintf(stderr, "%s\n", rerror_buf);
++				free(rerror_buf);
++				return -1;
++			}
++			rerror = regexec(&keysize_re, encryption_dup,
++					 1, &keysize_rm, 0);
++			regfree(&keysize_re);
++			if (rerror) {
++				fprintf(stderr,
++					_("You must specify a key size (in bits) "
++					  "for use with CryptoAPI encryption.\n"));
++				return -1;
++			}
++
++			/* convert the key size from #bits to #bytes */
++			loopinfo64.lo_encrypt_key_size =
++				atoi(encryption_dup + keysize_rm.rm_so + 1) / 8;
++			/* now cut off the key size */
++			encryption_dup[keysize_rm.rm_so] = '\0';
+ 			snprintf(loopinfo64.lo_crypt_name, LO_NAME_SIZE,
+-				 "%s", encryption);
++				 "%s", encryption_dup);
++			free(encryption_dup);
+ 		}
+ 	}
+ 
+@@ -307,9 +412,25 @@
+ 			strlen(loopinfo64.lo_encrypt_key);
+ 		break;
+ 	default:
+-		pass = xgetpass(pfd, _("Password: "));
+-		xstrncpy(loopinfo64.lo_encrypt_key, pass, LO_KEY_SIZE);
+-		loopinfo64.lo_encrypt_key_size = LO_KEY_SIZE;
++		if (pfd == -1) {
++			pass = getpass(_("Password: "));
++			xstrncpy(loopinfo64.lo_encrypt_key, pass, LO_KEY_SIZE);
++		} else {
++			/* If we're reading from an extenral program,	*
++			 * odds are good that a SIGCHLD will interrupt	*
++			 * this read(), and ruin our whole day. So we	*
++			 * must block it.				*/
++			sigset_t ss, oss;
++			sigemptyset(&ss);
++			sigaddset(&ss, SIGCHLD);
++			sigprocmask(SIG_BLOCK, &ss, &oss);
++			if (read(pfd, loopinfo64.lo_encrypt_key,
++				 LO_KEY_SIZE) == -1) {
++				perror("read");
++				fprintf(stderr, _("Error reading encryption key, exiting\n"));
++			}
++			sigprocmask(SIG_SETMASK, &oss, NULL);
++		}
+ 	}
+ 
+ 	if (ioctl(fd, LOOP_SET_FD, ffd) < 0) {
+@@ -322,6 +443,14 @@
+ 		struct loop_info loopinfo;
+ 		int errsv = errno;
+ 
++		if (errno == EINVAL &&
++		    loopinfo64.lo_encrypt_type == LO_CRYPT_CRYPTOAPI)
++			if (!check_crypto(&loopinfo64)) {
++				fprintf(stderr,
++					_("Error in crypto parameters, exiting\n"));
++				goto fail;
++			}
++
+ 		errno = loop_info64_to_old(&loopinfo64, &loopinfo);
+ 		if (errno) {
+ 			errno = errsv;
+@@ -330,6 +459,17 @@
+ 		}
+ 
+ 		if (ioctl(fd, LOOP_SET_STATUS, &loopinfo) < 0) {
++			errsv = errno;
++
++			if (errno == EINVAL &&
++			    loopinfo.lo_encrypt_type == LO_CRYPT_CRYPTOAPI)
++				if (!check_crypto_old(&loopinfo)) {
++					fprintf(stderr,
++						_("Error in crypto parameters, exiting\n"));
++					goto fail;
++				}
++
++			errno = errsv;
+ 			perror("ioctl: LOOP_SET_STATUS");
+ 			goto fail;
+ 		}
+@@ -416,6 +556,22 @@
+ 	exit(1);
+ }
+ 
++void *
++xmalloc (size_t size) {
++	void *t;
++
++	if (size == 0)
++		return NULL;
++
++	t = malloc (size);
++	if (t == NULL) {
++		fprintf(stderr, _("not enough memory"));
++		exit(1);
++	}
++
++	return t;
++}
++
+ char *
+ xstrdup (const char *s) {
+ 	char *t;
+--- util-linux-2.12/mount/sundries.c.orig	2003-09-21 18:14:27.000000000 -0400
++++ util-linux-2.12/mount/sundries.c	2003-09-21 18:16:18.000000000 -0400
+@@ -12,6 +12,8 @@
+ #include <stdio.h>
+ #include <string.h>
+ #include <mntent.h>		/* for MNTTYPE_SWAP */
++#include <sys/types.h>
++#include <sys/wait.h>
+ #include "fstab.h"
+ #include "sundries.h"
+ #include "realpath.h"
+@@ -285,3 +287,100 @@
+      free(canonical);
+      return xstrdup(path);
+ }
++
++static volatile int keygen_wait = 1;
++
++/* Handle a SIGCHLD -- wait for the child process */
++static void
++child_handler (int i) {
++	int status;
++	if (keygen_wait && wait(&status) != -1) {
++		keygen_wait = 0;
++		if (WEXITSTATUS(status) != 0)
++			exit(WEXITSTATUS(status));
++	}
++}
++
++/* Make sure we clean up after the child */
++static void
++child_cleanup (void) {
++	/* "Clean up" means wait. So we let child_handler do all the work */
++	while (keygen_wait)
++		sleep(1);
++}
++
++/* Split a string into pieces, using delim as the delimiter.		*
++ * Returns the number of pieces.					*/
++static int
++split_args (char *args[], const char *str, const char *delim, int nargs) {
++	int i=0;
++	char *s = xstrdup(str);
++	args[0] = strtok(s, delim);
++	if (args[0] == NULL)
++		return 0;
++
++	while (++i < nargs) {
++		if ((args[i] = strtok(NULL, delim)) == NULL)
++			break;
++	}
++
++	return i;
++}
++
++#define KEYGEN_MAX_ARGS 64	/* more than anyone will need, right? */
++
++/* Call an external program to give us the encryption key for an	*
++ * encrypted device. We split the string s into a command and args on	*
++ * semicolons ('cuz you can't put spaces in the fs_mntopts field), then	*
++ * add some specific args (eg. the looped file or device, the		*
++ * encryption method used; check the caller to see the actual list).	*
++ * Returns a file descriptor from which we read the key.		*/
++int
++use_keygen_prog (const char *s, const char *addl_args[], int naddl_args) {
++	int fd[2]; 
++	pid_t keygen_pid;
++	struct sigaction sa;
++	sa.sa_handler = child_handler;
++	sa.sa_flags = SA_NOCLDSTOP;
++
++	if (pipe(fd) == -1) {
++		perror("pipe");
++		exit(EX_SYSERR);
++	}
++	if (sigaction(SIGCHLD, &sa, NULL) == -1) {
++		perror("sigaction");
++		exit(EX_SYSERR);
++	}
++	if ((keygen_pid = fork()) == -1) {
++		perror("fork");
++		exit(EX_SYSERR);
++	} else if (keygen_pid) {	/* parent */
++		atexit(child_cleanup);
++		close(fd[1]);
++		return fd[0];
++	} else {		/* child */
++		char *args[KEYGEN_MAX_ARGS+1];
++		int i, n = split_args(args, s, ";", KEYGEN_MAX_ARGS - naddl_args);
++		if (!n) {
++			fprintf(stderr, _("Invalid keygen program, exiting\n"));
++			exit(EX_USAGE);
++		}
++		for(i=0; i < naddl_args && n+i < KEYGEN_MAX_ARGS; i++)
++			args[n+i] = (char *) addl_args[i];
++		args[n+i] = NULL;
++
++		close(fd[0]);
++		if (dup2(fd[1], STDOUT_FILENO) == -1) {
++			perror("dup2");
++			exit(EX_SYSERR);
++		}
++		setuid(getuid());	/* set euid to ruid */
++		if (execvp(args[0], args) == -1) {
++			perror(args[0]);
++			exit(EX_USAGE);
++		}
++	}
++
++	return 0; /* so gcc will shut up */
++}
++
+--- util-linux-2.12/mount/sundries.h.orig	2003-09-21 18:14:27.000000000 -0400
++++ util-linux-2.12/mount/sundries.h	2003-09-21 18:16:18.000000000 -0400
+@@ -25,6 +25,7 @@
+ void error (const char *fmt, ...);
+ int matching_type (const char *type, const char *types);
+ int matching_opts (const char *options, const char *test_opts);
++int use_keygen_prog (const char *s, const char *addl_args[], int naddl_args);
+ void *xmalloc (size_t size);
+ char *xstrdup (const char *s);
+ char *xstrndup (const char *s, int n);
