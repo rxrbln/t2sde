@@ -5,8 +5,7 @@
 / autoconf / { p; d; }
 / automake / { p; d; }
 / bash / { p; d; }
-/ bdb33 / { p; d; }
-/ bdb41 / { p; d; }
+/ bdb / { p; d; }
 / binutils / { p; d; }
 / bison / { p; d; }
 / bzip2 / { p; d; }
@@ -17,13 +16,10 @@
 / findutils / { p; d; }
 / flex / { p; d; }
 / gawk / { p; d; }
-/ gcc3 / { p; d; }
-/ gcc33 / { p; d; }
-/ gccx / { p; d; }
+/ gcc / { p; d; }
 / gdbm / { p; d; }
 / gettext / { p; d; }
-/ glibc22 / { p; d; }
-/ glibc23 / { p; d; }
+/ glibc / { p; d; }
 / grep / { p; d; }
 / groff / { p; d; }
 / gzip / { p; d; }
@@ -32,8 +28,8 @@
 / liblockfile / { p; d; }
 / libtool / { p; d; }
 / linux24 / { p; d; }
-/ linux24-header / { p; d; }
-/ linux24-src / { p; d; }
+/ linux26 / { p; d; }
+/ linux-header / { p; d; }
 / m4 / { p; d; }
 / make / { p; d; }
 / man / { p; d; }
