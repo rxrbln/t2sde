@@ -76,8 +76,8 @@ x_patch() {
 
 # build the "World"
 x_build() {
-	eval $MAKE World
-	cd nls ; eval $MAKE ; cd ..
+	eval $MAKE $makeopt World
+	cd nls ; eval $MAKE $makeopt ; cd ..
 }
 
 # prepare the X dirtree
@@ -98,9 +98,9 @@ x_dirtree() {
 
 # install the World
 x_install() {
-	eval $MAKE install
-	eval $MAKE install.man
-	cd nls ; eval $MAKE install ; cd ..
+	eval $MAKE $makeopt install
+	eval $MAKE $makeopt install.man
+	cd nls ; eval $MAKE $makeopt install ; cd ..
 	rm -fv $root/etc/fonts/*.bak
 
 	echo "Copy TWM config files ..."
