@@ -20,6 +20,9 @@
 # 
 # --- ROCK-COPYRIGHT-NOTE-END ---
 
+hook_add preconf 2 'cd build_unix'
+configscript="../dist/configure"
+
 var_append confopt ' ' '--enable-cxx'
 var_append confopt ' ' "--includedir=$root/$prefix/include/${pkg:1}"
 
@@ -28,10 +31,7 @@ var_append confopt ' ' "--includedir=$root/$prefix/include/${pkg:1}"
 var_append confopt ' ' "--program-transform-name='s/db/${pkg:1}/'"
 
 # bdb doesn't like some of our make options
-makeopt="all" ; makeinstopt="install"
-
-configscript="../dist/configure"
-hook_add preconf 2 'cd build_unix'
+makeopt="all docdir=$docdir" ; makeinstopt="install docdir=$docdir"
 
 hook_add postinstall 8 'chmod 755 $libdir/libdb-${ver:0:3}.so \
 	$libdir/libdb_cxx-${ver:0:3}.so'
