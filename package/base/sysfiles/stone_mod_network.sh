@@ -60,6 +60,16 @@ read_section() {
 	done < <( sed 's,\(^\|[ \t]\)#.*$,,' < "$rocknet_base"/config )
 }
 
+write_tags() {
+	for (( i=0 ; $i < ${#tags[@]} ; i=i+1 )) ; do
+		local netcmd="${tags[$i]}"
+		[ "$netcmd" ] || continue
+		[ $1 = 0 ] && [[ "$netcmd" != interface* ]] && \
+			echo -en "\t"
+		echo "${tags[$i]}"
+	done
+}
+
 write_section() {
 	local globals=1
 	local passit=1
@@ -69,45 +79,45 @@ write_section() {
 
 	echo -n > $rocknet_base/config.new
 
-	while read netcmd para
-	do
-		if [ -n "$netcmd" ]; then
-			netcmd="${netcmd//-/_}"
-			para="$( echo "$para" | sed 's,[\*\?],\\&,g' )"
-			if [ "$netcmd" = "interface" ] ; then
-				prof="$( echo "$para" | sed 's,[(),],_,g' )"
-				[ "$prof" = "$1" ] && passit=0 || passit=1
-				globals=0
+	while read netcmd para ; do
+		[ "$netcmd" ] || continue
+		netcmd="${netcmd//-/_}"
+		para="$( echo "$para" | sed 's,[\*\?],\\&,g' )"
 
-				# write out a separating newline
-				echo "" >> $rocknet_base/config.new
-			fi
+		# when we reached the matching section dump the
+		# mew tags ...
+		if [ $passit = 0 -a $dumped = 0 ] ; then
+			write_tags $globals >> $rocknet_base/config.new
+			dumped=1
+		fi
 
-			# when we reached the matching section dump the
-			# mew tags ...
-			if [ $passit = 0 -a $dumped = 0 ] ; then
-			  for (( i=0 ; $i < ${#tags[@]} ; i=i+1 )) ; do
-				netcmd="${tags[$i]}"
-				[ "$netcmd" ] || continue
-				[ $globals = 0 ] && [[ "$netcmd" != interface* ]] && \
-				  echo -en "\t" >> \
-				  $rocknet_base/config.new
-				echo "${tags[$i]}" >> \
-				  $rocknet_base/config.new
-			  done
-			  dumped=1
-			fi
+		# if we reached a new interface section maybe change
+		# the state
+		if [ "$netcmd" = "interface" ] ; then
+			prof="$( echo "$para" | sed 's,[(),],_,g' )"
+			[ "$prof" = "$1" ] && passit=0 || passit=1
 
-			if [ $passit = 1 ] ; then
-				[ $globals = 0 -a \
-				  "$netcmd" != "interface" ] && \
-				  echo -en "\t" >> \
-				  $rocknet_base/config.new
-				echo "$netcmd $para" >> \
-					$rocknet_base/config.new
-			fi
+			# write out a separating newline
+			echo "" >> $rocknet_base/config.new
+
+			globals=0
+		fi
+
+		# just pass the line thru?
+		if [ $passit = 1 ] ; then
+			[ $globals = 0 -a "$netcmd" != "interface" ] && \
+			  echo -en "\t" >> $rocknet_base/config.new
+			echo "$netcmd $para" >> $rocknet_base/config.new
 		fi
 	done < <( cat < "$rocknet_base"/config )
+
+	# if the config file was empty, for an not yet present or last
+	# we had no change to match the existing position - so write them
+	# out now ...
+	[ $globals = 0 ] && echo "" >> $rocknet_base/config.new
+	[ "$1" ] && globals=0
+	[ $dumped = 0 ] && write_tags $globals >> $rocknet_base/config.new
+
 	mv $rocknet_base/config{.new,}
 }
 
@@ -188,10 +198,6 @@ add_interface() {
 	          "$if" "if"
 	unset tags
 	tags[0]="interface $if"
-
-	# for now we need to add the interface line into the file
-	# so the parse finds the right place to add the new tags
-	echo -e "\ninterface $if\n#added by stone" >> "$rocknet_base"/config
 
 	if gui_yesno "Use DHCP to obtain the configuration?" ; then
 		add_tag "dhcp"
