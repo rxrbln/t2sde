@@ -27,35 +27,85 @@
 # 
 
 #
-# Clifford's Personal Helper Script
+# Helper scripts for core developers
 #
 
-export CVSROOT=":pserver:anonymous@clifford.homedns.org:/home/cvs"
-export CVSREPOSITORY=rock-src-1.7
+if [ "$1" = "svn-add-remove" ] ; then
 
-if [ "$1" = "snapshot" ] ; then
+	rm -f files_svn.txt files_local.txt
 
-	rm -rf src/snapshot
-	mkdir -p src/snapshot
-	cd src/snapshot
+	for dir in \
+		architecture   misc     scripts \
+		Documentation  package  target
+	do
 
-	cvs checkout -P $CVSREPOSITORY
+	    tmp1=`mktemp` tmp2=`mktemp`
+	    echo $dir > $tmp1
 
-	tm=$( date +%Y%m%d%H%M )
-	cd $CVSREPOSITORY; ./scripts/Puzzle; cd ..
-	mv $CVSREPOSITORY $CVSREPOSITORY-$tm
+	    while ! cmp -s $tmp1 $tmp2
+	    do
+		cat $tmp1 > $tmp2
+		find $( cat $tmp2 ) -maxdepth 1 -type d | \
+			egrep -v '/(\.svn|CVS)$' 2> /dev/null | sort -u > $tmp1
+	    done
 
-	tar cIf $CVSREPOSITORY-$tm.tar.bz2 $CVSREPOSITORY-$tm
+	    find $( cat $tmp2 ) -mindepth 1 -maxdepth 1 -type d -name .svn | \
+	    while read dirname ; do
+		grep ' name="' $dirname/entries | cut -f2 -d'"' | \
+			grep -v ^svn: | sed "s,^,${dirname%/*}/,"
+	    done | grep "/" | sort >> files_svn.txt
 
-	echo -n "Press enter when you are ready to type password #1."
-	read; scp $CVSREPOSITORY-$tm.tar.bz2 \
-		clifford@www.rocklinux.org:htdocs/rocklinux.org/snapshots/
+	    find $( cat $tmp2 ) -mindepth 1 -maxdepth 1 | \
+			egrep -v '/(\.svn|CVS)' | grep -v '/\.$' | \
+			sort >> files_local.txt
 
-	echo -n "Press enter when you are ready to type password #2."
-	read; ssh -t -x -l clifford www.rocklinux.org \
-		"cd htdocs/rocklinux.org && touch rock.sed && make"
+	    rm -f $tmp1 $tmp2
+	done
 
-	cd ..; rm -rf snapshot
+	if [ "$DO_SVN_REVERT" = 1 ]
+	then
+		diff -u0 files_svn.txt files_local.txt | \
+			grep '^[+][A-Za-z]' | \
+			egrep -xv '\+Documentation/(FAQ|LSM)' | \
+			sed 's,^+,rm -vf ,'
+	elif egrep -q '#|/\.|~' files_local.txt
+	then
+		echo '#'
+		echo '# Found dangerous files which must not go to SVN:'
+		echo '#'
+		egrep '#|/\.|~' files_local.txt | sed 's,^,rm -vf ,'
+	else
+		diff -u0 files_svn.txt files_local.txt | \
+			grep '^[-+][A-Za-z]' | \
+			egrep -xv '\+Documentation/(FAQ|LSM)' | \
+			sed 's,^-,svn remove ,; s,^+,svn add    ,'
+	fi
+
+	rm -f files_svn.txt files_local.txt
+
+elif [ "$1" = "svn-commit" ] ; then
+
+	./scripts/Internal svn-add-remove | tee svn_add_remove.sh
+
+	if [ -s svn_add_remove.sh ]
+	then
+		echo "Run 'sh svn_add_remove.sh' to execute these commands."
+	else
+		rm -f svn_add_remove.sh
+		svn commit
+	fi
+
+elif [ "$1" = "svn-revert" ] ; then
+
+	svn revert
+	DO_SVN_REVERT=1 ./scripts/Internal svn-add-remove | tee svn_revert.sh
+
+	if [ -s svn_revert.sh ]
+	then
+		echo "Run 'sh svn_revert.sh' to execute these commands."
+	else
+		rm -f svn_revert.sh
+	fi
 
 elif [ "$1" = "cvs-add-remove" ] ; then
 
@@ -107,17 +157,15 @@ elif [ "$1" = "cvs-update" ] ; then
 
 	cvs -q update -d -P
 
-elif [ "$1" = "cvs-setroot" ] ; then
-
-	[ "$2" ] && export CVSROOT="$2"
+elif [ "$1" = "cvs-setroot" -a -n "$2" -a -n "$3" ] ; then
 
 	find ./CVS ./architecture ./misc ./scripts ./target ./Documentation \
 	     ./package -name Root | grep '/CVS/Root$' | while read fn
 	do
 		fn="${fn%/CVS/Root}"; fn="${fn#./}"
 		echo "Writing $fn/CVS/{Root,Repository}.."
-		echo "$CVSROOT" > $fn/CVS/Root
-		echo "$CVSREPOSITORY/$fn" > $fn/CVS/Repository
+		echo "$2" > $fn/CVS/Root
+		echo "$3/$fn" > $fn/CVS/Repository
 	done
 
 elif [ "$1" = "ftp-cleanup" ] ; then
@@ -142,19 +190,32 @@ else
 
   Where the following modes are availalbe:
 
-	snapshot ........ checkout cvs in a temp dir and upload a snapshot
-	                  to the ROCK Linux webpage.
 
-	cvs-add-remove .. print suggested 'cvs add' and 'cvs remove' calls
+	svn-add-remove .... print suggested 'svn add' and 'svn remove' calls
 
-	cvs-commit ...... make a cvs-add-remove and and automatically run a
-	                  'cvs commit' if cvs-add-remove doesn't find anything.
+	svn-commit ........ make a svn-add-remove and and automatically run a
+	                    'svn commit' if svn-add-remove doesn't find
+                            anything to add or remove.
 
-	cvs-update ...... run 'cvs update -d -P'
+	svn-revert ........ run a 'svn revert' and then remove all files which
+                            are not known to svn. Usefull before doing an 'svn
+	                    up' to ver version containing a patch which is
+	                    applied in the working directory.
 
-	cvs-setroot x ... write 'x' to all CVS/Root files
 
-	ftp-cleanup ..... remove old files on ftp master
+	cvs-add-remove .... print suggested 'cvs add' and 'cvs remove' calls
+
+	cvs-commit ........ make a cvs-add-remove and and automatically run a
+	                    'cvs commit' if cvs-add-remove doesn't find
+	                    anything to add or remove.
+
+	cvs-update ........ run 'cvs update -d -P'
+
+	cvs-setroot x y ... write 'x' to all CVS/Root files and 'y' to all
+                            CVS/Repository files.
+
+
+	ftp-cleanup ....... remove old files on ftp master
 
 EOT
 fi
