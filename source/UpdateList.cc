@@ -44,59 +44,138 @@ public:
     return version[i];
   }
   
-  int operator() (const Version& a, const Version& b)
+  int compare (const Version& a, const Version& b) const
   {
     class subversion {
     public:
       
-      std::string::size_type read (const std::string& s, std::string::size_type i)
+      std::string::size_type read (const std::string& s,
+				   std::string::size_type i)
       {
-	val = 0;
+	val.clear();;
 	//std::cout << i << ": " << s[i] << std::endl;
-	for (;i < s.size() && isdigit(s[i]); ++i) {
-	  push (s[i]);
+	for (;i < s.size() && (isdigit(s[i]) || isalpha(s[i])); ++i) {
+	  val += s[i];
 	  // std::cout << "  " << val << std::endl;
 	}
 	return ++i;
       }
-      
-      int push (char c) {
-	// of course for the pure version check the "- '0'" is pure overhead
-	// so just for the correctness -ReneR
-	return val = (val * 10) + (c - '0');
+
+      std::string::size_type size() const {
+	return val.size();
       }
       
-      int val;
+      char operator[](std::string::size_type i) const {
+	return val[i];
+      }
+      
+      bool empty() const {
+	return val.empty();
+      }
+      
+      const std::string& str () const {
+	return val;
+      }
+      
+      bool same_cclass (char a, char b) const {
+	// I'm sure this could be done more elegant
+	return ( (isalpha(a) && isalpha(b)) ||
+		 (isdigit(a) && isdigit(b)) );
+      }
+      
+      bool operator< (const subversion& other) const {
+	// catch range exceptions ;-)
+	try {
+	  if (!same_cclass(val[0], other.val[0]))
+	    return (isalpha(val[0]));
+	}
+	catch (...) {
+	}
+	return val < other.val;
+      }
+
+      bool operator> (const subversion& other) const {
+	// catch range exceptions ;-)
+	try {
+	  if (!same_cclass(val[0], other.val[0]))
+	    return (isalpha(other.val[0]));
+	}
+	catch (...) {
+	}
+	return val > other.val;
+      }
+      
+    private:
+      std::string val;
     };
+  
+    std::cout << "Comparing: " << a.str() << " with " << b.str() << std::endl;
     
     std::string::size_type i, j;
     subversion subv_a, subv_b;
     for (i = j = 0; i < a.size() && j < b.size();) {
       
-      // was Valentin noted here some more matching is needed to sort:
-      // alpha -> beta -> gamma -> rc -> nothing - much fun
-      i = subv_a.read(a.Str(), i);
-      j = subv_b.read(b.Str(), j);
+      i = subv_a.read(a.str(), i);
+      j = subv_b.read(b.str(), j);
       
-      // std::cout << subv_a.val << " vs " << subv_b.val << std::endl;
+      std::cout << subv_a.str() << " vs " << subv_b.str() << ": ";
       
-      if (subv_a.val < subv_b.val)
+      if (subv_a < subv_b) {
+	std::cout << "... <" << std::endl;
 	return -1;
-      if (subv_a.val > subv_b.val)
+      }
+      if (subv_a > subv_b) {
+	std::cout << "... >" << std::endl;
 	return 1;
+      }
+      
+      std::cout << "=,  " << std::endl;
     }
+
+    i = subv_a.read(a.str(), i);
+    j = subv_b.read(b.str(), j);
     
-    if (a.size() == b.size())
-      return 0;
+    std::cout << "Final: " << subv_a.str() << " vs " << subv_b.str() << ": ";
     
-    // we have remaining characters: longer means higher version
-    if (a.size() < b.size())
-      return -1;
-    else
-      return 1;
+    if (!subv_a.empty())
+      {
+	if (isdigit(subv_a[0])) {
+	  std::cout << "... >" << std::endl;
+	  return 1;
+	}
+	else {
+	  std::cout << "... <" << std::endl;
+	  return -1;
+	}
+      }
+    
+    if (!subv_b.empty())
+      {
+	if (isdigit(subv_a[0])) {
+	  std::cout << "... <" << std::endl;
+	  return 1;
+	}
+	else {
+	  std::cout << "... >" << std::endl;
+	  return -1;
+	}
+      }
+    
+    std::cout << "... =" << std::endl;
+    return 0;
+  }
+
+  bool operator< (const Version& b) const
+  {
+    return compare(*this, b) == -1;
   }
   
-  const std::string& Str () const {
+  bool operator> (const Version& b) const
+  {
+    return compare(*this, b) == 1;
+  }
+  
+  const std::string& str () const {
     return version;
   }
   
@@ -129,7 +208,7 @@ void GenList (std::string file, std::ifstream& s, bool quote_mode) {
 
   std::string prefix;
 
-  std::string::size_type idx = templ.rfind(version.Str());
+  std::string::size_type idx = templ.rfind(version.str());
   if (idx == std::string::npos)
     prefix = templ;
   else
@@ -140,7 +219,7 @@ void GenList (std::string file, std::ifstream& s, bool quote_mode) {
     suffix += "\"";
   }
 
-  std::cout << file << "(" << version.Str()
+  std::cout << file << "(" << version.str()
 	    << ") ---> " << prefix << "???" << suffix << std::endl;
 
   std::string token;
@@ -178,9 +257,9 @@ void GenList (std::string file, std::ifstream& s, bool quote_mode) {
   }
   
   for (unsigned int i = 0; i < versions.size(); ++i) {
-    int sign = version.operator()(versions[i],version);
+    int sign = version.compare(versions[i],version);
     
-    std::cout << "[MATCH] (" << versions[i].Str() << ")";
+    std::cout << "[MATCH] (" << versions[i].str() << ")";
     
     switch (sign) {
     case 0:
@@ -199,9 +278,9 @@ void GenList (std::string file, std::ifstream& s, bool quote_mode) {
   
   std::cout << "-----------------------" << std::endl;
 
-  std::sort(newer_versions.begin(), newer_versions.end(), Version());
+  std::sort(newer_versions.begin(), newer_versions.end());
   if (newer_versions.size() > 0)
-    std::cout << "XXX " << newer_versions[0].Str() << std::endl;
+    std::cout << "XXX " << newer_versions[0].str() << std::endl;
   
   std::cout << "-----------------------" << std::endl;
 }
@@ -214,8 +293,31 @@ int main (int argc, char* argv[])
   suffixes.push_back(".tgz");
   suffixes.push_back(".bz2");
   suffixes.push_back(".gz");
+  
+  std::vector<Version> versions;
+  versions.push_back(Version("1.2.2"));
+  versions.push_back(Version("1.2.4"));
+  versions.push_back(Version("1.2.3"));
+  versions.push_back(Version("1.2.3b"));
+  versions.push_back(Version("1.2.3a"));
+  versions.push_back(Version("1.2.3-pre9"));
+  versions.push_back(Version("1.2.3-pre12"));
+  versions.push_back(Version("1.2.3-beta"));
+  versions.push_back(Version("1.2.3-rc2"));
+  versions.push_back(Version("1.2.3-alpha"));
+  versions.push_back(Version("1.2.3-rc1"));
+  versions.push_back(Version("1.2.3.1"));
 
   Package package;
+
+  std::cout << "-----------------------" << std::endl;
+
+  std::sort(versions.begin(), versions.end());
+
+  for (unsigned int i = 0; i < versions.size(); ++i)
+    std::cout << "  " << versions[i].str() << std::endl;
+  
+  std::cout << "-----------------------" << std::endl;
 
   for (int i = 1; i < argc; ++i)
     {
