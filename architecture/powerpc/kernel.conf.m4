@@ -29,6 +29,13 @@ include(`kernel-scsi.conf')
 include(`kernel-net.conf')
 include(`kernel-fs.conf')
 
+dnl macs need a special RTC ... (this need to be fixed in the kernel so we
+dnl can have generic support for the rs6k and mac support at the same time
+dnl
+# CONFIG_GEN_RTC is not set
+CONFIG_PPC_RTC=m
+# CONFIG_RTC is not set
+
 dnl macs need an FB
 dnl
 CONFIG_FB_RIVA=y
