@@ -5,7 +5,7 @@ public_forward() {
 			"in an interface section."
 		return
 	fi
-	[ "$interface" != all ] && return
+	[ "$interface" != auto ] && return
 	addcode up   9 5 "echo 1 > /proc/sys/net/ipv4/ip_forward"
 	addcode down 9 5 "echo 0 > /proc/sys/net/ipv4/ip_forward"
 }
