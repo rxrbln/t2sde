@@ -79,17 +79,21 @@ tar $taropt ../../pkgs/ncurses.tar.bz2	\
 	usr/share/terminfo/v/vt200	usr/share/terminfo/v/vt220	\
 	usr/share/terminfo/v/vt100	usr/share/terminfo/s/screen
 #
-echo_status "Installing some keymaps ..."
-tar $taropt ../../pkgs/kbd.tar.bz2 \
-	usr/share/kbd/keymaps/amiga	usr/share/kbd/keymaps/i386/qwerty \
-	usr/share/kbd/keymaps/atari	usr/share/kbd/keymaps/i386/qwertz \
-	usr/share/kbd/keymaps/sun
-find usr/share/kbd -name '*dvo*' -o -name '*az*' -o -name '*fgG*' | \
-	xargs rm -f
+if [ -f ../../pkgs/kbd.tar.bz2 ] ; then
+	echo_status "Installing some keymaps ..."
+	tar $taropt ../../pkgs/kbd.tar.bz2 \
+		usr/share/kbd/keymaps/amiga	usr/share/kbd/keymaps/i386/qwerty \
+		usr/share/kbd/keymaps/atari	usr/share/kbd/keymaps/i386/qwertz \
+		usr/share/kbd/keymaps/sun
+	find usr/share/kbd -name '*dvo*' -o -name '*az*' -o -name '*fgG*' | \
+		xargs rm -f
+fi
 #
-echo_status "Installing pci.ids ..."
-tar $taropt ../../pkgs/pciutils.tar.bz2 \
-	usr/share/pci.ids
+if [ -f ../../pkgs/pciutils.tar.bz2 ] ; then
+	echo_status "Installing pci.ids ..."
+	tar $taropt ../../pkgs/pciutils.tar.bz2 \
+		usr/share/pci.ids
+fi
 #
 echo_status "Creating 2nd stage linuxrc."
 cp $base/target/$target/linuxrc2.sh linuxrc ; chmod +x linuxrc
