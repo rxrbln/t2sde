@@ -32,26 +32,21 @@ lx_cpu=`echo "$arch_machine" | sed -e s/x86/i386/ \
 
 MAKE="$MAKE ARCH=$lx_cpu CROSS_COMPILE=$archprefix KCC=$KCC"
 
+# correct the abolute path for patchfiles supplied in the .conf file
+for x in $patchfiles ; do
+	if [ ! -e $x ] ; then
+		var_remove patchfiles " " $x
+		x=$archdir/$x
+		var_append parchfiles " " $x
+	fi
+done
+
 lx_config ()
 {
 	echo "Generic linux source patching and configuration ..."
 
-	for x in $lx_patches ; do
-		echo "Applying $x ..."
-		[ -e $x ] || x=$archdir/$x
-		if [[ $x = *.bz2 ]] ; then
-		  bzcat $x | patch -p1 -s
-		else
-		  cat $x | patch -p1 -s
-		fi
-	done
-
 	hook_eval prepatch
-	echo "Patching ..."
-		for x in $patchfiles ; do
-		echo "Applying '$x' ..."
-		patch -p1 -s < $x
-	done
+	apply_patchfiles
 	hook_eval postpatch
 
 	echo "Redefining some VERSION flags ..."
