@@ -4,7 +4,7 @@ pkgloop
 echo_header "Creating the router ramdisk..."
 
 echo_status "Creating the directory structure."
-outdir="$build_dir/router"
+outdir="$build_rock/router"
 rm -rf $outdir
 mkdir -p $outdir/initrd/bin
 mkdir -p $outdir/initrd/lib
@@ -90,7 +90,7 @@ echo_status "Create iso description."
 cat > ../isofs.txt <<- EOT
 	BOOT    -b isolinux.bin -c boot.catalog
 	BOOTx   -no-emul-boot -boot-load-size 4 -boot-info-table
-	DISK1   build/${ROCKCFG_ID}/router /
+	DISK1   build/${ROCKCFG_ID}/ROCK/router /
 EOT
 
 if [ "$ROCK_DEBUG_ROUTER_NOCLEANUP" != 1 ]; then

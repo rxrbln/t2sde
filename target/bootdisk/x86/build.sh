@@ -58,7 +58,7 @@ then
 	cat > ../isofs_arch.txt <<- EOT
 		BOOT	-b isolinux/isolinux.bin -c isolinux/boot.catalog
 		BOOTx	-no-emul-boot -boot-load-size 4 -boot-info-table
-		DISK1	build/${ROCKCFG_ID}/bootdisk/isolinux/ isolinux/
+		DISK1	build/${ROCKCFG_ID}/ROCK/bootdisk/isolinux/ isolinux/
 	EOT
 fi
 
