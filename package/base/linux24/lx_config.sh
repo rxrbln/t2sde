@@ -57,7 +57,7 @@ lx_config ()
 	echo "Correcting user and permissions ..."
 	chown -R root.root . * ; chmod -R u=rwX,go=rX .
 
-	if [ "$treever" = 24 ] ; then
+	if [[ $treever = 24* ]] ; then
 		echo "Create symlinks and a few headers for <$lx_cpu> ... "
 		make ARCH=$lx_cpu include/linux/version.h symlinks
 		cp $base/package/base/linux24/autoconf.h include/linux/
@@ -147,7 +147,7 @@ lx_config ()
 		$pkg_linux_brokenfiles < .config > config.new
 	mv config.new .config
 
-	if [ "$treever" = 25 ] ; then
+	if [[ $treever = 25* ]] ; then
 		echo "Create symlinks and a few headers for <$lx_cpu> ... "
 		make ARCH=$lx_cpu include/linux/version.h include/asm
 		make ARCH=$lx_cpu oldconfig > /dev/null
