@@ -37,11 +37,13 @@ config=default
 do_config_cycle=0
 delete_mode=0
 oldconfig=''
+profile=""
 
 while [ "$1" ] ; do
         case "$1" in
 	    -cycle)	do_config_cycle=1 ; shift ;;
 	    -delete)	delete_mode=1     ; shift ;;
+	    -profile)	profile='-profile'        ; shift ;;
 	    -oldconfig)	oldconfig='-oldconfig'    ; shift ;;
 	    -cfg)	config="$2"       ; shift ; shift ;;
 
@@ -101,370 +103,38 @@ EOT
 	mv src/rockconfig.in.$$ src/rockconfig.in
 
 	echo "Running ROCK Linux $rockver configuration ..."
-	while "$0" -cfg $config $oldconfig -cycle ; do : ; done
+	while "$0" -cfg $config $oldconfig $profile -cycle ; do : ; done
 
 	exit 0
 fi
 
-set_help() {
-	(echo -ne "$1 '$1:\n\n$2'" | sed 's,$,\\n,' |
-		tr -d '\n' | sed 's,\\n$,,'; echo ) >> config.help
-}
-
-comment() {
-	if [ $ROCKCFG_EXPERT -eq 1 -o $expert -eq 0 ] && \
-	   [ $menu_current = $menu_this ] ; then
-		commentnr=$(( $commentnr + 1 ))
-		echo "COMMENT_$commentnr '$spacer$1'" >> config.dialog
-
-		# Hi, esden here, very ill stuff here I save the help
-		# strings here to a temporary file named config.help
-		# this sed tr sandwitch formats the string so that
-		# \n are masked and the Help strings are not killed some way
-		if [ "$2" != "" ] ; then
-			set_help "COMMENT_$commentnr" "$2"
-		fi
+if [ -z "$profile" ]; then
+	bprof() { :; }
+	bprof_print() { :; }
+else
+	if [ ! -f src/bash_profiler.so ]; then
+		echo "Building src/bash_profiler.so ..."
+		gcc -shared -fPIC -Wall -o src/bash_profiler.so misc/tools-source/bash_profiler.c || exit 1
 	fi
-}
+	enable -f src/bash_profiler.so bprof || exit 1
+	bprof_print() {
+		bprof all print >> config.profile
+		awk '
+			$4 == "profiled" { next; }
+			$4 != "main" { count["profiled"]+=$1; time["profiled"]+=$2; }
+			{ count[$4]+=$1; time[$4]+=$2; }
+			END {
+				for (id in count)
+					printf "%7d %7Ld %10.3f %s\n", count[id], time[id], time[id]/count[id], id;
+			}
+		' < config.profile | sort -n +1 > config.profile.new
+		mv config.profile.new config.profile
+	}
+fi
 
-comment_id() {
-	if [ $ROCKCFG_EXPERT -eq 1 -o $expert -eq 0 ] &&
-	   [ $menu_current = $menu_this ] ; then
-		echo "$2 '$spacer$1'" >> config.dialog
+bprof main start
 
-		# If you do not know what mighty esden
-		# is doing here see comment()
-		if [ "$3" != "" ] ; then
-			set_help "$2" "$3"
-		fi
-	fi
-}
-
-const() {
-	local q="'"
-	local v="${2//$q/$q\\$q$q}"
-	eval "$1=\"\$2\""
-	echo "export $1='$v'" >> config/$config/config
-}
-
-# Usage: set_data NAME DEFAULT
-#
-set_data() {
-	local q="'" set_name="ROCKCFGSET_${1#ROCKCFG_}"
-
-	if eval "[ \"\$$set_name\" ]" ; then
-		eval "data=\"\$$set_name\""
-		eval "$1=\"\$data\""
-		if [ $ROCKCFG_EXPERT -eq 1 -o $expert -eq 0 ]
-		then menumode=2 ; else menumode=0 ; fi
-
-	elif [ $ROCKCFG_EXPERT -eq 1 -o $expert -eq 0 ] ; then
-		eval "data=\"\${$1:-$2}\""
-		eval "$1=\"\$data\""
-		menumode=1
-	else
-		data="$2" ; eval "$1=\"\$data\""
-		menumode=0
-	fi
-
-	item="$1"
-	echo "export $1='${data//$q/$q\\$q$q}'" >> config/$config/config
-}
-
-choice() {
-
-	# reset to default if current value is not in list
-	#
-	eval $(
-		eval "value=\$$1" ; name=$1 ; shift ; shift
-		while [ "$#" != 0 ] ; do
-			[ "$value" = "$1" ] && name="" ; shift ; shift
-		done
-		[ "$name" ] && echo "unset $name"
-	)
-
-	set_data "$1" "$2"
-
-	if [ "$menumode" -eq 1 -a $menu_current = $menu_this ] ; then
-		{ echo -en "$item\tchoice_action '$1' '$data'" ; shift ; shift
-		for x ; do echo -n " '$x'" ; done ; echo ; } >> config.data
-	fi
-
-	if [ "$menumode" -gt 0 -a $menu_current = $menu_this ] ; then
-		if [ "$menumode" -eq 1 ] ; then xdata="($data)"
-		else xdata="=$data=" ; fi
-
-		while [ "$1" -a "$1" != "$data" ] ; do shift ; shift ; done
-		printf "'$item' '$spacer%-${tabspace}s ${2//_/ }'\n" \
-		       "$xdata" >> config.dialog
-	fi
-}
-
-choice_action() {
-	command="./src/rockdialog.bin --title 'Build Config' \
-		--backtitle '$configtitle' \
-		--radiolist 'Arrow keys navigate the menu.  Press <Enter> to activate menu items.  Highlighted letters are hotkeys.' \
-		$(( $lines - 4 )) $(( $columns - 5 )) $(( $lines - 12 ))"
-	default=$2 ; item=$1 ; shift ; shift
-	while [ "$1" ] ; do
-		if [ "$1" = "$default" ]
-		then command="$command '$1' '${2//_/ }' ON"
-		else command="$command '$1' '${2//_/ }' OFF" ; fi
-		shift ; shift
-	done
-	eval "$command" 2> config.out
-
-	case "$?" in
-		0|6)
-			eval "$item='`cat config.out`'"
-			;;
-		1|255) return 0 ;;
-		2) echo "No help." ; sleep 1 ;;
-		*) echo "unknown returncode: $?" ; exit 1 ;;
-	esac
-}
-
-text() {
-	local q="'"
-	set_data "$2" "$3"
-
-	if [ "$menumode" -eq 1 -a $menu_current = $menu_this ] ; then
-		echo -e "$2\ttext_action '$1' '$2'" \
-				"'${data//$q/$q\\$q$q}'" >> config.data
-	fi
-
-	if [ "$menumode" -gt 0 -a $menu_current = $menu_this ] ; then
-		xdata="$( printf "%-${tabspace}s" \
-				"$(echo $data | cut -c1-20)")"
-		if [ "$menumode" -eq 1 ] ; then xdata="($xdata)"
-		else xdata="=$xdata=" ; fi
-
-		printf "'$2' '$spacer%s $1'\n" \
-			"${xdata//$q/$q\\$q$q}" >> config.dialog
-
-		# If you do not know what mighty esden
-		# is doin here see comment()
-		if [ "$4" != "" ] ; then
-			set_help "$2" "$4"
-		fi
-	fi
-}
-
-text_action() {
-	./src/rockdialog.bin --title 'Build Config' \
-		--backtitle "$configtitle" \
-		--inputbox "$1" 9 $(( $columns - 5 )) "$3" 2> config.out
-	[ "$?" -eq 0 -o "$?" -eq 1 ] && eval "$2=\"\$(cat config.out)\""
-}
-
-bool() {
-	local x
-	set_data "$2" "$3"
-
-	if [ "$menumode" -eq 1 -a $menu_current = $menu_this ] ; then
-		echo -e "$2\tbool_action '$1' '$2' '$data'" >> config.data
-	fi
-
-	if [ "$menumode" -gt 0 -a $menu_current = $menu_this ] ; then
-		if [ "$menumode" -eq 1 ] ; then
-			if [ $data -eq 0 ] ; then x='[ ]' ; else x='[*]' ; fi
-		else
-			if [ $data -eq 0 ] ; then x='= =' ; else x='=*=' ; fi
-		fi
-		printf "$2 '$spacer%-${tabspace}s ${1//_/ }'\n" \
-		       "$x" >> config.dialog
-
-		# If you do not know what mighty esden is doin here see comment()
-		if [ "$4" != "" ] ; then
-			set_help "$2" "$4"
-		fi
-	fi
-}
-
-bool_action() {
-	if [ $3 -eq 0 ] ; then eval "$2=1"
-	else eval "$2=0" ; fi
-}
-
-editfile() {
-    if [ $ROCKCFG_EXPERT -eq 1 -o $expert -eq 0 ] ; then
-	local x="$spacer" q="'"
-	comment ",----< $3 >----."
-	block_begin 0 ; spacer="${spacer%??}| "
-
-	touch "$2"
-	line_nr=1
-	while read line ; do
-		line="${line//$q/$q\\$q$q}"
-		if [ $menu_current = $menu_this ] ; then
-			printf "$1:${editfilenr} '$spacer%-${tabspace}s %s'\n" \
-			    `printf "%03d:" $line_nr` "$line" >> config.dialog
-
-			echo -e "$1:${editfilenr}\teditfile_action $2" \
-				"$line_nr '$3'" >> config.data
-		fi
-
-		editfilenr=$(( $editfilenr + 1 ))
-		line_nr=$(( $line_nr + 1 ))
-	done < "$2"
-
-	if [ $menu_current = $menu_this ] ; then
-		printf "$1:${editfilenr} '$spacer%-${tabspace}s %s'\n" \
-		       `printf "%03d:" $line_nr` "<add new rule>" >> config.dialog
-
-		echo -e "$1:${editfilenr}\teditfile_action $2" \
-			"$line_nr '$3'" >> config.data
-	fi
-
-	editfilenr=$(( $editfilenr + 1 ))
-
-	block_end
-	comment "\`------${3//?/-}------'\''"
-	spacer="$x"
-    else
-	rm -f "$2"
-    fi
-}
-
-editfile_action() {
-	line="`tail -n +$2 $1 | head -n 1`"
-
-	./src/rockdialog.bin --title 'Build Config' \
-		--backtitle "$configtitle" \
-		--inputbox "$3 - Line $3"  \
-		9 $(( $columns - 5 )) "$line" 2> config.out
-
-	head -n $(( $2 - 1 )) $1 > $1.new
-	[ -s config.out ] && echo "`cat config.out`" >> $1.new
-	tail -n +$(( $2 + 1 )) $1 >> $1.new
-
-	mv $1.new $1
-}
-
-startprog() {
-	if [ $ROCKCFG_EXPERT -eq 1 -o $expert -eq 0 ] &&
-	   [ $menu_current = $menu_this ] ; then
-		printf "$1 '$spacer%-${tabspace}s %s'\n" \
-		       "-->" "$2" >> config.dialog
-		echo -e "$1\t$3" >> config.data
-	fi
-}
-
-block_begin() {
-	if [ $menu_current = $menu_this ] ; then
-		[ "$tabspace_list" ] && spacer="$spacer  "
-		tabspace_list="$tabspace $tabspace_list"
-		tabspace="$(( $tabspace + $1 - 2 ))"
-	fi
-}
-
-block_end() {
-	if [ $menu_current = $menu_this ] ; then
-		spacer="`echo "$spacer" | sed 's,..$,,'`" ;
-		tabspace="`echo $tabspace_list | cut -f1 -d' '`"
-		tabspace_list="`echo $tabspace_list | cut -s -f2- -d' '`"
-	fi
-}
-
-expert_begin() {
-	expert=$(( $exprt + 1 ))
-}
-
-expert_end() {
-	expert=$(( $exprt - 1 ))
-}
-
-menu_begin() {
-	menu_counter=$(( $menu_counter + 1 ))
-
-	if [ $ROCKCFG_EXPERT -eq 1 -o $expert -eq 0 ] &&
-	   [ $menu_current = $menu_this ] ; then
-		printf "$1 '$spacer%-${tabspace}s %s'\n" \
-			"===>" "$2" >> config.dialog
-		echo -e "$1\tmenu_current=$menu_counter" >> config.data
-	fi
-	if [ $ROCKCFG_EXPERT -eq 1 -o $expert -eq 0 ] &&
-	   [ $menu_current = $menu_counter ] ; then
-		echo "$1 '===> $2'" >> config.dialog
-		echo -e "$1\tmenu_current=$menu_this" >> config.data
-	fi
-
-	if [ $menu_current = $menu_counter ] ; then
-		menu_back=$menu_this
-		menu_backpos=$1
-	fi
-
-	menu_stack="$menu_this $menu_stack"
-	menu_this=$menu_counter
-
-	block_begin 3
-}
-
-menu_end() {
-	block_end
-	menu_this="`echo $menu_stack | cut -f1 -d' '`"
-	menu_stack="`echo $menu_stack | cut -s -f2- -d' '`"
-}
-
-get_help() {
-	# Create standard help output ...
-	default_text="
-There is no help on '$1' available.
-
-This is the ROCK Linux $rockver Configuration Tool.
-
-Please read the build Documentation (Documentation/BUILD)
-and the ROCK Linux Guide  (Documentation/Guide/GUIDE.txt)
-before building ROCK Linux.
-
-More information can be found on the ROCK Linux Homepage:
-
-	       http://www.rocklinux.org/
-
-Subscribe to the mailing list by sending an e-mail with the
-subject 'subscribe rock-linux' to <minimalist@rocklinux.org>."
-	
-	# Ok let us find a help for the current item ...
-
-	# First of all mask all special chars in the item name
-	# Comment: this is sick. You can't get any \n this way !!!
-	item_name=$( echo "$1" | sed 's/[][\/.^$*]/\\&/g' )
-	# Now search *.hlp files
-	hlp_text=$( sed -n "/^$item_name[ 	]*\$/,\${
-			/^$item_name[ 	]*\$/c\\
-$item_name:\\
-
-			/^#/d
-			/^[^ 	]/q
-			s/^  //
-			p
-			}" scripts/config*.hlp package/*/*/subconfig-*.hlp package/*/*/config*.hlp target/*/config*.hlp misc/config/config*.hlp 2>/dev/null )
-	
-	# Get help strings out of the temporary file.
-	tmp_text=$(grep "^$item_name" config.help | cut -f2- -d' ' | sed -e "s,^',," -e "s,'$,," )
-
-	# Let us see what we have ...
-	if [ "$hlp_text" -a "$tmp_text" ] ; then
-		echo "
-There are two help text's... one in one of the config.in files and one
-in one of the config.hlp files. Please remove one of them to get rid of
-this message here.
-
-Here the one out of config.in:
-
-$tmp_text
-
-Here the one out of config.hlp:
-
-$hlp_text"
-	elif [ "$hlp_text" ] ; then
-		echo "$hlp_text"
-	elif [ "$tmp_text" ] ; then
-		echo "$tmp_text"
-	else
-		echo "$default_text"
-	fi
-}
+. scripts/config.func
 
 arch=none
 if expr "`uname -m`" : "i.86"    > /dev/null ; then arch=x86     ; fi
@@ -482,7 +152,9 @@ configtitle="$(printf ' %-50s %6s active packages ]' \
 	"ROCK Linux $rockver Configuration - $config" \
 	"[ $(echo `grep '^X' config/$config/packages | wc -l`)" )"
 
+bprof main stop
 . ./config/$config/config
+bprof main start
 
 rm -f config.dialog config.data config.help
 touch config.dialog config.data config.help
@@ -511,6 +183,8 @@ configtitle="$(printf ' %-50s %6s active packages ]' \
 	"ROCK Linux $rockver Configuration - $config" \
 	"[ $(echo `grep '^X' config/$config/packages | wc -l`)" )"
 
+bprof main stop
+
 if [ -z "$oldconfig" ] ; then
     eval "./src/rockdialog.bin --title 'Build Config' \
 	--backtitle '$configtitle' \
@@ -521,6 +195,8 @@ if [ -z "$oldconfig" ] ; then
 else
     returncode=1
 fi
+
+bprof main start
 
 [ "$returncode" = 1 -a "$menu_back" -ne -1 ] && returncode="menu-back"
 
@@ -543,6 +219,8 @@ case "$returncode" in
 		rm -f rockdialog.scrltmp # src/rockdialog.bin
 		echo "New config written to config/$config/*."
 		echo "Cleaning up. Configuration finished."
+		bprof main stop
+		bprof_print
 		exit 1 ;;
 	2)
 		tempitem=$item
@@ -553,14 +231,21 @@ case "$returncode" in
 
 		get_help $item > config.dialog
 
+		bprof main stop
 		./src/rockdialog.bin --title 'ROCK Linux Config - Help' \
 			--backtitle "ROCK Linux $rockver Configuration" \
 			--textbox config.dialog \
 			$(( $lines - 4 )) $(( $columns - 5 ))
+		bprof main start
 		;;
 	*)
 		echo "unknown returncode: $returncode"
+		bprof main stop
+		bprof_print
 		exit 1 ;;
 esac
+
+bprof main stop
+bprof_print
 
 exit 0
