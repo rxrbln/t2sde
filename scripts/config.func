@@ -42,51 +42,92 @@ var_insert() {
 #	pkgcheck	pattern [XO]
 #	pkgfilter	cmd arg1 ...
 #
-pkgfilter() {
-	bprof pkgfilter start
-	"$@" < config/$config/packages > config/$config/packages.new
-	mv config/$config/packages.new config/$config/packages
-	bprof pkgfilter stop
-}
-pkgenable() {
-	bprof pkgenable start
-	local pattern patterns
-	for pattern; do
-		patterns="$patterns -e '/ $pattern / s/^./X/'"
-	done
-	if [ "$patterns" ]; then
-		eval "pkgfilter sed $patterns"
-	fi
-	bprof pkgenable stop
-}
-pkgdisable() {
-	bprof pkgdisable start
-	local pattern patterns
-	for pattern; do
-		patterns="$patterns -e '/ $pattern / s/^./O/'"
-	done
-	if [ "$patterns" ]; then
-		eval "pkgfilter sed $patterns"
-	fi
-	bprof pkgdisable stop
-}
-pkgremove() {
-	bprof pkgremove start
-	local pattern patterns
-	if [ "$1" ]; then
-		patterns=" $1 "; shift
+if [ -n "$nobashmod" ]
+then
+	pkgin() { :; }
+	pkgout() { :; }
+	__pkgfilter() {
+		"$@" < config/$config/packages > config/$config/packages.new
+		mv config/$config/packages.new config/$config/packages
+	}
+	pkgfilter() {
+		bprof pkgfilter start
+		__pkgfilter "$@"
+		bprof pkgfilter stop
+	}
+	pkgenable() {
+		bprof pkgenable start
+		local pattern patterns
 		for pattern; do
-			patterns="$patterns| $pattern "
+			patterns="$patterns -e '/ $pattern / s/^./X/'"
 		done
-		pkgfilter egrep -v "$patterns"
-	fi
-	bprof pkgremove stop
-}
-pkgcheck() {
-	bprof pkgcheck start
-	egrep -q "^$2.* ($1) " config/$config/packages
-	bprof pkgcheck stop
-}
+		if [ "$patterns" ]; then
+			eval "__pkgfilter sed $patterns"
+		fi
+		bprof pkgenable stop
+	}
+	pkgdisable() {
+		bprof pkgdisable start
+		local pattern patterns
+		for pattern; do
+			patterns="$patterns -e '/ $pattern / s/^./O/'"
+		done
+		if [ "$patterns" ]; then
+			eval "__pkgfilter sed $patterns"
+		fi
+		bprof pkgdisable stop
+	}
+	pkgremove() {
+		bprof pkgremove start
+		local pattern patterns
+		if [ "$1" ]; then
+			patterns=" $1 "; shift
+			for pattern; do
+				patterns="$patterns| $pattern "
+			done
+			__pkgfilter egrep -v "$patterns"
+		fi
+		bprof pkgremove stop
+	}
+	pkgcheck() {
+		bprof pkgcheck start
+		local pattern="$1"; pattern="${pattern//+/\\+}"
+		egrep -q "^$2.*[ =]($pattern) " config/$config/packages; local ret=$?
+		bprof pkgcheck stop
+		return $ret
+	}
+else
+	pkgin() { cfghlp pkg_in config/$config/packages; }
+	pkgout() { cfghlp pkg_out config/$config/packages ; }
+	pkgfilter() {
+		bprof pkgfilter start
+		cfghlp pkg_out config/$config/packages.tmp
+		"$@" < config/$config/packages.tmp > config/$config/packages
+		cfghlp pkg_in config/$config/packages
+		bprof pkgfilter stop
+	}
+	pkgenable() {
+		bprof pkgenable start
+		cfghlp pkgenable "$@"
+		bprof pkgenable stop
+	}
+	pkgdisable() {
+		bprof pkgdisable start
+		cfghlp pkgdisable "$@"
+		bprof pkgdisable stop
+	}
+	pkgremove() {
+		bprof pkgremove start
+		cfghlp pkgremove "$@"
+		bprof pkgremove stop
+	}
+	pkgcheck() {
+		bprof pkgcheck start
+		cfghlp pkgcheck "$1" "$2"; local ret=$?
+		bprof pkgcheck stop
+		return $ret
+	}
+fi
 
 comment() {
 	bprof comment start
@@ -359,9 +400,9 @@ block_begin() {
 block_end() {
 	bprof block_end start
 	if [ $menu_current = $menu_this ] ; then
-		spacer="`echo "$spacer" | sed 's,..$,,'`" ;
-		tabspace="`echo $tabspace_list | cut -f1 -d' '`"
-		tabspace_list="`echo $tabspace_list | cut -s -f2- -d' '`"
+		spacer="${spacer%??}"
+		tabspace="${tabspace_list%% *}"
+		tabspace_list="${tabspace_list#* }"
 	fi
 	bprof block_end stop
 }
@@ -405,8 +446,8 @@ menu_begin() {
 menu_end() {
 	bprof menu_end start
 	block_end
-	menu_this="`echo $menu_stack | cut -f1 -d' '`"
-	menu_stack="`echo $menu_stack | cut -s -f2- -d' '`"
+	menu_this="${menu_stack%% *}"
+	menu_stack="${menu_stack#* }"
 	bprof menu_end stop
 }
 
