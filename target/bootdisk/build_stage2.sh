@@ -15,7 +15,7 @@ package_map='       +00-dirtree         +glibc22            +glibc23
 -binutils           -bin86              -nasm               -dietlibc
 +grub               +lilo               +yaboot             +aboot
 +silo               +parted             +mac-fdisk          +pdisk
-+xfsprogs           +mkdosfs            +mtools             +jfsutils
++xfsprogs           +mkdosfs            +jfsutils
 +e2fsprogs          +reiserfsprogs      +genromfs           +lvm
 +raidtools          +dump               +eject
 +hdparm             +memtest86          +cpuburn            +bonnie++
@@ -23,7 +23,7 @@ package_map='       +00-dirtree         +glibc22            +glibc23
 +readline           -strace             -ltrace             -perl5
 -m4                 -time               -gettext            -zlib
 +bash               +attr               +acl                +findutils
-+mktemp             +coreutils          +diffutils          +patch
++mktemp             +coreutils          -diffutils          -patch
 -make               +grep               +sed                +gzip
 +tar                +gawk               -flex               +bzip2
 -texinfo            +less               -groff              -man
