@@ -402,6 +402,12 @@ runconf=1 ; runxmkmf=1 ; runmkpl=1 ; autopatch=1
 autoextract=1 ; chownsrcdir=1 ; patchopt="-bfp1 -z .orig"
 createprefix=1 ; createdocs="" ; rmemptydir=""
 
+check_shared=1
+check_usrlocal=1
+check_badfiles=1
+
+badfiles="" badfiles_nr=0
+declare -a badfiles_desc
 
 #
 # ---- Read various config files
@@ -625,11 +631,7 @@ abort() {
 		fi
 		touch $root/var/adm/logs/$stagelevel-$xpkg.log
 	)
-	if [ -f $root/var/adm/logs/$stagelevel-$xpkg.log ] ; then
-		found_errors=0
-	else
-		found_errors=1
-	fi
+	[ ! -f $root/var/adm/logs/$stagelevel-$xpkg.log ] && abort
 
 	hook_eval postinstall
 
@@ -727,6 +729,18 @@ abort() {
 		sort -u $builddir/dependencies.txt > var/adm/dependencies/$xpkg
 	fi
 
+	echo -n "Creating md5sum and cksum files ..."
+	getfiles < var/adm/flists/$xpkg > $builddir/files.lst
+	if [ -s $builddir/files.lst ] ; then
+		cat $builddir/files.lst | \
+			grep -v '^var/adm/' | sed -e 's/ /\\ /g' | \
+			xargs -r md5sum > var/adm/md5sums/$xpkg
+		cat $builddir/files.lst | \
+			grep -v '^var/adm/' | sed -e 's/ /\\ /g' | \
+			xargs -r cksum > var/adm/cksums/$xpkg
+	fi
+	echo ' done.'
+
 	echo "Creating package description ..."
 	#
 	rocksrcck=$(cd $base; md5sum package/*/$pkg/* 2> /dev/null | \
@@ -772,53 +786,61 @@ EOT
 	    done < $base/Documentation/Developers/PKG-DESC-FORMAT
 	} > var/adm/descs/$xpkg
 
-	echo "Preparing to create md5sum and cksum files ..."
-	getfiles < var/adm/flists/$xpkg > $builddir/files.lst
-	if [ -s $builddir/files.lst ] ; then
-		echo "  creating md5sums ..."
-		( echo -e "var/adm/descs/$xpkg\nvar/adm/packages/$xpkg" ; \
-		  cat $builddir/files.lst | grep -v '^var/adm/' ) | \
-			sed -e 's/ /\\ /g' | \
-			xargs -r md5sum > var/adm/md5sums/$xpkg
-		echo "  creating cksums ..."
-		( echo -e "var/adm/descs/$xpkg\nvar/adm/packages/$xpkg" ; \
-		  cat $builddir/files.lst | grep -v '^var/adm/' ) | \
-			sed -e 's/ /\\ /g' | \
-			xargs -r cksum > var/adm/cksums/$xpkg
-	fi
-	echo 'done.'
-
 	echo "Making post-install adoptions."
 	if [ $stagelevel -ge 2 -a -f /sbin/ldconfig ] ; then ldconfig ; fi
 
 	if [ "$ROCKCFG_PARANOIA_CHECK" = 1 ] ; then
+		found_errors=0
 		found_dups=0
 
-		while read dummy file ; do
-			if [ $found_dups = 0 ] ; then
-				echo "Found shared files with other packages:"
-				found_errors=1; found_dups=1
-			fi
-			echo "$file:" $( cd $root/var/adm/flists
-					 grep -l " $file\$" * )
-		done < <( cat $root/var/adm/flists/* | sed "s,^$xpkg:,.," | \
-			  sort +1 | uniq -d -f1 | grep '^\. ' )
+		# check for files which are 'shared' with other packages
+		if [ "$check_shared" != "0" ]; then
+			while read dummy file; do
+				if [ $found_dups = 0 ] ; then
+					echo "Found shared files with other packages:"
+					found_errors=1; found_dups=1
+				fi
+				echo "$file:" $( cd $root/var/adm/flists
+						 grep -l " $file\$" * )
+			done < <( cat $root/var/adm/flists/* | sed "s,^$xpkg:,.," | \
+				  sort +1 | uniq -d -f1 | grep '^\. ' )
+		fi
 
 		found_local=0
 
 		# check for files in /usr/local
-		if [ "$usr_local_check" != "0" ] ; then
-		   while read file ; do
-			if [ $found_local = 0 ] ; then
-				echo "Found files in /usr/local:"
-				found_errors=1 ; found_local=1
-			fi
-			echo $file
-		  done < <( sed "s,^$xpkg: ,/," $root/var/adm/flists/$xpkg | \
-                  	    egrep "^/usr/local" )
+		if [ "$check_usrlocal" != "0" ]; then
+			while read file ; do
+				if [ $found_local = 0 ] ; then
+					echo "Found files in /usr/local:"
+					found_errors=1; found_local=1
+				fi
+				echo $file
+			done < <( sed "s,^$xpkg: ,/," $root/var/adm/flists/$xpkg | \
+				    egrep "^/usr/local" )
 		fi
+
+		found_bad=0
+
+		# check for registered 'bad files'
+		if [ "$check_badfiles" != "0" ]; then
+			echo "$badfiles" > $builddir/badfiles.txt
+			while read x file; do
+				if [ $found_bad = 0 ]; then
+					echo "Found registered 'bad files' in package:"
+					found_errors=1; found_bad=1
+				fi
+				desc="No description found!"
+				for ((x=0; x<badfiles_nr; x++)); do
+					if echo " $file" | grep -q "${badfiles_desc[x]%%$'\n'*}" 
+					then desc="${badfiles_desc[x]#*$'\n'}"; fi
+				done
+				echo "$file: $desc"
+			done < <( grep -f $builddir/badfiles.txt $root/var/adm/flists/$xpkg )
+		fi
+
+		[ $found_errors != 0 ] && abort
 	fi
-	[ $found_errors != 0 ] && abort
 
 } 2>&1 | {
 
