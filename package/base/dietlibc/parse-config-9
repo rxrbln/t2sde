@@ -22,13 +22,14 @@
 
 # --- FUNCTIONS-BEGIN ---
 function set_wrapper_and_misc () {
-	if [ "$stagelevel" -le 1 ] ; then
+	var_append CC_WRAPPER_INSERT " " "-idirafter $root/usr/include"
+	if [ "$stagelevel" -le 1 -o "$ROCKCFG_DIETLIBC_ALL" -ne 1 ] ; then
 		var_append CC_WRAPPER_INSERT " " "-nostdinc"
 		# all dietlibc pathes are redirected into the build system
 		var_insert CC_WRAPPER_FILTER "|" "sed -e 's,/usr/dietlibc/,$root&,'"
 		var_append CC_WRAPPER_OTHERS ":" $dietbin
 	else
-		if [ "$diet_dynamic_static" == "statically"  ] ; then
+		if [ "$diet_dynamic_static" == "static"  ] ; then
 			var_append GCC_WRAPPER_INSERT " " "-static"
 		fi
 		var_append GCC_WRAPPER_INSERT " " "-D__dietlibc__"
@@ -66,10 +67,10 @@ if [ "$pkg_dietlibc_useit" = 1 ]; then
 	fi
 
 	if [ "$ROCKCFG_DIETLIBC_DYN" = "1" ]
-	then dietbin="diet-dyn" ; diet_dynamic_static="dynamically"
-	else dietbin="diet" ; diet_dynamic_static="statically" ; fi
+	then dietbin="diet-dyn" ; diet_dynamic_static="dynamic"
+	else dietbin="diet" ; diet_dynamic_static="static" ; fi
 
-	echo_status "Preparing configuration to build this package with dietlibc ($diet_dynamic_static)."
+	echo_status "Preparing configuration to build this package with dietlibc ("${diet_dynamic_static}"ally)."
 
 	if [ "$stagelevel" -gt 1 ]; then
 		var_remove CC_WRAPPER_INSERT " " "-pipe" ;
@@ -81,7 +82,6 @@ if [ "$pkg_dietlibc_useit" = 1 ]; then
 		var_remove KCC_WRAPPER_INSERT " " "-pipe" ;
 		var_append KCC_WRAPPER_REMOVE " " "-pipe" ;
 
-#		var_append CC_WRAPPER_INSERT " " "-L/usr/i386-pc-linux-gnulibc1/lib"
 	fi
 
 	# patch has problems with Plan A patching so we switch with -x 16 to Plan B
@@ -94,24 +94,13 @@ if [ "$pkg_dietlibc_useit" = 1 ]; then
 
 		linux*)
 			echo_status "This package is currently blacklisted and not build using dietlibc!"
-			[ "$stagelevel" -gt 1 ] && [ "$diet_dynamic_static" == "statically" ] && var_append GCC_WRAPPER_INSERT " " "-static"
+			[ "$stagelevel" -gt 1 ] && [ "$diet_dynamic_static" == "static" ] && var_append GCC_WRAPPER_INSERT " " "-static"
 			;;
 
-		e2fsprogs) # the packets that have BSD problems and/or GNU problems
+		e2fsprogs|util-linux|net-tools) # the packets that have BSD problems and/or GNU problems
 			echo_status "Setting dietlibc special GNU/BSD settings!"
 			var_append CC_WRAPPER_INSERT " " "-D_BSD_SOURCE"
 			var_append CC_WRAPPER_INSERT " " "-D_GNU_SOURCE"
-			set_wrapper_and_misc
-			;;
-
-		util-linux|net-tools) # the packets that have BSD problems and/or GNU
-			    # problems and need tons of linux headers
-			echo_status "Setting dietlibc special GNU/BSD and linux header settings!"
-			var_append CC_WRAPPER_INSERT " " "-D_BSD_SOURCE"
-			var_append CC_WRAPPER_INSERT " " "-D_GNU_SOURCE"
-			var_append CC_WRAPPER_INSERT " " "-nostdinc"
-			var_append CC_WRAPPER_APPEND " " "-I$root/usr/dietlibc/include"
-			var_append CC_WRAPPER_APPEND " " "-I$root/usr/include"
 			set_wrapper_and_misc
 			;;
 
@@ -128,19 +117,6 @@ if [ "$pkg_dietlibc_useit" = 1 ]; then
 			set_wrapper_and_misc
 			;;
 
-		iproute2)
-			echo_status "Allowing default headers from /usr/include!"
-
-			# needs to be last since otherwise the (g)libc headers
-			# in /usr/include would be used instead of the dietlibc
-			# ones ... - so append instead insert.
-			# XXX check if it is really needed in that form ...
-			var_append CC_WRAPPER_APPEND " " "-I$root/usr/include"
-			var_append CC_WRAPPER_INSERT " " "-I/usr/dietlibc/include"
-
-			set_wrapper_and_misc
-			;;
-
 		*)
 			echo_status "Using default dietlibc compiler options!"
 			set_wrapper_and_misc
@@ -152,7 +128,7 @@ if [ "$pkg_dietlibc_useit" = 1 ]; then
 			var_remove patchfiles " " "*acl-xattr.patch"
 			;;
 		curl)
-			[ "$diet_dynamic_static" == "statically"  ] && var_append extraconfopt " " "--disable-shared"
+			[ "$diet_dynamic_static" == "static"  ] && var_append extraconfopt " " "--disable-shared"
 			;;
 		ncurses)
 			var_append extraconfopt " " "--without-cxx-binding --without-cxx"
@@ -161,9 +137,12 @@ if [ "$pkg_dietlibc_useit" = 1 ]; then
 			add_lib "-lrpc"
 			add_lib "-lcompat"
 			;;
+		dump)
+			var_append extraconfopt " " "--disable-rmt"
+			;;
 	esac
 
 	var_append patchfiles " " `ls $base/package/base/dietlibc/pkg_patch/pkg_$pkg.patch 2>/dev/null`
-	[ "$stagelevel" -ge 1 ] && var_append patchfiles " " `ls $base/package/base/dietlibc/pkg_patch/pkg_$pkg.chroot.patch 2>/dev/null`
+	[ "$stagelevel" -ge 1 -a "$ROCKCFG_DIETLIBC_ALL" -eq 1 ] && var_append patchfiles " " `ls $base/package/base/dietlibc/pkg_patch/pkg_$pkg.chroot.patch 2>/dev/null`
 fi
 
