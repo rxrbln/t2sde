@@ -1,3 +1,4 @@
+
 # FIXME: /tmp/.rocknet or such a directory should go to base.sh?
 ppp_config_path=/tmp/.rocknet/ppp
 [ -d $ppp_config_path ] || mkdir -p $ppp_config_path
@@ -40,10 +41,8 @@ ppp_option() {
 	esac
 
 	if egrep "^($optx) .*" $optfile 1>/dev/null 2>/dev/null; then
-		cp $optfile $optfile.tmp
 		optx="`echo $optx | sed 's,|,\\\\|,g'`"
-		sed "s,^\($optx\) .*,$opt $*," < $optfile.tmp > $optfile
-		rm -f $optfile.tmp
+		sed -i "s,^\($optx\) .*,$opt $*," $optfile
 	else
 		echo "$opt $*" >> $optfile
 	fi
@@ -52,7 +51,6 @@ ppp_option() {
 # pppoe_config_defaults - create default settings, the respective config file
 #                         is \$ppp_${if}_config
 pppoe_config_defaults() {
-	# FIXME should this be provider dependant, or does this fit for everybody?
 	local each
 	for each in noipdefault noauth default-asyncmap hide-password noaccomp nobsdcomp \
 		    ipcp-accept-local ipcp-accept-remote \
@@ -100,7 +98,7 @@ public_pppoe() {
 
 	ppp_args="$ppp_args${ppp_args+ }`echo $* | sed 's,",\\\\",g'`"
 
-	# fire
+	# final config codes
 	addcode up 5 1 "ip link set $ppp_if down up"
 	addcode up 5 2 "/usr/sbin/pppd plugin rp-pppoe.so $ppp_if unit $ppp_unit $ppp_args"
 	addcode down 5 2 "[ -f /var/run/$if.pid ] && kill -TERM \`head -n 1 /var/run/$if.pid\`"
@@ -119,3 +117,4 @@ public_ppp_on_demand() {
 	addcode up 4 6 "ppp_option \$ppp_${if}_config idle $1"
 	addcode up 4 6 "ppp_option \$ppp_${if}_config persist"
 }
+
