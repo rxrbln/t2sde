@@ -64,7 +64,7 @@ read_fm_config() {
 	extract_xml_name project $fmname.xml projectname_full
 	extract_xml_name title   $fmname.xml desc_short
 	extract_xml_name desc    $fmname.xml desc_full
-	extract_xml_name url     $fmname.xml url_project_page
+	extract_xml_name urlh    $fmname.xml url_homepage
 	extract_xml_name license $fmname.xml license
 	extract_xml_name version $fmname.xml latest_release_version
 
@@ -73,6 +73,7 @@ read_fm_config() {
 	extract_xml_name url_zip $fmname.xml url_zip
 	extract_xml_name url_cvs $fmname.xml url_cvs
 
+	url="$(curl -I $urlh 2>/dev/null | grep "^Location:" | sed -e 's,^Location: \(.*\)$,\1,' -e 's,,,' )"
 	get_download $url_tbz $url_tgz $url_zip #@FIXME $url_cvs 
 
 # grep trove categories for status IDs
