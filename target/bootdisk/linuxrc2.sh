@@ -23,6 +23,9 @@ ln -sf fd/1             stdout
 ln -sf fd/2             stderr
 cd /
 
+echo "Running ldconfig ..."
+ldconfig
+
 echo
 echo '  ******************************************************************'
 echo '  *         Welcome to the T2 Linux 2nd stage boot disk.           *'
