@@ -12,19 +12,20 @@
 # Author: Sebastian Jaenicke <sj-rocklinux@jaenicke.org>
 #
 
-NV_VERSION=4363
+NV_VERSION=4496
 
 export IGNORE_CC_MISMATCH=1 
 
-echo Installing GL libraries ..
-cd NVIDIA_GLX-1.0-${NV_VERSION} && \
-make install
-
 echo Compiling kernel module ..
-cd ../NVIDIA_kernel-1.0-${NV_VERSION} && \
-make nvidia.o && \
-install -m 0664 -o root -g root nvidia.o /lib/modules/`uname -r`/kernel/drivers/video/ && \
-/sbin/depmod -a
+CWD=$PWD
+cd usr/src/nv
+make nvidia.o
+install -m 0664 -o root -g root nvidia.o /lib/modules/`uname -r`/kernel/drivers/video/nvidia.o
+depmod -a
+cd $CWD
+
+echo Installing GL files ..
+make install_gl
 
 if [ "x`grep nvidia /etc/devfsd.conf`" = "x" ]; then
 	echo "Adding entries to /etc/devfsd.conf .."
