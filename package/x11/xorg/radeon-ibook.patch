@@ -1,21 +1,533 @@
 
-Due to disagreement how to solve this correctly we keep this private patch
-in order to use the radeon driver on iBooks without the UseFBDev hack.
-
-  - Rene Rebe - T2 project
-
-diff -u -r1.19 radeon_driver.c
---- xc/programs/Xserver/hw/xfree86/drivers/ati/radeon_driver.c	25 Aug 2004 00:30:41 -0000	1.19
-+++ xc/programs/Xserver/hw/xfree86/drivers/ati/radeon_driver.c	28 Aug 2004 19:28:47 -0000
-@@ -6755,6 +6755,11 @@
+diff -urN xc.orig/programs/Xserver/hw/xfree86/drivers/ati/radeon.h xc/programs/Xserver/hw/xfree86/drivers/ati/radeon.h
+--- xc.orig/programs/Xserver/hw/xfree86/drivers/ati/radeon.h	2004-10-04 11:25:21.000000000 +1000
++++ xc/programs/Xserver/hw/xfree86/drivers/ati/radeon.h	2004-11-12 16:20:40.000000000 +1100
+@@ -334,6 +334,7 @@
+     int               VBlank;
+     int               PanelPwrDly;
+     int               DotClock;
++    int               DotClockGuessed;
+     int               RefDivider;
+     int               FeedbackDivider;
+     int               PostDivider;
+@@ -615,6 +616,7 @@
+     Bool		AtLeastOneNonClone;
+     int			MergedFBXDPI, MergedFBYDPI;
+     Bool		NoVirtual;
++    Bool		VGAAccess;
  
-     save->ppll_ref_div   = pll->reference_div;
-     save->ppll_div_3     = (save->feedback_div | (post_div->bitvalue << 16));
+     /* special handlings for DELL triple-head server */
+     Bool		IsDellServer; 
+diff -urN xc.orig/programs/Xserver/hw/xfree86/drivers/ati/radeon.man xc/programs/Xserver/hw/xfree86/drivers/ati/radeon.man
+--- xc.orig/programs/Xserver/hw/xfree86/drivers/ati/radeon.man	2004-11-11 11:56:59.000000000 +1100
++++ xc/programs/Xserver/hw/xfree86/drivers/ati/radeon.man	2004-11-12 16:25:03.000000000 +1100
+@@ -496,6 +496,33 @@
+ with this enabled.  The default is
+ .B off.
+ .TP
++.BI "Option \*qVGAAccess\*q \*q" boolean \*q
++Tell the driver if it can do legacy VGA IOs to the card. This is
++necessary for properly resuming consoles when in VGA text mode, but
++shouldn't be if the console is using radeonfb or some other graphic
++mode driver. Some platforms like PowerPC have issues with those, and they aren't
++necessary unless you have a real text mode in console. The default is
++.B off 
++on PowerPC and
++.B on 
++on other architectures.
++.TP
++.BI "Option \*qLVDSProbePLL\*q \*q" boolean \*q
++When BIOS panel informations aren't available (like on PowerBooks), it
++may still be necessary to use the firmware provided PLL values for the
++panel or flickering will happen. This option will force probing of
++the current value programmed in the chip when X is launched in that
++case.  The default is
++.B off.
++.TP
++.BI "Option \*qReverseDDC\*q \*q" boolean \*q
++When BIOS connector informations aren't available, use this option to
++reverse the mapping of the 2 main DDC ports. Use this if the X serve
++obviously detects the wrong display for each connector. This is
++typically needed on the Radeon 9600 cards bundled with Apple G5s. The
++default is
++.B off.
++.TP
+ 
+ .SH SEE ALSO
+ __xservername__(__appmansuffix__), __xconfigfile__(__filemansuffix__), xorgconfig(__appmansuffix__), Xserver(__appmansuffix__), X(__miscmansuffix__)
+diff -urN xc.orig/programs/Xserver/hw/xfree86/drivers/ati/radeon_accel.c xc/programs/Xserver/hw/xfree86/drivers/ati/radeon_accel.c
+--- xc.orig/programs/Xserver/hw/xfree86/drivers/ati/radeon_accel.c	2004-08-12 15:00:22.000000000 +1000
++++ xc/programs/Xserver/hw/xfree86/drivers/ati/radeon_accel.c	2004-11-12 11:12:00.000000000 +1100
+@@ -291,10 +291,8 @@
+     OUTREGP(RADEON_DP_DATATYPE, 0, ~RADEON_HOST_BIG_ENDIAN_EN);
+ #endif
+ 
+-    /* Restore SURFACE_CNTL - only the first head contains valid data -ReneR */
+-    if (!info->IsSecondary) {
+-	OUTREG(RADEON_SURFACE_CNTL, info->ModeReg.surface_cntl);
+-    }
++    /* Restore SURFACE_CNTL */
++    OUTREG(RADEON_SURFACE_CNTL, info->ModeReg.surface_cntl);
+ 
+     RADEONWaitForFifo(pScrn, 1);
+     OUTREG(RADEON_DEFAULT_SC_BOTTOM_RIGHT, (RADEON_DEFAULT_SC_RIGHT_MAX
+diff -urN xc.orig/programs/Xserver/hw/xfree86/drivers/ati/radeon_driver.c xc/programs/Xserver/hw/xfree86/drivers/ati/radeon_driver.c
+--- xc.orig/programs/Xserver/hw/xfree86/drivers/ati/radeon_driver.c	2004-11-11 11:56:59.000000000 +1100
++++ xc/programs/Xserver/hw/xfree86/drivers/ati/radeon_driver.c	2004-11-12 16:26:51.000000000 +1100
+@@ -171,7 +171,10 @@
+     OPTION_SUBPIXEL_ORDER,
+ #endif
+     OPTION_SHOWCACHE,
+-    OPTION_DYNAMIC_CLOCKS
++    OPTION_DYNAMIC_CLOCKS,
++    OPTION_VGA_ACCESS,
++    OPTION_LVDS_PROBE_PLL,
++    OPTION_REVERSE_DDC,
+ } RADEONOpts;
+ 
+ static const OptionInfoRec RADEONOptions[] = {
+@@ -223,6 +226,9 @@
+ #endif
+     { OPTION_SHOWCACHE,      "ShowCache",        OPTV_BOOLEAN, {0}, FALSE },
+     { OPTION_DYNAMIC_CLOCKS, "DynamicClocks",    OPTV_BOOLEAN, {0}, FALSE },
++    { OPTION_VGA_ACCESS,     "VGAAccess",        OPTV_BOOLEAN, {0}, TRUE  },
++    { OPTION_LVDS_PROBE_PLL, "LVDSProbePLL",     OPTV_BOOLEAN, {0}, FALSE },
++    { OPTION_REVERSE_DDC,    "ReverseDDC",       OPTV_BOOLEAN, {0}, FALSE },
+     { -1,                    NULL,               OPTV_NONE,    {0}, FALSE }
+ };
+ 
+@@ -1204,10 +1210,10 @@
+     RADEONPLLPtr  pll  = &info->pll;
+     unsigned char *RADEONMMIO = info->MMIO;
+     unsigned char ppll_div_sel;
+-    unsigned Nx, M;
++    unsigned mpll_fb_div, spll_fb_div, M;
+     unsigned xclk, tmp, ref_div;
+     int hTotal, vTotal, num, denom, m, n;
+-    float hz, vclk, xtal;
++    float hz, vclk, xtal, mpll, spll;
+     long start_secs, start_usecs, stop_secs, stop_usecs, total_usecs;
+     int i;
+ 
+@@ -1292,20 +1298,68 @@
+         xtal = 1432;
+     else if ((xtal > 29400000) && (xtal < 29600000))
+         xtal = 2950;
+-    else
++    else {
++	xf86DrvMsg(pScrn->scrnIndex, X_WARNING, "Failed to probe xtal value !\n");
+ 	return FALSE;
++    }
+ 
+     tmp = INPLL(pScrn, RADEON_X_MPLL_REF_FB_DIV);
+     ref_div = INPLL(pScrn, RADEON_PPLL_REF_DIV) & 0x3ff;
+ 
+-    Nx = (tmp & 0xff00) >> 8;
++    /* Calculate "base" xclk straight from MPLL, though that isn't
++     * really useful (hopefully)
++     */
++    mpll_fb_div = (tmp & 0xff00) >> 8;
++    spll_fb_div = (tmp & 0xff0000) >> 16;
+     M = (tmp & 0xff);
+-    xclk = RADEONDiv((2 * Nx * xtal), (2 * M));
++    xclk = RADEONDiv((2 * mpll_fb_div * xtal), (2 * M));
 +
-+#if defined(__powerpc__)
-+    save->ppll_div_3     = 0x000600ad; /* hack for iBooks, needs some review -ReneR */
++    /*
++     * Calculate MCLK based on MCLK-A and SCLK
++     *
++     * NOTE: It is not clear at this point wether we should put in sclk and
++     * mclk the raw SPLL and MPLL output values, or the divided values according
++     * to the source selection iN MCLK_CNTL and SCLK_CNTL. I'm putting the divided
++     * values for now, waiting for a definitive answer from ATI
++     */
++    mpll = ((float)mpll_fb_div * (float)(xtal / 100.0)) / (float)M;
++    spll = ((float)spll_fb_div * (float)(xtal / 100.0)) / (float)M;
++
++    tmp = INPLL(pScrn, RADEON_MCLK_CNTL) & 0x7;
++    switch(tmp) {
++    case 1: info->mclk = mpll; break;
++    case 2: info->mclk = mpll / 2.0; break;
++    case 3: info->mclk = mpll / 4.0; break;
++    case 4: info->mclk = mpll / 8.0; break;
++    case 7: info->mclk = spll; break;
++    default:
++	    info->mclk = 200.00;
++	    xf86DrvMsg(pScrn->scrnIndex, X_WARNING, "Unsupported MCLKA source"
++		       " setting %d, can't probe MCLK value !\n", tmp);
++    }
++
++    tmp = INPLL(pScrn, RADEON_SCLK_CNTL) & 0x7;
++    switch(tmp) {
++    case 1: info->sclk = spll; break;
++    case 2: info->sclk = spll / 2.0; break;
++    case 3: info->sclk = spll / 4.0; break;
++    case 4: info->sclk = spll / 8.0; break;
++    case 7: info->sclk = mpll;
++    default:
++	    info->sclk = 200.00;
++	    xf86DrvMsg(pScrn->scrnIndex, X_WARNING, "Unsupported SCLK source"
++		       " setting %d, can't probe SCLK value !\n", tmp);
++    }
+ 
+     /* we're done, hopefully these are sane values */
+     pll->reference_div = ref_div;
+     pll->xclk = xclk;
+     pll->reference_freq = xtal;
++    pll->min_pll_freq = 12500;
++    pll->max_pll_freq = 35000;
++
++    xf86DrvMsg(pScrn->scrnIndex, X_INFO, "Probed PLL values: xtal: %f Mhz, "
++	       "sclk: %f Mhz, mclk: %f Mhz\n", xtal/100.0, info->sclk, info->mclk);
+ 
+     return TRUE;
+ }
+@@ -1334,6 +1388,21 @@
+ 	info->PanelXRes = 640;
+ 	info->PanelYRes = 480;
+     }
++
++    if (xf86ReturnOptValBool(info->Options, OPTION_LVDS_PROBE_PLL, FALSE)) {
++	    CARD32 ppll_div_sel, ppll_val;
++
++	    OUTREG(RADEON_CLOCK_CNTL_INDEX, 1);
++	    ppll_div_sel = INREG8(RADEON_CLOCK_CNTL_DATA + 1) & 0x3;
++            ppll_val = INPLL(pScrn, RADEON_PPLL_DIV_0 + ppll_div_sel);
++            info->FeedbackDivider = ppll_val & 0x7ff;
++            info->PostDivider = (ppll_val >> 16) & 0x7;
++	    info->RefDivider = info->pll.reference_div;
++            info->UseBiosDividers = TRUE;
++
++	    xf86DrvMsg(pScrn->scrnIndex, X_INFO,
++		       "Existing panel PLL dividers will be used.\n");
++    }
+     
+     xf86DrvMsg(pScrn->scrnIndex, X_WARNING, 
+ 	       "Panel size %dx%d is derived, this may not be correct.\n"
+@@ -1376,6 +1445,7 @@
+                     info->VSyncWidth = tmp_mode->VSyncEnd - tmp_mode->VSyncStart;
+                     info->DotClock   = tmp_mode->Clock;
+                     info->Flags = 0;
++		    info->DotClockGuessed = 1;
+                     break;
+                 }
+             }
+@@ -1623,8 +1693,18 @@
+ 	pRADEONEnt->PortInfo[1].DACType = DAC_PRIMARY;
+ 	pRADEONEnt->PortInfo[1].TMDSType = TMDS_EXT;
+ 	pRADEONEnt->PortInfo[1].ConnectorType = CONNECTOR_CRT;
++
++	/* Some cards have the DDC lines swapped and we have no way to
++	 * detect it yet (Mac cards)
++	 */
++	if (xf86ReturnOptValBool(info->Options, OPTION_REVERSE_DDC, FALSE)) {
++	    pRADEONEnt->PortInfo[0].DDCType = DDC_VGA;
++	    pRADEONEnt->PortInfo[1].DDCType = DDC_DVI;
++        }
+     }
+ 
++
++
+     /* always make TMDS_INT port first*/
+     if (pRADEONEnt->PortInfo[1].TMDSType == TMDS_INT) {
+         RADEONConnector connector;
+@@ -2601,9 +2681,27 @@
+ 	if (ddc->det_mon[j].type == 0) {
+ 	    struct detailed_timings *d_timings =
+ 		&ddc->det_mon[j].section.d_timings;
++	    int match = 0;
++
++	    /* If we didn't get a panel clock or guessed one, try to match the
++	     * mode with the panel size. We do that because we _need_ a panel
++	     * clock, or ValidateFPModes will fail, even when UseBiosDividers
++	     * is set.
++	     */
++	    if ((info->DotClock == 0 || info->DotClockGuessed) &&
++		 info->PanelXRes == d_timings->h_active &&
++		 info->PanelYRes == d_timings->v_active)
++	        match = 1;
++	    
++	    /* If we don't have a BIOS provided panel data with fixed dividers,
++	     * check for a larger panel size
++	     */
+ 	    if (info->PanelXRes < d_timings->h_active &&
+-		info->PanelYRes < d_timings->v_active) {
++		info->PanelYRes < d_timings->v_active &&
++		!info->UseBiosDividers)
++	        match = 1;
+ 
++	    if (match) {
+ 		info->PanelXRes  = d_timings->h_active;
+ 		info->PanelYRes  = d_timings->v_active;
+ 		info->DotClock   = d_timings->clock / 1000;
+@@ -2616,6 +2714,8 @@
+ 	    }
+ 	}
+     }
++    if (info->UseBiosDividers)
++        return;
+ 
+     /* Search thru standard VESA modes from EDID */
+     for (j = 0; j < 8; j++) {
+@@ -2778,6 +2878,8 @@
+ 
+     /* Search thru standard VESA modes from EDID */
+     for (j = 0; j < 8; j++) {
++	if (ddc->timings2[j].hsize == 0 || ddc->timings2[j].vsize == 0)
++		continue;
+ 	for (p = pScrn->monitor->Modes; p && p->next; p = p->next->next) {
+ 	    /* Ignore all double scan modes */
+ 	    if ((ddc->timings2[j].hsize == p->HDisplay) &&
+@@ -2867,7 +2969,7 @@
+     pScrn->virtualX = pScrn1->display->virtualX;
+     pScrn->virtualY = pScrn1->display->virtualY;
+ 
+-    if (pScrn->monitor->DDC && !info->UseBiosDividers) {
++    if (pScrn->monitor->DDC) {
+ 	int  maxVirtX = pScrn->virtualX;
+ 	int  maxVirtY = pScrn->virtualY;
+ 
+@@ -3175,8 +3277,9 @@
+ 		new->next       = NULL;
+ 		new->prev       = last;
+ 
+-		last->next = new;
++		if (last) last->next = new;
+ 		last = new;
++		if (!first) first = new;
+ 	    }
+ 	}
+     }
+@@ -4201,15 +4304,6 @@
+ 	return TRUE;
+     }
+ 
+-    if (!xf86LoadSubModule(pScrn, "vgahw")) return FALSE;
+-    xf86LoaderReqSymLists(vgahwSymbols, NULL);
+-    if (!vgaHWGetHWRec(pScrn)) {
+-	RADEONFreeRec(pScrn);
+-	goto fail2;
+-    }
+-
+-    vgaHWGetIOBase(VGAHWPTR(pScrn));
+-
+     xf86DrvMsg(pScrn->scrnIndex, X_INFO,
+ 	       "PCI bus %d card %d func %d\n",
+ 	       info->PciInfo->bus,
+@@ -4237,6 +4331,32 @@
+     memcpy(info->Options, RADEONOptions, sizeof(RADEONOptions));
+     xf86ProcessOptions(pScrn->scrnIndex, pScrn->options, info->Options);
+ 
++    /* By default, don't do VGA IOs on ppc */
++#ifdef __powerpc__
++    info->VGAAccess = FALSE;
++#else
++    info->VGAAccess = TRUE;
 +#endif
 +
-     save->htotal_cntl    = 0;
- }
++    xf86GetOptValBool(info->Options, OPTION_VGA_ACCESS, &info->VGAAccess);
++    if (info->VGAAccess) {
++	if (!xf86LoadSubModule(pScrn, "vgahw"))
++	    info->VGAAccess = FALSE;
++        else {
++	    xf86LoaderReqSymLists(vgahwSymbols, NULL);
++            if (!vgaHWGetHWRec(pScrn))
++		info->VGAAccess = FALSE;
++	}
++	if (!info->VGAAccess)
++	    xf86DrvMsg(pScrn->scrnIndex, X_WARNING, "Loading VGA module failed,"
++		       " trying to run without it\n");
++    } else
++	    xf86DrvMsg(pScrn->scrnIndex, X_INFO, "VGAAccess option set to FALSE,"
++		       " VGA module load skipped\n");
++    if (info->VGAAccess)
++	 vgaHWGetIOBase(VGAHWPTR(pScrn));	    
++
++
+     if (!RADEONPreInitWeight(pScrn))
+ 	goto fail;
  
+@@ -4410,7 +4530,8 @@
+     if (pInt10)
+ 	xf86FreeInt10(pInt10);
+ 
+-    vgaHWFreeHWRec(pScrn);
++    if (info->VGAAccess)
++	    vgaHWFreeHWRec(pScrn);
+ 
+  fail2:
+     if(info->MMIO) RADEONUnmapMMIO(pScrn);
+@@ -4612,10 +4733,15 @@
+ 
+     RADEONSave(pScrn);
+ 
+-    if (xf86ReturnOptValBool(info->Options, OPTION_DYNAMIC_CLOCKS, FALSE)) {
+-	RADEONSetDynamicClock(pScrn, 1);
+-    } else {
+-	RADEONSetDynamicClock(pScrn, 0);
++    /* Only use the value from the primary head or we end up toggling it
++     * for each head which is meaningless
++     */
++    if (!info->IsSecondary) {
++	if (xf86ReturnOptValBool(info->Options, OPTION_DYNAMIC_CLOCKS, FALSE)) {
++	    RADEONSetDynamicClock(pScrn, 1);
++        } else {
++	    RADEONSetDynamicClock(pScrn, 0);
++        }
+     }
+ 
+     if (info->FBDev) {
+@@ -5846,7 +5972,6 @@
+     RADEONInfoPtr  info       = RADEONPTR(pScrn);
+     unsigned char *RADEONMMIO = info->MMIO;
+     RADEONSavePtr  save       = &info->SavedReg;
+-    vgaHWPtr       hwp        = VGAHWPTR(pScrn);
+ 
+     RADEONTRACE(("RADEONSave\n"));
+     if (info->FBDev) {
+@@ -5855,19 +5980,23 @@
+     }
+ 
+     if (!info->IsSecondary) {
+-	vgaHWUnlock(hwp);
++        if (info->VGAAccess) {
++    	    vgaHWPtr hwp = VGAHWPTR(pScrn);
++
++            vgaHWUnlock(hwp);
+ #if defined(__powerpc__)
+-	/* temporary hack to prevent crashing on PowerMacs when trying to
+-	 * read VGA fonts and colormap, will find a better solution
+-	 * in the future
+-	 */
+-	vgaHWSave(pScrn, &hwp->SavedReg, VGA_SR_MODE); /* Save mode only */
++	    /* temporary hack to prevent crashing on PowerMacs when trying to
++	     * read VGA fonts and colormap, will find a better solution
++	     * in the future. TODO: Check if there's actually some VGA stuff
++	     * setup in the card at all !!
++	     */
++	    vgaHWSave(pScrn, &hwp->SavedReg, VGA_SR_MODE); /* Save mode only */
+ #else
+-	vgaHWSave(pScrn, &hwp->SavedReg, VGA_SR_MODE | VGA_SR_FONTS); /* Save mode
+-						       * & fonts & cmap
+-						       */
++	    /* Save mode * & fonts & cmap */
++	    vgaHWSave(pScrn, &hwp->SavedReg, VGA_SR_MODE | VGA_SR_FONTS); 
+ #endif
+-	vgaHWLock(hwp);
++	    vgaHWLock(hwp);
++	}
+ 	save->dp_datatype      = INREG(RADEON_DP_DATATYPE);
+ 	save->rbbm_soft_reset  = INREG(RADEON_RBBM_SOFT_RESET);
+ 	save->clock_cntl_index = INREG(RADEON_CLOCK_CNTL_INDEX);
+@@ -5883,7 +6012,6 @@
+     RADEONInfoPtr  info       = RADEONPTR(pScrn);
+     unsigned char *RADEONMMIO = info->MMIO;
+     RADEONSavePtr  restore    = &info->SavedReg;
+-    vgaHWPtr       hwp        = VGAHWPTR(pScrn);
+ 
+     RADEONTRACE(("RADEONRestore\n"));
+ 
+@@ -5925,27 +6053,36 @@
+     usleep(100000);
+ #endif
+ 
+-    if (!info->IsSecondary) {
+-	vgaHWUnlock(hwp);
++    if (info->VGAAccess) {
++    	vgaHWPtr hwp = VGAHWPTR(pScrn);
++        if (!info->IsSecondary) {
++            vgaHWUnlock(hwp);
+ #if defined(__powerpc__)
+-	/* Temporary hack to prevent crashing on PowerMacs when trying to
+-	 * write VGA fonts, will find a better solution in the future
+-	 */
+-	vgaHWRestore(pScrn, &hwp->SavedReg, VGA_SR_MODE );
++	    /* Temporary hack to prevent crashing on PowerMacs when trying to
++	     * write VGA fonts, will find a better solution in the future
++	     */
++	    vgaHWRestore(pScrn, &hwp->SavedReg, VGA_SR_MODE );
+ #else
+-	vgaHWRestore(pScrn, &hwp->SavedReg, VGA_SR_MODE | VGA_SR_FONTS );
++	    vgaHWRestore(pScrn, &hwp->SavedReg, VGA_SR_MODE | VGA_SR_FONTS );
+ #endif
+-	vgaHWLock(hwp);
+-    } else {
+-        RADEONEntPtr pRADEONEnt = RADEONEntPriv(pScrn);
+-	ScrnInfoPtr   pScrn0;
+-	vgaHWPtr      hwp0;
+-
+-	pScrn0 = pRADEONEnt->pPrimaryScrn;
+-	hwp0   = VGAHWPTR(pScrn0);
+-	vgaHWUnlock(hwp0);
+-	vgaHWRestore(pScrn0, &hwp0->SavedReg, VGA_SR_MODE | VGA_SR_FONTS );
+-	vgaHWLock(hwp0);
++	    vgaHWLock(hwp);
++        } else {
++            RADEONEntPtr  pRADEONEnt = RADEONEntPriv(pScrn);
++	    ScrnInfoPtr   pScrn0 = pRADEONEnt->pPrimaryScrn;
++            RADEONInfoPtr info0 = RADEONPTR(pScrn0);
++	    vgaHWPtr      hwp0;
++
++	    if (info0->VGAAccess) {
++ 	        hwp0 = VGAHWPTR(pScrn0);
++	        vgaHWUnlock(hwp0);
++#if defined(__powerpc__)
++	        vgaHWRestore(pScrn0, &hwp0->SavedReg, VGA_SR_MODE);
++#else
++	        vgaHWRestore(pScrn0, &hwp0->SavedReg, VGA_SR_MODE | VGA_SR_FONTS );
++#endif
++	        vgaHWLock(hwp0);
++	    }
++	}
+     }
+     RADEONUnblank(pScrn);
+ 
+@@ -6574,8 +6711,13 @@
+ 				      ? RADEON_CRTC2_V_SYNC_POL
+ 				      : 0));
+ 
++    /* We must make sure Tiling is disabled. It seem all other fancy
++     * options in there can be safely disabled too
++     */
+     save->crtc2_offset      = 0;
+-    save->crtc2_offset_cntl = INREG(RADEON_CRTC2_OFFSET_CNTL);
++    save->crtc2_offset_cntl = 0;
++    
++
+     /* this should be right */
+     if (info->MergedFB) {
+     save->crtc2_pitch  = (((info->CRT2pScrn->displayWidth * pScrn->bitsPerPixel) +
+@@ -6618,6 +6760,23 @@
+ 
+     }
+ 
++    /* We must set SURFACE_CNTL properly on the second screen too */
++    save->surface_cntl = 0;
++#if X_BYTE_ORDER == X_BIG_ENDIAN
++    /* Alhought we current onlu use aperture 0, also setting aperture 1 should not harm -ReneR */
++    switch (pScrn->bitsPerPixel) {
++    case 16:
++	save->surface_cntl |= RADEON_NONSURF_AP0_SWP_16BPP;
++	save->surface_cntl |= RADEON_NONSURF_AP1_SWP_16BPP;
++	break;
++
++    case 32:
++	save->surface_cntl |= RADEON_NONSURF_AP0_SWP_32BPP;
++	save->surface_cntl |= RADEON_NONSURF_AP1_SWP_32BPP;
++	break;
++    }
++#endif
++
+     RADEONTRACE(("Pitch = %d bytes (virtualX = %d, displayWidth = %d)\n",
+ 		 save->crtc2_pitch, pScrn->virtualX,
+ 		 info->CurrentLayout.displayWidth));
+@@ -7450,7 +7609,7 @@
+        }
+     }
+ 
+-    if (xf86LoaderCheckSymbol("vgaHWFreeHWRec"))
++    if (info->VGAAccess && xf86LoaderCheckSymbol("vgaHWFreeHWRec"))
+ 	vgaHWFreeHWRec(pScrn);
+     RADEONFreeRec(pScrn);
+ }
+
+
