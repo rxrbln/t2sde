@@ -58,11 +58,15 @@ part_mkfs() {
 	cmd="$cmd 'reiserfs (journaling filesystem)'"
 	cmd="$cmd 'mkreiserfs /dev/$1/$2'"
 
-	cmd="$cmd 'IBM JFS  (journaling filesystem)'"
-	cmd="$cmd 'jfs_mkfs /dev/$1/$2'"
+	if type -p jfs_mkfs > /dev/null ; then
+		cmd="$cmd 'IBM JFS  (journaling filesystem)'"
+		cmd="$cmd 'jfs_mkfs /dev/$1/$2'"
+	fi
 
-	cmd="$cmd 'SGI XFS  (journaling filesystem)'"
-	cmd="$cmd 'mkfs.xfs /dev/$1/$2'"
+	if type -p mkfs.xfs > /dev/null ; then
+		cmd="$cmd 'SGI XFS  (journaling filesystem)'"
+		cmd="$cmd 'mkfs.xfs /dev/$1/$2'"
+	fi
 
 	eval "$cmd" && part_mount $1 $2
 }
@@ -89,6 +93,7 @@ part_add() {
 			  sed "s,^/mnt/target,," `"
 		[ "$location" ] || location="/"
 	fi
+
 	# save partition information
 	disktype /dev/$1/$2 > /tmp/stone-install
 	type="`grep /tmp/stone-install -v -e '^  ' -e '^Block device' \
@@ -96,8 +101,9 @@ part_add() {
 	       sed -e 's/[,(].*//' -e '/^$/d' -e 's/ $//' | tail -1`"
 	size="`grep 'Block device, size' /tmp/stone-install | \
 	       sed 's/.* size \(.*\) (.*/\1/'`"
+
 	[ "$type" ] || type="undetected"
-	cmd="$cmd '`printf "%-6s %-24s %-10s" $2 "$location" "$size"` ($type)' 'part_${action}_action $1 $2'"
+	cmd="$cmd '`printf "%-6s %-24s %-10s" $2 "$location" "$size"` $type' 'part_${action}_action $1 $2'"
 }
 
 disk_action() {
