@@ -53,9 +53,9 @@
 / linux24 / { p; d; }
 / linux24-header / { p; d; }
 / linux24-src / { p; d; }
-/ linux25 / { p; d; }
-/ linux25-header / { p; d; }
-/ linux25-src / { p; d; }
+/ linux26 / { p; d; }
+/ linux26-header / { p; d; }
+/ linux26-src / { p; d; }
 / m4 / { p; d; }
 / make / { p; d; }
 / miscfiles / { p; d; }
