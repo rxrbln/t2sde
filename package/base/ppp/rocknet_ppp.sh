@@ -78,7 +78,7 @@ public_pppoe() {
 	addcode up 4 5 "ppp_option \$ppp_${if}_config mtu 1492"
 
 	addcode up 5 1 "ip link set $ppp_if up"
-	addcode down 5 5 "ip link set $ppp_ip down"
+	addcode down 5 5 "ip link set $ppp_if down"
 }
 
 public_ppp_defaults() {
