@@ -24,11 +24,11 @@
 
 create_kernel_list() {
 	first=1
-	for x in `(cd /boot/ ; ls vmlinux_* ) | sort -r` ; do
+	for x in `(cd /boot/ ; ls vmlinuz_* ) | sort -r` ; do
 		if [ $first = 1 ] ; then
 			label=linux ; first=0
 		else
-			label=linux-${x/vmlinux_/}
+			label=linux-${x/vmlinuz_/}
 		fi
 
 		cat << EOT
