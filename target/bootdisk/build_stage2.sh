@@ -95,15 +95,16 @@ tar -czf ../2nd_stage.tar.gz * ; cd ..
 
 echo_header "Creating small 2nd stage filesystem:"
 mkdir -p 2nd_stage_small ; cd 2nd_stage_small
-mkdir dev proc tmp bin lib etc share
+mkdir -p dev proc tmp bin lib etc share local/bin
 mkdir -p mnt/source mnt/target
 ln -s bin sbin ; ln -s . usr
 
 #
 
-progs="agetty bash cat cp date dd df ifconfig ip ln ls mine mkdir mke2fs \
-       mkswap mount mv rm reboot route sleep swapoff swapon sync umount wget \
-       eject chmod chroot grep halt rmdir sh shutdown uname killall5"
+progs="agetty bash cat cp date dd df ifconfig ln ls mine mkdir mke2fs \
+       mkswap mount mv rm reboot route sleep swapoff swapon sync umount \
+       eject chmod chroot grep halt rmdir sh shutdown uname killall5 \
+       stone mktemp sort fold sed mkreiserfs cut"
 
 progs="$progs fdisk sfdisk"
 
@@ -150,6 +151,23 @@ echo_status "Copy linuxrc."
 cp ../2nd_stage/linuxrc .
 echo_status "Copy /etc/fstab."
 cp ../2nd_stage/etc/fstab etc
+echo_status "Copy stone.d."
+mkdir -p etc/stone.d
+for i in gui_text mod_install mod_packages mod_gas default ; do
+	cp -v ../2nd_stage/etc/stone.d/$i.sh etc/stone.d
+done
+#
+echo_status "Creating head replacement script."
+cat << 'EOT' > bin/head
+#!/bin/sh
+m=10
+if echo "$1" | grep -- "-[0-9]\+" > /dev/null ; then
+	m="${1#-}"
+	shift
+fi
+exec grep -m$m "" $*
+EOT
+chmod +x bin/head
 #
 echo_status "Creating links for identical files."
 while read ck fn

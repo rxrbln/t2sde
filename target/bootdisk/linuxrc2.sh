@@ -40,7 +40,12 @@ echo -n "An empty text stands for vc/1 - vc/6: "  ;  read ttydevs
 
 echo
 echo 'Just type "stone" now if you want to make a normal installation of a ROCK'
-echo 'Linux build (or type "stone -text" if you prefer non-dialog based menus).'
+echo -n 'Linux build '
+if type -p dialog > /dev/null ; then
+	echo '(or type "stone -text" if you prefer non-dialog based menus).'
+else
+	echo '(only the text interface is available).'
+fi
 
 echo -e '#!/bin/sh\ncd ; exec /bin/sh --login' > /sbin/login-shell
 chmod +x /sbin/login-shell
