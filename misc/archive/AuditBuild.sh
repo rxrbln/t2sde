@@ -17,7 +17,7 @@ config=default
 enabled='X'
 repositories=
 VERBOSE=
-HTML=
+HTMLDIR=
 root=
 
 show_usage() {
@@ -30,7 +30,7 @@ while [ $# -gt 0 ]; do
 	case "$1" in
 		-cfg)	config="$2"; shift	;;
 		-v)	VERBOSE=1		;;
-		-w)	HTML=1			;;
+		-w)	HTMLDIR="$2"; shift	;;
 		--help)	show_usage; exit 1	;;
 		-R)	root="$2"; shift	;;
 		--no-enabled-too)
@@ -59,6 +59,10 @@ if [ -z "$ROCKCFG_ID" -o ! -d $LOGSDIR ]; then
 	exit 1
 fi
 
+if [ "$HTMLDIR" ]; then
+	mkdir -p $HTMLDIR/$config.$$/{diff,log}
+fi
+
 expand_stages() {
 	local array="$1" stage=
 	while [ "$array" ]; do
@@ -73,20 +77,31 @@ expand_stages() {
 audit_package() {
 	local pkg="$1" repo="$2" ver="$3" enabled="$4"
 	local stages= svndiff= oldver= newver= lchanges= stage=
-	local lstatus= lbuild= file=
+	local svnst= lstatus= lbuild= file=
 	shift 4; stages="$*"
 
-	svndiff=`svn diff package/$repo/$pkg`
-	if [ "$svndiff" ]; then
-		lchanges="CHANGED"
-		oldver=`echo "$svndiff" | grep '^-\[V\]' | cut -d' ' -f2`
-		newver=`echo "$svndiff" | grep '^+\[V\]' | cut -d' ' -f2`
+	svnst=`svn st package/$repo/$pkg`
+	if [ "$svnst" ]; then
+		svndiff=`svn diff package/$repo/$pkg`
+		if [ "$svndiff" ]; then
+			lchanges="CHANGED"
+			oldver=`echo "$svndiff" | grep '^-\[V\]' | cut -d' ' -f2`
+			newver=`echo "$svndiff" | grep '^+\[V\]' | cut -d' ' -f2`
 
-		if [ "$oldver" ]; then
-			ver="$oldver -> $ver"
-			lchanges="UPDATED"
-		elif [ "$newver" ]; then
-			lchanges="ADDED"
+			if [ "$oldver" ]; then
+				ver="$oldver -> $ver"
+				lchanges="UPDATED"
+			elif [ "$newver" ]; then
+				lchanges="ADDED"
+			fi
+		fi
+		if [ "$HTMLDIR" ]; then
+			{
+			echo "$svnst"
+			echo ""
+			echo "$svndiff"
+			} > $HTMLDIR/$config.$$/diff/$pkg.diff
+			lchanges="<a href=\"diff/$pkg.diff\">$lchanges</a>"
 		fi
 	fi
 
@@ -98,20 +113,24 @@ audit_package() {
 	else
 		for stage in $stages; do
 		file=`ls -1 $LOGSDIR/$stage-$pkg.{err,log,out} 2> /dev/null`
+		lstatus=
 		if [ "$file" ]; then
 			case "$file" in
-				*.log)	[ "$lstatus" == 2 ] || lstatus=1
+				*.log)	[ "$lstatus" ] || lstatus=1
 					lbuild="$lbuild OK($stage)"	;;
-				*.out)	lbuild="$lbuild NO($stage)"	;;
+				*.out)	[ "$lstatus" != "2" ] || lstatus=0
+					lbuild="$lbuild NO($stage)"	;;
 				*)	lstatus=2
-					if [ "$HTML" == "1" ]; then
-						lbuild="$lbuild <a href=\"$stage-$pkg.err\">ERR($stage)</a>"
+					if [ "$HTMLDIR" ]; then
+						lbuild="$lbuild <a href=\"log/$stage-$pkg.err\">ERR($stage)</a>"
+						cp $file $HTMLDIR/$config.$$/log/$stage-$pkg.err
 					else
 						lbuild="$lbuild ERR($stage)"
 					fi	;;
 			esac
 		else
 			lbuild="$lbuild NO($stage)"
+			[ "$lstatus" ] || lstatus=0
 		fi
 		done
 	fi
@@ -121,7 +140,7 @@ audit_package() {
 		1)	lstatus=SUCCESSFUL	;;
 		*)	lstatus=PENDING		;;
 	esac
-	if [ "$HTML" == "1" ]; then
+	if [ "$HTMLDIR" ]; then
 		cat <<EOT
 <tr><td>package/$repo/$pkg</td><td>$lchanges</td><td>(${ver//>/&gt;})</td><td>$lbuild</td><td>$lstatus</td></tr>
 EOT
@@ -130,7 +149,7 @@ EOT
 	fi
 }
 
-if [ "$HTML" == "1" ]; then
+if [ "$HTMLDIR" ]; then
 	cat <<EOT
 <html>
 <head><title>Audit Build $config over revision $( svn info | grep Revision | cut -d' ' -f2 )</title>
@@ -163,6 +182,11 @@ else
 	done
 fi
 
-if [ "$HTML" == "1" ]; then
+if [ "$HTMLDIR" ]; then
 	echo "<body><html>"
+
+	if [ -d "$HTMLDIR/$config" ];
+		mv $HTMLDIR/$config $HTMLDIR/$config.$$-old
+	fi
+	mv $HTMLDIR/$config.$$ $HTMLDIR/$config
 fi
