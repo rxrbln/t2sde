@@ -39,7 +39,7 @@ sector_count() {
 	echo `du -B 512 --apparent-size $1 | -d ' ' -f1` 
 }
 
-if [ "$cd" == 0 ] ; then
+if [ "$cd" != 0 ] ; then
 	echo "Not the first CD - not blessing ..."
 fi
 
