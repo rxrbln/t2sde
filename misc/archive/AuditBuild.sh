@@ -1,6 +1,7 @@
 #!/bin/sh
 
 config=default
+enabled='X'
 repositories=
 VERBOSE=
 HTML=
@@ -8,7 +9,7 @@ root=
 
 show_usage() {
 	cat<<-EOT
-	usage: $0 [-v] [-cfg <config>] [-repository <repositories>]
+	usage: $0 [-v] [-cfg <config>] [-no-enabled-too] [-repository <repositories>]
 	EOT
 }
 
@@ -19,6 +20,8 @@ while [ $# -gt 0 ]; do
 		-w)	HTML=1			;;
 		--help)	show_usage; exit 1	;;
 		-R)	root="$2"; shift	;;
+		-no-enabled-too)
+			enabled=.		;;
 		-repository)
 			shift; repositories="$*"
 			break ;;
@@ -119,14 +122,14 @@ if [ "$repositories" ]; then
 	for repo in $repositories; do
 		repo=${repo#package/}; repo=${repo%/}
 		if [ -d package/$repo/ ]; then
-			grep -e "^X.* $repo " config/$config/packages | while \
+			grep -e "^$enabled.* $repo " config/$config/packages | while \
 				read x stages x repo pkg ver x; do
 					audit_package $pkg $repo $ver `expand_stages $stages`
 			done
 		fi
 	done
 else
-	grep -e "^X" config/$config/packages | while \
+	grep -e "^$enabled" config/$config/packages | while \
 		read x stages x repo pkg ver x; do
 			audit_package $pkg $repo $ver `expand_stages $stages`
 	done
