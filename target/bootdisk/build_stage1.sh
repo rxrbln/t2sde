@@ -57,10 +57,13 @@ fi
 cd ..
 
 echo_header "Creating initrd filesystem image: "
-#
+
+ramdisk_size=8192
+[ $arch = x86 ] && ramdisk_size=4096
+
 echo_status "Creating temporary files."
 tmpdir=initrd_$$.dir; mkdir -p $disksdir/$tmpdir; cd $disksdir
-dd if=/dev/zero of=initrd.img bs=1024 count=4096 &> /dev/null
+dd if=/dev/zero of=initrd.img bs=1024 count=$ramdisk_size &> /dev/null
 tmpdev=""
 for x in /dev/loop/* ; do
         if losetup $x initrd.img 2> /dev/null ; then
