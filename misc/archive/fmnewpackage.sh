@@ -20,7 +20,7 @@
 # the ROCK-COPYRIGHT-NOTE-END tag. Otherwise it might get removed by
 # the ./scripts/Create-CopyPatch script. Do not edit this copyright text!
 # 
-# ROCK Linux: rock-src/misc/archive/newpackage.sh
+# ROCK Linux: rock-src/misc/archive/fmnewpackage.sh
 # ROCK Linux is Copyright (C) 1998 - 2003 Clifford Wolf
 # 
 # This program is free software; you can redistribute it and/or modify
