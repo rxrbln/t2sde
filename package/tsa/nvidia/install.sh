@@ -12,7 +12,7 @@
 # Author: Sebastian Jaenicke <sj-rocklinux@jaenicke.org>
 #
 
-NV_VERSION=4496
+NV_VERSION=5328
 
 export IGNORE_CC_MISMATCH=1 
 
