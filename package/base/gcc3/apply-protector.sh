@@ -1,6 +1,6 @@
 
-# only try to apply protector if present
-read x pfile x < <( echo "$3" | grep protector )
+# only try to apply protector if available
+pfile=$( echo "$3" | grep protector | tr ' ' '\t' | tr -s '\t' | cut -f2 )
 if [ "$pfile" ] ; then
 	tar --use-compress-program=bzip2 \
 	  -xf $1/download/base/$2/${pfile/.gz/.bz2}
