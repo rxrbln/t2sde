@@ -41,31 +41,8 @@ for x in $patchfiles ; do
 	fi
 done
 
-lx_config ()
+auto_config ()
 {
-	echo "Generic linux source patching and configuration ..."
-
-	hook_eval prepatch
-	apply_patchfiles
-	hook_eval postpatch
-
-	echo "Redefining some VERSION flags ..."
-	x="-`echo $ver-rock | cut -d - -f 2-`"
-	sed -e "s/^EXTRAVERSION =.*/EXTRAVERSION = $x/" Makefile > Makefile.new
-	mv Makefile.new Makefile
-
-	echo "Correcting user and permissions ..."
-	chown -R root.root . * ; chmod -R u=rwX,go=rX .
-
-	if [[ $treever = 24* ]] ; then
-		echo "Create symlinks and a few headers for <$lx_cpu> ... "
-		eval $MAKE include/linux/version.h symlinks
-		cp $base/package/base/linux24/autoconf.h include/linux/
-		touch include/linux/modversions.h
-	fi
-
-	echo "Creating default configuration ...."
-
 	if [ -f $base/architecture/$arch/kernel$treever.conf.sh ] ; then
 		echo "  using: architecture/$arch/kernel$treever.conf.sh"
 		. $base/architecture/$arch/kernel$treever.conf.sh > .config
@@ -149,11 +126,46 @@ lx_config ()
 	mv .config .config_nomods
 
 	# which .config to use?
-	if [ "$ROCKCFG_PKG_LINUX_MODS" = 0 ] ; then
-		cp .config_nomods .config
-	else
+	if [ "$ROCKCFG_PKG_LINUX_CONFIG_STYLE" = "modules" ] ; then
 		cp .config_modules .config
+	else
+		cp .config_nomods .config
 	fi
+}
+
+lx_config ()
+{
+	echo "Generic linux source patching and configuration ..."
+
+	hook_eval prepatch
+	apply_patchfiles
+	hook_eval postpatch
+
+	echo "Redefining some VERSION flags ..."
+	x="-`echo $ver-rock | cut -d - -f 2-`"
+	sed -e "s/^EXTRAVERSION =.*/EXTRAVERSION = $x/" Makefile > Makefile.new
+	mv Makefile.new Makefile
+
+	echo "Correcting user and permissions ..."
+	chown -R root.root . * ; chmod -R u=rwX,go=rX .
+
+	if [[ $treever = 24* ]] ; then
+		echo "Create symlinks and a few headers for <$lx_cpu> ... "
+		eval $MAKE include/linux/version.h symlinks
+		cp $base/package/base/linux24/autoconf.h include/linux/
+		touch include/linux/modversions.h
+	fi
+
+	if [ "$$ROCKCFG_PKG_LINUX_CONFIG_STYLE" = none ] ; then
+		echo "Using \$base/config/\$config/linux.cfg."
+		echo "Since automatic generation is disabled ..." 
+		cp -v $base/config/$config/linux.cfg .config
+	else
+		echo "Automatically creating default configuration ...."
+		auto_config
+	fi
+
+	echo "... configuration finished!"
 
 	if [[ $treever != 24* ]] ; then
 		echo "Create symlinks and a few headers for <$lx_cpu> ... "
