@@ -1,6 +1,6 @@
 #!/bin/bash
 
-rocknet_debug=1
+rocknet_debug=0
 rocknet_base="/etc/network"
 
 unset code_snipplets_idx code_snipplets_dat code_snipplets_counter
