@@ -11,12 +11,12 @@ package_map='       +00-dirtree
 +glibc	            -gcc                -linux-header
 +linux24            +linux26            +linux24benh
 -binutils           -bin86              -nasm               -dietlibc
-+lilo               +yaboot             +aboot
++lilo               +yaboot             +aboot              +grub
 +silo               +parted             +mac-fdisk          +pdisk
 +xfsprogs           +mkdosfs            +jfsutils
 +e2fsprogs          +reiserfsprogs      +reiser4progs       +genromfs
 +popt               +raidtools          +mdadm              +lvm
-+dump               +eject              +disktype
++dump               +eject              +disktype           -patchutils
 +hdparm             +memtest86          +cpuburn            +bonnie++
 -mine               -bize               -termcap            +ncurses
 +readline           -strace             -ltrace             -perl
@@ -37,7 +37,8 @@ package_map='       +00-dirtree
 +netkit-base        +netkit-ftp         +netkit-telnet      +netkit-tftp
 +sysfiles           +libpcap            +iptables           +tcp_wrappers
 -kiss               +kbd		-syslinux           +ntfsprogs
--ethtool            -uml_utilities      -bdb'
+-ethtool            -uml_utilities      -bdb
++joe                +libol'
 
 if [ -f ../../pkgs/bize.tar.bz2 -a ! -f ../../pkgs/mine.tar.bz2 ] ; then
 	packager=bize
@@ -45,7 +46,7 @@ else
 	packager=mine
 fi
 
-package_map="+$packager $( echo "$package_map" | tr -s ' ' | tr ' ' '\n') "
+package_map="$( echo "+$packager $package_map" | tr "\t" " " | tr -s ' ' | tr ' ' '\n')"
 forgotten_packages=
 
 echo_status "Extracting the packages archives."
@@ -57,7 +58,7 @@ do
 		echo_error "\`- Not found in \$package_map: $x"
 		echo_error "    ... fix target/$target/build_stage2.sh"
 		var_append forgotten_packages ' ' $x
-	elif [ "$y" == "+" ]; then
+	elif [ "$y" != "-" ]; then
 		echo_status "\`- Extracting $x.tar.bz2 ..."
 		tar -p $taropt ../../pkgs/$x.tar.bz2
 	fi
