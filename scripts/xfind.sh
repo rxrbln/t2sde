@@ -8,7 +8,7 @@ tmp1=`mktemp` tmp2=`mktemp`
 
 while [ "$#" -gt 0 ]
 do
-	[ -z "${1##[-(]*}" ] && break
+	[ -z "${1##[-(\!]*}" ] && break
 	echo $1 >> $tmp1
 	shift
 done
