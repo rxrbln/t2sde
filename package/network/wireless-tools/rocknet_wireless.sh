@@ -11,6 +11,7 @@
 # the Free Software Foundation; version 2 of the License. A copy of the
 # GNU General Public License can be found in the file COPYING.
 # --- T2-COPYRIGHT-NOTE-END ---
+
 iwdetect_mangle_cells() {
 	local essid=none mode= encryption= quality=
 	local line=
@@ -36,7 +37,7 @@ iwdetect_mangle_cells() {
 	done > $rocknet_tmp_base/$if/detected_cells
 }
 iwdetect_select_cell() {
-	local networkfile=${1:-/etc/network/nettab}
+	local networkfile=${1:-/etc/conf/network-nettab}
 	local essid= key= extra=
 	local line=
 

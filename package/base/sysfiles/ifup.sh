@@ -42,7 +42,7 @@ while [ "$1" ] ; do
 	shift
 done
 
-[ "$profile" ] || profile="`cat /etc/network/profile 2> /dev/null`"
+[ "$profile" ] || profile="`cat /etc/conf/network-profile 2> /dev/null`"
 profile=${profile:-default}
 
 # sanity checks (...)
@@ -65,6 +65,6 @@ if [ $force -eq 0 ] ; then
   fi
 fi
 
-/etc/network/rocknet "$profile" "$if" "$action"
-echo "$profile" > /etc/network/profile
+/sbin/rocknet "$profile" "$if" "$action"
+echo "$profile" > /etc/conf/network-profile
 

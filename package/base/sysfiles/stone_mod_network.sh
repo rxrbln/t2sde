@@ -17,7 +17,8 @@
 
 ### DYNAMIC NEW-STYLE CONFIG ###
 
-rocknet_base="/etc/network"
+export rocknet_base="/lib/network" # export needed for subshells ...
+rocknet_config="/etc/conf"
 
 edit() {
 	gui_edit "Edit file $1" "$1"
@@ -50,7 +51,7 @@ read_section() {
 				i=$((i+1))
 			fi
 		fi
-	done < <( sed 's,\(^\|[ \t]\)#.*$,,' < "$rocknet_base"/config )
+	done < <( sed 's,\(^\|[ \t]\)#.*$,,' < $rocknet_config/network )
 }
 
 write_tags() {
@@ -70,7 +71,7 @@ write_section() {
 
 	[ "$1" = "" ] && passit=0
 
-	echo -n > $rocknet_base/config.new
+	echo -n > $rocknet_config/network.new
 
 	while read netcmd para ; do
 		[ "$netcmd" ] || continue
@@ -80,7 +81,7 @@ write_section() {
 		# when we reached the matching section dump the
 		# mew tags ...
 		if [ $passit = 0 -a $dumped = 0 ] ; then
-			write_tags $globals >> $rocknet_base/config.new
+			write_tags $globals >> $rocknet_config/network.new
 			dumped=1
 		fi
 
@@ -91,7 +92,7 @@ write_section() {
 			[ "$prof" = "$1" ] && passit=0 || passit=1
 
 			# write out a separating newline
-			echo "" >> $rocknet_base/config.new
+			echo "" >> $rocknet_config/network.new
 
 			globals=0
 		fi
@@ -99,19 +100,19 @@ write_section() {
 		# just pass the line thru?
 		if [ $passit = 1 ] ; then
 			[ $globals = 0 -a "$netcmd" != "interface" ] && \
-			  echo -en "\t" >> $rocknet_base/config.new
-			echo "$netcmd $para" >> $rocknet_base/config.new
+			  echo -en "\t" >> $rocknet_config/network.new
+			echo "$netcmd $para" >> $rocknet_config/network.new
 		fi
-	done < <( cat < "$rocknet_base"/config )
+	done < <( cat < $rocknet_network/config )
 
 	# if the config file was empty, for an not yet present or last
 	# we had no change to match the existing position - so write them
 	# out now ...
-	[ $globals = 0 ] && echo "" >> $rocknet_base/config.new
+	[ $globals = 0 ] && echo "" >> $rocknet_network/config.new
 	[ "$1" ] && globals=0
-	[ $dumped = 0 ] && write_tags $globals >> $rocknet_base/config.new
+	[ $dumped = 0 ] && write_tags $globals >> $rocknet_network/config.new
 
-	mv $rocknet_base/config{.new,}
+	mv $rocknet_config/network{.new,}
 }
 
 edit_tag() {
@@ -135,7 +136,7 @@ add_tag() {
 
 		while read module ; do
 			cmd="$cmd "$module" module='$module'"
-		done < <( cd /etc/network/modules/ ; grep public_ * | sed -e \
+		done < <( cd $rocknet_base/ ; grep public_ * | sed -e \
 			  's/\.sh//' -e 's/:.*//' | sort -u )
 		module=""
 		eval $cmd
@@ -143,7 +144,7 @@ add_tag() {
 		cmd="gui_menu add_tag 'Add tag of type'"
 		while read tag ; do
 			cmd="$cmd "$tag" 'tta=$tag'"
-		done < <( cd /etc/network/modules/ ; grep -h public_ $module.sh \
+		done < <( cd $rocknet_base/ ; grep -h public_ $module.sh \
 			  | sed -e 's/public_\([^(]*\).*/\1/' | sort )
 		eval "$cmd"
 	fi
@@ -292,7 +293,7 @@ Do you want to create an interface section?" ; then
 	cmd="gui_menu network 'Network Configuration - Select an item to
 change the value
 
-WARNING: This script tries to adapt /etc/network/config and /etc/hosts
+WARNING: This script tries to adapt /etc/conf/network and /etc/hosts
 according to your changes. Changes only take affect the next time
 rocknet is executed.'"
 
@@ -319,7 +320,7 @@ rocknet is executed.'"
 
 	cmd="$cmd 'View/Edit /etc/resolv.conf file'     'edit /etc/resolv.conf'"
 	cmd="$cmd 'View/Edit /etc/hosts file'           'edit /etc/hosts'"
-	cmd="$cmd 'View/Edit $rocknet_base/config file' 'edit $rocknet_base/config'"
+	cmd="$cmd 'View/Edit $rocknet_config/network file' 'edit $rocknet_config/network'"
 
 	eval "$cmd"
     do : ; done
