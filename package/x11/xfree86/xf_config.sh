@@ -88,6 +88,7 @@ xf_install() {
 	eval $MAKE install
 	eval $MAKE install.man
 	cd nls ; eval $MAKE install ; cd ..
+	rm -fv $root/etc/fonts/*.bak
 
 	rm -fv $root/usr/X11
 	rm -fv $root/usr/bin/X11
