@@ -36,8 +36,9 @@ then
 	cat > ../isofs_arch.txt <<- EOT
 		BOOT	-hfs -part -map $datdir/mapping -hfs-volid "ROCK_Linux_CD"
 		BOOTx	-hfs-bless boot -sysid PPC
+		BOOTx	-prep-boot boot/yaboot -prep-boot boot/yaboot.rs6k
 		DISK1	$datdir/boot/ boot/
-		SCRIPT	sh $base/target/bootdisk/powerpc/bless-rs6k.sh $disksdir
 	EOT
+#		SCRIPT  sh $base/target/bootdisk/powerpc/bless-rs6k.sh $disksdir
 fi
 
