@@ -113,26 +113,19 @@ void trygets(char *s, int len)
 		printf("\nCan't start /linuxrc!! Life sucks.\n\n");
 		exit(0);
 	}
-	// guarantee a 0 termination and remove the trailing newline
+	/* guarantee a 0 termination and remove the trailing newline */
 	s[len-1]=0;
 	if (strlen(s) > 0) s[strlen(s)-1]=0;
 }
 
-int trywait(int pid)
+void trywait(pid)
 {
-	int status = -1;
-
-	if (pid < 0)
-		perror("fork");
-	else if (waitpid(pid, &status, 0) >= 0)
-		status = !WIFEXITED(status) || WEXITSTATUS(status);
-
-	return status;
+	if (pid < 0) perror("fork");
+	else waitpid(pid, NULL, 0);
 }
 
-
 #define tryexeclp(file, arg, ...) ( { \
-	int i = 0, pid; \
+	int pid; \
 \
 	if ( (pid = fork()) == 0 ) { \
 		execlp(file, arg, __VA_ARGS__); \
@@ -142,7 +135,6 @@ int trywait(int pid)
 \
 	trywait(pid); \
 } )
-
 
 void httpload() 
 {
@@ -200,7 +192,7 @@ void httpload()
 	}
 
 	close(fd[0]); close(fd[1]);
-	waitpid(pid_wget, NULL, 0); waitpid(pid_tar, NULL, 0);
+	trywait(pid_wget); trywait(pid_tar);
 	printf("finished ... now booting 2nd stage\n");
 	doboot();
 }
@@ -258,9 +250,7 @@ void load_modules(char * dir)
 		printf("Can't start %s!\n", execargs[0]);
 		exit(1);
 	}
-	waitpid(pid, NULL, 0);
-
-	return;
+	trywait(pid);
 }
 
 void load_ramdisk_file()
@@ -353,7 +343,7 @@ void load_ramdisk_file()
 		printf("Can't run tar on %s!\n", filename);
 		exit(1);
 	}
-	waitpid(pid, NULL, 0);
+	trywait(pid);
 
 	if ( umount("/mnt_source") )
 		{ perror("Can't umount /mnt_source"); exit_linuxrc=0; }
@@ -390,7 +380,6 @@ void config_net()
 	printf("\n");
 
 	tryexeclp("ip", "ip", "route", NULL);
-	perror("ip");
 	printf("\n");
 
 	printf("Enter interface name (eth0): ");
@@ -448,11 +437,11 @@ void autoload_modules()
 				perror("Cant run modprobe/insmod");
 				exit(1);
 			}
-			waitpid(rc, NULL, 0);
+			trywait(rc);
 		}
 	}
 	fclose(f);
-	waitpid(pid, NULL, 0);
+	trywait(pid);
 }
 
 void exec_sh()
@@ -465,14 +454,14 @@ void exec_sh()
 		perror("kiss");
 		_exit(1);
 	}
-	waitpid(rc, NULL, 0);
+	trywait(rc);
 }
 
 int main()
 {
 	char text[100];
 	int input=1;
-	
+
 	if ( mount("none", "/dev", "devfs", 0, NULL) && errno != EBUSY )
 		perror("Can't mount /dev");
 
@@ -510,7 +499,7 @@ drivers (if needed) and configure the installation source so the\n\
 What do you want to do [0-7] (default=0)? ");
 		fflush(stdout);
 
-		text[0]=0; trygets(text, 100);
+		trygets(text, 100);
 		input=atoi(text);
 		
 		switch (input) {
