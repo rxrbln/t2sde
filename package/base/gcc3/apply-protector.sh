@@ -3,7 +3,7 @@
 pfile=$( echo "$3" | grep protector | tr ' ' '\t' | tr -s '\t' | cut -f2 )
 if [ "$pfile" ] ; then
 	tar --use-compress-program=bzip2 \
-	  -xf $1/download/base/$2/${pfile/.gz/.bz2}
+	  -xf $archdir/${pfile/.gz/.bz2}
 
 	# Patch protector.dif a bit to apply against current gcc-3
 	#[ $2 = gcc3 ] && patch -p1 < $1/package/base/$2/protector-hotfix.diff
