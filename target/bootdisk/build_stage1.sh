@@ -8,13 +8,17 @@ echo_status "Create linuxrc binary."
 diet $CC $base/target/$target/linuxrc.c -Wall \
 	-DSTAGE_2_BIG_IMAGE="\"${ROCKCFG_SHORTID}/2nd_stage.tar.gz\"" \
 	-DSTAGE_2_SMALL_IMAGE="\"${ROCKCFG_SHORTID}/2nd_stage_small.tar.gz\"" \
-	-o linuxrc > $disksdir/tmp 2>&1
+	-o linuxrc > $disksdir/tmp 
+# I always prefer to see the output !
+# 2>&1
 # Only print this output if it's not the usual dietlibc junk
-x="$( sed 's,^[^:]*: ,~~: ,' < $disksdir/tmp | md5sum | cut -f1 -d' ' )"
-if [ "$x" != "0ede96ab34b5572403579dfb48ebe10c" ] ; then
-	cat $disksdir/tmp ; echo "[ $x ]"
-fi ; rm -f $disksdir/tmp
+#x="$( sed 's,^[^:]*: ,~~: ,' < $disksdir/tmp | md5sum | cut -f1 -d' ' )"
+#if [ "$x" != "0ede96ab34b5572403579dfb48ebe10c" ] ; then
+#	cat $disksdir/tmp ; echo "[ $x ]"
+#fi ; rm -f $disksdir/tmp
+
 #
+
 echo_status "Copy various helper applications."
 cp ../2nd_stage/bin/{tar,gzip} bin/
 cp ../2nd_stage/sbin/{ip,hwscan} bin/
