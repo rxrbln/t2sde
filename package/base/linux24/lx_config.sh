@@ -94,12 +94,12 @@ lx_config ()
 	echo "  merging (system default): 'arch/$lx_cpu/defconfig'"
 	grep '^CONF.*=y' arch/$lx_cpu/defconfig | cut -f1 -d= | \
 	while read tag ; do egrep -q "(^| )$tag[= ]" .config || echo "$tag=y"
-	  done >> .config
+	  done >> .config ; cp .config .config.1
 
 	# all modules needs to be first so modules can be disabled by i.e.
 	# the targets later
 	echo "Enabling all modules ..."
-	yes '' | make ARCH=$lx_cpu no2modconfig > /dev/null
+	yes '' | make ARCH=$lx_cpu no2modconfig > /dev/null ; cp .config .config.2
 
 	if [ -f $base/target/$target/kernel$treever.conf.sh ] ; then
 		conffiles="$base/target/$target/kernel$treever.conf.sh $conffiles"
@@ -111,25 +111,26 @@ lx_config ()
 		echo "  running: $x"
 		sh $x .config
 	done
+	cp .config .config.3
 
 	# merge target config
 	if [ -f $base/config/$config/linux.cfg ] ; then
 		echo "  merging: 'config/$config/linux.cfg'"
 		x="$(sed '/CONFIG_/ ! d; s,.*CONFIG_\([^ =]*\).*,\1,' \
 			$base/config/$config/linux.cfg | tr '\n' '|')"
-		egrep -v "\bCONFIG_($x)\b" < .config > .config_new
+		egrep -v "\bCONFIG_($x)\b" < .config > .config.4
 		sed 's,\(CONFIG_.*\)=n,# \1 is not set,' \
-			$base/config/$config/linux.cfg >> .config_new
-		mv .config_new .config
+			$base/config/$config/linux.cfg >> .config.4
+		cp .config.4 .config
 	fi
 
 	# create a valid .config
-	yes '' | make ARCH=$lx_cpu oldconfig > /dev/null
+	yes '' | make ARCH=$lx_cpu oldconfig > /dev/null ; cp .config .config.5
 
 	# last disable broken crap
 	sh $base/package/base/linux24/disable-broken.sh \
-	$pkg_linux_brokenfiles < .config > config.new
-	mv config.new .config
+	$pkg_linux_brokenfiles < .config > config.6
+	cp config.6 .config
 
 	# create a valid .config (dependencies might need to be disabled)
 	yes '' | make ARCH=$lx_cpu oldconfig > /dev/null
