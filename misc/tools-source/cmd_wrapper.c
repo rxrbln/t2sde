@@ -40,6 +40,7 @@
  *      prefix_WRAPPER_FILTER		"sed '...' | awk '...' | foobar"
  *
  *	prefix_WRAPPER_NOLOOP		Internal use only.
+ *	prefix_WRAPPER_OTHERS_DONE	Internal use only.
  *
  */
 
@@ -96,7 +97,7 @@ void cleanenv(const char * name, const char ch) {
  */
 int main(int argc, char ** argv) {
 	char **newargv;
-	char *other;
+	char *other, *other_done;
 	int c1,c2,c3;
 	char *delim, *optbuf, *wrdir;
 	FILE *logfile = NULL;
@@ -161,6 +162,9 @@ int main(int argc, char ** argv) {
 		fprintf(stderr, "ENVPREFIX = '%s'\n", ENVPREFIX);
 		fprintf(stderr, "OTHERS = '%s'\n",
 				getenv(ENVPREFIX "_WRAPPER_OTHERS"));
+		if (getenv(ENVPREFIX "_WRAPPER_OTHERS_DONE"))
+		fprintf(stderr, "OTHERS DONE = '%s'\n",
+				getenv(ENVPREFIX "_WRAPPER_OTHERS_DONE"));
 		fprintf(stderr, "INSERT = '%s'\n",
 				getenv(ENVPREFIX "_WRAPPER_INSERT"));
 		fprintf(stderr, "REMOVE = '%s'\n",
@@ -174,15 +178,38 @@ int main(int argc, char ** argv) {
 
 	/* extract the next other wrapper */
 	other = strdup(getenv(ENVPREFIX "_WRAPPER_OTHERS"));
-	other = strtok(other, ":");
+	other_done = getenv(ENVPREFIX "_WRAPPER_OTHERS_DONE");
+	
+	if (other) {
+		char *newother_done;
+		
+		if (other_done) {
+			char *str = strstr(other, other_done);
+			if (str != other) {
+				fprintf(stderr, "OTHERS_DONE set but does not match.\n");
+				return 249;
+			}
 
-	if (other != NULL) {
-		/* if we have other wrappers remove the current one from the list */
-		char *newothers = getenv(ENVPREFIX "_WRAPPER_OTHERS");
-		newothers += strlen (other);
-		if (*newothers == ':')
-			newothers++;
-		setenv (ENVPREFIX "_WRAPPER_OTHERS", newothers, 1);
+			other += strlen(other_done);
+			if (*other == 0) {
+			  other = 0;
+			}
+			else {
+			  if (*other == ':') 
+			    other++;
+			
+			  newother_done = (char *) malloc(strlen(getenv(ENVPREFIX "_WRAPPER_OTHERS")));
+			  strcpy(newother_done, other_done);
+			  strcat(newother_done, ":");
+			  strcat(newother_done, other);
+
+			  setenv(ENVPREFIX "_WRAPPER_OTHERS_DONE", newother_done, 1);
+			}
+		}
+		else {
+			other = strtok(other, ":");
+			setenv(ENVPREFIX "_WRAPPER_OTHERS_DONE", other, 1);
+		}
 	}
 
 	/*
@@ -344,14 +371,36 @@ reread_file_finished:
 	}
 
 	/*
-	 *  Detect loops
+	 * Run other wrappers first. They will re-start us.
 	 */
-	
-	if ( (delim=getenv(ENVPREFIX "_WRAPPER_NOLOOP")) != NULL &&
-					delim[0] && delim[0] != '0') {
-		return 251;
+
+	if (other != NULL) {
+
+#if VERBOSE_DEBUG
+		if (debug) {
+		  fprintf(stderr,
+			  "Running external wrapper: %s\n", newargv[0]);
+		  for (c3=0; c3<c1; c3++)
+		    fprintf(stderr, " %s", newargv[c3]);
+		  fprintf(stderr, "\n");
+		}
+#endif
+
+		if (logfile) {
+			fprintf(logfile, "+");
+			for (c3=0; c3<=c1; c3++)
+					fprintf(logfile, " %s", newargv[c3]);
+			fprintf(logfile, "\n");
+			fclose(logfile);
+		}
+
+		newargv[c1] = NULL;
+		execvp(newargv[0], newargv);
+		fprintf(stderr, "cmd_wrapper: execvp(%s,...) - %s\n", 
+			newargv[0], strerror(errno));
+
+		return 253;
 	}
-	setenv(ENVPREFIX "_WRAPPER_NOLOOP", "1", 1);
 
 	/*
 	 *  Remove the wrapper dir from PATH
@@ -386,36 +435,14 @@ reread_file_finished:
 	}
 
 	/*
-	 * Run other wrappers first. They will re-start us.
+	 *  Detect loops
 	 */
-
-	if (other != NULL) {
-
-#if VERBOSE_DEBUG
-		if (debug) {
-		  fprintf(stderr,
-			  "Running external wrapper: %s\n", newargv[0]);
-		  for (c3=0; c3<c1; c3++)
-		    fprintf(stderr, " %s", newargv[c3]);
-		  fprintf(stderr, "\n");
-		}
-#endif
-
-		if (logfile) {
-			fprintf(logfile, "+");
-			for (c3=0; c3<=c1; c3++)
-					fprintf(logfile, " %s", newargv[c3]);
-			fprintf(logfile, "\n");
-			fclose(logfile);
-		}
-
-		newargv[c1] = NULL;
-		execvp(newargv[0], newargv);
-		fprintf(stderr, "cmd_wrapper: execvp(%s,...) - %s\n", 
-			newargv[0], strerror(errno));
-
-		return 253;
+	
+	if ( (delim=getenv(ENVPREFIX "_WRAPPER_NOLOOP")) != NULL &&
+					delim[0] && delim[0] != '0') {
+		return 251;
 	}
+	setenv(ENVPREFIX "_WRAPPER_NOLOOP", "1", 1);
 
 	/*
 	 *  Run the new command
