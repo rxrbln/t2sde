@@ -7,16 +7,15 @@ mkdir -p $disksdir/2nd_stage
 cd $disksdir/2nd_stage
 mkdir -p mnt/source mnt/target
 #
-package_map='       +00-dirtree         +glibc	            -gcc
--linux24-source     -linux26-source     -linux24benh-src
--linux24-header     -linux26-header     -linux24benh-header
+package_map='       +00-dirtree
++glibc	            -gcc                -linux-header
 -linux24            -linux26            -linux24benh
 -binutils           -bin86              -nasm               -dietlibc
 +grub               +lilo               +yaboot             +aboot
 +silo               +parted             +mac-fdisk          +pdisk
 +xfsprogs           +mkdosfs            +jfsutils
-+e2fsprogs          +reiserfsprogs      +genromfs           +lvm
-+popt               +raidtools          +mdadm
++e2fsprogs          +reiserfsprogs      +reiser4progs       +genromfs
++popt               +raidtools          +mdadm              +lvm
 +dump               +eject              +disktype
 +hdparm             +memtest86          +cpuburn            +bonnie++
 -mine               -bize               -termcap            +ncurses
