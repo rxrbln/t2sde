@@ -16,6 +16,15 @@ CONFIG_FB_CGFOURTEEN=y
 CONFIG_FB_P9100=y
 CONFIG_FB_LEO=y
 
+CONFIG_FB_ATY=y
+
+# CONFIG_FB_RIVA is not set
+# CONFIG_FB_RADEON is not set
+
+CONFIG_FONT_8x16=y
+CONFIG_FONT_SUN8x16=y
+CONFIG_FONT_SUN12x22=y
+
 include(`kernel-common.conf')
 include(`kernel-scsi.conf')
 include(`kernel-net.conf')
