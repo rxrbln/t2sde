@@ -1,8 +1,11 @@
-T2_TARGET_DEBUG=yes
-
-# include functions we need
 source misc/target/functions
 [ -f target/$target/functions ] && source target/$target/functions
+
+#rm -rf $imagedir
+#mkdir -p $imagedir
+
+image_parse_cfg target/$target/initrd.cfg
+exit
 
 pkgsel_update_tmpl   # rerun config if pkgsel.tmpl was updated
 pkgloop              # build it
@@ -12,11 +15,16 @@ export PATH="$build_rock/tools.cross/bin:$base/build/${ROCKCFG_ID}/TOOLCHAIN/too
 # set DIETHOME in case we use diet
 export DIETHOME="$base/build/${ROCKCFG_ID}/usr/dietlibc"
 
-# Create initrds
-initrd_parse_config
-initrd_create
+# 
 
 
 
 
 
+
+
+
+# Create ISO structure
+#iso_prepare_bootable
+#FIXME dummy entry
+#iso_add DISK1 $topdir/COPYING /
