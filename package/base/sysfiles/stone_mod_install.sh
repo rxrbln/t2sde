@@ -127,6 +127,28 @@ can't modify this disks partition table."
 	eval $cmd
 }
 
+vg_action() {
+	cmd="gui_menu vg 'Volume Group $1'"
+
+
+	if [ -e /proc/lvm/VGs/$1 ]; then
+		cmd="$cmd 'Display attributes of $1' 'gui_cmd \"display $1\" vgdisplay $1'"
+
+		if grep -q "^/dev/$1/" /proc/swaps /proc/mounts; then
+		  cmd="$cmd \"LVs of $1 are currently in use, so you can't
+de-activate it.\" ''"
+		else
+		  cmd="$cmd \"De-activate VG '$1'\" 'vgchange -an $1'"
+		fi
+	else
+		cmd="$cmd 'Display attributes of $1' 'gui_cmd \"display $1\" vgdisplay -D $1'"
+
+		cmd="$cmd \"Activate VG '$1'\" 'vgchange -ay $1'"
+	fi
+
+	eval $cmd
+}
+
 disk_add() {
 	local x y=0
 	cmd="$cmd 'Partition table of $1:' 'disk_action $1'"
@@ -136,6 +158,23 @@ disk_add() {
 	done
 	if [ $y = 0 ]; then
 		cmd="$cmd 'Partition table is empty.' ''"
+	fi
+	cmd="$cmd '' ''"
+}
+
+vg_add() {
+	local x y=0
+	cmd="$cmd 'Logical volumes of $1:' 'vg_action $1'"
+	if [ -e /proc/lvm/VGs/$1 ] ; then
+		for x in $( cd /proc/lvm/VGs/$1/LVs; ls -1 )
+		do
+			part_add $1 $x ; y=1
+		done
+		if [ $y = 0 ]; then
+			cmd="$cmd 'No logical volumes.' ''"
+		fi
+	else
+		cmd="$cmd 'Volume Group is not active.' ''"
 	fi
 	cmd="$cmd '' ''"
 }
@@ -154,12 +193,15 @@ This dialog allows you to modify your discs parition layout and to create filesy
 		  do
 			disk_add $x
 		  done
+		  for x in $( cat /etc/lvmtab 2> /dev/null )
+		  do
+			vg_add "$x"
+		  done
 		else
 		  cmd="$cmd 'No hard-disc found!' ''"
 		fi
 
-		cmd="$cmd 'Install the system ...'"
-		cmd="$cmd 'install_now=1'"
+		cmd="$cmd 'Install the system ...' 'install_now=1'"
 
 		eval "$cmd" && [ "$install_now" -eq 0 ]
 	do : ; done
