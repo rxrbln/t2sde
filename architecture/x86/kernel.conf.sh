@@ -54,6 +54,10 @@
 		dnl PC Speaker for 2.5/6 kernel
 		CONFIG_INPUT_PCSPKR=y
 
+		dnl Other useful stuff
+		dnl
+		CONFIG_RTC=y
+
 		include(`kernel-common.conf')
 		include(`kernel-scsi.conf')
 		include(`kernel-net.conf')
