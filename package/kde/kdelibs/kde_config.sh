@@ -3,12 +3,7 @@ if [ "$prefix_auto" = 1 ] ; then
   if [ "$NO_SANITY_CHECK" ] ; then
 	prefix=$ROCKCFG_PKG_KDE3_CORE_PREFIX
   else 
-	for dir in usr opt/kde3 $ROCKCFG_PKG_KDE3_CORE_PREFIX ; do
-		[ -f "$root/$dir/bin/artsd" ] && prefix="$dir"
-	done
-
-	[ ! -f "$root/$prefix/bin/artsd" ] &&
-	abort "kdelibs (artsd) is not installed (in prefix $prefix)!"
+	pkgprefix -t arts
   fi
 
   set_confopt
