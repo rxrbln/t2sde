@@ -57,7 +57,7 @@ read_section() {
 				i=$((i+1))
 			fi
 		fi
-	done < <( sed 's,#.*,,' < "$rocknet_base"/config )
+	done < <( sed 's,\(^\|[ \t]\)#.*$,,' < "$rocknet_base"/config )
 }
 
 write_section() {
@@ -88,6 +88,7 @@ write_section() {
 			if [ $passit = 0 -a $dumped = 0 ] ; then
 			  for (( i=0 ; $i < ${#tags[@]} ; i=i+1 )) ; do
 				netcmd="${tags[$i]}"
+				[ "$netcmd" ] || continue
 				[ $globals = 0 ] && [[ "$netcmd" != interface* ]] && \
 				  echo -en "\t" >> \
 				  $rocknet_base/config.new
@@ -115,6 +116,7 @@ edit_tag() {
 	name="$tag"
 	gui_input "Set new value for tag '$name'" \
 	          "$tag" "tag"
+
 	tags[$1]="$tag"
 }
 
@@ -126,13 +128,20 @@ edit_global_tag() {
 add_tag() {
 	tta="$@"
 	if [ "$tta" = "" ] ; then
-		cmd="gui_menu add_tag 'Add tag of type'"
+		cmd="gui_menu add_tag 'Add tag of from module'"
 
-		while read tag module ; do
-			cmd="$cmd '`printf "%-12s %s" "$tag" "($module)"`' 'tta=$tag'"
+		while read module ; do
+			cmd="$cmd "$module" module='$module'"
 		done < <( cd /etc/network/modules/ ; grep public_ * | sed -e \
-		          's/\([a-zA-Z0-9_-]*\).sh:public_\([a-zA-Z0-9_-]*\).*/\2 \1/' \
-		          | sort +2 +1)
+			  's/\.sh//' -e 's/:.*//' | sort -u )
+		module=""
+		eval $cmd
+
+		cmd="gui_menu add_tag 'Add tag of type'"
+		while read tag ; do
+			cmd="$cmd "$tag" 'tta=$tag'"
+		done < <( cd /etc/network/modules/ ; grep -h public_ $module.sh \
+			  | sed -e 's/public_\([^(]*\).*/\1/' | sort )
 		eval "$cmd"
 	fi
 
@@ -155,6 +164,7 @@ edit_if() {
 	while 
 		cmd="gui_menu if_edit 'Configure interface ${1//_/ }'"
 		for (( i=0 ; $i < ${#tags[@]} ; i=i+1 )) ; do
+			[ "${tags[$i]}" ] || continue
 			cmd="$cmd '${tags[$i]}' 'edit_tag $i'"
 		done
 
@@ -162,8 +172,8 @@ edit_if() {
 		cmd="$cmd 'Delete this interface/profile' 'del_interface $1 && quit=1'"
 
 		# tiny hack since gui_menu return 0 or 1 depending on the exec
-		# status of e.g. dialog - and thus a del_interface && false cannot
-		# be used ...
+		# status of e.g. dialog - and thus a del_interface && false
+		# cannot be used ...
 
 		eval "$cmd" || quit=1
 		[ $quit = 0 ]
