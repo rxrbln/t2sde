@@ -61,7 +61,7 @@
 #undef open
 #undef open64
 
-void * get_dl_symbol(char *);
+static void * get_dl_symbol(char *);
 
 struct status_t {
 	ino_t   inode;
@@ -70,15 +70,18 @@ struct status_t {
 	time_t  ctime;
 };
 
-void handle_file_access_before(const char *, const char *, struct status_t *);
-void handle_file_access_after(const char *, const char *, struct status_t *);
+static void handle_file_access_before(const char *, const char *, struct status_t *);
+static void handle_file_access_after(const char *, const char *, struct status_t *);
+
+char *wlog = 0, *rlog = 0, *cmdname = "unkown";
 
 /* Wrapper Functions */
 
 extern int open(const char* f, int a, int b);
-int (*orig_open)(const char* f, int a, int b) = NULL;
+int (*orig_open)(const char* f, int a, int b) = 0;
 
-extern int open(const char* f, int a, int b) {
+int open(const char* f, int a, int b)
+{
 	struct status_t status;
 	int old_errno=errno;
 	int rc;
@@ -101,9 +104,10 @@ extern int open(const char* f, int a, int b) {
 }
 
 extern int open64(const char* f, int a, int b);
-int (*orig_open64)(const char* f, int a, int b) = NULL;
+int (*orig_open64)(const char* f, int a, int b) = 0;
 
-extern int open64(const char* f, int a, int b) {
+int open64(const char* f, int a, int b)
+{
 	struct status_t status;
 	int old_errno=errno;
 	int rc;
@@ -126,9 +130,10 @@ extern int open64(const char* f, int a, int b) {
 }
 
 extern FILE* fopen(const char* f, const char* g);
-FILE* (*orig_fopen)(const char* f, const char* g) = NULL;
+FILE* (*orig_fopen)(const char* f, const char* g) = 0;
 
-extern FILE* fopen(const char* f, const char* g) {
+FILE* fopen(const char* f, const char* g)
+{
 	struct status_t status;
 	int old_errno=errno;
 	FILE* rc;
@@ -151,9 +156,10 @@ extern FILE* fopen(const char* f, const char* g) {
 }
 
 extern FILE* fopen64(const char* f, const char* g);
-FILE* (*orig_fopen64)(const char* f, const char* g) = NULL;
+FILE* (*orig_fopen64)(const char* f, const char* g) = 0;
 
-extern FILE* fopen64(const char* f, const char* g) {
+FILE* fopen64(const char* f, const char* g)
+{
 	struct status_t status;
 	int old_errno=errno;
 	FILE* rc;
@@ -176,9 +182,10 @@ extern FILE* fopen64(const char* f, const char* g) {
 }
 
 extern int creat(const char* f, mode_t m);
-int (*orig_creat)(const char* f, mode_t m) = NULL;
+int (*orig_creat)(const char* f, mode_t m) = 0;
 
-extern int creat(const char* f, mode_t m) {
+int creat(const char* f, mode_t m)
+{
 	struct status_t status;
 	int old_errno=errno;
 	int rc;
@@ -201,9 +208,10 @@ extern int creat(const char* f, mode_t m) {
 }
 
 extern int creat64(const char* f, mode_t m);
-int (*orig_creat64)(const char* f, mode_t m) = NULL;
+int (*orig_creat64)(const char* f, mode_t m) = 0;
 
-extern int creat64(const char* f, mode_t m) {
+int creat64(const char* f, mode_t m)
+{
 	struct status_t status;
 	int old_errno=errno;
 	int rc;
@@ -226,9 +234,10 @@ extern int creat64(const char* f, mode_t m) {
 }
 
 extern int mkdir(const char* f, mode_t m);
-int (*orig_mkdir)(const char* f, mode_t m) = NULL;
+int (*orig_mkdir)(const char* f, mode_t m) = 0;
 
-extern int mkdir(const char* f, mode_t m) {
+int mkdir(const char* f, mode_t m)
+{
 	struct status_t status;
 	int old_errno=errno;
 	int rc;
@@ -251,9 +260,10 @@ extern int mkdir(const char* f, mode_t m) {
 }
 
 extern int mknod(const char* f, mode_t m, dev_t d);
-int (*orig_mknod)(const char* f, mode_t m, dev_t d) = NULL;
+int (*orig_mknod)(const char* f, mode_t m, dev_t d) = 0;
 
-extern int mknod(const char* f, mode_t m, dev_t d) {
+int mknod(const char* f, mode_t m, dev_t d)
+{
 	struct status_t status;
 	int old_errno=errno;
 	int rc;
@@ -276,9 +286,10 @@ extern int mknod(const char* f, mode_t m, dev_t d) {
 }
 
 extern int link(const char* s, const char* f);
-int (*orig_link)(const char* s, const char* f) = NULL;
+int (*orig_link)(const char* s, const char* f) = 0;
 
-extern int link(const char* s, const char* f) {
+int link(const char* s, const char* f)
+{
 	struct status_t status;
 	int old_errno=errno;
 	int rc;
@@ -301,9 +312,10 @@ extern int link(const char* s, const char* f) {
 }
 
 extern int symlink(const char* s, const char* f);
-int (*orig_symlink)(const char* s, const char* f) = NULL;
+int (*orig_symlink)(const char* s, const char* f) = 0;
 
-extern int symlink(const char* s, const char* f) {
+int symlink(const char* s, const char* f)
+{
 	struct status_t status;
 	int old_errno=errno;
 	int rc;
@@ -326,9 +338,10 @@ extern int symlink(const char* s, const char* f) {
 }
 
 extern int rename(const char* s, const char* f);
-int (*orig_rename)(const char* s, const char* f) = NULL;
+int (*orig_rename)(const char* s, const char* f) = 0;
 
-extern int rename(const char* s, const char* f) {
+int rename(const char* s, const char* f)
+{
 	struct status_t status;
 	int old_errno=errno;
 	int rc;
@@ -351,9 +364,10 @@ extern int rename(const char* s, const char* f) {
 }
 
 extern int utime(const char* f, const struct utimbuf* t);
-int (*orig_utime)(const char* f, const struct utimbuf* t) = NULL;
+int (*orig_utime)(const char* f, const struct utimbuf* t) = 0;
 
-extern int utime(const char* f, const struct utimbuf* t) {
+int utime(const char* f, const struct utimbuf* t)
+{
 	struct status_t status;
 	int old_errno=errno;
 	int rc;
@@ -376,9 +390,10 @@ extern int utime(const char* f, const struct utimbuf* t) {
 }
 
 extern int utimes(const char* f, struct timeval* t);
-int (*orig_utimes)(const char* f, struct timeval* t) = NULL;
+int (*orig_utimes)(const char* f, struct timeval* t) = 0;
 
-extern int utimes(const char* f, struct timeval* t) {
+int utimes(const char* f, struct timeval* t)
+{
 	struct status_t status;
 	int old_errno=errno;
 	int rc;
@@ -401,12 +416,13 @@ extern int utimes(const char* f, struct timeval* t) {
 }
 
 extern int execv(const char* f, char* const a[]);
-int (*orig_execv)(const char* f, char* const a[]) = NULL;
+int (*orig_execv)(const char* f, char* const a[]) = 0;
 
-extern int execv(const char* f, char* const a[]) {
+int execv(const char* f, char* const a[])
+{
 	int old_errno=errno;
 
-	handle_file_access_after("execv", f, NULL);
+	handle_file_access_after("execv", f, 0);
 	if (!orig_execv) orig_execv = get_dl_symbol("execv");
 	errno=old_errno;
 
@@ -414,12 +430,13 @@ extern int execv(const char* f, char* const a[]) {
 }
 
 extern int execve(const char* f, char* const a[], char* const e[]);
-int (*orig_execve)(const char* f, char* const a[], char* const e[]) = NULL;
+int (*orig_execve)(const char* f, char* const a[], char* const e[]) = 0;
 
-extern int execve(const char* f, char* const a[], char* const e[]) {
+int execve(const char* f, char* const a[], char* const e[])
+{
 	int old_errno=errno;
 
-	handle_file_access_after("execve", f, NULL);
+	handle_file_access_after("execve", f, 0);
 	if (!orig_execve) orig_execve = get_dl_symbol("execve");
 	errno=old_errno;
 
@@ -737,10 +754,11 @@ execvp (file, argv)
 
 /* Internal Functions */
 
-void * get_dl_symbol(char * symname) {
+static void * get_dl_symbol(char * symname)
+{
 	void * rc;
 #if DLOPEN_LIBC
-	static void * libc_handle = NULL;
+	static void * libc_handle = 0;
 
 	if (!libc_handle) libc_handle=dlopen("libc.so.6", RTLD_LAZY);
 	if (!libc_handle) {
@@ -770,8 +788,92 @@ void * get_dl_symbol(char * symname) {
         return rc;
 }
 
-void handle_file_access_before(const char * func, const char * file,
-                               struct status_t * status) {
+static int pid2ppid(int pid)
+{
+	char buffer[100];
+	int fd, rc, ppid = 0;
+
+	sprintf(buffer, "/proc/%d/stat", pid);
+	if ( (fd = open(buffer, O_RDONLY, 0)) < 0 ) return 0;
+	if ( (rc = read(fd, buffer, 99)) > 0) {
+		buffer[rc] = 0;
+		/* format: 27910 (bash) S 27315 ... */
+		sscanf(buffer, "%*[^ ] %*[^ ] %*[^ ] %d", &ppid);
+	}
+	close(fd);
+
+	return ppid;
+}
+
+/* this is only called from fl_wrapper_init(). so it doesn't need to be
+ * reentrant. */
+static char *getpname(int pid)
+{
+	static char p[512];
+	char buffer[100]="";
+	char *arg=0, *b;
+	int i, fd, rc;
+
+	sprintf(buffer, "/proc/%d/cmdline", pid);
+	if ( (fd = open(buffer, O_RDONLY, 0)) < 0 ) return "unkown";
+	if ( (rc = read(fd, buffer, 99)) > 0) {
+		buffer[rc--] = 0;
+		for (i=0; i<rc; i++)
+			if (!buffer[i]) { arg = buffer+i+1; break; }
+	}
+	close(fd);
+
+	b = basename(buffer);
+	snprintf(p, 512, "%s", b);
+
+	if ( !strcmp(b, "bash") || !strcmp(b, "sh") || !strcmp(b, "perl") )
+		if (arg && *arg && *arg != '-')
+			snprintf(p, 512, "%s(%s)", b, basename(arg));
+
+	return p;
+}
+
+/* invert the order by recursion. there will be only one recursion tree
+ * so we can use a static var for managing the last ent */
+static void addptree(int *txtpos, char *cmdtxt, int pid, int basepid)
+{
+	static char l[512] = "";
+	char *p;
+
+	if (!pid || pid == basepid) return;
+
+	addptree(txtpos, cmdtxt, pid2ppid(pid), basepid);
+
+	p = getpname(pid);
+
+	if ( strcmp(l, p) )
+		*txtpos += snprintf(cmdtxt+*txtpos, 4096-*txtpos, "%s%s",
+				*txtpos ? "." : "", getpname(pid));
+	else
+		*txtpos += snprintf(cmdtxt+*txtpos, 4096-*txtpos, "*");
+
+	strcpy(l, p);
+}
+
+void __attribute__ ((constructor)) fl_wrapper_init()
+{
+	char cmdtxt[4096] = "";
+	char *basepid_txt = getenv("FLWRAPPER_BASEPID");
+	int basepid = 0, txtpos=0;
+
+	if (basepid_txt)
+		basepid = atoi(basepid_txt);
+
+	addptree(&txtpos, cmdtxt, getpid(), basepid);
+	cmdname = strdup(cmdtxt);
+
+	wlog = getenv("FLWRAPPER_WLOG");
+	rlog = getenv("FLWRAPPER_RLOG");
+}
+
+static void handle_file_access_before(const char * func, const char * file,
+                               struct status_t * status)
+{
 	struct stat st;
 #if DEBUG == 1
 	fprintf(stderr, "fl_wrapper.so debug [%d]: begin of handle_file_access_before(\"%s\", \"%s\", xxx)\n",
@@ -790,45 +892,36 @@ void handle_file_access_before(const char * func, const char * file,
 #endif
 }
 
-char *wlog = NULL, *rlog = NULL;
-
-void handle_file_access_after(const char * func, const char * file,
-                              struct status_t * status) {
+static void handle_file_access_after(const char * func, const char * file,
+                              struct status_t * status)
+{
 	char buf[512], *buf2, *logfile;
-	char cmdname[512] = "unknown";
 	int fd; struct stat st;
 
 #if DEBUG == 1
 	fprintf(stderr, "fl_wrapper.so debug [%d]: begin of handle_file_access_after(\"%s\", \"%s\", xxx)\n",
 		getpid(), func, file);
 #endif
-	fd=readlink("/proc/self/exe", cmdname, 512);
-	if (fd < 1) strcpy(cmdname, "unknown");
-	else cmdname[fd] = 0;
-
-	if ( wlog == NULL ) wlog = getenv("FLWRAPPER_WLOG");
-	if ( rlog == NULL ) rlog = getenv("FLWRAPPER_RLOG");
-
-	if ( wlog != NULL && !strcmp(file, wlog) ) return;
-	if ( rlog != NULL && !strcmp(file, rlog) ) return;
+	if ( wlog != 0 && !strcmp(file, wlog) ) return;
+	if ( rlog != 0 && !strcmp(file, rlog) ) return;
 	if ( lstat(file, &st) ) return;
 
-	if ( (status != NULL) && (status->inode != st.st_ino ||
+	if ( (status != 0) && (status->inode != st.st_ino ||
 	     status->size  != st.st_size || status->mtime != st.st_mtime ||
 	     status->ctime != st.st_ctime) ) { logfile = wlog; }
 	else { logfile = rlog; }
 
-	if ( logfile == NULL ) return;
+	if ( logfile == 0 ) return;
 	fd=open(logfile,O_APPEND|O_WRONLY,0);
 	if (fd == -1) return;
 
 	if (file[0] == '/') {
 		sprintf(buf,"%s.%s:\t%s\n",
-		        basename(cmdname), func, file);
+		        cmdname, func, file);
 	} else {
 		buf2=get_current_dir_name();
 		sprintf(buf,"%s.%s:\t%s%s%s\n",
-			basename(cmdname), func, buf2,
+			cmdname, func, buf2,
 			strcmp(buf2,"/") ? "/" : "", file);
 		free(buf2);
 	}

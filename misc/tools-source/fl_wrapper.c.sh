@@ -66,7 +66,7 @@ cat << EOT
 #undef open
 #undef open64
 
-void * get_dl_symbol(char *);
+static void * get_dl_symbol(char *);
 
 struct status_t {
 	ino_t   inode;
@@ -75,8 +75,10 @@ struct status_t {
 	time_t  ctime;
 };
 
-void handle_file_access_before(const char *, const char *, struct status_t *);
-void handle_file_access_after(const char *, const char *, struct status_t *);
+static void handle_file_access_before(const char *, const char *, struct status_t *);
+static void handle_file_access_after(const char *, const char *, struct status_t *);
+
+char *wlog = 0, *rlog = 0, *cmdname = "unkown";
 
 /* Wrapper Functions */
 EOT
@@ -98,9 +100,10 @@ add_wrapper()
 	then
 		echo ; cat << EOT
 extern $ret_type $function($p1);
-$ret_type (*orig_$function)($p1) = NULL;
+$ret_type (*orig_$function)($p1) = 0;
 
-extern $ret_type $function($p1) {
+$ret_type $function($p1)
+{
 	struct status_t status;
 	int old_errno=errno;
 	$ret_type rc;
@@ -125,12 +128,13 @@ EOT
 	else
 		echo ; cat << EOT
 extern $ret_type $function($p1);
-$ret_type (*orig_$function)($p1) = NULL;
+$ret_type (*orig_$function)($p1) = 0;
 
-extern $ret_type $function($p1) {
+$ret_type $function($p1)
+{
 	int old_errno=errno;
 
-	handle_file_access_after("$function", f, NULL);
+	handle_file_access_after("$function", f, 0);
 	if (!orig_$function) orig_$function = get_dl_symbol("$function");
 	errno=old_errno;
 
@@ -168,10 +172,11 @@ cat fl_wrapper_execl.c
 echo ; cat << "EOT"
 /* Internal Functions */
 
-void * get_dl_symbol(char * symname) {
+static void * get_dl_symbol(char * symname)
+{
 	void * rc;
 #if DLOPEN_LIBC
-	static void * libc_handle = NULL;
+	static void * libc_handle = 0;
 
 	if (!libc_handle) libc_handle=dlopen("libc.so.6", RTLD_LAZY);
 	if (!libc_handle) {
@@ -201,8 +206,92 @@ void * get_dl_symbol(char * symname) {
         return rc;
 }
 
-void handle_file_access_before(const char * func, const char * file,
-                               struct status_t * status) {
+static int pid2ppid(int pid)
+{
+	char buffer[100];
+	int fd, rc, ppid = 0;
+
+	sprintf(buffer, "/proc/%d/stat", pid);
+	if ( (fd = open(buffer, O_RDONLY, 0)) < 0 ) return 0;
+	if ( (rc = read(fd, buffer, 99)) > 0) {
+		buffer[rc] = 0;
+		/* format: 27910 (bash) S 27315 ... */
+		sscanf(buffer, "%*[^ ] %*[^ ] %*[^ ] %d", &ppid);
+	}
+	close(fd);
+
+	return ppid;
+}
+
+/* this is only called from fl_wrapper_init(). so it doesn't need to be
+ * reentrant. */
+static char *getpname(int pid)
+{
+	static char p[512];
+	char buffer[100]="";
+	char *arg=0, *b;
+	int i, fd, rc;
+
+	sprintf(buffer, "/proc/%d/cmdline", pid);
+	if ( (fd = open(buffer, O_RDONLY, 0)) < 0 ) return "unkown";
+	if ( (rc = read(fd, buffer, 99)) > 0) {
+		buffer[rc--] = 0;
+		for (i=0; i<rc; i++)
+			if (!buffer[i]) { arg = buffer+i+1; break; }
+	}
+	close(fd);
+
+	b = basename(buffer);
+	snprintf(p, 512, "%s", b);
+
+	if ( !strcmp(b, "bash") || !strcmp(b, "sh") || !strcmp(b, "perl") )
+		if (arg && *arg && *arg != '-')
+			snprintf(p, 512, "%s(%s)", b, basename(arg));
+
+	return p;
+}
+
+/* invert the order by recursion. there will be only one recursion tree
+ * so we can use a static var for managing the last ent */
+static void addptree(int *txtpos, char *cmdtxt, int pid, int basepid)
+{
+	static char l[512] = "";
+	char *p;
+
+	if (!pid || pid == basepid) return;
+
+	addptree(txtpos, cmdtxt, pid2ppid(pid), basepid);
+
+	p = getpname(pid);
+
+	if ( strcmp(l, p) )
+		*txtpos += snprintf(cmdtxt+*txtpos, 4096-*txtpos, "%s%s",
+				*txtpos ? "." : "", getpname(pid));
+	else
+		*txtpos += snprintf(cmdtxt+*txtpos, 4096-*txtpos, "*");
+
+	strcpy(l, p);
+}
+
+void __attribute__ ((constructor)) fl_wrapper_init()
+{
+	char cmdtxt[4096] = "";
+	char *basepid_txt = getenv("FLWRAPPER_BASEPID");
+	int basepid = 0, txtpos=0;
+
+	if (basepid_txt)
+		basepid = atoi(basepid_txt);
+
+	addptree(&txtpos, cmdtxt, getpid(), basepid);
+	cmdname = strdup(cmdtxt);
+
+	wlog = getenv("FLWRAPPER_WLOG");
+	rlog = getenv("FLWRAPPER_RLOG");
+}
+
+static void handle_file_access_before(const char * func, const char * file,
+                               struct status_t * status)
+{
 	struct stat st;
 #if DEBUG == 1
 	fprintf(stderr, "fl_wrapper.so debug [%d]: begin of handle_file_access_before(\"%s\", \"%s\", xxx)\n",
@@ -221,45 +310,36 @@ void handle_file_access_before(const char * func, const char * file,
 #endif
 }
 
-char *wlog = NULL, *rlog = NULL;
-
-void handle_file_access_after(const char * func, const char * file,
-                              struct status_t * status) {
+static void handle_file_access_after(const char * func, const char * file,
+                              struct status_t * status)
+{
 	char buf[512], *buf2, *logfile;
-	char cmdname[512] = "unknown";
 	int fd; struct stat st;
 
 #if DEBUG == 1
 	fprintf(stderr, "fl_wrapper.so debug [%d]: begin of handle_file_access_after(\"%s\", \"%s\", xxx)\n",
 		getpid(), func, file);
 #endif
-	fd=readlink("/proc/self/exe", cmdname, 512);
-	if (fd < 1) strcpy(cmdname, "unknown");
-	else cmdname[fd] = 0;
-
-	if ( wlog == NULL ) wlog = getenv("FLWRAPPER_WLOG");
-	if ( rlog == NULL ) rlog = getenv("FLWRAPPER_RLOG");
-
-	if ( wlog != NULL && !strcmp(file, wlog) ) return;
-	if ( rlog != NULL && !strcmp(file, rlog) ) return;
+	if ( wlog != 0 && !strcmp(file, wlog) ) return;
+	if ( rlog != 0 && !strcmp(file, rlog) ) return;
 	if ( lstat(file, &st) ) return;
 
-	if ( (status != NULL) && (status->inode != st.st_ino ||
+	if ( (status != 0) && (status->inode != st.st_ino ||
 	     status->size  != st.st_size || status->mtime != st.st_mtime ||
 	     status->ctime != st.st_ctime) ) { logfile = wlog; }
 	else { logfile = rlog; }
 
-	if ( logfile == NULL ) return;
+	if ( logfile == 0 ) return;
 	fd=open(logfile,O_APPEND|O_WRONLY,0);
 	if (fd == -1) return;
 
 	if (file[0] == '/') {
 		sprintf(buf,"%s.%s:\t%s\n",
-		        basename(cmdname), func, file);
+		        cmdname, func, file);
 	} else {
 		buf2=get_current_dir_name();
 		sprintf(buf,"%s.%s:\t%s%s%s\n",
-			basename(cmdname), func, buf2,
+			cmdname, func, buf2,
 			strcmp(buf2,"/") ? "/" : "", file);
 		free(buf2);
 	}
