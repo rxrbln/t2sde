@@ -29,7 +29,7 @@ NOT_SRCS :=
 include $(TOPDIR)/Rules.pre
 
 BUILD_LIBS := 
-BUILD_PROGS := Download
+BUILD_PROGS := Download dependency
 
 all: $(BUILD_OBJS) $(BUILD_PROGS)
 
