@@ -37,7 +37,7 @@
 #
 
 extract_xml_name() {
-    local tmp="`tr -d "\012" < $2 | grep $3 | sed "s,.*<$3>\([^<]*\)<.*,\1," | sed 's,,\n[T] ,g' | sed 's,^\[T\] $,,'`"
+    local tmp="`tr -d "\012" < $2 | grep $3 | sed "s,.*<$3>\([^<]*\)<.*,\1," | sed 's,,\n[T] ,g' | sed 's,^\[T\] $,,'`"
     eval "$1=\"\$tmp\""
 }
 
