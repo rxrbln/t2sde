@@ -127,11 +127,11 @@ add_tag() {
 		cmd="gui_menu add_tag 'Add tag of type'"
 
 		while read tag module ; do
-			cmd="$cmd '$tag ($module)' 'tta=$tag'"
+			cmd="$cmd '`printf "%-12s %s" "$tag" "($module)"`' 'tta=$tag'"
 		done < <( cd /etc/network/modules/ ; grep public_ * | sed -e \
 		          's/\([a-zA-Z0-9_-]*\).sh:public_\([a-zA-Z0-9_-]*\).*/\2 \1/' \
-		          | sort)
-		eval $cmd
+		          | sort +2 +1)
+		eval "$cmd"
 	fi
 
 	if [ "$tta" ] ; then
