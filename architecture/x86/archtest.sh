@@ -9,7 +9,7 @@ case "$ROCKCFG_X86_OPT" in
     pentium*|athlon*)
 	arch_machine="i686" ;;
 
-    hammer)
+    x86_64)
 	arch_machine="x86_64"
 	arch_sizeof_char_p=8 ;;
 esac
