@@ -54,7 +54,12 @@ public:
     int error = 0;
     
     // parse
-    std::fstream src_file(file.c_str());
+    std::ifstream src_file(file.c_str());
+    
+    if (!src_file) {
+      std::cerr << file << ": Can not open file!" << std::endl;
+      return false;
+    }
     
     std::string line;
     std::string tag, value;
@@ -101,6 +106,8 @@ public:
 	    tag == tags[i]->name)
 	  {
 	    tags[i]->value.append (value + '\n');
+	    //std::cerr << line << std::endl;
+	    //std::cerr << tag << ": " << value << std::endl;
 	    tag_found = true;
 	    break;
 	  }
