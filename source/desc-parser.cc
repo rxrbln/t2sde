@@ -1,7 +1,7 @@
 
 #include "tag-parser.hh"
 
-// some inteligent Version information cless, that contains
+// some inteligent Version information class, that contains
 // some logic to compare version numbers, including -beta and
 // -alpha suffixes
 
@@ -92,14 +92,3 @@ public:
   Tag sourcepackage;
   Tag conf;
 };
-
-int main (int argc, char* argv[])
-{
-  Package p;
-  
-  if (argc > 1)
-    if (!p.ParsePakage (argv[1]))
-      return 1;
-  
-  return 0;
-}
