@@ -45,9 +45,9 @@ define(`default_restart', `    restart)
 
 ifelse(initstyle, `sysv_nice', `
 	define(`main_begin', `title() {
-	local x=1 w="`$'( stty size 2>/dev/null </dev/tty | cut -d" " -f2  )"
+	local x w="`$'( stty size 2>/dev/null </dev/tty | cut -d" " -f2  )"
 	[ -z "`$'w" ] && w="`$'( stty size </dev/console | cut -d" " -f2  )"
-	while [ `$'x -lt $w ]; do echo -n .; x=`$'((x+1)); done
+	for (( x=1; x<w; x++ )) do echo -n .; done
 	echo -e "\e[222G\e[3D v \r\e[36m`$'* \e[0m"
 	error=0
 }
