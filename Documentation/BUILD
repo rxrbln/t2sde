@@ -16,6 +16,9 @@ The distribution you are building ROCK Linux on should also be ROCK Linux.
 It is also possible to build ROCK Linux on other distributions, but don't expect
 it to work without some hacking ...
 
+If you are building on older ROCK Linux versions (1.4/1.6) you should at least
+make sure to upgrade/install the packages "Curl" "mktemp" and "coreutils".
+
 
 	2. Extracting the sources
 	=========================
