@@ -40,8 +40,10 @@ for x in /etc/setup-*.sh /setup/setup.sh ; do
 done
 
 echo
-echo "Enter the names of all terminal devices (e.g. 'vc/1' or 'tts/0')."
-echo -n "An empty text stands for vc/1 - vc/6: "  ;  read ttydevs
+echo "If you use a serial terminal, enter the names of terminal devices to"
+echo "use - for example 'tts/0' for the first serial port."
+echo "(default=vc/1 vc/2 vc/3 vc/4 vc/5 vc/6): "
+read ttydevs
 [ -z "$ttydevs" ] && ttydevs="vc/1 vc/2 vc/3 vc/4 vc/5 vc/6"
 
 echo
