@@ -392,10 +392,9 @@ int main (int argc, char* argv[])
 	      std::cout << "trying to download listing of " << info.url << std::endl;
 	      
 	      dl.Download(info.url, 0, 200000);
-	      std::ifstream* s = dl.OpenFile();
+	      std::auto_ptr<std::ifstream> s = dl.OpenFile();
 	      GenList(info.file, *s, info.protocol == "http");
 	      s->close();
-	      delete s;
 	    }
 	  }
 	  catch (TimeoutException e) {
