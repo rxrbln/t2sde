@@ -1,4 +1,7 @@
 
+set -e
+taropt="--use-compress-program=bzip2 -xf"
+
 echo_header "Creating 2nd stage filesystem:"
 mkdir -p $disksdir/2nd_stage
 cd $disksdir/2nd_stage
@@ -34,7 +37,7 @@ package_map='       +00-dirtree         +glibc22            +glibc23
 +sysklogd           +devfsd             +setserial          +iproute2
 +netkit-base        +netkit-ftp         +netkit-telnet      +netkit-tftp
 +sysfiles           +libpcap            +iptables           +tcp_wrappers
--kiss'
+-kiss               +kbd'
 
 package_map="+$ROCKCFG_DEFAULT_KERNEL $package_map"
 
@@ -53,17 +56,29 @@ do
 done
 #
 echo_status "Remove the stuff we don't need ..."
-rm -rf home usr/{local,doc,man,info,games} var/adm/*
+rm -rf home usr/{local,doc,man,info,games,share}
+rm -rf var/adm/* var/games var/adm var/mail var/opt
 rm -rf usr/{include,src} usr/*-linux-gnu usr/lib/*.{a,la,o}
 rm -rf usr/lib/*/ boot/*-rock boot/System.map
-ls -d usr/share/* | grep -v pci.ids | xargs rm -rf
 #
 echo_status "Installing some terminfo databases ..."
-tar --use-compress-program=bzip2 -xf ../../pkgs/ncurses.tar.bz2	\
+tar $taropt ../../pkgs/ncurses.tar.bz2	\
 	usr/share/terminfo/x/xterm	usr/share/terminfo/a/ansi	\
 	usr/share/terminfo/n/nxterm	usr/share/terminfo/l/linux	\
 	usr/share/terminfo/v/vt200	usr/share/terminfo/v/vt220	\
 	usr/share/terminfo/v/vt100	usr/share/terminfo/s/screen
+#
+echo_status "Installing some keymaps ..."
+tar $taropt ../../pkgs/kbd.tar.bz2 \
+	usr/share/kbd/keymaps/amiga	usr/share/kbd/keymaps/i386/qwerty \
+	usr/share/kbd/keymaps/atari	usr/share/kbd/keymaps/i386/qwertz \
+	usr/share/kbd/keymaps/sun
+find usr/share/kbd -name '*dvo*' -o -name '*az*' -o -name '*fgG*' | \
+	xargs rm -f
+#
+echo_status "Installing pci.ids ..."
+tar $taropt ../../pkgs/pciutils.tar.bz2 \
+	usr/share/pci.ids
 #
 echo_status "Creating 2nd stage linuxrc."
 cp $base/target/$target/linuxrc2.sh linuxrc ; chmod +x linuxrc
