@@ -3,6 +3,11 @@
 #include "Curl.hh"
 #include "ctype.h"
 
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <unistd.h>
+#include <glob.h>
+
 std::vector <std::string> suffixes;
 
 unsigned int GetNumber (std::string& s, std::string::size_type start, std::string::size_type end) {
@@ -200,7 +205,24 @@ int main (int argc, char* argv[])
   for (int i = 1; i < argc; ++i)
     {
       package.Clear();
-      package.ParsePackage (argv[i]);
+
+      // check if package name or path is given
+      std::string fname = argv[i];
+      struct stat statbuf;
+      if (stat(fname.c_str(), &statbuf)) {
+	fname = "package/*/" + fname + "/" + fname + ".desc";
+	// std::cout << "Checking " << fname << std::endl;
+
+	glob_t globbuf;
+	if (glob(fname.c_str(), GLOB_ERR, NULL, &globbuf) == 0) {
+	  fname = globbuf.gl_pathv[0];
+	  // std::cout << "Found " << fname << std::endl;
+	}
+	globfree(&globbuf);
+      }
+
+      // parse package ...
+      package.ParsePackage (fname);
 
       unsigned int no_downloads = package.download.download_infos.size();
 
