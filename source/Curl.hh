@@ -31,11 +31,15 @@ public:
   void Download (std::string url) {
     GenParamString ();
     params << " " << url;
-    //    std::cout << params.str () << std::endl;
     ExecCurl ();
   }
 
-  void Download (std::string url, unsigned int start, unsigned int end);
+  void Download (std::string url, unsigned int start, unsigned int end) {
+    GenParamString ();
+    params << " -r " << start << "-" << end << " " << url;
+    ExecCurl (); 
+  }
+
 
   std::string GetCommand () {
     return params.str();
