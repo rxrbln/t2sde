@@ -10,7 +10,7 @@ if [ "$pfile" ] ; then
 	elif [ -f gcc_*.dif ] ; then
 		patch -p0 < gcc_*.dif
 	else
-		abord "Protector patch not found"
+		abort "Protector patch not found"
 	fi
 	if [ -f protector.c ] ; then
 		mv protector.{c,h} gcc/
