@@ -67,6 +67,9 @@ if [ "$rep" != "*" ]; then
 	exit
 fi
 
+rep=${dir/\/$package/}
+maintainer="$( grep -h -m 1 "\[M\]" package/$rep/*/*.desc | head -n 1 | cut -d' ' -f2- )"
+
 echo -n "Creating package/$dir ... "
 if [ -e package/$dir ] ; then
 	echo "failed"
@@ -119,7 +122,7 @@ cat >>$package.desc <<EEE
 [U] TODO: URL
 
 [A] TODO: Author
-[M] TODO: Maintainer
+[M] ${maintainer:-TODO: Maintainer}
 
 [C] TODO: Category
 
