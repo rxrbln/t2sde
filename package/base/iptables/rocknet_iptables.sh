@@ -24,6 +24,10 @@ iptables_parse_conditions() {
 			iptables_cond="$iptables_cond -p $1 --dport $2"
 			shift; shift
 			;;
+		    icmp)
+			iptables_cond="$iptables_cond -p icmp --icmp-type $2"
+			shift; shift
+			;;
 		    ip)
 			iptables_cond="$iptables_cond -s $2"
 			shift; shift
