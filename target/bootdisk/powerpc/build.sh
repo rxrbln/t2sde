@@ -10,11 +10,14 @@ if [ $use_yaboot -eq 1 ]
 then
 	echo_header "Creating yaboot setup:"
 	#
-	echo_status "Extracting yaboot boot loader."
+	echo_status "Extracting yaboot boot loader images."
 	mkdir -p boot
 	tar --use-compress-program=bzip2 \
 	    -xf $base/build/${ROCKCFG_ID}/pkgs/yaboot.tar.bz2 \
 	    usr/lib/yaboot/yaboot -O > boot/yaboot
+	tar --use-compress-program=bzip2 \
+	    -xf $base/build/${ROCKCFG_ID}/pkgs/yaboot.tar.bz2 \
+            usr/lib/yaboot/yaboot.rs6k -O > boot/yaboot.rs6k
 	#
 	echo_status "Creating yaboot config file."
 	cp -v $base/target/$target/powerpc/{yaboot.conf,boot.msg,ofboot.b} \
@@ -31,6 +34,7 @@ then
 		BOOT	-hfs -part -map $datdir/mapping -hfs-volid "ROCK_Linux_CD"
 		BOOTx	-hfs-bless boot -sysid PPC
 		DISK1	$datdir/boot/ boot/
+		SCRIPT	./target/bootdisk/powerpc/bless-rs6k.sh
 	EOT
 fi
 
