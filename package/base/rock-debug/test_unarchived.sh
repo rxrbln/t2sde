@@ -33,7 +33,7 @@
     cat /var/adm/flists/* ; } | sort +1 |
   awk 'BEGIN { last=""; } $1=="~:" && last!=$2 { print $2; } { last=$2; }'
 
-  ls | egrep -vx 'dev|home|lost\+found|mnt|proc|root|tmp' |
+  ls | egrep -vx 'dev|home|lost\+found|mnt|proc|root|sys|tmp' |
   egrep -vx 'bin|boot|etc|lib|sbin|usr|var|opt'
 } |
 egrep -xv 'etc/ld.so.cache|usr/share/info/dir|lib/modules/.*/modules.dep'
