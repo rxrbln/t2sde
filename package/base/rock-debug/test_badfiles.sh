@@ -31,6 +31,6 @@
 egrep -h ' opt/*/(etc|var)' /var/adm/flists/*
 egrep -h ' (etc/ld.so.cache|usr/share/info/dir)$' /var/adm/flists/*
 
-egrep -h '/perllocal.pod$' /var/adm/flists/* | grep -v '^perl5:'
+egrep -h '/perllocal.pod$' /var/adm/flists/* | grep -v '^perl:'
 
 exit 0
