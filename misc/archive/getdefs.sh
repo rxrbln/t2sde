@@ -22,7 +22,7 @@
 # 
 # --- ROCK-COPYRIGHT-NOTE-END ---
 
-for x in unix linux i386 alpha powerpc ppc gnuc \
+for x in unix linux i{3,4,5,6}86 alpha powerpc ppc gnuc \
          intel_compiler ; do
 	for y in $x __${x}__ _${x}_ __$x _$x ; do
 		for z in $y $( echo $y | tr a-z A-Z ) ; do
