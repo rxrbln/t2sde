@@ -147,6 +147,8 @@ xf_config() {
 	cat >> config/cf/host.def << EOT
 /* Disable the internal zlib to use the system installed one */
 #define		HasZlib			YES
+/* Disable the internal expat library to use the system installed one */
+#define		HasExpat		YES
 
 /* Less warnings with recent gccs ... */
 #define		DefaultCCOptions	-ansi GccWarningOptions
