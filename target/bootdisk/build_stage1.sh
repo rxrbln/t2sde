@@ -48,7 +48,7 @@ for x in `egrep 'X .* KERNEL .*' $base/config/$config/packages |
 
   kernel=${x/_*/}
   kernelver=${x/*_/}
-  initrd="initrd-${kernel/linux/}"
+  initrd="initrd-${kernel/linux/}.gz"
 
   pushd . 2>&1 > /dev/null
 
