@@ -57,6 +57,8 @@ create_lilo_conf() {
 	cat << EOT > /etc/lilo.conf
 boot=$bootdev
 delay=40
+timeout=60
+prompt
 lba32
 EOT
 
