@@ -30,7 +30,6 @@ builddep=0
 debug=0
 ignore_chksum=0
 update=1
-recursive=0
 
 #
 # ----  Functions
@@ -43,7 +42,7 @@ help_msg() {
 	echo
 	echo "Usage: ./scripts/Emerge-Pkg" \
 	             "[ -cfg <config> ] [ -dep ]"
-	echo "$spacer [ -recursive ] [ -noupdate ] [ -debug ] pkg-name(s)"
+	echo "$spacer [ -noupdate ] [ -debug ] pkg-name(s)"
 	echo
 	echo "Type './scripts/Help Emerge-Pkg' for details."
 	echo
@@ -54,33 +53,37 @@ dep4pkg()
 	grep "$1:" scripts/dep_db.txt | cut -d ' ' -f 4-
 }
 
-fill_deplist()
+#
+# ---- Parse options + config
+#
+
+while [ "$1" ] ; do
+	case "$1" in
+		-cfg)     options="$options $1 $2" ; config="$2"   ; shift ;;
+		-debug)   debug=1 ;;
+		-dep)     builddep=1 ;;
+		-noupdate) update=0 ;;
+		-*) help_msg ; exit 1 ;;
+		*)  break ;;
+	esac
+	shift
+done
+
+. ./scripts/parse-config
+
+check4update()
 {
-	local addlist=''
-
-	echo "Parsing dependencies for $1"
-
-	for package in `dep4pkg $1` ; do
-
-	# make sure it is a valid package (and not a group)
-
-	if [ "`echo $alllist | grep +$package+`" = "" ] ; then
-		[ $debug = 1 ] && \
-		  echo "  $package: not in target configuration (e.g. meta flag) - skipped."
-		continue
-	fi
-
-	if [ "`echo $deplist | grep +$package+`" ] ; then
-		[ $debug = 1 ] && \
-		  echo "  $package: allready processed - skipped."
-		continue
-	fi
-
+  addlist=""
+  for package in $deplist ; do
+	[ "$debug" ] && echo "checking $package ..."
 	confdir=""
-        for x in package/* ; do
-            if [ -d "$x/$package" ] ; then
-                if [ "$confdir" ] ; then confdir=X
-                else confdir="$x/$package" ; fi
+        for x in package/*/$package/$package.desc ; do
+            if [ -f "$x" ] ; then
+		if [ -z "$confdir" ] ; then
+		  confdir=${x/$package.desc/}
+		else
+		  confdir=X
+		fi
             fi
         done
 
@@ -90,9 +93,12 @@ fill_deplist()
         elif [ "$confdir" = X ] ; then
                 [ $debug = 1 ] && \
 		  echo "  $package: Package in multiple trees."
+	elif [ ! "`echo $alllist | grep +${package}+`" ] ; then
+		[ $debug = 1 ] && \
+		  echo "  $package: Package not in default package list." 
         elif [ ! -f /var/adm/packages/$package ] ; then
                 [ $debug = 1 ] && \
-		  echo "  $package: Not installed."
+		  echo "  $package: Not installed. Added."
 		addlist="$addlist $package"
         else
                 o_ver=$(grep '^Package Name and Version' \
@@ -100,7 +106,7 @@ fill_deplist()
                 n_ver=$(grep '^\[V\] ' $confdir/$package.desc | cut -f2 -d' ')
                 if [ "$o_ver" != "$n_ver" -a "$n_ver" != "0000" ] ; then
                         [ $debug = 1 ] && \
-			  echo "  $package: New version ($o_ver -> $n_ver)."
+			  echo "  $package: New version ($o_ver -> $n_ver). Added."
 			addlist="$addlist $package"
                 else
                   if [ $ignore_chksum = 0 ] ; then
@@ -110,7 +116,7 @@ fill_deplist()
                                 grep -v '\.cache$' | md5sum | cut -f1 -d' ')
                         if [ "$o_ck" != "$n_ck" ] ; then
                                 [ $debug = 1 ] && \
-				  echo "  $package: New source checksum ($n_ck)."
+				  echo "  $package: New source checksum ($n_ck). Added."
 				addlist="$addlist $package"
 			else
 				if [ -f /var/adm/cache/$package ] ; then
@@ -128,47 +134,19 @@ fill_deplist()
                 fi
         fi
 
-	done
-
-	for package in $addlist ; do
-		deplist="$deplist +$package+"
-	done
-
-	if [ $recursive = 1 ] ; then 
-		for package in $addlist ; do
-			fill_deplist $package
-		done
-	fi
+  done
+  deplist="$addlist"
 }
 
-#
-# ---- Parse options + config
-#
-
-while [ "$1" ] ; do
-	case "$1" in
-		-cfg)     options="$options $1 $2" ; config="$2"   ; shift ;;
-		-debug)   debug=1 ;;
-		-dep)     builddep=1 ;;
-		-noupdate) update=0 ;;
-		-recursive) recursive=1 ;;
-		-*) help_msg ; exit 1 ;;
-		*)  break ;;
-	esac
-	shift
-done
-
-. ./scripts/parse-config
-
-deplist=''
 alllist=`./scripts/Create-PkgList $arch | grep ^X | cut -d ' ' -f 5 | \
-  sed -e 's/$/+/' -e 's/^/+/'`
+        sed -e 's/$/+/' -e 's/^/+/'`
 
 if [ $builddep = 1 ] ; then
-	# build a complete dependency graph
-	fill_deplist $1
+        # we have a complete dependency graph cached ...
+        deplist="`dep4pkg $1`"
+        check4update
 else
-	deplist=$1
+        deplist=$1
 fi
 
 echo "Packages scheduled to build: $deplist"
@@ -178,11 +156,8 @@ echo "Packages scheduled to build: $deplist"
 
 [ $update = 1 ] && options="$options -update"
 
-for package in $alllist ; do
-	if [ "`echo $deplist | grep $package`" ] ; then
-		package="` echo $package | sed -e s/^+// -e s/+$//`"
-		./scripts/Download -package $package
-		./scripts/Build-Pkg $options $package
-	fi
+for package in $deplist ; do
+	./scripts/Download -package $package
+	./scripts/Build-Pkg $options $package
 done
 
