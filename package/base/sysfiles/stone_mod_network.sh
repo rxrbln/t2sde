@@ -85,8 +85,8 @@ write_section() {
 			# mew tags ...
 			if [ $passit = 0 -a $dumped = 0 ] ; then
 			  for (( i=0 ; $i < ${#tags[@]} ; i=i+1 )) ; do
-				[ $globals = 1 -o \
-				  "$netcmd" = "interface" ] || \
+				netcmd="${tags[$i]}"
+				[ $globals = 0 ] && [[ "$netcmd" != interface* ]] && \
 				  echo -en "\t" >> \
 				  $rocknet_base/config.new
 				echo "${tags[$i]}" >> \
@@ -96,8 +96,8 @@ write_section() {
 			fi
 
 			if [ $passit = 1 ] ; then
-				[ $globals = 1 -o \
-				  "$netcmd" = "interface" ] || \
+				[ $globals = 0 -a \
+				  "$netcmd" != "interface" ] && \
 				  echo -en "\t" >> \
 				  $rocknet_base/config.new
 				echo "$netcmd $para" >> \
@@ -145,15 +145,23 @@ add_global_tag() {
 
 edit_if() {
 	read_section "$1"
-	while
+
+	quit=0
+	while 
 		cmd="gui_menu if_edit 'Configure interface ${1//_/ }'"
 		for (( i=0 ; $i < ${#tags[@]} ; i=i+1 )) ; do
 			cmd="$cmd '${tags[$i]}' 'edit_tag $i'"
 		done
 
 		cmd="$cmd '' '' 'Add new tag' 'add_tag'"
+		cmd="$cmd 'Delete this interface/profile' 'del_interface $1 && quit=1'"
 
-		eval "$cmd"
+		# tiny hack since gui_menu return 0 or 1 depending on the exec
+		# status of e.g. dialog - and thus a del_interface && false cannot
+		# be used ...
+
+		eval "$cmd" || quit=1
+		[ $quit = 0 ]
 	do : ; done
 	write_section "$1"
 }
@@ -163,6 +171,11 @@ add_interface() {
 	          "" "name"
 	echo -e "\ninterface $name" >> $rocknet_base/config
 } 
+
+del_interface() {
+	unset tags
+	write_section "$1"
+}
 
 main() {
     while
@@ -189,7 +202,7 @@ rocknet is executed.'"
 		cmd="$cmd 'Edit interface ${if//_/ }' 'edit_if $if'"
 	done
 
-	cmd="$cmd '' '' 'Add new interface' 'add_interface'"
+	cmd="$cmd '' '' 'Add new interface/profile' 'add_interface'"
 
 	cmd="$cmd '' '' 'Configure runlevels for network service'"
 	cmd="$cmd '$STONE runlevel edit_srv network'"
