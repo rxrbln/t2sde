@@ -20,78 +20,6 @@
 # 
 # --- ROCK-COPYRIGHT-NOTE-END ---
 
-jail_pkg_apache_postmake() {
-	jail_ensure_users http
-
-	### Updates paths in $datadir/build/config_vars.mk
-	
-	echo "Updateing paths in $datadir/build/config_vars.mk"
-        tmp=`mktemp`
-
-	# A copy of original config_vars.mk is left for reference
-	cp $datadir/build/config_vars.mk $datadir/build/config_vars.mk.orig
-        
-	cp -f $datadir/build/config_vars.mk $tmp
-
-	# s|$base/$builddir/httpd-$ver|/$jail/usr|; is repeated many times
-	# because it appear many times in same line ... probably there is
-	# a not so silly way but I can't find it :(
-	# Feel free of cleaning it
-        sed "   /^exp_.* = \/.*/ {s| = /*usr| = /$jail/usr|; \
-			s| = /*etc| = /$jail/etc|; s| = /*var| = /$jail/var|; \
-			p; d; }; \
-                /^rel_.* = \/.*/ {s| = /*usr/| = |; s| = /*usr| = |; \
-			s| = /*etc| = ../etc|; s| = /*var| = ../var|; p; d; }; \
-		/ = \/.*/ {s| = /*usr| = /$jail/usr|; \
-			s| = /*etc| = /$jail/etc|; s| = /*var| = /$jail/var|; \
-			p; d; }; \
-                " < $tmp > $datadir/build/config_vars.mk
-
-	### END Updates paths in $datadir/build/config_vars.mk
-
-	### Updates paths in $sbindir/apxs
-        
-	echo "Updateing paths in $sbindir/apxs"
-	cp -f $sbindir/apxs $tmp
-	sed "s|/usr/share/build|/$datadir/build|" < $tmp \
-                                        > $sbindir/apxs
-
-	### END Updates paths in $sbindir/apxs
-
-	### Update apachectl
-
-	echo "Updateing paths in $sbindir/apachectl"
-	cp -f $sbindir/apachectl $tmp
-	sed "s|HTTPD=.*|HTTPD='chroot /$jail ${sbindir/\/$jail}/httpd'|" \
-					< $tmp > $sbindir/apachectl
-
-	### END Update apachectl
-
-	rm $tmp
-        unset tmp
-}
-
-jail_pkg_postfix_postmake() {
-	./postfix-install -non-interactive \
-		daemon_directory=/usr/libexec command_directory=/usr/bin \
-		sendmail_path=/usr/bin/sendmail \
-		newaliases_path=/usr/bin/newaliases \
-		mailq_path=/usr/bin/mailq manpage_directory=/man/ \
-		sample_directory=/usr/share/$pkg
-	jail_ensure_users postfix
-	jail_ensure_groups postdrop
-}
-
-jail_pkg_mysql_postmake() {
-	mv $libdir/mysql/* $libdir
-	rmdir $libdir/mysql
-	mv $root/$jail/usr/include/mysql/* $root/$jail/usr/include/
-	rmdir $root/$jail/usr/include/mysql
-	mkdir -p $docdir
-	cp support-files/my-*.cnf $docdir
-	chown $pkg.$pkg $localstatedir
-}
-
 
 # Revwrite --with-<option>=<pkg_path> in confopt
 # to correct <path> when <option> is relative to
@@ -110,18 +38,16 @@ jail_confopt_paths_rewrite() {
 
                 	eval "y_path=$root/\"\${ROCKCFG_JAILDIR_$y}/usr\""
 
+			var_append LDFLAGS ' ' "-L/${y_path}/lib"
+
 			# Set correct optname and y_path
 			# This will grow too
-			case $y in
+			case "$y" in
 				postgresql) optname=pgsql ;;
 				openldap) optname=ldap ;;
 				apache) optname=apxs2
 					y_path=${y_path}/sbin/apxs ;;
 				*) optname=$y ;;
-			esac
-
-			case $pkg in
-				dbmail) y_path=${y_path}/include/ ;;
 			esac
 
 			# Rewrite
@@ -141,6 +67,7 @@ jail_confopt_paths_rewrite() {
 			fi
 		fi
 	done
+	export LDFLAGS
 	unset y optname y_path
 }
 
@@ -157,6 +84,7 @@ then
 	
 	if eval "[ \"\${ROCKCFG_JAILING_$pkg}\" = 1 ]" ; then
 		. $base/misc/jailing/jail-functions
+		. $base/misc/jailing/package-functions
 		if eval "[ ! \"\${ROCKCFG_JAILDIR_$pkg}\"  ]" ; then
 			eval "export \${ROCKCFG_JAILDIR_$pkg}=\"${ROCKCFG_BASEJAIL}/$pkg\""
 		fi
@@ -167,14 +95,21 @@ then
 			postfix) destvar='install_root' ;;
 			php) destvar='INSTALL_ROOT' ;;
 			*) destvar='DESTDIR' ;;
+		esac
 
+		[ -e $base/misc/jailing/$pkg.patch ] && var_append patchfiles ' ' $base/misc/jailing/$pkg.patch
+		for i in `ls $base/misc/jailing/$pkg-*.patch 2>/dev/null` ; do
+			var_append patchfiles ' ' "$i"
+		done
+
+		case "$pkg" in
 			# Special package settings
-			apache) postmake=jail_pkg_apache_postmake ;;
-			postfix) postmake=jail_pkg_postfix_postmake ;;
+			apache) postmake='jail_pkg_apache_postmake' ;;
+			postfix) postmake='jail_pkg_postfix_postmake' ;;
 			openldap) postmake='jail_ensure_users ldap' ;;
 			mysql) var_append extraconfopt " " "--with-mysql-user=$pkg"
-				inmake="jail_ensure_users mysql"
-				postmake="jail_pkg_mysql_postmake" ;;
+				inmake='jail_ensure_users mysql'
+				postmake='jail_pkg_mysql_postmake' ;;
 			php) has_internal='mysql' ;;
 		esac
 
