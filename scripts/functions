@@ -319,12 +319,17 @@ postflist_static_lib() {
 parse_desc() {
 	tag="`grep '^\[' $base/Documentation/Developers/PKG-DESC-FORMAT | \
 	      sed 's, (\*),,; s,\] \[,|,g; s,\[,,; s,\],,;'`"
+
 	for tag in $tag ; do
 		tagdata="`egrep "^\[($tag)\]" $confdir/$1.desc | \
 		          cut -f2- -d']' | sed 's,^ ,,'`"
 		tag="`echo $tag | cut -f1 -d'|' | tr - _`"
 		eval "desc_$tag=\"\$tagdata\""
 	done
+
+	ver="`echo "$desc_V" | tail -n 1 | cut -f1 -d' '`"
+	extraver="`echo "$desc_V" | tail -n 1 | cut -s -f2- -d' '`"
+	[ -z "$extraver" ] && extraver="${rockver//DEV-*/DEV}"
 }
 
 # This function is used for forcing a file to be in the flist
@@ -587,6 +592,18 @@ register_badfiles() {
 	done
 }
 
+# Detect the available patchfiles
+#
+detect_patchfiles()
+{
+	patchfiles="`ls $confdir/*.patch $confdir/*.patch.$arch \
+	             $confdir/*.patch_$xpkg $confdir/*.patch_$xpkg.$arch \
+	             $targetdir/pkg_$pkg.patch $targetdir/pkg_$pkg.patch.$arch \
+	             $targetdir/xpkg_$xpkg.patch \
+	             $targetdir/xpkg_$xpkg.patch.$arch 2>/dev/null |
+	             tr '\n' ' '`"
+}
+
 # Apply the given $patchfiles
 #
 apply_patchfiles() {
@@ -809,6 +826,7 @@ build_this_package() {
 # cksum and url are ignored
 # ([D] tag compatible format)
 # Intentionally removed DIST - not used yet and we will do it differently -ReneR
+#
 source_file() {
 	local pre="" file="$2"
 	
@@ -820,3 +838,95 @@ source_file() {
 	echo ${pre}download/mirror/${file:0:1}/$file
 }
 
+# search for the package confdir
+#
+detect_confdir()
+{
+	confdir=""
+	if [ -z "$pkgdir" ] ; then
+	  for x in package/*/$pkg/$pkg.desc ; do
+		if [ -f "$x" ] ; then
+		  if [ "$confdir" ] ; then
+			echo_pkg_deny $stagelevel $pkg "in multiple trees"
+			echo "Package in multiple trees: $pkg !" \
+			  > $root/var/adm/logs/$stagelevel-$xpkg.err
+			exit 1
+		  fi
+		  x=${x#package/}; x=${x%%/*}
+		  confdir="$base/package/$x/$pkg"
+		  repository=$x
+		fi
+	  done
+	else
+	  if [ -f "$pkgdir/$pkg.desc" ] ; then
+		confdir="$pkgdir"
+		repository=extern
+	  fi
+	fi
+}
+
+# initialize standard vars and hooks
+#
+init_vars_and_hooks()
+{
+	makeopt='prefix=$root/$prefix CC="$CC" CXX="$CXX"'
+	if [ $stagelevel -le 1 ] ; then
+		makeopt="$makeopt"' CC_FOR_BUILD="$BUILDCC"'
+		makeopt="$makeopt"' BUILDCC="$BUILDCC" BUILD_CC="$BUILD_CC"'
+		makeopt="$makeopt"' HOSTCC="$HOSTCC"   HOST_CC="$HOST_CC"'
+		makeopt="$makeopt"' STRIP="$STRIP" AR="$AR" LD="$LD"'
+		makeopt="$makeopt"' RANLIB="$RANLIB" NM="$NM"'
+	else
+		flistdel="$flistdel|`echo $base | sed s,^/,,`/.*"
+	fi
+	makeinstopt="$makeopt"' install'
+
+	prepare=""	; hook_add prepare	5 'eval "$prepare"'
+	prepatch=""	; hook_add prepatch	5 'eval "$prepatch"'
+	postpatch=""	; hook_add postpatch	5 'eval "$postpatch"'
+	postdoc=""	; hook_add postdoc	5 'eval "$postdoc"'
+	preconf=""	; hook_add preconf	5 'eval "$preconf"'
+	premake=""	; hook_add premake	5 'eval "$premake"'
+	inmake=""	; hook_add inmake	5 'eval "$inmake"'
+	postmake=""	; hook_add postmake	5 'eval "$postmake"'
+	postinstall=""	; hook_add postinstall	5 'eval "$postinstall"'
+	postflist=""	; hook_add postflist	5 'eval "$postflist"'
+	finish=""	; hook_add finish	5 'eval "$finish"'
+
+	[ "$ROCKCFG_DO_CHECK" = 1 ] && hook_add inmake 6 'run_check'
+	hook_add postflist 3 'postflist_static_lib'
+
+	configprefix="" ; autogen=0
+	configscript="./configure" ; extraconfopt=""
+
+	srcdir=auto ; srctar=auto
+	taropt="--use-compress-program=bzip2 -xf"
+
+	mainfunction="build_this_package"
+	runconf=1 ; runxmkmf=1 ; runmkpl=1 ; runpysetup=1 ; autopatch=1
+	autoextract=1 ; chownsrcdir=1 ; nocvsinsrcdir=1;
+	patchopt="-bfp1 -z .orig"
+	createprefix=1 ; createdocs="" ; rmemptydir=""
+
+	check_shared=1
+	check_usrlocal=1
+	check_badfiles=1
+
+	badfiles="" badfiles_nr=0
+	declare -a badfiles_desc
+}
+
+# this is a 2nd lightweight and modular "build this package" implementation
+# currently only used for the postlinux stuff - later maybe for more -ReneR
+#
+build_package()
+{
+	pkg="$1"
+	init_vars_and_hooks
+	parse_desc $pkg
+	detect_confdir
+	detect_patchfiles
+
+	eval "$desc_O"
+
+}
