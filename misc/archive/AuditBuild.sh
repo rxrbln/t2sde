@@ -142,7 +142,7 @@ audit_package() {
 	esac
 	if [ "$HTMLDIR" ]; then
 		cat <<EOT
-<tr><td>package/$repo/$pkg</td><td>$lchanges</td><td>(${ver//>/&gt;})</td><td>$lbuild</td><td>$lstatus</td></tr>
+<tr><td><a name="$pkg">package/$repo/$pkg</a></td><td>$lchanges</td><td>(${ver//>/&gt;})</td><td>$lbuild</td><td>$lstatus</td></tr>
 EOT
 	else
 		echo -e "package/$repo/$pkg\t$lchanges\t($ver)\t$lbuild\t$lstatus"
