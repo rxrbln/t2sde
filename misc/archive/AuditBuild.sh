@@ -4,6 +4,7 @@ config=default
 repositories=
 VERBOSE=
 HTML=
+root=
 
 show_usage() {
 	cat<<-EOT
@@ -17,6 +18,7 @@ while [ $# -gt 0 ]; do
 		-v)	VERBOSE=1		;;
 		-w)	HTML=1			;;
 		--help)	show_usage; exit 1	;;
+		-R)	root="$2"; shift	;;
 		-repository)
 			shift; repositories="$*"
 			break ;;
@@ -31,7 +33,11 @@ if [ ! -f config/$config/packages ]; then
 fi
 
 eval `grep 'ROCKCFG_ID=' config/$config/config 2> /dev/null`
-LOGSDIR=build/$ROCKCFG_ID/var/adm/logs
+if [ "$root" ]; then
+	LOGSDIR=$root/var/adm/logs
+else
+	LOGSDIR=build/$ROCKCFG_ID/var/adm/logs
+fi
 if [ -z "$ROCKCFG_ID" -o ! -d $LOGSDIR ]; then
 	echo "ERROR: 'build/$ROCKCFG_ID/' is not a valid build root (sandbox)"
 	exit 1
