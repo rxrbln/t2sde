@@ -20,11 +20,14 @@ fi
 
 trap 'echo "Got SIGINT (Crtl-C)." ; rm $$.log ; exit 1' INT
 
-svn diff $* | awk "
-	BEGIN { FS=\"[ /\t]\" }
-	/+++ / { pkg=\$4 }
-	/-\[V\] / { oldver=\$2 }
-	/+\[V\] / {
+# the grep -v === is a hack - somehow the svn === lines confuse awk ... ?!?
+svn diff $* | grep -v === | awk "
+	BEGIN { FS=\"[ /]\" }
+
+	/^\+\+\+ / { pkg = \$4 }
+
+	/^\-\[V\] / { oldver=\$2 }
+	/^\+\[V\] / {
 		newver=\$2
 		if ( oldver )
 		  print \"\t* updated \" pkg \" (\" oldver \" -> \" newver \")\"
