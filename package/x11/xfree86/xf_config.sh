@@ -67,17 +67,24 @@ xf_build() {
 
 # install the World
 xf_install() {
+	echo "Create /etc/X11 (if it's not already there) ..."
+	mkdir -p $root/etc/X11
+
 	eval $MAKE install
 	eval $MAKE install.man
 	cd nls ; eval $MAKE install ; cd ..
 
 	rm -fv $root/usr/X11
-	rm -fv $root/usr/include/X11
+	rm -fv $root/usr/bin/X11
 	rm -fv $root/usr/lib/X11
+	rm -fv $root/usr/include/X11
+
 	ln -sv X11R6 $root/usr/X11
-	ln -sv ../X11/include/X11 $root/usr/include/X11
+	ln -sv ../X11/bin $root/usr/bin/X11
 	ln -sv ../X11/lib/X11 $root/usr/lib/X11
-	mkdir -p $root/usr/X11/lib/X11/fonts/TrueType
+	ln -sv ../X11/include/X11 $root/usr/include/X11
+
+	mkdir -p $root/usr/X11R6/lib/X11/fonts/TrueType
 	
 	echo "Copy TWM config files ..."
 	cp -v programs/twm/system.twmrc.orig \
@@ -89,9 +96,6 @@ xf_install() {
 	rm -rf $root/usr/doc/X11
 	cp -rv doc/* $docdir
 	ln -s $docdir X11
-
-	echo "Create /etc/X11 (if it's not allready there) ..."
-	mkdir -p /etc/X11
 
 	echo "Copying default example configs ..."
 	cp -fv $base/package/x11/xfree86/XF86Config.data $root/etc/X11/XF86Config
