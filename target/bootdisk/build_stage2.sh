@@ -104,7 +104,7 @@ ln -s bin sbin ; ln -s . usr
 progs="agetty bash cat cp date dd df ifconfig ln ls mine mkdir mke2fs \
        mkswap mount mv rm reboot route sleep swapoff swapon sync umount \
        eject chmod chroot grep halt rmdir sh shutdown uname killall5 \
-       stone mktemp sort fold sed mkreiserfs cut"
+       stone mktemp sort fold sed mkreiserfs cut head tail disktype"
 
 progs="$progs fdisk sfdisk"
 
@@ -156,9 +156,6 @@ mkdir -p etc/stone.d
 for i in gui_text mod_install mod_packages mod_gas default ; do
 	cp -v ../2nd_stage/etc/stone.d/$i.sh etc/stone.d
 done
-#
-echo_status "Copy head replacement script."
-cp $base/target/$target/head bin/head ; chmod +x bin/head
 #
 echo_status "Creating links for identical files."
 while read ck fn
