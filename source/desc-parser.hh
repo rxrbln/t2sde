@@ -5,7 +5,7 @@
 // some logic to compare version numbers, including -beta and
 // -alpha suffixes
 
-// TODO: IMHO better tat bookkeeping ... -ReneR
+// TODO: IMHO better tag bookkeeping ... -ReneR
 class Package : public TagParser
 {
 public:
