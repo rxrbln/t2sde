@@ -46,6 +46,7 @@ else
 fi
 
 package_map="+$packager $( echo "$package_map" | tr -s ' ' | tr ' ' '\n') "
+forgotten_packages=
 
 echo_status "Extracting the packages archives."
 for x in $( ls ../../pkgs/*.tar.bz2 | tr . / | cut -f8 -d/ )
@@ -55,11 +56,19 @@ do
 	if [ -z "$y" ]; then
 		echo_error "\`- Not found in \$package_map: $x"
 		echo_error "    ... fix target/$target/build_stage2.sh"
+		var_append forgotten_packages ' ' $x
 	elif [ "$y" == "+" ]; then
 		echo_status "\`- Extracting $x.tar.bz2 ..."
 		tar -p $taropt ../../pkgs/$x.tar.bz2
 	fi
 done
+
+if [ "$forgotten_packages" ]; then
+	echo_status "Forgotten packages summary:"
+	for x in $forgotten_packages; do
+		echo_error "\`- $x"
+	done
+fi
 #
 echo_status "Saving boot/* - we do not need this on the 2nd stage ..."
 rm -rf ../boot ; mkdir ../boot
