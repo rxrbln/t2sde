@@ -22,6 +22,8 @@
 #
 # [MAIN] 20 network Network Configuration
 
+### DYNAMIC NEW-STYLE CONFIG ###
+
 rocknet_base="/etc/network"
 
 edit() {
@@ -197,6 +199,62 @@ del_interface() {
 	write_section "$1"
 }
 
+### STATIC OLD-STYLE CONFIG ###
+
+set_name() {
+	old1="$HOSTNAME" old2="$HOSTNAME.$DOMAINNAME" old3="$DOMAINNAME"
+	if [ $1 = HOSTNAME ] ; then
+		gui_input "Set a new hostname (without domain part)" \
+		          "${!1}" "$1"
+	else
+		gui_input "Set a new domainname (without host part)" \
+		          "${!1}" "$1"
+	fi
+	new="$HOSTNAME.$DOMAINNAME $HOSTNAME"
+
+	echo "$HOSTNAME" > /etc/HOSTNAME ; hostname "$HOSTNAME"
+
+	#ip="`echo $IPADDR | sed 's,[/ ].*,,'`"
+	#if grep -q "^$ip\\b" /etc/hosts ; then
+	#	tmp="`mktemp`"
+	#	sed -e "/^$ip\\b/ s,\\b$old2\\b[ 	]*,,g" \
+	#	    -e "/^$ip\\b/ s,\\b$old1\\b[ 	]*,,g" \
+	#	    -e "/^$ip\\b/ s,[ 	]\\+,&$new ," < /etc/hosts > $tmp
+	#	cat $tmp > /etc/hosts ; rm -f $tmp
+	#else
+	#	echo -e "$ip\\t$new" >> /etc/hosts
+	#fi
+
+	if [ $1 = DOMAINNAME ] ; then
+		tmp="`mktemp`"
+		grep -vx "search $old3" /etc/resolv.conf > $tmp
+		[ -n "$DOMAINNAME" ] && echo "search $DOMAINNAME" >> $tmp
+		cat $tmp > /etc/resolv.conf
+		rm -f $tmp
+	fi
+}
+
+set_dns() {
+	gui_input "Set a new (space seperated) list of DNS Servers" "$DNSSRV" "DNSSRV"
+	DNSSRV="`echo $DNSSRV`" ; [ -z "$DNSSRV" ] && DNSSRV="none"
+
+	tmp="`mktemp`" ; grep -v '^nameserver\b' /etc/resolv.conf > $tmp
+	for x in $DNSSRV ; do
+		[ "$x" != "none" ] && echo "nameserver $x" >> $tmp
+	done
+	cat $tmp > /etc/resolv.conf
+	rm -f $tmp
+}
+
+HOSTNAME="`hostname`"
+DOMAINNAME="`hostname -d 2> /dev/null`"
+
+tmp="`mktemp`"
+grep '^nameserver ' /etc/resolv.conf | tr '\t' ' ' | tr -s ' ' | \
+    sed 's,^nameserver *\([^ ]*\),DNSSRV="$DNSSRV \1",' > $tmp
+DNSSRV='' ; . $tmp ; DNSSRV="`echo $DNSSRV`"
+[ -z "$DNSSRV" ] && DNSSRV="none" ; rm -f $tmp
+
 main() {
     first_run=1
     while
@@ -229,6 +287,10 @@ WARNING: This script tries to adapt /etc/network/config and /etc/hosts
 according to your changes. Changes only take affect the next time
 rocknet is executed.'"
 
+	cmd="$cmd 'Static hostname:   $HOSTNAME'   'set_name HOSTNAME'"
+	cmd="$cmd 'Static domainname: $DOMAINNAME' 'set_name DOMAINNAME'"
+	cmd="$cmd 'Static DNS-Server: $DNSSRV'     'set_dns' '' ''"
+
 	for (( i=0 ; $i < ${#tags[@]} ; i=i+1 )) ; do
 		cmd="$cmd '${tags[$i]}' 'edit_global_tag $i'"
 	done
@@ -249,8 +311,9 @@ rocknet is executed.'"
 	cmd="$cmd '$STONE runlevel restart network'"
 	cmd="$cmd '' ''"
 
+	cmd="$cmd 'View/Edit /etc/resolv.conf file'     'edit /etc/resolv.conf'"
+	cmd="$cmd 'View/Edit /etc/hosts file'           'edit /etc/hosts'"
 	cmd="$cmd 'View/Edit $rocknet_base/config file' 'edit $rocknet_base/config'"
-	cmd="$cmd 'View/Edit /etc/hosts file'          'edit /etc/hosts'"
 
 	eval "$cmd"
     do : ; done
