@@ -81,8 +81,8 @@ ln -s bin sbin ; ln -s . usr
 #
 
 progs="agetty bash cat cp date dd df ifconfig ip ln ls mine mkdir mke2fs \
-       mkswap mount mv rm reboot route sleep swapoff swapon sync umount wget
-       eject"
+       mkswap mount mv rm reboot route sleep swapoff swapon sync umount wget \
+       eject chmod chroot grep halt rmdir sh shutdown uname killall5"
 
 progs="$progs fdisk sfdisk"
 
@@ -99,7 +99,7 @@ for x in $progs ; do
 	[ -f ../2nd_stage/usr/sbin/$x ] && fn="usr/sbin/$x"
 
 	if [ "$fn" ] ; then
-		cp ../2nd_stage/$fn $fn
+		cp -d ../2nd_stage/$fn $fn
 	else
 		echo_error "\`- Program not found: $x"
 	fi
