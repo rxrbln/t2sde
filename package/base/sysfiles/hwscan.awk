@@ -19,8 +19,8 @@ function autocomplete(mod, id) {
 
 	if ( modidx[mod] ~ "/video/" ) {
 		driver_cmd[id] = driver_cmd[id] \
-			"\n:touch /dev/vc/{1,2,3,4,5,6}" \
-			"\n:fbset -a 800x600-60" \
+			"\n: touch /dev/vc/{1,2,3,4,5,6}" \
+			"\n: fbset -a 800x600-60" \
 			"\nchvt 2; sleep 1; chvt 1";
 		driver_initrd[id] = 0;
 	}
