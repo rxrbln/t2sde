@@ -35,7 +35,7 @@ all: $(BUILD_OBJS) $(BUILD_PROGS)
 
 include $(TOPDIR)/Rules
 
-INCDIRS := . ../include
+INCDIRS := . ../include utility/include
 
 INCLUDES := $(SIGC2INCS) \
 	$(filter-out $(NOT_INCS), \
