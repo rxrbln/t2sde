@@ -59,6 +59,7 @@ for x in `egrep 'X .* KERNEL .*' $base/config/$config/packages |
 
   echo_status "Copy scsi and network kernel modules."
   for x in ../$moduledir/kernel/drivers/{scsi,net}/*.{ko,o} \
+      ../$moduledir/kernel/drivers/md/dm-mod.ko \
       ../$moduledir/kernel/fs/nls/nls_{utf8,iso8859-{1,15}}.{ko,o}
   do
 	# this test is needed in case there are no .o or only .ko files
