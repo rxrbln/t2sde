@@ -84,6 +84,10 @@ rmdir $tmpdir/lost+found/
 cp -a initrd/* $tmpdir
 umount $tmpdir
 #
+echo_status "Compressing initrd image file."
+gzip -9 initrd.img 
+mv initrd{.img,}.gz
+#
 echo_status "Removing temporary files."
 losetup -d $tmpdev
 rm -rf $tmpdir
