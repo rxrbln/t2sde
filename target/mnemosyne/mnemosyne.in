@@ -1,0 +1,122 @@
+#!/bin/bash
+
+#
+#
+
+trg_mnemosyne_features() {
+	local xroot="$1"
+	local prefix=${2:-MNEMOSYNE}
+
+	for file in $xroot/*.{ask,all}; do
+		file=${file##$xroot/} ; 
+		[ -r $xroot/$file ] && trg_mnemosyne_feature
+	done
+	for dir in `find "$xroot/" -maxdepth 1 -type d ! -name CVS ! -name .svn | sed s,$xroot/,,g`; do
+		dir="${dir%$xroot/}"
+		if [ ! -f $xroot/$dir.all -a ! -f $xroot/$dir.ask -a \
+			! -f $xroot/[0-9]*-$dir.all -a ! -f $xroot/[0-9]*-$dir.ask ]; then
+
+			comment "--- ${dir/_/ }"
+			#menu_begin MENU_TGT_$prefix_$dir "${dir/_/ }"
+				block_begin 2
+				trg_mnemosyne_features "$xroot/$dir" $prefix
+				block_end
+			#menu_end
+		fi
+	done
+}
+
+trg_mnemosyne_feature() {
+	local option desc var default
+	local help
+	local render
+
+	if [ "$file" != "${file%.all}" ]; then
+		option=${file%.all}
+		render=0
+	else
+		option=${file%.ask}
+		render=1
+	fi
+	option=${option/[0-9]*-/}
+
+	desc=`sed -n 's/^#Description: \(.*\)/\1/p' $xroot/$file`
+	desc="${desc:-${option/_/ }}"
+
+	var=`sed -n 's/^#Variable: \(.*\)/\1/p' $xroot/$file`
+	var="${var:-`echo $option | tr [a-z] [A-Z]`}"
+	var='ROCKCFG_TRG_'$prefix'_'$var
+
+	if [ $render -eq 1 ]; then
+		default=`sed -n 's/^#Default: \(.*\)/\1/p' $xroot/$file`
+		default=${default:-0}
+
+		if [ -r "$xroot/$option.hlp" ]; then
+			help=<$xroot/$option.hlp
+		else
+			help=
+		fi
+
+		bool "$desc" $var $default "$help"
+	else
+		eval export $var=1
+	fi
+	
+	if eval "test \$$var -eq 1 "; then
+		var_append 'CFGTEMP_TRG_'$prefix'_PKGLST' ' ' "$xroot/$file"
+
+		test -r "$xroot/$option.in" && . "$xroot/$option.in"
+
+		if [ -d "$xroot/$option" ]; then
+			block_begin 2
+			comment "-- $desc Options"
+			#menu_begin 'MENU_TGT_'$prefix'_'$option "$desc Options"
+				block_begin 2
+				trg_mnemosyne_features $xroot/$option
+				block_end
+			#menu_end
+			block_end
+		fi
+	fi
+}
+
+trg_mnemosyne_filter() {
+	echo "# generated for $ROCKCFG_TARGET target"
+	echo '{ $1="O"; }'
+	for file; do
+		while read action patternlist ; do
+			[ -z "$action" ] && continue;
+			case "$action" in
+			    [#]*)
+				continue ;;
+			    [xX])
+				action='$1="X"' ;;
+			    [oO])
+				action='$1="O"' ;;
+			    -)
+				action='next'   ;;
+			    *)
+				echo '{ exit; }'
+				continue ;;
+			esac
+			address="" ; first="(" ; others="&&"
+			while read pattern ; do
+				if [ -z "$address" ] && \
+				   [ "$pattern" = "!" ] ; then
+					address="! " ; others="||"
+				else
+					pattern="$( echo "$pattern" | sed \
+						-e 's,[^a-zA-Z0-9_/\*+\.-],,g' \
+						-e 's,[/\.\+],\\&,g' \
+						-e 's,\*,[^ ]*,g' )"
+					[ "$pattern" ] || continue
+					address="$address$first"
+					address="$address / $pattern /"
+					first=" $others"
+				fi
+			done < <( echo "$patternlist" | tr '\t ' '\n\n' )
+			echo "$address ) { $action; }"
+		done < $file
+	done | sort -u
+	echo '{ print; }' 
+}
