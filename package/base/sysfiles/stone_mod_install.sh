@@ -91,7 +91,7 @@ part_add() {
 	type="`disktype /dev/$1/$2 | \
 		grep -v -e '^  ' -e '^Block device' -e '^Partition' -e '^---' | \
 		sed -e 's/[,(].*//' -e '/^$/d' -e 's/ $//' | tail -1`"
-	[ "$type" ] || type="Blank disk/medium?"
+	[ "$type" ] || type="undetected"
 	cmd="$cmd '`printf "%-8s %-24s" $2 "$location"` ($type)' 'part_${action}_action $1 $2'"
 }
 
