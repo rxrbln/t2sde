@@ -122,7 +122,7 @@ xf_install() {
 	ln -sf ../../../var/lib/xkb $root/etc/X11/xkb/compiled
 
 	echo "Installing XFree86 Init Scripts ..."
-	install_init xdm $base/package/x11/xfree86/xfs.init
+	install_init xfs $base/package/x11/xfree86/xfs.init
 	install_init xdm $base/package/x11/xfree86/xdm.init
 
 	echo "Installing XFree86 Setup Script ..."
