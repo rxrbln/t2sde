@@ -20,8 +20,8 @@ then
 	cp -v $base/target/$target/sparc/{silo.conf,boot.msg} \
 	  boot
 	#
-	# echo_status "Moving image (initrd) to boot directory."
-	# mv -v initrd.img boot/
+	echo_status "Moving image (initrd) to boot directory."
+	mv -v initrd.gz boot/
 	#
 	buildroot="build/${ROCKCFG_ID}"
 	datadir="build/${ROCKCFG_ID}/ROCK/bootdisk"

@@ -16,4 +16,3 @@ So you are going to install ROCK Linux ...
 Possible choices are:
   install ........... normal CD boot 
 
-.
