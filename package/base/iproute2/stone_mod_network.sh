@@ -76,6 +76,9 @@ write_section() {
 				prof="$( echo "$para" | sed 's,[(),],_,g' )"
 				[ "$prof" = "$1" ] && passit=0 || passit=1
 				globals=0
+
+				# write out a separating newline
+				echo "" >> $rocknet_base/config.new
 			fi
 
 			# when we reached the matching section dump the
@@ -101,7 +104,7 @@ write_section() {
 					$rocknet_base/config.new
 			fi
 		fi
-	done < <( sed 's,#.*,,' < "$rocknet_base"/config )
+	done < <( cat < "$rocknet_base"/config )
 	mv $rocknet_base/config{.new,}
 }
 
