@@ -55,6 +55,16 @@ SPLIT	build/${ROCKCFG_ID}/pkgs/	${ROCKCFG_SHORTID}/pkgs/
 EOT
 
 echo_header "Reference build finished."
+
+cat <<- EOT > build/${ROCKCFG_ID}/result/copy-cache.sh
+	#!/bin/sh
+	cd $base/build/${ROCKCFG_ID}/result
+	find package -type f | while read fn
+	do [ -f ../../../\${fn%.cache}.desc ] && cp -v \$fn ../../../\$fn; done
+	cd ../../..; ./scripts/Create-DepDB > scripts/dep_db.txt
+EOT
+chmod +x build/${ROCKCFG_ID}/result/copy-cache.sh
+
 echo_status "Results are stored in the directory"
 echo_status "build/$ROCKCFG_ID/result/."
 
