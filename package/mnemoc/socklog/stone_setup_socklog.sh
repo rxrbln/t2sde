@@ -5,6 +5,6 @@ D_commanddir/socklog-conf klog nobody log D_sysconfdir D_logdir-klog
 
 for y in unix klog; do
 	if [ ! -e "D_servicedir/socklog-$y" ]; then
-		ln -s D_servicedir/socklog-$y D_sysconfdir/$y
+		ln -s D_sysconfdir/$y D_servicedir/socklog-$y
 	fi
 done
