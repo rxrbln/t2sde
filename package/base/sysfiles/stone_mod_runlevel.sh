@@ -121,9 +121,9 @@ main() {
 			      cut -f2- -d: | tr -d "'" | cut -c1-45`
 			desc="$( printf "%-10s %s" "$srv" "$desc" )"
 
-			echo "$pri '$pri $rlv  $desc' 'edit_srv $srv'"
+			echo "$pri$srv '$pri $rlv  $desc' 'edit_srv $srv'"
 		done | sort > $x
-		cmd="$cmd $(cut -c4- < $x | tr '\n' ' ')"
+		cmd="$cmd $(cut -f2- -d' ' < $x | tr '\n' ' ')"
 		rm -f $x ; eval "$cmd"
 	do : ; done
 }

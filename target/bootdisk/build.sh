@@ -8,6 +8,9 @@ then
 	rm -rf $disksdir; mkdir -p $disksdir; chmod 700 $disksdir
 fi
 
+# Re-evaluate CC and other variables (as we have built the cross cc now)
+. scripts/parse-config
+
 # Add tools.cross/diet-bin/ to path so we find our 'diet' program
 PATH="$base/build/${ROCKCFG_ID}/$toolsdir/diet-bin:$PATH"
 
