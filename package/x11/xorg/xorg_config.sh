@@ -132,7 +132,7 @@ x_install() {
 	echo "export WINDOWMANAGER=kde" > $root/etc/profile.d/windowmanager
 
 	echo "Installing X Cron Script ..."
-	cp -fv $base/package/x11/xorg/xorg.cron \
+	rock_substitute $base/package/x11/xorg/xorg.cron > \
 		$root/etc/cron.daily/80-xorg
 	chmod +x $root/etc/cron.daily/80-xorg
 }
