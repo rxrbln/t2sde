@@ -46,12 +46,41 @@ public:
   
   int operator() (const Version& a, const Version& b)
   {
-    std::string::size_type i = 0;
-    for (; i < std::min(a.size(), b.size()); ++i) {
-      //std::cout << i << ": " << a[i] << " vs. " << b[i] << std::endl;
-      if (a[i] < b[i])
+    class subversion {
+    public:
+      
+      std::string::size_type read (const std::string& s, std::string::size_type i)
+      {
+	val = 0;
+	//std::cout << i << ": " << s[i] << std::endl;
+	for (;i < s.size() && isdigit(s[i]); ++i) {
+	  push (s[i]);
+	  // std::cout << "  " << val << std::endl;
+	}
+	return ++i;
+      }
+      
+      int push (char c) {
+	// of course for the pure version check the "- '0'" is pure overhead
+	// so just for the correctness -ReneR
+	return val = (val * 10) + (c - '0');
+      }
+      
+      int val;
+    };
+    
+    std::string::size_type i, j;
+    subversion subv_a, subv_b;
+    for (i = j = 0; i < a.size() && j < b.size();) {
+      
+      i = subv_a.read(a.Str(), i);
+      j = subv_b.read(b.Str(), j);
+      
+      std::cout << subv_a.val << " vs " << subv_b.val << std::endl;
+      
+      if (subv_a.val < subv_b.val)
 	return -1;
-      if (a[i] > b[i])
+      if (subv_a.val > subv_b.val)
 	return 1;
     }
     
@@ -65,7 +94,7 @@ public:
       return 1;
   }
   
-  const std::string& Str () {
+  const std::string& Str () const {
     return version;
   }
   
