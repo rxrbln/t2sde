@@ -9,13 +9,7 @@ diet $CC $base/target/$target/linuxrc.c -Wall \
 	-DSTAGE_2_BIG_IMAGE="\"${ROCKCFG_SHORTID}/2nd_stage.tar.gz\"" \
 	-DSTAGE_2_SMALL_IMAGE="\"${ROCKCFG_SHORTID}/2nd_stage_small.tar.gz\"" \
 	-o linuxrc # > $disksdir/tmp 2>&1
-# I always prefer to see the output !
-# Only print this output if it's not the usual dietlibc junk
-#x="$( sed 's,^[^:]*: ,~~: ,' < $disksdir/tmp | md5sum | cut -f1 -d' ' )"
-#if [ "$x" != "0ede96ab34b5572403579dfb48ebe10c" ] ; then
-#	cat $disksdir/tmp ; echo "[ $x ]"
-#fi ; rm -f $disksdir/tmp
-
+#
 echo_status "Copy various helper applications."
 cp ../2nd_stage/bin/{tar,gzip} bin/
 cp ../2nd_stage/sbin/{ip,hwscan} bin/
@@ -49,11 +43,12 @@ done
 rm -f lib/modules/[0-9]*/kernel/drivers/scsi/{st,scsi_debug}.o
 rm -f lib/modules/[0-9]*/kernel/drivers/net/{dummy,ppp*}.o
 #
-if [ "$ROCK_DEBUG_BOOTDISK_USEKISS" = 1 ]; then
-	echo_status "Using kiss shell for debugging initrd image."
-	cp /bin/kiss bin/; mv linuxrc bin/; ln -s bin/kiss linuxrc
-	rm -f lib/modules/[0-9]*/kernel/drivers/net/{dgrx,acenic}.o
-	rm -f lib/modules/[0-9]*/kernel/drivers/scsi/{advansys,qla1280}.o
+if [ "$ROCKCFG_BOOTDISK_USEKISS" = 1 ]; then
+	echo_status "Adding kiss shell for expert use of the initrd image."
+	cp $root/bin/kiss bin/
+	#mv linuxrc bin/; ln -s bin/kiss linuxrc
+	#rm -f lib/modules/[0-9]*/kernel/drivers/net/{dgrx,acenic}.o
+	#rm -f lib/modules/[0-9]*/kernel/drivers/scsi/{advansys,qla1280}.o
 fi
 cd ..
 
