@@ -199,6 +199,10 @@ lx_patch ()
 	rm -f .config.old
 	find -name '*.orig' -o -name '*~' | xargs rm -f
 
+	# some arches (sh64 at the time of writing) have a "defect" Makefile
+	# and do not work without a .config ...
+	touch .config
+
 	echo "... linux source patching finished."
 }
 
