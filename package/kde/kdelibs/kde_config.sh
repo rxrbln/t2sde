@@ -1,9 +1,9 @@
 
 if [ "$prefix_auto" = 1 ] ; then
   if [ "$NO_SANITY_CHECK" ] ; then
-	prefix=$ROCKCFG_PKG_KDE32_CORE_PREFIX
+	prefix=$ROCKCFG_PKG_KDE33_CORE_PREFIX
   else 
-	for dir in usr opt/kde32 $ROCKCFG_PKG_KDE32_CORE_PREFIX ; do
+	for dir in usr opt/kde33 $ROCKCFG_PKG_KDE33_CORE_PREFIX ; do
 		[ -f "$root/$dir/bin/artsd" ] && prefix="$dir"
 	done
 
