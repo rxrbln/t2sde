@@ -20,6 +20,7 @@ if [ -d package/*/$pkg ]; then
 	./scripts/Create-CkSumPatch $pkg | patch -p0
 else
 	echo "ERROR: package $pkg doesn't exist"
-	echo package/*/*$pkg*/ | tr ' ' '\n' | grep -v '*'
+	pkg=`echo "$pkg" | tr '\-_.' '***'`
+	echo `echo package/*/*$pkg*/ | tr ' ' '\n' | grep -v '*' | cut -d'/' -f3`
 fi
 
