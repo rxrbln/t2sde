@@ -1,0 +1,551 @@
+
+Some fixes from PAM cvs (checked out at 2003-05-03).
+
+diff -x CVS -x '*cvs*' -ruN Linux-PAM-0.77/modules/pam_unix/Makefile Linux-PAM/modules/pam_unix/Makefile
+--- Linux-PAM-0.77/modules/pam_unix/Makefile	2001-02-11 07:33:53.000000000 +0100
++++ Linux-PAM/modules/pam_unix/Makefile	2003-01-14 06:43:07.000000000 +0100
+@@ -1,4 +1,4 @@
+-# $Id: cvs-fixes.patch,v 1.1 2003/05/03 13:03:46 clifford Exp $
++# $Id: cvs-fixes.patch,v 1.1 2003/05/03 13:03:46 clifford Exp $
+ #
+ # This Makefile controls a build process of the pam_unix modules
+ # for Linux-PAM. You should not modify this Makefile.
+@@ -41,8 +41,10 @@
+ 
+ ########################################################################
+ 
+-CFLAGS += $(USE_CRACKLIB) $(USE_LCKPWDF) $(NEED_LCKPWDF) $(EXTRAS)
+-LDLIBS = $(EXTRALS)
++CFLAGS += $(USE_CRACKLIB) $(USE_LCKPWDF) $(NEED_LCKPWDF) $(EXTRAS) \
++	 -I../pammodutil/include
++
++LDLIBS = $(EXTRALS) -L../pammodutil -lpammodutil
+ 
+ ifdef USE_CRACKLIB
+ CRACKLIB = -lcrack
+diff -x CVS -x '*cvs*' -ruN Linux-PAM-0.77/modules/pam_unix/pam_unix_passwd.c Linux-PAM/modules/pam_unix/pam_unix_passwd.c
+--- Linux-PAM-0.77/modules/pam_unix/pam_unix_passwd.c	2002-07-09 06:44:18.000000000 +0200
++++ Linux-PAM/modules/pam_unix/pam_unix_passwd.c	2003-01-14 06:43:07.000000000 +0100
+@@ -88,7 +88,7 @@
+  */
+ 
+ #ifdef NEED_LCKPWDF
+-#include "./lckpwdf.-c"
++# include "./lckpwdf.-c"
+ #endif
+ 
+ extern char *bigcrypt(const char *key, const char *salt);
+@@ -471,10 +471,7 @@
+ 
+ 	D(("called"));
+ 
+-	setpwent();
+ 	pwd = getpwnam(forwho);
+-	endpwent();
+-
+ 	if (pwd == NULL)
+ 		return PAM_AUTHTOK_ERR;
+ 
+@@ -544,6 +541,24 @@
+ 	if (save_old_password(forwho, fromwhat, remember)) {
+ 		return PAM_AUTHTOK_ERR;
+ 	}
++
++#ifdef USE_LCKPWDF
++	/*
++	 * These values for the number of attempts and the sleep time
++	 * are, of course, completely arbitrary.
++	 *
++	 * My reading of the PAM docs is that, once pam_chauthtok()
++	 * has been called with PAM_UPDATE_AUTHTOK, we are obliged to
++	 * take any reasonable steps to make sure the token is
++	 * updated; so retrying for 1/10 sec. isn't overdoing it.
++	 */
++
++	retval = lckpwdf();
++	if (retval != 0) {
++	    return PAM_AUTHTOK_LOCK_BUSY;
++	}
++#endif /* def USE_LCKPWDF */
++	
+ 	if (on(UNIX_SHADOW, ctrl) || (strcmp(pwd->pw_passwd, "x") == 0)) {
+ 		retval = _update_shadow(forwho, towhat);
+ 		if (retval == PAM_SUCCESS)
+@@ -552,6 +567,10 @@
+ 		retval = _update_passwd(pamh, forwho, towhat);
+ 	}
+ 
++#ifdef USE_LCKPWDF
++	ulckpwdf();
++#endif /* def USE_LCKPWDF */
++
+ 	return retval;
+ }
+ 
+@@ -563,9 +582,7 @@
+ 	int retval = PAM_SUCCESS;
+ 
+ 	/* UNIX passwords area */
+-	setpwent();
+ 	pwd = getpwnam(user);	/* Get password file entry... */
+-	endpwent();
+ 	if (pwd == NULL)
+ 		return PAM_AUTHINFO_UNAVAIL;	/* We don't need to do the rest... */
+ 
+@@ -679,7 +696,7 @@
+ 				int argc, const char **argv)
+ {
+ 	unsigned int ctrl, lctrl;
+-	int retval, i;
++	int retval;
+ 	int remember = -1;
+ 
+ 	/* <DO NOT free() THESE> */
+@@ -689,33 +706,12 @@
+ 
+ 	D(("called."));
+ 
+-#ifdef USE_LCKPWDF
+-	/* our current locking system requires that we lock the
+-	   entire password database.  This avoids both livelock
+-	   and deadlock. */
+-	/* These values for the number of attempts and the sleep time
+-	   are, of course, completely arbitrary.
+-	   My reading of the PAM docs is that, once pam_chauthtok() has been
+-	   called with PAM_UPDATE_AUTHTOK, we are obliged to take any
+-	   reasonable steps to make sure the token is updated; so retrying
+-	   for 1/10 sec. isn't overdoing it.
+-	   The other possibility is to call lckpwdf() on the first
+-	   pam_chauthtok() pass, and hold the lock until released in the
+-	   second pass--but is this guaranteed to work? -SRL */
+-	i=0;
+-	while((retval = lckpwdf()) != 0 && i < 100) {
+-		usleep(1000);
+-	}
+-	if(retval != 0) {
+-		return PAM_AUTHTOK_LOCK_BUSY;
+-	}
+-#endif
+ 	ctrl = _set_ctrl(pamh, flags, &remember, argc, argv);
+ 
+ 	/*
+ 	 * First get the name of a user
+ 	 */
+-	retval = pam_get_user(pamh, &user, "Username: ");
++	retval = pam_get_user(pamh, &user, NULL);
+ 	if (retval == PAM_SUCCESS) {
+ 		/*
+ 		 * Various libraries at various times have had bugs related to
+@@ -725,9 +721,6 @@
+ 		 */
+ 		if (user == NULL || !isalnum(*user)) {
+ 			_log_err(LOG_ERR, pamh, "bad username [%s]", user);
+-#ifdef USE_LCKPWDF
+-			ulckpwdf();
+-#endif
+ 			return PAM_USER_UNKNOWN;
+ 		}
+ 		if (retval == PAM_SUCCESS && on(UNIX_DEBUG, ctrl))
+@@ -737,9 +730,6 @@
+ 		if (on(UNIX_DEBUG, ctrl))
+ 			_log_err(LOG_DEBUG, pamh,
+ 			         "password - could not identify user");
+-#ifdef USE_LCKPWDF
+-		ulckpwdf();
+-#endif
+ 		return retval;
+ 	}
+ 
+@@ -761,9 +751,6 @@
+ 		D(("prelim check"));
+ 
+ 		if (_unix_blankpasswd(ctrl, user)) {
+-#ifdef USE_LCKPWDF
+-			ulckpwdf();
+-#endif
+ 			return PAM_SUCCESS;
+ 		} else if (off(UNIX__IAMROOT, ctrl)) {
+ 
+@@ -773,9 +760,6 @@
+ 			if (Announce == NULL) {
+ 				_log_err(LOG_CRIT, pamh,
+ 				         "password - out of memory");
+-#ifdef USE_LCKPWDF
+-				ulckpwdf();
+-#endif
+ 				return PAM_BUF_ERR;
+ 			}
+ 			(void) strcpy(Announce, greeting);
+@@ -795,9 +779,6 @@
+ 			if (retval != PAM_SUCCESS) {
+ 				_log_err(LOG_NOTICE, pamh
+ 				 ,"password - (old) token not obtained");
+-#ifdef USE_LCKPWDF
+-				ulckpwdf();
+-#endif
+ 				return retval;
+ 			}
+ 			/* verify that this is the password for this user */
+@@ -812,9 +793,6 @@
+ 		if (retval != PAM_SUCCESS) {
+ 			D(("Authentication failed"));
+ 			pass_old = NULL;
+-#ifdef USE_LCKPWDF
+-			ulckpwdf();
+-#endif
+ 			return retval;
+ 		}
+ 		retval = pam_set_item(pamh, PAM_OLDAUTHTOK, (const void *) pass_old);
+@@ -867,17 +845,11 @@
+ 
+ 		if (retval != PAM_SUCCESS) {
+ 			_log_err(LOG_NOTICE, pamh, "user not authenticated");
+-#ifdef USE_LCKPWDF
+-			ulckpwdf();
+-#endif
+ 			return retval;
+ 		}
+ 		retval = _unix_verify_shadow(user, ctrl);
+ 		if (retval != PAM_SUCCESS) {
+ 			_log_err(LOG_NOTICE, pamh, "user not authenticated 2");
+-#ifdef USE_LCKPWDF
+-			ulckpwdf();
+-#endif
+ 			return retval;
+ 		}
+ 		D(("get new password now"));
+@@ -908,9 +880,6 @@
+ 						 ,"password - new password not obtained");
+ 				}
+ 				pass_old = NULL;	/* tidy up */
+-#ifdef USE_LCKPWDF
+-				ulckpwdf();
+-#endif
+ 				return retval;
+ 			}
+ 			D(("returned to _unix_chauthtok"));
+@@ -931,9 +900,6 @@
+ 			_log_err(LOG_NOTICE, pamh,
+ 			         "new password not acceptable");
+ 			pass_new = pass_old = NULL;	/* tidy up */
+-#ifdef USE_LCKPWDF
+-			ulckpwdf();
+-#endif
+ 			return retval;
+ 		}
+ 		/*
+@@ -974,9 +940,6 @@
+ 					_log_err(LOG_CRIT, pamh,
+ 					         "out of memory for password");
+ 					pass_new = pass_old = NULL;	/* tidy up */
+-#ifdef USE_LCKPWDF
+-					ulckpwdf();
+-#endif
+ 					return PAM_BUF_ERR;
+ 				}
+ 				/* copy first 8 bytes of password */
+@@ -998,6 +961,7 @@
+ 
+ 		retval = _do_setpass(pamh, user, pass_old, tpass, ctrl,
+ 		                     remember);
++
+ 		_pam_delete(tpass);
+ 		pass_old = pass_new = NULL;
+ 	} else {		/* something has broken with the module */
+@@ -1008,9 +972,6 @@
+ 
+ 	D(("retval was %d", retval));
+ 
+-#ifdef USE_LCKPWDF
+-	ulckpwdf();
+-#endif
+ 	return retval;
+ }
+ 
+diff -x CVS -x '*cvs*' -ruN Linux-PAM-0.77/modules/pam_unix/pam_unix_sess.c Linux-PAM/modules/pam_unix/pam_unix_sess.c
+--- Linux-PAM-0.77/modules/pam_unix/pam_unix_sess.c	2000-12-20 06:15:05.000000000 +0100
++++ Linux-PAM/modules/pam_unix/pam_unix_sess.c	2003-01-14 06:43:07.000000000 +0100
+@@ -1,5 +1,5 @@
+ /*
+- * $Id: cvs-fixes.patch,v 1.1 2003/05/03 13:03:46 clifford Exp $
++ * $Id: cvs-fixes.patch,v 1.1 2003/05/03 13:03:46 clifford Exp $
+  *
+  * Copyright Alexander O. Yuriev, 1996.  All rights reserved.
+  * Copyright Jan Rêkorajski, 1999.  All rights reserved.
+@@ -53,6 +53,7 @@
+ 
+ #include <security/_pam_macros.h>
+ #include <security/pam_modules.h>
++#include <security/_pam_modutil.h>
+ 
+ #ifndef LINUX_PAM
+ #include <security/pam_appl.h>
+@@ -71,6 +72,7 @@
+ 	char *user_name, *service;
+ 	unsigned int ctrl;
+ 	int retval;
++    const char *login_name;
+ 
+ 	D(("called."));
+ 
+@@ -89,9 +91,12 @@
+ 		         "open_session - error recovering service");
+ 		return PAM_SESSION_ERR;
+ 	}
+-	_log_err(LOG_INFO, pamh, "session opened for user %s by %s(uid=%d)"
+-		 ,user_name
+-		 ,PAM_getlogin() == NULL ? "" : PAM_getlogin(), getuid());
++	login_name = _pammodutil_getlogin(pamh);
++	if (login_name == NULL) {
++	    login_name = "";
++	}
++	_log_err(LOG_INFO, pamh, "session opened for user %s by %s(uid=%d)",
++		 user_name, login_name, getuid());
+ 
+ 	return PAM_SUCCESS;
+ }
+diff -x CVS -x '*cvs*' -ruN Linux-PAM-0.77/modules/pam_unix/support.c Linux-PAM/modules/pam_unix/support.c
+--- Linux-PAM-0.77/modules/pam_unix/support.c	2002-09-23 19:33:22.000000000 +0200
++++ Linux-PAM/modules/pam_unix/support.c	2003-01-14 06:43:07.000000000 +0100
+@@ -1,5 +1,5 @@
+ /* 
+- * $Id: cvs-fixes.patch,v 1.1 2003/05/03 13:03:46 clifford Exp $
++ * $Id: cvs-fixes.patch,v 1.1 2003/05/03 13:03:46 clifford Exp $
+  *
+  * Copyright information at end of file.
+  */
+@@ -20,6 +20,7 @@
+ 
+ #include <security/_pam_macros.h>
+ #include <security/pam_modules.h>
++#include <security/_pam_modutil.h>
+ 
+ #include "md5.h"
+ #include "support.h"
+@@ -107,36 +108,6 @@
+ 	return retval;
+ }
+ 
+-  /*
+-   * Beacause getlogin() is braindead and sometimes it just
+-   * doesn't work, we reimplement it here.
+-   */
+-char *PAM_getlogin(void)
+-{
+-	struct utmp *ut, line;
+-	char *curr_tty, *retval;
+-	static char curr_user[sizeof(ut->ut_user) + 4];
+-
+-	retval = NULL;
+-
+-	curr_tty = ttyname(0);
+-	if (curr_tty != NULL) {
+-		D(("PAM_getlogin ttyname: %s", curr_tty));
+-		curr_tty += 5;
+-		setutent();
+-		strncpy(line.ut_line, curr_tty, sizeof(line.ut_line));
+-		if ((ut = getutline(&line)) != NULL) {
+-			strncpy(curr_user, ut->ut_user, sizeof(ut->ut_user));
+-			curr_user[sizeof(curr_user) - 1] = '\0';
+-			retval = curr_user;
+-		}
+-		endutent();
+-	}
+-	D(("PAM_getlogin retval: %s", retval));
+-
+-	return retval;
+-}
+-
+ /*
+  * set the control flags for the UNIX module.
+  */
+@@ -668,10 +639,17 @@
+ 
+ 			if (new != NULL) {
+ 
+-				new->user = x_strdup(name ? name : "");
++			    const char *login_name;
++
++			    login_name = _pammodutil_getlogin(pamh);
++			    if (login_name == NULL) {
++				login_name = "";
++			    }
++
++			        new->user = x_strdup(name ? name : "");
+ 				new->uid = getuid();
+ 				new->euid = geteuid();
+-				new->name = x_strdup(PAM_getlogin()? PAM_getlogin() : "");
++				new->name = x_strdup(login_name);
+ 
+ 				/* any previous failures for this user ? */
+ 				pam_get_data(pamh, data_name, (const void **) &old);
+diff -x CVS -x '*cvs*' -ruN Linux-PAM-0.77/modules/pam_unix/support.h Linux-PAM/modules/pam_unix/support.h
+--- Linux-PAM-0.77/modules/pam_unix/support.h	2002-07-11 07:43:51.000000000 +0200
++++ Linux-PAM/modules/pam_unix/support.h	2003-01-14 06:43:07.000000000 +0100
+@@ -1,5 +1,5 @@
+ /*
+- * $Id: cvs-fixes.patch,v 1.1 2003/05/03 13:03:46 clifford Exp $
++ * $Id: cvs-fixes.patch,v 1.1 2003/05/03 13:03:46 clifford Exp $
+  */
+ 
+ #ifndef _PAM_UNIX_SUPPORT_H
+@@ -125,7 +125,6 @@
+ 	_pam_drop(xx);		\
+ }
+ 
+-extern char *PAM_getlogin(void);
+ extern void _log_err(int err, pam_handle_t *pamh, const char *format,...);
+ extern int _make_remark(pam_handle_t * pamh, unsigned int ctrl
+ 		       ,int type, const char *text);
+diff -x CVS -x '*cvs*' -ruN Linux-PAM-0.77/modules/pam_wheel/pam_wheel.c Linux-PAM/modules/pam_wheel/pam_wheel.c
+--- Linux-PAM-0.77/modules/pam_wheel/pam_wheel.c	2002-07-13 07:48:19.000000000 +0200
++++ Linux-PAM/modules/pam_wheel/pam_wheel.c	2003-01-14 06:43:07.000000000 +0100
+@@ -43,6 +43,7 @@
+ #define PAM_SM_ACCOUNT
+ 
+ #include <security/pam_modules.h>
++#include <security/_pam_modutil.h>
+ 
+ /* some syslogging */
+ 
+@@ -110,7 +111,7 @@
+ 			 const char *use_group)
+ {
+     const char *username = NULL;
+-    char *fromsu;
++    const char *fromsu;
+     struct passwd *pwd, *tpwd;
+     struct group *grp;
+     int retval = PAM_AUTH_ERR;
+@@ -142,7 +143,7 @@
+ 	}
+ 	fromsu = tpwd->pw_name;
+     } else {
+-	fromsu = getlogin();
++	fromsu = _pammodutil_getlogin(pamh);
+ 	if (fromsu) {
+ 	    tpwd = getpwnam(fromsu);
+ 	}
+diff -x CVS -x '*cvs*' -ruN Linux-PAM-0.77/modules/pammodutil/Makefile Linux-PAM/modules/pammodutil/Makefile
+--- Linux-PAM-0.77/modules/pammodutil/Makefile	2001-12-09 23:15:12.000000000 +0100
++++ Linux-PAM/modules/pammodutil/Makefile	2003-01-14 06:43:07.000000000 +0100
+@@ -1,5 +1,5 @@
+ #
+-# $Id: cvs-fixes.patch,v 1.1 2003/05/03 13:03:46 clifford Exp $
++# $Id: cvs-fixes.patch,v 1.1 2003/05/03 13:03:46 clifford Exp $
+ #
+ #
+ 
+@@ -18,7 +18,8 @@
+   -DLIBPAM_VERSION_MINOR=$(MINOR_REL)
+ 
+ # all the object files we care about
+-LIBOBJECTS = modutil_cleanup.o modutil_getpwnam.o modutil_getpwuid.o
++LIBOBJECTS = modutil_cleanup.o modutil_getpwnam.o modutil_getpwuid.o \
++	modutil_getlogin.o
+ 
+ # static library name
+ LIBSTATIC = $(LIBNAME).a
+diff -x CVS -x '*cvs*' -ruN Linux-PAM-0.77/modules/pammodutil/include/security/_pam_modutil.h Linux-PAM/modules/pammodutil/include/security/_pam_modutil.h
+--- Linux-PAM-0.77/modules/pammodutil/include/security/_pam_modutil.h	2001-12-09 23:15:12.000000000 +0100
++++ Linux-PAM/modules/pammodutil/include/security/_pam_modutil.h	2003-01-14 06:43:08.000000000 +0100
+@@ -2,7 +2,7 @@
+ #define _PAM_MODUTIL_H
+ 
+ /*
+- * $Id: cvs-fixes.patch,v 1.1 2003/05/03 13:03:46 clifford Exp $
++ * $Id: cvs-fixes.patch,v 1.1 2003/05/03 13:03:46 clifford Exp $
+  *
+  * This file is a list of handy libc wrappers that attempt to provide some
+  * thread-safe and other convenient functionality to modules in a form that
+@@ -15,7 +15,7 @@
+  * On systems that simply can't support thread safe programming, these
+  * functions don't support it either - sorry.
+  *
+- * Copyright (c) 2001 Andrew Morgan <morgan@kernel.org>
++ * Copyright (c) 2001-2002 Andrew Morgan <morgan@kernel.org>
+  */
+ 
+ #include <pwd.h>
+@@ -30,4 +30,6 @@
+ extern void _pammodutil_cleanup(pam_handle_t *pamh, void *data,
+ 				int error_status);
+ 
++extern const char *_pammodutil_getlogin(pam_handle_t *pamh);
++
+ #endif /* _PAM_MODUTIL_H */
+diff -x CVS -x '*cvs*' -ruN Linux-PAM-0.77/modules/pammodutil/modutil_getlogin.c Linux-PAM/modules/pammodutil/modutil_getlogin.c
+--- Linux-PAM-0.77/modules/pammodutil/modutil_getlogin.c	1970-01-01 01:00:00.000000000 +0100
++++ Linux-PAM/modules/pammodutil/modutil_getlogin.c	2003-01-14 06:43:08.000000000 +0100
+@@ -0,0 +1,71 @@
++/*
++ * $Id: cvs-fixes.patch,v 1.1 2003/05/03 13:03:46 clifford Exp $
++ *
++ * A central point for invoking getlogin(). Hopefully, this is a
++ * little harder to spoof than all the other versions that are out
++ * there.
++ */
++
++#include <stdlib.h>
++#include <unistd.h>
++#include <utmp.h>
++
++#include "pammodutil.h"
++
++#define _PAMMODUTIL_GETLOGIN "_pammodutil_getlogin"
++
++const char *_pammodutil_getlogin(pam_handle_t *pamh)
++{
++    int status;
++    const char *logname, *curr_tty;
++    char *curr_user;
++    struct utmp *ut, line;
++
++    status = pam_get_data(pamh, _PAMMODUTIL_GETLOGIN,
++			  (const void **) &logname);
++    if (status == PAM_SUCCESS) {
++	return logname;
++    }
++
++    status = pam_get_item(pamh, PAM_TTY, (const void **) &curr_tty);
++    if ((status != PAM_SUCCESS) || (curr_tty == NULL)) {
++	curr_tty = ttyname(0);
++    }
++
++    if ((curr_tty == NULL) || memcmp(curr_tty, "/dev/", 5)) {
++	return NULL;
++    }
++
++    curr_tty += 5;  /* strlen("/dev/") */
++    logname = NULL;
++
++    setutent();
++    strncpy(line.ut_line, curr_tty, sizeof(line.ut_line));
++
++    if ((ut = getutline(&line)) == NULL) {
++	goto clean_up_and_go_home;
++    }
++
++    curr_user = calloc(sizeof(line.ut_user)+1, 1);
++    if (curr_user == NULL) {
++	goto clean_up_and_go_home;
++    }
++
++    strncpy(curr_user, ut->ut_user, sizeof(ut->ut_user));
++    curr_user[sizeof(line.ut_user)] = '\0';
++
++    status = pam_set_data(pamh, _PAMMODUTIL_GETLOGIN, logname,
++			  _pammodutil_cleanup);
++    if (status != PAM_SUCCESS) {
++	free(curr_user);
++	goto clean_up_and_go_home;
++    }
++
++    logname = curr_user;
++
++clean_up_and_go_home:
++
++    endutent();
++
++    return logname;
++}
