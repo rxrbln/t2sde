@@ -48,6 +48,10 @@
 		dnl (improvements in graphic speed ...)
 		dnl
 		CONFIG_MTRR=y
+
+		dnl PC Speaker for 2.5/6 kernel
+		CONFIG_INPUT_PCSPKR=y
+
 		include(`kernel-common.conf')
 		include(`kernel-scsi.conf')
 		include(`kernel-net.conf')
