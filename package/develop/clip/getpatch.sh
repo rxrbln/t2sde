@@ -1,7 +1,7 @@
 #!/bin/sh
 tempfile=clip-patch.tar.gz.$$
 #location=ftp://ftp.linux.ru.net/mirrors/clip
-location=ftp://ftp.itk.ru/pub/clip/
+location=ftp://ftp.itk.ru/pub/clip
 
 echo "get: $location/patch.tgz"
 if [ -f patch.tgz ]; then
