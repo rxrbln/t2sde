@@ -99,7 +99,7 @@ auto_config ()
 	for x in $base/config/$config/linux.cfg \
 	         $base/target/$target/kernel.conf ; do
 	   if [ -f $x ] ; then
-		echo "  merging: 'config/$config/linux.cfg'"
+		echo "  merging: '$x'"
 		tag="$(sed '/CONFIG_/ ! d; s,.*CONFIG_\([^ =]*\).*,\1,' \
 			$x | tr '\n' '|')"
 		egrep -v "\bCONFIG_($tag)\b" < .config > .config.4
