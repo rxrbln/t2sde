@@ -1,6 +1,9 @@
 
 public_udhcp() {
-	local cmdline="/usr/sbin/udhcpc -h `hostname` -i $if"
+	local HOSTNAME="`hostname`" cmdline=
+	[ "$HOSTNAME" == "(none)" ] && HOSTNAME=
+	
+	cmdline="/usr/sbin/udhcpc ${HOSTNAME:+-h $HOSTNAME} -i $if"
 	cmdline="$cmdline -s /etc/udhcp/t2-default.script"
 
 	if [ "$CANUSESERVICE" == "1" ]; then
