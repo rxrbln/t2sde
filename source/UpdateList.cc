@@ -42,10 +42,33 @@ void ExtractNumbers (std::string& s, std::vector<unsigned int>& output) {
     output.push_back(GetNumber(s, number_start, s.length()));
 }
 
+class Match
+{
+public:
+  Match (const std::string& i_name, const std::string& suffix)
+  {
+    name = i_name;
+    std::string base = name.substr(0, name.length()+1-suffix.length());
+    ExtractNumbers(base, version);
+  }
+
+  std::string name;
+  std::vector <unsigned int> version;
+};
+
+class VersionComparator
+{
+public:
+  bool operator() (Match* a, Match* b)
+  {
+    return CmpVersions(a -> version, b -> version) < 0;
+  }
+};
+
 void GenList (std::string file, std::ifstream& s, bool quote_mode) {
-  std::vector <std::string> hits;
+  std::vector <Match> matches;
+  std::vector <Match*> newer_versions;
   std::vector <unsigned int> file_version;
-  std::vector <unsigned int> hit_version;
 
   std::string templ=file;
   std::string suffix = "";
@@ -109,7 +132,7 @@ void GenList (std::string file, std::ifstream& s, bool quote_mode) {
 
 	std::string matched=token.substr(begin, length);
 
-	hits.push_back(matched);
+	matches.push_back(Match(matched, suffix));
       }
 
     }
@@ -117,21 +140,18 @@ void GenList (std::string file, std::ifstream& s, bool quote_mode) {
 
 
 
-  for (unsigned int i = 0; i < hits.size(); i++) {
-    std::string base = hits[i].substr(0, hits[i].length()+1-suffix.length());
-    //    std::cout << base << std::endl;
-    ExtractNumbers(base, hit_version);
+  for (unsigned int i = 0; i < matches.size(); i++) {
 
     int sign = 0;
-    if(hits[i] != file) {
-      sign = CmpVersions(hit_version, file_version);
+    if(matches[i].name != file) {
+      sign = CmpVersions(matches[i].version, file_version);
       if (sign >= 0)
 	sign++;
     }
 
-    std::cout << "[MATCH] '" << hits[i] << "' (v";
-    for (unsigned int j=0; j < hit_version.size(); j++) {
-      std::cout << "." << hit_version[j];
+    std::cout << "[MATCH] '" << matches[i].name << "' (v";
+    for (unsigned int j=0; j < matches[i].version.size(); j++) {
+      std::cout << "." << matches[i].version[j];
     }
     std::cout << ")";
     switch (sign) {
@@ -140,9 +160,11 @@ void GenList (std::string file, std::ifstream& s, bool quote_mode) {
       break;
     case 1:
       std::cout << " [?]" << std::endl;
+      newer_versions.push_back(&matches[i]);
       break;
     case 2:
       std::cout << " [+]" << std::endl;
+      newer_versions.push_back(&matches[i]);
       break;
     case -1:
       std::cout << " [-]" << std::endl;
@@ -151,6 +173,17 @@ void GenList (std::string file, std::ifstream& s, bool quote_mode) {
   
   }
   
+  std::cout << "-----------------------" << std::endl;
+
+  std::sort(newer_versions.begin(), newer_versions.end(), VersionComparator());
+  for (unsigned int i=0; i < newer_versions.size(); i++) {
+    if (i == 0 || newer_versions[i-1] -> name != newer_versions[i] -> name)
+      std::cout << newer_versions[i] -> name << std::endl;
+  }
+    
+
+  std::cout << "-----------------------" << std::endl;
+
 }
 
 
