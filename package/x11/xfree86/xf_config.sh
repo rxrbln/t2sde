@@ -112,8 +112,6 @@ xf_install() {
 	cp -fv $base/package/x11/xfree86/XF86Config.data \
 		$root/etc/X11/XF86Config.example
 	cp -fv $root/etc/X11/XF86Config{.example,}
-	cp -fv $base/package/x11/xfree86/local.conf.data \
-		$root/etc/fonts/local.conf
 
 	echo "Fixing compiled keymaps directory ..."
 	mkdir -p $root/var/lib/xkb $root/etc/X11/xkb
