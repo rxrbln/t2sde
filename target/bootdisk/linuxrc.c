@@ -111,10 +111,10 @@ void doboot()
 			{ perror("Can't call pivot_root"); exit_linuxrc=0; }
 		chdir("/");
 
-		if ( mount("/old_root/dev", "/dev", NULL, MS_MOVE, NULL) )
+		if ( mount("/old_root/dev", "/dev", "", MS_MOVE, NULL) )
 			perror("Can't remount /old_root/dev as /dev");
 
-		if ( mount("/old_root/proc", "/proc", NULL, MS_MOVE, NULL) )
+		if ( mount("/old_root/proc", "/proc", "", MS_MOVE, NULL) )
 			perror("Can't remount /old_root/proc as /proc");
 	} else {
 		if ( rmdir("/mnt_root/old_root") )
