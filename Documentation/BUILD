@@ -82,7 +82,7 @@ be passed to './scripts/Create-ISO'.
 
 So, a complete call might look like this:
 
-# ./scripts/Create-ISO rock-cd -size 700 -mkdebug bootdisk athlon pentium4 generic
+# ./scripts/Create-ISO -size 700 -mkdebug rock-cd bootdisk athlon pentium4 generic
 
 This would create a CD-Set of iso images which are at most 700 MB big, the
 first CD would be bootable and the set would contain the builds 'athlon',
