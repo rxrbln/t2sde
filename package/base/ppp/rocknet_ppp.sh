@@ -1,7 +1,4 @@
 
-ppp_config_path=/tmp/.rocknet/ppp
-[ -d $ppp_config_path ] || mkdir -p $ppp_config_path
-
 ppp_option() {
 	local optfile=$1
 	local opt=$2 ; shift 2
@@ -57,8 +54,8 @@ chat_init_if() {
 # pppoe ppp-interface [config file|auto] [ppp-command-line-arg [...]]
 public_ppp() {
 	# config file
-	eval "ppp_${if}_config=$ppp_config_path/${if}_options"
-	eval "ppp_${if}_chat=$ppp_config_path/${if}_chat"
+	eval "ppp_${if}_config=$rocknet_tmp_base/ppp_${if}_options"
+	eval "ppp_${if}_chat=$rocknet_tmp_base/ppp_${if}_chat"
 
 	# get unit from $if
 	ppp_unit=${if#ppp}

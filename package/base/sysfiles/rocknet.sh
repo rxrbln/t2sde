@@ -2,6 +2,9 @@
 
 rocknet_debug=0
 rocknet_base="/etc/network"
+rocknet_tmp_base="/var/run/rocknet"
+
+[ -d $rocknet_tmp_base ] || mkdir -p $rocknet_tmp_base
 
 unset code_snipplets_idx code_snipplets_dat code_snipplets_counter
 declare -a code_snipplets_idx='()'
