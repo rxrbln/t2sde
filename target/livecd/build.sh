@@ -2,12 +2,12 @@
 disksdir="$build_rock/livecd"
 
 if [ -z "`which create_compressed_fs`" ] ; then
-	echo "Please make sure create_compressed_fs is installed! Rock Package: fake/cloop"
+	echo "Please make sure that create_compressed_fs is installed! T2 Package: filesystem/cloop"
 	exit 1;
 fi ;
 
 if [ -z "`which mkisofs`" ] ; then
-	echo "Please make mkisofs is installed! Rock Package: base/cdrtools"
+	echo "Please make sure that mkisofs is installed! T2 Package: base/cdrtools"
 	exit 1;
 fi;
 
@@ -36,3 +36,4 @@ echo "DISK1	build/${ROCKCFG_ID}/TOOLCHAIN/livecd/isofs/ `
 	`${ROCKCFG_SHORTID}/" > ../isofs_generic.txt
 cat ../isofs_*.txt > ../isofs.txt
 
+echo_status "Done!"
