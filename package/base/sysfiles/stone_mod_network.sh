@@ -122,15 +122,18 @@ edit_global_tag() {
 }
 
 add_tag() {
-	tta=""
-	cmd="gui_menu add_tag 'Add tag of type'"
+	tta="$@"
+	if [ "$tta" = "" ] ; then
+		cmd="gui_menu add_tag 'Add tag of type'"
 
-	while read tag module ; do
-		cmd="$cmd '$tag ($module)' 'tta=$tag'"
-	done < <( cd /etc/network/modules/ ; grep public_ * | sed -e \
-	          's/\([a-zA-Z0-9_-]*\).sh:public_\([a-zA-Z0-9_-]*\).*/\2 \1/' \
-	          | sort)
-	eval $cmd
+		while read tag module ; do
+			cmd="$cmd '$tag ($module)' 'tta=$tag'"
+		done < <( cd /etc/network/modules/ ; grep public_ * | sed -e \
+		          's/\([a-zA-Z0-9_-]*\).sh:public_\([a-zA-Z0-9_-]*\).*/\2 \1/' \
+		          | sort)
+		eval $cmd
+	fi
+
 	if [ "$tta" ] ; then
 		tagno=${#tags[@]}
 		tags[$tagno]="$tta"
@@ -167,9 +170,26 @@ edit_if() {
 }
 
 add_interface() {
+	if="$1"
+
 	gui_input "The new interface name (and profile)" \
-	          "" "name"
-	echo -e "\ninterface $name" >> $rocknet_base/config
+	          "$if" "if"
+	unset tags
+	tags[0]="interface $if"
+
+	# for now we need to add the interface line into the file
+	# so the parse finds the right place to add the new tags
+	echo -e "\ninterface $if\n#added by stone" >> "$rocknet_base"/config
+
+	if gui_yesno "Use DHCP to obtain the configuration?" ; then
+		add_tag "dhcp"
+	else
+		add_tag "ip 192.168.5.1"
+		add_tag "gw 192.168.5.1"
+		add_tag "nameserver 192.168.5.1"
+	fi
+
+	write_section "$if"
 } 
 
 del_interface() {
@@ -178,7 +198,29 @@ del_interface() {
 }
 
 main() {
+    first_run=1
     while
+
+	# read global section and interface list ...
+	read_section ""
+
+	p_interfaces=$(ip link | egrep '[^:]*: .*' | \
+	               sed 's/[^:]*: \([a-z0-9]*\): .*/\1/' | \
+	               grep -v -e lo -e sit)
+
+	if [ $first_run = 1 ] ; then
+		first_run=0
+		# check if a section for the interface is already present
+		for x in $p_interfaces ; do
+			if [[ $interfaces != *$x* ]] ; then
+			  if gui_yesno "Unconfigured interface $x detected. \
+Do you want to create an interface section?" ; then
+				add_interface "$x"
+			  fi
+			fi
+		done
+		read_section ""
+	fi
 
 	cmd="gui_menu network 'Network Configuration - Select an item to
 change the value
@@ -186,9 +228,6 @@ change the value
 WARNING: This script tries to adapt /etc/network/config and /etc/hosts
 according to your changes. Changes only take affect the next time
 rocknet is executed.'"
-
-	# read global section and interface list ...
-	read_section ""
 
 	for (( i=0 ; $i < ${#tags[@]} ; i=i+1 )) ; do
 		cmd="$cmd '${tags[$i]}' 'edit_global_tag $i'"
