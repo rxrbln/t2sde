@@ -73,10 +73,12 @@ public:
     subversion subv_a, subv_b;
     for (i = j = 0; i < a.size() && j < b.size();) {
       
+      // was Valentin noted here some more matching is needed to sort:
+      // alpha -> beta -> gamma -> rc -> nothing - much fun
       i = subv_a.read(a.Str(), i);
       j = subv_b.read(b.Str(), j);
       
-      std::cout << subv_a.val << " vs " << subv_b.val << std::endl;
+      // std::cout << subv_a.val << " vs " << subv_b.val << std::endl;
       
       if (subv_a.val < subv_b.val)
 	return -1;
