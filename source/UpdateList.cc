@@ -75,16 +75,17 @@ void GenList (std::string file, std::ifstream& s, bool quote_mode) {
   std::vector <Match*> newer_versions;
   std::vector <unsigned int> file_version;
 
-  std::string templ=file;
+  // search for a matching extension
+  std::string templ = file;
   std::string suffix = "";
 
-  for (unsigned int i=0; i < suffixes.size(); i++) {
-    std::string& test=suffixes[i];
-    std::string::size_type s_pos=templ.length() - test.length();
-    //    std::cout << templ.substr(s_pos, test.length()) << std::endl;
-    if (templ.substr(s_pos, test.length()) == test) {
-      suffix=test;
+  for (unsigned int i = 0; i < suffixes.size(); ++i) {
+    std::string& test = suffixes[i];
+    std::string::size_type s_pos = templ.rfind(test);
+    if (s_pos != std::string::npos) {
+      suffix = test;
       templ = templ.substr(0, s_pos);
+      break;
     }
   }
 
@@ -194,13 +195,14 @@ void GenList (std::string file, std::ifstream& s, bool quote_mode) {
 
 int main (int argc, char* argv[])
 {
-  Package package;
-
-  suffixes.push_back(".tar.gz");
-  suffixes.push_back(".gz");
   suffixes.push_back(".tar.bz2");
-  suffixes.push_back(".bz2");
+  suffixes.push_back(".tar.gz");
+  suffixes.push_back(".tbz2");
   suffixes.push_back(".tgz");
+  suffixes.push_back(".bz2");
+  suffixes.push_back(".gz");
+
+  Package package;
 
   for (int i = 1; i < argc; ++i)
     {
