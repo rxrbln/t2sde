@@ -230,7 +230,7 @@ lx_config ()
 	if [[ $treever != 24* ]] ; then
 		echo "Create symlinks and a few headers for <$lx_cpu> ... "
 		eval $MAKE include/asm
-		eval $MAKE oldconfig > /dev/null
+		yes '' | eval $MAKE oldconfig > /dev/null
 	fi
 
 	echo "Clean up the *.orig and *~ files ... "
