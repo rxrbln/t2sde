@@ -24,7 +24,7 @@
 #
 gui_menu() {
 	echo ; echo "+---" ; echo "$2" | fold -s -70 | sed 's,^,|  ,'
-	echo "+---" ; echo ; shift ; shift ; local nr=1 xnr=1 y
+	echo "+---" ; echo ; shift ; shift ; local nr=1 xnr=1 y in
 
 	while [ $# -ge 2 ] ; do
 		y="${2#\*}"
@@ -41,23 +41,23 @@ gui_menu() {
 		fi
 		xnr=$(( $xnr + 1 ))
 		if [ $(( $xnr % 20 )) -eq 0 -a $# -gt 4 ] ; then
-			echo
-			read -p '== Press ENTER for next page =='
+			echo ; echo -n ">> " ; read in || return 1
+			[ "$in" ] && break
 			echo
 		fi
 	done
 
-	echo ; echo -n "> " ; read nr ; nr="action_$nr"
-	[ -z "${!nr}" ] && return 1
-	eval "${!nr}" ; return 0
+	if [ -z "$in" ] ; then echo ; echo -n "> " ; read in ; fi
+	in="action_$in" ; [ -z "${!in}" ] && return 1
+	eval "${!in}" ; return 0
 }
 
 # Use: gui_input "Text" "Default" "VarName"
 #
 gui_input() {
 	echo ; echo "+---" ; echo "$1" | fold -s -66 | sed 's,^,|  ,'
-	echo "+---" ; echo ; echo -n "[ $2 ] > " ; local tmp ; read tmp
-	[ -z "$tmp" ] && tmp="$2" ; eval "$3=\"\$tmp\""
+	echo "+---" ; echo ; echo -n "[ $2 ] > " ; local tmp
+	read tmp && [ -z "$tmp" ] && tmp="$2" ; eval "$3=\"\$tmp\""
 }
 
 # Use: gui_yesno "Text"
@@ -95,7 +95,7 @@ gui_message() {
 gui_edit() {
 	# find editor
 	for x in $EDITOR vi nvi emacs xemacs pico ; do
-		if which $x > /dev/null
+		if type -p $x > /dev/null
 		then xx=$x ; break ; fi
 	done
 	if [ "$xx" ] ; then
