@@ -46,8 +46,11 @@ char * get_realname(char * origname) {
 	}
 	
 	getcwd(odir, FILENAME_MAX); chdir(buf);
-	getcwd(buf, FILENAME_MAX);  strcat(buf,"/");
-	strcat(buf, file); chdir(odir);
+	getcwd(buf, FILENAME_MAX);  chdir(odir);
+
+	if (strcmp(buf, "/")) strcat(buf,"/");
+	strcat(buf, file);
+
 	return buf;
 }
 
