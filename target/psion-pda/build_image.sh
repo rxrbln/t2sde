@@ -200,9 +200,6 @@ echo "Injecting some more stuff ..."
 ln -s ash bin/sh
 cp -f $base/target/psion-pda/{passwd,group,fstab,issue,profile} etc/
 
-echo "Injecting minit config ..."
-(cd $base/target/psion-pda/minit ; tar cSp . ) | tar xSp -C etc/minit/
-
 # image size estimation ...
 s="`du -s -B 1 . | cut -f 1`"
 s="$(( (s + 128000) / 1024 ))"
