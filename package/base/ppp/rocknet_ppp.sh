@@ -46,7 +46,7 @@ chat_init_if() {
     if isfirst "chat_$if" ; then
 	addcode up 4 1 "echo -n > \$ppp_${if}_chat"
 	addcode up 4 6 "ppp_option \$ppp_${if}_config \
-	                connect chat -v -f \$ppp_${if}_chat"
+	                connect \'chat -v -f \$ppp_${if}_chat\'"
     fi
 }
 
@@ -61,17 +61,15 @@ public_ppp() {
 	ppp_unit=${if#ppp}
 
 	# parse args
-	local ppp_if=$1 ; shift
-	local ppp_args="file \$ppp_${if}_config\""
-
-	ppp_args="`echo $* | sed 's,",\\\\",g'`"
+	ppp_if=$1 ; shift
+	local ppp_args="`echo $* | sed 's,",\\\\",g'`"
 
 	addcode up 4 1 "echo -n > \$ppp_${if}_config"
 	addcode up 4 2 "chmod 0600 \$ppp_${if}_config"
-	addcode up 5 2 "/usr/sbin/pppd $ppp_if unit $ppp_unit $ppp_args"
+	addcode up 6 2 "/usr/sbin/pppd file \$ppp_${if}_config $ppp_if unit $ppp_unit $ppp_args"
 
-	addcode down 6 1 "[ -f /var/run/$if.pid ] && kill -TERM \`head -n 1 /var/run/$if.pid\`" 
-	addcode down 6 2 "[ -f /var/run/$if.pid ] && rm -f /var/run/$if.pid"
+	addcode down 5 5 "[ -f /var/run/$if.pid ] && kill -TERM \`head -n 1 /var/run/$if.pid\`" 
+	addcode down 5 4 "[ -f /var/run/$if.pid ] && rm -f /var/run/$if.pid"
 }
 
 public_pppoe() {
@@ -122,7 +120,7 @@ ABORT \"NO DIALTONE\"
 ABORT \"ERROR\"
 ABORT \"NO ANSWER\"
 ABORT \"BUSY\"
-\"\" \"AT\"' >> \$ppp_${if}_chat"
+\"\" \"at\"' >> \$ppp_${if}_chat"
 }
 
 public_chat_init() {
