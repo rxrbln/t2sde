@@ -25,7 +25,7 @@
 make_fstab() {
 	tmp1=`mktemp` ; tmp2=`mktemp`
 
-	cat > $tmp2 <<- EOT
+	cat <<- EOT > $tmp2
 /dev/root / auto defaults 0 0
 none /proc proc defaults 0 0
 none /dev devfs defaults 0 0
@@ -57,7 +57,7 @@ EOT
 	cut -f2 -d' ' < $tmp2 | sort -u | while read dn ; do
 		grep " $dn " $tmp2 | tail -n 1; done > $tmp1
 
-	cat << 'EOT' > $tmp2
+	cat << EOT > $tmp2
 ARGIND == 1 {
     for (c=1; c<=NF; c++) if (ss[c] < length($c)) ss[c]=length($c);
 }
@@ -116,6 +116,11 @@ main() {
 	$STONE general set_dtime
 	$STONE general set_locale
 	$STONE general set_vcfont
+
+	# source postinstall scripts added by misc packages
+	for x in ${SETUPD}/setup_*.sh ; do
+		[ -f $x ] && . $x
+	done
 
 	cron.run
 
