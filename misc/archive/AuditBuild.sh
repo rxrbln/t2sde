@@ -185,8 +185,8 @@ fi
 if [ "$HTMLDIR" ]; then
 	echo "<body><html>"
 
-	if [ -d "$HTMLDIR/$config" ];
+	if [ -d "$HTMLDIR/$config" ]; then
 		mv $HTMLDIR/$config $HTMLDIR/$config.$$-old
 	fi
-	mv $HTMLDIR/$config.$$ $HTMLDIR/$config
+	mv $HTMLDIR/$config.$$ $HTMLDIR/$config/
 fi
