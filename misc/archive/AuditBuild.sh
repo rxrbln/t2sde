@@ -89,7 +89,7 @@ audit_package() {
 			newver=`echo "$svndiff" | grep '^+\[V\]' | cut -d' ' -f2`
 
 			if [ "$oldver" ]; then
-				ver="$oldver -> $ver"
+				ver="$oldver -> $newver"
 				lchanges="UPDATED"
 			elif [ "$newver" ]; then
 				lchanges="ADDED"
