@@ -1,14 +1,17 @@
 
 public_essid() {
 	addcode up 4 5 "iwconfig $if essid $*"
+	addcode down 4 5 "iwconfig $if essid any"
 }
 
 public_nwid() {
 	addcode up 4 5 "iwconfig $if nwid $*"
+	addcode down 4 5 "iwconfig $if nwid off"
 }
 
 public_domain() {
 	addcode up 4 5 "iwconfig $if domain $*"
+	addcode down 4 5 "iwconfig $if domain off"
 }
 
 public_freq() {
@@ -25,10 +28,12 @@ public_sens() {
 
 public_mode() {
 	addcode up 4 4 "iwconfig $if mode $*"
+	addcode down 4 4 "iwconfig $if mode Auto"
 }
 
 public_ap() {
 	addcode up 4 5 "iwconfig $if ap $*"
+	addcode down 4 5 "iwconfig $if ap any"
 }
 
 public_nick() {
@@ -37,6 +42,7 @@ public_nick() {
 
 public_rate() {
 	addcode up 4 5 "iwconfig $if rate $*"
+	addcode down 4 5 "iwconfig $if rate auto"
 }
 
 public_rts() {
@@ -49,10 +55,12 @@ public_frag() {
 
 public_key() {
 	addcode up 4 5 "iwconfig $if key $*"
+	addcode down 4 5 "iwconfig $if key off"
 }
 
 public_enc() {
         addcode up 4 5 "iwconfig $if enc $*"
+	addcode down 4 5 "iwconfig $if enc off"
 }
 
 public_power() {
@@ -61,6 +69,7 @@ public_power() {
 
 public_txpower() {
 	addcode up 4 5 "iwconfig $if txpower $*"
+	addcode down 4 5 "iwconfig $if txpower auto"
 }
 
 public_retry() {
