@@ -5,21 +5,31 @@
 # Alejandro Mery <amery@geeks.cl>
 
 tail_read() {
-	local verbose=1 output=
+	local verbose=1 file= output= query=
+	local query= count=2
 
 	if [ "$1" == "-q" ]; then
 		verbose=
 		shift
 	fi
 
-	output="$( grep -e "^$1	" $2 | cut -f2- )"
+	file="$1"; shift
+	while [ $# -gt 1 ]; do
+		query="${query}$1	"
+		shift;
+		(( count++ ))
+	done
+	query="${query}$1\\(	\\|\$\\)"
+
+	output="$( grep -e "^$query" $file | cut -f$count- )"
 	[ "$verbose" ] && echo "$output"
 	
-	[ -n "$output" ]
+	grep -q -e "^$query" $file
 	}
 
 tail_install() {
 	local style=$1 tailfile="$2"
+	local x= y= z=
 	shift 2
 
 	case "$style" in
@@ -27,32 +37,63 @@ tail_install() {
 			local servicedir=$( echo `eval echo $1` )
 			local runprefix=
 			
-			mkdir -p "$servicedir"
+			mkdir -vp "$servicedir"
+			rm -f /tmp/tail.$$
+
+			# run /tailrun/ options
+			#
+			eval "`tail_read $tailfile tailrun $style`"
+
+			# ./env/
+			#
+			if tail_read -q $tailfile env; then
+				mkdir -p "$servicedir/env"
+				runprefix="$runprefix${runprefix:+ }envdir ./env"
+				tail_read $tailfile env | while read x y; do
+					echo "TAIL: ./env/$x = $y"
+					echo "$y" | rock_substitute > $servicedir/env/$x
+				done
+			fi
 
 			# ./run
 			#
-			cat <<-EOT > /tmp/tail.$$.run
+			cat <<-EOT > /tmp/tail.$$
 				#!/bin/sh
 				exec 2>&1
 				EOT
 
-			if tail_read -q input $tailfile; then
-				echo "exec <$( tail_read input $tailfile )" >> /tmp/tail.$$.run
+			if tail_read -q $tailfile input; then
+				echo "exec < $( tail_read $tailfile input )" >> /tmp/tail.$$
 			fi
-			if tail_read -q user $tailfile; then
-				runprefix="setuidgid $( tail_read user $tailfile )"
-			fi
-			echo "exec $runprefix $( tail_read run $tailfile | head -n 1 )" >> /tmp/tail.$$.run
 
-			rock_substitute /tmp/tail.$$.run > $servicedir/run
-			rm -f /tmp/tail.$$.run
+			if tail_read -q $tailfile user; then
+				runprefix="$runprefix${runprefix:+ }envuidgid $( tail_read $tailfile user )"
+			fi
+
+			echo "exec $runprefix${runprefix:+ }$( tail_read $tailfile run )" >> /tmp/tail.$$
+
+			rock_substitute /tmp/tail.$$ > $servicedir/run
 			chmod +x $servicedir/run
 
-			# TODO: ./env/
-			# TODO: ./conffile
-			# TODO: ./log/
-			if grep -q -e "^log	" $tailfile; then
-				mkdir -p "$servicedir/log"
+			# ./conffile
+			#
+			for x in `tail_read $tailfile conf | cut -f1 | sort -u`; do
+				y="$x"
+				echo "TAIL: $x ..."
+				if [ "${y%/*}" != "$y" ]; then
+					if [ "${y:0:1}" != "/" ]; then
+						y="$servicedir/$y"
+					fi
+					mkdir -vp ${y%/*}
+				fi
+				rm -vf $y
+				tail_read $tailfile conf $x | rock_substitute > $y
+			done
+
+			# ./log/
+			#
+			if tail_read -q $tailfile log; then
+				mkdir -vp "$servicedir/log/main"
 					
 				if [ -z "$logdir" ]; then
 					if [ "${localstatedir%$pkg}" != "$localstatedir" ]; then
@@ -62,9 +103,26 @@ tail_install() {
 					fi
 				fi
 
-				tail_read log $tailfile | while read id option; do
-					echo "$logdir/$id: $option"
-				done || true
+				z= 
+				for x in `tail_read $tailfile log | cut -f1 | sort -u`; do
+					echo "TAIL: ./log/$x"
+					mkdir -vp $logdir/$x
+					chown 9:9 $logdir/$x
+
+					ln -vnfs $logdir/$x $servicedir/log/main/
+
+					z="$z main/$x"
+
+					y="`tail_read $tailfile log $x`"
+					[ "$y" ] && echo "$y" > $logdir/$x/config || true
+				done
+				cat <<-EOT > "$servicedir/log/run"
+				#!/bin/sh
+				exec 2>&1
+
+				exec setuidgid log svlogd -t $z
+				EOT
+				chmod +x "$servicedir/log/run"
 			fi
 				
 			;;
