@@ -20,14 +20,14 @@ then
 	cp -v $base/target/$target/sparc/{silo.conf,boot.msg} \
 	  boot
 	#
-	# echo_status "Moving image (initrd) to yaboot directory."
+	# echo_status "Moving image (initrd) to boot directory."
 	# mv -v initrd.img boot/
 	#
 	buildroot="build/${ROCKCFG_ID}/root"
+	datadir="build/${ROCKCFG_ID}/bootdisk"
 	cat > ../isofs_arch.txt <<- EOT
 		BOOT	-G $buildroot/boot/isofs.b -B ...
 		DISK1	$datdir/boot/ boot/
-		SCRIPT	sh $base/target/bootdisk/powerpc/bless-rs6k.sh $disksdir
 	EOT
 fi
 
