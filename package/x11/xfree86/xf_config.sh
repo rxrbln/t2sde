@@ -143,6 +143,7 @@ xf_config() {
 /* Disable some internal libraries - we (normally) ship a newer one */
 #define		BuildFontconfig		NO
 #define		BuildXftLibrary		NO
+#define         BuildXft1Library	NO
 
 /* Less warnings with recent gccs ... */
 #define		DefaultCCOptions	-ansi GccWarningOptions
