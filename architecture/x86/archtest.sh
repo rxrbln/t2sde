@@ -1,5 +1,6 @@
 
-case "$ROCKCFG_X86_OPT" in
+if [ "$ROCKCFG_X86_BITS" = 32 ] ; then
+  case "$ROCKCFG_X86_OPT" in
     i?86)
 	arch_machine="$ROCKCFG_X86_OPT" ;;
 
@@ -8,11 +9,14 @@ case "$ROCKCFG_X86_OPT" in
 
     pentium*|athlon*)
 	arch_machine="i686" ;;
-
+  esac
+else
+  arch_sizeof_char_p=8
+  case "$ROCKCFG_X86_OPT" in
     x86_64)
-	arch_machine="x86_64"
-	arch_sizeof_char_p=8 ;;
-esac
+	arch_machine="x86_64" ;;
+  esac
+fi
 
 arch_target="${arch_machine}-pc-linux-gnu"
 
