@@ -70,7 +70,7 @@ enableofboot
 EOT
 
 	[ "$macosxpart" ] && \
-	  echo -e "\nmacosx=/dev/ide/host0/bus0/target0/lun0/part$macosxpart\n" \
+	  echo -e "\nmacosx=$macosxdev\n" \
 	    >> /etc/yaboot.conf
 
 
@@ -83,13 +83,13 @@ $( cat /etc/yaboot.conf )"
 yaboot_install()
 {
 	# format the boostrap if not already done	
-	if hmount /dev/ide/host0/bus0/target0/lun0/part$bootstrappart > /dev/null ; then
+	if hmount $bootstrapdev > /dev/null ; then
 		humount
 	else
 		if gui_yesno "The boostrap device \
-/dev/ide/host0/bus0/target0/lun0/part$bootstrappart is not yet HFS formated. \
+$bootstrapdev is not yet HFS formated. \
 Format now?" ; then
-			hformat /dev/ide/host0/bus0/target0/lun0/part$bootstrappart
+			hformat $bootstrapdev
 		else
 			return
 		fi
@@ -121,17 +121,26 @@ device4()
 	fi
 }
 
+realpath() {
+	dir="`dirname $1`"
+	file="`basename $1`"
+	dir="`dirname $dir`/`readlink $dir`"
+	dir="`echo $dir | sed 's,[^/]*/\.\./,,g'`"
+	echo $dir/$file
+}
+
 main() {
     while
-        bootstrappart="`pdisk -l /dev/ide/host0/bus0/target0/lun0/disc | \
+        bootstrappart="`pdisk -l /dev/discs/disc0/disc | \
                        grep Apple_Bootstrap | sed -e "s/:.*//" -e "s/ //g"`"
+	bootstrapdev="`realpath /dev/discs/disc0/part$bootstrappart`"
 	rootdev="`device4 /`"
 	bootdev="`device4 /boot`"
 	yabootdev="`device4 /usr`"
-	bootstrapdev=/dev/ide/host0/bus0/target0/lun0/part$bootstrappart
 
 	macosxpart="`pdisk -l /dev/discs/disc0/disc  | grep Apple_HFS | head -1 | \
 	           sed -e "s/:.*//" -e "s/ //g"`"
+	[ "$macosxpart" ] && macosxdev="`realpath /dev/discs/disc0/part$macosxpart`"
 
 	if [ "$rootdev" = "$bootdev" ]
 	then bootpath=/boot ; else bootpath="" ; fi
@@ -145,7 +154,7 @@ main() {
 		"Yaboot partition:path . $yabootpart:$yabootpath" "" \
 		"Root Device ........... $rootdev" "" \
 		"Boot Device ........... $bootdev" "" \
-		"MacOS X partition ..... $macosxpart" "" \
+		"MacOS X partition ..... $macosxdev" "" \
 		'' '' \
 		'(Re-)Create default /etc/yaboot.conf' 'create_yaboot_conf' \
 		'(Re-)Install the yaboot boot chrp script and binary' 'yaboot_install' \
