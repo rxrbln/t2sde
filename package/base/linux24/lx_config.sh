@@ -33,12 +33,12 @@ lx_config ()
 
 	for x in $lx_patches ; do
 		echo "Applying $x ..."
-		(
-		  [ -e $x ] || x=$archdir/$x
-		  if [[ $x = *.bz2 ]]
-		  then bzcat $x ; else cat $x
-		  fi
-		) | patch -p1 -s
+		[ -e $x ] || x=$archdir/$x
+		if [[ $x = *.bz2 ]] ; then
+		  bzcat $x | patch -p1 -s
+		else
+		  cat $x | patch -p1 -s
+		fi
 	done
 
 	hook_eval prepatch
