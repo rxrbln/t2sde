@@ -1,5 +1,5 @@
 # This file is auto-generated from pkgsel.sh
-/ base / ! { d; }
+/ base / ! { s/^X /O /p; d; }
 / 00-dirtree / { p; d; }
 / acl / { p; d; }
 / attr / { p; d; }

@@ -21,7 +21,7 @@ perl -e '
 ' < ../../scripts/dep_db.txt > pkgsel.mk
 
 echo '# This file is auto-generated from pkgsel.sh' > pkgsel.sed
-echo '/ base / ! { d; }' >> pkgsel.sed
+echo '/ base / ! { s/^X /O /p; d; }' >> pkgsel.sed
 make -f pkgsel.mk ALL 2> /dev/null | sort -u >> pkgsel.sed
 echo 'd;' >> pkgsel.sed; rm -f pkgsel.mk
 
