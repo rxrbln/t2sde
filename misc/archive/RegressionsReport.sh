@@ -18,7 +18,7 @@ mkdir -p $TARGET
 
 echo "[$( date +%T )] Auditing '$config' to '$TARGET/' ..."
 sh misc/archive/AuditBuild.sh -w $TARGET -cfg $config --no-enabled-too -repository package/* \
-	| grep '\(CHANGED\|UPDATED\|ADDED\|FAILED\|PENDING\|NOQUEUED\)' > $TARGET/regressions.$config.$$
+	| grep '\(CHANGED\|UPDATED\|ADDED\|FAILED\|PENDING\|DISABLED\)' > $TARGET/regressions.$config.$$
 echo "[$( date +%T )] Auditing completed."
 
 if [ ! -d $TARGET/$config ]; then
@@ -93,14 +93,14 @@ cat <<EOT
 	<tr><th>Package</th><th>SVN Status</th><th>Version</th><th>Audit</th><th>Status</th></tr>
 EOT
 
-grep -v NOQUEUED $TARGET/regressions.$config.$$
+grep -v DISABLED $TARGET/regressions.$config.$$
 
 cat <<EOT
 </table><hr><table>
 	<tr><th>Package</th><th>SVN Status</th><th>Version</th><th>Audit</th><th>Status</th></tr>
 EOT
 
-grep NOQUEUED $TARGET/regressions.$config.$$
+grep DISABLED $TARGET/regressions.$config.$$
 
 cat <<EOT
 </table></td></tr>
