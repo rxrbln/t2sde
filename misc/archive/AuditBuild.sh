@@ -135,7 +135,7 @@ audit_package() {
 		done
 	fi
 	case "$lstatus" in
-		3)	lstatus=NOQUEUED	;;
+		3)	lstatus=DISABLED	;;
 		2)	lstatus=FAILED		;;
 		1)	lstatus=SUCCESSFUL	;;
 		*)	lstatus=PENDING		;;
