@@ -33,16 +33,16 @@ case "$1" in
 	*.gem) mine -p $1 ; echo -e "\nFile List:" ; mine -l $1;;
 	*.rpm) rpm -q -i -p $1 ; echo "File List   :" ; rpm -q -l -p $1;;
 	# Manuals
-	*ld.so.8) groff -S -s -p -t -e -Tlatin1 -mandoc $1;;
+	*ld.so.8) nroff -p -t -c -mandoc $1;;
 	*.so.*) ;;
 	*.[1-9]|*.[1-9][mxt]|*.[1-9]thr|*.man)
-		groff -S -s -p -t -e -Tlatin1 -mandoc $1;;
+		nroff -p -t -c -mandoc $1;;
 	# Compressed manuals
 	*.[1-9].gz|*.[1-9][mxt].gz|*.[1-9]thr.gz|*.man.gz|\
 	*.[1-9].[Zz]|*.[1-9][mxt].[Zz]|*.[1-9]thr.[Zz]|*.man.[Zz])
-		gzip -c -d $1 | groff -S -s -p -t -e -Tlatin1 -mandoc;;
+		gzip -c -d $1 | nroff -p -t -c -mandoc;;
 	*.[1-9].bz2|*.[1-9][mxt].bz2|*.[1-9]thr.bz2|*.man.bz2)
-		bzip2 -c -d $1 | groff -S -s -p -t -e -Tlatin1 -mandoc ;;
+		bzip2 -c -d $1 | nroff -p -t -c -mandoc ;;
 	# Compressed files
 	*.gz|*.Z|*.z) gzip -c -d $1;;
 	*.bz2) bzip2 -c -d $1;;
