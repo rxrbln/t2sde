@@ -10,7 +10,7 @@ echo_header "Finishing build."
 echo_status "Creating package database ..."
 admdir="build/${ROCKCFG_ID}/root/var/adm"
 create_package_db $admdir build/${ROCKCFG_ID}/pkgs \
-                  > build/${ROCKCFG_ID}/packages.db
+                  build/${ROCKCFG_ID}/packages.db
 
 echo_status "Creating isofs.txt file .."
 cat << EOT > build/${ROCKCFG_ID}/isofs.txt
