@@ -1,9 +1,9 @@
 
 if [ "$prefix_auto" = 1 ] ; then
   if [ "$NO_SANITY_CHECK" ] ; then
-	prefix=$ROCKCFG_PKG_KDE33_CORE_PREFIX
+	prefix=$ROCKCFG_PKG_KDE3_CORE_PREFIX
   else 
-	for dir in usr opt/kde33 $ROCKCFG_PKG_KDE33_CORE_PREFIX ; do
+	for dir in usr opt/kde3 $ROCKCFG_PKG_KDE3_CORE_PREFIX ; do
 		[ -f "$root/$dir/bin/artsd" ] && prefix="$dir"
 	done
 
@@ -24,8 +24,8 @@ var_append confopt " " "--with-qt-dir=$QTDIR \
 
 # some feature and optimization settings ...
 
-pkginstalled openldap && var_append confopt ' ' "--with-ldap=$root/$pkg_openldap_prefix"
+pkginstalled openldap && var_append confopt " " "--with-ldap=$root/$pkg_openldap_prefix"
 var_append confopt " " "--with-xinerama --enable-dnotify"
-
+var_append confopt " " "--enable-final"
 [ $arch = x86 ] && var_append confopt " " "--enable-fast-malloc=full"
 
