@@ -1,5 +1,9 @@
 define(`SPARC', 'SPARC')dnl
 
+dnl does at least not work for sun4 - and should not be really needed
+dnl on 32bit SPARCs (it is also not a default for our x86 default config)
+# CONFIG_HIGHMEM is not set
+
 # CONFIG_SUN4 is not set
 
 CONFIG_FB=y
