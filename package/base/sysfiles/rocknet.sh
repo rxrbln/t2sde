@@ -23,6 +23,9 @@ profile=$1
 interface=$2
 mode=$3
 
+pmatched=0 # some profile matched ?
+imatched=0 # some interface matched ?
+
 #
 # addcode mode major-priority minor-priority code1
 #
@@ -54,6 +57,10 @@ error() {
 	echo "$*"
 }
 
+status() {
+	echo "$*"
+}
+
 for x in "$rocknet_base"/modules/*.sh; do . "$x"; done
 
 while read cmd para
@@ -80,4 +87,7 @@ done < <(
 	for x in "${code_snipplets_idx[@]}"; do echo "$x"
 	done | sort
 )
+
+[ "$pmatched" = 0 ] && error "Unknown profile: $profile"
+[ "$imatched" = 0 ] && error "Unknown interface for profile: $interface"
 

@@ -1,11 +1,11 @@
 #!/bin/sh
 
-useage() {
-	echo "Useage: $0 interface [ profile ]"
+usage() {
+	echo "Usage: $0 interface [ profile ]"
 	exit 1
 }
 
-[ "$1" ] || useage
+[ "$1" ] || usage
 
 if [ "$2" = "" ] ; then
 	profile="`cat /etc/network/profile 2> /dev/null`"
