@@ -1,0 +1,76 @@
+#!/bin/sh
+
+# T2 Automated Init Language - Tail
+# http://wiki.t2-project.org/index.cgi?TailFormat
+# Alejandro Mery <amery@geeks.cl>
+
+tail_read() {
+	local verbose=1 output=
+
+	if [ "$1" == "-q" ]; then
+		verbose=
+		shift
+	fi
+
+	output="$( grep -e "^$1	" $2 | cut -f2- )"
+	[ "$verbose" ] && echo "$output"
+	
+	[ -n "$output" ]
+	}
+
+tail_install() {
+	local style=$1 tailfile="$2"
+	shift 2
+
+	case "$style" in
+		runit)
+			local servicedir=$( echo `eval echo $1` )
+			local runprefix=
+			
+			mkdir -p "$servicedir"
+
+			# ./run
+			#
+			cat <<-EOT > /tmp/tail.$$.run
+				#!/bin/sh
+				exec 2>&1
+				EOT
+
+			if tail_read -q input $tailfile; then
+				echo "exec <$( tail_read input $tailfile )" >> /tmp/tail.$$.run
+			fi
+			if tail_read -q user $tailfile; then
+				runprefix="setuidgid $( tail_read user $tailfile )"
+			fi
+			echo "exec $runprefix $( tail_read run $tailfile | head -n 1 )" >> /tmp/tail.$$.run
+
+			rock_substitute /tmp/tail.$$.run > $servicedir/run
+			rm -f /tmp/tail.$$.run
+			chmod +x $servicedir/run
+
+			# TODO: ./env/
+			# TODO: ./conffile
+			# TODO: ./log/
+			if grep -q -e "^log	" $tailfile; then
+				mkdir -p "$servicedir/log"
+					
+				if [ -z "$logdir" ]; then
+					if [ "${localstatedir%$pkg}" != "$localstatedir" ]; then
+						logdir=$localstatedir/log
+					else
+						logdir=$localstatedir/log/$pkg
+					fi
+				fi
+
+				tail_read log $tailfile | while read id option; do
+					echo "$logdir/$id: $option"
+				done || true
+			fi
+				
+			;;
+		*)
+			abort "tail_install: unknown style '$style' for $tailfile."
+			;;
+	esac
+}
+
