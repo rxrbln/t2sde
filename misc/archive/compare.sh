@@ -90,7 +90,7 @@ function diff_package() {
 			diff_package $x $target/${x##*/}
 		elif [[ "$x" = *.cache ]]; then
 			continue
-		else
+		elif [ -f "$x" ]; then
 			remove_header $x > $$.source
 			if [ -f $target/${x##*/} ]; then
 				remove_header $target/${x##*/} > $$.target
@@ -114,8 +114,8 @@ function diff_package() {
 			[ ! -d $source/${x#$target/} ] && diff_package $source/${x#$target/} $x
 		elif [[ "$x" = *.cache ]]; then
 			continue
-		else
-			if [ ! -f $source/${x#$target/} ]; then
+		elif [ -f "$x" ]; then
+			if [ ! -f "$source/${x#$target/}" ]; then
 				remove_header $x > $$.target
 				show_nice_diff /dev/null $$.target $source/${x#$target/}
 				rm $$.target
