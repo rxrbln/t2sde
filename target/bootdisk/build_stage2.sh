@@ -157,17 +157,8 @@ for i in gui_text mod_install mod_packages mod_gas default ; do
 	cp -v ../2nd_stage/etc/stone.d/$i.sh etc/stone.d
 done
 #
-echo_status "Creating head replacement script."
-cat << 'EOT' > bin/head
-#!/bin/sh
-m=10
-if echo "$1" | grep -- "-[0-9]\+" > /dev/null ; then
-	m="${1#-}"
-	shift
-fi
-exec grep -m$m "" $*
-EOT
-chmod +x bin/head
+echo_status "Copy head replacement script."
+cp $base/target/$target/head bin/head ; chmod +x bin/head
 #
 echo_status "Creating links for identical files."
 while read ck fn
