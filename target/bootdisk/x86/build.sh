@@ -10,21 +10,20 @@ cd $disksdir
 
 echo_header "Creating lilo config and cleaning boot directory:"
 cp $base/target/$target/x86/lilo-* boot/
-rm -rfv boot/*-rock boot/grub boot/System.map boot/kconfig boot/*.24**
+rm -rfv boot/grub boot/System.map boot/kconfig boot/*.24**
 
-echo_header "Creating floppy disk images:"
-cp $base/target/$target/x86/makeimages.sh .
-chmod +x makeimages.sh
+#echo_header "Creating floppy disk images:"
+#cp $base/target/$target/x86/makeimages.sh .
+#chmod +x makeimages.sh
 
-if [ $use_mdlbl -eq 1 ]
-then
+if false ; then # [ $use_mdlbl -eq 1 ]
 	tar --use-compress-program=bzip2 \
 	    -xf $base/download/mirror/m/mdlbl-$mdlbl_ver.tar.bz2
 	cd mdlbl-$mdlbl_ver
 	cp ../boot/vmlinuz .; cp ../initrd.gz initrd; ./makedisks.sh
 	for x in disk*.img; do mv $x ../floppy${x#disk}; done; cd ..
 	du -sh floppy*.img | while read x; do echo_status $x; done
-else
+elif false ; then # else
 	tmpfile=`mktemp -p $PWD`
 	if sh ./makeimages.sh &> $tmpfile; then
 		cat $tmpfile | while read x; do echo_status "$x"; done
@@ -50,10 +49,29 @@ then
 	echo_status "Creating isolinux config file."
 	cp $base/target/$target/x86/isolinux.cfg isolinux/
 	cp $base/target/$target/x86/help?.txt isolinux/
+
+	for x in `egrep 'X .* KERNEL .*' $base/config/$config/packages |
+	          cut -d ' ' -f 5-6 | tr ' ' '_'` ; do
+		kernel=${x/_*/}
+		kernelver=${x/*_/}
+		initrd="initrd-${kernel/linux/}.gz"
+
+		cat >> isolinux/isolinux.cfg << EOT
+
+LABEL $kernel
+	kernel vmlinuz_$kernelver-rock
+	APPEND initrd=$initrd root=/dev/ram devfs=nocompat init=/linuxrc rw
+EOT
+	done
+
+	cat >> isolinux/isolinux.cfg << EOT
+LABEL memtest86
+	kernel memtest86
+EOT
 	#
 	echo_status "Copy images to isolinux directory."
 	cp boot/memtest86.bin isolinux/memtest86
-	cp initrd.gz boot/vmlinuz isolinux/
+	cp initrd-* boot/vmlinuz* isolinux/
 	#
 	cat > ../isofs_arch.txt <<- EOT
 		BOOT	-b isolinux/isolinux.bin -c isolinux/boot.catalog
