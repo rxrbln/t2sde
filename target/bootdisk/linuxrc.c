@@ -612,11 +612,11 @@ int main()
 	autoload_modules();
 
 	printf("\n\
-     ============================================\n\
-     ===   ROCK Linux 1st stage boot system   ===\n\
-     ============================================\n\
+     =================================\n\
+     ===   1st stage boot system   ===\n\
+     =================================\n\
 \n\
-The ROCK Linux install / rescue system boots up in two stages. You\n\
+The T2 / ROCK install / rescue system boots up in two stages. You\n\
 are now in the first of this two stages and if everything goes right\n\
 you will not spend much time here. Just load your SCSI and networking\n\
 drivers (if needed) and configure the installation source so the\n\
