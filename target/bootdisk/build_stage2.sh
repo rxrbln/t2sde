@@ -17,7 +17,7 @@ package_map='       +00-dirtree         +glibc22            +glibc23
 +silo               +parted             +mac-fdisk          +pdisk
 +xfsprogs           +mkdosfs            +jfsutils
 +e2fsprogs          +reiserfsprogs      +genromfs           +lvm
-+raidtools          +dump               +eject
++raidtools          +dump               +eject              +disktype
 +hdparm             +memtest86          +cpuburn            +bonnie++
 +mine               -termcap            +ncurses
 +readline           -strace             -ltrace             -perl5
