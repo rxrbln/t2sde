@@ -3,15 +3,13 @@ pkgloop_action() {
 
         $cmd_buildpkg ; rc=$?
 
-	admdir="build/${ROCKCFG_ID}/root/var/adm"
+	admdir="build/${ROCKCFG_ID}/var/adm"
 
 	if [ $ROCKCFG_TRG_MNEMOSYNE_COPYCACHE -eq 1 ] && \
-	   [ "$pkg_tree" == "mnemoc" -o "$pkg_tree" == "mnemoc-devel" ]; then
-		if grep -q "^\[P\] O" ./package/$pkg_tree/$pkg_name/$pkg_name.desc ; then
-			if [ -r $admdir/cache/$pkg_name ]; then
-				echo_status "mnemosyne: catching cache file."
-				cp $admdir/cache/$pkg_name ./package/$pkg_tree/$pkg_name/$pkg_name.cache
-			fi
+	   [[ "$desc_M" == "Alejandro Mery*" ]] && [[ "$desc_P" == "O*" ]]; then
+		if [ -r $admdir/cache/$pkg_name ]; then
+			echo_status "mnemosyne: catching cache file."
+			cp $admdir/cache/$pkg_name ./package/$pkg_tree/$pkg_name/$pkg_name.cache
 		fi
 	fi
 
