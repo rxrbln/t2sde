@@ -19,6 +19,8 @@ CONFIG_PMAC=y
 CONFIG_MACH_SPECIFIC=y
 
 include(`kernel-common.conf')
+include(`kernel-scsi.conf')
+include(`kernel-net.conf')
 include(`kernel-fs.conf')
 
 dnl macs need an FB
