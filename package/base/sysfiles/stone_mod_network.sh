@@ -69,10 +69,9 @@ write_section() {
 	local passit=1
 	local dumped=0
 
-set -x
 	[ "$1" = "" ] && passit=0
 
-	echo -n > ${rocknet_config}.new
+	echo -n > $rocknet_config.new
 
 	while read netcmd para ; do
 
@@ -83,7 +82,7 @@ set -x
 		# when we reached the matching section dump the
 		# mew tags ...
 		if [ $passit = 0 -a $dumped = 0 ] ; then
-			write_tags $globals >> ${rocknet_config}.new
+			write_tags $globals >> $rocknet_config.new
 			dumped=1
 		fi
 
@@ -94,7 +93,7 @@ set -x
 			[ "$prof" = "$1" ] && passit=0 || passit=1
 
 			# write out a separating newline
-			echo "" >> ${rocknet_config}.new
+			echo "" >> $rocknet_config.new
 
 			globals=0
 		fi
@@ -103,20 +102,18 @@ set -x
 		if [ $passit = 1 ] ; then
 			[ $globals = 0 -a "$netcmd" != "interface" ] && \
 			  echo -en "\t" >> $rocknet_config.new
-			echo "$netcmd $para" >> ${rocknet_config}.new
+			echo "$netcmd $para" >> $rocknet_config.new
 		fi
 	done < <( cat $rocknet_config )
 
 	# if the config file was empty, for an not yet present or last
 	# we had no change to match the existing position - so write them
 	# out now ...
-	[ $globals = 0 ] && echo "" >> ${rocknet_config}.new
+	[ $globals = 0 ] && echo "" >> $rocknet_config.new
 	[ "$1" ] && globals=0
-	[ $dumped = 0 ] && write_tags $globals >> ${rocknet_config}.new
+	[ $dumped = 0 ] && write_tags $globals >> $rocknet_config.new
 
 	mv $rocknet_config{.new,}
-set +x
-	exit
 }
 
 edit_tag() {
