@@ -477,7 +477,8 @@ download_file_now() {
 
 	# Download
 	#
-	if [[ $url == http://* ]] || [[ $url == ftp://* ]] ; then
+	case "$url" in
+	http://*|ftp://*)
 		if [ -s "$gzfile.incomplete" ] ; then
 		    echo "INFO: Trying to resume previous download .."
 		    resume="-C -"
@@ -547,31 +548,57 @@ download_file_now() {
 			mv "$gzfile.incomplete" "$gzfile"
 		    fi
 		fi
-	elif [[ $url = cvs://* ]] ; then
-		# we need to use $location - $url is already mangled above -ReneR
-		module="`echo "$location" | sed 's,cvs://[^ ]* \([^ ]*\).*,\1,'`"
-		url="`echo "$location" | sed 's,cvs://\([^ ]*\) [^ ]*\(.*\),\1 co -P \2,'`"
-		mode="$url"
+		;;
+	*)
+		cmdclient="${url%%://*}"
 
-		cvsdir="src/down.cvsdir.`echo $bzfile | tr / -`"
+		# we need to use $location - $url is already mangled above -ReneR
+		# $cmdclient://$url $options
+		url="`echo "$location" | sed "s,$cmdclient://\([^ ]*\).*,\1,"`"
+		options="`echo "$location" | cut -d' ' -f2-`"
+
+		case "$cmdclient" in
+			cvs)
+				# the first option is the module name
+				module="${options%% *}"
+				options="${options#* }"
+				cmdline="cvs -z9 -Q -d $url co -P $options $module"
+		  
+		  		# sometimes cvs wants to read ~/.cvspass just for fun ..
+				touch $HOME/.cvspass
+				;;
+			svn)
+				if [ "${options:0:1}" == "-" ]; then
+					# the module is the last dir of $url
+					module="${url##*/}"
+				else
+					# the first option is the module name
+					module="${options%% *}"
+					options="${options#* }"
+				fi
+				cmdline="svn co $options $url $module"
+				;;
+			*)
+				echo "$cmdclient unrecognized!"
+				return 1
+				;;
+		esac
+
+		cvsdir="src/down.${cmdclient}dir.`echo $bzfile | tr / -`"
 		saved_pwd=$PWD ; mkdir -p $cvsdir ; cd $cvsdir
 
-		echo cvs -z9 -Q -d $url $module
-		{ # [ $mode = ssh ] && export CVS_RSH=ssh
-		  # [ $mode = pserver ] && loc=":pserver:$loc"
-		  # sometimes cvs wants to read ~/.cvspass just for fun ..
-		  touch $HOME/.cvspass
-		  # for ssh we need some way to quitely accept the key ...
-		  cvs -z9 -Q -d $url $module || touch .cvs_error
+		echo "$cmdline"
+		{
+		  $cmdline || touch .cvs_error
 		} &> .cvs_output &
 
 		while fuser .cvs_output &> /dev/null ; do
 			echo -ne `nice du -sh 2> /dev/null | \
-				cut -f1` 'downloaded from CVS archive so far...\r'
+				cut -f1` 'downloaded from archive so far...\r'
 			sleep 3
 		done
 		echo `du -sh 2> /dev/null | \
-			cut -f1` 'downloaded from CVS archive (download finished).'
+			cut -f1` 'downloaded from archive (download finished).'
 
 		if [ -f .cvs_error ] ; then
 			cd $saved_pwd ; rm -rf $cvsdir
@@ -581,7 +608,7 @@ download_file_now() {
 		cd `dirname $module`
 		tarname="`basename $bzfile`"
 		echo "Preparing files for final tarball ..."
-		find -name CVS | xargs rm -rf
+		find -type d \( -name CVS -o -name .svn \) | xargs rm -rf
 		find `basename $module` | xargs touch -t 200001010000
 		tar --owner root --group root \
 		    --use-compress-program=bzip2 \
@@ -589,10 +616,8 @@ download_file_now() {
 		mv $tarname $saved_pwd/$bzfile
 
 		cd $saved_pwd ; rm -rf $cvsdir
-	else
-		echo "I don't know how to download $url"
-		curlret=-100
-	fi
+		;;
+	esac
 	return $curlret
 }
 
