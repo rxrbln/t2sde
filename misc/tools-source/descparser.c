@@ -89,7 +89,7 @@ int main()
 			}
 		} else
 			if ( !falselevel )
-				puts(line);
+				fputs(line, stdout);
 	}
 
 	return 0;
