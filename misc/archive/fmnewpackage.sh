@@ -45,32 +45,28 @@ get_download() {
     local location
     download_file=""
     download_url=""
-set -x
     for arg; do
-	if curl -I -f "$arg" -o "header.log"; then
+	if curl -s -I -f "$arg" -o "header.log"; then
 	    location="`grep Location: header.log | sed 's,Location:[ ]\([.0-9A-Za-z-:/% ]*\).*,\1,'`"
 	    download_file="`basename $location`"
 	    download_url="`dirname $location`/"
 	    rm -f header.log
-	    set +x
 	    return
 	fi
     done
-    set +x
     rm -f header.log
 }
 
 read_fm_config() {
     local fmname=$1
-    curl_options="" #--disable-epsv 
-    if curl -w '\rFinished downloading %{size_download} bytes in %{time_total} seconds (%{speed_download} bytes/sec). \n' -f --progress-bar $resume $curl_options "http://freshmeat.net/projects-xml/$fmname/$fmname.xml" -o "$fmname.xml"; then
+    curl_options="" #--disable-epsv -#
+    if curl -s -f $resume $curl_options "http://freshmeat.net/projects-xml/$fmname/$fmname.xml" -o "$fmname.xml"; then
 	extract_xml_name project $fmname.xml projectname_full
 	extract_xml_name title   $fmname.xml desc_short
 	extract_xml_name desc    $fmname.xml desc_full
 	extract_xml_name url     $fmname.xml url_project_page
-	extract_xml_name status  $fmname.xml branch_name
 	extract_xml_name license $fmname.xml license
-	extract_xml_name version $fmname.xml latest_version
+	extract_xml_name version $fmname.xml latest_release_version
 
 	extract_xml_name url_tbz $fmname.xml url_bz2
 	extract_xml_name url_tgz $fmname.xml url_tgz
@@ -79,15 +75,58 @@ read_fm_config() {
 
 	get_download $url_tbz $url_tgz $url_zip #@FIXME $url_cvs 
 
-	#cleanup some variables
-	case "$status" in
-	Alpha|Beta|Gamma|Stable)
-	    ;;
-	*)
-	    status="TODO: Unknown ($status)"
-	    ;;
-	esac	 
+# grep trove categories for status IDs
+	for trove_id in `grep '<trove_id>' $fmname.xml | sed 's,.*<trove_id>\(.*\)</trove_id>,\1,g'` ; do
+		case $trove_id in
+			3) status="Alpha"
+				;;
+    			4) status="Beta"
+				;;
+			[56]) status="Stable"
+				;;
+			# there is no default
+		esac
+	done
 
+# download package fm-page and grep for the author
+	html="http://freshmeat.net/projects/$fmname/"
+	curl -I -s "$html" -o "header.log"
+	html_new="`grep Location: header.log | sed 's,Location:[ ]\([.0-9A-Za-z-:/%?_= ]*\).*,\1,'`"
+	[ ! -z html_new ] && html="$html_new"
+	unset html_new
+	rm -f header.log
+	curl -s "$html" -o "$fmname.html"
+	dev_name="`grep 'contact developer' "$fmname.html" | sed 's,^[[:blank:]]*\(.*\)[[:blank:]]<a.*$,\1,' | sed 's, *$,,g'`"
+	dev_mail="<`grep 'contact developer' "$fmname.html" | sed 's,^.*<a href=\"mailto:\(.*\)\">.*$,\1,'`>"
+	echo "__at__ @" >subst
+	echo "__dot__ ." >>subst
+	echo "|at| @" >>subst
+	echo "|dot| ." >>subst
+	echo "\\[at\\] @" >>subst
+	echo "\\[dot\\] ." >>subst
+	echo "(at) @" >>subst
+	echo "(dot) ." >>subst
+
+	echo -n "$dev_mail" >dev_mail
+# for some strange reason, this doesn't work:
+# cat subst | while read from to ; do 
+#         export dev_mail="${dev_mail// $from /$to}"
+# done
+# dev_mail will have the same value as before
+	cat subst | while read from to ; do 
+		dev_mail="`cat dev_mail`"
+		dev_mail="${dev_mail// $from /$to}"
+		echo -n "$dev_mail" >dev_mail
+	done
+	dev_mail="`cat dev_mail`"
+	rm -f subst $fmname.html dev_mail
+
+	if [ -z "$dev_mail" -o -z "$dev_name" ] ; then
+		dev_name="TODO: "
+		dev_mail="Author"
+	fi
+
+	#cleanup license
 	case "$license" in
 	*GPL*Library*)
 	    license=LGPL
@@ -106,9 +145,6 @@ read_fm_config() {
 	    ;;
 	*BSD*)
 	    license=BSD
-	    ;;
-	*)
-	    license="TODO: Unknown ($license)"
 	    ;;
 	esac
 	rm -f $fmname.xml
@@ -199,20 +235,20 @@ cat >>$package.desc <<EEE
 [COPY] 
 [COPY] --- ${rc}-NOTE-END ---
 
-[I] $title
+[I] ${title:-TODO: Title}
 
-[T] $desc
+[T] ${desc:-TODO: Description}
 
-[U] $url
+[U] ${url:-TODO: URL}
 
-[A] TODO: Author
+[A] $dev_name $dev_mail
 [M] ${maintainer:-TODO: Maintainer}
 
 [C] TODO: Category
 
-[L] $license
-[S] $status
-[V] $version
+[L] ${license:-TODO: License}
+[S] ${status:-TODO: Status}
+[V] ${version:-TODO: Version}
 [P] X -----5---9 800.000
 
 [D] 0 $download_file $download_url
