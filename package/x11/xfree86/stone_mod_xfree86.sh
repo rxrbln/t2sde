@@ -39,7 +39,7 @@ main() {
 			'gui_cmd xf86cfg'
 
 		'Run X -configure (automated config)'
-			'X -configure ; mv /root/XF86Config.new /etc/X11/XF86Config.new'
+			'gui_cmd xfree86 -configure ; mv /root/XF86Config.new /etc/X11/XF86Config.new'
 
 		'Run xf86config (old textual config)'
 			'gui_cmd xf86config xf86config'"
