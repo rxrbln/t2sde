@@ -151,7 +151,7 @@ int pkgcheck(const char *pattern, const char *mode)
 
 	pat_list[0] = strtok(pattern_copy, "|");
 	for (i=1; i<10; i++)
-		if ( !(pat_list[1] = strtok(0, "|")) ) break;
+		if ( !(pat_list[i] = strtok(0, "|")) ) break;
 
 	while (pkg) {
 		for (i=0; i<10 && pat_list[i]; i++)
