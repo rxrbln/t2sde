@@ -213,12 +213,13 @@ int cfghlp_builtin(WORD_LIST *list)
 	char *args[10];
 	int i;
 
-	for (i=0; i<10 && list; i++) {
+	for (i=0; i<9 && list; i++) {
 		args[i] = list->word->word;
 		list = list->next;
 	}
-	for (; i<10 && list; i++)
+	for (; i<10; i++) {
 		args[i] = "";
+	}
 
 	if (!strcmp(args[0],"pkg_in"))
 		return read_pkg_list(args[1]);
