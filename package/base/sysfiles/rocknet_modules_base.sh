@@ -7,7 +7,7 @@ public_auto() {
 	auto_if=()
 	for x in "$@"; do
 		a="${x%(*}"; b="${x#*(}"
-		b="${b#)}"; b="${b//,/ }"
+		b="${b/)}"; b="${b//,/ }"
 		if [ "$a" = "$b" ]; then
 			auto_if[${#auto_if[*]}]="$a"
 		else
