@@ -65,6 +65,37 @@ add_hw_config() {
 	id=""
 }
 
+store_clock() {
+	if [ -f /etc/conf/clock ] ; then
+		sed -e "s/clock_tz=.*/clock_tz=$clock_tz/" \
+		    -e "s/clock_rtc=.*/clock_rtc=$clock_rtc/" \
+		  < /etc/conf/clock > /etc/conf/clock.tmp
+		grep -q clock_tz= /etc/conf/clock.tmp || \
+		  echo clock_tz=$clock_tz >> /etc/conf/clock.tmp
+		grep -q clock_rtc= /etc/conf/clock.tmp || \
+		  echo clock_rtc=$clock_rtc >> /etc/conf/clock.tmp
+		mv /etc/conf/clock.tmp /etc/conf/clock
+	else
+		echo -e "clock_tz=$clock_tz\nclock_rtc=$clock_rtc\n" \
+		  > /etc/conf/clock
+	fi
+	if [ -w /proc/sys/dev/rtc/max-user-freq -a "$clock_rtc" ] ; then
+		echo $clock_rtc > /proc/sys/dev/rtc/max-user-freq
+	fi
+}
+
+set_zone() {
+	clock_tz=$1
+	hwclock --hctosys --$clock_tz
+	store_clock
+}
+
+set_rtc() {
+	gui_input "Set new enhanced real time clock precision" \
+                  "$clock_rtc" "clock_rtc"
+	store_clock
+}
+
 main() {
     while
         HARDWARE_SETUP=rockplug
@@ -78,6 +109,12 @@ main() {
 		eval "hw_$x='< >'"
 	    fi
 	done
+
+	clock_tz=utc
+	clock_rtc="`cat /proc/sys/dev/rtc/max-user-freq 2> /dev/null`"
+	if [ -f /etc/conf/clock ]; then
+	    . /etc/conf/clock
+	fi
 
 	cmd="gui_menu hw 'Kernel Drivers Configuration'"
 	if [ "$HARDWARE_SETUP" = rockplug ]; then
@@ -131,6 +168,14 @@ main() {
 	    done < /etc/conf/kernel
 	    [ -z "$id" ] || add_hw_config
 	fi	   
+
+	if [ "$clock_tz" = localtime ] ; then
+	    cmd="$cmd '[*] Use localtime instead of utc' 'set_zone utc'"
+	else
+	    cmd="$cmd '[ ] Use localtime instead of utc' 'set_zone localtime'"
+	    clock_tz=utc
+	fi
+	cmd="$cmd 'Set enhanced real time clock precision ($clock_rtc)' set_rtc"
  
 	eval "$cmd"
     do : ; done
