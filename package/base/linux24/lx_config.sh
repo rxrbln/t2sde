@@ -21,7 +21,6 @@
 # --- ROCK-COPYRIGHT-NOTE-END ---
 
 treever=${pkg/linux/} ; treever=${treever/-*/}
-hook_add prepare 3 'archdir="$base/download/mirror/l"'
 
 [ "$vanilla_ver" ] || vanilla_ver="$ver"
 srctar="linux-${vanilla_ver}.tar.bz2"
