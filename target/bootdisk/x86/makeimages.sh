@@ -38,14 +38,15 @@ echo "Using $tmpdev."
 
 for image in initrd boot_144 boot_288
 do
-	echo "Creating ${image}.img ..."
-
 	case ${image} in
 		initrd)
+			echo "Creating ${image}.gz ..."
 			size=4096 ;;
 		boot_144)
+			echo "Creating ${image}.img ..."
 			size=1440 ;;
 		boot_288)
+			echo "Creating ${image}.img ..."
 			size=2880 ;;
 	esac
 
@@ -65,7 +66,7 @@ do
 			fi
 			liloconf=lilo-conf-${image#boot_}
 			if [ $image = boot_288 -o "$combo" = 1 ] ; then
-				cp initrd.img $tmpdir || rc=1
+				cp initrd.gz $tmpdir || rc=1
 				[ $image = boot_144 ] && liloconf=lilo-conf-1x2
 			fi
 			sed -e "s,/mnt/,$tmpdir/,g" \
@@ -78,7 +79,7 @@ do
 	umount $tmpdir
 
 	case ${image} in
-		initrd)	gzip -9 < $tmpfile > $image.img || rc=1 ;;
+		initrd)	gzip -9 < $tmpfile > $image.gz || rc=1 ;;
 		*)	cp $tmpfile $image.img || rc=1 ;;
 	esac
 done
