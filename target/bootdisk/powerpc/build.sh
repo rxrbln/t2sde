@@ -32,7 +32,7 @@ then
 		cat $base/target/$target/powerpc/yaboot.conf
 	) > boot/yaboot.conf
 	#
-	echo_status "Moving image (initrd) to yaboot directory."
+	echo_status "Moving image (initrd) to boot directory."
 	mv -v initrd.gz boot/
 	#
 	echo_status "Copy more config files."
