@@ -5,6 +5,7 @@ pkgloop_action() {
 
 	admdir="build/${ROCKCFG_ID}/var/adm"
 
+	echo_status "M: $desc_M P: $desc_P"
 	if [ $ROCKCFG_TRG_MNEMOSYNE_COPYCACHE -eq 1 ] && \
 	   [[ "$desc_M" == "Alejandro Mery*" ]] && [[ "$desc_P" == "O*" ]]; then
 		if [ -r $admdir/cache/$pkg_name ]; then
