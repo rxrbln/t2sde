@@ -111,9 +111,10 @@ main() {
 	make_fstab
 	$STONE general set_keymap
 	while ! set_rootpw; do :; done
-	$STONE general set_tmzone
+	$STONE general set_tmarea
 	$STONE general set_dtime
 	$STONE general set_locale
+	$STONE general set_vcfont
 
 	cron.run
 
