@@ -9,3 +9,4 @@ case "$ROCKCFG_SPARC_BITS" in
 	arch_target="sparc64-unknown-linux-gnu"
 	arch_sizeof_char_p=8 ;;
 esac
+
