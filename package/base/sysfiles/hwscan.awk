@@ -3,6 +3,10 @@
 # Usually I'd write this in perl. But this should also work on a system
 # with no perl installed, so it's in awk ...
 
+function debug(text) {
+	if ( print_debug )
+		print text > "/dev/stderr";
+}
 
 function autocomplete(mod, id) {
 	driver_initrd[id] = 1;
@@ -22,6 +26,7 @@ function autocomplete(mod, id) {
 }
 
 function get_pci_drivers() {
+	debug("Reading /lib/modules/" kernel "/modules.pcimap.");
 	while ( (getline < ("/lib/modules/" kernel "/modules.pcimap")) > 0 ) {
 		id = sprintf( "%04x%04x", and(strtonum($2),0xffff),
 			and(strtonum($3),0xffff));
@@ -56,7 +61,7 @@ function get_pci_drivers() {
 }
 
 function get_isapnp_drivers() {
-	print ("/lib/modules/" kernel "/modules.isapnpmap")
+	debug("Reading /lib/modules/" kernel "/modules.isapnpmap.");
 	while ( (getline < ("/lib/modules/" kernel "/modules.isapnpmap")) > 0 ) {
 		vendor = strtonum($2);
 		device = strtonum($3);
@@ -136,15 +141,20 @@ function get_usb_flag(name) {
 function get_usb_drivers() {
 	while ( ("lspci -v" | getline) > 0 ) {
 		if ( / USB Controller: / ) {
+			usb_ctrl_desc="";
 			if ( /prog-if.*OHCI/ ) 
 				{ usb_ctrl_driver="usb-ohci"; usb_ctrl_desc="OHCI"; }
 			if ( /prog-if.*UHCI/ )
 				{ usb_ctrl_driver="usb-uhci"; usb_ctrl_desc="UHCI"; }
-			sub("^[^ ]*", ""); sub("\\(rev .*$", "");
-			usb_ctrl_desc = usb_ctrl_desc $0;
+			if ( usb_ctrl_desc != "" ) {
+				sub("^[^ ]*", ""); sub("\\(rev .*$", "");
+				usb_ctrl_desc = usb_ctrl_desc $0;
+				break;
+			}
 		}
 	}
 	if ( usb_ctrl_driver && modidx[usb_ctrl_driver] ) {
+		debug("Found USB " usb_ctrl_driver " device in lspci output.");
 		id = "usb-controller (PCI " usb_ctrl_driver ")";
 		driver_mod[id] = usb_ctrl_driver;
 		driver_dsc[id] = usb_ctrl_desc;
@@ -153,6 +163,7 @@ function get_usb_drivers() {
 		autocomplete(usb_ctrl_driver, id);
 	}
 
+	debug("Reading /lib/modules/" kernel "/modules.usbmap.");
 	for ( usb_driver_c=0;
 	      (getline < ("/lib/modules/" kernel "/modules.usbmap")) > 0;
 	      usb_driver_c++ ) {
@@ -232,10 +243,14 @@ function print_driver(id) {
 		print "New Device: " id;
 		print "\n### " id " ###"  >> file;
 		print "# " driver_dsc[id] >> file;
+		if ( print_echos )
+			print "echo '" driver_dsc[id] "'" >> file;
 		print tmp >> file;
 	} else {
 		print "\n### " id " ###";
 		print "# " driver_dsc[id];
+		if ( print_echos )
+			print "echo '" driver_dsc[id] "'";
 		print tmp;
 	}
 }
@@ -248,6 +263,10 @@ BEGIN {
 			file = ARGV[++i];
 		else if ( ARGV[i] == "-d" )
 			disable_default = 1;
+		else if ( ARGV[i] == "-D" )
+			print_debug = 1;
+		else if ( ARGV[i] == "-V" )
+			print_echos = 1;
 		else {
 print 									"\n" \
 "HWScan - ROCK Linux (www.rocklinux.org)"				"\n" \
@@ -258,30 +277,35 @@ print 									"\n" \
 									"\n" \
 " -k <kernel-version>  .........  use /lib/modules/<thisvalue>/"	"\n" \
 " -s <hw-init-script>  .........  e.g. /etc/conf/kernel"		"\n" \
-" -d  ..........................  disable new driver on default"	"\n";
+" -d  ..........................  disable new driver on default"	"\n" \
+" -D  ..........................  debug (print auto-detected values)"	"\n" \
+" -V  ..........................  verbose (add echo's)"			"\n";
 exit 1;
 		}
 	}
 
 	if ( ! kernel ) {
-		if ( (getline < "/proc/version") > 0 ) {
+		if ( ("cat /proc/version" | getline) > 0 ) {
 			kernel = $3;
 		} else {
 			kernel = "*";
 		}
+		debug("Auto-detected kernel version: " kernel);
 	}
 
-	while ( (("find /lib/modules/" kernel \
-			" -name '*.o' -printf '%P %f\n'") | getline) > 0 ) {
+	for ( c=0; (("find /lib/modules/" kernel \
+			"/. -name '*.o' -printf '%P %f\n'") | getline) > 0; c++ ) {
 		sub("\\.o$", "");
 		modidx[$2] = $1;
 	}
+	debug("Found " c " modules in /lib/modules/" kernel ".");
 
 	while ( file && (getline < file) > 0 ) {
 		if ( /^### .* ###$/ ) {
 			sub("^### ", "");
 			sub(" ###$", "");
 			skip[$0] = 1;
+			debug("Mark existing driver " $0 " to be skipped.");
 		}
 	}
 
