@@ -32,3 +32,11 @@ CONFIG_PMAC_PBOOK=y
 CONFIG_PMAC_BACKLIGHT=y
 CONFIG_MAC_FLOPPY=y
 
+dnl usefull stuff
+# CONFIG_MAC_ADBKEYCODES is not set
+CONFIG_PMAC_APM_EMU=yes
+
+dnl currently broken on powerpc
+# CONFIG_SCx200_I2C is not set
+# CONFIG_SCx200_ACB is not set
+
