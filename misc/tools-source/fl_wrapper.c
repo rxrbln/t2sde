@@ -780,14 +780,23 @@ execvp (file, argv)
 }
 
 /* Internal Functions */
+static void * libc_handle = 0;
+
+static void close_libc_handle()
+{
+  if (libc_handle) 
+    dlclose(libc_handle);
+}
 
 static void * get_dl_symbol(char * symname)
 {
 	void * rc;
-#if DLOPEN_LIBC
-	static void * libc_handle = 0;
 
-	if (!libc_handle) libc_handle=dlopen(FLWRAPPER_LIBC, RTLD_LAZY);
+#if DLOPEN_LIBC
+	if (!libc_handle) {
+	  libc_handle=dlopen(FLWRAPPER_LIBC, RTLD_LAZY);
+	  atexit(close_libc_handle);
+	}
 	if (!libc_handle) {
 		fprintf(stderr, "fl_wrapper.so: Can't dlopen libc: %s\n", dlerror()); fflush(stderr);
 		abort();
