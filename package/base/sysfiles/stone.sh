@@ -61,7 +61,7 @@ then
 	do : ; done
 else
 	echo
-	echo "STONE - Setup Tool ONE - ROCK Linux System Configuration"
+	echo "STONE - Setup Tool ONE - System Configuration"
 	echo
 	echo "Usage: $0 [ -text | -dialog | -x11 ] [ module [ command ] ]"
 	echo
