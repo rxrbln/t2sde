@@ -227,7 +227,7 @@ lx_config() {
 	if [ "$ROCKCFG_PKG_LINUX_CONFIG_STYLE" = none ] ; then
 		echo "Using \$base/config/\$config/linux.cfg."
 		echo "Since automatic generation is disabled ..."
-		cp -v $base/config/$config/linux.cfg .config
+		cp -v $base/config/$config/linux.cfg .config || true
 	else
 		echo "Automatically creating default configuration ...."
 		auto_config
