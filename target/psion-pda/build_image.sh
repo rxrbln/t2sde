@@ -1,15 +1,12 @@
 #!/bin/bash
 
 set -e
-set -x
 
 arlo_ver="`sed -e 's,.*arlo-\(.*\).zip .*,\1,' \
            $base/target/psion-pda/download.txt`"
 
-mkdir -p $imagedir ; cd $imagedir
-
-# wipe possible existing garbage
-rm -rf initrd ; mkdir initrd ; cd initrd
+rm -rf $imagedir
+mkdir -p $imagedir/initrd ; cd $imagedir/initrd
 
 find $build_root -printf "%P\n" | sed '
 
@@ -198,8 +195,6 @@ c 1 5 zero
 EOT
 )
 
-set -x
-
 # image size estimation ...
 s="`du -s -B 1 . | cut -f 1`"
 s="$(( (s + 128000) / 1024 ))"
@@ -225,4 +220,7 @@ rmdir $tmpdir ; rm -f $tmpfile
 cd $imagedir
 cp $build_root/boot/Image_* Image
 unzip $base/download/mirror/a/arlo-$arlo_ver.zip
+rm arlo/{copying,readme.html,example.cfg}
+
+cp $base/target/psion-pda/arlo.cfg arlo/
 
