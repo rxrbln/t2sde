@@ -5,7 +5,7 @@
 # the ROCK-COPYRIGHT-NOTE-END tag. Otherwise it might get removed by
 # the ./scripts/Create-CopyPatch script. Do not edit this copyright text!
 # 
-# ROCK Linux: rock-src/package/ia32/grub/stone_mod_grub.sh
+# ROCK Linux: rock-src/package/x86/grub/stone_mod_grub.sh
 # ROCK Linux is Copyright (C) 1998 - 2003 Clifford Wolf
 # 
 # This program is free software; you can redistribute it and/or modify
