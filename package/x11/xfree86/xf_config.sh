@@ -80,15 +80,10 @@ xf_build() {
 	cd nls ; eval $MAKE ; cd ..
 }
 
-# install the World
-xf_install() {
-	echo "Create /etc/X11 (if it's not already there) ..."
+# prepare the XFree86 dirtree
+xf_dirtree() {
 	mkdir -p $root/etc/X11
-
-	eval $MAKE install
-	eval $MAKE install.man
-	cd nls ; eval $MAKE install ; cd ..
-	rm -fv $root/etc/fonts/*.bak
+	mkdir -p $root/usr/X11R6/lib/X11/fonts/TrueType
 
 	rm -fv $root/usr/X11
 	rm -fv $root/usr/bin/X11
@@ -99,9 +94,15 @@ xf_install() {
 	ln -sv ../X11/bin $root/usr/bin/X11
 	ln -sv ../X11/lib/X11 $root/usr/lib/X11
 	ln -sv ../X11/include/X11 $root/usr/include/X11
+}
 
-	mkdir -p $root/usr/X11R6/lib/X11/fonts/TrueType
-	
+# install the World
+xf_install() {
+	eval $MAKE install
+	eval $MAKE install.man
+	cd nls ; eval $MAKE install ; cd ..
+	rm -fv $root/etc/fonts/*.bak
+
 	echo "Copy TWM config files ..."
 	cp -v programs/twm/system.twmrc.orig \
 	  programs/twm/sample-twmrc/original.twmrc
