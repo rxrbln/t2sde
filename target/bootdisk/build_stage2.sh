@@ -62,7 +62,7 @@ mv -v boot/* ../boot/
 echo_status "Remove the stuff we don't need ..."
 rm -rf home usr/{local,doc,man,info,games,share}
 rm -rf var/adm/* var/games var/adm var/mail var/opt
-rm -rf usr/{include,src} usr/*-linux-gnu usr/lib/*.{a,la,o}
+rm -rf usr/{include,src} usr/*-linux-gnu {,usr/}lib/*.{a,la,o}
 rm -rf usr/lib/*/
 #
 echo_status "Installing some terminfo databases ..."
