@@ -12,10 +12,7 @@ if [ "$ROCKCFG_X86_BITS" = 32 ] ; then
   esac
 else
   arch_sizeof_char_p=8
-  case "$ROCKCFG_X86_OPT" in
-    x86_64)
-	arch_machine="x86_64" ;;
-  esac
+  arch_machine="x86_64"
 fi
 
 arch_target="${arch_machine}-pc-linux-gnu"
