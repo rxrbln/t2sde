@@ -110,7 +110,7 @@ block_begin 7
 		if [ -s $cfgtmpdir/pkgsel.$ROCKCFG_TARGET.awk ]; then
 		pkgfilter awk -f $cfgtmpdir/pkgsel.$ROCKCFG_TARGET.awk
 		else
-			comment 'WARNING! something went wrong with target-spkgsel'
+			comment 'WARNING! something went wrong with target-pkgsel'
 		fi
 	fi
 
@@ -165,6 +165,43 @@ block_begin 3
 	fi
 block_end
 
+# Apply template
+if [ -f misc/pkgsel/${ROCKCFG_PKGSEL_TPL}.in ]; then
+	. misc/pkgsel/${ROCKCFG_PKGSEL_TPL}.in
+fi
+
+# Apply custom package selection
+if [ "$ROCKCFG_PKGSEL" = 1 ] ; then
+	# Active error checking: explicitly show an annoying popup
+	filter=`printf "^[-xXoO][ \t]\+[a-zA-Z0-9_/*+.-]"`
+	if grep -lvq "$filter" config/$config/pkgsel 2> /dev/null && \
+		./src/rockdialog.bin --title "Build Config" --yesno \
+		"Invalid line(s) in package rule set. Remove?" 5 50
+	then
+		grep "$filter" < config/$config/pkgsel \
+			> $cfgtmpdir/pkgsel.new
+		mv $cfgtmpdir/pkgsel.new config/$config/pkgsel
+	fi
+	unset filter
+
+	( echo "# created from 'pkgsel'"
+	  pkgsel_init
+	  pkgsel_parse < config/$config/pkgsel
+	  pkgsel_finish
+	) > $cfgtmpdir/pkgsel.awk
+
+	pkgout
+	gawk -f $cfgtmpdir/pkgsel.awk < config/$config/packages \
+			> $cfgtmpdir/packages.new 2> /dev/null
+	if [ -s $cfgtmpdir/packages.new ] ; then
+		mv $cfgtmpdir/packages.new config/$config/packages
+	else
+		rm -f $cfgtmpdir/packages.new
+		CFGTEMP_PKSEL_ERROR=1
+	fi
+	pkgin
+fi
+
 comment ' '
 block_begin 3
 # this is warranted to exist
@@ -194,43 +231,15 @@ expert_begin
     block_begin 3
       choice ROCKCFG_PKGSEL_TPL none none 'No package preselection template' \
 		$( cd misc/pkgsel; grep -H "^# TITLE: " *.in | tr ' ' '_' | sed 's,\.in:#_TITLE:_, ,' )
-      if [ -f misc/pkgsel/${ROCKCFG_PKGSEL_TPL}.in ]; then
-	. misc/pkgsel/${ROCKCFG_PKGSEL_TPL}.in
-      fi
       bool 'Custom package selection' ROCKCFG_PKGSEL 0
       if [ "$ROCKCFG_PKGSEL" = 1 ] ; then
 	menu_begin MENU_PKGSEL_RULES 'Edit package selection rules'
-		# Active error checking: explicitly show an annoying popup
-		filter=`printf "^[-xXoO][ \t]\+[a-zA-Z0-9_/*+.-]"`
-		if grep -lvq "$filter" config/$config/pkgsel 2> /dev/null && \
-			./src/rockdialog.bin --title "Build Config" --yesno \
-			"Invalid line(s) in package rule set. Remove?" 5 50
-		then
-			grep "$filter" < config/$config/pkgsel \
-				> $cfgtmpdir/pkgsel.new
-			mv $cfgtmpdir/pkgsel.new config/$config/pkgsel
-		fi
-		unset filter
-
 		editfile ROCKCFG_PKGSEL_FILE config/$config/pkgsel \
 		         'Package selection rules'
 
-		( echo "# created from 'pkgsel'"
-		  pkgsel_init
-		  pkgsel_parse < config/$config/pkgsel
-		  pkgsel_finish
-		) > $cfgtmpdir/pkgsel.awk
-
-		pkgout
-		gawk -f $cfgtmpdir/pkgsel.awk < config/$config/packages \
-				> $cfgtmpdir/packages.new 2> /dev/null
-		if [ -s $cfgtmpdir/packages.new ] ; then
-			mv $cfgtmpdir/packages.new config/$config/packages
-		else
-			rm -f $cfgtmpdir/packages.new
+		if [ "$CFGTEMP_PKGSEL_ERROR" = 1 ]; then
 			comment '----    Syntax error(s) in rule set!'
 		fi
-		pkgin
 	menu_end
       else
 	rm -f config/$config/pkgsel $cfgtmpdir/pkgsel.awk
