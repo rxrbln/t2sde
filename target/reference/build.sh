@@ -31,9 +31,9 @@ mkdir -p "$build_result/scripts"
 ./scripts/Create-DepDB -cachedir "$build_result/package" \
 	> "$build_result/scripts/dep_db.txt" 2> /dev/null
 
-echo_status "Copying error logs and rock-debug data."
-mkdir -p $build_result/{errors,rock-debug,dep-debug}
-cp $build_root/var/adm/rock-debug/* $build_result/rock-debug/
+echo_status "Copying error logs and t2-debug data."
+mkdir -p $build_result/{errors,t2-debug,dep-debug}
+cp $build_root/var/adm/t2-debug/* $build_result/t2-debug/
 cp $build_root/var/adm/dep-debug/* $build_result/dep-debug/
 cp $build_root/var/adm/logs/*.err $build_result/errors/
 
