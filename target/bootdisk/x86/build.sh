@@ -1,6 +1,7 @@
 
 use_isolinux=1
 use_mdlbl=1
+mdlbl_ver=0.1a
 
 cd $disksdir
 
@@ -15,7 +16,8 @@ chmod +x makeimages.sh
 if [ $use_mdlbl -eq 1 ]
 then
 	tar --use-compress-program=bzip2 \
-	    -xf $base/download/bootdisk/mdlbl-0.1.tar.bz2; cd mdlbl-0.1
+	    -xf $base/download/bootdisk/mdlbl-$mdlbl_ver.tar.bz2
+	cd mdlbl-$mdlbl_ver
 	cp ../boot/vmlinuz .; cp ../initrd.img initrd; ./makedisks.sh
 	for x in disk*.img; do mv $x ../floppy${x#disk}; done; cd ..
 	du -sh floppy*.img | while read x; do echo_status $x; done
