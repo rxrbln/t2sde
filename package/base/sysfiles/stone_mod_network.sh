@@ -18,7 +18,7 @@
 ### DYNAMIC NEW-STYLE CONFIG ###
 
 export rocknet_base="/lib/network" # export needed for subshells ...
-rocknet_config="/etc/conf"
+export rocknet_config="/etc/conf/network"
 
 edit() {
 	gui_edit "Edit file $1" "$1"
@@ -51,7 +51,7 @@ read_section() {
 				i=$((i+1))
 			fi
 		fi
-	done < <( sed 's,\(^\|[ \t]\)#.*$,,' < $rocknet_config/network )
+	done < <( sed 's,\(^\|[ \t]\)#.*$,,' < $rocknet_config )
 }
 
 write_tags() {
@@ -69,11 +69,13 @@ write_section() {
 	local passit=1
 	local dumped=0
 
+set -x
 	[ "$1" = "" ] && passit=0
 
-	echo -n > $rocknet_config/network.new
+	echo -n > ${rocknet_config}.new
 
 	while read netcmd para ; do
+
 		[ "$netcmd" ] || continue
 		netcmd="${netcmd//-/_}"
 		para="$( echo "$para" | sed 's,[\*\?],\\&,g' )"
@@ -81,7 +83,7 @@ write_section() {
 		# when we reached the matching section dump the
 		# mew tags ...
 		if [ $passit = 0 -a $dumped = 0 ] ; then
-			write_tags $globals >> $rocknet_config/network.new
+			write_tags $globals >> ${rocknet_config}.new
 			dumped=1
 		fi
 
@@ -92,7 +94,7 @@ write_section() {
 			[ "$prof" = "$1" ] && passit=0 || passit=1
 
 			# write out a separating newline
-			echo "" >> $rocknet_config/network.new
+			echo "" >> ${rocknet_config}.new
 
 			globals=0
 		fi
@@ -100,19 +102,21 @@ write_section() {
 		# just pass the line thru?
 		if [ $passit = 1 ] ; then
 			[ $globals = 0 -a "$netcmd" != "interface" ] && \
-			  echo -en "\t" >> $rocknet_config/network.new
-			echo "$netcmd $para" >> $rocknet_config/network.new
+			  echo -en "\t" >> $rocknet_config.new
+			echo "$netcmd $para" >> ${rocknet_config}.new
 		fi
-	done < <( cat < $rocknet_network/config )
+	done < <( cat $rocknet_config )
 
 	# if the config file was empty, for an not yet present or last
 	# we had no change to match the existing position - so write them
 	# out now ...
-	[ $globals = 0 ] && echo "" >> $rocknet_network/config.new
+	[ $globals = 0 ] && echo "" >> ${rocknet_config}.new
 	[ "$1" ] && globals=0
-	[ $dumped = 0 ] && write_tags $globals >> $rocknet_network/config.new
+	[ $dumped = 0 ] && write_tags $globals >> ${rocknet_config}.new
 
-	mv $rocknet_config/network{.new,}
+	mv $rocknet_config{.new,}
+set +x
+	exit
 }
 
 edit_tag() {
@@ -320,7 +324,7 @@ rocknet is executed.'"
 
 	cmd="$cmd 'View/Edit /etc/resolv.conf file'     'edit /etc/resolv.conf'"
 	cmd="$cmd 'View/Edit /etc/hosts file'           'edit /etc/hosts'"
-	cmd="$cmd 'View/Edit $rocknet_config/network file' 'edit $rocknet_config/network'"
+	cmd="$cmd 'View/Edit $rocknet_config file' 'edit $rocknet_config'"
 
 	eval "$cmd"
     do : ; done
