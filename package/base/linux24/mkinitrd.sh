@@ -71,9 +71,10 @@ else
 	# This works, but only for initrd images < 4 MB
 	dd if=/dev/zero of=/boot/initrd-${kernel}.img.tmp \
 				count=4096 bs=1024 &> /dev/null
-	mke2fs -F /boot/initrd-${kernel}.img.tmp &> /dev/null
+	mke2fs -m 0 -N 180 -F /boot/initrd-${kernel}.img.tmp &> /dev/null
 	mntpoint="`mktemp -d`"
 	mount -o loop /boot/initrd-${kernel}.img.tmp $mntpoint
+	rdir $mntpoint/lost+found/
 	cp -a $tmpdir/* $mntpoint/
 	umount $mntpoint
 	rmdir $mntpoint
