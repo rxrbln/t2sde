@@ -93,6 +93,7 @@ mirror='' ; checkonly=0 ; altdir='' ; loop=1
 tryques=0 ; nocheck=0 ; options='-this_is_the_2nd_run '
 notimeout=0 ; curl_options='--disable-epsv --location'
 altcopy=link
+downloaderror=0
 
 #
 while [ $loop -eq 1 ] ; do
@@ -405,13 +406,16 @@ download_file() {
 
 			if ! download_file_now "!$mirror/${bzfile#download/mirror/}" $bzfile $bzfile; then
 				echo "INFO: download from mirror failed, trying original URL."
-				download_file_now "$location" $gzfile $bzfile
+				download_file_now "$location" $gzfile $bzfile \
+					|| downloaderror=1
+	
 			else
 				gzfile="$bzfile"
 			fi
 		    else
 			# don't want to use mirror
-			download_file_now "$location" $gzfile $bzfile
+			download_file_now "$location" $gzfile $bzfile \
+				downloaderror=1
 		    fi
 		fi
 
@@ -438,7 +442,8 @@ download_file() {
 		echo "cksum-test (bzip2): $bzfile"
 		if [ $nocheck = 0 ] ; then
 			bunzip2 < "$bzfile" > src/down.$$.dat
-			cksum_chk src/down.$$.dat $cksum "$bzfile"
+			cksum_chk src/down.$$.dat $cksum "$bzfile" \
+				|| downloaderror=1
 		fi
 		rm -f src/down.$$.dat
 
@@ -446,7 +451,7 @@ download_file() {
 	#
 	else
 		echo "cksum-test (raw): $gzfile"
-		cksum_chk "$gzfile" $cksum "$gzfile"
+		cksum_chk "$gzfile" $cksum "$gzfile" || downloaderror=1
 	fi
 
 	# Free Lock and finish
@@ -468,19 +473,6 @@ download_file_now() {
 	else
 		url="`echo "$location" | \
 			sed 's,/[^/]*$,,'`/`echo $gzfile | sed 's,.*/,,'`"
-	fi
-
-	# Check for existing Error Log
-	#
-	if test -s src/Download-Errors &&
- 	   grep -q " $url\$" src/Download-Errors ; then
-		echo "ERROR: According to src/Download-Errors" \
-		     "we had already an error for the URL"
-		echo "ERROR:    $url"
-		echo "ERROR: So I'm not trying to download" \
-		     "it again (remove src/Download-Errors"
-		echo "ERROR: if you want to force a retry)."
-		return 1
 	fi
 
 	# Download
@@ -526,10 +518,7 @@ download_file_now() {
 			cd $saved_pwd ; rm -rf $cvsdir
 			set +x
 		else
-			cat .cvs_output
-			cd $saved_pwd ; rm -rf $cvsdir
-			echo ERROR: CVS $url returned an error.
-			echo "0 $gzfile $url" >> src/Download-Errors
+			return 1
 		fi
 	else
 		if [ -s "$gzfile.incomplete" ] ; then
@@ -602,6 +591,7 @@ download_file_now() {
 		    fi
 		fi
 	fi
+	return $curlret
 }
 
 list_dtags() {
@@ -804,4 +794,4 @@ case "$1" in
 	*)		packages "$@" ;;
 esac
 
-exit 0
+exit $downloaderr
