@@ -38,7 +38,7 @@
 #define DEBUG 0
 #define DLOPEN_LIBC 1
 #ifndef FLWRAPPER_LIBC
-#  define "libc.so.6"
+#  define FLWRAPPER_LIBC "libc.so.6"
 #endif
 
 #define _GNU_SOURCE
