@@ -2,8 +2,10 @@
 
 verbose=0
 quiet=0
+
 ignspace=0
 ignprio=0
+dopatch=0
 
 source=
 targets=
@@ -11,12 +13,13 @@ repositories=
 packages=
 
 function show_usage() {
-	echo "usage: $0 [-q[q]] [-v [-P] [-S]] <source> <target> [-repository <repo>|<packages>|]"
-	echo "usage: $0 [-q[q]] -3 <source> <target1> <target2> [-repository <repo>|<packages>|]"
+	echo "usage: $0 [-q[q]] [-v] [-p [-P] [-S]] <source> <target> [-repository <repo>|<packages>|]"
+	echo "usage: $0 [-q[q]] [-v] -3 <source> <target1> <target2> [-repository <repo>|<packages>|]"
 	echo
 	echo "    -q: don't show packages with the same version"
 	echo "   -qq: don't show packages missing or with the same version"
-	echo "    -v: show patch"
+	echo "    -v: show extra info about the packages"
+	echo "    -p: show patch to turn \$source into \$target"
 	echo "    -P: ignore [P]s of .desc files on patches"
 	echo "    -S: ignore spaces on patches" 
 }
@@ -28,6 +31,7 @@ while [ $# -gt 0 ]; do
 		-v)	verbose=1	;;
 		-q)	quiet=1		;;
 		-qq)	quiet=2		;;
+		-p)	dopatch=1	;;
 		-P)	ignprio=1	;;
 		-S)	ignspace=1	;;
 
@@ -50,17 +54,10 @@ while [ $# -gt 0 ]; do
 	shift
 done
 			
-#if [ $verbose -eq 1 ]; then
-#	echo "   verbosity: $verbose"
-#	echo "      source: $source"
-#	echo "     targets: $targets"
-#	echo "repositories: $repositories"
-#	echo "    packages: $packages"
-#fi 1>&2
-
 function remove_header() {
-	local here=0
-	local count=1
+	# thanks you blindcoder :)
+	#
+	local here=0 count=1
 	while read line ; do
 		count=$(( ${count} + 1 )) 
 		[ "${line//COPYRIGHT-NOTE-END/}" != "${line}" ] && here=${count}
@@ -105,7 +102,7 @@ function diff_package() {
 			rm $$.source
 		fi
 	done
-	# TODO: files only on target
+	# files only on target
 	for x in $target/*; do
 		if [ -d $x/ ]; then
 			[ ! -d $source/${x#$target/} ] && diff_package $source/${x#$target/} $x
@@ -165,6 +162,11 @@ function compare_package() {
 	local pkg=${1##*/}
 	local source=$1
 	local target= x= missing=0
+
+	local info=
+	local srcver= srcstatus= srcsize=
+	local tgtver= tgtstatus= tgtsize=
+
 	shift;
 
 	srcver=$( grabdata $source $pkg version )
@@ -212,13 +214,25 @@ function compare_package() {
 		status="$srcstatus -> $tgtstatus"
 	fi
 	
-	if [ $missing -eq 1 ]; then
-		[ $quiet -le 1 ] && echo "N $pkg ($version) ($status) ($srcsize -> $tgtsize)" 1>&2
-	elif [ $equalver -eq 1 ]; then
-		[ $quiet -eq 0 ] && echo "E $pkg ($version) ($status) ($srcsize -> $tgtsize)" 1>&2
+	if [ $verbose -eq 0 ]; then
+		info="($version)"
 	else
-		echo "U $pkg ($version) ($status) ($srcsize -> $tgtsize)" 1>&2
-		[ "$verbose" -eq 1 ] && diff_package $source $target
+		info="($version) ($status) ($srcsize -> $tgtsize)"
+	fi
+
+	if [ $missing -eq 1 ]; then
+		if [ $quiet -le 1 ]; then
+			echo "N $pkg $info" 1>&2
+			[ $dopatch -eq 1 ] && diff_package $source $target
+		fi
+	elif [ $equalver -eq 1 ]; then
+		if [ $quiet -eq 0 ]; then
+			echo "E $pkg $info" 1>&2
+			[ $dopatch -eq 1 ] && diff_package $source $target
+		fi
+	else
+		echo "U $pkg $info" 1>&2
+		[ $dopatch -eq 1 ] && diff_package $source $target
 	fi
 }
 
