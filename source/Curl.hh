@@ -19,10 +19,9 @@ public:
   CurlWrapper () {
     SetConnectTimeout(20);
     SetMaxTime(-1);
-    char* templ=strdup("/tmp/curl_downloadXXXXXX");
+    char templ[] = "/tmp/curl_downloadXXXXXX";
     mkstemp(templ);
     filename=templ;
-    free(templ);
   }
 
   void SetConnectTimeout (int value) {connect_timeout = value;}
