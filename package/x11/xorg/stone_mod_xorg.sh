@@ -20,7 +20,7 @@
 # 
 # --- ROCK-COPYRIGHT-NOTE-END ---
 #
-# [MAIN] 50 xfree86 X11/XFree86 (Graphical User Interface)
+# [MAIN] 50 x X11 Configuration
 
 set_wm() {
 	echo "export WINDOWMANAGER=$1" > /etc/profile.d/windowmanager
@@ -42,7 +42,7 @@ main() {
 			. /etc/conf/xdm
 		fi
 
-		cmd="gui_menu xfree86 'XFree86 Configuration Menu'
+		cmd="gui_menu x 'X11 Configuration Menu'
 
 		'Run xf86cfg (recommended, new interactve config)'
 			'gui_cmd xf86ccfg xf86cfg -xf86config /etc/X11/XF86Config'
