@@ -1,0 +1,86 @@
+#!/bin/bash
+
+type_plain="plain"
+
+usage_plain(){
+	cat >&2 <<EOF
+Usage: $0 -type plain
+	This will save the files in plain view on the medium.
+	This way you can view the content on any OS without the
+	need to boot the LVP. Of course, you can still do so :)
+
+EOF
+}
+
+lvp_copy(){
+	src="${1}" ; trg="${2}"
+	echo -n "Trying to hardlink ${src} ... "
+	if ln "${src}" "${trg}" 2>/dev/null ; then
+		echo "ok"
+	else
+		echo "failed"
+		echo -n "Copying ${src} to ${trg} ... "
+		if cp "${src}" "${trg}" ; then
+			echo "ok"
+		else
+			echo "failed"
+		fi
+	fi
+}
+
+process_plain(){
+	target="livesystem"
+
+	echo -n "Checking necessary filesystem size ... "
+	filesize=0
+
+	while read file ; do
+		[ ! -f "${file}" ] && continue
+		thisfilesize=`ls -l "${file}" | sed 's,[ \t][ \t]*, ,g' | cut -f5 -d' '`
+		filesize=$(( ${filesize} + ${thisfilesize} ))
+	done < ${moviefiles}
+
+	echo "${filesize} Byte (`human_readable ${size}`)"
+
+	echo -n "Checking Livesystem size ... "
+	livesize=`du -sb ${target} | cut -f1`
+	echo "`human_readable ${livesize}`"
+	filesize=$(( $filesize + $livesize ))
+	echo
+	echo "Total space needed: $(( ${filesize} / 1024 / 1024 )) MB"
+
+	if [ $(( ${filesize} / 1024 / 1024 )) -gt $size ] ; then
+		echo
+		echo "This may be more than fits onto your medium."
+		echo "You specified ${size} MB to fit onto your medium."
+		echo "If you are sure that this is okay, please continue."
+		echo "If not, please truncate your filelist."
+		confirm "Continue"
+		[ ${?} -eq 1 ] && exit 1
+	fi
+
+	while read file ; do
+		[ ! -f "${file}" ] && continue
+
+		if [ -f "${target}/${file##*/}" ] ; then
+			origfilesize=`ls -l "${file}" | sed 's,[ \t][ \t]*, ,g' | cut -f5 -d' '`
+			targfilesize=`ls -l "${target}/${file##*/}" | sed 's,[ \t][ \t]*, ,g' | cut -f5 -d' '`
+
+			if [ ${origfilesize} -eq ${targfilesize} ] ; then
+				echo "${target}/${file##*/} already exists."
+			else
+				rm -f "${target}/${file##*/}"
+				lvp_copy "${file}" "${target}/${file##*/}"
+			fi
+		else
+			rm -f "${target}/${file##*/}"
+			lvp_copy "${file}" "${target}/${file##*/}"
+		fi
+
+		environment="`echo ${file} | tr '[. \-!]' '_'`"
+		eval "export file_${environment##*/}=\"/${file##*/}\""
+	done < ${moviefiles}
+
+	lvpxml=livesystem/lvp.xml
+	process_create_lvpxml
+}
