@@ -65,6 +65,22 @@
 
 		include(`kernel-common.conf')
 		include(`kernel-scsi.conf')
+
+		dnl SATA stuff that is mostly x86 right now
+		dnl we need a modular kernel anyway ... :-(
+		dnl
+		CONFIG_BLK_DEV_SX8=y
+		CONFIG_SCSI_SATA_AHCI=y
+		CONFIG_SCSI_SATA_SVW=y
+		CONFIG_SCSI_SATA_NV=y
+		CONFIG_SCSI_SATA_PROMISE=y
+		CONFIG_SCSI_SATA_SX4=y
+		CONFIG_SCSI_SATA_SIL=y
+		CONFIG_SCSI_SATA_SIS=y
+		CONFIG_SCSI_SATA_ULI=y
+		CONFIG_SCSI_SATA_VIA=y
+		CONFIG_SCSI_SATA_VITESSE=y
+
 		include(`kernel-net.conf')
 		include(`kernel-fs.conf')
 
