@@ -23,6 +23,7 @@
 hook_add preconf 2 'cd build_unix'
 configscript="../dist/configure"
 
+var_append confopt ' ' '--enable-compat185'
 var_append confopt ' ' '--enable-cxx'
 var_append confopt ' ' "--includedir=$root/$prefix/include/${pkg:1}"
 
