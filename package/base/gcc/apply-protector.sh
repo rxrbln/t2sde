@@ -6,6 +6,8 @@ if [ "$pfile" ] ; then
 	ppatch=`tar -v $taropt $pfile | grep 'dif\$' | head -n 1`
 
 	if [ "$ppatch" -a -f $ppatch ]; then
+		[ -f $confdir/protector-adapter.diff ] && \
+			patch -p0 $ppatch $confdir/protector-adapter.diff
 		patch -p0  < $ppatch
 	else
 		abort "Protector patch not found"
