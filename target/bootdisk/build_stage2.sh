@@ -4,10 +4,20 @@ mkdir -p $disksdir/2nd_stage
 cd $disksdir/2nd_stage
 mkdir -p mnt/source mnt/target
 #
-package_map='       +tcp_wrappers       +glibc22            -gcc3
-+00-dirtree         -linux24-src        +linux24            +glibc23
--binutils           -gcc2               -bin86              +cpuburn
-+memtest86          +mine               -termcap            +ncurses
+package_map='       +00-dirtree         +glibc22            +glibc23
+-gcc2               -gcc3               -gcc33              -gccx
+-linux24-src        -linux25-src        -linux24benh-src
++linux24            +linux25            +linux24benh
+-linux24-header     -linux25-header     -linux24benh-header
+-binutils           -bin86              -nasm               -dietlibc
+
++grub               +lilo               +yaboot             +aboot
++silo               +parted             +mac-fdisk          +pdisk
++xfsprogs           +mkdosfs            +mtools             +jfsutils
++e2fsprogs          +reiserfsprogs      +genromfs           +lvm
++raidtools          +dump               +eject
++hdparm             +memtest86          +cpuburn            +bonnie++
++mine               -termcap            +ncurses
 +readline           -strace             -ltrace             -perl5
 -m4                 -time               -gettext            -zlib
 +bash               +attr               +acl                +findutils
@@ -18,19 +28,13 @@ package_map='       +tcp_wrappers       +glibc22            -gcc3
 +nvi                -bison              +bc                 +cpio
 +ed                 -autoconf           -automake           -libtool
 +curl               +wget               +dialog             +minicom
-+lrzsz              +mtools             +rsync              +tcpdump
-+sysvinit           +shadow             +util-linux         +hdparm
-+e2fsprogs          +reiserfsprogs      +genromfs           +lvm
-+raidtools          +net-tools          +procps             +psmisc
-+modutils           +pciutils           -cron               +jfsutils
-+sysklogd           +devfsd             +setserial          +dump
++lrzsz              +rsync              +tcpdump            +module-init-tools
++sysvinit           +shadow             +util-linux         +wireless-tools
++net-tools          +procps             +psmisc             +rockplug
++modutils           +pciutils           -cron               +portmap
++sysklogd           +devfsd             +setserial          +iproute2
 +netkit-base        +netkit-ftp         +netkit-telnet      +netkit-tftp
-+portmap            +iproute2           +grub               +lilo
-+sysfiles           +libpcap            +bonnie++           -nasm
--dietlibc           -linux25-src        +linux25            +iptables
-+xfsprogs           +module-init-tools  -linux24-header     -linux25-header
-+yaboot             +aboot              +wireless-tools     +pdisk
-+parted             +mkdosfs            +rockplug           +eject'
++sysfiles           +libpcap            +iptables           +tcp_wrappers'
 
 echo_status "Extracting the packages archives."
 for x in $( ls ../../pkgs/*.tar.bz2 | tr . / | cut -f8 -d/ )
@@ -75,7 +79,8 @@ ln -s bin sbin ; ln -s . usr
 #
 
 progs="agetty bash cat cp date dd df ifconfig ip ln ls mine mkdir mke2fs \
-       mkswap mount mv rm reboot route sleep swapoff swapon sync umount wget"
+       mkswap mount mv rm reboot route sleep swapoff swapon sync umount wget
+       eject"
 
 progs="$progs fdisk sfdisk"
 
