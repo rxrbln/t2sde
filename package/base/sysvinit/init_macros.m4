@@ -43,6 +43,8 @@ define(`default_restart', `    restart)
 
 ')
 
+define(`end_restart', ` | restart')
+
 ifelse(initstyle, `sysv_nice', `
 	define(`main_begin', `title() {
 	local x w="`$'( stty size 2>/dev/null </dev/tty | cut -d" " -f2  )"
@@ -66,7 +68,7 @@ case "`$'1" in')
 	define(`main_begin', `case "`$'1" in')
 ')
 define(`main_end', `default_restart    *)
-	echo "Usage: `$'0 { undivert(1) }"
+	echo "Usage: `$'0 { undivert(1)end_restart }"
 	exit 1 ;;
 
 esac
@@ -93,6 +95,7 @@ divert(1)dnl
 this_is_not_the_first_option`$1'dnl
 define(`this_is_not_the_first_option',` | ')dnl
 define(`default_$1', `')dnl
+define(`end_$1', `')dnl
 divert(0)dnl
 echo_title(`$2')')
 
