@@ -31,7 +31,7 @@ include(`kernel-net.conf')
 include(`kernel-fs.conf')
 
 dnl macs need a special RTC ... (this need to be fixed in the kernel so we
-dnl can have generic support for the rs6k and mac support at the same time
+dnl can have generic support for the rs6k and mac support at the same time)
 dnl
 # CONFIG_RTC is not set
 # CONFIG_GEN_RTC is not set
@@ -54,6 +54,12 @@ dnl
 CONFIG_PMAC_PBOOK=y
 CONFIG_PMAC_BACKLIGHT=y
 CONFIG_PMAC_APM_EMU=y
+dnl the thermal control stuff needed for newer desktop macs and iBook G4
+dnl
+CONFIG_I2C=y
+CONFIG_I2C_KEYWEST=y
+CONFIG_THERM_WINDTUNNEL=y
+CONFIG_THERM_ADT746X=y
 
 # for 2.6 kernels
 dnl
