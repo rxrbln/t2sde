@@ -1,0 +1,81 @@
+
+This adds /etc/ld.so.conf globbing to the gnu linker. We need this, since we
+also patch the glibc's dynamic linker and the linker needs to be able to
+scan the directories, too.
+
+  - Rene Rebe <rene@exactcode.de>
+
+--- binutils-2.15.94.0.1/ld/emultempl/elf32.em	2004-11-22 21:33:33.000000000 +0100
++++ binutils-2.15.94.0.1-glob/ld/emultempl/elf32.em	2004-12-23 23:40:56.549479128 +0100
+@@ -633,7 +633,7 @@
+ 	    }
+ 	  while (c != '\0');
+ 	}
+-      else
++      else /* normal dir (e.g. no include) */
+ 	{
+ 	  char *dir = p;
+ 	  while (*p && *p != '=' && *p != ' ' && *p != '\t' && *p != '\f'
+@@ -642,14 +642,45 @@
+ 
+ 	  while (p != dir && p[-1] == '/')
+ 	    --p;
+-	  if (info->path == NULL)
++
++	  /* cut trailing comments and such */
++	  p[1] = 0;
++
++	  /* assume path is a pattern - compare with quite equal glibc patch
++	     -ReneR */
++
++	  glob_t result;
++	  if (glob(dir, GLOB_ONLYDIR, NULL, &result) == 0) {
++	    int j;
++	    for (j = 0; j < result.gl_pathc; j++)
+ 	    {
++	      char* x = result.gl_pathv[j];
++
++	      if (info->path == NULL) {
++	        info->alloc = strlen(x) + 256;
++	        info->path = xmalloc (info->alloc);
++	        info->len = 0;
++	      }
++	      else {
++	        if (info->len + 1 + (p - dir) >= info->alloc) {
++		  info->alloc += strlen(x) + 1 + 256;
++		  info->path = xrealloc (info->path, info->alloc);
++		}
++	        info->path[info->len++] = ':';
++	      }
++	      strcpy (info->path + info->len, x);
++	      info->len += strlen(x);
++	      info->path[info->len] = '\0';
++
++	    }
++	  } else {
++	    /* error orig. code from binutils - in theory we do not need it */
++	    if (info->path == NULL) {
+ 	      info->alloc = p - dir + 1 + 256;
+ 	      info->path = xmalloc (info->alloc);
+ 	      info->len = 0;
+ 	    }
+-	  else
+-	    {
++	    else {
+ 	      if (info->len + 1 + (p - dir) >= info->alloc)
+ 		{
+ 		  info->alloc += p - dir + 256;
+@@ -657,9 +688,10 @@
+ 		}
+ 	      info->path[info->len++] = ':';
+ 	    }
+-	  memcpy (info->path + info->len, dir, p - dir);
+-	  info->len += p - dir;
+-	  info->path[info->len] = '\0';
++	    memcpy (info->path + info->len, dir, p - dir);
++	    info->len += p - dir;
++	    info->path[info->len] = '\0';
++	  }
+ 	}
+     }
+   while (! feof (f));
