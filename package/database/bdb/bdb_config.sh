@@ -20,6 +20,15 @@
 # 
 # --- ROCK-COPYRIGHT-NOTE-END ---
 
+# oficial patches
+bdb_autopatch() {
+	local x=
+	for x in `match_source_file -p patch` ; do
+		patch -p0 < $x
+	done
+}
+hook_add prepatch 5 'bdb_autopatch'
+
 hook_add preconf 2 'cd build_unix'
 configscript="../dist/configure"
 
