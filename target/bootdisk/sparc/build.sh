@@ -13,7 +13,7 @@ then
 	echo_status "Extracting silo boot loader images."
 	mkdir -p boot
 	tar --use-compress-program=bzip2 \
-	    -xf $base/build/${ROCKCFG_ID}/pkgs/silo.tar.bz2 \
+	    -xf $base/build/${ROCKCFG_ID}/ROCK/pkgs/silo.tar.bz2 \
 	    boot/second.b -O > boot/second.b
 	#
 	echo_status "Creating silo config file."
