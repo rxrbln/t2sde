@@ -53,3 +53,13 @@ public_drop() {
 	iptables_init_if
 }
 
+public_clamp_mtu() {
+	addcode up 1 6 "iptables -I FORWARD -p tcp --tcp-flags SYN,RST SYN \
+	                -j TCPMSS --clamp-mss-to-pmtu"
+}
+
+public_masquerade() {
+	addcode up 1 6 "iptables -t nat -A POSTROUTING -o $if \
+	                -j MASQUERADE"
+}
+
