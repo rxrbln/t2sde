@@ -1,16 +1,60 @@
 
+I had access to a 1600x1200 TFT panel today in addition to my 1280x1024 and so
+had the opportunity to fix an old bug with using flat panels (DVI) as second head,
+the external digital interface doesn't like having P2PLL post dividers with odd
+values. This version of my patch fixes it as well
+
+Changes already in the previous one are:
+
+ - Fix various bugs in RADEONProbePLLParameters() and made it overall more robust.
+I'm now probing my PLL parameters on my 3 test machines 100% of the time properly.
+This might fix issues with bandwidth calculation
+
+ - Fix a bug in UpdatePanelSize where it could access the detailed DDC timings array
+beyond it's limits. I don't fully understand why the code parsing the VESA modes
+would try to get the "Flags" from the detailed timings and the code parsing the
+detailed timings wouldn't try to get the "Flags" ... This is both fixed now and
+it might fix some sync polarity issues with some panels
+
+ - RADEONUpdatePanelSize() is no longer called from RADEONValidateDDCModes() as
+suggested by Hui, but instead directly from GetPanelInfo() for MT_DFP and
+GetLVDSInfo() for MT_LCD.
+However, I still keep the call to RADEONValidateDDCModes() even when UseBIOSDividers
+is true, it should be totally harmless now that we get the panel info, the mode data
+will not be used for anything but information purpose and/or allowing RMX modes, which
+is fine.
+
+ - LVDSProbePLL() is now TRUE by default, thus we do probe the current PLL value
+for an LVDS panel by default in absence of a BIOS provided value provided that
+PPLL_DIV_n is not equal to the "default" value (0x1bb). This need some testing on
+x86 especially but should help on PPC.
+
+ - Fix definition of RADEON_IO_MCLK_DYN_ENABLE to the value in the doc, it was
+obviously a typo.
+
+ - Fix once for all the SURFACE_CNTL issues (endian swapper access) by
+properly setting the value for the second head. The code got broken by
+the new cursor code which would restore the value on both heads, and
+thus end up with broken swapper setting whenever the cursor was moved
+to head 2
+
+ - Add NoVGA, ReverseDDC and LVDSProbePLL options, see man page for
+details.
+
+ - Fix a crasher in RADEONValidateFPModes() where the link pointers
+could be dereferenced when NULL under some circumstances
+
+ - Add more stuff to the PLL probing code so it tries to get mclk/sclk
+and properly sets the PLL min/max to reasonable defaults (that was missing,
+thus breaking CRT mode validation). The code still tend to fail to measure
+xtal when the machine isn't perfectly idle, it should be made more robust
+by measuring a longer timer and retrying a few times ...
+
+
 diff -urN xc.orig/programs/Xserver/hw/xfree86/drivers/ati/radeon.h xc/programs/Xserver/hw/xfree86/drivers/ati/radeon.h
 --- xc.orig/programs/Xserver/hw/xfree86/drivers/ati/radeon.h	2004-10-04 11:25:21.000000000 +1000
-+++ xc/programs/Xserver/hw/xfree86/drivers/ati/radeon.h	2004-11-12 16:20:40.000000000 +1100
-@@ -334,6 +334,7 @@
-     int               VBlank;
-     int               PanelPwrDly;
-     int               DotClock;
-+    int               DotClockGuessed;
-     int               RefDivider;
-     int               FeedbackDivider;
-     int               PostDivider;
-@@ -615,6 +616,7 @@
++++ xc/programs/Xserver/hw/xfree86/drivers/ati/radeon.h	2004-11-15 13:48:06.000000000 +1100
+@@ -615,6 +615,7 @@
      Bool		AtLeastOneNonClone;
      int			MergedFBXDPI, MergedFBYDPI;
      Bool		NoVirtual;
@@ -20,8 +64,8 @@ diff -urN xc.orig/programs/Xserver/hw/xfree86/drivers/ati/radeon.h xc/programs/X
      Bool		IsDellServer; 
 diff -urN xc.orig/programs/Xserver/hw/xfree86/drivers/ati/radeon.man xc/programs/Xserver/hw/xfree86/drivers/ati/radeon.man
 --- xc.orig/programs/Xserver/hw/xfree86/drivers/ati/radeon.man	2004-11-11 11:56:59.000000000 +1100
-+++ xc/programs/Xserver/hw/xfree86/drivers/ati/radeon.man	2004-11-12 16:25:03.000000000 +1100
-@@ -496,6 +496,33 @@
++++ xc/programs/Xserver/hw/xfree86/drivers/ati/radeon.man	2004-11-15 15:13:10.000000000 +1100
+@@ -496,6 +496,34 @@
  with this enabled.  The default is
  .B off.
  .TP
@@ -41,8 +85,9 @@ diff -urN xc.orig/programs/Xserver/hw/xfree86/drivers/ati/radeon.man xc/programs
 +may still be necessary to use the firmware provided PLL values for the
 +panel or flickering will happen. This option will force probing of
 +the current value programmed in the chip when X is launched in that
-+case.  The default is
-+.B off.
++case.  This is only useful for LVDS panels (laptop internal panels).
++The default is
++.B on.
 +.TP
 +.BI "Option \*qReverseDDC\*q \*q" boolean \*q
 +When BIOS connector informations aren't available, use this option to
@@ -73,8 +118,16 @@ diff -urN xc.orig/programs/Xserver/hw/xfree86/drivers/ati/radeon_accel.c xc/prog
      OUTREG(RADEON_DEFAULT_SC_BOTTOM_RIGHT, (RADEON_DEFAULT_SC_RIGHT_MAX
 diff -urN xc.orig/programs/Xserver/hw/xfree86/drivers/ati/radeon_driver.c xc/programs/Xserver/hw/xfree86/drivers/ati/radeon_driver.c
 --- xc.orig/programs/Xserver/hw/xfree86/drivers/ati/radeon_driver.c	2004-11-11 11:56:59.000000000 +1100
-+++ xc/programs/Xserver/hw/xfree86/drivers/ati/radeon_driver.c	2004-11-12 16:26:51.000000000 +1100
-@@ -171,7 +171,10 @@
++++ xc/programs/Xserver/hw/xfree86/drivers/ati/radeon_driver.c	2004-11-15 16:33:25.000000000 +1100
+@@ -118,6 +118,7 @@
+ static void RADEONGetMergedFBOptions(ScrnInfoPtr pScrn);
+ static int RADEONValidateMergeModes(ScrnInfoPtr pScrn);
+ static void RADEONSetDynamicClock(ScrnInfoPtr pScrn, int mode);
++static void RADEONUpdatePanelSize(ScrnInfoPtr pScrn);
+ 
+ /* psuedo xinerama support */
+ 
+@@ -171,7 +172,10 @@
      OPTION_SUBPIXEL_ORDER,
  #endif
      OPTION_SHOWCACHE,
@@ -86,7 +139,7 @@ diff -urN xc.orig/programs/Xserver/hw/xfree86/drivers/ati/radeon_driver.c xc/pro
  } RADEONOpts;
  
  static const OptionInfoRec RADEONOptions[] = {
-@@ -223,6 +226,9 @@
+@@ -223,6 +227,9 @@
  #endif
      { OPTION_SHOWCACHE,      "ShowCache",        OPTV_BOOLEAN, {0}, FALSE },
      { OPTION_DYNAMIC_CLOCKS, "DynamicClocks",    OPTV_BOOLEAN, {0}, FALSE },
@@ -96,7 +149,15 @@ diff -urN xc.orig/programs/Xserver/hw/xfree86/drivers/ati/radeon_driver.c xc/pro
      { -1,                    NULL,               OPTV_NONE,    {0}, FALSE }
  };
  
-@@ -1204,10 +1210,10 @@
+@@ -891,7 +898,6 @@
+ 	return MT_NONE;
+     }
+ 
+-    /* Read and output monitor info using DDC2 over I2C bus */
+     if (info->pI2CBus && info->ddc2) {
+ 	OUTREG(info->DDCReg, INREG(info->DDCReg) &
+ 	       (CARD32)~(RADEON_GPIO_A_0 | RADEON_GPIO_A_1));
+@@ -1204,34 +1210,49 @@
      RADEONPLLPtr  pll  = &info->pll;
      unsigned char *RADEONMMIO = info->MMIO;
      unsigned char ppll_div_sel;
@@ -105,18 +166,83 @@ diff -urN xc.orig/programs/Xserver/hw/xfree86/drivers/ati/radeon_driver.c xc/pro
      unsigned xclk, tmp, ref_div;
      int hTotal, vTotal, num, denom, m, n;
 -    float hz, vclk, xtal;
-+    float hz, vclk, xtal, mpll, spll;
++    float hz, prev_xtal, vclk, xtal, mpll, spll;
      long start_secs, start_usecs, stop_secs, stop_usecs, total_usecs;
-     int i;
+-    int i;
+-
+-    for(i=0; i<1000000; i++)
+-	if (((INREG(RADEON_CRTC_VLINE_CRNT_VLINE) >> 16) & 0x3ff) == 0)
++    long to1_secs, to1_usecs, to2_secs, to2_usecs;
++    unsigned int f1, f2, f3;
++    int i, tries = 0;
++
++    prev_xtal = 0;
++ again:
++    xtal = 0;
++    if (++tries > 10)
++	    goto failed;
++
++    xf86getsecs(&to1_secs, &to2_usecs);
++    f1 = INREG(RADEON_CRTC_CRNT_FRAME);
++    for (;;) {
++	f2 = INREG(RADEON_CRTC_CRNT_FRAME);
++	if (f1 != f2)
+ 	    break;
+-
++	xf86getsecs(&to2_secs, &to2_usecs);
++	if ((to2_secs - to1_secs) > 1) {
++	    xf86DrvMsg(pScrn->scrnIndex, X_WARNING, "Clock not counting...\n");
++	    goto failed;
++	}
++    }
+     xf86getsecs(&start_secs, &start_usecs);
+-
+-    for(i=0; i<1000000; i++)
+-	if (((INREG(RADEON_CRTC_VLINE_CRNT_VLINE) >> 16) & 0x3ff) != 0)
+-	    break;
+-
+-    for(i=0; i<1000000; i++)
+-	if (((INREG(RADEON_CRTC_VLINE_CRNT_VLINE) >> 16) & 0x3ff) == 0)
++    for(;;) {
++	f3 = INREG(RADEON_CRTC_CRNT_FRAME);
++	if (f3 != f2)
+ 	    break;
+-
++	xf86getsecs(&to2_secs, &to2_usecs);
++	if ((to2_secs - start_secs) > 1)
++	    goto failed;
++    }
+     xf86getsecs(&stop_secs, &stop_usecs);
  
-@@ -1292,20 +1298,68 @@
-         xtal = 1432;
+     total_usecs = abs(stop_usecs - start_usecs);
+     hz = 1000000/total_usecs;
+ 
+-    hTotal = ((INREG(RADEON_CRTC_H_TOTAL_DISP) & 0x1ff) + 1) * 8;
+-    vTotal = ((INREG(RADEON_CRTC_V_TOTAL_DISP) & 0x3ff) + 1);
++    hTotal = ((INREG(RADEON_CRTC_H_TOTAL_DISP) & 0x3ff) + 1) * 8;
++    vTotal = ((INREG(RADEON_CRTC_V_TOTAL_DISP) & 0xfff) + 1);
+     vclk = (float)(hTotal * (float)(vTotal * hz));
+ 
+     switch((INPLL(pScrn, RADEON_PPLL_REF_DIV) & 0x30000) >> 16) {
+@@ -1293,19 +1314,79 @@
      else if ((xtal > 29400000) && (xtal < 29600000))
          xtal = 2950;
--    else
-+    else {
-+	xf86DrvMsg(pScrn->scrnIndex, X_WARNING, "Failed to probe xtal value !\n");
- 	return FALSE;
+     else
+-	return FALSE;
++	goto again;
++ failed:
++    if (xtal == 0) {
++	xf86DrvMsg(pScrn->scrnIndex, X_WARNING, "Failed to probe xtal value ! Using default 27Mhz\n");
++	xtal = 2700;
++    } else {
++	if (prev_xtal == 0) {
++	    prev_xtal = xtal;
++	    tries = 0;
++	    goto again;
++	} else if (prev_xtal != xtal) {
++	    prev_xtal = 0;
++	    goto again;
++	}
 +    }
  
      tmp = INPLL(pScrn, RADEON_X_MPLL_REF_FB_DIV);
@@ -181,17 +307,19 @@ diff -urN xc.orig/programs/Xserver/hw/xfree86/drivers/ati/radeon_driver.c xc/pro
  
      return TRUE;
  }
-@@ -1334,6 +1388,21 @@
+@@ -1334,6 +1415,24 @@
  	info->PanelXRes = 640;
  	info->PanelYRes = 480;
      }
 +
-+    if (xf86ReturnOptValBool(info->Options, OPTION_LVDS_PROBE_PLL, FALSE)) {
++    if (xf86ReturnOptValBool(info->Options, OPTION_LVDS_PROBE_PLL, TRUE)) {
 +	    CARD32 ppll_div_sel, ppll_val;
 +
 +	    OUTREG(RADEON_CLOCK_CNTL_INDEX, 1);
 +	    ppll_div_sel = INREG8(RADEON_CLOCK_CNTL_DATA + 1) & 0x3;
 +            ppll_val = INPLL(pScrn, RADEON_PPLL_DIV_0 + ppll_div_sel);
++	    if ((ppll_val & 0x000707ff) == 0x1bb)
++		goto noprobe;
 +            info->FeedbackDivider = ppll_val & 0x7ff;
 +            info->PostDivider = (ppll_val >> 16) & 0x7;
 +	    info->RefDivider = info->pll.reference_div;
@@ -200,18 +328,61 @@ diff -urN xc.orig/programs/Xserver/hw/xfree86/drivers/ati/radeon_driver.c xc/pro
 +	    xf86DrvMsg(pScrn->scrnIndex, X_INFO,
 +		       "Existing panel PLL dividers will be used.\n");
 +    }
++ noprobe:
      
      xf86DrvMsg(pScrn->scrnIndex, X_WARNING, 
  	       "Panel size %dx%d is derived, this may not be correct.\n"
-@@ -1376,6 +1445,7 @@
-                     info->VSyncWidth = tmp_mode->VSyncEnd - tmp_mode->VSyncStart;
-                     info->DotClock   = tmp_mode->Clock;
-                     info->Flags = 0;
-+		    info->DotClockGuessed = 1;
-                     break;
-                 }
-             }
-@@ -1623,8 +1693,18 @@
+@@ -1348,17 +1447,24 @@
+     if (!RADEONGetLVDSInfoFromBIOS(pScrn))
+         RADEONGetPanelInfoFromReg(pScrn);
+ 
++    /* The panel size we collected from BIOS may not be the
++     * maximum size supported by the panel.  If not, we update
++     * it now.  These will be used if no matching mode can be
++     * found from EDID data.
++     */
++    RADEONUpdatePanelSize(pScrn);
++
++    /* No timing information for the native mode,
++     * use whatever specified in the Modeline.
++     * If no Modeline specified, we'll just pick
++     * the VESA mode at 60Hz refresh rate which
++     * is likely to be the best for a flat panel.
++     */
+     if (info->DotClock == 0) {
+         RADEONEntPtr pRADEONEnt   = RADEONEntPriv(pScrn);
+         DisplayModePtr  tmp_mode = NULL;
+         xf86DrvMsg(pScrn->scrnIndex, X_WARNING,
+                    "No valid timing info from BIOS.\n");
+-        /* No timing information for the native mode,
+-           use whatever specified in the Modeline.
+-           If no Modeline specified, we'll just pick
+-           the VESA mode at 60Hz refresh rate which
+-           is likely to be the best for a flat panel.
+-	*/
+         tmp_mode = pScrn->monitor->Modes;
+         while(tmp_mode) {
+             if ((tmp_mode->HDisplay == info->PanelXRes) &&
+@@ -1429,6 +1535,8 @@
+             RADEONGetTMDSInfo(pScrn);
+             if (!pScrn->monitor->DDC)
+                 RADEONGetHardCodedEDIDFromBIOS(pScrn);
++	    else if (!info->IsSecondary)
++		RADEONUpdatePanelSize(pScrn);
+         }
+     }
+ }
+@@ -1462,7 +1570,8 @@
+ 		    "Video BIOS not detected, using default clock settings!\n");
+ 
+ #if defined(__powerpc__)
+-	if (RADEONProbePLLParameters(pScrn)) return;
++	if (RADEONProbePLLParameters(pScrn))
++            return;
+ #endif
+ 	if (info->IsIGP)
+ 	    pll->reference_freq = 1432;
+@@ -1623,8 +1732,18 @@
  	pRADEONEnt->PortInfo[1].DACType = DAC_PRIMARY;
  	pRADEONEnt->PortInfo[1].TMDSType = TMDS_EXT;
  	pRADEONEnt->PortInfo[1].ConnectorType = CONNECTOR_CRT;
@@ -230,7 +401,15 @@ diff -urN xc.orig/programs/Xserver/hw/xfree86/drivers/ati/radeon_driver.c xc/pro
      /* always make TMDS_INT port first*/
      if (pRADEONEnt->PortInfo[1].TMDSType == TMDS_INT) {
          RADEONConnector connector;
-@@ -2601,9 +2681,27 @@
+@@ -2596,14 +2715,35 @@
+     xf86MonPtr      ddc  = pScrn->monitor->DDC;
+     DisplayModePtr  p;
+ 
++    if (info->UseBiosDividers && info->DotClock != 0)
++	return;
++
+     /* Go thru detailed timing table first */
+     for (j = 0; j < 4; j++) {
  	if (ddc->det_mon[j].type == 0) {
  	    struct detailed_timings *d_timings =
  		&ddc->det_mon[j].section.d_timings;
@@ -241,9 +420,9 @@ diff -urN xc.orig/programs/Xserver/hw/xfree86/drivers/ati/radeon_driver.c xc/pro
 +	     * clock, or ValidateFPModes will fail, even when UseBiosDividers
 +	     * is set.
 +	     */
-+	    if ((info->DotClock == 0 || info->DotClockGuessed) &&
-+		 info->PanelXRes == d_timings->h_active &&
-+		 info->PanelYRes == d_timings->v_active)
++	    if (info->DotClock == 0 &&
++		info->PanelXRes == d_timings->h_active &&
++		info->PanelYRes == d_timings->v_active)
 +	        match = 1;
 +	    
 +	    /* If we don't have a BIOS provided panel data with fixed dividers,
@@ -259,16 +438,66 @@ diff -urN xc.orig/programs/Xserver/hw/xfree86/drivers/ati/radeon_driver.c xc/pro
  		info->PanelXRes  = d_timings->h_active;
  		info->PanelYRes  = d_timings->v_active;
  		info->DotClock   = d_timings->clock / 1000;
-@@ -2616,6 +2714,8 @@
+@@ -2613,10 +2753,24 @@
+ 		info->VOverPlus  = d_timings->v_sync_off;
+ 		info->VSyncWidth = d_timings->v_sync_width;
+ 		info->VBlank     = d_timings->v_blanking;
++		info->Flags      = (d_timings->interlaced ? V_INTERLACE : 0);
++		if (d_timings->sync == 3) {
++		    switch (d_timings->misc) {
++		    case 0: info->Flags |= V_NHSYNC | V_NVSYNC; break;
++		    case 1: info->Flags |= V_PHSYNC | V_NVSYNC; break;
++		    case 2: info->Flags |= V_NHSYNC | V_PVSYNC; break;
++		    case 3: info->Flags |= V_PHSYNC | V_PVSYNC; break;
++		    }
++	        }
++		xf86DrvMsg(pScrn->scrnIndex, X_INFO, "Panel infos found from DDC detailed: %dx%d\n",
++			   info->PanelXRes, info->PanelYRes);
  	    }
  	}
      }
-+    if (info->UseBiosDividers)
-+        return;
  
++    if (info->UseBiosDividers && info->DotClock != 0)
++	return;
++
      /* Search thru standard VESA modes from EDID */
      for (j = 0; j < 8; j++) {
-@@ -2778,6 +2878,8 @@
+ 	if ((info->PanelXRes < ddc->timings2[j].hsize) &&
+@@ -2638,28 +2792,16 @@
+ 			info->VOverPlus  = p->VSyncStart - p->VDisplay;
+ 			info->VSyncWidth = p->VSyncEnd - p->VSyncStart;
+ 			info->DotClock   = p->Clock;
+-			info->Flags      =
+-			    (ddc->det_mon[j].section.d_timings.interlaced
+-			     ? V_INTERLACE
+-			     : 0);
+-			if (ddc->det_mon[j].section.d_timings.sync == 3) {
+-			    switch (ddc->det_mon[j].section.d_timings.misc) {
+-			    case 0: info->Flags |= V_NHSYNC | V_NVSYNC; break;
+-			    case 1: info->Flags |= V_PHSYNC | V_NVSYNC; break;
+-			    case 2: info->Flags |= V_NHSYNC | V_PVSYNC; break;
+-			    case 3: info->Flags |= V_PHSYNC | V_PVSYNC; break;
+-			    }
+-			}
++			info->Flags	 = p->Flags;
++			xf86DrvMsg(pScrn->scrnIndex, X_INFO, "Panel infos found from DDC VESA/EDID: %dx%d\n",
++				   info->PanelXRes, info->PanelYRes);
+ 		    }
+ 		}
+ 	    }
+ 	}
+     }
+-
+-    xf86DrvMsg(pScrn->scrnIndex, X_INFO, "Panel size found from DDC: %dx%d\n",
+-	       info->PanelXRes, info->PanelYRes);
+-}
+-
++ }
++ 
+ /* This function will sort all modes according to their resolution.
+  * Highest resolution first.
+  */
+@@ -2778,6 +2920,8 @@
  
      /* Search thru standard VESA modes from EDID */
      for (j = 0; j < 8; j++) {
@@ -277,7 +506,7 @@ diff -urN xc.orig/programs/Xserver/hw/xfree86/drivers/ati/radeon_driver.c xc/pro
  	for (p = pScrn->monitor->Modes; p && p->next; p = p->next->next) {
  	    /* Ignore all double scan modes */
  	    if ((ddc->timings2[j].hsize == p->HDisplay) &&
-@@ -2867,7 +2969,7 @@
+@@ -2867,19 +3011,10 @@
      pScrn->virtualX = pScrn1->display->virtualX;
      pScrn->virtualY = pScrn1->display->virtualY;
  
@@ -286,7 +515,19 @@ diff -urN xc.orig/programs/Xserver/hw/xfree86/drivers/ati/radeon_driver.c xc/pro
  	int  maxVirtX = pScrn->virtualX;
  	int  maxVirtY = pScrn->virtualY;
  
-@@ -3175,8 +3277,9 @@
+-	if ((DisplayType != MT_CRT) && (!info->IsSecondary) && (!crtc2)) {
+-	    /* The panel size we collected from BIOS may not be the
+-	     * maximum size supported by the panel.  If not, we update
+-	     * it now.  These will be used if no matching mode can be
+-	     * found from EDID data.
+-	     */
+-	    RADEONUpdatePanelSize(pScrn);
+-	}
+-
+ 	/* Collect all of the DDC modes */
+ 	first = last = ddcModes = RADEONDDCModes(pScrn);
+ 
+@@ -3175,8 +3310,9 @@
  		new->next       = NULL;
  		new->prev       = last;
  
@@ -297,7 +538,17 @@ diff -urN xc.orig/programs/Xserver/hw/xfree86/drivers/ati/radeon_driver.c xc/pro
  	    }
  	}
      }
-@@ -4201,15 +4304,6 @@
+@@ -3570,7 +3706,8 @@
+ 		xf86DrvMsg(pScrn->scrnIndex, X_CONFIG,
+ 			   "Invalid PanelSize value: %s\n", s);
+ 	    }
+-	}
++	} else
++		RADEONGetPanelInfo(pScrn);
+     }
+ 
+     if (pScrn->monitor->DDC) {
+@@ -4201,15 +4338,6 @@
  	return TRUE;
      }
  
@@ -313,7 +564,7 @@ diff -urN xc.orig/programs/Xserver/hw/xfree86/drivers/ati/radeon_driver.c xc/pro
      xf86DrvMsg(pScrn->scrnIndex, X_INFO,
  	       "PCI bus %d card %d func %d\n",
  	       info->PciInfo->bus,
-@@ -4237,6 +4331,32 @@
+@@ -4237,6 +4365,32 @@
      memcpy(info->Options, RADEONOptions, sizeof(RADEONOptions));
      xf86ProcessOptions(pScrn->scrnIndex, pScrn->options, info->Options);
  
@@ -346,7 +597,15 @@ diff -urN xc.orig/programs/Xserver/hw/xfree86/drivers/ati/radeon_driver.c xc/pro
      if (!RADEONPreInitWeight(pScrn))
  	goto fail;
  
-@@ -4410,7 +4530,8 @@
+@@ -4352,7 +4506,6 @@
+     RADEONGetBIOSInfo(pScrn, pInt10);
+     if (!RADEONQueryConnectedMonitors(pScrn))    goto fail;
+     RADEONGetClockInfo(pScrn);
+-    RADEONGetPanelInfo(pScrn);
+ 
+     /* collect MergedFB options */
+     /* only parse mergedfb options on the primary head. 
+@@ -4410,7 +4563,8 @@
      if (pInt10)
  	xf86FreeInt10(pInt10);
  
@@ -356,7 +615,7 @@ diff -urN xc.orig/programs/Xserver/hw/xfree86/drivers/ati/radeon_driver.c xc/pro
  
   fail2:
      if(info->MMIO) RADEONUnmapMMIO(pScrn);
-@@ -4612,10 +4733,15 @@
+@@ -4612,10 +4766,15 @@
  
      RADEONSave(pScrn);
  
@@ -376,7 +635,7 @@ diff -urN xc.orig/programs/Xserver/hw/xfree86/drivers/ati/radeon_driver.c xc/pro
      }
  
      if (info->FBDev) {
-@@ -5846,7 +5972,6 @@
+@@ -5846,7 +6005,6 @@
      RADEONInfoPtr  info       = RADEONPTR(pScrn);
      unsigned char *RADEONMMIO = info->MMIO;
      RADEONSavePtr  save       = &info->SavedReg;
@@ -384,7 +643,7 @@ diff -urN xc.orig/programs/Xserver/hw/xfree86/drivers/ati/radeon_driver.c xc/pro
  
      RADEONTRACE(("RADEONSave\n"));
      if (info->FBDev) {
-@@ -5855,19 +5980,23 @@
+@@ -5855,19 +6013,23 @@
      }
  
      if (!info->IsSecondary) {
@@ -418,7 +677,7 @@ diff -urN xc.orig/programs/Xserver/hw/xfree86/drivers/ati/radeon_driver.c xc/pro
  	save->dp_datatype      = INREG(RADEON_DP_DATATYPE);
  	save->rbbm_soft_reset  = INREG(RADEON_RBBM_SOFT_RESET);
  	save->clock_cntl_index = INREG(RADEON_CLOCK_CNTL_INDEX);
-@@ -5883,7 +6012,6 @@
+@@ -5883,7 +6045,6 @@
      RADEONInfoPtr  info       = RADEONPTR(pScrn);
      unsigned char *RADEONMMIO = info->MMIO;
      RADEONSavePtr  restore    = &info->SavedReg;
@@ -426,7 +685,7 @@ diff -urN xc.orig/programs/Xserver/hw/xfree86/drivers/ati/radeon_driver.c xc/pro
  
      RADEONTRACE(("RADEONRestore\n"));
  
-@@ -5925,27 +6053,36 @@
+@@ -5925,27 +6086,36 @@
      usleep(100000);
  #endif
  
@@ -481,7 +740,7 @@ diff -urN xc.orig/programs/Xserver/hw/xfree86/drivers/ati/radeon_driver.c xc/pro
      }
      RADEONUnblank(pScrn);
  
-@@ -6574,8 +6711,13 @@
+@@ -6574,8 +6744,13 @@
  				      ? RADEON_CRTC2_V_SYNC_POL
  				      : 0));
  
@@ -496,7 +755,7 @@ diff -urN xc.orig/programs/Xserver/hw/xfree86/drivers/ati/radeon_driver.c xc/pro
      /* this should be right */
      if (info->MergedFB) {
      save->crtc2_pitch  = (((info->CRT2pScrn->displayWidth * pScrn->bitsPerPixel) +
-@@ -6618,6 +6760,23 @@
+@@ -6618,6 +6793,23 @@
  
      }
  
@@ -520,7 +779,56 @@ diff -urN xc.orig/programs/Xserver/hw/xfree86/drivers/ati/radeon_driver.c xc/pro
      RADEONTRACE(("Pitch = %d bytes (virtualX = %d, displayWidth = %d)\n",
  		 save->crtc2_pitch, pScrn->virtualX,
  		 info->CurrentLayout.displayWidth));
-@@ -7450,7 +7609,7 @@
+@@ -6902,7 +7094,7 @@
+ 
+ /* Define PLL2 registers for requested video mode */
+ static void RADEONInitPLL2Registers(RADEONSavePtr save, RADEONPLLPtr pll,
+-				    double dot_clock)
++				    double dot_clock, int no_odd_postdiv)
+ {
+     unsigned long  freq = dot_clock * 100;
+ 
+@@ -6919,7 +7111,7 @@
+ 	{  2, 1 },              /* VCLK_SRC/2               */
+ 	{  4, 2 },              /* VCLK_SRC/4               */
+ 	{  8, 3 },              /* VCLK_SRC/8               */
+-	{  3, 4 },              /* VCLK_SRC/3               */
++      	{  3, 4 },              /* VCLK_SRC/3               */
+ 	{  6, 6 },              /* VCLK_SRC/6               */
+ 	{ 12, 7 },              /* VCLK_SRC/12              */
+ 	{  0, 0 }
+@@ -6929,6 +7121,11 @@
+     if (freq * 12 < pll->min_pll_freq) freq = pll->min_pll_freq / 12;
+ 
+     for (post_div = &post_divs[0]; post_div->divider; ++post_div) {
++	/* Odd post divider value don't work properly on the second digital
++         * output
++         */
++	if (no_odd_postdiv && (post_div->divider & 1))
++	    continue;
+ 	save->pll_output_freq_2 = post_div->divider * freq;
+ 	if (save->pll_output_freq_2 >= pll->min_pll_freq
+ 	    && save->pll_output_freq_2 <= pll->max_pll_freq) break;
+@@ -7029,7 +7226,7 @@
+     if (info->IsSecondary) {
+ 	if (!RADEONInitCrtc2Registers(pScrn, save, mode, info))
+ 	    return FALSE;
+-	RADEONInitPLL2Registers(save, &info->pll, dot_clock);
++	RADEONInitPLL2Registers(save, &info->pll, dot_clock, info->DisplayType != MT_CRT);
+     } else if (info->MergedFB) {
+         RADEONInitCommonRegisters(save, info);
+         if (!RADEONInitCrtcRegisters(pScrn, save, 
+@@ -7046,7 +7243,8 @@
+         RADEONInitCrtc2Registers(pScrn, save, 
+ 			((RADEONMergedDisplayModePtr)mode->Private)->CRT2, info);
+         dot_clock = (((RADEONMergedDisplayModePtr)mode->Private)->CRT2)->Clock / 1000.0;
+-        RADEONInitPLL2Registers(save, &info->pll, dot_clock);
++        RADEONInitPLL2Registers(save, &info->pll, dot_clock, 
++				info->MergeType != MT_CRT);
+     } else {
+ 	if (!RADEONInitCrtcRegisters(pScrn, save, mode, info))
+ 	    return FALSE;
+@@ -7450,7 +7648,7 @@
         }
      }
  
@@ -529,5 +837,17 @@ diff -urN xc.orig/programs/Xserver/hw/xfree86/drivers/ati/radeon_driver.c xc/pro
  	vgaHWFreeHWRec(pScrn);
      RADEONFreeRec(pScrn);
  }
+diff -urN xc.orig/programs/Xserver/hw/xfree86/drivers/ati/radeon_reg.h xc/programs/Xserver/hw/xfree86/drivers/ati/radeon_reg.h
+--- xc.orig/programs/Xserver/hw/xfree86/drivers/ati/radeon_reg.h	2004-11-11 11:56:59.000000000 +1100
++++ xc/programs/Xserver/hw/xfree86/drivers/ati/radeon_reg.h	2004-11-15 14:42:19.000000000 +1100
+@@ -821,7 +821,7 @@
+ #       define RADEON_MC_MCLK_MAX_DYN_STOP_LAT (1<<12)
+ #       define RADEON_IO_MCLK_MAX_DYN_STOP_LAT (1<<13)
+ #       define RADEON_MC_MCLK_DYN_ENABLE    (1 << 14)
+-#       define RADEON_IO_MCLK_DYN_ENABLE    (1 << 14)
++#       define RADEON_IO_MCLK_DYN_ENABLE    (1 << 15)
+ #define RADEON_MDGPIO_A_REG                 0x01ac
+ #define RADEON_MDGPIO_EN_REG                0x01b0
+ #define RADEON_MDGPIO_MASK                  0x0198
 
 
