@@ -34,7 +34,8 @@ echo_header "Creating ISO filesystem description."
 cd $disksdir; rm -rf isofs; mkdir -p isofs
 
 echo_status "Creating bootdisk/isofs directory.."
-ln 2nd_stage.tar.gz 2nd_stage_small.tar.gz *.img isofs/
+ln 2nd_stage.tar.gz 2nd_stage_small.tar.gz isofs/
+ln *.img isofs/ 2>/dev/null || true # might not exist on some architectures
 
 echo_status "Creating isofs.txt file .."
 echo "DISK1	build/${ROCKCFG_ID}/bootdisk/isofs/ `

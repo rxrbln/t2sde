@@ -34,9 +34,11 @@ for x in ../2nd_stage/lib/modules/*/kernel/drivers/{scsi,net}/*.o; do
 	mkdir -p $( dirname $xx ) ; cp $x $xx
 	strip $xx # --strip-debug --strip-unneeded $xx
 done
-cp ../2nd_stage/lib/modules/*/modules.dep       lib/modules/[0-9]*/
-cp ../2nd_stage/lib/modules/*/modules.pcimap    lib/modules/[0-9]*/
-cp ../2nd_stage/lib/modules/*/modules.isapnpmap lib/modules/[0-9]*/
+#
+for x in ../2nd_stage/lib/modules/*/modules.{dep,pcimap,isapnpmap} ; do
+	cp $x ${x#../2nd_stage/}
+done
+#
 for x in lib/modules/*/kernel/drivers/{scsi,net}; do
 	ln -s ${x#lib/modules/} lib/modules/
 done

@@ -1,8 +1,10 @@
 
 use_yaboot=1
 
-echo "Copying vmlinux."
-cp -v 2nd_stage/boot/vmlinux .
+cd $disksdir
+
+echo_header "Creating cleaning boot directory:"
+rm -rfv boot/*-rock boot/System.map boot/kconfig*
 
 if [ $use_yaboot -eq 1 ]
 then
@@ -18,8 +20,8 @@ then
 	cp -v $base/target/$target/powerpc/{yaboot.conf,boot.msg,ofboot.b} \
 	  boot
 	#
-	echo_status "Copy images (initrd,vmlinux) to yaboot directory."
-	cp -v initrd.img vmlinux boot/
+	echo_status "Moving image (initrd) to yaboot directory."
+	mv -v initrd.img boot/
 	#
 	echo_status "Copy more config files."
 	cp -v $base/target/$target/powerpc/mapping .
