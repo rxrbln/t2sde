@@ -38,9 +38,9 @@ xf_extract() {
 # extract additional gl* stuff
 xf_extract_gl() {
 	mkdir release ; ln -s ../.. release/xc
-	tar xZf $archdir/mangl.tar.Z
-	tar xZf $archdir/manglu.tar.Z
-	tar xZf $archdir/manglx.tar.Z
+	tar $taropt $archdir/mangl.tar.bz2
+	tar $taropt $archdir/manglu.tar.bz2
+	tar $taropt $archdir/manglx.tar.bz2
 	rm -rf release
 }
 
