@@ -20,14 +20,14 @@ public:
     SetConnectTimeout(20);
     SetMaxTime(-1);
     char templ[] = "/tmp/curl_downloadXXXXXX";
-    mkstemp(templ);
-    filename=templ;
+    close(mkstemp(templ)); // ReneR: Hack alert!
+    filename = templ;
   }
 
   void SetConnectTimeout (int value) {connect_timeout = value;}
   void SetMaxTime (int value) {max_time = value;}
 
-  void Download (std::string url) {
+  void Download (const std::string& url) {
     GenParamString ();
     params << " " << url;
     ExecCurl ();
@@ -39,16 +39,13 @@ public:
     ExecCurl (); 
   }
 
+  std::string GetCommand () {return params.str();}
 
-  std::string GetCommand () {
-    return params.str();
-  }
-
-  void SetFile (std::string name) {filename=name;}
+  void SetFile (const std::string& name) {filename = name;}
 
   std::ifstream* OpenFile () {
-    std::ifstream* r=new std::ifstream();
-    r -> open(filename.c_str());
+    std::ifstream* r = new std::ifstream();
+    r->open(filename.c_str());
     return r;
   }
 
@@ -57,7 +54,7 @@ public:
 private:
 
   void ExecCurl () {
-    int ret=system(GetCommand().c_str());
+    int ret = system(GetCommand().c_str());
     if (ret != 0)
       switch (ret) {
       case 1:
@@ -86,7 +83,7 @@ private:
 
   void GenParamString () {
     std::string empty("");
-    params.rdbuf() -> str(empty);
+    params.rdbuf()->str(empty);
     params << "curl -o " << filename;
     if (connect_timeout > 0)
       params << " --connect-timeout " << connect_timeout;
