@@ -123,7 +123,7 @@ main() {
 	cmd="gui_menu network 'Network Configuration - Select an item to"
 	cmd="$cmd change the value
 
-WARNING: This script tries to adopt /etc/conf/network, /etc/hosts,
+WARNING: This script tries to adapt /etc/conf/network, /etc/hosts,
 /etc/resolv.conf and /etc/HOSTNAME according to your changes. You
 better be carefull if you also change this files by hand.'"
 
