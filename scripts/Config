@@ -61,13 +61,44 @@ if [ $do_config_cycle = 0 ] ; then
 	rm -f config.data config.dialog config.out config.help
 	rm -f config.pcache.data config.pcache.cmd
 	rm -f rockdialog.scrltmp # src/rockdialog.bin
+	mkdir -p src
 
 	if [ -z "$oldconfig" -a ! -f src/rockdialog.bin ] ; then
 		echo "Creating rockdialog tool ..."
-		mkdir -p src/ ; command="gcc misc/rockdialog/*.c `
+		command="gcc misc/rockdialog/*.c `
 			`-Imisc/rockdialog -lncurses -o src/rockdialog.bin"
-		echo "$command" ; eval "$command"
+		echo "$command" ; eval "$command.$$"
+		mv src/rockdialog.bin.$$ src/rockdialog.bin
 	fi
+
+	echo "Creating configuration script ..."
+	cat << "EOT" > src/rockconfig.awk.$$
+#!/usr/bin/awk -f
+
+FNR == 1 {
+        if ( lastfile ) {
+                print "### END of " lastfile;
+        }
+        print "### BEGIN of " FILENAME;
+        lastfile = FILENAME;
+}
+
+END {
+        print "### END of " FILENAME;
+}
+
+$1 == "%include" {
+        $1 = "awk -f src/rockconfig.awk";
+        system($0);
+        next;
+}
+
+$1 == "#" { next; }
+{ print; }
+EOT
+	mv src/rockconfig.awk.$$ src/rockconfig.awk
+	awk -f src/rockconfig.awk scripts/config.in > src/rockconfig.in.$$ 2> /dev/null
+	mv src/rockconfig.in.$$ src/rockconfig.in
 
 	echo "Running ROCK Linux $rockver configuration ..."
 	while "$0" -cfg $config $oldconfig -cycle ; do : ; done
@@ -459,7 +490,7 @@ else
 	cat config.pcache.data > config/$config/packages
 fi
 
-export ROCKCFG_ID="$rockver" ; . scripts/config.in
+export ROCKCFG_ID="$rockver" ; . src/rockconfig.in
 echo "export ROCKCFG_ID='$ROCKCFG_ID'" >> config/$config/config
 
 cut -f1,2,4,5,8- -d' ' config/$config/packages | sed 's, [^ ]*$,,' | \
