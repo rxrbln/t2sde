@@ -13,7 +13,7 @@ fi
 
 # Add tools.cross/diet-bin/ to path so we find our 'diet' program
 PATH="$base/build/${ROCKCFG_ID}/ROCK/$toolsdir/diet-bin:$PATH"
-
+export DIETHOME="$base/build/${ROCKCFG_ID}/usr/dietlibc"
 
 if [ "$ROCK_DEBUG_BOOTDISK_NOSTAGE2" != 1 ]
 then
