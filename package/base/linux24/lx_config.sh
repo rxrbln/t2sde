@@ -215,7 +215,8 @@ lx_patch ()
 	fi
 
 	echo "Clean up the *.orig and *~ files ... "
-	rm -f .config.old `find -name '*.orig' -o -name '*~'`
+	rm -f .config.old
+	find -name '*.orig' -o -name '*~' | xargs rm -f
 
 	echo "... linux source patching finished."
 }
