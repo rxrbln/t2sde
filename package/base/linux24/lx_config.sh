@@ -20,8 +20,8 @@
 # 
 # --- ROCK-COPYRIGHT-NOTE-END ---
 
-treever=${ver:0:3} ; treever=${treever//./}
-archdir="$base/download/base/linux$treever"
+treever=${pkg/linux/} ; treever=${treever/-*/}
+archdir="$base/download/$repository/linux$treever"
 srctar="linux-${vanilla_ver}.tar.bz2"
 
 lx_cpu=`echo "$arch" | sed -e s/x86/i386/ -e s/powerpc/ppc/`
@@ -34,10 +34,9 @@ lx_config ()
 	for x in $lx_patches ; do
 		echo "Applying $x ..."
 		(
-		  if [[ $x = *.bz2 ]] ; then
-			bzcat $base/download/base/linux$treever/$x
-		  else
-			cat $base/download/base/linux$treever/$x
+		  [ -e $x ] || x=$archdir/$x
+		  if [[ $x = *.bz2 ]]
+		  then bzcat $x ; else cat $x
 		  fi
 		) | patch -p1 -s
 	done
