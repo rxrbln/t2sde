@@ -187,7 +187,7 @@ int make_etc_symlinks() {
 	int n, ret=0;
 
 	getcwd(oldcwd, 100);
-	chdir("/ROCK/etc");
+	chdir("/TOOLCHAIN/etc");
 
 	n = scandir(".", &namelist, no_dot_dirs_filter, NULL);
 	if (n < 0) {
@@ -195,7 +195,7 @@ int make_etc_symlinks() {
 	}
 
 	while(n--) {
-		snprintf(source, 256, "/ROCK/etc/%s",namelist[n]->d_name);
+		snprintf(source, 256, "/TOOLCHAIN/etc/%s",namelist[n]->d_name);
 		snprintf(target, 256, "/etc/%s",namelist[n]->d_name);
 
 		if (symlink(source, target) != 0) {
@@ -256,10 +256,10 @@ int prepare_root() {
 	umask(00);
 
 	/* simple symlinking */
-	if(symlink("/ROCK/bin","/bin") != 0) { perror("/bin symlink FAILED"); ret=-1; }
-	if(symlink("/ROCK/sbin","/sbin") != 0) { perror("/sbin symlink FAILED"); ret=-1; }
-	if(symlink("/ROCK/boot","/boot") != 0) { perror("/boot symlink FAILED"); ret=-1; }
-	if(symlink("/ROCK/opt","/opt") != 0) { perror("/opt symlink FAILED"); ret=-1; }
+	if(symlink("/TOOLCHAIN/bin","/bin") != 0) { perror("/bin symlink FAILED"); ret=-1; }
+	if(symlink("/TOOLCHAIN/sbin","/sbin") != 0) { perror("/sbin symlink FAILED"); ret=-1; }
+	if(symlink("/TOOLCHAIN/boot","/boot") != 0) { perror("/boot symlink FAILED"); ret=-1; }
+	if(symlink("/TOOLCHAIN/opt","/opt") != 0) { perror("/opt symlink FAILED"); ret=-1; }
 
 	/* if /tmp isn't empty, this is gonna blow... */	
 	if(rmdir("/tmp") != 0) { perror("unable to remove old /tmp"); ret=-1; }
@@ -271,13 +271,13 @@ int prepare_root() {
 
 	/* usr is just a symlink to / , that's why it works */
 	if(unlink("/usr") != 0) { perror("unable to remove old /usr"); ret=-1; }
-	if(symlink("/ROCK/usr","/usr") != 0) { perror("/usr symlink FAILED"); ret=-1; }
+	if(symlink("/TOOLCHAIN/usr","/usr") != 0) { perror("/usr symlink FAILED"); ret=-1; }
 
 	if(mkdir("/ramdisk/var", 0755) != 0) { perror("unable to create /ramdisk/var"); ret=-1; }
 	if(symlink("/ramdisk/var", "/var") != 0) { perror("/var symlink FAILED"); ret=-1; }
 
 	if(rm_recursive("/lib") != 0) { printf("removal of /lib FAILED\n"); ret=-1; }
-	if(symlink("/ROCK/lib", "/lib") != 0) { perror("/lib symlink FAILED"); ret=-1; }
+	if(symlink("/TOOLCHAIN/lib", "/lib") != 0) { perror("/lib symlink FAILED"); ret=-1; }
 
 	if(unlink("/sbin-static") != 0) { perror("error removing /sbin-static"); ret=-1; }
 	if(rm_recursive("/bin-static") != 0) { printf("removal of /bin-static FAILED\n"); ret=-1; }
@@ -307,7 +307,7 @@ int prepare_root() {
 	fclose(orig); fclose(mod); buf[1]=0;
 
 	/* add rocker to /etc/passwd and change root's home to /home/root */
-	orig = fopen("/ROCK/etc/passwd","r");
+	orig = fopen("/TOOLCHAIN/etc/passwd","r");
 	mod = fopen("/etc/passwd","w");
         while(fgets(buf, 256, orig) != NULL) {
                 if(memcmp(buf,"root",4) != 0) fputs(buf, mod);
@@ -318,7 +318,7 @@ int prepare_root() {
 
         /* add rocker to /etc/shadow */
 	umask(066);
-        orig = fopen("/ROCK/etc/shadow","r");
+        orig = fopen("/TOOLCHAIN/etc/shadow","r");
         mod = fopen("/etc/shadow","w");
         while(fgets(buf, 256, orig) != NULL) {
 		if(memcmp(buf,"root",4) != 0) fputs(buf, mod);
@@ -330,7 +330,7 @@ int prepare_root() {
         /* add rocker to group 'sound' */
 	int fnd = 0;
 	umask(022);
-        orig = fopen("/ROCK/etc/group","r");
+        orig = fopen("/TOOLCHAIN/etc/group","r");
         mod = fopen("/etc/group","w");
         while(fgets(buf, 256, orig) != NULL) {
                 if(memcmp(buf,"sound",5) != 0) fputs(buf, mod);
@@ -343,21 +343,21 @@ int prepare_root() {
         fclose(orig); fclose(mod); buf[1]=0;
 
 	/* copy over XF86Config */
-	orig = fopen("/ROCK/etc/X11/XF86Config","r");
+	orig = fopen("/TOOLCHAIN/etc/X11/XF86Config","r");
         mod = fopen("/etc/X11/XF86Config","w");
         while(fgets(buf, 256, orig) != NULL) fputs(buf, mod);
 	fclose(orig); fclose(mod); buf[1]=0;
 
 	/* copy over resolv.conf */
 	unlink("/etc/resolv.conf");
-	orig = fopen("/ROCK/etc/resolv.conf","r");
+	orig = fopen("/TOOLCHAIN/etc/resolv.conf","r");
         mod = fopen("/etc/resolv.conf","w");
         while(fgets(buf, 256, orig) != NULL) fputs(buf, mod);
 	fclose(orig); fclose(mod); buf[1]=0;
 
 	/* change modules.conf to place it's modules.dep in /etc */
 	unlink("/etc/modules.conf");
-	orig = fopen("/ROCK/etc/modules.conf","r");
+	orig = fopen("/TOOLCHAIN/etc/modules.conf","r");
         mod = fopen("/etc/modules.conf","w");
         while(fgets(buf, 256, orig) != NULL) fputs(buf, mod);
 	fputs("depfile=/etc/modules.dep\n",mod);
