@@ -27,8 +27,7 @@ x_extract() {
 		tar $taropt $archdir/$x
 	done
 
-	# allow both, CVS and release builds ...
-	cd xc || cd X*$ver*
+	cd xc
 
 	for x in $x_patches ; do
 		echo "Patching source ($x) ..."
