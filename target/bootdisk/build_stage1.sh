@@ -5,13 +5,15 @@ mkdir -p $disksdir/initrd/{dev,proc,tmp,scsi,net,bin}
 cd $disksdir/initrd; ln -s bin sbin; ln -s . usr
 #
 echo_status "Create linuxrc binary."
-diet $CC -c $base/misc/isomd5sum/md5.c -Wall -o md5.o || true
-diet $CC -c $base/misc/isomd5sum/libcheckisomd5.c -Wall -o libcheckisomd5.o || true
-diet $CC -c $base/target/$target/linuxrc.c -Wall -I $base/misc/isomd5sum/ \
+diet $CC -Wall -Os -s -c $base/misc/isomd5sum/md5.c -o md5.o
+diet $CC -Wall -Os -s -c $base/misc/isomd5sum/libcheckisomd5.c \
+	-o libcheckisomd5.o
+diet $CC -Wall -Os -s -I $base/misc/isomd5sum/ \
+	-c $base/target/$target/linuxrc.c \
 	-DSTAGE_2_BIG_IMAGE="\"${ROCKCFG_SHORTID}/2nd_stage.tar.gz\"" \
 	-DSTAGE_2_SMALL_IMAGE="\"${ROCKCFG_SHORTID}/2nd_stage_small.tar.gz\"" \
-	-o linuxrc.o || true
-diet $CC linuxrc.o md5.o libcheckisomd5.o -o linuxrc
+	-o linuxrc.o
+diet $CC -Os -s linuxrc.o md5.o libcheckisomd5.o -o linuxrc
 rm -f linuxrc.o md5.o libcheckisomd5.o
 #
 echo_status "Copy various helper applications."
