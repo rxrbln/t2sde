@@ -1,9 +1,16 @@
 #!/bin/sh
 
+if [ "$1" = -reroot ] ; then
+	echo "Old PATH: $PATH"
+	PATH="../root/sbin:../root/bin:../root/usr/sbin:../usr/bin:$PATH"
+	echo "New PATH: $PATH"
+	shift
+fi
+
 if [ "$1" = -combo ] ; then
 	combo=1
 elif [ "$#" != 0 ] ; then
-	echo "usage: $0 [-combo]"
+	echo "usage: $0 [-reroot] [-combo]"
 	exit 1
 fi
 
