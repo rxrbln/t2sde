@@ -53,7 +53,7 @@ fi
 
 for stagelevel in 0 1 2 3 4 5 6 7 8 9 ; do
 	if [ -f "${varadm}/logs/$stagelevel-$pkg.err" ] ; then
-		tail -50 "${varadm}/logs/$stagelevel-$pkg.err" | \
+		tail -n 50 "${varadm}/logs/$stagelevel-$pkg.err" | \
 			sed "s,^,[$stagelevel-ERROR] ,"
 		echo
 	fi

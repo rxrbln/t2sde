@@ -37,7 +37,7 @@ if [ $# = 0 ] ; then
 	exit 1
 else
 	for x ; do
-		for y in $( ps -e -o pid,comm | tail +2 |
+		for y in $( ps -e -o pid,comm | tail -n +2 |
 			awk "\$1 == \"$x\" || \$2 == \"$x\" { print \$1; }" )
 		do
 				main $y ""
