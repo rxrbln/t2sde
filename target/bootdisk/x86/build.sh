@@ -21,7 +21,7 @@ then
 	tar --use-compress-program=bzip2 \
 	    -xf $base/download/bootdisk/mdlbl-$mdlbl_ver.tar.bz2
 	cd mdlbl-$mdlbl_ver
-	cp ../boot/vmlinuz .; cp ../initrd.img initrd; ./makedisks.sh
+	cp ../boot/vmlinuz .; cp ../initrd.gz initrd; ./makedisks.sh
 	for x in disk*.img; do mv $x ../floppy${x#disk}; done; cd ..
 	du -sh floppy*.img | while read x; do echo_status $x; done
 else
@@ -53,7 +53,7 @@ then
 	#
 	echo_status "Copy images to isolinux directory."
 	cp boot/memtest86.bin isolinux/memtest86
-	cp initrd.img boot/vmlinuz isolinux/
+	cp initrd.gz boot/vmlinuz isolinux/
 	#
 	cat > ../isofs_arch.txt <<- EOT
 		BOOT	-b isolinux/isolinux.bin -c isolinux/boot.catalog
