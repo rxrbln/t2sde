@@ -55,11 +55,15 @@ do
 	fi
 done
 #
+echo_status "Saving boot/* - we do not need this on the 2nd stage ..."
+rm -rf ../boor ; mkdir ../boot
+mv -v boot/* ../boot/
+#
 echo_status "Remove the stuff we don't need ..."
 rm -rf home usr/{local,doc,man,info,games,share}
 rm -rf var/adm/* var/games var/adm var/mail var/opt
 rm -rf usr/{include,src} usr/*-linux-gnu usr/lib/*.{a,la,o}
-rm -rf usr/lib/*/ boot/*-rock boot/System.map
+rm -rf usr/lib/*/
 #
 echo_status "Installing some terminfo databases ..."
 tar $taropt ../../pkgs/ncurses.tar.bz2	\

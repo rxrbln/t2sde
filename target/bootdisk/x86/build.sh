@@ -2,12 +2,14 @@
 use_isolinux=1
 use_mdlbl=1
 
-echo_header "Creating floppy disk images:"
-cd $disksdir; mkdir -p boot
+cd $disksdir
+
+echo_header "Creating lilo config and cleaning boot directory:"
 cp $base/target/$target/x86/lilo-* boot/
+rm -rfv boot/*-rock boot/grub boot/System.map boot/kconfig*
+
+echo_header "Creating floppy disk images:"
 cp $base/target/$target/x86/makeimages.sh .
-cp 2nd_stage/boot/memtest86.bin boot/
-cp 2nd_stage/boot/vmlinuz boot/
 chmod +x makeimages.sh
 
 if [ $use_mdlbl -eq 1 ]
