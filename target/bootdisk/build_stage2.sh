@@ -7,7 +7,7 @@ mkdir -p $disksdir/2nd_stage
 cd $disksdir/2nd_stage
 mkdir -p mnt/source mnt/target
 #
-package_map='       +00-dirtree         +glibc	            -cc2
+package_map='       +00-dirtree         +glibc	            -gcc
 -linux24-source     -linux26-source     -linux24benh-src
 -linux24-header     -linux26-header     -linux24benh-header
 -linux24            -linux26            -linux24benh
