@@ -19,19 +19,47 @@
 # file for details.
 # 
 # --- ROCK-COPYRIGHT-NOTE-END ---
+# e.g. $1: admin mail net ...
+#      $2: $sbindir $bindir
+#
+pkg_djb_hierarchy=$1
+pkg_djb_altdir=${2:-$bindir}
 
-# why to use this secure stuff?
+if [ -z "$pkg_djb_hierarchy" ]; then
+	abort "djb-config: must specify hierarchy /package/\$hierarchy."
+fi
+
+sysconfdir="$sysconfdir/$pkg"
+srcdir="$pkg_djb_hierarchy/$pkg-$ver"
+
+if [ "$createdocs" != "0" -a "$ROCKCFG_CREATE_DOCS" == "1" ]; then
+	createdocs=0
+	hook_add postdoc 2 'pkg_djb_installdoc $pkg_djb_hierarchy'
+fi
+
+# custmain
+#
+custmain="pkg_djb_main"
+pkg_djb_main() {
+        hook_eval premake
+        ./package/compile
+        hook_eval inmake
+        pkg_djb_installpackage $pkg_djb_hierarchy $pkg_djb_altdir
+        hook_eval postmake
+}
+
+# why to use this safe stuff?
 # because we can be updating... sure?
 # to honor daemontools behavior :-)
 #
-pkg_djb_securecopy() {
+pkg_djb_safecopy() {
 	echo "'${1#root}/$3' -> '${2#root}/$3'"
 	rm -f $2/$3'{new}'
 	cp -p $1/$3 $2/$3'{new}'
 	mv -f $2/$3'{new}' $2/$3
 }
 
-pkg_djb_securelink() {
+pkg_djb_safelink() {
 	echo "create symbolic link '${1#root}/$3' to '${2#root}/$3'"
 	rm -f $2/$3'{new}'
 	ln -s $1/$3 $2/$3'{new}'
@@ -44,82 +72,84 @@ pkg_djb_installpackage() {
 	# requires ./package/commands
 	# and files in ./command
 
+	local x y
 	local package=$1
 	local altdir=$2
 
-	if [ "$ROCKCFG_PKG_DJB_LAYOUT" == "1" ]; then	
+	if [ "$pkg_djb_packagedir" ]; then
 		echo 'Copying commands to package directory...'
 		mkdir -p $pkg_djb_packagedir/$package/$pkg-$ver/command
-		for i in `cat ./package/commands`; do
-			pkg_djb_securecopy ./command \
-				$pkg_djb_packagedir/$package/$pkg-$ver/command $i
+		for x in `cat ./package/commands`; do
+			pkg_djb_safecopy ./command \
+				$pkg_djb_packagedir/$package/$pkg-$ver/command $x
 		done
 
 		echo "Creating symlink $pkg -> $pkg-$ver..."
 		rm -f $pkg_djb_packagedir/$package/$pkg
 		ln -sv $pkg-$ver $pkg_djb_packagedir/$package/$pkg
-
-		echo "Making command links in $pkg_djb_commanddir..."
-		mkdir -p $pkg_djb_commanddir
-		for i in `cat package/commands`; do
-			pkg_djb_securelink $pkg_djb_packagedir/$package/$pkg-$ver/command \
-				$pkg_djb_commanddir $i
-		done
-	
-		# usr/local is evil :)
-		#if [ $ROCKCFG_PKG_DJB_COMPAT -eq 1 ]; then	
-		#	echo "Making compatibility links in $pkg_djb_compatdir..."
-		#	mkdir -p $pkg_djb_compatdir
-		#	for i in `cat package/commands`; do
-		#		pkg_djb_securelink $pkg_djb_packagedir/$package/$pkg-$ver/command \
-		#			$pkg_djb_compatdir $i
-		#	done
-		#fi
-	else
-		echo 'Copying commands to package directory...'
-		pkg_djb_commanddir=$altdir
-		mkdir -p $pkg_djb_commanddir
-		for i in `cat ./package/commands`; do
-			pkg_djb_securecopy ./command $pkg_djb_commanddir $i
-		done
 	fi
+
+	if [ "$pkg_djb_commanddir" ]; then
+		echo "Making command links in $pkg_djb_commanddir..."
+		y=pkg_djb_safelink
+	else
+		echo 'Copying commands to $altdir...'
+		pkg_djb_commanddir=$altdir
+		y=pkg_djb_safecopy
+	fi
+	mkdir -p $pkg_djb_commanddir
+	for x in `cat package/commands`; do
+		$y $pkg_djb_packagedir/$package/$pkg-$ver/command \
+			$pkg_djb_commanddir $x
+	done
+	
+	# usr/local is evil :)
+	#if [ "$pkg_djb_compatdir" ]; then	
+	#	echo "Making compatibility links in $pkg_djb_compatdir..."
+	#	mkdir -p $pkg_djb_compatdir
+	#	for i in `cat package/commands`; do
+	#		pkg_djb_safelink $pkg_djb_packagedir/$package/$pkg-$ver/command \
+	#			$pkg_djb_compatdir $i
+	#	done
+	#fi
 }
 
-# installs package files into package directory or $docdir as requested
+# installs documentation to package directory or $docdir as requested
 #
 pkg_djb_installdoc() {
-	local package=$1
+	local x package=$1
+	local docpkg
 
-	if [ "$ROCKCFG_PKG_DJB_LAYOUT" == "1" ]; then	
-		echo 'Copying package files to package directory...'
-		mkdir -p $pkg_djb_packagedir/$package/$pkg-$ver/package
-		for i in `ls ./package`; do
-			case $i in
-				compile|install*|upgrade)
-					/bin/true ;;
-				*)	pkg_djb_securecopy ./package \
-						$pkg_djb_packagedir/$package/$pkg-$ver/package $i ;;
-			esac
-		done
+	echo 'Copying documentation....'
+	if [ "$pkg_djb_packagedir" ]; then
+		docpkg=$pkg_djb_packagedir/$package/$pkg-$ver/package
+		docdir=$pkg_djb_packagedir/$package/$pkg-$ver/doc
 	else
-		echo 'Copying package files to doc directory...'
-		mkdir -p $docdir
-		for i in `ls ./package`; do
-			case $i in
-				compile|install*|upgrade)
-					/bin/true ;;
-				*)	pkg_djb_securecopy ./package $docdir $i ;;
-			esac
+		docpkg=$docdir
+	fi
+	mkdir -p $docpkg $docdir
+
+	# ./package
+	for x in `ls ./package`; do
+		case $x in
+			compile|install*|upgrade)
+				/bin/true ;;
+			*)	pkg_djb_safecopy ./package $docpkg $x ;;
+		esac
+	done
+
+	# ./doc
+	if [ -d doc ]; then
+		cp -rLv ./doc/* $docdir
+	fi
+
+	# ./man
+	if [ -d man ]; then
+		echo "Installing man pages ... "
+		for x in $( cd man; ls -1 *.[1-9] | sed -e 's,.*\.\([1-9]\),\1,g' | sort -u ); do
+			gzip -9 ./man/*.$x
+			cp -vf ./man/*.$x.gz $mandir/man$x/
 		done
 	fi
 }
 
-pkg_djb_packagedir="$root/package"
-pkg_djb_commanddir="$root/command"
-#pkg_djb_compatdir="$root/usr/local/bin"
-
-if [ "$ROCKCFG_PKG_DJB_LAYOUT" == "1" ]; then
-	pkg_djb_servicedir="$root/service"
-else
-	pkg_djb_servicedir="$root/var/service"
-fi
