@@ -68,7 +68,7 @@ if [ "$rep" != "*" ]; then
 fi
 
 rep=${dir/\/$package/}
-maintainer="$( grep -h -m 1 "\[M\]" package/$rep/*/*.desc | head -n 1 | cut -d' ' -f2- )"
+maintainer='The T2 Project <t2@exactcode.de>'
 
 echo -n "Creating package/$dir ... "
 if [ -e package/$dir ] ; then
