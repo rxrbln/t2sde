@@ -223,6 +223,7 @@ lx_patch ()
 
 lx_config() {
 	echo "Generic linux configuration ..."
+	hook_eval preconf
 	if [ "$ROCKCFG_PKG_LINUX_CONFIG_STYLE" = none ] ; then
 		echo "Using \$base/config/\$config/linux.cfg."
 		echo "Since automatic generation is disabled ..."
