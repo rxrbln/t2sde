@@ -21,7 +21,7 @@
 # --- ROCK-COPYRIGHT-NOTE-END ---
 
 treever=${pkg/linux/} ; treever=${treever/-*/}
-archdir="$base/download/$repository/linux$treever"
+hook_add prepare 3 'archdir="$base/download/mirror/l"'
 
 [ "$vanilla_ver" ] || vanilla_ver="$ver"
 srctar="linux-${vanilla_ver}.tar.bz2"
@@ -41,7 +41,7 @@ MAKE="$MAKE ARCH=$lx_cpu CROSS_COMPILE=$archprefix KCC=$KCC"
 for x in $patchfiles ; do
 	if [ ! -e "$x" -a -n "${x##*/*}" ] ; then
 		var_remove patchfiles " " "$x"
-		var_append patchfiles " " "$archdir/$x"
+		var_append patchfiles " " "$base/download/mirror/${x:0:1}/$x"
 	fi
 done
 
