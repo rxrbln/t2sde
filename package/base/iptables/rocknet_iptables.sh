@@ -12,7 +12,7 @@ iptables_init_if() {
 	fi
 }
 
-iptales_parse_conditions() {
+iptables_parse_conditions() {
 	iptables_cond=""
 	while [ -n "$1" ]
 	do
@@ -36,19 +36,19 @@ iptales_parse_conditions() {
 }
 
 public_accept() {
-	iptales_parse_conditions "$@"
+	iptables_parse_conditions "$@"
 	addcode up 1 5 "iptables -A firewall_$if $iptables_cond -j ACCEPT"
 	iptables_init_if
 }
 
 public_reject() {
-	iptales_parse_conditions "$@"
+	iptables_parse_conditions "$@"
 	addcode up 1 5 "iptables -A firewall_$if $iptables_cond -j REJECT"
 	iptables_init_if
 }
 
 public_drop() {
-	iptales_parse_conditions "$@"
+	iptables_parse_conditions "$@"
 	addcode up 1 5 "iptables -A firewall_$if $iptables_cond -j DROP"
 	iptables_init_if
 }
