@@ -4,7 +4,7 @@ use_yaboot=1
 cd $disksdir
 
 echo_header "Creating cleaning boot directory:"
-rm -rfv boot/*-rock boot/System.map boot/kconfig*
+rm -rfv boot/*-dist boot/System.map boot/kconfig*
 
 if [ $use_yaboot -eq 1 ]
 then

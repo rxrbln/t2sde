@@ -66,7 +66,7 @@ then
 			first=0
 		fi
 
-		cp boot/vmlinuz_$kernelver-rock isolinux/vmlinuz${kernel/linux/}
+		cp boot/vmlinuz_$kernelver isolinux/vmlinuz${kernel/linux/}
 		cat >> isolinux/isolinux.cfg << EOT
 
 LABEL $kernel
