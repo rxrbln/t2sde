@@ -15,14 +15,15 @@
 #
 # SCRIPT	script-name	args	Run given script for each image
 #
-# Intended for image post-processing - like needed for IBM RS/6k boot
-# blessing. The first attached argument is the CD number and the second
-# the image file.
+# Intended for image post-processing. The first attached argument is the CD
+# number and the second the image file.
 #
+
+eval `grep rockver scripts/parse-config`
 
 if [ $# -eq 0 ] ; then
 	echo
-	echo "Usage: $0 [ -size MB ] [ -mkdebug] ISO-Prefix \\"
+	echo "Usage: $0 [ -size MB ] [ -source ] [ -mkdebug ] ISO-Prefix \\"
 	echo "       ${0//?/ } Config [ Config [ .. ] ]"
 	echo
 	echo "E.g.: $0 mycdset install generic"
@@ -32,12 +33,15 @@ fi
 
 # default disk-size is 600 MB
 dsize=$(( 600 * 1024 ))
+src=0
 mkdebug=0
 
 while true ; do
 	case "$1" in
 		-size)
 			dsize=$(( $2 * 1024 )) ; shift ; shift ;;
+		-source)
+			src=1 ; shift ;;
 		-mkdebug)
 			mkdebug=1 ; shift ;;
 		-* | '')
@@ -166,12 +170,32 @@ while read type from to ; do
 	fi
 done < $dat
 
+if [ $src = 1 ] ; then
+	echo "$spacer embedding source."
+
+	./scripts/Create-SrcTar
+
+	for x in Documentation/* rock-src-$rockver.tar.bz2 ; do
+		[ ! -d $x ] && add $x ${x/Documentation\/}
+	done
+
+	while read from ; do
+		# adaptions of the sed exp need to propagated into Download, too
+		from="`echo $from | sed 's,\.\(t\?\)\(gz\|Z\)$,.\1bz2,'`"
+		if [ -e $from ] ; then
+			add $from $from
+		else
+			echo "WARNING: File $from is missing!"
+		fi
+	done < <( ./scripts/Download -list )
+fi
+
 echo -n > $index
 for x in 0 $disks ; do
 	dd=disk_${x}_data
 	for y in ${!dd} `cat ${pathspec}_${x} 2> /dev/null` ; do
 		to=${y%=*} ; from=${y#*=}
-		if [ -d $from ] ; then
+		if [ -e $from ] ; then
 			find $from -printf "disk$x	$to%P\\n" >> $index
 		else
 			echo "disk$x	$to" >> $index
