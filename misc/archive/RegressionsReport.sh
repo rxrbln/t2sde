@@ -1,7 +1,10 @@
 #!/bin/sh
-config=ref
+config=default
 TARGET=regressions
 
+if [ "$1" == "-cfg" ]; then
+	config="$2"; shift 2
+fi
 mkdir -p $TARGET
 
 sh misc/archive/AuditBuild.sh -w $TARGET -cfg $config --no-enabled-too -repository package/* \
