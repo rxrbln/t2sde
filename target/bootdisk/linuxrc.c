@@ -22,7 +22,7 @@
  * 
  * --- ROCK-COPYRIGHT-NOTE-END ---
  *
- * linuxrc.c is Copyright (C) 2003 Cliford Wolf and Rene Rebe
+ * linuxrc.c is Copyright (C) 2003, 2004 Cliford Wolf and Rene Rebe
  *
  */
 
@@ -39,6 +39,7 @@
 #include <sys/klog.h>
 #include <fcntl.h>
 #include <errno.h>
+#include <stdarg.h>
 
 #ifndef MS_MOVE
 #  define MS_MOVE	8192
@@ -52,7 +53,11 @@
 #  define STAGE_2_SMALL_IMAGE "2nd_stage_small.tar.gz"
 #endif
 
-/* 64 MB should be enought for the tmpfs */
+#ifndef STAGE_2_COMPRESS_ARG
+#  define STAGE_2_COMPRESS_ARG "--use-compress-program=gzip"
+#endif
+
+/* 640kB, err, 64 MB should be enought for the tmpfs ;-) */
 #define TMPFS_OPTIONS "size=67108864"
 
 /* It seams like we need this prototype here ... */
@@ -89,12 +94,55 @@ void doboot()
 
 int trymount (const char* source, const char* target)
 {
-	return	mount(source, target, "ext3",    MS_RDONLY, NULL) &&
+	return	mount(source, target, "iso9660", MS_RDONLY, NULL) &&
+		mount(source, target, "ext3",    MS_RDONLY, NULL) &&
 		mount(source, target, "ext2",    MS_RDONLY, NULL) &&
 		mount(source, target, "minix",   MS_RDONLY, NULL) &&
-		mount(source, target, "vfat",    MS_RDONLY, NULL) &&
-		mount(source, target, "iso9660", MS_RDONLY, NULL);
+		mount(source, target, "vfat",    MS_RDONLY, NULL);
 }
+
+void trygets(char *s, int len)
+{
+	s[0]=0;
+	if (fgets(s, len, stdin) == NULL) {
+		if (ferror(stdin)) perror("fgets");
+		else printf("EOF\n");
+
+		sleep(1);
+		execl("/linuxrc", "/linuxrc", NULL);
+		printf("\nCan't start /linuxrc!! Life sucks.\n\n");
+		exit(0);
+	}
+	// guarantee a 0 termination and remove the trailing newline
+	s[len-1]=0;
+	if (strlen(s) > 0) s[strlen(s)-1]=0;
+}
+
+int trywait(int pid)
+{
+	int status = -1;
+
+	if (pid < 0)
+		perror("fork");
+	else if (waitpid(pid, &status, 0) >= 0)
+		status = !WIFEXITED(status) || WEXITSTATUS(status);
+
+	return status;
+}
+
+
+#define tryexeclp(file, arg, ...) ( { \
+	int i = 0, pid; \
+\
+	if ( (pid = fork()) == 0 ) { \
+		execlp(file, arg, __VA_ARGS__); \
+		perror(file); \
+		exit(1); \
+	} \
+\
+	trywait(pid); \
+} )
+
 
 void httpload() 
 {
@@ -102,12 +150,12 @@ void httpload()
 	char baseurl[200];
 	char filename[100];
 	char url[500];
+	int pid_wget, pid_tar;
 
 	printf("Enter base URL (e.g. http://1.2.3.4/rock): ");
 	fflush(stdout);
 
-	baseurl[0]=0; fgets(baseurl, 200, stdin); baseurl[199]=0;
-	if (strlen(baseurl) > 0) baseurl[strlen(baseurl)-1]=0;
+	trygets(baseurl, 200);
 	if (baseurl[0] == 0) return;
 
 	printf("Select a stage 2 image file:\n\n"
@@ -115,8 +163,7 @@ void httpload()
 	       "Enter number or image file name (default=1): ",
 	       STAGE_2_BIG_IMAGE, STAGE_2_SMALL_IMAGE);
 
-	filename[0]=0; fgets(filename, 100, stdin); filename[99]=0;
-	if (strlen(filename) > 0) filename[strlen(filename)-1]=0;
+	trygets(filename, 100);
 	if (filename[0] == 0) strcpy(filename, STAGE_2_BIG_IMAGE);
 	else if (!strcmp(filename, "1")) strcpy(filename, STAGE_2_BIG_IMAGE);
 	else if (!strcmp(filename, "2")) strcpy(filename, STAGE_2_SMALL_IMAGE);
@@ -137,23 +184,23 @@ void httpload()
 	if ( pipe(fd) < 0 )
 		{ perror("Can't create pipe"); exit_linuxrc=0; } 
 
-	if ( fork() == 0 ) {
+	if ( (pid_wget = fork()) == 0 ) {
 		dup2(fd[1],1); close(fd[0]); close(fd[1]);
 		execlp("wget", "wget", "-O", "-", url, NULL);
 		perror("wget");
 		_exit(1);
 	}
 
-	if ( fork() == 0 ) {
+	if ( (pid_tar = fork()) == 0 ) {
 		dup2(fd[0],0); close(fd[0]); close(fd[1]);
-		execlp("tar", "tar", "--use-compress-program=gzip",
+		execlp("tar", "tar", STAGE_2_COMPRESS_ARG,
 		       "-C", "/mnt_root", "-xf", "-", NULL);
 		perror("tar");
 		_exit(1);
 	}
 
 	close(fd[0]); close(fd[1]);
-	wait(NULL); wait(NULL);
+	waitpid(pid_wget, NULL, 0); waitpid(pid_tar, NULL, 0);
 	printf("finished ... now booting 2nd stage\n");
 	doboot();
 }
@@ -164,6 +211,7 @@ void load_modules(char * dir)
 	char text[100], filename[200];
 	char *execargs[100];
 	int n, m=0, len;
+	int pid;
 
 	n = scandir(dir, &namelist, 0, alphasort);
 	if (n > 0) {
@@ -191,8 +239,7 @@ void load_modules(char * dir)
 	fflush(stdout);
 
 	while (1) {
-		text[0]=0; fgets(text, 100, stdin); text[99]=0;
-		if (strlen(text) > 0) text[strlen(text)-1]=0;
+		trygets(text, 100);
 		if (text[0] == 0) return;
 
 		snprintf(filename, 200, "%s/%s.o", dir, strtok(text, " "));
@@ -206,12 +253,12 @@ void load_modules(char * dir)
 	}
 
 
-	if ( fork() == 0 ) {
+	if ( (pid = fork()) == 0 ) {
 		execvp(execargs[0], execargs);
 		printf("Can't start %s!\n", execargs[0]);
 		exit(1);
 	}
-	wait(NULL);
+	waitpid(pid, NULL, 0);
 
 	return;
 }
@@ -226,6 +273,7 @@ void load_ramdisk_file()
 	char filename[100];
 	int nr=0;
 	int i, tmp_nr;
+	int pid;
 
 	printf("Select a device for loading the 2nd stage system from: \n\n");
 
@@ -250,14 +298,11 @@ void load_ramdisk_file()
 	printf("\nEnter number or device file name (default=0): ");
 	fflush(stdout);
 
+	trygets(text, 100);
+	if (text[0] == 0)
+		strcpy (text, "0");
+
 	while (1) {
-		text[0]=0; fgets(text, 100, stdin); text[99]=0;
-		if (strlen(text) > 0)
-			text[strlen(text)-1]=0;
-
-		if (text[0] == 0)
-			strcpy (text, "0");
-
 		if ( ! access(text, R_OK) ) {
 			strcpy(devicefile, text);
 			break;
@@ -270,6 +315,8 @@ void load_ramdisk_file()
 
 		printf("No such device found. Try again (enter=back): ");
 		fflush(stdout);
+	 	trygets(text, 100);
+		if (text[0] == 0) return;
 	}
 
 	printf("Select a stage 2 image file:\n\n"
@@ -277,8 +324,7 @@ void load_ramdisk_file()
 	       "Enter number or image file name (default=1): ",
 	       STAGE_2_BIG_IMAGE, STAGE_2_SMALL_IMAGE);
 
-	text[0]=0; fgets(text, 100, stdin); text[99]=0;
-	if (strlen(text) > 0) text[strlen(text)-1]=0;
+	trygets(text, 100);
 	if (text[0] == 0) strcpy(filename, STAGE_2_BIG_IMAGE);
 	else if (! strcmp(text, "1")) strcpy(filename, STAGE_2_BIG_IMAGE);
 	else if (! strcmp(text, "2")) strcpy(filename, STAGE_2_SMALL_IMAGE);
@@ -299,15 +345,15 @@ void load_ramdisk_file()
 	if ( mount("none", "/mnt_root", "tmpfs", 0, TMPFS_OPTIONS) )
 		{ perror("Can't mount /mnt_root"); exit_linuxrc=0; }
 
-	if ( fork() == 0 ) {
+	if ( (pid = fork()) == 0 ) {
 		printf("Extracting 2nd stage filesystem to ram ...\n");
 		snprintf(text, 100, "/mnt_source/%s", filename);
-		execlp( "tar", "tar", "--use-compress-program=gzip",
+		execlp( "tar", "tar", STAGE_2_COMPRESS_ARG,
 		               "-C", "/mnt_root", "-xf", text, NULL);
 		printf("Can't run tar on %s!\n", filename);
 		exit(1);
 	}
-	wait(NULL);
+	waitpid(pid, NULL, 0);
 
 	if ( umount("/mnt_source") )
 		{ perror("Can't umount /mnt_source"); exit_linuxrc=0; }
@@ -327,7 +373,7 @@ void activate_swap()
 	printf("\nEnter file name of swap device: ");
 	fflush(stdout);
 
-	text[0]=0; fgets(text, 100, stdin); text[99]=0;
+	trygets(text, 100);
 	if ( text[0] ) {
 		if ( swapon(text, 0) < 0 )
 			perror("Can't activate swap device");
@@ -340,75 +386,38 @@ void config_net()
 	char ip[100]="";
 	char gw[100]="";
 
-	if ( fork() == 0 ) {
-		execlp("ip", "ip", "addr", NULL);
-		perror("ip");
-		exit(1);
-	}
-	wait(NULL);
+	tryexeclp("ip", "ip", "addr", NULL);
 	printf("\n");
 
-	if ( fork() == 0 ) {
-		execlp("ip", "ip", "route", NULL);
-		perror("ip");
-		exit(1);
-	}
-	wait(NULL);
+	tryexeclp("ip", "ip", "route", NULL);
+	perror("ip");
 	printf("\n");
 
 	printf("Enter interface name (eth0): ");
-	fflush(stdout); fgets(dv, 100, stdin); dv[99]=0;
-	if (strlen(dv) > 0) dv[strlen(dv)-1]=0;
+	fflush(stdout);
+	trygets(dv, 100);
 	if (dv[0] == 0) strcpy(dv, "eth0");
 
 	printf("Enter ip (192.168.0.254/24): ");
-	fflush(stdout); fgets(ip, 100, stdin); ip[99]=0;
-	if (strlen(ip) > 0) ip[strlen(ip)-1]=0;
+	fflush(stdout);
+	trygets(ip, 100);
 	if (ip[0] == 0) strcpy(ip, "192.168.0.254/24");
 
-	if ( fork() == 0 ) {
-		execlp("ip", "ip", "addr", "add", ip, "dev", dv, NULL);
-		perror("ip");
-		exit(1);
-	}
-	wait(NULL);
-
-	if ( fork() == 0 ) {
-		execlp("ip", "ip", "link", "set", dv, "up", NULL);
-		perror("ip");
-		exit(1);
-	}
-	wait(NULL);
+	tryexeclp("ip", "ip", "addr", "add", ip, "dev", dv, NULL);
+	tryexeclp("ip", "ip", "link", "set", dv, "up", NULL);
 
 	printf("Enter default gateway (none): ");
-	fflush(stdout); fgets(gw, 100, stdin); gw[99]=0;
-	if (strlen(gw) > 0) gw[strlen(gw)-1]=0;
-
-	if (gw[0] != 0) {
-		if ( fork() == 0 ) {
-			execlp("ip", "ip", "route", "add",
-			             "default", "via", gw, NULL);
-			perror("ip");
-			exit(1);
-		}
-		wait(NULL);
-	}
+	fflush(stdout);
+	trygets(gw, 100);
+	if (gw[0] != 0)
+		tryexeclp("ip", "ip", "route", "add",
+		          "default", "via", gw, NULL);
 	printf("\n");
 
-	if ( fork() == 0 ) {
-		execlp("ip", "ip", "addr", NULL);
-		perror("ip");
-		exit(1);
-	}
-	wait(NULL);
+	tryexeclp("ip", "ip", "addr", NULL);
 	printf("\n");
 
-	if ( fork() == 0 ) {
-		execlp("ip", "ip", "route", NULL);
-		perror("ip");
-		exit(1);
-	}
-	wait(NULL);
+	tryexeclp("ip", "ip", "route", NULL);
 }
 
 void autoload_modules()
@@ -416,11 +425,12 @@ void autoload_modules()
 	char line[200], cmd[200], module[200];
 	int fd[2], rc;
 	FILE *f;
+	int pid;
 
 	if (pipe(fd) <0)
 		{ perror("Can't create pipe"); return; } 
 
-	if ( fork() == 0 ) {
+	if ( (pid = fork()) == 0 ) {
 		dup2(fd[1],1); close(fd[0]); close(fd[1]);
 		execlp("gawk", "gawk", "-f", "/bin/hwscan", NULL);
 		printf("Can't start >>hwscan<< program with gawk!\n");
@@ -442,29 +452,31 @@ void autoload_modules()
 		}
 	}
 	fclose(f);
-	wait(NULL);
+	waitpid(pid, NULL, 0);
 }
 
 void exec_sh()
 {
+	int rc;
+
 	printf ("Quit the shell to return to the stage 1 loader!\n");
-	if ( fork() == 0 ) {
-		execl("/bin/kiss", "kiss", NULL);
+	if ( (rc = fork()) == 0 ) {
+	        execl("/bin/kiss", "kiss", "-E", NULL);
 		perror("kiss");
 		_exit(1);
 	}
-	wait(NULL);
+	waitpid(rc, NULL, 0);
 }
 
 int main()
 {
 	char text[100];
 	int input=1;
-
+	
 	if ( mount("none", "/dev", "devfs", 0, NULL) && errno != EBUSY )
 		perror("Can't mount /dev");
 
-	if ( mount("none", "/proc", "proc", 0, NULL) )
+	if ( mount("none", "/proc", "proc", 0, NULL) && errno != EBUSY )
 		perror("Can't mount /proc");
 
 	/* Only print important stuff to console */
@@ -498,10 +510,7 @@ drivers (if needed) and configure the installation source so the\n\
 What do you want to do [0-7] (default=0)? ");
 		fflush(stdout);
 
-		text[0]=0; fgets(text, 100, stdin); text[99]=0;
-		if (strlen(text) > 0)
-			 text[strlen(text)-1]=0;
-		
+		text[0]=0; trygets(text, 100);
 		input=atoi(text);
 		
 		switch (input) {
@@ -557,3 +566,4 @@ What do you want to do [0-7] (default=0)? ");
 	printf("\nCan't start /linuxrc!! Life sucks.\n\n");
 	return 0;
 }
+
