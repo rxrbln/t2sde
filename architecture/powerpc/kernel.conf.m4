@@ -30,6 +30,10 @@ CONFIG_FB_RADEON=y
 dnl power management
 CONFIG_PMAC_PBOOK=y
 CONFIG_PMAC_BACKLIGHT=y
+CONFIG_CPU_FREQ=y
+CONFIG_CPU_FREQ_PMAC=y
+CONFIG_CPU_FREQ_26_API=y
+
 CONFIG_MAC_FLOPPY=y
 
 dnl usefull stuff
@@ -37,7 +41,7 @@ dnl usefull stuff
 CONFIG_PMAC_APM_EMU=y
 CONFIG_PMAC_BACKLIGHT=y
 
-dnl currently broken on powerpc
-# CONFIG_SCx200_I2C is not set
-# CONFIG_SCx200_ACB is not set
+dnl make sure old OSS modules are build (ALSA does not yet work correct)
+CONFIG_DMASOUND_PMAC=m
+CONFIG_DMASOUND=m
 
