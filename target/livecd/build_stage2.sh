@@ -15,7 +15,7 @@ else
 	packager=mine
 fi
 
-package_map="+$ROCKCFG_DEFAULT_KERNEL +$packager $package_map"
+package_map="+$ROCKCFG_PKG_LINUX_DEFAULT +$packager $package_map"
 
 echo_status "Extracting the packages archives."
 for x in $( ls ../../pkgs/*.tar.bz2 | tr . / | cut -f8 -d/ )
