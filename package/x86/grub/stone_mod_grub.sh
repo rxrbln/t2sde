@@ -25,17 +25,18 @@
 create_kernel_list() {
 	first=1
 	for x in `(cd /boot/ ; ls vmlinuz_* ) | sort -r` ; do
+		ver=${x/vmlinuz_/}
 		if [ $first = 1 ] ; then
 			label=linux ; first=0
 		else
-			label=linux-${x/vmlinuz_/}
+			label=linux-$ver
 		fi
 
 		cat << EOT
 
 title  $label
 kernel $bootdrive$bootpath/$x root=$rootdev ro
-initrd $bootdrive$bootpath/initrd.img
+initrd $bootdrive$bootpath/initrd-${ver}.img
 EOT
 	done
 }
