@@ -92,7 +92,7 @@ echo_status "Create iso description."
 cat > ../isofs.txt <<- EOT
 	BOOT    -b isolinux.bin -c boot.catalog
 	BOOTx   -no-emul-boot -boot-load-size 4 -boot-info-table
-	DISK1   build/${ROCKCFG_ID}/ROCK/router /
+	DISK1   build/${ROCKCFG_ID}/TOOLCHAIN/router /
 EOT
 
 if [ "$ROCK_DEBUG_ROUTER_NOCLEANUP" != 1 ]; then
