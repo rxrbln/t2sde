@@ -37,6 +37,7 @@ config=default
 do_config_cycle=0
 delete_mode=0
 oldconfig=''
+nobashmod=''
 profile=""
 
 while [ "$1" ] ; do
@@ -45,10 +46,17 @@ while [ "$1" ] ; do
 	    -delete)	delete_mode=1     ; shift ;;
 	    -profile)	profile='-profile'        ; shift ;;
 	    -oldconfig)	oldconfig='-oldconfig'    ; shift ;;
+	    -nobashmod)	nobashmod='-nobashmod'    ; shift ;;
 	    -cfg)	config="$2"       ; shift ; shift ;;
 
 	    *)
+		echo
 		echo "Usage: $0 [ -delete | -oldconfig ] [ -cfg <config> ]"
+		echo
+		echo "Other options:"
+		echo "	-profile	create a config.profile with profiling data"
+		echo "	-nobashmod	don't use the bash config helper plugin"
+		echo
 		exit 1 ;;
         esac
 done
@@ -66,14 +74,14 @@ if [ $do_config_cycle = 0 ] ; then
 	mkdir -p src
 
 	if [ -z "$oldconfig" -a ! -f src/rockdialog.bin ] ; then
-		echo "Creating rockdialog tool ..."
+		echo "Creating rockdialog tool."
 		command="gcc misc/rockdialog/*.c `
 			`-Imisc/rockdialog -lncurses -o src/rockdialog.bin"
 		echo "$command" ; eval "$command.$$"
 		mv src/rockdialog.bin.$$ src/rockdialog.bin
 	fi
 
-	echo "Creating configuration script ..."
+	echo "Creating configuration script."
 	cat << "EOT" > src/rockconfig.awk.$$
 #!/usr/bin/awk -f
 
@@ -103,17 +111,25 @@ EOT
 	mv src/rockconfig.in.$$ src/rockconfig.in
 
 	echo "Running ROCK Linux $rockver configuration ..."
-	while "$0" -cfg $config $oldconfig $profile -cycle ; do : ; done
+	while "$0" -cfg $config $oldconfig $profile $nobashmod -cycle ; do : ; done
 
 	exit 0
+fi
+
+if [ -z "$nobashmod" ]; then
+	if [ ! -f src/config_helper.so -o misc/tools-source/config_helper.c -nt src/config_helper.so ]; then
+		echo "Building src/config_helper.so."
+		gcc -shared -fPIC -Wall -o src/config_helper.so misc/tools-source/config_helper.c || exit 1
+	fi
+	enable -f src/config_helper.so cfghlp || exit 1
 fi
 
 if [ -z "$profile" ]; then
 	bprof() { :; }
 	bprof_print() { :; }
 else
-	if [ ! -f src/bash_profiler.so ]; then
-		echo "Building src/bash_profiler.so ..."
+	if [ ! -f src/bash_profiler.so -o misc/tools-source/bash_profiler.c -nt src/bash_profiler.so ]; then
+		echo "Building src/bash_profiler.so."
 		gcc -shared -fPIC -Wall -o src/bash_profiler.so misc/tools-source/bash_profiler.c || exit 1
 	fi
 	enable -f src/bash_profiler.so bprof || exit 1
@@ -143,7 +159,7 @@ if expr "`uname -m`" : "ppc"     > /dev/null ; then arch=powerpc ; fi
 if expr "`uname -m`" : "powerpc" > /dev/null ; then arch=powerpc ; fi
 current="" ; export ROCKCFG_ARCH="$arch" ; export ROCKCFG_EXPERT=0
 menu_this=0 ; menu_current=0 ; menu_counter=0
-menu_stack=-1 ; menu_back=-1 ; menu_backpos=-1
+menu_stack=x ; menu_back=-1 ; menu_backpos=-1
 
 mkdir -p config/$config
 touch config/$config/config config/$config/packages
@@ -162,6 +178,7 @@ echo -e "#\n# ROCK Linux $rockver Config File\n#" > config/$config/config
 spacer="" ; expert=0 ; tabspace="5" ; tabspace_list=""
 commentnr=0 ; editfilenr=0
 
+bprof mkpkglist start
 cmd="./scripts/Create-PkgList"
 [ "$ROCKCFG_DISABLE_BROKEN" = 1 ] && cmd="$cmd -nobroken"
 cmd="$cmd $ROCKCFG_ARCH"
@@ -172,9 +189,11 @@ if [ "$cmd" != "`cat config.pcache.cmd 2> /dev/null`" ] ; then
 else
 	cat config.pcache.data > config/$config/packages
 fi
+bprof mkpkglist stop
 
-export ROCKCFG_ID="$rockver" ; . src/rockconfig.in
+export ROCKCFG_ID="$rockver"; pkgin; . src/rockconfig.in; pkgout
 echo "export ROCKCFG_ID='$ROCKCFG_ID'" >> config/$config/config
+rm -f config/$config/*.tmp
 
 cut -f1,2,4,5,8- -d' ' config/$config/packages | sed 's, [^ ]*$,,' | \
 tr ' ' '\t' | expand -t2,15,35, > config/$config/packages.txt
