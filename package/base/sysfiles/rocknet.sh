@@ -1,0 +1,80 @@
+#!/bin/bash
+
+rocknet_debug=1
+rocknet_base="/etc/network"
+
+unset code_snipplets_idx code_snipplets_dat code_snipplets_counter
+declare -a code_snipplets_idx='()'
+declare -a code_snipplets_dat='()'
+code_snipplets_counter=0
+
+lineno=0
+ignore=0
+
+if [ "$3" != "up" -a "$3" != "down" ]; then
+	echo "Usage: $0 { profile | default } { interface | auto } { up | down }"
+	exit 1
+fi
+
+profile=$1
+interface=$2
+mode=$3
+
+#
+# addcode mode major-priority minor-priority code1
+#
+addcode() {
+	[ "$mode" != "$1" ] && return
+	[ "$ignore" -gt 0 ] && return
+	if [ "$1" = "up" ]; then udo="+"; else udo="-"; fi
+	code_snipplets_idx[code_snipplets_counter]="`
+		printf '%04d.%04d.%04d' $((5000$udo$2)) $((5000$udo$lineno)) \
+		$((5000$udo$3))` $code_snipplets_counter"
+	code_snipplets_dat[code_snipplets_counter]="$4"
+	(( code_snipplets_counter++ ))
+}
+
+#
+# isfirst unique-id
+#
+isfirst() {
+	[ "$ignore" -gt 0 ] && return 0
+	eval "\$isfirst_$1"
+	eval "isfirst_$1='return 1'"
+	return 0
+}
+
+#
+# error error-message
+#
+error() {
+	echo "$*"
+}
+
+for x in "$rocknet_base"/modules/*.sh; do . "$x"; done
+
+while read cmd para
+do
+	(( lineno++ ))
+	if [ -n "$cmd" ]; then
+		cmd="${cmd//-/_}"
+		para="$( echo "$para" | sed 's,[\*\?],\\&,g' )"
+		if declare -f public_$cmd > /dev/null
+		then
+			public_$cmd $para
+		else
+			error "Unknown statement in config file: $cmd"
+		fi
+	fi
+done < <( sed 's,#.*,,' < "$rocknet_base"/config )
+
+while read id1 id2; do
+	if [ "$rocknet_debug" = 1 ]; then
+		echo ">> $id1 -> $id2: ${code_snipplets_dat[id2]}"
+	fi
+	eval "${code_snipplets_dat[id2]}"
+done < <(
+	for x in "${code_snipplets_idx[@]}"; do echo "$x"
+	done | sort
+)
+
