@@ -230,7 +230,7 @@ void load_ramdisk_file()
 	printf("Select a device for loading the 2nd stage system from: \n\n");
 
 	for (i = 0; i < 2; i++) {
-		for (tmp_nr = 0; ; ++tmp_nr) {
+		for (tmp_nr = 0; tmp_nr < 10; ++tmp_nr) {
 			sprintf(devicefile, devicelists[i], tmp_nr);
 			sprintf(text, devicenames[i], tmp_nr+1);
 
