@@ -9,6 +9,7 @@ sed -e "s/CONFIG_SOUND\(.*\)=./# CONFIG_SOUND\1 is not set/" \
     -e "s/CONFIG_HAMRADIO\(.*\)=./# CONFIG_HAMRADIO\1 is not set/" \
     -e "s/CONFIG_ATM\(.*\)=./# CONFIG_ATM\1 is not set/" \
     -e "s/CONFIG_AGP\(.*\)=./# CONFIG_AGP\1 is not set/" \
+    -e "s/CONFIG_SMP\(.*\)=./# CONFIG_SMP\1 is not set/" \
     -e "s/CONFIG_PCI_NAMES\(.*\)=./# CONFIG_PCI_NAMES\1 is not set/" \
     -e "s/CONFIG_INPUT_JOYDEV\(.*\)=./# CONFIG_INPUT_JOYDEV\1 is not set/" \
     $1 > .config.boot
