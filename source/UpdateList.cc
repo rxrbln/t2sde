@@ -11,6 +11,8 @@
 #include <unistd.h>
 #include <glob.h>
 
+const bool debug = 0;
+
 std::vector <std::string> suffixes;
 
 // maybe inherit std::string? -ReneR
@@ -30,7 +32,8 @@ public:
     for (std::string::size_type i = 0; i < filename.size(); ++i)
       if (isdigit(filename[i])) {
 	version = filename.substr(i);
-	std::cout << "Vesion set to: " << version << std::endl;
+	if (debug)
+	  std::cout << "Vesion set to: " << version << std::endl;
 	return;
       }
     version.clear();
@@ -74,7 +77,8 @@ public:
 	}
 	catch (...){}
 	return i;
-	std::cout << "extracted part: " << val << std::endl;
+	if (debug)
+	  std::cout << "extracted part: " << val << std::endl;
       }
 
       std::string::size_type size() const {
@@ -110,8 +114,9 @@ public:
 	    int int_val, other_int_val;
 	    int_val = atoi(val.c_str());
 	    other_int_val = atoi(other.val.c_str());
-	    std::cout << "Intergers only: " << int_val << " " << other_int_val
-		      << std::endl;
+	    if (debug)
+	      std::cout << "Intergers only: " << int_val << " "
+			<< other_int_val << std::endl;
 	    return int_val < other_int_val;
 	  }
 	}
@@ -130,8 +135,9 @@ public:
 	    int int_val, other_int_val;
 	    int_val = atoi(val.c_str());
 	    other_int_val = atoi(other.val.c_str());
-	    std::cout << "Intergers only: " << int_val << " " << other_int_val
-		      << std::endl;
+	    if (debug)
+	      std::cout << "Intergers only: " << int_val << " "
+			<< other_int_val << std::endl;
 	    return int_val > other_int_val;
 	  }
 	}
@@ -144,7 +150,9 @@ public:
       std::string val;
     };
   
-    std::cout << "Comparing: " << a.str() << " with " << b.str() << std::endl;
+    if (debug)
+      std::cout << "Comparing: " << a.str() << " with " << b.str()
+		<< std::endl;
     
     std::string::size_type i, j;
     subversion subv_a, subv_b;
@@ -153,33 +161,40 @@ public:
       i = subv_a.next_part(a.str(), i);
       j = subv_b.next_part(b.str(), j);
       
-      std::cout << subv_a.str() << " vs " << subv_b.str() << ": ";
+      if (debug)
+	std::cout << subv_a.str() << " vs " << subv_b.str() << ": ";
       
       if (subv_a < subv_b) {
-	std::cout << "... <" << std::endl;
+	if (debug)
+	  std::cout << "... <" << std::endl;
 	return -1;
       }
       if (subv_a > subv_b) {
-	std::cout << "... >" << std::endl;
+	if (debug)
+	  std::cout << "... >" << std::endl;
 	return 1;
       }
       
-      std::cout << "=,  " << std::endl;
+      if (debug)
+	std::cout << "=,  " << std::endl;
     }
 
     i = subv_a.next_part(a.str(), i);
     j = subv_b.next_part(b.str(), j);
     
-    std::cout << "Final: " << subv_a.str() << " vs " << subv_b.str() << ": ";
+    if (debug)
+      std::cout << "Final: " << subv_a.str() << " vs " << subv_b.str() << ": ";
     
     if (!subv_a.empty())
       {
 	if (isdigit(subv_a[0])) {
-	  std::cout << "... >" << std::endl;
+	  if (debug)
+	    std::cout << "... >" << std::endl;
 	  return 1;
 	}
 	else {
-	  std::cout << "... <" << std::endl;
+	  if (debug)
+	    std::cout << "... <" << std::endl;
 	  return -1;
 	}
       }
@@ -187,16 +202,19 @@ public:
     if (!subv_b.empty())
       {
 	if (isdigit(subv_a[0])) {
-	  std::cout << "... <" << std::endl;
+	  if (debug)
+	    std::cout << "... <" << std::endl;
 	  return 1;
 	}
 	else {
-	  std::cout << "... >" << std::endl;
+	  if (debug)
+	    std::cout << "... >" << std::endl;
 	  return -1;
 	}
       }
     
-    std::cout << "... =" << std::endl;
+    if (debug)
+      std::cout << "... =" << std::endl;
     return 0;
   }
 
@@ -220,7 +238,7 @@ private:
   
 };
 
-void GenList (std::string file, std::ifstream& s) {
+void ParseList (std::string file, std::ifstream& s) {
   // search for a matching extension
   std::string templ = file;
   std::string suffix = "";
@@ -254,14 +272,14 @@ void GenList (std::string file, std::ifstream& s) {
 
   std::string token;
   while (!s.eof()) {
-    s >> token;
     
+    // read a line and search for the prefix
+    s >> token;
     idx = token.find(prefix);
     
     if (idx != std::string::npos) {
-      //      std::cout << token << std::endl;
+
       std::string::size_type idx2;
-      
       if (suffix.length() > 0)
 	idx2 = token.find(suffix, idx+1);
       else {
@@ -313,6 +331,60 @@ void GenList (std::string file, std::ifstream& s) {
   std::cout << "-----------------------" << std::endl;
 }
 
+void GenList (const DownloadInfo& info)
+{
+  CurlWrapper dl;
+  dl.SetConnectTimeout(15);
+  dl.SetMaxTime(30);
+  
+  try {
+    dl.Download(info.url, 0, 200000);
+    std::auto_ptr<std::ifstream> s = dl.OpenFile();
+    ParseList(info.file, *s);
+    s->close();
+  }
+  
+  catch (TimeoutException e) {
+    std::cout << "Operation timeout" << std::endl;
+  }
+  catch (UnsupportedProtocolException e) {
+    std::cout << "Unsupported protocol : " << info.protocol << std::endl;
+  }
+  catch (MalformedUrlException e) {
+    std::cout << "Malformed URL or invalid URL options "
+	      << info.url << std::endl;
+  }
+  catch (ConnectErrorException e) {
+    std::cout << "Could not connect to host" << std::endl;
+  }
+  catch (AccessDeniedException e) {
+    std::cout << "Access denied or invalid user/pass" << std::endl;
+  }
+  catch (DoesNotExistException e) {
+    std::cout << "File does not exist" << std::endl;
+  }
+  catch (CurlException e) {
+    std::cout << "operation canceled due to errors executing '"
+	      << dl.GetCommand() << "'" << std::endl;
+  }
+
+  dl.RemoveFile();
+}
+
+void Check4Updates (const Package& package)
+{
+  unsigned int no_downloads = package.download.download_infos.size();
+  for (unsigned int dln = 0; dln < no_downloads; ++dln) {
+    const DownloadInfo& info = package.download.download_infos[dln];
+    if (info.protocol != "http" && info.protocol != "ftp")
+      continue;
+    
+    std::cout << "Checking updates for " << info.url << std::endl;
+    
+    GenList(info);
+  }
+}
+
 int main (int argc, char* argv[])
 {
   suffixes.push_back(".tar.bz2");
@@ -351,7 +423,7 @@ int main (int argc, char* argv[])
   for (int i = 1; i < argc; ++i)
     {
       package.Clear();
-
+      
       // check if package name or path is given
       std::string fname = argv[i];
       struct stat statbuf;
@@ -369,50 +441,6 @@ int main (int argc, char* argv[])
 
       // parse package ...
       package.ParsePackage (fname);
-
-      unsigned int no_downloads = package.download.download_infos.size();
-
-      CurlWrapper dl;
-      dl.SetConnectTimeout(15);
-      dl.SetMaxTime(30);
-
-      for (unsigned int dln = 0; dln < no_downloads; ++dln)
-	{
-	  DownloadInfo& info = package.download.download_infos[dln];
-	  
-	  try {
-	    if (info.protocol == "http" || info.protocol == "ftp") {
-	      std::cout << "trying to download listing of " << info.url << std::endl;
-	      
-	      dl.Download(info.url, 0, 200000);
-	      std::auto_ptr<std::ifstream> s = dl.OpenFile();
-	      GenList(info.file, *s);
-	      s->close();
-	    }
-	  }
-	  catch (TimeoutException e) {
-	    std::cout << "Operation timeout" << std::endl;
-	  }
-	  catch (UnsupportedProtocolException e) {
-	    std::cout << "Unsupported protocol : " << info.protocol << std::endl;
-	  }
-	  catch (MalformedUrlException e) {
-	    std::cout << "Malformed URL or invalid URL options" << info.url << std::endl;
-	  }
-	  catch (ConnectErrorException e) {
-	    std::cout << "Could not connect to host" << std::endl;
-	  }
-	  catch (AccessDeniedException e) {
-	    std::cout << "Access denied or invalid user/pass" << std::endl;
-	  }
-	  catch (DoesNotExistException e) {
-	    std::cout << "File does not exist" << std::endl;
-	  }
-	  catch (CurlException e) {
-	    std::cout << "operation canceled due to errors executing '"
-		      << dl.GetCommand() << "'" << std::endl;
-	  }
-	}
-      dl.RemoveFile();
+      Check4Updates (package);
     }
 }
