@@ -103,7 +103,7 @@ main() {
 		cmd="$cmd item to change the priority or runlevels'"
 
 		x=`mktemp`
-		for srv in $( cd /etc/rc.d/init.d ; ls ; )
+		for srv in $( ls /etc/rc.d/init.d/ )
 		do
 			[ -f /etc/rc.d/init.d/$srv ] || continue
 
