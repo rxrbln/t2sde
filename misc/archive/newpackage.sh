@@ -38,8 +38,21 @@ if [ "$1" == "-main" ] ; then
 	create_main=1
 	shift
 fi
-dir=$1 ; shift
 
+if [ $# -lt 2 ] ; then
+	cat <<-EEE
+Usage:
+$0 <option> package/repository/packagename Download_1 < Download_2, Download_n >
+
+Where <option> may be:
+	-main		Create a package.conf file with main-function
+
+	EEE
+	exit 1
+fi
+
+
+dir=${1#package/} ; shift
 package=${dir##*/}
 if [ "$package" = "$dir" ]; then
 	echo "failed"
@@ -127,7 +140,9 @@ echo >> $package.desc
 
 echo "ok"
 echo -n "Creating $package.conf ... "
-cat >>$package.conf <<EEE
+
+if [ "$create_main" == "1" ] ; then
+	cat >>$package.conf <<-EEE
 
 # --- ${rc}-NOTE-BEGIN ---
 # 
@@ -151,16 +166,13 @@ cat >>$package.conf <<EEE
 # 
 # --- ${rc}-NOTE-END ---
 
-EEE
-if [ "$create_main" == "1" ] ; then
-	main=$package"_main";
-	cat >>$package.conf <<EEE
-$main() {
-	# TODO
+	EEE
+	cat >>$package.conf <<-EEE
+${package}_main() { #TODO
 }
 
-custmain="$main"
-EEE
+custmain="${package}_main"
+	EEE
 fi
 
 echo "ok"
