@@ -120,7 +120,7 @@ x_install() {
 	install_init xfs $base/package/x11/xorg/xfs.init
 
 
-	register_xdm xdm 'X11 display manager' /usr/X11R6/bin/xdm
+	register_xdm xdm 'X11 display manager' "/usr/X11R6/bin/xdm -nodaemon"
 
 
 	echo "Installing the xdm start script (multiplexer) ..."
