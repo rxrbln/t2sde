@@ -22,95 +22,87 @@
 # 
 # --- ROCK-COPYRIGHT-NOTE-END ---
 
-if [ $# = 1 -a "$1" = -misc ] ; then
-	set x -repository misc ; shift
-fi
+. scripts/functions
+override=0
+files=''
 
-if [ $# = 1 -a "$1" = -all ] ; then
-	shift $# ; cmpfield=2
-else
-	if [ "$1" = "-repository" -o "$1" = "-target" ]
-	then cmpfield=2 ; shift  ;  else cmpfield=3 ; fi
+while [ "$1" ]; do
+    case "$1" in
+	-override)   override=1 ; shift ;;
+	-repository) files="$files `echo package/$2/*/*.desc`" ; shift ; shift ;;
+	-*)
+	    echo "Usage:"
+	    echo "./scripts/Create-CkSumPatch [options] <package-name>"
+	    echo "./scripts/Create-CkSumPatch [options] <target-name>"
+	    echo "./scripts/Create-CkSumPatch [options] <file-path>"
+	    echo " "
+	    echo "Options:"
+	    echo "    -override        Create new cksum if old one should be valid."
+	    echo "    -help            This."
+	    ;;
+	-help)       exit ;;
+	-*)          exit -1 ;;
+	target/*)    files="$files $arg" ; shift ;;
+	*.desc)      files="$files $arg" ; shift ;;
+	*)           files="$files `echo package/*/$1/$1.desc`" ; shift ;;
+    esac
+done
 
-	if [ "$#" -eq 0 -o "${1#-}" != "$1" ] ; then
-		echo "Usage: $0 <package-names>"
-		echo "or     $0 -repository <respository-names>"
-		echo "or     $0 -target <target-names>"
-		echo "or     $0 -misc"
-		echo "or     $0 -all"
-		exit 1
-	fi
-fi
+# cksum_file path-to-desc-or-target-file
+cksum_file() {
+    case "$1" in
+	target/*)
+	    has_D='cat'
+	    sedscript='s,^[0-9]*  *$file,$newcksum $file,'
+	    ;;
+	*.desc)
+	    has_D='fgrep "[D]" | sed "s/[[]D[^ ]*//"' 
+	    sedscript='s,\[D\]  *[0-9]*  *$file,[D] $newcksum $file,'
+	    ;;
+	*)
+	    echo "!!! File type not recognized" >&2
+	    return -1
+    esac
 
-echo "Creating cksum.patch ..." >&2
+    if [ ! -f "$1" ]; then
+	echo "!!! File not found: $1" >&2
+	return -1
+    fi
 
-./scripts/Download -list-cksums | grep '^00* ' | \
-while read cksum gzfile ; do
+    cp $1 /tmp/$$
+    eval "egrep -v '^#' $1 | $has_D" | while read cksum file url flags; do
+	[ "$cksum" = 'X' ] && continue
+	[ "$cksum" != '0' -a "$override" = '0' ] && continue
 
-   bzfile="`echo "$gzfile" | sed 's,\.\(t\?\)\(gz\|Z\)$,.\1bz2,'`"
-
-   if [ -f "$bzfile" ]
-   then
-	checkthis=1
-
-	xfile="`basename $gzfile`"
-	descfile="`grep $xfile package/*/*/*.desc target/*/download.txt   | sed 's,:.*,,'`"
-	rep="`echo $descfile | cut -f2 -d/`" 
-	pkg="`echo $descfile | cut -f3 -d/`" 
-
-	for x ; do
-		[ $checkthis = 1 ] && checkthis=0
-		[ "$pkg" = $x ] && checkthis=2
-		[ "$descfile" = $x ] && checkthis=2
-	done
-	if [ $checkthis = 0 ] ; then
-		: echo "Skip: $bzfile" ; continue
+	gzfile=`source_file cksum $file url $flags`
+	bzfile="`echo "$gzfile" | sed 's,\.\(t\?\)\(gz\|Z\)$,.\1bz2,'`"
+	if [ ! -f "$bzfile" ]; then
+	    echo "!!! File not present: $bzfile" >&2
+	    continue
 	fi
 
 	if [[ "$bzfile" = *.bz2 ]] || [[ "$bzfile" = *.tbz2 ]] ; then
 		echo -n "$bzfile (bzip2): " >&2
-		cksum="`bunzip2 < $bzfile | cksum | cut -f1 -d' '`"
+		newcksum="`bunzip2 < $bzfile | cksum | cut -f1 -d' '`"
 	else
 		echo -n "$gzfile (raw): " >&2
-		cksum="`cksum "$gzfile" | cut -f1 -d' '`"
+		newcksum="`cksum $gzfile | cut -f1 -d' '`"
 	fi
-	echo $cksum >&2
+ 	echo $newcksum >&2
 
-	if [ -d package/$rep ] ; then
-		if [ -f $descfile ] ; then
-			sedscript="s,\[D\]  *00*  *$xfile,[D] $cksum $xfile,"
-			sed "$sedscript" -i /tmp/$$
-			if cmp -s ./$descfile /tmp/$$ ; then
-				echo "!!! SED script didn't change anything:" >&2
-				echo "!!! $sedscript" >&2
-			else
-				{ echo "diff -u -U 0 ./$descfile /tmp/$$"
-				diff -u -U 0 ./$descfile /tmp/$$ ; }
-			fi
-			rm -f /tmp/$$
-		else
-			echo "!!! No Desc File for $gzfile" >&2
-			echo "!!! (My guess was $descfile)" >&2
-		fi
-	elif [ -d target/$rep -o "$rep" = misc ] ; then
-		if [ -f $descfile ] ; then
-			sedscript="s,^00*  *$xfile,$cksum $xfile,"
-			sed "$sedscript" < $descfile > /tmp/$$
-			if cmp -s ./$descfile /tmp/$$ ; then
-				echo "!!! SED script didn't change anything:" >&2
-				echo "!!! $sedscript" >&2
-			else
-				{ echo "diff -u -U 0 ./$descfile /tmp/$$"
-				diff -u -U 0 ./$descfile /tmp/$$ ; }
-			fi
-			rm -f /tmp/$$
-		else
-			echo "!!! No Desc File for $gzfile" >&2
-			echo "!!! (My guess was $descfile)" >&2
-		fi
-	else
-		echo "!!! No Desc File for $gzfile" >&2
-		echo "!!! (I didn't have any possible guesses)" >&2
+	if [ "$cksum" != 0 -a "$cksum" != "$newcksum" ]; then
+	    echo "!!! Checksum of $file changed (was $cksum)." >&2
 	fi
-   fi
+
+	eval "sed \"$sedscript\" -i /tmp/$$"
+    done
+
+    diff -u $1 /tmp/$$
+    rm -f /tmp/$$
+}
+
+echo "Creating cksum.patch ..." >&2
+
+for f in $files; do
+    cksum_file $f
 done
