@@ -108,7 +108,6 @@ int main(int argc, char ** argv) {
 			argv++; argc--;
 			argv[0] = basename(argv[0]);
 		} else {
-			fprintf(stderr, "Usage: %s command\n", argv[0]);
 			exit(250);
 		}
 	}
@@ -176,18 +175,13 @@ int main(int argc, char ** argv) {
 	other = strdup(getenv(ENVPREFIX "_WRAPPER_OTHERS"));
 	other = strtok(other, ":");
 
-	fprintf(stderr, "other %s\n", other);
 	if (other != NULL) {
 		/* if we have other wrappers remove the current one from the list */
 		char *newothers = getenv(ENVPREFIX "_WRAPPER_OTHERS");
 		newothers += strlen (other);
-		fprintf(stderr, "others env. %s\n", newothers);
 		if (*newothers == ':')
 			newothers++;
-		fprintf(stderr, "others env. %s\n", newothers);
 		setenv (ENVPREFIX "_WRAPPER_OTHERS", newothers, 1);
-		fprintf(stderr, "others env. %s\n",
-		        getenv(ENVPREFIX "_WRAPPER_OTHERS"));
 	}
 
 	/*
@@ -320,8 +314,6 @@ int main(int argc, char ** argv) {
 			dup2(infd,  0);  close(infd);
 			dup2(outfd, 1);  close(outfd);
 			execlp("sh", "sh", "-c", delim, NULL);
-			fprintf(stderr, ENVPREFIX "_WRAPPER: Can't execute "
-			                "'%s' with shell!\n", delim);
 			return 1;
 		}
 		wait(NULL);  /* We don't expect any signals and have no */
@@ -356,8 +348,6 @@ reread_file_finished:
 	
 	if ( (delim=getenv(ENVPREFIX "_WRAPPER_NOLOOP")) != NULL &&
 					delim[0] && delim[0] != '0') {
-		fprintf(stderr, ENVPREFIX
-				"_WRAPPER: Detected loop! -> abort.\n");
 		return 250;
 	}
 	setenv(ENVPREFIX "_WRAPPER_NOLOOP", "1", 1);
@@ -391,8 +381,6 @@ reread_file_finished:
 		if (debug) fprintf(stderr, "New PATH: %s\n", optbuf);
 #endif
 	} else {
-		fprintf(stderr, ENVPREFIX "_WRAPPER: $PATH or $" ENVPREFIX
-		                "_WRAPPER_MYPATH is not set! -> abort.\n");
 		return 250;
 	}
 
@@ -403,11 +391,13 @@ reread_file_finished:
 	if (other != NULL) {
 
 #if VERBOSE_DEBUG
-		if (debug) fprintf(stderr,
-			"Running external wrapper: %s\n", newargv[0]);
-		        for (c3=0; c3<c1; c3++)
-			         fprintf(stderr, " %s", newargv[c3]);
-		        fprintf(stderr, "\n");
+		if (debug) {
+		  fprintf(stderr,
+			  "Running external wrapper: %s\n", newargv[0]);
+		  for (c3=0; c3<c1; c3++)
+		    fprintf(stderr, " %s", newargv[c3]);
+		  fprintf(stderr, "\n");
+		}
 #endif
 
 		if (logfile) {
@@ -417,11 +407,7 @@ reread_file_finished:
 			fprintf(logfile, "\n");
 			fclose(logfile);
 		}
-		fprintf (stderr, "wrapper others env: %s\n",
-		         getenv(ENVPREFIX "_WRAPPER_OTHERS"));
 		execvp(newargv[0], newargv);
-		fprintf(stderr, ENVPREFIX "_WRAPPER: Can't execute "
-				"'%s' -> abort.\n", newargv[0]);
 		return 250;
 	}
 
@@ -429,11 +415,13 @@ reread_file_finished:
 	 *  Run the new command
 	 */
 	
+#if VERBOSE_DEBUG
 	if (debug) {
 		fprintf(stderr, "New Command:");
 		for (c3=0; c3<c1; c3++) fprintf(stderr, " %s", newargv[c3]);
 		fprintf(stderr, "\n");
 	}
+#endif
 
 	if (logfile) {
 		fprintf(logfile, "+");
@@ -445,7 +433,5 @@ reread_file_finished:
 	newargv[c1]=NULL;
 	execvp(newargv[0], newargv);
 	
-	fprintf(stderr, ENVPREFIX "_WRAPPER: Can't execute "
-	                "'%s' -> abort.\n", newargv[0]);
 	return 250;
 }
