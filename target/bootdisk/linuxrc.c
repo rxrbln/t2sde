@@ -130,7 +130,7 @@ void httpload()
 	if ( mount("none", "/mnt_root", "tmpfs", 0, TMPFS_OPTIONS) )
 		{ perror("Can't mount /mnt_root"); exit_linuxrc=0; }
 
-	if (pipe(fd) <0)
+	if ( pipe(fd) < 0 )
 		{ perror("Can't create pipe"); exit_linuxrc=0; } 
 
 	if ( fork() == 0 ) {
@@ -454,6 +454,16 @@ void autoload_modules()
 	wait(NULL);
 }
 
+void exec_sh()
+{
+	if ( fork() == 0 ) {
+		execl("/bin/kiss", "kiss", NULL);
+		perror("kiss");
+		_exit(1);
+	}
+	wait(NULL);
+}
+
 int main()
 {
 	char text[100];
@@ -491,8 +501,9 @@ drivers (if needed) and configure the installation source so the\n\
      4. Load kernel SCSI modules from this disk\n\
      5. Load kernel modules from another disk\n\
      6. Activate already formatted swap device\n\
+     7. Execute a (kiss) shell if present (for experts!)\n\
 \n\
-What do you want to do [0-6] (default=0)? ");
+What do you want to do [0-7] (default=0)? ");
 		fflush(stdout);
 
 		text[0]=0; fgets(text, 100, stdin); text[99]=0;
@@ -538,6 +549,10 @@ What do you want to do [0-6] (default=0)? ");
 		  
 		case 6:
 		  activate_swap();
+		  break;
+		  
+		case 7:
+		  exec_sh();
 		  break;
 		  
 		default:
