@@ -1,8 +1,17 @@
 #!/bin/bash
 
-rm -rf image ; mkdir image ; cd image
+set -e
+set -x
 
-find ../../ -printf "%P\n" | sed '
+arlo_ver="`sed -e 's,.*arlo-\(.*\).zip .*,\1,' \
+           $base/target/psion-pda/download.txt`"
+
+mkdir -p $imagedir ; cd $imagedir
+
+# wipe possible existing garbage
+rm -rf initrd ; mkdir initrd ; cd initrd
+
+find $build_root -printf "%P\n" | sed '
 
 # stuff we never need
 
@@ -18,7 +27,7 @@ find ../../ -printf "%P\n" | sed '
 /\/local/	d;
 /^boot/		d;
 
-# stuff that would be nice - but is huge and only documentatoin
+# stuff that would be nice - but is huge and only documentation
 /\/man/		d;
 /\/doc/		d;
 
@@ -43,11 +52,16 @@ find ../../ -printf "%P\n" | sed '
 
 /^\/man\//	d;
 
+/terminfo\/a\/ansi$/	{ p; d; }
 /terminfo\/l\/linux$/	{ p; d; }
 /terminfo\/x\/xterm$/	{ p; d; }
+/terminfo\/n\/nxterm$/	{ p; d; }
 /terminfo\/x\/xterm-color$/	{ p; d; }
 /terminfo\/x\/xterm-8bit$/	{ p; d; }
 /terminfo\/x\/screen$/	{ p; d; }
+/terminfo\/v\/vt100$/	{ p; d; }
+/terminfo\/v\/vt200$/	{ p; d; }
+/terminfo\/v\/vt220$/	{ p; d; }
 /terminfo/	d;
 
 # some big ncurses stuff
@@ -62,8 +76,8 @@ find ../../ -printf "%P\n" | sed '
 ' | while read file ; do
 	[ "$file" ] || continue
 	mkdir -p `dirname $file`
-	if [ -f ../../$file ] ; then
-		cp -p ../../$file $file
+	if [ -f $build_root/$file ] ; then
+		cp -p $build_root/$file $file
 	else
 		mkdir $file
 	fi
@@ -78,8 +92,6 @@ while read ck fn ; do
                 oldck=$ck ; oldfn=$fn
         fi
 done < <( find -type f | xargs md5sum | sort )
-
-mkdir dev
 
 while read target name ; do
 	ln -s $target $name
@@ -188,6 +200,7 @@ EOT
 
 set -x
 
+# image size estimation ...
 s="`du -s -B 1 . | cut -f 1`"
 s="$(( (s + 128000) / 1024 ))"
 s="$(( s * 1024 ))"
@@ -205,9 +218,11 @@ rmdir $tmpdir/lost+found/
 
 tar cSp . | (cd $tmpdir ; tar xSp)
 
-#tree $tmpdir
-df
 umount $tmpdir
-
 gzip -9 -c $tmpfile > ../initrd.gz
+rmdir $tmpdir ; rm -f $tmpfile
+
+cd $imagedir
+cp $build_root/boot/Image_* Image
+unzip $base/download/mirror/a/arlo-$arlo_ver.zip
 
