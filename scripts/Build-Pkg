@@ -108,8 +108,8 @@ fi
 if [ -z "$root" -a $stagelevel -le 1 ] || \
    [ -z "$root" -a $chroot -eq 1 ] || \
    [ "$root" = auto ]; then
-		if [ $stagelevel -gt 0 ]; then root="build/$ROCKCFG_ID/root"
-		else root="build/$ROCKCFG_ID/$toolsdir"; fi
+		if [ $stagelevel -gt 0 ]; then root="build/$ROCKCFG_ID"
+		else root="build/$ROCKCFG_ID/ROCK/$toolsdir"; fi
 fi
 
 [ "$pkgdir" -a "${pkgdir#/}" = "$pkgdir" ] && pkgdir="$base/$pkgdir"
@@ -139,102 +139,84 @@ builddir="$base/src.$pkg.$id"
 
 if [ "$chroot" = 1 ] ; then
 
-	mkdir -p $builddir
-	cd $builddir || exit 1
+	cd "$xroot" || exit 1
 
-	mkdir -p R.orig R.build R.work R.src
-	ln -s ../R.src   R.work/src.$pkg.$id
-	ln -s ../R.build R.work/build
+	x_mknod() {
+		if [ ! -e "$1" ]; then
+			mknod "$@"
+		fi
+	}
 
-	mkdir -p dev proc tmp mnt
-	[ -f proc/mounts ] || mount -t proc  none $builddir/proc
-	mknod $builddir/dev/null c 1 3
-	mknod $builddir/dev/zero c 1 5
-	mknod $builddir/dev/random c 1 8
-	mknod $builddir/dev/uramdom c 1 9
-	mkdir $builddir/dev/loop
-	mknod $builddir/dev/loop/0   b 7 0 
-	mknod $builddir/dev/loop/1   b 7 1 
-	mknod $builddir/dev/loop/2   b 7 2 
-	mknod $builddir/dev/loop/3   b 7 3 
-	# mknod $builddir/dev/tty c 5 0
-	ln -s /proc/self/fd $builddir/dev/fd
+	mkdir -p dev/loop
+	x_mknod dev/null     c 1 3
+	x_mknod dev/zero     c 1 5
+	x_mknod dev/random   c 1 8
+	x_mknod dev/uramdom  c 1 9
+	x_mknod dev/loop/0   b 7 0 
+	x_mknod dev/loop/1   b 7 1 
+	x_mknod dev/loop/2   b 7 2 
+	x_mknod dev/loop/3   b 7 3 
+	#_mknod dev/tty      c 5 0
 
-	realbase=$(dirname $(cd $base/scripts ; pwd -P))
-	mount --bind $realbase  $builddir/R.orig
-	
-	# handle mounted download dirs
-	if [ -L $realbase/download ]; then
-		abort "download dir can't be a symlink, use mount instead."
+	if [ ! -L dev/fd ]; then
+		ln -s /proc/self/fd dev/fd
 	fi
-	mount --bind $realbase/download $builddir/R.orig/download
 
-	realbuild=$(cd $base/build ; pwd -P)
-	mount --bind $realbuild $builddir/R.build
-	ln -sf R.build/$ROCKCFG_ID/root/* . 2> /dev/null
+	realconf=$(cd $base/config; pwd -P)
+	realdown=$(cd $base/download; pwd -P)
+	realbase=$(dirname $(cd $base/scripts; pwd -P))
 
-	cat > R_chroot.sh <<- EOT
-		cd /R.orig ; ./scripts/Create-Links /R.work > /dev/null
-		cd /R.work ; ./scripts/Build-Pkg $options -chr-sub -root "/R.build/$ROCKCFG_ID/root" "$1"
+	if [ ! -e ROCK/loop/scripts ]; then
+		mkdir -p ROCK/{loop,config,download}
+		mount --bind $realbase ROCK/loop
+		mount --bind $realconf ROCK/config
+		mount --bind $realdown ROCK/download
+	fi
+
+	if [ ! -f proc/mounts ]; then
+		mount -t proc none proc
+	fi
+
+	for x in Documentation architecture misc package scripts target; do
+		if [ ! -e ROCK/$x ]; then ln -s "loop/$x" "ROCK/$x"; fi
+	done
+
+	mkdir -p "ROCK/src.$pkg.$id"
+	ln -s "$PWD/ROCK/src.$pkg.$id" "$builddir"
+
+	cat > $builddir/chroot.sh <<- EOT
+		export ROCK_THIS_IS_CHROOT=1; cd /ROCK
+		./scripts/Build-Pkg $options -chr-sub -root "/" "$1"
 	EOT
 
-	cat <<- EOT > $builddir/R_mount.sh
-		mount -t proc  none $builddir/proc
-		mount --bind $realbase $builddir/R.orig
-		mount --bind $realbase/download $builddir/R.orig/download
-		mount --bind $realbuild $builddir/R.build
-	EOT
-	cat <<- EOT > $builddir/R_umount.sh
-		umount proc R.orig/download R.orig R.build
-	EOT
-	cat <<- EOT > $builddir/debug.sh
-		sh R_mount.sh
-		chroot . bin/bash -c 'cd R.src ; exec ./debug.sh'
-		[ -z "\`fuser R.src/build.pid\`" ] && sh R_umount.sh
+	cat > $builddir/debug.sh <<- EOT
+		#!/bin/bash
+		export ROCK_THIS_IS_CHROOT=1
+		chroot "$xroot" /bin/bash ROCK/src.$pkg.$id/debug_x.sh
 	EOT
 	chmod +x $builddir/debug.sh
 
-	mkdir -p R.work/config/
-	cp -rp $base/config/$config R.work/config/
-
 	if [ "$TZ" ] ; then
 		if [ "${TZ#/}" != "$TZ" ] ; then
-			cp $TZ R.localtime
+			cp $TZ ROCK/localtime
 		else
-			cp /usr/share/zoneinfo/$TZ R.localtime
+			cp /usr/share/zoneinfo/$TZ ROCK/localtime
 		fi
 	else
 		if [ -f /etc/localtime ] ; then
-			cp /etc/localtime R.localtime
+			cp /etc/localtime ROCK/localtime
 		else
-			ln -s /usr/share/zoneinfo/Factory R.localtime
+			ln -s /usr/share/zoneinfo/Factory ROCK/localtime
 		fi
 	fi
 
-	TZ="/R.localtime" chroot . bin/bash R_chroot.sh ; returncode=$?
+	TZ="/ROCK/localtime" chroot . bin/bash ROCK/src.$pkg.$id/chroot.sh
+	returncode=$?
 
-	{
-		umount -d -f $builddir/R.orig/download
-		umount -d -f $builddir/R.orig $builddir/R.build
-		umount -d -f $builddir/proc
-		umount -l -d -f $builddir/R.orig/download
-		umount -l -d -f $builddir/R.orig $builddir/R.build
-		umount -l -d -f $builddir/proc
-	} > /dev/null 2>&1
-
-	delbuilddir=1
-	for x in R.src R.orig R.build proc ; do
-		if [ $delbuilddir = 1 ] ; then
-			rmdir $x 2>/dev/null
-			[ -e "$x" ] && delbuilddir=0
-		fi
-	done
-	cd $base
-
-	if [ $delbuilddir = 1 ] ; then
-		rm -rf $builddir/
+	if [ ! -d "$builddir/." ]; then
+		rm "$builddir"
 	fi
-	
+
 	exit $returncode
 fi
 
@@ -242,7 +224,7 @@ if [ "$ROCKCFG_FLIST" = "flwrapper" -a -z "$FLWRAPPER" ] ; then
 	export FLWRAPPER_WLOG="$builddir/fl_wrapper.wlog"
 	export FLWRAPPER_RLOG="$builddir/fl_wrapper.rlog"
 	[ "$LD_PRELOAD" ] && LD_PRELOAD="${LD_PRELOAD}:"
-	export FLWRAPPER="$base/build/$ROCKCFG_ID/$toolsdir/lib/fl_wrapper.so"
+	export FLWRAPPER="$base/build/$ROCKCFG_ID/ROCK/$toolsdir/lib/fl_wrapper.so"
 	export LD_PRELOAD="${LD_PRELOAD}$FLWRAPPER"
 fi
 export INSTALL_WRAPPER_LOGFILE="$builddir/install_wrapper.log"
@@ -473,16 +455,16 @@ if [ $stagelevel -gt 1 ]; then
 	done
 	unset pc_file
 fi
-. $base/build/$ROCKCFG_ID/$toolsdir/lib/parse-config
+. $base/build/$ROCKCFG_ID/ROCK/$toolsdir/lib/parse-config
 
 set_confopt
 
 eval "$desc_O"
 
 # include package pre config - if any
-if [ -f $base/build/$ROCKCFG_ID/$toolsdir/lib/pkg_${pkg}_pre.conf ] ; then
+if [ -f $base/build/$ROCKCFG_ID/ROCK/$toolsdir/lib/pkg_${pkg}_pre.conf ] ; then
 	echo_status "Reading build/.../$toolsdir/lib/pkg_${pkg}_pre.conf"
-	. $base/build/$ROCKCFG_ID/$toolsdir/lib/pkg_${pkg}_pre.conf
+	. $base/build/$ROCKCFG_ID/ROCK/$toolsdir/lib/pkg_${pkg}_pre.conf
 fi
 
 if [ -f $targetdir/pkg_$pkg.conf ] ; then
@@ -494,9 +476,9 @@ elif [ -f $confdir/$pkg.conf ] ; then
 	. $confdir/$pkg.conf
 fi
 # include package post config - if any
-if [ -f $base/build/$ROCKCFG_ID/$toolsdir/lib/pkg_${pkg}_post.conf ] ; then
+if [ -f $base/build/$ROCKCFG_ID/ROCK/$toolsdir/lib/pkg_${pkg}_post.conf ] ; then
 	echo_status "Reading build/.../$toolsdir/lib/pkg_${pkg}_post.conf"
-	. $base/build/$ROCKCFG_ID/$toolsdir/lib/pkg_${pkg}_post.conf
+	. $base/build/$ROCKCFG_ID/ROCK/$toolsdir/lib/pkg_${pkg}_post.conf
 fi
 
 if [ -f $base/architecture/$arch/pkg-header ] ; then
@@ -533,18 +515,13 @@ fi
 
 echo_status "Preparing build in src.$pkg.$id"
 
-umount -r -d -f    $builddir/* 2> /dev/null
-umount -r -d -f -l $builddir/* 2> /dev/null
-umount -r -d -f    $builddir   2> /dev/null
-umount -r -d -f -l $builddir   2> /dev/null
-
 if [ $clear_src = 1 ] ; then
-	rm -rf $builddir/* ; mkdir -p $builddir ; chmod 700 $builddir
-	if [ "$ROCKCFG_SRC_TMPFS" = 1 ] ; then
+	mkdir -p $builddir; chmod 700 $builddir
+	if [ "$ROCKCFG_SRC_TMPFS" = 1 ]; then
 		mount -t tmpfs -o $ROCKCFG_SRC_TMPFS_OPT none $builddir
 	fi
 else
-	mkdir -p $builddir ; chmod 700 $builddir
+	mkdir -p $builddir; chmod 700 $builddir
 fi
 
 if [ "$xroot" != "$root" ] ; then
@@ -615,10 +592,14 @@ abort() {
 	} > $builddir/debug.buildenv
 	#
 	{	echo "#!/bin/bash"
-		echo "export PROMPT_COMMAND='. debug.buildenv ; cd . ;" \
-		     "unset PROMPT_COMMAND'" ; echo "exec bash 200>> build.pid"
-	} > $builddir/debug.sh
-	chmod +x $builddir/debug.sh
+		echo "export PROMPT_COMMAND='. debug.buildenv; cd .; unset PROMPT_COMMAND'"
+		echo "cd $builddir; exec bash 200>> build.pid"
+	} > $builddir/debug_x.sh
+	#
+	if [ "$ROCK_THIS_IS_CHROOT" != 1 ]; then
+		mv $builddir/debug_x.sh $builddir/debug.sh
+		chmod +x $builddir/debug.sh
+	fi
 
 	# Create PID file
 	#

@@ -13,10 +13,10 @@ then
 	echo_status "Extracting yaboot boot loader images."
 	mkdir -p boot etc
 	tar --use-compress-program=bzip2 \
-	    -xf $base/build/${ROCKCFG_ID}/pkgs/yaboot.tar.bz2 \
+	    -xf $base/build/${ROCKCFG_ID}/ROCK/pkgs/yaboot.tar.bz2 \
 	    usr/lib/yaboot/yaboot -O > boot/yaboot
 	tar --use-compress-program=bzip2 \
-	    -xf $base/build/${ROCKCFG_ID}/pkgs/yaboot.tar.bz2 \
+	    -xf $base/build/${ROCKCFG_ID}/ROCK/pkgs/yaboot.tar.bz2 \
             usr/lib/yaboot/yaboot.rs6k -O > boot/yaboot.rs6k
 	#
 	echo_status "Creating yaboot config file."
@@ -32,7 +32,7 @@ then
 	echo_status "Copy more config files."
 	cp -v $base/target/$target/powerpc/mapping .
 	#
-	datdir="build/${ROCKCFG_ID}/bootdisk"
+	datdir="build/${ROCKCFG_ID}/ROCK/bootdisk"
 	cat > ../isofs_arch.txt <<- EOT
 		BOOT	-hfs -part -map $datdir/mapping -hfs-volid "ROCK_Linux_CD"
 		BOOTx	-hfs-bless boot -sysid PPC
