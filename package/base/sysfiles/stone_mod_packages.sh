@@ -57,7 +57,7 @@ read_ids() {
 		for x in `cd $mnt; ls -d */pkgs | cut -f1 -d/` ; do
 			cmd="$cmd '$x' 'ROCKCFG_SHORTID=\"$x\"'"
 		done
-		umount $dir
+		umount $mnt
 	else
 		cmd="$cmd 'The medium could not be mounted!' ''"
 	fi
