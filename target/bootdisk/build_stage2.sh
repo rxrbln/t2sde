@@ -58,7 +58,7 @@ done
 #
 echo_status "Saving boot/* - we do not need this on the 2nd stage ..."
 rm -rf ../boot ; mkdir ../boot
-mv -v boot/* ../boot/
+mv boot/* ../boot/
 #
 echo_status "Remove the stuff we don't need ..."
 rm -rf home usr/{local,doc,man,info,games,share}
@@ -122,7 +122,7 @@ for x in $progs ; do
 	[ -f ../2nd_stage/usr/sbin/$x ] && fn="usr/sbin/$x"
 
 	if [ "$fn" ] ; then
-		cp -v ../2nd_stage/$fn $fn
+		cp ../2nd_stage/$fn $fn
 	else
 		echo_error "\`- Program not found: $x"
 	fi
@@ -155,7 +155,7 @@ cp ../2nd_stage/etc/fstab etc
 echo_status "Copy stone.d."
 mkdir -p etc/stone.d
 for i in gui_text mod_install mod_packages mod_gas default ; do
-	cp -v ../2nd_stage/etc/stone.d/$i.sh etc/stone.d
+	cp ../2nd_stage/etc/stone.d/$i.sh etc/stone.d
 done
 #
 echo_status "Creating links for identical files."
@@ -170,4 +170,5 @@ do
 done < <( find -type f | xargs md5sum | sort )
 #
 echo_status "Creating 2nd_stage_small.tar.gz archive."
-tar -cvf- * | gzip -9 > ../2nd_stage_small.tar.gz ; cd ..
+tar -cf- * | gzip -9 > ../2nd_stage_small.tar.gz ; cd ..
+
