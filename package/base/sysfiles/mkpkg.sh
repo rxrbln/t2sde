@@ -26,13 +26,19 @@ strace_pid=$!; sleep 1; cd $PWD
 sleep 1; kill -INT $strace_pid; sleep 1
 /usr/lib/fl_stparse -w $wlog < $slog
 touch /var/adm/flists/$pkg
-/usr/lib/fl_wrparse -s -r / -p "$pkg" < $wlog | cat /var/adm/flists/$pkg - |
+{
+  /usr/lib/fl_wrparse -s -r / -p "$pkg" < $wlog
+  for x in flists packages dependencies descs cksums md5sums ; do
+	echo "$pkg: var/adm/$x/$pkg" ; done
+} | cat /var/adm/flists/$pkg - |
 	egrep -v '^[^ ]+: (dev|proc|tmp)(/|$)' | sort -u > $flog
 cat $flog > /var/adm/flists/$pkg
 
 cd /
-cut -f2- -d' ' < var/adm/flists/$pkg | xargs cksum > var/adm/cksums/$pkg
-cut -f2- -d' ' < var/adm/flists/$pkg | xargs md5sum > var/adm/md5sums/$pkg
+egrep -v "^$pkg: var/adm/" var/adm/flists/$pkg | cut -f2- -d' ' | \
+ xargs cksum > var/adm/cksums/$pkg
+egrep -v "^$pkg: var/adm/" var/adm/flists/$pkg | cut -f2- -d' ' | \
+ xargs md5sum > var/adm/md5sums/$pkg
 
 touch var/adm/{dependencies,descs}/$pkg
 echo "Package Name and Version: $pkg 0000 mkpkg" > var/adm/packages/$pkg
