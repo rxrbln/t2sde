@@ -18,7 +18,7 @@ CONFIG_ALPHA_GENERIC=y
 
 
 include(`kernel-common.conf.m4')
-include(`kernel-scsi.conf.m4')
+include(`kernel-block.conf.m4')
 CONFIG_BLK_DEV_CY82C693=y
 
 include(`kernel-net.conf.m4')

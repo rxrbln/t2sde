@@ -39,7 +39,7 @@ CONFIG_PPC32=y
 CONFIG_ALTIVEC=y
 
 include(`kernel-common.conf.m4')
-include(`kernel-scsi.conf.m4')
+include(`kernel-block.conf.m4')
 include(`kernel-net.conf.m4')
 include(`kernel-fs.conf.m4')
 
