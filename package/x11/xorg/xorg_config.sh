@@ -20,20 +20,11 @@
 # 
 # --- ROCK-COPYRIGHT-NOTE-END ---
 
-# extract and patch base
-x_extract() {
-	echo "Extracting source (for package version $ver) ..."
-	for x in `match_source_file -p X11R6`; do
-		tar $taropt $x
-	done
+if [ "$prefix_auto" = 1 ] ; then
+  prefix="usr/X11R6"
+  set_confopt
+fi
 
-	cd xc
-
-	if [ -n "$x_patches" ]; then
-	    local patchfiles="$x_patches"
-	    apply_patchfiles
-	fi
-}
 
 # extract additional gl* stuff
 x_extract_gl() {
@@ -56,7 +47,7 @@ x_extract_hallib() {
 	  programs/Xserver/hw/xfree86/drivers/mga/HALlib/binding.h
 	rm -rf mgadrivers-*-src 
 
-	if [ "$arch" = "x86" -a "$ROCKCFG_X86_BITS" != "64" ] ; then
+	if [ "$arch" = "x86" ] ; then
 		echo "Enabling Matrox HALlib (since this is x86) ..."
 		cat >> config/cf/host.def << EOT
 
@@ -66,47 +57,39 @@ EOT
 	fi
 }
 
-# apply the patches
-x_patch() {
+# some fixup
+x_fixes() {
 	cp -v programs/twm/system.twmrc programs/twm/system.twmrc.orig
-	apply_patchfiles
 	find \( -name 'config.guess' -o -name 'config.sub' \) \
 		-exec chmod +x '{}' ';'
-}
-
-# build the "World"
-x_build() {
-	eval $MAKE $makeopt World
-	cd nls ; eval $MAKE $makeopt ; cd ..
 }
 
 # prepare the X dirtree
 x_dirtree() {
 	mkdir -p $root/etc/X11
-	mkdir -p $root/usr/X11R6/lib/X11/fonts/TrueType
+	mkdir -p $root/$libdir/X11/fonts/TrueType
 
 	rm -fv $root/usr/X11
 	rm -fv $root/usr/bin/X11
 	rm -fv $root/usr/lib/X11
+	rm -fv $root/usr/lib64/X11
 	rm -fv $root/usr/include/X11
 
 	ln -sv X11R6 $root/usr/X11
 	ln -sv ../X11/bin $root/usr/bin/X11
 	ln -sv ../X11/lib/X11 $root/usr/lib/X11
+	[[ $libdir = *lib64 ]] && ln -sv ../X11/lib64/X11 $root/usr/lib64/X11
 	ln -sv ../X11/include/X11 $root/usr/include/X11
 }
 
 # install the World
-x_install() {
-	eval $MAKE $makeopt install
-	eval $MAKE $makeopt install.man
-	cd nls ; eval $MAKE $makeopt install ; cd ..
+x_postmake() {
 	rm -fv $root/etc/fonts/*.bak
 
 	echo "Copy TWM config files ..."
 	cp -v programs/twm/system.twmrc.orig \
 	  programs/twm/sample-twmrc/original.twmrc
-	cp -v programs/twm/sample-twmrc/*.twmrc $root/usr/X11R6/lib/X11/twm/
+	cp -v programs/twm/sample-twmrc/*.twmrc $root/$prefix/lib/X11/twm/
 	register_wm twm TWM /usr/X11/bin/twm
 
 	echo "Copying default example configs ..."
