@@ -98,7 +98,7 @@ lx_config ()
 
 	# all modules needs to be first so modules can be disabled by i.e.
 	# the targets later
-	echo "Enabling all modeules ..."
+	echo "Enabling all modules ..."
 	yes '' | make ARCH=$lx_cpu no2modconfig > /dev/null
 
 	if [ -f $base/target/$target/kernel$treever.conf.sh ] ; then
