@@ -23,29 +23,58 @@
 #
 # prepare root links for DJB filesystem hierarchy inside chrooted env.
 #
-
 if [ "$ROCKCFG_PKG_DJB_LAYOUT" == "1" ]; then
-	for x in package service command; do
-		mkdir -p $xroot/$x
+	for x in package command service; do
+		eval "pkg_djb_${x}dir='$x'"
 		var_append flistroot ' ' $x
 	done
-	if [ "$pkg" == "runit" ]; then
-		hook_add premake 1 'for x in package service command; do \
-			add_flist $xroot/$x/; \
-		done ; \
-		chmod 1755 $xroot/package'
-	fi
+	#pkg_djb_compatdir="usr/local/bin"
 elif [ "$ROCKCFG_PKG_DJB_LAYOUT" == "0" ]; then
-	mkdir -p $xroot/var/service	
-	if [ "$pkg" == "runit" ]; then
-		hook_add premake 1 'add_flist $xroot/var/service'
-	fi
+	pkg_djb_packagedir=""
+	pkg_djb_commanddir=""
+	pkg_djb_servicedir="var/service"
+	#pkg_djb_compatdir=""
+fi
+
+# package
+if [ "$pkg_djb_packagedir" ]; then
+	mkdir -p $xroot/$pkg_djb_packagedir
+	chmod 1755 $xroot/$pkg_djb_packagedir
+	pkg_djb_packagedir=$root/$pkg_djb_packagedir
+fi
+
+# service
+if [ "$pkg_djb_servicedir" ]; then
+	mkdir -p $xroot/$pkg_djb_servicedir
+	chmod 1755 $xroot/$pkg_djb_servicedir
+	pkg_djb_servicedir=$root/$pkg_djb_servicedir
+fi
+
+# command
+if [ "$pkg_djb_commanddir" ]; then
+	mkdir -p $xroot/$pkg_djb_commanddir
+	pkg_djb_commanddir=$root/$pkg_djb_commanddir
 fi
 
 #
 # add init scripts
 #
 if pkgcheck runit X; then
+	# runit_substitute
+	#
+	runit_substitute() {
+		local logdir
+
+		if [ "${localstatedir%$pkg}" != "$localstatedir" ]; then
+			logdir=$localstatedir/log
+		else
+			logdir=$localstatedir/log/$pkg
+		fi
+
+		sed -e "s,D_logdir,$logdir,g" $1 > $1.new
+		mv $1.new $1
+	}
+
 	runitconfdir=$base/package/mnemoc/runit
 	for x in $( cd $runitconfdir/packages; ls -1 $pkg-*.txt 2> /dev/null ); do
 		y=${x#$pkg-}; y=${y%.txt}; y=${y//_/\/}
@@ -55,9 +84,27 @@ if pkgcheck runit X; then
 			y=\$sysconfdir/$y
 		fi
 		echo_status "runit: Setting conf to install $y"
+		case "${y##*/}" in
+			run|finish)	runitxmode=1 ;;
+			*)		runitxmode=  ;;
+		esac
 		hook_add postmake 8 "mkdir -p ${y%/*}; \
+			${runitxmode:+chmod 755 ${y%/*};} \
 			rock_substitute $runitconfdir/packages/$x > $y; \
-			chmod 744 $y;"
+			runit_substitute $y; \
+			${runitxmode:+chmod 755 $y;}"
 	done
-	unset runitconfdir
+	unset runitconfdir runitxmode
+
+	# minimal services
+	case "$pkg" in
+		cron)
+			hook_add postmake 9 'ln -svf /etc/runit/cron $pkg_djb_servicedir/cron'
+			;;
+		sysklogd)
+			hook_add postmake 9 'ln -svf /etc/runit/syslogd $pkg_djb_servicedir/syslogd'
+			hook_add postmake 9 'ln -svf /etc/runit/klogd $pkg_djb_servicedir/klogd'
+			;;
+	esac
 fi
+
