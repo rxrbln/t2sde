@@ -40,6 +40,10 @@
 #include <fcntl.h>
 #include <errno.h>
 
+#ifndef MS_MOVE
+#  define MS_MOVE	8192
+#endif
+
 #ifndef STAGE_2_BIG_IMAGE
 #  define STAGE_2_BIG_IMAGE "2nd_stage.tar.gz"
 #endif
@@ -64,24 +68,16 @@ void doboot()
 	if ( access("/mnt_root/linuxrc", R_OK) )
 		{ printf("Can't find /mnt_root/linuxrc!\n"); exit_linuxrc=0; }
 
-	if ( mount("/bin", "/mnt_root/usr/local/bin", NULL, MS_BIND, NULL) ) {
-		perror("Can't mount /mnt_root/usr/local/bin");
-		if (access("/mnt_root/bin/gzip", R_OK)) {
-			perror("Can't find /mnt_root/bin/gzip");
-			exit_linuxrc=0;
-		}
-	}
-
 	if ( exit_linuxrc ) {
 		if ( pivot_root("/mnt_root", "/mnt_root/old_root") )
 			{ perror("Can't call pivot_root"); exit_linuxrc=0; }
 		chdir("/");
 
-		if ( mount("none", "/dev", "devfs", 0, NULL) )
-			perror("Can't mount /dev");
+		if ( mount("/old_root/dev", "/dev", NULL, MS_MOVE, NULL) )
+			perror("Can't remount /old_root/dev as /dev");
 
-		if ( mount("none", "/proc", "proc", 0, NULL) )
-			perror("Can't mount /proc");
+		if ( mount("/old_root/proc", "/proc", NULL, MS_MOVE, NULL) )
+			perror("Can't remount /old_root/proc as /proc");
 	} else {
 		if ( rmdir("/mnt_root/old_root") )
 			perror("Can't remove /mnt_root/old_root");
