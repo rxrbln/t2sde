@@ -1,14 +1,55 @@
 #include <ostream>
 #include "desc-parser.hh"
 #include "Curl.hh"
+#include "ctype.h"
 
 std::vector <std::string> suffixes;
 
-void GenList (std::string templ, std::ifstream& s, bool quote_mode) {
+unsigned int GetNumber (std::string& s, std::string::size_type start, std::string::size_type end) {
+  std::string::size_type number_length = end - start;
+  std::string found_number_string = s.substr(start, number_length);
+  //  std::cout << found_number_string << std::endl;
+  unsigned int found_number = (unsigned int) atoi(found_number_string.c_str());
+  return found_number;
+}
 
-  std::cout << templ << " ---> ";
+int CmpVersions(std::vector<unsigned int>& a, std::vector<unsigned int>& b) {
+  for (unsigned int i = 0; i < std::min(a.size(), b.size()); i++) {
+    if (a[i] < b[i])
+      return -1;
+    if (a[i] > b[i])
+      return 1;
+  }
+  return 0;
+}
 
+void ExtractNumbers (std::string& s, std::vector<unsigned int>& output) {
+  std::string::size_type number_start = std::string::npos;
+
+  output.clear ();
+
+  for (std::string::size_type s_pos=0; s_pos < s.length(); s_pos++) {
+    if (isdigit(s[s_pos])) {
+      if (number_start == std::string::npos)
+	number_start = s_pos;
+    } else if (number_start != std::string::npos) {
+      output.push_back(GetNumber(s, number_start, s_pos));
+      number_start = std::string::npos;
+    }
+  }
+  
+  if (number_start != std::string::npos)
+    output.push_back(GetNumber(s, number_start, s.length()));
+}
+
+void GenList (std::string file, std::ifstream& s, bool quote_mode) {
+  std::vector <std::string> hits;
+  std::vector <unsigned int> file_version;
+  std::vector <unsigned int> hit_version;
+
+  std::string templ=file;
   std::string suffix = "";
+
   for (unsigned int i=0; i < suffixes.size(); i++) {
     std::string& test=suffixes[i];
     std::string::size_type s_pos=templ.length() - test.length();
@@ -18,6 +59,8 @@ void GenList (std::string templ, std::ifstream& s, bool quote_mode) {
       templ = templ.substr(0, s_pos);
     }
   }
+
+  ExtractNumbers(templ, file_version);
 
   std::string prefix;
 
@@ -34,7 +77,11 @@ void GenList (std::string templ, std::ifstream& s, bool quote_mode) {
     suffix += "\"";
   }
 
-  std::cout << prefix << "?" << suffix << std::endl;
+  std::cout << file << "(v";
+  for (unsigned int i=0; i < file_version.size(); i++) {
+    std::cout << "." << file_version[i];
+  }
+  std::cout << ") ---> " << prefix << "?" << suffix << std::endl;
 
   std::string token;
   while (!s.eof()) {
@@ -58,17 +105,52 @@ void GenList (std::string templ, std::ifstream& s, bool quote_mode) {
 	std::string::size_type begin = (quote_mode) ? idx+1 : idx;
 	std::string::size_type length = (idx2-idx)+suffix.length();
 	if (quote_mode)
-	  length--;
+	  length -= 2;
 
 	std::string matched=token.substr(begin, length);
 
-	std::cout << matched << std::endl;
+	hits.push_back(matched);
       }
-
 
     }
   }
-    
+
+
+
+  for (unsigned int i = 0; i < hits.size(); i++) {
+    std::string base = hits[i].substr(0, hits[i].length()+1-suffix.length());
+    //    std::cout << base << std::endl;
+    ExtractNumbers(base, hit_version);
+
+    int sign = 0;
+    if(hits[i] != file) {
+      sign = CmpVersions(hit_version, file_version);
+      if (sign >= 0)
+	sign++;
+    }
+
+    std::cout << "[MATCH] '" << hits[i] << "' (v";
+    for (unsigned int j=0; j < hit_version.size(); j++) {
+      std::cout << "." << hit_version[j];
+    }
+    std::cout << ")";
+    switch (sign) {
+    case 0:
+      std::cout << " [=]" << std::endl;
+      break;
+    case 1:
+      std::cout << " [?]" << std::endl;
+      break;
+    case 2:
+      std::cout << " [+]" << std::endl;
+      break;
+    case -1:
+      std::cout << " [-]" << std::endl;
+      break;
+    }
+  
+  }
+  
 }
 
 
