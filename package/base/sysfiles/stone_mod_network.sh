@@ -294,18 +294,15 @@ rocknet is executed.'"
 	for (( i=0 ; $i < ${#tags[@]} ; i=i+1 )) ; do
 		cmd="$cmd '${tags[$i]}' 'edit_global_tag $i'"
 	done
-
-	cmd="$cmd '' '' 'Add new tag' 'add_global_tag'"
-
-	cmd="$cmd '' ''"
+	cmd="$cmd 'Add new global tag' 'add_global_tag' '' ''"
 
 	for if in $interfaces ; do
 		cmd="$cmd 'Edit interface ${if//_/ }' 'edit_if $if'"
 	done
 
-	cmd="$cmd '' '' 'Add new interface/profile' 'add_interface'"
+	cmd="$cmd 'Add new interface/profile' 'add_interface' '' ''"
 
-	cmd="$cmd '' '' 'Configure runlevels for network service'"
+	cmd="$cmd 'Configure runlevels for network service'"
 	cmd="$cmd '$STONE runlevel edit_srv network'"
 	cmd="$cmd '(Re-)Start network init script'"
 	cmd="$cmd '$STONE runlevel restart network'"
