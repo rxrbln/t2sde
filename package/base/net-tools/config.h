@@ -7,7 +7,7 @@
 * the ROCK-COPYRIGHT-NOTE-END tag. Otherwise it might get removed by
 * the ./scripts/Create-CopyPatch script. Do not edit this copyright text!
 * 
-* ROCK Linux: rock-src/package/*/net-tools/config.h
+* ROCK Linux: rock-src/package/.../net-tools/config.h
 * Copyright (C) 1998 - 2003 ROCK Linux Project
 * 
 * This program is free software; you can redistribute it and/or modify
