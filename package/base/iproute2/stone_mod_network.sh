@@ -67,7 +67,7 @@ set_name() {
 }
 
 set_dns() {
-	gui_input "Set a new list of DNS Servers" "$DNSSRV" "DNSSRV"
+	gui_input "Set a new (space seperated) list of DNS Servers" "$DNSSRV" "DNSSRV"
 	DNSSRV="`echo $DNSSRV`" ; [ -z "$DNSSRV" ] && DNSSRV="none"
 
 	tmp="`mktemp`" ; grep -v '^nameserver\b' /etc/resolv.conf > $tmp
