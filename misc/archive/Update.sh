@@ -8,7 +8,13 @@ if [ -z "$pkg" -o -z "$ver" ] ; then
 	exit
 fi
 
-./scripts/Create-PkgUpdPatch $pkg-$ver | patch -p1
+rm -f $$.diff
+pkg=`echo $pkg | tr [A-Z] [a-z]`
+
+./scripts/Create-PkgUpdPatch $pkg-$ver | tee $$.diff
+patch -p1 < $$.diff
+rm -f $$.diff
+
 ./scripts/Download $pkg
 ./scripts/Create-CkSumPatch $pkg | patch -p0
 
