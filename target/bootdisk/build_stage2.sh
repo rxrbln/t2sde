@@ -38,7 +38,7 @@ package_map='       +00-dirtree         +glibc22            +glibc23
 +sysklogd           +devfsd             +setserial          +iproute2
 +netkit-base        +netkit-ftp         +netkit-telnet      +netkit-tftp
 +sysfiles           +libpcap            +iptables           +tcp_wrappers
--kiss               +kbd		-syslinux'
+-kiss               +kbd		-syslinux           +ntfsprogs'
 
 package_map="+$ROCKCFG_DEFAULT_KERNEL $package_map"
 
