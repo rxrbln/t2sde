@@ -13,6 +13,7 @@ code_snipplets_counter=0
 
 lineno=0
 ignore=0
+global=1
 
 if [ "$3" != "up" -a "$3" != "down" ]; then
 	echo "Usage: $0 { profile | default } { interface | auto } { up | down }"
@@ -61,6 +62,20 @@ status() {
 	echo "$*"
 }
 
+#
+# register / unregister active interfaces for user input validation
+#
+
+register() {
+	echo -n "${1}," >> $rocknet_tmp_base/active-interfaces
+}
+
+unregister () {
+	active_interfaces="`cat $rocknet_tmp_base/active-interfaces 2>/dev/null`"
+	active_interfaces="${active_interfaces//${1},/}"
+	echo -n "$active_interfaces" > $rocknet_tmp_base/active-interfaces
+}
+
 for x in "$rocknet_base"/modules/*.sh; do . "$x"; done
 
 while read cmd para
@@ -71,7 +86,14 @@ do
 		para="$( echo "$para" | sed 's,[\*\?],\\&,g' )"
 		if declare -f public_$cmd > /dev/null
 		then
-			public_$cmd $para
+			# optimization: Only execute commands when they are
+			# inside an unignored interface section ...
+			if [ $cmd = "interface" ] ; then
+				public_$cmd $para
+				global=0
+			elif [ $ignore -eq 0 -o $global -gt 0 ] ; then
+				public_$cmd $para
+			fi
 		else
 			error "Unknown statement in config file: $cmd"
 		fi
@@ -88,6 +110,8 @@ done < <(
 	done | sort
 )
 
-[ "$pmatched" = 0 ] && error "Unknown profile: $profile"
-[ "$imatched" = 0 ] && error "Unknown interface for profile: $interface"
+[ "$pmatched" = 0 ] && \
+	error "Unknown profile: '$profile'"
+[ "$pmatched" = 1 -a "$imatched" = 0 ] && \
+	error "Unknown interface for profile: '$interface'"
 
