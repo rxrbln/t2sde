@@ -2,14 +2,23 @@
 
 verbose=0
 quiet=0
+ignspace=0
+ignprio=0
+
 source=
 targets=
 repositories=
 packages=
 
 function show_usage() {
-	echo "usage: $0 [-q] [-v] <source> <target> [-repository <repo>|<packages>|]"
-	echo "usage: $0 [-q] -3 <source> <target1> <target2> [-repository <repo>|<packages>|]"
+	echo "usage: $0 [-q[q]] [-v [-P] [-S]] <source> <target> [-repository <repo>|<packages>|]"
+	echo "usage: $0 [-q[q]] -3 <source> <target1> <target2> [-repository <repo>|<packages>|]"
+	echo
+	echo "    -q: don't show packages with the same version"
+	echo "   -qq: don't show packages missing or with the same version"
+	echo "    -v: show patch"
+	echo "    -P: ignore [P]s of .desc files on patches"
+	echo "    -S: ignore spaces on patches" 
 }
 
 # TODO: it would be great to port it to "-n <n>" instead of -3
@@ -18,9 +27,14 @@ while [ $# -gt 0 ]; do
 	case "$1" in
 		-v)	verbose=1	;;
 		-q)	quiet=1		;;
+		-qq)	quiet=2		;;
+		-P)	ignprio=1	;;
+		-S)	ignspace=1	;;
+
 		-3)	source="$2"
 			targets="$3 $4"
 			shift 3		;;
+
 		-repository) 
 			shift
 			repositories="$*"; set -- 
@@ -54,7 +68,10 @@ function remove_header() {
 	tail -n +${here} $1
 }
 function show_nice_diff() {
-	diff -uEBb "$1" "$2" | sed \
+	local diffopt=
+	[ $ignspace -eq 1 ] && diffopt='-EBb'
+
+	diff -u $diffopt "$1" "$2" | sed \
 		-e 's,^--- .*,--- old/package/'"${3##*/package/}," \
 		-e 's,^[\+][\+][\+] .*,+++ new/package/'"${3##*/package/},"
 }
@@ -62,6 +79,7 @@ function show_nice_diff() {
 function diff_package() {
 	local source="$1"
 	local target="$2"
+	local x= y=
 
 	# files on source
 	for x in $source/*; do
@@ -73,10 +91,16 @@ function diff_package() {
 			remove_header $x > $$.source
 			if [ -f $target/${x##*/} ]; then
 				remove_header $target/${x##*/} > $$.target
-				show_nice_diff $$.source $$.target $source/${x#$target/}
+
+				if [[ "$x" = *.desc ]]; then
+					y=$( grep -e "^\[P\]" $x )
+					[ "$y" -a $ignprio -eq 1 ] && sed -i -e "s,^\[P\] .*,$y," $$.target
+				fi
+
+				show_nice_diff $$.source $$.target $x
 				rm $$.target
 			else
-				show_nice_diff $$.source /dev/null $source/${x#$target/}
+				show_nice_diff $$.source /dev/null $x
 			fi
 			rm $$.source
 		fi
@@ -189,7 +213,7 @@ function compare_package() {
 	fi
 	
 	if [ $missing -eq 1 ]; then
-		echo "N $pkg ($version) ($status) ($srcsize -> $tgtsize)" 1>&2
+		[ $quiet -le 1 ] && echo "N $pkg ($version) ($status) ($srcsize -> $tgtsize)" 1>&2
 	elif [ $equalver -eq 1 ]; then
 		[ $quiet -eq 0 ] && echo "E $pkg ($version) ($status) ($srcsize -> $tgtsize)" 1>&2
 	else
