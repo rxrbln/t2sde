@@ -20,129 +20,128 @@
 # 
 # --- ROCK-COPYRIGHT-NOTE-END ---
 #
-# [MAIN] 20 network Network (TCP/IP v4) Configuration
+# [MAIN] 20 network Network Configuration
 
-HOSTNAME="`hostname`"
-DOMAINNAME="`hostname -d 2> /dev/null`"
-
-DHCP="X" ; IF="X" ; IPADDR="X" ; GATEWAY="X" ; tmp="`mktemp`"
-egrep '^(DHCP|IF|IPADDR|GATEWAY)=' /etc/conf/network > $tmp ; . $tmp
-
-grep '^nameserver ' /etc/resolv.conf | tr '\t' ' ' | tr -s ' ' | \
-    sed 's,^nameserver *\([^ ]*\),DNSSRV="$DNSSRV \1",' > $tmp
-DNSSRV='' ; . $tmp ; DNSSRV="`echo $DNSSRV`"
-[ -z "$DNSSRV" ] && DNSSRV="none" ; rm -f $tmp
-
-set_name() {
-	old1="$HOSTNAME" old2="$HOSTNAME.$DOMAINNAME" old3="$DOMAINNAME"
-	if [ $1 = HOSTNAME ] ; then
-		gui_input "Set a new hostname (without domain part)" \
-		          "${!1}" "$1"
-	else
-		gui_input "Set a new domainname (without host part)" \
-		          "${!1}" "$1"
-	fi
-	new="$HOSTNAME.$DOMAINNAME $HOSTNAME"
-
-	echo "$HOSTNAME" > /etc/HOSTNAME ; hostname "$HOSTNAME"
-
-	ip="`echo $IPADDR | sed 's,[/ ].*,,'`"
-	if grep -q "^$ip\\b" /etc/hosts ; then
-		tmp="`mktemp`"
-		sed -e "/^$ip\\b/ s,\\b$old2\\b[ 	]*,,g" \
-		    -e "/^$ip\\b/ s,\\b$old1\\b[ 	]*,,g" \
-		    -e "/^$ip\\b/ s,[ 	]\\+,&$new ," < /etc/hosts > $tmp
-		cat $tmp > /etc/hosts ; rm -f $tmp
-	else
-		echo -e "$ip\\t$new" >> /etc/hosts
-	fi
-
-	if [ $1 = DOMAINNAME ] ; then
-		tmp="`mktemp`"
-		grep -vx "search $old3" /etc/resolv.conf > $tmp
-		[ -n "$DOMAINNAME" ] && echo "search $DOMAINNAME" >> $tmp
-		cat $tmp > /etc/resolv.conf
-		rm -f $tmp
-	fi
-}
-
-set_dns() {
-	gui_input "Set a new (space seperated) list of DNS Servers" "$DNSSRV" "DNSSRV"
-	DNSSRV="`echo $DNSSRV`" ; [ -z "$DNSSRV" ] && DNSSRV="none"
-
-	tmp="`mktemp`" ; grep -v '^nameserver\b' /etc/resolv.conf > $tmp
-	for x in $DNSSRV ; do
-		[ "$x" != "none" ] && echo "nameserver $x" >> $tmp
-	done
-	cat $tmp > /etc/resolv.conf
-	rm -f $tmp
-}
-
-set_dhcp() {
-	DHCP=$1 ; tmp="`mktemp`"
-	sed "s,^DHCP=.*,DHCP=\"$1\"," < /etc/conf/network > $tmp
-	cat $tmp > /etc/conf/network ; rm -f $tmp
-}
-
-set_if() {
-	gui_input "Set a new network interface" "$IF" IF ; tmp="`mktemp`"
-	sed "s,^IF=.*,IF=\"$IF\"," < /etc/conf/network > $tmp
-	cat $tmp > /etc/conf/network ; rm -f $tmp
-}
-
-set_ip() {
-	oldip="`echo $IPADDR | sed 's,[/ ].*,,'`"
-	if [ $1 = IPADDR ] ; then
-		gui_input "Set a new IP address or a whitespace seperated list
-of IP addresses in the format A.B.C.D/NM (e.g. 192.168.20.17/24)" "$IPADDR" IPADDR
-	else
-		gui_input "Set a new gateway IP address (e.g. 192.168.20.1)" \
-				"$GATEWAY" GATEWAY
-	fi
-	newip="`echo $IPADDR | sed 's,[/ ].*,,'`"
-
-	sed -e "s,^IPADDR=.*,IPADDR=\"$IPADDR\"," \
-	    -e "s,^GATEWAY=.*,GATEWAY=\"$GATEWAY\"," \
-		< /etc/conf/network > $tmp
-	cat $tmp > /etc/conf/network ; rm -f $tmp
-
-	if [ "$newip" != "$oldip" ] ; then
-		tmp="`mktemp`"
-		sed -e "s,^$oldip\\b,$newip," < /etc/hosts > $tmp
-		cat $tmp > /etc/hosts ; rm -f $tmp
-	fi
-}
+rocknet_base="/etc/network"
 
 edit() {
 	gui_edit "Edit file $1" "$1"
 	exec $STONE network
 }
 
+read_section() {
+	local globals=1
+	local readit=0
+	local i=0
+
+	tags=""
+	interfaces=""
+
+
+	[ "$1" = "" ] && readit=1
+	while read netcmd para
+	do
+		if [ -n "$netcmd" ]; then
+			netcmd="${netcmd//-/_}"
+			para="$( echo "$para" | sed 's,[\*\?],\\&,g' )"
+			if [ "$netcmd" = "interface" ] ; then
+				prof="$( echo "$para" | sed 's,[(),],_,g' )"
+				[ "$prof" = "$1" ] && readit=1 || readit=0
+				globals=0
+				interfaces="$interfaces $prof"
+			fi
+			if [ $readit = 1 ] ; then
+				tags[$i]="$netcmd $para"
+				i=$((i+1))
+			fi
+		fi
+	done < <( sed 's,#.*,,' < "$rocknet_base"/config )
+}
+
+write_section() {
+	local globals=1
+	local passit=1
+	local dumped=0
+
+	[ "$1" = "" ] && passit=0
+
+	echo -n > $rocknet_base/config.new
+
+	while read netcmd para
+	do
+		if [ -n "$netcmd" ]; then
+			netcmd="${netcmd//-/_}"
+			para="$( echo "$para" | sed 's,[\*\?],\\&,g' )"
+			if [ "$netcmd" = "interface" ] ; then
+				prof="$( echo "$para" | sed 's,[(),],_,g' )"
+				[ "$prof" = "$1" ] && passit=0 || passit=1
+				globals=0
+			fi
+
+			# when we reached the matching section dump the
+			# mew tags ...
+			if [ $passit = 0 -a $dumped = 0 ] ; then
+				for (( i=0 ; $i < ${#tags[@]} ; i=i+1 )) ; do
+					echo "${tags[$i]}" # >> \
+					# $rocknet_base/config.new
+				done
+				dumped=1
+			fi
+
+			[ $passit = 1 ] && echo "$netcmd $para" # >> \
+					#$rocknet_base/config.new
+		fi
+	done < <( sed 's,#.*,,' < "$rocknet_base"/config )
+	# mv $rocknet_base/config{.new,}
+}
+
+edit_tag() {
+	tag="${tags[$1]}"
+	name="$tag"
+	gui_input "Set new value for tag '$name'" \
+	          "$tag" "tag"
+	tags[$1]="$tag"
+}
+
+edit_global_tag() {
+	edit_tag $@
+	write_section ""
+}
+
+edit_if() {
+	read_section "$1"
+	while
+		cmd="gui_menu if_edit 'Configure interface ${1//_/ }'"
+		for (( i=0 ; $i < ${#tags[@]} ; i=i+1 )) ; do
+			cmd="$cmd '${tags[$i]}' 'edit_tag $i'"
+		done
+		eval "$cmd"
+	do : ; done
+	write_section "$1"
+}
+
 main() {
     while
-	cmd="gui_menu network 'Network Configuration - Select an item to"
-	cmd="$cmd change the value
 
-WARNING: This script tries to adapt /etc/conf/network, /etc/hosts,
-/etc/resolv.conf and /etc/HOSTNAME according to your changes. You
-better be carefull if you also change this files by hand.'"
+	cmd="gui_menu network 'Network Configuration - Select an item to
+change the value
 
-	cmd="$cmd 'Hostname:    $HOSTNAME'   'set_name HOSTNAME'"
-	cmd="$cmd 'Domainname:  $DOMAINNAME' 'set_name DOMAINNAME'"
-	cmd="$cmd 'DNS-Server:  $DNSSRV'     'set_dns' '' ''"
+WARNING: This script tries to adapt /etc/network/config and /etc/hosts
+according to your changes. Changes only take affect the next time
+rocknet is executed.'"
 
-	if [ "$DHCP" = "X" ] ; then
-		cmd="$cmd 'File /etc/conf/network has been changed.' ''"
-		cmd="$cmd 'So no IP configuration is available here.' ''"
-	elif [ "$DHCP" = "on" ] ; then
-		cmd="$cmd '[*] Use DHCP for IP configuration' 'set_dhcp off'"
-		cmd="$cmd 'Network Interface:  $IF' 'set_if'"
-	else
-		cmd="$cmd '[ ] Use DHCP for IP configuration' 'set_dhcp on'"
-		cmd="$cmd 'Network Interface:  $IF' 'set_if'"
-		cmd="$cmd 'Host IP Addresses:  $IPADDR'  'set_ip IPADDR'"
-		cmd="$cmd 'Gateway IP Address: $GATEWAY' 'set_ip GATEWAY'"
-	fi
+	# read global section and interface list ...
+	read_section ""
+
+	for (( i=0 ; $i < ${#tags[@]} ; i=i+1 )) ; do
+		cmd="$cmd '${tags[$i]}' 'edit_global_tag $i'"
+	done
+
+	cmd="$cmd '' ''"
+
+	for if in $interfaces ; do
+		cmd="$cmd 'Edit interface ${if//_/ }' 'edit_if $if'"
+	done
 
 	cmd="$cmd '' '' 'Configure runlevels for network service'"
 	cmd="$cmd '$STONE runlevel edit_srv network'"
@@ -150,9 +149,8 @@ better be carefull if you also change this files by hand.'"
 	cmd="$cmd '$STONE runlevel restart network'"
 	cmd="$cmd '' ''"
 
-	cmd="$cmd 'View/Edit /etc/conf/network file' 'edit /etc/conf/network'"
-	cmd="$cmd 'View/Edit /etc/hosts file'        'edit /etc/hosts'"
-	cmd="$cmd 'View/Edit /etc/resolv.conf file'  'edit /etc/resolv.conf'"
+	cmd="$cmd 'View/Edit $rocknet_base/config file' 'edit $rocknet_base/config'"
+	cmd="$cmd 'View/Edit /etc/hosts file'          'edit /etc/hosts'"
 
 	eval "$cmd"
     do : ; done
