@@ -68,7 +68,9 @@ elif [ $sources_counter -eq 0 ]; then
 	$newcommand "$destination" || error=$?
 elif [ -d "$destination" ]; then
 	for source in "${sources[@]}"; do
-		thisdest="$destination/${source##*/}"; thisdest="${thisdest//\/\///}"
+		thisdest="${destination}"
+		[ ! -d "${source//\/\///}" ] && thisdest="$thisdest/${source##*/}"
+		thisdest="${thisdest//\/\///}"
 		[ "$filter" != " " ] && thisdest="$( eval "echo \"$thisdest\" $filter" )"
 		if [ ! -z "$thisdest" ]; then
 			echo "+ $newcommand $source $thisdest" >> $logfile
