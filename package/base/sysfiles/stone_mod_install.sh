@@ -97,9 +97,19 @@ disk_action() {
 can't modify this disks partition table."
 		return
 	fi
-	gui_menu disk "Edit partition table of $1" \
-		"Edit partition table using 'cfdisk'" "cfdisk /dev/$1/disc" \
-		"Edit partition table using 'fdisk'"  "fdisk  /dev/$1/disc"
+
+	cmd="gui_menu disk 'Edit partition table of $1'"
+	for x in cfdisk fdisk pdisk mac-fdisk ; do
+		fn=""
+		[ -f /bin/$x ] && fn="/bin/$x"
+		[ -f /sbin/$x ] && fn="/sbin/$x"
+		[ -f /usr/bin/$x ] && fn="/usr/bin/$x"
+		[ -f /usr/sbin/$x ] && fn="/usr/sbin/$x"
+		[ "$fn" ] && \
+		  cmd="$cmd \"Edit partition table using 'cfdisk'\" \"$x /dev/$1/disc\""
+	done
+
+	eval $cmd
 }
 
 disk_add() {
