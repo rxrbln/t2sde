@@ -12,15 +12,17 @@ public:
     : short_name(i_short_name), name(i_name),
       long_name(i_long_name)
   {
-  };
+  }
   
   virtual ~Tag(){};
   
-  virtual std::ostream& Read(std::istream& is)
+  virtual std::istream& Read(std::istream& is)
   {
+    return is;
   }
   virtual std::ostream& Write(std::ostream& os)
   {
+    return os;
   }
   
   std::string short_name;
@@ -34,13 +36,17 @@ public:
 class TagParser
 {
 protected:
+  
   TagParser () {}
   virtual ~TagParser () {}
 
+public:
+  
   // erases all tag's data
   void Clear() {
-      for (int i = 0; i < tags.size(); ++i)
-	tags[i] -> value = "";
+    for (std::vector<Tag*>::size_type i = 0;
+	 i < tags.size(); ++i)
+	tags[i]->value.clear();
   }
 
   bool Parse(const std::string& file)
@@ -88,7 +94,8 @@ protected:
       
       // search thru "registered" tags
       bool tag_found = false;
-      for (int i = 0; i < tags.size(); ++i) {
+      for (std::vector<Tag*>::size_type i = 0;
+	   i < tags.size(); ++i) {
 	if (tag == tags[i]->short_name ||
 	    tag == tags[i]->long_name ||
 	    tag == tags[i]->name)
