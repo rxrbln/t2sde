@@ -51,7 +51,7 @@ lx_config ()
 	hook_eval postpatch
 
 	echo "Redefining some VERSION flags ..."
-	sed -e "s/EXTRAVERSION =.*/EXTRAVERSION = ${ver/[0-9,.]*-/}-rock/" \
+	sed -e "s/EXTRAVERSION =.*/EXTRAVERSION = -${ver/[0-9,.]*-/}-rock/" \
 		Makefile > Makefile.new
 	mv Makefile.new Makefile
 
