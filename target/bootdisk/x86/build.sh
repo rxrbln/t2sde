@@ -46,32 +46,40 @@ then
 	    -xf $base/download/mirror/s/syslinux-$syslinux_ver.tar.bz2 \
 	    syslinux-$syslinux_ver/isolinux.bin -O > isolinux/isolinux.bin
 	#
+	echo_status "Copy images to isolinux directory."
+	cp boot/memtest86.bin isolinux/memtest86
+        cp initrd[0-9]* isolinux/
+
 	echo_status "Creating isolinux config file."
 	cp $base/target/$target/x86/isolinux.cfg isolinux/
 	cp $base/target/$target/x86/help?.txt isolinux/
 
+	first=1
 	for x in `egrep 'X .* KERNEL .*' $base/config/$config/packages |
 	          cut -d ' ' -f 5-6 | tr ' ' '_'` ; do
 		kernel=${x/_*/}
 		kernelver=${x/*_/}
-		initrd="initrd-${kernel/linux/}.gz"
+		initrd="initrd${kernel/linux/}.gz"
 
+		if [ $first = 1 ] ; then
+			echo "DEFAULT $kernel" >> isolinux/isolinux.cfg
+			first=0
+		fi
+
+		cp boot/vmlinuz_$kernelver-rock isolinux/vmlinuz${kernel/linux/}
 		cat >> isolinux/isolinux.cfg << EOT
 
 LABEL $kernel
-	kernel vmlinuz_$kernelver-rock
+	kernel vmlinuz${kernel/linux/}
 	APPEND initrd=$initrd root=/dev/ram devfs=nocompat init=/linuxrc rw
 EOT
 	done
 
 	cat >> isolinux/isolinux.cfg << EOT
+
 LABEL memtest86
 	kernel memtest86
 EOT
-	#
-	echo_status "Copy images to isolinux directory."
-	cp boot/memtest86.bin isolinux/memtest86
-	cp initrd-* boot/vmlinuz* isolinux/
 	#
 	cat > ../isofs_arch.txt <<- EOT
 		BOOT	-b isolinux/isolinux.bin -c isolinux/boot.catalog
