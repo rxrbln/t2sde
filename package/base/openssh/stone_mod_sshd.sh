@@ -22,14 +22,6 @@
 #
 # [MAIN] 50 sshd SSH Daemon configuration
 
-ssh_privelege_seperation_ug(){
-	gui_cmd "Creating ssh host keypair" \
-		"groupadd -g 19 sshd ; \
-		 useradd -d /var/empty -s /bin/false -g sshd -u 19 \
-			-c 'sshd privsep' sshd"
-	
-}
-
 ssh_create_hostpair(){
 	gui_cmd "Creating ssh host keypair" \
                 "/usr/bin/ssh-keygen -t rsa1 -f /etc/ssh/ssh_host_key -N '' ; \
@@ -40,8 +32,6 @@ ssh_create_hostpair(){
 main() {
     while
 	gui_menu alsa 'SSH Daemon Configuration.' \
-		'(Re-)Create a sshd user/group for privelege seperation' \
-			'ssh_privelege_seperation_ug' \
 		'Create a ssh host keypair' \
 			'ssh_create_hostpair' \
 		'Configure runlevels for sshd service' \
