@@ -24,7 +24,7 @@ treever=${pkg/linux/} ; treever=${treever/-*/}
 archdir="$base/download/$repository/linux$treever"
 srctar="linux-${vanilla_ver}.tar.bz2"
 
-lx_cpu=`echo "$arch_machine" | sed -e s/x86/i386/ \
+lx_cpu=`echo "$arch_machine" | sed -e s/x86$/i386/ \
   -e s/i.86/i386/ -e s/powerpc/ppc/ -e s/hppa/parisc/`
 
 [ $arch = sparc -a "$ROCKCFG_SPARC_64BIT_KERNEL" = 1 ] && \
