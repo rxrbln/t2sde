@@ -34,6 +34,8 @@ public:
   std::string value;
 };
 
+
+// TODO: IMHO better tat bookkeeping ... -ReneR
 class Package
 {
 public:
@@ -49,8 +51,8 @@ public:
       maintainer("M","","MAINTAINER"),
       category("C","","CATEGORY"),
       flags("F","","FLAGS"),
-      arch("A","ARCH","ARCHITECTUR"),
-      dependency("D","DEP","DEPENDENCY"),
+      arch("R","ARCH","ARCHITECTUR"),
+      dependency("E","DEP","DEPENDENCY"),
       
       license("L","","LICENCE"),
       status("S","","STATUS"),
@@ -58,7 +60,7 @@ public:
       priority("P","","PRIORITY"),
       
       download("D","DOWN","DOWNLOAD"),
-      cv_url("","",""),
+      cv_url("","","CV-URL"),
       
       sourcepackage("SRC","","SRCPACKAGE"),
       conf("O","","CONF")
@@ -70,6 +72,8 @@ public:
   
   bool Parse(const std::string& file)
   {
+    int error = 0;
+    
     std::vector<DescTag*> tags;
     
     tags.push_back(&copyright);
@@ -101,15 +105,22 @@ public:
     
     std::string line;
     std::string tag, value;
-    while (desc_file) {
-      getline(desc_file, line);
+    for (int linenr = 0; desc_file; ++linenr) {
+      std::getline(desc_file, line);
       
       if (line.size() == 0)
 	continue;
       
+      // skip comments (maybe we also need to compress
+      // whitespaces? -ReneR
+      if (line[0] == '#' || line[0] == ' ')
+	continue;
+      
       if (line.size() < 3) {
-	  std::cout << "Error: Only garbage found in line."
-		    << std::endl;
+	++error;
+	std::cout << "Error: Only garbage found in line "
+		  << linenr << ":" << std::endl
+		  << "  " << line << std::endl;
       }
       
       std::string::size_type idx = line.find(' ');
@@ -117,7 +128,10 @@ public:
 	idx = line.size();
       
       if (line[0] != '[' || line[idx - 1] != ']') {
-	std::cout << "Error: No tag found in line." << std::endl;
+	++error;
+	std::cout << "Error: No tag found in line "
+		  << linenr << ":" << std::endl
+		  << "  " << line << std::endl;
 	continue;
       }
       
@@ -126,8 +140,27 @@ public:
       value.erase();
       value.append(line, idx, std::string::npos);
       
+      // search thru "registered" tags
+      bool tag_found = false;
+      for (int i = 0; i < tags.size(); ++i) {
+	if (tag == tags[i]->short_name ||
+	    tag == tags[i]->long_name ||
+	    tag == tags[i]->name)
+	  {
+	    tags[i]->value.append (value + '\n');
+	    tag_found = true;
+	    break;
+	  }
+      }
       
+      if (!tag_found) {
+	++error;
+	std::cout << line << std::endl;
+	std::cout << "Error: Unknown tag: " << tag << " in line "
+		  << linenr << std::endl;
+      }
     }
+    return error == 0;
   }
   
   DescTag copyright;
@@ -156,12 +189,13 @@ public:
   DescTag conf;
 };
 
-int main (int argc, char* cargv[])
+int main (int argc, char* argv[])
 {
-  
   Package p;
   
-  p.Parse ("package/kde/kdebase/kdebase.desc");
+  if (argc > 1)
+    if (!p.Parse (argv[1]))
+      return 1;
   
   return 0;
 }
