@@ -45,3 +45,7 @@ dnl make sure old OSS modules are build (ALSA does not yet work correct)
 CONFIG_DMASOUND_PMAC=m
 CONFIG_DMASOUND=m
 
+dnl some network teaks (the GMAC is obsoleted by SUNGEM)
+# CONFIG_GMAC is not set
+CONFIG_SUNGEM=y
+
