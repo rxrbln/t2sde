@@ -151,7 +151,7 @@ auto_config ()
 
 lx_grabextraversion () {
 	local ev
-	ev=$( sed -n -e 's,^[ \t]*EXTRAVERSION[ \t]*=[ \t]*\([^ \t]*\),\1,p' Makefile | tail -1 )
+	ev=$( sed -n -e 's,^[ \t]*EXTRAVERSION[ \t]*=[ \t]*\([^ \t]*\),\1,p' Makefile | tail -n 1 )
 	if [ "$ev" ]; then
 		lx_extraversion="${lx_extraversion}$ev"
 		# keep intact but commented since the second EXTRAVERSION
@@ -175,7 +175,7 @@ lx_injectextraversion () {
 	# get kernel_release
 	lx_kernelrelease="$( echo -e "#include <linux/version.h>\nUTS_RELEASE" \
                     > conftest.c &&	\
-                    gcc -E -I./include conftest.c | tail -1	\
+                    gcc -E -I./include conftest.c | tail -n 1	\
                     | cut -d '"' -f 2 && rm -f conftest.c )"
 
 	# rename temp directory 
