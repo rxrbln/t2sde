@@ -110,9 +110,9 @@ x_install() {
 	register_wm twm TWM /usr/X11/bin/twm
 
 	echo "Copying default example configs ..."
-	cp -fv $base/package/x11/xorg/XF86Config.data \
-		$root/etc/X11/XF86Config.example
-	cp -fv $root/etc/X11/XF86Config{.example,}
+	cp -fv $base/package/x11/xorg/xorg.conf.data \
+		$root/etc/X11/xorg.conf.example
+	cp -fv $root/etc/X11/xorg.conf{.example,}
 	cp -fv $base/package/x11/xorg/local.conf.data \
 		$root/etc/fonts/local.conf
 
