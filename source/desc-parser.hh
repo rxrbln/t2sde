@@ -22,37 +22,14 @@ public:
 
   bool Parse ()
   {
-    std::stringstream sstr (value);
-
-    // TODO: clean this mess up and check for errors !!
-
-    while (sstr) {
-      DownloadInfo info;
-      sstr >> info.chksum >> info.file;
-      if (!sstr) // work around for trailing newlines
-	continue;
-      std::getline(sstr, info.url);
-	
-      // url contains at least one leading ' ' ...
-      info.url.erase(0, 1);
-      bool overwrite_url = info.url[0] == '!';
-      if (overwrite_url)
-	info.url.erase(0, 1);
-	
-      std::string::size_type idx = info.url.find(':');
-      if (idx == std::string::npos)
-	info.protocol.clear();
-      else
-	info.protocol = info.url.substr(0, idx);
-      if (info.protocol.size() > 0 && info.protocol[0] == '!')
-	  info.protocol.erase(0, 1);
-	
-	if (overwrite_url)
-	  info.down_url = info.url;
-	else
-	  info.down_url = info.url + info.file;
-	download_infos.push_back(info);
-      }
+    std::string::size_type line_start = 0;
+    std::string::size_type line_end;
+    do {
+      line_end = value.find('\n', line_start);
+      std::string line = value.substr(line_start, line_end-line_start);
+      ParseLine (line);
+      line_start = line_end+1;
+    } while (line_end != std::string::npos && line_end < value.length()-1); 
 
     return true;
   }
@@ -63,6 +40,30 @@ public:
   }
 
   std::vector<DownloadInfo> download_infos;
+
+private:
+  bool ParseLine (const std::string& line)
+  { // Todo: Error evaluation !
+    DownloadInfo info;
+    std::stringstream sstr(line);
+    sstr >> info.chksum;
+    sstr >> info.file;
+    sstr >> info.url;
+
+    if (info.url[0] == '!') { // overwriting filename
+      info.url.erase(0,1);
+      info.down_url = info.url;
+      std::string::size_type url_end = info.url.rfind('/');
+      info.url = info.url.substr(0,url_end);
+    } else
+      info.down_url = info.url+info.file;
+
+    std::string::size_type protocol_end = info.url.find(':');
+    info.protocol = info.url.substr(0, protocol_end);
+
+    download_infos.push_back(info);
+    return true;
+  }
 };
 
 
