@@ -1,0 +1,235 @@
+
+                    Building ROCK Linux on a cluster
+                    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+
+	1. Basics
+	=========
+
+I'm assuming you have read the BUILD file and know how to make a 'normal'
+build of ROCK Linux. I'm also assuming that you know how to use a Linux
+cluster (since you are reading this, you might have one). I'm now going to
+explain how to build ROCK Linux on a cluster. The techniques described here
+can also be used to build ROCK Linux on an SMP machine to get the best
+performance out of all CPUs.
+
+ROCK Linux can be build on a simple cluster of workstations connected with
+a normal LAN (ethernet, etc). No low-latency or high-bandwith network is needed
+to build ROCK Linux on a cluster with good performance.
+
+ROCK Linux has it's own job scheduler to distribute jobs over the cluster
+nodes. But you can also use any job scheduler you have already installed on
+your cluster to do the job.
+
+When building ROCK Linux in parallel (cluster) mode, the build scripts simple
+decide based on the package dependencies which packages might be build in
+parallel and builds them parallel (instead of serial, which is the default
+behavior).
+
+For building ROCK Linux you always have to be root. That doesn't change
+when you are building on a cluster. The 'Abort when a package-build fails'
+config option is not available when making a parallel (cluster) build.
+
+
+	2. Amdahl's law
+	===============
+
+In a famous paper Amdahl observed that one must consider an entire application
+when consider the level of available parallelism. If only one percent of a
+problem fails to parallelize, then no matter how much parallelism is available
+for the rest, the problem can never be solved more than one hundred times
+faster than in the sequential case.
+
+Almost every package in ROCK Linux depends on a few very basic packages like
+the C-library, the C-compiler and the shell. So it's not possible to make use
+of the power of your cluster in the early phase of the build where this
+essential packages are build. Later in the build there are almost always a few
+more packages which can be build in parallel (than 100 packages is very common
+after the base packages have been built).
+
+The tool './scripts/Create-ParaSim' can be used to "simulate" a parallel build.
+Just configure your build and run './scripts/Create-ParaSim'. The output is a
+graph showing how many paralell jobs are available for building in which phase
+of the Build. It looks like this:
+
+  ----+----------------------------------------------------------------------+
+  181 |                                     ::::.                            |
+      |                                   .:::::::.                          |
+    P |                              .::::::::::::::                         |
+    a |                             .::::::::::::::::.                       |
+    r |                           :::::::::::::::::::::.                     |
+    a |                        ..::::::::::::::::::::::::.                   |
+    l |              .  ..  ...::::::::::::::::::::::::::::                  |
+    l |             ::::::::::::::::::::::::::::::::::::::::.                |
+    e |             ::::::::::::::::::::::::::::::::::::::::::.              |
+    l |             ::::::::::::::::::::::::::::::::::::::::::::.            |
+      |            .::::::::::::::::::::::::::::::::::::::::::::::           |
+    J |            ::::::::::::::::::::::::::::::::::::::::::::::::.         |
+    o |            ::::::::::::::::::::::::::::::::::::::::::::::::::.       |
+    b |            ::::::::::::::::::::::::::::::::::::::::::::::::::::.     |
+    s |          ::::::::::::::::::::::::::::::::::::::::::::::::::::::::.   |
+      |       :.::::::::::::::::::::::::::::::::::::::::::::::::::::::::::.  |
+    1 |...::..::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::.|
+  ----+----------------------------------------------------------------------+
+      | 1                  Number of Jobs build so far                   424 |
+
+You can see that the build doesn't parallelize very well in the early phase
+but soon reaches a state where over 100 jobs can be built at the same time.
+
+That the number of available jobs going down in the right side of the graph
+is normal. When E.g. 400 of 424 jobs are already built, there are only 24
+jobs left and so it's not possible anymore to have 100 parallel jobs.
+
+Note that the X-axis is the number of jobs built already - and not the time.
+so that graph is telling you somethign about the level of parallelism which
+is possible in your selected configuration in general - but it does not provide
+exact numbers how much faster the build would be e.g. on a 16 node cluster.
+
+You can pass the option '-jobs N' to ./scripts/Create-ParaSim to get a
+simulation of the build on a cluster with N nodes. The script assumes that the
+cluster nodes are as fast as the system which has done the reference build. If
+your cluster nodes are e.g. about 20% faster, your build will be about 20%
+sooner compleated as printed in the stat. You can even compare builds - e.g.
+"-jobs 1,2,8" would compare a "normal" single-node build with a build on a
+2-node cluster and an 8-node cluster:
+
+  -----+--------------------------------------------------------------------+
+     8 |     :    :::                                                       |
+       |     :.  ::::.                                                      |
+       |   ..::  :::::                                                      |
+       |   ::::..:::::.                                                     |
+     1 |::::::::::::::::::                                                  |
+  -----+--------------------------------------------------------------------+
+     2 |    ::::::::::::::::::::::::::::::::                                |
+       |  ::::::::::::::::::::::::::::::::::                                |
+       |.:::::::::::::::::::::::::::::::::::                                |
+       |::::::::::::::::::::::::::::::::::::                                |
+     1 |::::::::::::::::::::::::::::::::::::                                |
+  -----+--------------------------------------------------------------------+
+     1 |::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::|
+       |::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::|
+       |::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::|
+       |::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::|
+     1 |::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::|
+  -----+--------------------------------------------------------------------+
+  Jobs | 00:00                       Time                             14:41 |
+
+If you have 'gnuplot' installed and $DISPLAY set, you can also pass the option
+'-x11' to ./scripts/Create-ParaSim so it will use the program 'gnuplot' to
+graph the results. A screenshot of the '-x11' mode of ./scripts/Create-ParaSim
+can be found at http://www.rocklinux.org/pics/screenshot_parasim.jpg.
+
+
+	3. Setting up the master
+	========================
+
+Extract the ROCK Linux source somewhere and export this directory read-write
+to all nodes using NFS. In many cases there will be already a directory on
+your cluster which is shared between all nodes (e.g. /home). I will assume
+the directory name /home/rock-master in this document.
+
+Configure your build as usual. Enable the config option 'Make a parallel
+(cluster) build'. The config option 'Maximum size of job queue' should have
+a value which is higher than the maximum number of jobs which will be built
+on our cluster. Set this config option to '0' (unlimited) when building on a
+big cluster.
+
+The option 'Command for adding jobs' will be explained in section 6 (Building
+with an external job scheduler) and can be left blank if you are using the
+built-in job scheduler.
+
+You also might want to enable the 'Always clean up src dirs (even on pkg
+fail)' option so the local disks of your cluster nodes are not filled up
+with the src dirs of broken packages.
+
+Download the required source packages as usual (if you don't have them already
+all downloaded).
+
+
+	4. Setting up the nodes
+	=======================
+
+The following has to be done on every node. If you have many nodes in your
+cluster you might mant to use 'prsh' from http://www.cacr.caltech.edu/beowulf/
+to perform the following steps on all nodes.
+
+You need to create a local build directory on every cluster node (building
+the packages on the NFS share would cost too much performance). In many cases
+there will be already a directory on the cluster for this (e.g. /scratch). I
+will assume the directory name /scratch/rock-node in this document.
+
+Set up the /scratch/rock-node directory using the commands:
+
+    # mkdir -p /scratch/rock-node
+    # cd /home/rock-master
+    # ./scripts/Create-Links -config -build /scratch/rock-node
+
+Now your cluster is ready for building ROCK Linux.
+
+
+	5. Building with the built-in job scheduler
+	===========================================
+
+Run './scripts/Build-Target' in /home/rock-master the master. Instead of
+building the packages the master will create a job queue and add those
+packages to the queue which can be built next.
+
+Run './scripts/Build-Job -daemon' in /scratch/rock-node on the nodes. Again,
+you might want to use 'prsh' to do this on all nodes. If you want to build
+multiple packages parallel on one cluster node (e.g. because they have two
+CPUs) you need to run './scripts/Build-Job -daemon' as often as many jobs
+you want to run on the node at the same time.
+
+"Build-Target" on the master will show you what's going on. You can view
+the current status of your build from every console using the tool
+'./scripts/Create-ParaStatus'. The output of the script looks like:
+
+   18:41 2002-05-08:   --- current status ---
+   Build-Job (daemon mode)       running on node01 with PID 18452
+   Build-Job (daemon mode)       running on node02 with PID 18665
+   Build-Job (daemon mode)       running on node03 with PID 19618
+   Job 3-kdenetwork              node02 (18665) since 18:32 2002-5-08
+   Job 3-kdeutils                node03 (19618) since 18:41 2002-5-08
+   Job 3-kdevelop                node01 (18452) since 18:30 2002-5-08
+   Job 3-kdebindings             waiting in the job queue (priority 2)
+   Job 3-kdeadmin                waiting in the job queue (priority 1)
+   Job 3-kde-i18n-fr             waiting in the job queue (priority 1)
+   Job 3-kde-i18n-es             waiting in the job queue (priority 1)
+   Job 3-kde-i18n-de             waiting in the job queue (priority 1)
+   Job 3-kdeartwork              waiting in the job queue (priority 0)
+   Job 3-kdeaddons               waiting in the job queue (priority 0)
+   18:41 2002-05-08:   ----------------------
+
+"Build-Job -daemon" on the nodes forkes in the background and only prints a one
+line message containing the filename of the logfile which contains the output
+of the script. This logfile is in the build/ directory, which is shared between
+all nodes so you can view all logs from the master node.
+
+
+	6. Building with an external job scheduler
+	==========================================
+
+Let's say the command for adding jobs in your job scheduler is 'addjob' and
+has only one parameter, which is the command to execute. You would set the
+config option 'Command for adding jobs' to the value
+
+    addjob 'cd /scratch/rock-node ; {}'
+
+The text {} will automatically replaced with the Build-Job invocation for
+building the package and always has the form of:
+
+    ./scripts/Build-Job -cfg <config-name> <stagelevel>-<package-name>
+
+So if you want to make some inteligent job scheduling (e.g. build large
+packages on a faster node) you can also pass {} to another script and
+have the command in $*, the config name in $3 and the stagelevel and
+package name in $4.
+
+If not all jobs can be executed, the job scheduler should prefer those jobs
+which have been submitted first. This is importand to make sure that it always
+is possible that multiple packages can be build in parallel.
+
+Note that './scripts/Build-Job -daemon' does not work if the 'Command for
+adding jobs' config option is set. The './scripts/Create-ParaStatus' script
+works as usual.
+

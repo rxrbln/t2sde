@@ -1,0 +1,124 @@
+#!/usr/bin/perl -w
+
+use strict;
+use English;
+
+my (@pkg, %opr, %pri, %dep, %rep, %rdp, %ign, %lop);
+
+foreach (@ARGV) { $ign{$_} = 1; }
+
+print "Reading package priorities ...\n";
+open(F, "./scripts/Create-PkgList |") || die $!;
+while (<F>) {
+	@_ = split /\s+/;
+	next unless $_[1] eq "-----5---9";
+	next if defined $ign{$_[3]} || defined $ign{$_[4]};
+	$opr{$_[4]} = $_[2];
+	$pri{$_[4]} = $_[2];
+	$rep{$_[4]} = $_[3];
+	$pkg[$#pkg+1] = $_[4];
+}
+close F;
+
+print "Reading package dependencies ...\n";
+open(F, "scripts/dep_db.txt") || die $!;
+while (<F>) {
+	chomp;
+	if ( ! /^(\S+): \d+ \d+ (.*)$/ ) {
+		print "Format Error: $_\n";
+		exit 1;
+	}
+	@{$dep{$1}} = split /\s+/, $2;
+	foreach ( @{$dep{$1}} ) {
+		$rdp{$_} = () unless defined $rdp{$_};
+		push @{$rdp{$_}}, $1;
+	}
+}
+close F;
+
+sub count_errs($) {
+	my $package = $_[0];
+	my $dependency;
+	my $errors = 0;
+
+	foreach $dependency (@{$dep{$package}}) {
+		next unless defined $pri{$dependency};
+		$errors++ if $pri{$package} < $pri{$dependency};
+	}
+	foreach $dependency (@{$rdp{$package}}) {
+		next unless defined $pri{$dependency};
+		$errors++ if $pri{$package} > $pri{$dependency};
+	}
+
+	return $errors;
+}
+
+my ($interation, $package, $dependency, $a, $b);
+my $did_something=0;
+
+print "\nLoop    Old/New Errors  Package                   Dependency\n".
+"------------------------------------------------------------------------\n";
+
+for $interation (1..99) {
+  my $looplog = '';
+  foreach $package (@pkg) {
+    foreach $dependency (@{$dep{$package}}) {
+	next unless defined $pri{$dependency};
+	if ( $pri{$package} < $pri{$dependency} ) {
+		$a = count_errs($package) + count_errs($dependency);
+		$_ = $pri{$dependency};
+		$pri{$dependency} = $pri{$package};
+		$pri{$package} = $_;
+		$b = count_errs($package) + count_errs($dependency);
+
+		$looplog.="[$package,$dependency]";
+
+		$_ = sprintf "[%02d]    %-7d %-7d %-25s %s\n",
+		       $interation, $a, $b, $pri{$dependency}." ".$package,
+			$pri{$package}." ".$dependency;
+		s/   / . /g; s/\.  /.. /g; s/\.  /.. /g;
+		s/\. (\s*)\./..$1./g; s/\. (\s*)\./..$1./g;
+		print; $did_something=1;
+	}
+    }
+  }
+  last if $looplog eq "";
+  if (defined $lop{$looplog}) {
+	print "[XX] Detected endless-loop ".
+	      "(cross-dependency) -> Aborting now.\n";
+	last;
+  }
+  $lop{$looplog} = 1;
+}
+
+if ( $did_something ) {
+	print "\nCreate dependencies.patch ...\n";
+	my $tmpfile = `mktemp`; chomp $tmpfile;
+	unlink "dependencies.patch";
+
+	foreach $package (@pkg) {
+	  if ($pri{$package} != $opr{$package}) {
+		my $descfile = "package/$rep{$package}/".
+			       "$package/$package.desc";
+		open(IN, $descfile) || die $!;
+		open(OUT, ">$tmpfile") || die $!;
+		$did_something = 0;
+		my $re1 = "(\\[P\\] . \\S+) $opr{$package}";
+		my $re2 = "\$1 $pri{$package}";
+		while (<IN>) {
+			$did_something = 1 if eval "s/$re1/$re2/";
+			print OUT;
+		}
+		close IN; close OUT;
+		if (not $did_something) {
+			print "ERROR: Can't patch $descfile!\n";
+			print "ERROR: Regex was s/$re1/$re2/\n";
+		}
+		system("diff -u0 ./$descfile $tmpfile >> dependencies.patch");
+	  }
+	}
+	unlink $tmpfile;
+	print "Done. Please check moves manually bofore applying the patch.\n";
+} else {
+	print "No unresolved dependencies found.\n";
+}
