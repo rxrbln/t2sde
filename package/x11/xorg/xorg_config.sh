@@ -56,7 +56,7 @@ x_extract_hallib() {
 	  programs/Xserver/hw/xfree86/drivers/mga/HALlib/binding.h
 	rm -rf mgadrivers-$mga_version-src 
 
-	if [ $arch == "x86" ] ; then
+	if [ "$arch" = "x86" -a "$ROCKCFG_X86_BITS" != "64" ] ; then
 		echo "Enabling Matrox HALlib (since this is x86) ..."
 		cat >> config/cf/host.def << EOT
 
@@ -165,14 +165,6 @@ EOT
 /* do not install duplicate crap in /etc/X11 */
 #define		UseSeparateConfDir	NO
 
-EOT
-	
-	if [ $arch == "x86" ] ; then
-	        echo "Enabling Matrox HALlib (since this is x86) ..."
-		cat >> config/cf/host.def << EOT
-
-/* Additinal TV/DVI support since this is x86 */
-#define		HaveMatroxHal		YES
 EOT
 	fi
 }
