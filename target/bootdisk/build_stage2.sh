@@ -30,7 +30,7 @@ package_map='       +tcp_wrappers       +glibc22            -gcc3
 -dietlibc           -linux25-src        +linux25            +iptables
 +xfsprogs           +module-init-tools  -linux24-header     -linux25-header
 +yaboot             +aboot              +wireless-tools     +pdisk
-+parted             +mkdosfs            +rockplug'
++parted             +mkdosfs            +rockplug           +eject'
 
 echo_status "Extracting the packages archives."
 for x in $( ls ../../pkgs/*.tar.bz2 | tr . / | cut -f8 -d/ )
@@ -71,13 +71,20 @@ mkdir -p 2nd_stage_small ; cd 2nd_stage_small
 mkdir dev proc tmp bin lib etc share
 mkdir -p mnt/source mnt/target
 ln -s bin sbin ; ln -s . usr
+
 #
+
+progs="agetty bash cat cp date dd df ifconfig ip ln ls mine mkdir mke2fs \
+       mkswap mount mv rm reboot route sleep swapoff swapon sync umount wget"
+
+progs="$progs fdisk sfdisk"
+
+if [ $arch = ppc ] ; then
+	progs="$progs mac-fdisk pdisk"
+fi
+
 echo_status "Copy the most important programs ..."
-for x in \
-	agetty bash cat cp date dd df fdisk ifconfig ip ln	\
-	ls mine mkdir mke2fs mkswap mount mv rm reboot route	\
-	sfdisk sleep swapoff swapon sync umount wget
-do
+for x in $progs ; do
 	fn=""
 	[ -f ../2nd_stage/bin/$x ] && fn="bin/$x"
 	[ -f ../2nd_stage/sbin/$x ] && fn="sbin/$x"
@@ -90,7 +97,9 @@ do
 		echo_error "\`- Program not found: $x"
 	fi
 done
+
 #
+
 echo_status "Copy the required libraries ..."
 found=1 ; while [ $found = 1 ]
 do
