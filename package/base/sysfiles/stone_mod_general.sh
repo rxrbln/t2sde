@@ -51,17 +51,36 @@ set_keymap() {
 	eval "$cmd"
 }
 
+set_vcfont() {
+	vcfont=$(ls -l /etc/default.vcfont 2> /dev/null | sed 's,.*/,,')
+	if [ -z "$vcfont" ] ; then vcfont="none"
+	else vcfont="`echo $vcfont | sed -e "s,\.\(fnt\|psf.*\)\.gz$,,"`" ; fi
+	fontdir="/usr/share/kbd/consolefonts"
+
+	cmd="gui_menu 'general_vcfont' 'Select one of the"
+	cmd="$cmd following console fonts. (Current: $vcfont)'"
+	cmd="$cmd 'none (kernel defaults)' 'rm -f /etc/default.vcfont ; setfont'"
+
+	cmd="$cmd $( find $fontdir -type f \( -name '*.fnt.gz' -or -name '*.psf*.gz' \) -printf '%P\n' | sed 's,\(.*\).\(fnt\|psf.*\)\.gz$,"\1" "ln -sf '$fontdir'/& /etc/default.vcfont ; setfont \1",' | expand -30 | sort | tr '\n' ' ')"
+
+	eval "$cmd"
+}
+
 store_kbd(){
 	if [ -f /etc/conf/kbd ] ; then
 		sed -e "s/kbd_rate=.*/kbd_rate=$kbd_rate/" \
 		    -e "s/kbd_delay=.*/kbd_delay=$kbd_delay/" < /etc/conf/kbd \
 		  > /etc/conf/kbd.tmp
+		grep kbd_rate= /etc/conf/kbd.tmp || echo kbd_rate=$kbd_rate \
+		  >> /etc/conf/kbd.tmp
+		grep kbd_delay= /etc/conf/kbd.tmp || echo kbd_delay=$kbd_delay \
+		  >> /etc/conf/kbd.tmp
 		mv /etc/conf/kbd.tmp /etc/conf/kbd
 	else
-		echo -e "kbd_rate=$newkbd_rate\nkbd_delay=$newkbd_delay\n" \
+		echo -e "kbd_rate=$kbd_rate\nkbd_delay=$kbd_delay\n" \
 		  > /etc/conf/kbd
 	fi
-	kbdrate -r $kbd_rate -d $kbd_delay
+	[ "$kbd_rate" -a "$kbd_delay" ] && kbdrate -r $kbd_rate -d $kbd_delay
 }
 
 set_kbd_rate() {
@@ -74,6 +93,36 @@ set_kbd_delay() {
 	gui_input "Set new console keyboard auto-repeat delay" \
                   "$kbd_delay" "kbd_delay"
 	store_kbd
+}
+
+store_con(){
+	if [ -f /etc/conf/console ] ; then
+		sed -e "s/con_term=.*/con_term=$con_term/" \
+		    -e "s/con_blank=.*/con_blank=$con_blank/" \
+		  < /etc/conf/console > /etc/conf/console.tmp
+		grep con_term= /etc/conf/console.tmp || \
+		  echo con_term=$con_term >> /etc/conf/console.tmp
+		grep con_blank= /etc/conf/console.tmp || \
+		  echo con_blank=$con_blank >> /etc/conf/console.tmp
+		mv /etc/conf/console.tmp /etc/conf/console
+	else
+		echo -e "con_term=$con_term\ncon_blank=$con_blank\n" \
+		  > /etc/conf/console
+	fi
+	[ "$con_term" -a "$con_blank" ] && \
+	  setterm -term $con_term -blank $con_blank > /dev/console
+}
+
+set_con_term() {
+	gui_input "Set new console screen terminal type" \
+                  "$con_term" "con_term"
+	store_con
+}
+
+set_con_blank() {
+	gui_input "Set new console screen blank interval" \
+                  "$con_blank" "con_blank"
+	store_con
 }
 
 set_tmzone() {
@@ -108,11 +157,11 @@ set_locale() {
 	unset LANG ; [ -f /etc/profile.d/locale ] && . /etc/profile.d/locale
 	locale="${LANG:-none}" ; cmd="gui_menu 'general_locale' 'Select one of the following locales. (Current: $locale)' 'none' 'set_locale_sub none'"
 
-	x="$( echo -e "POSIX\tC" | expand -50 )"
+	x="$( echo -e "POSIX\tC" | expand -52 )"
 	cmd="$cmd '$x' 'set_locale_sub C' $(
 		grep -H ^title /usr/share/i18n/locales/* 2> /dev/null | \
 		awk -F '"' '{ sub(".*/", "", $1); sub("[\\.:].*", "", $1); '"
-		printf \" '%-50s%s' 'set_locale_sub %s'\", \$2, \$1, \$1; }"
+		printf \" '%-52s%s' 'set_locale_sub %s'\", \$2, \$1, \$1; }"
 	)"
 
 	eval "$cmd"
@@ -124,18 +173,27 @@ main() {
 	locale="${LANG:-none}" ; tz="$( ls -l /etc/localtime | cut -f7- -d/ )"
 	keymap=$(ls -l /etc/default.keymap 2> /dev/null | sed 's,.*/,,')
 	[ "$keymap" ] || keymap="none" ; keymap="${keymap%.map.gz}"
+	vcfont=$(ls -l /etc/default.vcfont 2> /dev/null | sed 's,.*/,,')
+	if [ -z "$vcfont" ] ; then vcfont="none"
+	else vcfont="`echo $vcfont | sed -e "s,\.\(fnt\|psf.*\)\.gz$,,"`" ; fi
 	dtime="`date '+%m-%d %H:%M %Y'`"
 	[ -f /etc/conf/kbd ] && . /etc/conf/kbd
 	[ "$kbd_rate" ] || kbd_rate=30
 	[ "$kbd_delay" ] || kbd_delay=250
+	[ -f /etc/conf/console ] && . /etc/conf/console
+	[ "$con_term" ] || con_term=linux
+	[ "$con_blank" ] || con_blank=0
 
 	gui_menu general 'Various general system configurations' \
 		"Set console keyboard mapping ....... $keymap" "set_keymap" \
+		"Set console screen font ............ $vcfont" "set_vcfont" \
 		"Set system-wide time zone .......... $tz"     "set_tmzone" \
 		"Set date and time (localtime) ...... $dtime"  "set_dtime"  \
 		"Set system-wide locale (language) .. $locale" "set_locale" \
 		"Set console keyboard repeat rate ... $kbd_rate" "set_kbd_rate" \
 		"Set console keyboard repeat delay .. $kbd_delay" "set_kbd_delay" \
+		"Set console screen terminal type ... $con_term" "set_con_term" \
+		"Set console screen blank interval .. $con_blank" "set_con_blank" \
 		"Run the (daily) 'cron.run' script now" "cron.run"
     do : ; done
 }
