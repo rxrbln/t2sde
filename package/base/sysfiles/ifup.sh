@@ -13,5 +13,6 @@ else
 	profile="$2"
 fi
 
-/etc/network/rocknet $1 $2 ${x#if}
+/etc/network/rocknet "$1" "$2" "${x#if}"
+echo "$profile" > /etc/network/proflie
 
