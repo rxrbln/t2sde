@@ -30,7 +30,7 @@ package_map='       +tcp_wrappers       +glibc22            -gcc3
 -dietlibc           -linux25-src        +linux25            +iptables
 +xfsprogs           +module-init-tools  -linux24-header     -linux25-header
 +yaboot             +aboot              +wireless-tools     +pdisk
-+parted'
++parted             +mkdosfs'
 
 echo_status "Extracting the packages archives."
 for x in $( ls ../../pkgs/*.tar.bz2 | tr . / | cut -f8 -d/ )

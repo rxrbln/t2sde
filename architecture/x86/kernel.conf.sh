@@ -7,7 +7,11 @@
 		dnl
 	EOT
 
-	linux_arch=386
+	# we are using i586 kernels on default because
+	# i386 kernels are missing some features which
+	# are needed for running on modern hardware.
+	#
+	linux_arch=586
 	for x in "i386		386"		\
 		 "i486		486"		\
 		 "pentium	586"		\

@@ -20,7 +20,8 @@ function autocomplete(mod, id) {
 	if ( modidx[mod] ~ "/video/" ) {
 		driver_cmd[id] = driver_cmd[id] \
 			"\n:touch /dev/vc/{1,2,3,4,5,6}" \
-			"\n:fbset -a 800x600-60";
+			"\n:fbset -a 800x600-60" \
+			"\nchvt 2; sleep 1; chvt 1";
 		driver_initrd[id] = 0;
 	}
 }
@@ -30,6 +31,8 @@ function get_pci_drivers() {
 	while ( (getline < ("/lib/modules/" kernel "/modules.pcimap")) > 0 ) {
 		id = sprintf( "%04x%04x", and(strtonum($2),0xffff),
 			and(strtonum($3),0xffff));
+		# always prefer ALSA drivers if available
+		if ( id in pci_driver && pci_driver[id] ~ /^snd-/ ) continue;
 		pci_driver[id] = $1;
 	}
 
@@ -237,6 +240,11 @@ function print_driver(id) {
 	if ( disable_default ) {
 		gsub("\n", "\n#", tmp);
 		tmp = "#" tmp;
+	}
+
+	if ( driver_dsc[id] == "" ) {
+		tmp2 = driver_mod[id]; gsub(" .*", "", tmp2);
+		driver_dsc[id] = "Unkown device for driver " tmp2;
 	}
 
 	if ( file ) {
