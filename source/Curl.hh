@@ -1,9 +1,12 @@
-#include <string>
-#include <fstream>
-#include <sstream>
+
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+
+#include <string>
+#include <fstream>
+#include <sstream>
+#include <memory>
 
 class CurlException {};
 class TimeoutException : public CurlException {};
@@ -43,8 +46,8 @@ public:
 
   void SetFile (const std::string& name) {filename = name;}
 
-  std::ifstream* OpenFile () {
-    std::ifstream* r = new std::ifstream();
+  std::auto_ptr<std::ifstream> OpenFile () {
+    std::auto_ptr<std::ifstream> r (new std::ifstream());
     r->open(filename.c_str());
     return r;
   }
