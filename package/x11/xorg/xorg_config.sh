@@ -150,6 +150,7 @@ EOT
 
 /* Disable the internal expat library to use the system installed one */
 #define		HasExpat		YES
+EOT
 
 	cat >> config/cf/host.def << EOT
 
