@@ -23,6 +23,7 @@
 / grep / { p; d; }
 / groff / { p; d; }
 / gzip / { p; d; }
+/ indent / { p; d; }
 / iproute2 / { p; d; }
 / iptables / { p; d; }
 / liblockfile / { p; d; }
@@ -43,12 +44,13 @@
 / patch / { p; d; }
 / pciutils / { p; d; }
 / pcmcia-cs / { p; d; }
-/ perl5 / { p; d; }
+/ perl / { p; d; }
 / procps / { p; d; }
 / psutils / { p; d; }
 / sed / { p; d; }
 / strace / { p; d; }
 / sysfiles / { p; d; }
+/ sysvinit / { p; d; }
 / tar / { p; d; }
 / tcp_wrappers / { p; d; }
 / tcsh / { p; d; }
