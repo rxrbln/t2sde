@@ -99,12 +99,16 @@ int main(int argc, char ** argv) {
 "  Run SystemV Init-Scripts with a clean environment and detached from\n"
 "  the terminal.\n"
 "\n"
-"  Usage: rc [ --nobtee ] <service> { start | stop | ... | help }\n"
-"\n"
+"  Usage: rc [ --nobtee ] <service> { start | stop | ... | help }\n");
+	}
+	if ( argc == 1 ) {
+		fprintf(stderr, "\n"
 "  <service> might be one of:\n"
 "\n");
 		fflush(stderr);
 		system("ls /etc/rc.d/init.d >&2");
+	}
+	if ( argc != 3 ) {
 		fprintf(stderr, "\n");
 		return 1;
 	}
