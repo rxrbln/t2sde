@@ -55,7 +55,8 @@ then
 			x="'" ; cmd="${cmd//,/ }"
 			command="$command '${name//$x/$x\\$x$x}'"
 			command="$command '$STONE ${cmd//$x/$x\\$x$x}'"
-		done < <( grep -h '^# \[MAIN\] [0-9][0-9] ' $SETUPD/* | sort )
+		done < <( grep -h '^# \[MAIN\] [0-9][0-9] ' \
+						$SETUPD/mod_*.sh | sort )
 		eval "$command"
 	do : ; done
 else
