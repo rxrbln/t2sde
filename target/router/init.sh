@@ -16,8 +16,8 @@ sh /etc/hwscan.sh 2> /dev/null
 
 echo
 echo "                     *************************************"
-echo "                     **        ROCK Router Linux        **"
-echo "                     **    http://www.rocklinux.org/    **"
+echo "                     **            T2 Router            **"
+echo "                     **   http://www.exactcode.de/t2/   **"
 echo "                     *************************************"
 echo
 
