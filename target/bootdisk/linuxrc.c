@@ -89,7 +89,7 @@ void doboot()
 
 int trymount (const char* source, const char* target)
 {
-	return mount(source, "/mnt_source", "ext3",    MS_RDONLY, NULL) &&
+	return	mount(source, target, "ext3",    MS_RDONLY, NULL) &&
 		mount(source, target, "ext2",    MS_RDONLY, NULL) &&
 		mount(source, target, "minix",   MS_RDONLY, NULL) &&
 		mount(source, target, "vfat",    MS_RDONLY, NULL) &&
