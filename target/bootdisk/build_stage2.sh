@@ -95,7 +95,7 @@ tar -czf ../2nd_stage.tar.gz * ; cd ..
 
 echo_header "Creating small 2nd stage filesystem:"
 mkdir -p 2nd_stage_small ; cd 2nd_stage_small
-mkdir -p dev proc tmp bin lib etc share local/bin
+mkdir -p dev proc tmp bin lib etc share
 mkdir -p mnt/source mnt/target
 ln -s bin sbin ; ln -s . usr
 
@@ -172,4 +172,4 @@ do
 done < <( find -type f | xargs md5sum | sort )
 #
 echo_status "Creating 2nd_stage_small.tar.gz archive."
-tar -czf ../2nd_stage_small.tar.gz * ; cd ..
+tar -cvf- * | gzip -9 > ../2nd_stage_small.tar.gz ; cd ..
