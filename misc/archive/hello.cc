@@ -1,4 +1,4 @@
-// Hello World in C++ (by Clifford)
+// Hello World in C++ (by Clifford - revisited for post C++ 8x by Rene Rebe)
 //
 // --- ROCK-COPYRIGHT-NOTE-BEGIN ---
 // 
@@ -22,10 +22,10 @@
 // 
 // --- ROCK-COPYRIGHT-NOTE-END ---
 
-#include <iostream.h>
+#include <iostream>
 
 int main() {
-	cout << "Hello World! (A simple C++ program.)\n";
+	std::cout << "Hello World! (A simple C++ program.)" << std::endl;
 	return 0;
 }
 
