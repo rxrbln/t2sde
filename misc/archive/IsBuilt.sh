@@ -1,33 +1,47 @@
 #!/bin/sh
 
+config=default
+if [ "$1" == "-cfg" ]; then
+	config="$2"; shift; shift
+fi
+
+VERBOSE=
 if [ "$1" == "-v" ]; then
 	VERBOSE=1; shift
-else
-	VERBOSE=
 fi
-LOGSDIR=$1/var/adm/logs
 
-if [ ! -d $LOGSDIR ]; then
-	echo "'${LOGSDIR%var/adm/logs}' is not a valid root."
+if [ ! -f config/$config/packages ]; then
+	echo "ERROR: '$config' is not a valid config"
 	exit 1
 fi
 
-for repo in package/*; do
-	svn st $repo | cut -d'/' -f3 | sort -u | \
-	while read pkg; do
+eval `grep 'ROCKCFG_ID=' config/$config/config 2> /dev/null`
+LOGSDIR=build/$ROCKCFG_ID/var/adm/logs
+if [ -z "$ROCKCFG_ID" -o ! -d $LOGSDIR ]; then
+	echo "ERROR: 'build/$ROCKCFG_ID/' is not a valid build root (sandbox)"
+	exit 1
+fi
+
+i=1
+while read x x x repo pkg x; do
+	svnstatus="`svn st package/$repo/$pkg`"
+	if [ "$svnstatus" ]; then
 		status=
+		errlog=
 		for file in $( ls -1 $LOGSDIR/[0-9]-${pkg}.{out,err,log} 2> /dev/null ); do
 			case $file in
-			*.err)	status=2	;;
+			*.err)	errlog="$errlog$file "; status=2	;;
 			*.log)	[ "$status" ] || status=1	;;
 			esac
 		done
 		if [ -z "$status" ]; then
-			[ "$VERBOSE" ] && echo "$pkg PENDING"
+			[ "$VERBOSE" ] && echo "$i package/$repo/$pkg PENDING"
 		elif [ "$status" == 2 ]; then
-			echo "$pkg FAILED"
+			echo "$i package/$repo/$pkg FAILED $errlog"
 		else
-			echo "$pkg OK"
+			echo "$i package/$repo/$pkg OK"
 		fi
-	done
-done
+		(( i++ ))
+	fi
+done < config/ref/packages
+
