@@ -9,7 +9,8 @@ echo_header "Finishing build."
 
 echo_status "Creating package database ..."
 admdir="build/${ROCKCFG_ID}/root/var/adm"
-create_package_db $admdir > build/${ROCKCFG_ID}/packages.db
+create_package_db $admdir build/${ROCKCFG_ID}/pkgs \
+                  > build/${ROCKCFG_ID}/packages.db
 
 echo_status "Creating isofs.txt file .."
 cat << EOT > build/${ROCKCFG_ID}/isofs.txt
@@ -23,3 +24,4 @@ DISK1	$admdir/packages/		${ROCKCFG_SHORTID}/info/packages/
 EVERY	build/${ROCKCFG_ID}/packages.db	${ROCKCFG_SHORTID}/packages.db
 SPLIT	build/${ROCKCFG_ID}/pkgs/	${ROCKCFG_SHORTID}/pkgs/
 EOT
+
