@@ -121,9 +121,15 @@ xf_install() {
 	rm -rf $root/etc/X11/xkb/compiled
 	ln -sf ../../../var/lib/xkb $root/etc/X11/xkb/compiled
 
-	echo "Installing XFree86 Init Scripts ..."
+	echo "Installing xfs init script ..."
 	install_init xfs $base/package/x11/xfree86/xfs.init
-	install_init xdm $base/package/x11/xfree86/xdm.init
+
+	register_xdm xdm 'X11 dislay manager' /usr/X11R6/bin/xdm
+
+
+	echo "Installing the xdm start script (multiplexer) ..."
+	cp $confdir/startxdm.sh $root/usr/X11R6/bin/startxdm
+	chmod +x $root/usr/X11R6/bin/startxdm
 
 	echo "Installing XFree86 Setup Script ..."
 	cp -fv $base/package/x11/xfree86/stone_mod_xfree86.sh $root/etc/stone.d/mod_xfree86.sh

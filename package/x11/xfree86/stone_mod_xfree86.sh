@@ -26,11 +26,20 @@ set_wm() {
 	echo "export WINDOWMANAGER=$1" > /etc/profile.d/windowmanager
 }
 
+set_xdm() {
+	echo "export XDM=$1" > /etc/conf/xdm
+}
+
 main() {
 	while
 		WINDOWMANAGER=""
 		if [ -f /etc/profile.d/windowmanager ]; then
 			. /etc/profile.d/windowmanager
+		fi
+
+		XDM=""
+		if [ -f /etc/conf/xdm ]; then
+			. /etc/conf/xdm
 		fi
 
 		cmd="gui_menu xfree86 'XFree86 Configuration Menu'
@@ -43,6 +52,22 @@ main() {
 
 		'Run xf86config (old textual config)'
 			'gui_cmd xf86config xf86config'"
+
+		cmd="$cmd '' ''"
+
+		for x in /usr/share/rock-registry/xdm/* ; do
+		  if [ -f $x ] ; then
+			. $x
+
+			if [ "$XDM" = "$exec" ]; then
+			pre='[*]' ; else
+			pre='[ ]' ; fi
+
+			cmd="$cmd
+			    '$pre Use $name in runlevel 5'
+			    'set_xdm $exec'"
+		  fi
+		done
 
 		cmd="$cmd '' ''"
 
