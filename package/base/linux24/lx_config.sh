@@ -160,7 +160,7 @@ lx_config ()
 	mv Makefile.new Makefile
 
 	echo "Correcting user and permissions ..."
-	chown -R root.root . * ; chmod -R u=rwX,go=rX .
+	chown -R root:root . * ; chmod -R u=rwX,go=rX .
 
 	if [[ $treever = 24* ]] ; then
 		echo "Create symlinks and a few headers for <$lx_cpu> ... "

@@ -69,7 +69,7 @@ startgas() {
 	[ -z "$( cd $dir; ls )" ] && mount $opt -v -o ro $dev $dir
 	if [ "$ROCKCFG_SHORTID" = "Automatically choose first" ]; then
 		ROCKCFG_SHORTID="$( cd $dir; ls -d */pkgs | \
-					cut -f1 -d/ | head -1 )"
+					cut -f1 -d/ | head -n 1 )"
 		echo "Using Config-ID <${ROCKCFG_SHORTID:-None}> .."
 	fi
 	if [ $startgas = 1 ] ; then

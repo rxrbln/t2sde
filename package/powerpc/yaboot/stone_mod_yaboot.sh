@@ -107,11 +107,11 @@ yaboot_install_doit() {
 
 device4()
 {
-	dev="`grep \" $1 \" /proc/mounts | tail -1 | \
+	dev="`grep \" $1 \" /proc/mounts | tail -n 1 | \
 	      cut -d ' ' -f 1`"
 	try="`dirname $1`"
 	if [ ! "$dev" ] ; then
-		dev="`grep \" $try \" /proc/mounts | tail -1 | \
+		dev="`grep \" $try \" /proc/mounts | tail -n 1 | \
 		      cut -d ' ' -f 1`"
 	fi
 	if [ -h "$dev" ] ; then 
@@ -138,7 +138,7 @@ main() {
 	bootdev="`device4 /boot`"
 	yabootdev="`device4 /usr`"
 
-	macosxpart="`pdisk -l /dev/discs/disc0/disc  | grep Apple_HFS | head -1 | \
+	macosxpart="`pdisk -l /dev/discs/disc0/disc  | grep Apple_HFS | head -n 1 | \
 	           sed -e "s/:.*//" -e "s/ //g"`"
 	[ "$macosxpart" ] && macosxdev="`realpath /dev/discs/disc0/part$macosxpart`"
 

@@ -33,6 +33,6 @@ done
 
 echo "== ${1:-cc} -E =="
 ${1:-cc} -E /tmp/$$.c | egrep -xv '(X(.*) \2|#.*)' | \
-	cut -c2- | sed 's, ,	,' | expand -20
+	cut -c2- | sed 's, ,	,' | expand -t20
 rm -f /tmp/$$.c
 

@@ -8,7 +8,7 @@
 #               echo $(( ${y//)/(}$x )) $x
 #       done | sort -n | while read y x ; do
 #               echo ${x//)\\*1000+/.}
-#       done | tail -1
+#       done | tail -n 1
 # }
 
 getkernelversion() {

@@ -187,7 +187,7 @@ find-cycle () {
   if [ "x`cat $fl_dir/find-cycle`" = x ] ; then
     return 1
   else
-    if [ "x`head -1 $fl_dir/find-cycle`" != "xtsort: cycle in data" ] ; then
+    if [ "x`head -n 1 $fl_dir/find-cycle`" != "xtsort: cycle in data" ] ; then
       echo 1>&2 $0: find-cycle: internal error: tsort has invalid output format
       exit 1
     fi
@@ -325,7 +325,7 @@ get-top-of-queue () {
     exit 1
   fi
   is-queue "$1"
-  local head=`head -1 "$1"`
+  local head=`head -n 1 "$1"`
   if [ "x$head" = "x$QUEUE_SEPERATOR" ] ; then
     return 1
   else
@@ -831,7 +831,7 @@ do
     add-arrow $fl_dir/dependency-graph "$cur_lib" "$lib"
   else
     get-library-depends "$lib" > $fl_dir/backup
-    if [ "x`head -1 $fl_dir/backup`" = x ] ; then
+    if [ "x`head -n 1 $fl_dir/backup`" = x ] ; then
       $verbose -n 2>&1 N
       add-node $fl_dir/dependency-graph "$cur_lib"
     else
