@@ -1,8 +1,6 @@
 
 #include <ostream>
 
-#include <boost/regex.hpp>
-
 #include "desc-parser.hh"
 
 int main (int argc, char* argv[])
