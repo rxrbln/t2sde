@@ -21,22 +21,22 @@
 # --- ROCK-COPYRIGHT-NOTE-END ---
 
 # extract and patch base
-xf_extract() {
+x_extract() {
 	echo "Extracting source (for package version $ver) ..."
-	for x in $xf_files ; do
+	for x in $x_files ; do
 		tar $taropt $archdir/$x
 	done
 
 	cd xc
 
-	for x in $xf_patches ; do
+	for x in $x_patches ; do
 		echo "Patching source ($x) ..."
         	bunzip2 < $archdir/$x | patch -p1 -E
 	done
 }
 
 # extract additional gl* stuff
-xf_extract_gl() {
+x_extract_gl() {
 	mkdir release ; ln -s ../.. release/xc
 	tar $taropt $archdir/mangl.tar.bz2
 	tar $taropt $archdir/manglu.tar.bz2
@@ -63,7 +63,7 @@ EOT
 }
 
 # apply the patches
-xf_patch() {
+x_patch() {
 	cp -v programs/twm/system.twmrc programs/twm/system.twmrc.orig
 	for x in $patchfiles ; do
 	  if [ -f $x ] ; then
@@ -74,14 +74,14 @@ xf_patch() {
 		-exec chmod +x '{}' ';'
 }
 
-# build the World
-xf_build() {
+# build the "World"
+x_build() {
 	eval $MAKE World
 	cd nls ; eval $MAKE ; cd ..
 }
 
-# prepare the XFree86 dirtree
-xf_dirtree() {
+# prepare the X dirtree
+x_dirtree() {
 	mkdir -p $root/etc/X11
 	mkdir -p $root/usr/X11R6/lib/X11/fonts/TrueType
 
@@ -97,7 +97,7 @@ xf_dirtree() {
 }
 
 # install the World
-xf_install() {
+x_install() {
 	eval $MAKE install
 	eval $MAKE install.man
 	cd nls ; eval $MAKE install ; cd ..
@@ -110,14 +110,14 @@ xf_install() {
 	register_wm twm TWM /usr/X11/bin/twm
 
 	echo "Copying default example configs ..."
-	cp -fv $base/package/x11/xfree86/XF86Config.data \
+	cp -fv $base/package/x11/xorg/XF86Config.data \
 		$root/etc/X11/XF86Config.example
 	cp -fv $root/etc/X11/XF86Config{.example,}
-	cp -fv $base/package/x11/xfree86/local.conf.data \
+	cp -fv $base/package/x11/xorg/local.conf.data \
 		$root/etc/fonts/local.conf
 
 	echo "Installing xfs init script ..."
-	install_init xfs $base/package/x11/xfree86/xfs.init
+	install_init xfs $base/package/x11/xorg/xfs.init
 
 	register_xdm xdm 'X11 dislay manager' /usr/X11R6/bin/xdm
 
@@ -126,19 +126,19 @@ xf_install() {
 	cp $confdir/startxdm.sh $root/usr/X11R6/bin/startxdm
 	chmod +x $root/usr/X11R6/bin/startxdm
 
-	echo "Installing XFree86 Setup Script ..."
-	cp -fv $base/package/x11/xfree86/stone_mod_xfree86.sh $root/etc/stone.d/mod_xfree86.sh
+	echo "Installing X Setup Script ..."
+	cp -fv $base/package/x11/xorg/stone_mod_xorg.sh $root/etc/stone.d/mod_xorg.sh
 	echo "export WINDOWMANAGER=kde" > $root/etc/profile.d/windowmanager
 
-	echo "Installing XFree86 Cron Script ..."
-	cp -fv $base/package/x11/xfree86/xfree86.cron \
-		$root/etc/cron.daily/80-xfree86
-	chmod +x $root/etc/cron.daily/80-xfree86
+	echo "Installing X Cron Script ..."
+	cp -fv $base/package/x11/xorg/xorg.cron \
+		$root/etc/cron.daily/80-xorg
+	chmod +x $root/etc/cron.daily/80-xorg
 }
 
 # configure the World
-xf_config() {
-	echo "Configuring XFree ..."
+x_config() {
+	echo "Configuring X ..."
 	cat >> config/cf/host.def << EOT
 /* Disable the internal zlib to use the system installed one */
 #define		HasZlib			YES
