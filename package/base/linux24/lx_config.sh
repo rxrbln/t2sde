@@ -28,6 +28,9 @@ srctar="linux-${vanilla_ver}.tar.bz2"
 
 lx_cpu=`echo "$arch_machine" | sed -e s/x86$/i386/ \
   -e s/i.86/i386/ -e s/powerpc/ppc/ -e s/hppa/parisc/`
+lx_extraversion=""
+lx_kernelrelease=""
+lx_tempdir=""
 
 [ $arch = sparc -a "$ROCKCFG_SPARC_64BIT_KERNEL" = 1 ] && \
         lx_cpu=sparc64
@@ -146,25 +149,69 @@ auto_config ()
 	fi
 }
 
+lx_grabextraversion () {
+	local ev
+	ev=$( sed -n -e 's,^[ \t]*EXTRAVERSION[ \t]*=[ \t]*\([^ \t]*\),\1,p' Makefile | tail -1 )
+	if [ "$ev" ]; then
+		lx_extraversion="${lx_extraversion}$ev"
+		# keep intact but commented since the second EXTRAVERSION
+		# definition, and clean the first.
+		sed -e 's,^\([ \t]*EXTRAVERSION[ \t]*=.*\),#\1,g' \
+		    -e 's,^#\(EXTRAVERSION =\).*,\1,' \
+		    Makefile > Makefile.new
+		mv Makefile.new Makefile
+	fi
+}
+lx_injectextraversion () {
+	lx_extraversion="${lx_extraversion}-rock"
+
+	# inject final EXTRAVERSION into Makefile
+	sed -e "s,^\([ \t]*EXTRAVERSION[ \t]*\)=.*,\1= ${lx_extraversion},g" Makefile > Makefile.new
+	mv Makefile.new Makefile
+
+	# update version.h
+	eval $MAKE include/linux/version.h
+
+	# get kernel_release
+	lx_kernelrelease="$( echo -e "#include <linux/version.h>\nUTS_RELEASE" \
+                    > conftest.c &&	\
+                    gcc -E -I./include conftest.c | tail -1	\
+                    | cut -d '"' -f 2 && rm -f conftest.c )"
+
+	# rename temp directory 
+	if [ "${lx_tempdir}" ]; then
+		cd ..
+		rm -rf linux-${lx_kernelrelease} ; mv ${lx_tempdir} linux-${lx_kernelrelease}
+		ln -sf $PWD/linux-${lx_kernelrelease} $builddir/linux-${vanilla_ver}
+
+		if [ "${pkg%-src}" = "$ROCKCFG_DEFAULT_KERNEL" ] ; then
+			rm -f linux
+			ln -svf linux-${lx_kernelrelease} linux
+		fi
+		cd linux-${lx_kernelrelease}
+	fi
+}
+
 lx_config ()
 {
 	echo "Generic linux source patching and configuration ..."
 
+	# grab extraversion from vanilla
+	lx_grabextraversion
+
 	hook_eval prepatch
-	apply_patchfiles
+	apply_patchfiles "lx_grabextraversion"
 	hook_eval postpatch
 
 	echo "Redefining some VERSION flags ..."
-	x="-`echo $ver-rock | cut -d - -f 2-`"
-	sed -e "s/^EXTRAVERSION =.*/EXTRAVERSION = $x/" Makefile > Makefile.new
-	mv Makefile.new Makefile
+	lx_injectextraversion
 
 	echo "Correcting user and permissions ..."
 	chown -R root:root . * ; chmod -R u=rwX,go=rX .
 
 	if [[ $treever = 24* ]] ; then
 		echo "Create symlinks and a few headers for <$lx_cpu> ... "
-		eval $MAKE include/linux/version.h symlinks
+		eval $MAKE symlinks
 		cp $base/package/base/linux24/autoconf.h include/linux/
 		touch include/linux/modversions.h
 	fi
@@ -182,7 +229,7 @@ lx_config ()
 
 	if [[ $treever != 24* ]] ; then
 		echo "Create symlinks and a few headers for <$lx_cpu> ... "
-		eval $MAKE include/linux/version.h include/asm
+		eval $MAKE include/asm
 		eval $MAKE oldconfig > /dev/null
 	fi
 
