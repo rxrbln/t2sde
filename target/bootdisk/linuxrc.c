@@ -63,7 +63,7 @@
 #  define STAGE_2_COMPRESS_ARG "--use-compress-program=gzip"
 #endif
 
-/* 640kB, err, 64 MB should be enought for the tmpfs ;-) */
+/* 640kB, err, 64 MB should be enough for everyone, err. our tmpfs ;-) */
 #define TMPFS_OPTIONS "size=67108864"
 
 /* It seams like we need this prototype here ... */
@@ -97,8 +97,6 @@ void mod_load_info(char *mod_loader, char *mod_dir, char *mod_suffix) {
 	} else {
 		strcpy(mod_suffix, ".o");
 	}
-
-	return;
 }
 
 void doboot()
@@ -607,9 +605,6 @@ stage1()
 	char text[100];
 	int input=1;
 
-	mod_load_info(mod_loader, mod_dir, mod_suffix);
-	mod_suffix_len = strlen(mod_suffix);
-
 	autoload_modules();
 
 	printf("\n\
@@ -697,8 +692,8 @@ What do you want to do [0-8] (default=0)? ");
 int load_one_module (const char *file, const struct stat *sb, int flag)
 {
 	if ( flag == FTW_F ) {
-		printf("Module to load: %s\n", file);
-		// TODO
+		printf("loading: %s\n", file);
+		tryexeclp(mod_loader, mod_loader, file, NULL);
 	}
 	return 0;
 }
@@ -721,6 +716,9 @@ int main(int argc, char* argv[])
 	/* Only print important stuff to console */
 	klogctl(8, NULL, 3);
 
+	mod_load_info(mod_loader, mod_dir, mod_suffix);
+	mod_suffix_len = strlen(mod_suffix);
+
 	/* since only the unrecognized command line arguements are passed
 	   to linuxrc/init, we need to re-generate a nice list out of /proc */
 	{
@@ -735,14 +733,13 @@ int main(int argc, char* argv[])
 	  close (i);
 
 	  /* seperate the options with 0, 00 terminated */
-	  for (i = 0; i < 1024; ++i) {
+	  for (i = 0; i < 1023; ++i) {
 		if (cmdline[i] == ' ')
 			cmdline[i] = 0;
-		else if (cmdline[i] == 0) {
-			cmdline[i+1] = 0;
+		else if (cmdline[i] == 0)
 			break;
-		}
 	  }
+	  cmdline[i+1] = 0;
 	}
 
 	/* Extract the root= kernel argument. Run the stage1 shell when a
@@ -770,11 +767,12 @@ int main(int argc, char* argv[])
 	/* normal in-sytem linuxrc */
 
 	printf("Loading all embedded modules ...\n");
-	ftw("/lib/modules/", *load_one_module, 16);
+	ftw("/lib/modules/", *load_one_module, 4);
 
 	printf("Mounting real-root device and continue to boot the system.\n");
 
-	// TODO and reuse code above
+	// TODO and reuse code above to check and mount the root device
+	// and offer a nice fallback shell in the case s.th. is wrong
 
 	return 0;
 }
