@@ -77,14 +77,15 @@ char *wlog = 0, *rlog = 0, *cmdname = "unkown";
 
 /* Wrapper Functions */
 
-extern int open(const char* f, int a, int b);
-int (*orig_open)(const char* f, int a, int b) = 0;
+extern int open(const char* f, int a, ...);
+int (*orig_open)(const char* f, int a, ...) = 0;
 
-int open(const char* f, int a, int b)
+int open(const char* f, int a, ...)
 {
 	struct status_t status;
 	int old_errno=errno;
 	int rc;
+	mode_t b = 0;
 
 	handle_file_access_before("open", f, &status);
 	if (!orig_open) orig_open = get_dl_symbol("open");
@@ -94,7 +95,17 @@ int open(const char* f, int a, int b)
 	fprintf(stderr, "fl_wrapper.so debug [%d]: going to run original open() at %p (wrapper is at %p).\n",
 		getpid(), orig_open, open);
 #endif
-	rc = orig_open(f, a, b);
+	if (a & O_CREAT) {
+	  va_list ap;
+
+	  va_start(ap, a);
+	  b = va_arg(ap, mode_t);
+	  va_end(ap);
+
+	  rc = orig_open(f, a, b);
+	}
+	else
+	  rc = orig_open(f, a);
 
 	old_errno=errno;
 	handle_file_access_after("open", f, &status);
@@ -103,14 +114,15 @@ int open(const char* f, int a, int b)
 	return rc;
 }
 
-extern int open64(const char* f, int a, int b);
-int (*orig_open64)(const char* f, int a, int b) = 0;
+extern int open64(const char* f, int a, ...);
+int (*orig_open64)(const char* f, int a, ...) = 0;
 
-int open64(const char* f, int a, int b)
+int open64(const char* f, int a, ...)
 {
 	struct status_t status;
 	int old_errno=errno;
 	int rc;
+	mode_t b = 0;
 
 	handle_file_access_before("open64", f, &status);
 	if (!orig_open64) orig_open64 = get_dl_symbol("open64");
@@ -120,7 +132,18 @@ int open64(const char* f, int a, int b)
 	fprintf(stderr, "fl_wrapper.so debug [%d]: going to run original open64() at %p (wrapper is at %p).\n",
 		getpid(), orig_open64, open64);
 #endif
-	rc = orig_open64(f, a, b);
+
+	if (a & O_CREAT) {
+	  va_list ap;
+
+	  va_start(ap, a);
+	  b = va_arg(ap, mode_t);
+	  va_end(ap);
+
+	  rc = orig_open64(f, a, b);
+	}
+	else
+	  rc = orig_open64(f, a);
 
 	old_errno=errno;
 	handle_file_access_after("open64", f, &status);
