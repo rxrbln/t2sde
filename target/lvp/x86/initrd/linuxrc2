@@ -1,0 +1,70 @@
+#!/bin/bash
+
+scan_for_lvp() {
+	unset lvp_drives
+	num_found=0
+
+	for x in /dev/cdroms/* ; do
+		if mount -n ${x} /mnt >/dev/null 2>&1 ; then
+			if grep -q LVP /mnt/etc/VERSION ; then
+				lvp_drives="${lvp_drives} ${x}"
+				num_found=$(( ${num_found} + 1 ))
+			fi
+			umount /mnt
+		fi
+	done
+}
+
+if [ ! -e /dev/cdroms/cdrom0 ] ; then
+	echo "EEP! I have not found any cdroms!"
+	echo "Can't continue."
+	echo
+	echo "Press -<enter>- to shut down"
+	read
+	echo o >/proc/sysrq-trigger
+fi
+
+while : ; do
+	scan_for_lvp
+	echo "Found ${num_found} LVP Disks. Please choose one:"
+	choice=0
+	for x in ${lvp_drives} ; do
+		choice=$(( ${choice} + 1 ))
+		echo "${choice}	${x}"
+	done
+	echo
+	echo "r	rescan devices"
+	echo "0	shut down"
+	echo -n "> "
+	read s
+	if [ "${s}" == "0" ] ; then
+		echo "Ejecting LVP Disks"
+		for x in ${lvp_drives} ; do
+			eject -p ${x}
+		done
+		echo
+		echo "Press -<enter>- to turn off the machine."
+		read
+		echo o >/proc/sysrq-trigger
+		while : ; do echo -n ; done
+	fi
+
+	exec 2>/dev/null
+	if [ ${s} -gt 0 -a ${s} -le ${num_found} ] ; then
+		choice=0
+		for x in ${lvp_drives} ; do
+			choice=$(( ${choice} + 1 ))
+			if [ ${choice} -eq ${s} ] ; then
+				mount ${x} /mnt
+				chroot /mnt /linuxrc
+				# man, this sucks
+				# sometimes the livesystem's linuxrc seems to be unable to umount everything...
+				for x in 1 2 3 4 5 6 7 8 9 0 ; do
+					umount /mnt/*
+				done
+				umount /mnt
+			fi
+		done
+	fi
+	exec 2>&1
+done

@@ -24,6 +24,7 @@ case "${ROCKCFG_X86_OPT}" in
 	athlon4)	opt_text="for AMD Athlon 4";;
 	athlon-xp)	opt_text="for AMD Athlon XP";;
 	athlon-mp)	opt_text="for AMD Athlon MP" ;;
+	*)		opt_text="for unknown optimisation" ;;
 esac
 
 sed -i -e "s,COMPILEDFOR,${opt_text},g" README
@@ -33,11 +34,11 @@ find ${releasedir} -name .svn -exec rm -rf {} \; 2>/dev/null
 echo_status "Extracting isolinux boot loader."
 mkdir -p isolinux
 tar --use-compress-program=bzip2 \
-    -xf ${base}/download/${target}/syslinux-2.02.tar.bz2 \
-    syslinux-2.02/isolinux.bin -O > ${releasedir}/isolinux/isolinux.bin
+    -xf ${base}/download/${target}/syslinux-${syslinux_ver}.tar.bz2 \
+    syslinux-${syslinux_ver}/isolinux.bin -O > ${releasedir}/isolinux/isolinux.bin
 
 echo_status "Creating isolinux config file."
 cp ${base}/target/${target}/x86/isolinux.cfg ${releasedir}/isolinux/
 cp ${base}/target/${target}/x86/help?.txt ${releasedir}/isolinux/
-cp ../root/boot/vmlinuz ${releasedir}/isolinux/
+cp ${rootdir}/boot/vmlinuz ${releasedir}/isolinux/
 
