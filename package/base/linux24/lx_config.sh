@@ -241,6 +241,6 @@ lx_config ()
 
 pkg_linux_brokenfiles="$base/architecture/$arch/kernel-disable.lst \
 	$base/architecture/$arch/kernel$treever-disable.lst \
-	$base/package/base/linux$treever/disable-broken.lst \
+	$base/package/*/linux$treever/disable-broken.lst \
 	$pkg_linux_brokenfiles"
 
