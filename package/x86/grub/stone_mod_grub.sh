@@ -94,7 +94,7 @@ fallback 1
 EOT
 	create_kernel_list >> /boot/grub/menu.lst
 
-	cat << EOT >> /boot/grub/menu.lst
+	[ -f /boot/memtest86.bin ] && cat << EOT >> /boot/grub/menu.lst
 
 title  MemTest86 (memory tester)
 kernel $bootdrive$bootpath/memtest86.bin
