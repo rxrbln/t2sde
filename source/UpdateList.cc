@@ -61,7 +61,7 @@ class VersionComparator
 public:
   bool operator() (Match* a, Match* b)
   {
-    return CmpVersions(a -> version, b -> version) < 0;
+    return CmpVersions(a -> version, b -> version) > 0;
   }
 };
 
