@@ -32,7 +32,8 @@ part_swap_action() {
 
 part_mount() {
 	local dir
-	gui_input "Mount device $1/$2 on directory" '' dir
+	gui_input "Mount device $1/$2 on directory
+(for example /, /home, /var, ...)" '/' dir
 	if [ "$dir" ] ; then
 		dir="$( echo $dir | sed 's,^/*,,; s,/*$,,' )"
 		if [ -z "$dir" ] || grep -q " /mnt/target " /proc/mounts
@@ -48,11 +49,11 @@ part_mount() {
 part_mkfs() {
 	cmd="gui_menu part_mkfs 'Create filesystem on $1/$2'"
 
-	cmd="$cmd 'ext2fs   (non-journaling fs)'"
-	cmd="$cmd 'mke2fs /dev/$1/$2'"
-
 	cmd="$cmd 'ext3fs   (journaling filesystem)'"
 	cmd="$cmd 'mke2fs -j /dev/$1/$2'"
+
+	cmd="$cmd 'ext2fs   (non-journaling fs)'"
+	cmd="$cmd 'mke2fs /dev/$1/$2'"
 
 	cmd="$cmd 'reiserfs (journaling filesystem)'"
 	cmd="$cmd 'mkreiserfs /dev/$1/$2'"
@@ -176,7 +177,7 @@ EOT
 		echo "	umount -arv"
 		echo "	reboot -f"
 		echo
-		echo "Or by executing 'shutdown' which will run the above commands."
+		echo "Or by executing 'shutdown -r' which will run the above commands."
 		echo
 	fi
 }
