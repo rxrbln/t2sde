@@ -15,5 +15,5 @@ else
   arch_machine="x86_64"
 fi
 
-arch_target="${arch_machine}-pc-linux-gnu"
+arch_target="${arch_machine}-unknown-linux-gnu"
 
