@@ -1,4 +1,6 @@
 
+set | grep STRIP
+
 echo_header "Creating initrd data:"
 rm -rf $disksdir/initrd
 mkdir -p $disksdir/initrd/{dev,proc,tmp,scsi,net,bin}
@@ -30,9 +32,9 @@ done
 #
 echo_status "Copy scsi and network kernel modules."
 for x in ../2nd_stage/lib/modules/*/kernel/drivers/{scsi,net}/*.o; do
-	mkdir -p $( dirname ${x#../2nd_stage/} )
-	cp $x ${x#../2nd_stage/}
-	strip --strip-debug --strip-unneeded ${x#../2nd_stage/}
+	xx=${x#../2nd_stage/}
+	mkdir -p $( dirname $xx ) ; cp $x $xx
+	strip $xx # --strip-debug --strip-unneeded $xx
 done
 cp ../2nd_stage/lib/modules/*/modules.dep       lib/modules/[0-9]*/
 cp ../2nd_stage/lib/modules/*/modules.pcimap    lib/modules/[0-9]*/
@@ -45,7 +47,7 @@ rm -f lib/modules/[0-9]*/kernel/drivers/net/{dummy,ppp*}.o
 #
 if [ "$ROCKCFG_BOOTDISK_USEKISS" = 1 ]; then
 	echo_status "Adding kiss shell for expert use of the initrd image."
-	cp $root/bin/kiss bin/
+	cp $build_dir/root/bin/kiss bin/
 	#mv linuxrc bin/; ln -s bin/kiss linuxrc
 	#rm -f lib/modules/[0-9]*/kernel/drivers/net/{dgrx,acenic}.o
 	#rm -f lib/modules/[0-9]*/kernel/drivers/scsi/{advansys,qla1280}.o
