@@ -13,7 +13,15 @@ public_ip() {
 }
 
 public_gw() {
-	addcode up 6 5 "ip route add default via $1 dev $if"
+	code="ip route add default via $1 dev $if" ; shift
+
+	case "$1" in
+	metric)
+		code="$code metric $2" ; shift ;;
+	esac
+	shift
+
+	addcode up 6 5 "$code"
 	iproute2_init_if
 }
 
