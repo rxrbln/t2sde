@@ -127,7 +127,7 @@ int main(int argc, char ** argv) {
 		return 1;
 	}
 
-	while (fgets(line, 1024, stdin) != NULL) {
+	do {
 
 		if ( sscanf(line, "%d fork() = %d", &pid, &newpid) == 2 ||
 		     sscanf(line, "%d vfork() = %d", &pid, &newpid) == 2 ||
@@ -142,7 +142,8 @@ int main(int argc, char ** argv) {
 			continue;
 		}
 
-		if ( sscanf(line, "%d _exit(%d", &pid, &newpid) == 2 ) {
+		if ( sscanf(line, "%d _exit(%d", &pid, &newpid) == 2 ||
+		     sscanf(line, "%d exit_group(%d", &pid, &newpid) == 2 ) {
 			freeproc(pid);
 			continue;
 		}
@@ -191,6 +192,6 @@ int main(int argc, char ** argv) {
 			continue;
 		}
 
-	}
+	} while (fgets(line, 1024, stdin) != NULL);
 	return 0;
 }
