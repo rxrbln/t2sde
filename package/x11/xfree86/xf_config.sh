@@ -137,8 +137,8 @@ xf_install() {
 
 	echo "Installing XFree86 Cron Script ..."
 	cp -fv $base/package/x11/xfree86/xfree86.cron \
-		$root/etc/cron.d/80-xfree86
-	chmod +x $root/etc/cron.d/80-xfree86
+		$root/etc/cron.daily/80-xfree86
+	chmod +x $root/etc/cron.daily/80-xfree86
 }
 
 # configure the World
