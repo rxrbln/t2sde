@@ -29,21 +29,24 @@ do
 done
 #
 echo_status "Copy scsi and network kernel modules."
-for x in ../2nd_stage/lib/modules/*/kernel/drivers/{scsi,net}/*.o; do
-	xx=${x#../2nd_stage/}
-	mkdir -p $( dirname $xx ) ; cp $x $xx
-	strip $xx # --strip-debug --strip-unneeded $xx
+for x in ../2nd_stage/lib/modules/*/kernel/drivers/{scsi,net}/*.{ko,o} ; do
+	# this test is needed in case there are only .o or only .ko files
+	if [ -f $x ]; then
+		xx=${x#../2nd_stage/}
+		mkdir -p $( dirname $xx ) ; cp $x $xx
+		strip $xx # --strip-debug --strip-unneeded $xx
+	fi
 done
 #
 for x in ../2nd_stage/lib/modules/*/modules.{dep,pcimap,isapnpmap} ; do
-	cp $x ${x#../2nd_stage/}
+	cp $x ${x#../2nd_stage/} || echo "not found: $x" ;
 done
 #
 for x in lib/modules/*/kernel/drivers/{scsi,net}; do
 	ln -s ${x#lib/modules/} lib/modules/
 done
-rm -f lib/modules/[0-9]*/kernel/drivers/scsi/{st,scsi_debug}.o
-rm -f lib/modules/[0-9]*/kernel/drivers/net/{dummy,ppp*}.o
+rm -f lib/modules/[0-9]*/kernel/drivers/scsi/{st,scsi_debug}.{o,ko}
+rm -f lib/modules/[0-9]*/kernel/drivers/net/{dummy,ppp*}.{o,ko}
 #
 if [ "$ROCKCFG_BOOTDISK_USEKISS" = 1 ]; then
 	echo_status "Adding kiss shell for expert use of the initrd image."
