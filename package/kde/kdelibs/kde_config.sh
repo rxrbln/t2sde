@@ -4,6 +4,7 @@ if [ "$prefix_auto" = 1 ] ; then
 	prefix=$ROCKCFG_PKG_KDE3_CORE_PREFIX
   else 
 	pkgprefix -t arts
+	prefix=`pkgprefix prefix arts`
   fi
 
   set_confopt
