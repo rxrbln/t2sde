@@ -36,11 +36,12 @@ iso=$3
 
 # function to return a 512 sized sector count
 sector_count() {
-	echo `du -B 512 --apparent-size $1 | -d ' ' -f1` 
+	echo `du -B 512 --apparent-size $1 | cut -f1` 
 }
 
-if [ "$cd" != 0 ] ; then
+if [ "$cd" != 1 ] ; then
 	echo "Not the first CD - not blessing ..."
+	exit 0
 fi
 
 
