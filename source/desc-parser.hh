@@ -57,6 +57,11 @@ public:
     return true;
   }
 
+  virtual void ClearImpl ()
+  {
+    download_infos.clear ();
+  }
+
   std::vector<DownloadInfo> download_infos;
 };
 
