@@ -1,5 +1,6 @@
 
 #include <ostream>
+#include <algorithm>
 
 #include "desc-parser.hh"
 #include "Curl.hh"
@@ -314,7 +315,7 @@ void GenList (std::string file, std::ifstream& s, bool quote_mode) {
 
   std::sort(newer_versions.begin(), newer_versions.end());
   if (newer_versions.size() > 0)
-    std::cout << "XXX " << newer_versions[0].str() << std::endl;
+    std::cout << "XXX " << prefix << newer_versions[0].str() << std::endl;
   
   std::cout << "-----------------------" << std::endl;
 }
@@ -391,10 +392,10 @@ int main (int argc, char* argv[])
 	      std::cout << "trying to download listing of " << info.url << std::endl;
 	      
 	      dl.Download(info.url, 0, 200000);
-	     
 	      std::ifstream* s = dl.OpenFile();
 	      GenList(info.file, *s, info.protocol == "http");
-	      s -> close();
+	      s->close();
+	      delete s;
 	    }
 	  }
 	  catch (TimeoutException e) {
