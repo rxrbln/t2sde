@@ -32,7 +32,7 @@ fi
 . ${SETUPD}/gui_dialog.sh
 
 gui_dialog() {
-        Xdialog --stdout --title 'STONE - Setup Tool ONE - ROCK Linux System Configuration' "$@"
+        Xdialog --stdout --title 'STONE - Setup Tool ONE - T2 System Configuration' "$@"
 }
 
 gui_edit() {

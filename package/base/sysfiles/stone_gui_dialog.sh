@@ -34,7 +34,7 @@ gui_dialog_s62=$(( gui_dialog_columns - 18 ))
 gui_dialog_s15=$(( gui_dialog_lines - 10 ))
 
 gui_dialog() {
-	dialog --stdout --title 'STONE - Setup Tool ONE - ROCK Linux System Configuration' "$@"
+	dialog --stdout --title 'STONE - Setup Tool ONE - T2 System Configuration' "$@"
 }
 
 
