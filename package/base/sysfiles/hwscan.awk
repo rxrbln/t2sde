@@ -1,4 +1,4 @@
-#!/usr/bin/awk -f
+#!/bin/gawk -f
 #
 # Usually I'd write this in perl. But this should also work on a system
 # with no perl installed, so it's in awk ...
