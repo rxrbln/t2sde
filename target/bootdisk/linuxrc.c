@@ -37,6 +37,8 @@
 #include <sys/wait.h>
 #include <sys/stat.h>
 #include <sys/klog.h>
+#include <sys/utsname.h>
+#include <dirent.h>
 #include <fcntl.h>
 #include <errno.h>
 #include <stdarg.h>
@@ -65,6 +67,36 @@
 int pivot_root(const char *new_root, const char *put_old);
 
 int exit_linuxrc=0;
+
+char mod_loader[50];
+char mod_dir[255];
+char mod_suffix[3];
+int  mod_suffix_len=0;
+
+void mod_load_info(char *mod_loader, char *mod_dir, char *mod_suffix) {
+	struct utsname uts_name;
+
+	if(uname(&uts_name) < 0) {
+		perror("unable to perform uname syscall correctly");
+		return;
+	} else if(strcmp(uts_name.sysname, "Linux") != 0) {
+		printf("Your operating system is not supported ?!\n");
+		return;
+	}
+
+	strcpy(mod_loader, "/sbin/insmod");
+	strcpy(mod_dir, "/lib/modules/");
+	strcat(mod_dir, uts_name.release);
+
+	/* kernel module suffix for <= 2.4 is .o, .ko if above */
+	if(uts_name.release[2] > '4') {
+		strcpy(mod_suffix, ".ko");
+	} else {
+		strcpy(mod_suffix, ".o");
+	}
+
+	return;
+}
 
 void doboot()
 {
@@ -198,60 +230,130 @@ void httpload()
 	doboot();
 }
 
-void load_modules(char * dir)
-{
+/* check wether a file is a directory */
+int is_dir(const struct dirent *entry) {
+	struct stat tmpstat;
+	stat(entry->d_name, &tmpstat);
+	return S_ISDIR(tmpstat.st_mode);
+}
+
+/* this is used in the module loading shell for sorting dirs before files */
+int dirs_first_sort(const struct dirent **a, const struct dirent **b) {
+	if(is_dir(*a)) {
+		if(is_dir(*b)) return 0;
+		else return 1;
+	} else if(is_dir(*b)) {
+		return -1;
+	} else return 0;
+}
+
+/* this is used in the modules loading shell to filter out kernel objects */
+int module_filter(const struct dirent *entry) {
+	if(is_dir(entry)) {
+		if(!strcmp(entry->d_name, ".") || !strcmp(entry->d_name, "..")) return 0;
+		else return 1;
+	} else if (!strcmp(entry->d_name+(strlen(entry->d_name) - mod_suffix_len), mod_suffix)) return 1;
+	return 0;
+}
+
+/* this starts the module loading shell */
+void load_modules(char* directory){
 	struct dirent **namelist;
-	char text[100], filename[200];
+	int cnt, n, len, needmodhdr = 1, needdirhdr = 1;
+	int loader_res=0;
+	char filename[256], input[256];
 	char *execargs[100];
-	int n, m=0, len;
 	int pid;
 
-	n = scandir(dir, &namelist, 0, alphasort);
-	if (n > 0) {
-		printf("List of available modules:\n\n     ");
+	printf("module loading shell\n\n");
+	printf("you can navigate through the filestem with 'cd'. for loading a module\n");
+	printf("simply enter the shown name, to exit press enter on a blank line.\n\n");
+
+	while(1) {
+		if(chdir(directory)) {
+			perror("chdir");
+		}
+
+		n = scandir(".", &namelist, module_filter, dirs_first_sort);
+		if (n < 0) {
+			perror("scandir");
+		}
+		getcwd(directory, 255);
+
 		while(n--) {
 			strcpy(filename, namelist[n]->d_name);
-			free(namelist[n]); len = strlen(filename);
+			len = strlen(filename);
+	
+			if(is_dir(namelist[n])) {
+				/* first visit to this function, show header */
+				if(needdirhdr == 1) {
+					printf("directories:\n	");
+					needdirhdr = 0; cnt = 1;
+				}
+				printf("[%-15s]",filename);
+				if(cnt % 4 == 0) printf("\n	");
+				cnt++;
+			} else { 
+				/* finished directories, show module header */
+				if(needmodhdr == 1) {
+					if(needdirhdr == 0) printf("\n");
+					printf("kernel modules:\n	");
+					needmodhdr = 0; cnt = 1;
+				}
+				filename[len-mod_suffix_len] = 0;
+				printf("%-15s",filename);
+				if(cnt % 4 == 0) printf("\n	");
+				cnt++;
+			}
+	
+			free(namelist[n]);
+		}
+		free(namelist);
+		needmodhdr = 1; needdirhdr = 1;
+	
+		printf("\n[%s]> ", directory);
+		fflush(stdout);
+	
+		input[0]=0; fgets(input, 256, stdin); input[255]=0;
+		if (strlen(input) > 0) input[strlen(input)-1]=0;
+		if (input[0] == 0) return;
+	
+		if(!strncmp(input, "cd ", 3)) {
+			/* absolute or relative pathname? */
+			if(input[3] == '/') {
+				strcpy(filename, input+3);
+			} else {
+				strcpy(filename, directory);
+				strcat(filename, "/");
+				strcat(filename, input+3);
+			}
+			free(directory);
+			directory = (char*)malloc(strlen(filename)+1);
+			strcpy(directory, filename);
+		} else {
+			snprintf(filename, 256, "%s%s", strtok(input, " "), mod_suffix);
+			execargs[0] = mod_loader; execargs[1] = filename;
+			for (n=2; (execargs[n] = strtok(NULL, " ")) != NULL; n++) ;
 
-			if (len > 2 && !strcmp(filename+len-2, ".o")) {
-				filename[len-2]=0;
-				printf("%-15s", filename);
-				if (++m % 4 == 0) printf("\n     ");
+			if ( ! access(filename, R_OK) ) {
+				if ( fork() == 0 ) {
+					execvp(execargs[0], execargs);
+					printf("Can't start %s!\n", execargs[0]);
+					exit(1);
+				}
+				wait(&loader_res);
+				if(WEXITSTATUS(loader_res) != 0)
+					printf("error: module loader finished unsuccesfully!\n");
+				else 
+					printf("module loader finished succesfully.\n");
+			} else {
+				printf("%s: no such module found! try again... (enter=exit)\n", filename);
 			}
 		}
-		if (m % 4 != 0) printf("\n");
-		printf("\n");
-		free(namelist);
-	} else {
-		printf("No modules found!\n");
-		if (n == 0) free(namelist);
-		return;
-	}
 
-	printf("Enter module name (and optional parameters): ");
-	fflush(stdout);
-
-	while (1) {
-		trygets(text, 100);
-		if (text[0] == 0) return;
-
-		snprintf(filename, 200, "%s/%s.o", dir, strtok(text, " "));
-		execargs[0] = "insmod"; execargs[1] = "-v";
-		execargs[2] = "-f";     execargs[3] = filename;
-		for (n=4; (execargs[n] = strtok(NULL, " ")) != NULL; n++) ;
-
-		if ( ! access(filename, R_OK) ) break;
-		printf("No such module found. Try again (enter=back): ");
 		fflush(stdout);
 	}
-
-
-	if ( (pid = fork()) == 0 ) {
-		execvp(execargs[0], execargs);
-		printf("Can't start %s!\n", execargs[0]);
-		exit(1);
-	}
-	trywait(pid);
+	return;
 }
 
 int getdevice(char* devstr, int devlen, int cdroms, int floppies)
@@ -504,6 +606,9 @@ int main()
 	/* Only print important stuff to console */
 	klogctl(8, NULL, 3);
 
+	mod_load_info(mod_loader, mod_dir, mod_suffix);
+	mod_suffix_len = strlen(mod_suffix);
+
 	autoload_modules();
 
 	printf("\n\
@@ -523,12 +628,11 @@ drivers (if needed) and configure the installation source so the\n\
      0. Load 2nd stage system from local device\n\
      1. Load 2nd stage system from network\n\
      2. Configure network interfaces (IPv4 only)\n\
-     3. Load kernel networking modules from this disk\n\
-     4. Load kernel SCSI modules from this disk\n\
-     5. Load kernel modules from another disk\n\
-     6. Activate already formatted swap device\n\
-     7. Execute a (kiss) shell if present (for experts!)\n\
-     8. Validate a CD/DVD against its embedded checksum\n\
+     3. Load kernel modules from this disk\n\
+     4. Load kernel modules from another disk\n\
+     5. Activate already formatted swap device\n\
+     6. Execute a (kiss) shell if present (for experts!)\n\
+     7. Validate a CD/DVD against its embedded checksum\n\
 \n\
 What do you want to do [0-8] (default=0)? ");
 		fflush(stdout);
@@ -550,14 +654,10 @@ What do you want to do [0-8] (default=0)? ");
 		  break;
 		  
 		case 3:
-		  load_modules("/lib/modules/net");
+		  load_modules(mod_dir);
 		  break;
 
 		case 4:
-		  load_modules("/lib/modules/scsi");
-		  break;
-
-		case 5:
 		  if ( mkdir("/mnt_floppy", 700) )
 		    perror("Can't create /mnt_floppy");
 		  
@@ -571,15 +671,15 @@ What do you want to do [0-8] (default=0)? ");
 		    perror("Can't remove /mnt_floppy");
 		  break;
 		  
-		case 6:
+		case 5:
 		  activate_swap();
 		  break;
 		  
-		case 7:
+		case 6:
 		  exec_sh();
 		  break;
 		  
-		case 8:
+		case 7:
 		  checkisomd5();
 		  break;
 		  
