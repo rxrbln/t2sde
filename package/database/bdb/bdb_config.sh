@@ -25,11 +25,11 @@ configscript="../dist/configure"
 
 var_append confopt ' ' '--enable-compat185'
 var_append confopt ' ' '--enable-cxx'
-var_append confopt ' ' "--includedir=$root/$prefix/include/${pkg:1}"
+var_append confopt ' ' "--includedir=$root/$prefix/include/db${ver:0:1}"
 
 # we need the install-sh here, since our gnu-install does not
 # handle the transform-name ...
-var_append confopt ' ' "--program-transform-name='s/db/${pkg:1}/'"
+var_append confopt ' ' "--program-transform-name='s/db/db${ver:0:1}/'"
 
 # bdb doesn't like some of our make options
 makeopt="docdir=$docdir all" ; makeinstopt="docdir=$docdir install"
@@ -39,7 +39,7 @@ hook_add postinstall 8 'chmod 755 $libdir/libdb-${ver:0:3}.so \
 
 # create yet another alternative library name some programs use
 # this will crate a symlink in the form libdb-4.1.so -> libdb41.so
-hook_add postinstall 9 'ln -sfv libdb-${ver:0:3}.so $libdir/libdb${pkg:3}.so'
+hook_add postinstall 9 'ln -sfv libdb-${ver:0:3}.so $libdir/libdb${ver0::1}.so'
 
 # bdb does copy the docs itself ...
 createdocs=0
