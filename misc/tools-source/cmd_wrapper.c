@@ -408,6 +408,7 @@ reread_file_finished:
 			fprintf(logfile, "\n");
 			fclose(logfile);
 		}
+
 		newargv[c1] = NULL;
 		execvp(newargv[0], newargv);
 		fprintf(stderr, "cmd_wrapper: execvp(%s,...) - %s\n", 
