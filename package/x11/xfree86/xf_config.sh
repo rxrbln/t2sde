@@ -109,9 +109,11 @@ xf_install() {
 	register_wm twm TWM /usr/X11/bin/twm
 
 	echo "Copying default example configs ..."
-	cp -fv $base/package/x11/xfree86/XF86Config.data $root/etc/X11/XF86Config
-	cp -fv $base/package/x11/xfree86/XF86Config.data $root/etc/X11/XF86Config.example
-	cp -fv $base/package/x11/xfree86/local.conf.data $root/etc/fonts/local.conf
+	cp -fv $base/package/x11/xfree86/XF86Config.data \
+		$root/etc/X11/XF86Config.example
+	cp -fv $root/etc/X11/XF86Config{.example,}
+	cp -fv $base/package/x11/xfree86/local.conf.data \
+		$root/etc/fonts/local.conf
 
 	echo "Fixing compiled keymaps directory ..."
 	mkdir -p $root/var/lib/xkb $root/etc/X11/xkb
@@ -128,7 +130,8 @@ xf_install() {
 	echo "export WINDOWMANAGER=kde" > $root/etc/profile.d/windowmanager
 
 	echo "Installing XFree86 Cron Script ..."
-	cp -fv $base/package/x11/xfree86/xfree86.cron $root/etc/cron.d/80-xfree86
+	cp -fv $base/package/x11/xfree86/xfree86.cron \
+		$root/etc/cron.d/80-xfree86
 	chmod +x $root/etc/cron.d/80-xfree86
 }
 
@@ -156,7 +159,7 @@ EOT
 	        echo "Enabling Matrox HALlib (since this is x86) ..."
 		cat >> config/cf/host.def << EOT
 
-/* Additinal TC/DVI support since this is x86 */
+/* Additinal TV/DVI support since this is x86 */
 #define		HaveMatroxHal		YES
 EOT
 	fi
