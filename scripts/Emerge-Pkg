@@ -31,6 +31,7 @@ debug=0
 ignore_chksum=0
 update=1
 dryrun=0
+rebuild=1
 repositories=""
 
 #
@@ -44,8 +45,8 @@ help_msg() {
 	echo
 	echo "Usage: ./scripts/Emerge-Pkg" \
 	             "[ -cfg <config> ] [ -dep ] [ -dry-run ]"
-	echo "$spacer [ -noupdate ] [ -debug ]"
-	echo "$spacer [ -repository repository-name ]"
+	echo "$spacer [ -noupdate ] [ -ignore-chksum ] [ -norebuild ]"
+	echo "$spacer [ -repository repository-name ] [ -debug ]"
 	echo "$spacer [ pkg-name(s) ]"
 	echo "pkg-name(s) are only optional if a repository is specified!"
 	echo
@@ -68,7 +69,9 @@ while [ "$1" ] ; do
 		-debug)   debug=1 ;;
 		-dep)     builddep=1 ;;
 		-dry-run) dryrun=1 ;;
-		-noupdate) update=0 ;;	
+		-noupdate) update=0 ;;
+		-ignore-chksum) ignore_chksum=1 ;;
+		-norebuild) rebuild=0 ;;
 		-repository) repositories="$repositories $2" ; shift ;;
 		-*) help_msg ; exit 1 ;;
 		*)  break ;;
@@ -113,12 +116,11 @@ check4update()
 			  echo "  $package: New version ($o_ver -> $n_ver). Added."
 			addlist="$addlist $package"
                 else
-                  if [ $ignore_chksum = 0 ] ; then
                         o_ck=$(grep '^ROCK Linux Package Source Checksum' \
                                 /var/adm/packages/$package | cut -f6 -d' ')
                         n_ck=$(md5sum package/*/$package/* 2> /dev/null | \
                                 grep -v '\.cache$' | md5sum | cut -f1 -d' ')
-                        if [ "$o_ck" != "$n_ck" ] ; then
+                        if [ $ignore_chksum = 0 -a "$o_ck" != "$n_ck" ] ; then
                                 [ $debug = 1 ] && \
 				  echo "  $package: New source checksum ($n_ck). Added."
 				addlist="$addlist $package"
@@ -126,15 +128,21 @@ check4update()
 				if [ -f /var/adm/cache/$package ] ; then
 				  if ! grep -q BUILDTIME /var/adm/cache/$package ; then
 				    [ $debug = 1 ] && \
-				      echo "  $package: Former build was broken. Added."
-				    addlist="$addlist $package"
+				      echo -n "  $package: Former build was broken."
+				    if [ $rebuild = 1 ] ; then
+
+					[ $debug = 1 ] && echo " Added."
+					addlist="$addlist $package"
+				    else
+					[ $debug = 1 ] && echo " Skipped."
+				    fi
+					
 				  fi
 				else
 				  [ $debug = 1 ] && \
 				    echo "  $package: Equal source checksum ($n_ck), skipped."
 				fi
                         fi
-                  fi
                 fi
         fi
 
@@ -215,7 +223,7 @@ deplist="$deplist $@"
 
 # packages from repositories
 for x in $repositories ; do
-	deplist="$deplist `egrep " $x " config/$config/packages | \
+	deplist="$deplist ` egrep "^X .* $x .*" config/$config/packages | \
 	         cut -d ' ' -f 5`"
 done
 
