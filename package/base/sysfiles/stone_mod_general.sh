@@ -159,13 +159,17 @@ set_locale_sub() {
 
 set_locale() {
 	unset LANG ; [ -f /etc/profile.d/locale ] && . /etc/profile.d/locale
-	locale="${LANG:-none}" ; cmd="gui_menu 'general_locale' 'Select one of the following locales. (Current: $locale)' 'none' 'set_locale_sub none'"
+	locale="${LANG:-none}" ; cmd="gui_menu 'general_locale' 'Select one of the following locales. (Current: $locale)'"
+	x="$( echo -e "none\tnone" | expand -t52 )"
+	cmd="$cmd '$x' 'set_locale_sub none'"
 
 	x="$( echo -e "POSIX\tC" | expand -t52 )"
 	cmd="$cmd '$x' 'set_locale_sub C' $(
-		grep -H ^title /usr/share/i18n/locales/* 2> /dev/null | \
-		awk -F '"' '{ sub(".*/", "", $1); sub("[\\.:].*", "", $1); '"
-		printf \" '%-52s%s' 'set_locale_sub %s'\", \$2, \$1, \$1; }"
+		grep -H ^title /usr/share/i18n/locales/* | sed \
+        	  -e 's,.*/\(.*\):.*"\(.*\)",\1\t\2,g' \
+        	  -e "s,',´,g" | while read key title; do
+			echo "'${title:0:50}	$key' 'set_locale_sub $key'" | expand -t53 | tr '\n' ' '
+		done
 	)"
 
 	eval "$cmd"
