@@ -188,3 +188,246 @@ Patch:
   WORD_LIST *
 
 
+			     BASH PATCH REPORT
+			     =================
+
+Bash-Release: 2.05b
+Patch-ID: bash205b-005
+
+Bug-Reported-by:	Jim Meyering <jim@meyering.net>
+Bug-Reference-ID:	<87bs6v8iib.fsf@pixie.eng.ascend.com>
+Bug-Reference-URL:	http://mail.gnu.org/archive/html/bug-bash/2002-09/msg00047.html
+
+Bug-Description:
+
+When in a locale with multibyte characters, the readline display updater
+will occasionally cause a segmentation fault when attempting to compute
+the length of the first multibyte character on the line.
+
+Patch:
+
+*** ./lib/readline/mbutil.c	Tue Jun  4 11:54:29 2002
+--- ./lib/readline/mbutil.c	Mon Aug  5 11:20:39 2002
+***************
+*** 206,210 ****
+      {
+        /* shorted to compose multibyte char */
+!       memset (ps, 0, sizeof(mbstate_t));
+        return -2;
+      }
+--- 206,211 ----
+      {
+        /* shorted to compose multibyte char */
+!       if (ps)
+! 	memset (ps, 0, sizeof(mbstate_t));
+        return -2;
+      }
+***************
+*** 213,217 ****
+        /* invalid to compose multibyte char */
+        /* initialize the conversion state */
+!       memset (ps, 0, sizeof(mbstate_t));
+        return -1;
+      }
+--- 214,219 ----
+        /* invalid to compose multibyte char */
+        /* initialize the conversion state */
+!       if (ps)
+! 	memset (ps, 0, sizeof(mbstate_t));
+        return -1;
+      }
+***************
+*** 226,232 ****
+  int
+  _rl_compare_chars (buf1, pos1, ps1, buf2, pos2, ps2)
+!      char *buf1, *buf2;
+!      mbstate_t *ps1, *ps2;
+!      int pos1, pos2;
+  {
+    int i, w1, w2;
+--- 228,237 ----
+  int
+  _rl_compare_chars (buf1, pos1, ps1, buf2, pos2, ps2)
+!      char *buf1;
+!      int pos1;
+!      mbstate_t *ps1;
+!      char *buf2;
+!      int pos2;
+!      mbstate_t *ps2;
+  {
+    int i, w1, w2;
+***************
+*** 277,282 ****
+  	  /* clear the state of the byte sequence, because
+  	     in this case effect of mbstate is undefined  */
+! 	  memset (ps, 0, sizeof (mbstate_t));
+  	}
+        else
+  	pos += tmp;
+--- 282,290 ----
+  	  /* clear the state of the byte sequence, because
+  	     in this case effect of mbstate is undefined  */
+! 	  if (ps)
+! 	    memset (ps, 0, sizeof (mbstate_t));
+  	}
++       else if (tmp == 0)
++ 	pos++;
+        else
+  	pos += tmp;
+			     BASH PATCH REPORT
+			     =================
+
+Bash-Release: 2.05b
+Patch-ID: bash205b-006
+
+Bug-Reported-by:	clowenst@ucsd.edu
+Bug-Reference-ID:	<156388ec.0212021151.51a48df1@posting.google.com>
+Bug-Reference-URL:	
+
+Bug-Description:
+
+When running in a locale with multibyte characters, the readline display
+updater will use carriage returns when drawing the line, overwriting any
+partial output already on the screen and not terminated by a newline.
+
+Patch:
+
+*** ./lib/readline/display.c	Tue Jun  4 10:54:47 2002
+--- ./lib/readline/display.c	Fri Sep 13 16:22:57 2002
+***************
+*** 71,75 ****
+  
+  #if defined (HANDLE_MULTIBYTE)
+! static int _rl_col_width PARAMS((char *, int, int));
+  static int *_rl_wrapped_line;
+  #else
+--- 71,75 ----
+  
+  #if defined (HANDLE_MULTIBYTE)
+! static int _rl_col_width PARAMS((const char *, int, int));
+  static int *_rl_wrapped_line;
+  #else
+***************
+*** 1349,1355 ****
+  	      _rl_output_some_chars (nfd + lendiff, temp - lendiff);
+  #if 0
+- 	      _rl_last_c_pos += _rl_col_width (nfd+lendiff, 0, temp-lendiff) - col_lendiff;
+- #else
+  	      _rl_last_c_pos += _rl_col_width (nfd+lendiff, 0, temp-col_lendiff);
+  #endif
+  	    }
+--- 1349,1355 ----
+  	      _rl_output_some_chars (nfd + lendiff, temp - lendiff);
+  #if 0
+  	      _rl_last_c_pos += _rl_col_width (nfd+lendiff, 0, temp-col_lendiff);
++ #else
++ 	      _rl_last_c_pos += _rl_col_width (nfd+lendiff, 0, temp-lendiff);
+  #endif
+  	    }
+***************
+*** 1511,1516 ****
+    /* If we have multibyte characters, NEW is indexed by the buffer point in
+       a multibyte string, but _rl_last_c_pos is the display position.  In
+!      this case, NEW's display position is not obvious. */
+!   if ((MB_CUR_MAX == 1 || rl_byte_oriented ) && _rl_last_c_pos == new) return;
+  #else
+    if (_rl_last_c_pos == new) return;
+--- 1511,1523 ----
+    /* If we have multibyte characters, NEW is indexed by the buffer point in
+       a multibyte string, but _rl_last_c_pos is the display position.  In
+!      this case, NEW's display position is not obvious and must be
+!      calculated. */
+!   if (MB_CUR_MAX == 1 || rl_byte_oriented)
+!     {
+!       if (_rl_last_c_pos == new)
+! 	return;
+!     }
+!   else if (_rl_last_c_pos == _rl_col_width (data, 0, new))
+!     return;
+  #else
+    if (_rl_last_c_pos == new) return;
+***************
+*** 1595,1603 ****
+      {
+        if (MB_CUR_MAX > 1 && rl_byte_oriented == 0)
+! 	{
+! 	  tputs (_rl_term_cr, 1, _rl_output_character_function);
+! 	  for (i = 0; i < new; i++)
+! 	    putc (data[i], rl_outstream);
+! 	}
+        else
+  	_rl_backspace (_rl_last_c_pos - new);
+--- 1602,1606 ----
+      {
+        if (MB_CUR_MAX > 1 && rl_byte_oriented == 0)
+! 	_rl_backspace (_rl_last_c_pos - _rl_col_width (data, 0, new));
+        else
+  	_rl_backspace (_rl_last_c_pos - new);
+***************
+*** 2118,2122 ****
+  static int
+  _rl_col_width (str, start, end)
+!      char *str;
+       int start, end;
+  {
+--- 2121,2125 ----
+  static int
+  _rl_col_width (str, start, end)
+!      const char *str;
+       int start, end;
+  {
+***************
+*** 2194,2196 ****
+  }
+  #endif /* HANDLE_MULTIBYTE */
+- 	  
+--- 2197,2198 ----
+			     BASH PATCH REPORT
+			     =================
+
+Bash-Release: 2.05b
+Patch-ID:  bash205b-007
+
+Bug-Reported-by:	dman@dman.ddts.net
+Bug-Reference-ID:	<15893.26358.129589.503364@gargle.gargle.HOWL>
+Bug-Reference-URL:	http://bugs.debian.org/cgi-bin/bugreport.cgi?bug=175127
+
+Bug-Description:
+
+Using the vi editing mode's case-changing commands in a locale with
+multibyte characters will cause garbage characters to be inserted into
+the editing buffer.
+
+Patch:
+
+*** ./lib/readline/vi_mode.c	Thu May 23 13:27:58 2002
+--- ./lib/readline/vi_mode.c	Tue Feb  4 15:11:07 2003
+***************
+*** 681,685 ****
+  {
+    wchar_t wc;
+!   char mb[MB_LEN_MAX];
+    mbstate_t ps;
+  
+--- 681,686 ----
+  {
+    wchar_t wc;
+!   char mb[MB_LEN_MAX+1];
+!   int mblen;
+    mbstate_t ps;
+  
+***************
+*** 704,708 ****
+        if (wc)
+  	{
+! 	  wctomb (mb, wc);
+  	  rl_begin_undo_group ();
+  	  rl_delete (1, 0);
+--- 705,711 ----
+        if (wc)
+  	{
+! 	  mblen = wctomb (mb, wc);
+! 	  if (mblen >= 0)
+! 	    mb[mblen] = '\0';
+  	  rl_begin_undo_group ();
+  	  rl_delete (1, 0);
