@@ -13,12 +13,10 @@ tgt_mnemosyne_parser() {
 
 tgt_mnemosyne_render() {
 	local root="$1" pkgseldir="$2" prefix="$3" configin="$4" rulesin="$5"
-	local file= filename= dirname= dirvar=
-	local subdirs= onchoice= helptext= conffile=
-	local render=0 deps= depsin= 
-	local x=
+	local file= dirname= dirvar= subdirs= x=
 
-	local option= var= val= desc= kind= helptext=
+	# exported variables
+	local onchoice= render=0
 
 	if [ "$pkgseldir" != "$root" ]; then
 		dirname="${pkgseldir##*/}"
@@ -29,183 +27,29 @@ tgt_mnemosyne_render() {
 	fi
 
 	if [ "$dirname" ]; then
-	cat <<EOT >> $configin
-	if [ "\$$dirvar" == 1 ]; then
-		comment '-- ${dirname//_/ }'
-		block_begin 2
-	fi
-EOT
+		cat <<-EOT >> $configin
+		if [ "\$$dirvar" == 1 ]; then
+		   comment '-- ${dirname//_/ }'
+		   block_begin 2
+		fi
+		EOT
 	fi
 
 	for file in $pkgseldir/*; do
-		deps=
 		if [ -d $file ]; then
 			tgt_mnemosyne_render "$root" "$file" "$prefix" "$configin" "$rulesin"
 			subdirs="$subdirs ${file#$root/}"
 		else
-			filename=${file##*/}
-			kind=${filename##*.}
-			option=${filename%.$kind}
-
-			option=${option/[0-9]*-/}
-
-			# var name
-			if [ "$kind" == "choice" ]; then
-				var=${option%%.*}
-				option=${option#*.}
-
-				# new choice?
-				[ "$onchoice" -a "$onchoice" != "$var" ] && onchoice=
-
-				if [ -z "$onchoice" ]; then
-					onchoice=$var
-					var=$( echo $var | tr [a-z] [A-Z] )
-
-					# help
-					# FIXME: how do i inject this help?
-					helptext= 
-					[ -f $pkgseldir/$onchoice.hlp ] && \
-						helptext=<$pkgseldir/$onchoice.hlp
-
-					cat <<EOT >> $configin
-			if [ "\$CFGTEMP_TRG_${prefix}_${var}" == 1 ]; then
-				choice ROCKCFG_TRG_${prefix}_${var} \${CFGTEMP_TRG_${prefix}_${var}_DEFAULT:-$option} \\
-					\${CFGTEMP_TRG_${prefix}_${var}_LIST}
-			fi
-						
-EOT
-				else
-					var=$( echo $var | tr [a-z] [A-Z] )
-				fi
-				var=ROCKCFG_TRG_${prefix}_${var}
-			elif [ "$kind" == ask -o "$kind" == all ]; then
-				var=ROCKCFG_TRG_${prefix}_$( tgt_mnemosyne_parser Variable $file "`echo $option | tr [a-z] [A-Z]`" )
-				[ "$onchoice" ] && onchoice=
-			else
-				continue
-			fi
-
-			# description
-			desc=$( tgt_mnemosyne_parser Description $file "${option//_/ }" )
-			
-			# dependencies
-			for x in $( tgt_mnemosyne_parser Dependencies $file ); do
-				if [[ $x == ROCKCFG_* ]]; then
-					deps="$deps $x"
-				else
-					deps="$deps ROCKCFG_TRG_${prefix}_$x"
-				fi
-			done
-
-			[ "$kind" == "choice" ] && depsin=$rulesin || depsin=$configin
-			set -- $deps; if [ $# -gt 0 ]; then
-				echo -n -e "\t\tif [ \"\$$1\" == '1' "
-				shift
-				for x; do
-					echo -n "-a \"\$1\" == '1' "
-				done
-				echo "]; then"
-			fi >> $depsin
-
-			# help
-			helptext= conffile= forced=
-
-			if [ -f ${file%.$kind}.conf ]; then
-				conffile="				. ${file%.$kind}.conf
-"
-			fi
-
-			for x in $( tgt_mnemosyne_parser Forced $file ); do
-				if [[ $x == *=* ]]; then
-					forced="$forced				ROCKCFGSET_TRG_${prefix}_${x}
-"
-				else
-					forced="$forced				ROCKCFGSET_TRG_${prefix}_${x}=1
-"
-				fi
-			done
-
-			# content
-			case $kind in
-				ask)	# boolean
-					val=$( tgt_mnemosyne_parser Default $file 0 )
-			
-					[ -f ${file%.$kind}.hlp ] && helptext=<${file%.$kind}.hlp
-
-					cat <<EOT >> $configin
-			bool '$desc' $var $val
-			if [ "\$$var" == 1 ]; then
-				var_append CFGTEMP_TRG_${prefix}_PKGLST ' ' $file
-$conffile			fi
-
-EOT
-					if [ "$forced" ]; then
-						cat<<EOT >>$rulesin
-			if [ "\$$var" == 1 ]; then
-$forced			fi
-EOT
-					fi
-					;;
-				choice) # multiple choice
-					val=$( tgt_mnemosyne_parser Default $file )
-					if [ "$val" ]; then
-						cat << EOT >> $rulesin
-			CFGTEMP${var#ROCKCFG}_DEFAULT=$val
-EOT
-					fi
-					cat << EOT >> $rulesin
-			CFGTEMP${var#ROCKCFG}=1
-			var_append CFGTEMP${var#ROCKCFG}_LIST ' ' "$option ${desc// /_}"
-EOT
-					cat << EOT >> $configin
-			if [ "\$$var" == "$option" ]; then
-				var_append CFGTEMP_TRG_${prefix}_PKGLST ' ' $file
-$conffile			fi
-EOT
-					if [ "$forced" ]; then
-						cat << EOT >> $rulesin
-			if [ "\$$var" == "$option" ]; then
-$forced			fi
-EOT
-					fi
-					;;
-				*)	# hidden field
-					cat <<EOT >> $configin
-			$var=1
-			var_append CFGTEMP_TRG_${prefix}_PKGLST ' ' $file
-$conffile
-EOT
-					if [ "$forced" ]; then
-						cat << EOT >> $rulesin
-$forced
-EOT
-					fi
-					;;
-			esac
-
-			if [ "$deps" ]; then
-				echo -e "\t\tfi" >> $depsin
-				if [ $kind = "ask" -o $kind = "choice" ]; then
-					# TODO: add rule: this directory will be shown if these deps are meet
-					true
-				fi
-			else
-				if [ $kind = "ask" ]; then
-					render=1
-				elif [ $kind = "choice" ]; then
-					render=1
-					# TODO: add rule: always display this choice
-				fi
-			fi
+			tgt_mnemosyne_render_option $file
 		fi
 	done
 
 	if [ "$dirname" ]; then
-	cat <<EOT >> $configin
-	if [ "\$$dirvar" == 1 ]; then
-		block_end
-	fi
-EOT
+		cat <<-EOT >> $configin
+		if [ "\$$dirvar" == 1 ]; then
+		   block_end
+		fi
+		EOT
 	fi
 
 	if [ $render -eq 1 ]; then
@@ -216,13 +60,222 @@ EOT
 		if [ "$dirvar" ]; then
 			for x in $subdirs; do
 				x=$( echo "${x//\//_}" | tr [a-z] [A-Z] )
-				cat <<EOT >> $rulesin
-if [ "\$CFGTEMP_TRG_${prefix}_$x" == 1 ]; then
-	$dirvar=1
-fi
-EOT
+				cat <<-EOT >> $rulesin
+				if [ "\$CFGTEMP_TRG_${prefix}_$x" == 1 ]; then
+				   $dirvar=1
+				fi
+				EOT
 			done
 		fi
+	fi
+}
+
+tgt_mnemosyne_render_option() {
+	local file="$1" var0= var= kind= option= dir=
+	local desc= conffile= forced= implied= val=
+	local deps= depsin= pkgselfiles=
+	local x= y=
+
+	# this defines dir,var0,option and kind acording to the following format.
+	# $dir/[$prio-]$var[$option].$kind
+	eval `echo $file | \
+	sed -n 's|\(.*\)/\([0-9]*\-\)\{0,1\}\([^\.]*\)\(.*\)\{0,1\}\.\([^\.]*\)|dir="\1" var0="\3" option="\4" kind="\5"|p'`
+	option=${option#.}
+	var=$( echo $var0 | tr [a-z] [A-Z] )
+	
+	# external data: configin rulesin prefix 
+	# global variables: onchoice render
+
+	# var name and description
+	case "$kind" in
+		choice)
+			# new choice?
+			[ "$onchoice" -a "$onchoice" != "$var" ] && onchoice=
+
+			desc=$( tgt_mnemosyne_parser Description $file "${var0//_/ } (${option//_/ })" )
+
+			if [ -z "$onchoice" ]; then
+				onchoice=$var
+
+				cat <<-EOT >> $rulesin
+				  CFGTEMP_TRG_${prefix}_${var}=0
+				EOT
+				cat <<-EOT >> $configin
+				  if [ "\$CFGTEMP_TRG_${prefix}_${var}" == 1 ]; then
+				    choice ROCKCFG_TRG_${prefix}_${var} \${CFGTEMP_TRG_${prefix}_${var}_DEFAULT:-$option} \\
+				       \${CFGTEMP_TRG_${prefix}_${var}_LIST}
+				  fi
+				EOT
+			fi
+			;;
+		ask|all)
+			var=$( tgt_mnemosyne_parser Variable $file $var )
+			desc=$( tgt_mnemosyne_parser Description $file "${var0//_/ }" )
+			[ "$onchoice" ] && onchoice=
+			;;
+		*)
+			continue
+			;;
+	esac
+	var=ROCKCFG_TRG_${prefix}_${var}
+
+	# dependencies
+	# NOTE: don't use spaces on the pkgsel file, only to delimite different dependencies
+	deps=
+	for x in $( tgt_mnemosyne_parser Dependencies $file ); do
+		case "$x" in
+			*!=*)	x=${x/!=/ != }	;;
+			*==*)	x=${x/==/ == }	;;
+			*=*)	x=${x/=/ == }	;;
+			*)	x="$x == '1'"	;;
+		esac
+		if [ "$deps" ]; then
+			if [[ "$x" == ROCKCFG_* ]]; then
+				deps="$deps -a \$$x"
+			else
+				deps="$deps -a \$ROCKCFG_TRG_${prefix}_$x"
+			fi
+		else
+			if [[ "$x" == ROCKCFG_* ]]; then
+				deps="\$$x"
+			else
+				deps="\$ROCKCFG_TRG_${prefix}_$x"
+			fi
+		fi
+	done
+
+	forced=
+	# forced options
+	for x in $( tgt_mnemosyne_parser Forced $file ); do
+		[[ $x != *=* ]] && x="$x='1'"
+		forced="$forced ROCKCFGSET_TRG_${prefix}_${x}"
+	done
+
+	# config script file
+	conffile=
+	if [ -f ${file%.$kind}.conf ]; then
+		conffile="${file%.$kind}.conf"
+	fi
+
+	# pkgsel files
+	pkgselfiles=$file
+	if [ "$kind" = "choice" ]; then
+		for x in $( tgt_mnemosyne_parser Imply $file ); do
+			y=`echo $dir/*$var0.$x.choice`
+			if [ -f "$y" ]; then
+				pkgselfiles="$pkgselfiles $y"
+			fi
+		done
+	fi
+
+	# content
+	case "$kind" in
+		ask)	val=$( tgt_mnemosyne_parser Default $file 0 )	;;
+		choice)	val=$( tgt_mnemosyne_parser Default $file )	;;
+		*)	val=1	;;
+	esac
+
+	#
+	# output to rules file
+	#
+	{
+	if [ "$deps" -a "$kind" != "choice" ]; then
+		echo "CFGTEMP${var#ROCKCFG}=\${CFGTEMP${var#ROCKCFG}:-0}"
+	fi
+
+	# dependencies
+	[ "$deps" ] && echo "if [ $deps ]; then"
+	echo -e "  CFGTEMP${var#ROCKCFG}=1"
+
+	# choice option
+	if [ "$kind" == "choice" ]; then
+		echo "  var_append CFGTEMP${var#ROCKCFG}_LIST ' ' '$option ${desc// /_}'"
+		if [ "$val" ]; then
+			echo "  CFGTEMP${var#ROCKCFG}_DEFAULT=$val"
+		fi
+	fi
+
+	# forced
+	if [ "$forced" ]; then
+		if [ "$kind" == "choice" ]; then
+			if [ "$val" ]; then
+				cat <<-EOT
+				  if [ "\${$var:-$val}" == "$option" ]; then
+				EOT
+			else
+				cat <<-EOT
+				  if [ "\$$var" == "$option" ]; then
+				EOT
+			fi
+		elif [ "$val" ]; then
+			cat <<-EOT
+			  if [ "\${$var:-$val}" == 1 ]; then
+			EOT
+		else
+			cat <<-EOT
+			  if [ "\$$var" == 1 ]; then
+			EOT
+		fi
+
+		for x in $forced; do
+			echo "    $x"
+		done
+		echo "  fi"
+	fi
+
+	[ "$deps" ] && echo "fi"
+	} >> $rulesin
+
+
+	#
+	# output to config file
+	#
+	{
+	echo "if [ \$CFGTEMP${var#ROCKCFG} == 1 ]; then"
+	
+	case "$kind" in
+		ask)	echo "   bool '$desc' $var $val"	;;
+		choice)	true	;;
+		*)	echo "   $var=1"	;;
+	esac
+
+	if [ "$kind" == "$choice" ]; then
+		cat <<-EOT
+		  if [ "\$$var" == "$option" ]; then
+		EOT
+	else
+		cat <<-EOT
+		   if [ "\$$var" == 1 ]; then
+		EOT
+	fi
+	cat <<-EOT
+	      var_append CFGTEMP_TRG_${prefix}_PKGLST ' ' "$pkgselfiles"
+	EOT
+
+	# conffiles
+	for x in $conffile; do
+		echo "      . $x"
+	done
+
+	cat <<-EOT
+	   fi
+	fi
+	EOT
+	} >> $configin
+
+	if [ "$deps" ]; then
+		case "$kind" in
+			ask|choice)
+				# TODO: add rule: this directory will be shown if these deps are meet
+				true	;;
+		esac
+	else
+		case "$kind" in
+			ask)	render=1	;;
+			choice)	render=1
+				# TODO: add rule: always display this choice
+				;;
+		esac
 	fi
 }
 
