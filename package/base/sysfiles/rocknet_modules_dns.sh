@@ -20,3 +20,13 @@ public_search() {
 	dns_init
 }
 
+public_hostname() {
+	addcode up 9 5 "hostname $1"
+}
+
+public_domainname() {
+	# THIS IS A HACK
+	addcode up 9 5 "sed 's/`hostname`\..* /`hostname`.$1 /' /etc/hosts > \
+	                /etc/hosts.new ; mv /etc/hosts{.new,}"
+}
+
