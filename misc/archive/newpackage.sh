@@ -68,25 +68,24 @@ if [ "$rep" != "*" ]; then
 fi
 
 rep=${dir/\/$package/}
+confdir="package/$dir"
 maintainer='The T2 Project <t2@exactcode.de>'
 
-echo -n "Creating package/$dir ... "
-if [ -e package/$dir ] ; then
+echo -n "Creating $confdir ... "
+if [ -e $confdir ] ; then
 	echo "failed"
-	echo -e "\tpackage/$dir already exists!\n"
+	echo -e "\t$confdir already exists!\n"
 	exit
 fi
-if mkdir -p package/$dir ; then
+if mkdir -p $confdir ; then
 	echo "ok"
 else
 	echo "failed"
 	exit
 fi
 
-cd package/$dir
-
 echo -n "Creating $package.desc ... "
-	cat >$package.desc <<EEE
+	cat >$confdir/$package.desc <<EEE
 [I] TODO: Short Information
 
 [T] TODO: Long Expanation
@@ -113,15 +112,15 @@ while [ "$1" ]; do
 	dl=$1; shift
 	file=`echo $dl | sed 's,^.*/,,g'`
 	server=${dl%$file}
-	echo [D] 0 $file $server >> $package.desc
+	echo [D] 0 $file $server >> $confdir/$package.desc
 done
-echo >> $package.desc
+echo >> $confdir/$package.desc
 
 echo "ok"
 echo -n "Creating $package.conf ... "
 
 if [ "$create_main" == "1" ] ; then
-	cat >>$package.conf <<-EEE
+	cat >>$confdir/$package.conf <<-EEE
 ${package}_main() { 
 	: TODO
 }
@@ -132,6 +131,5 @@ fi
 
 echo "ok"
 echo "Remember to fill in the TODO's:"
-cd -
-grep TODO package/$dir/$package.*
+grep TODO $confdir/$package.*
 echo
