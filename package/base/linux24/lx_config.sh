@@ -22,7 +22,7 @@
 
 treever=${ver:0:3} ; treever=${treever//./}
 archdir="$base/download/base/linux$treever"
-srctar="linux-$ver.tar.bz2"
+srctar="linux-$vanilla_ver.tar.bz2"
 
 lx_cpu=`echo "$arch" | sed -e s/x86/i386/ -e s/powerpc/ppc/`
 MAKE="$MAKE CROSS_COMPILE=$archprefix KCC=$KCC ARCH=$lx_cpu"
