@@ -23,7 +23,11 @@
 # --- ROCK-COPYRIGHT-NOTE-END ---
 
 export SETUPD="${SETUPD:-/etc/stone.d}"
-export SETUPG="${SETUPG:-dialog}"
+if which dialog > /dev/null ; then 
+	export SETUPG="${SETUPG:-dialog}"
+else
+	export SETUPG="${SETUPG:-text}"
+fi
 export STONE="`type -p $0`"
 
 if [ "$1" = "-text"   ] ; then SETUPG="text"   ; shift ; fi
