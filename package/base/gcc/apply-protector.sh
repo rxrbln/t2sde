@@ -13,7 +13,9 @@ if [ "$pfile" ] ; then
 	else
 		abord "Protector patch not found"
 	fi
-	[ -f protector.c ] && mv protector.{c,h} gcc/
+	if [ -f protector.c ] ; then
+		mv protector.{c,h} gcc/
+	fi
 else
 	echo "No stack-protector available for $pkg ..."
 fi
