@@ -160,8 +160,6 @@ lx_config ()
 		echo "Using \$base/config/\$config/linux.cfg."
 		echo "Since automatic generation is disabled ..."
 		cp -v $base/config/$config/linux.cfg .config
-		# create a valid .config (new settings may be available)
-		yes '' | eval $MAKE oldconfig > /dev/null
 	else
 		echo "Automatically creating default configuration ...."
 		auto_config
