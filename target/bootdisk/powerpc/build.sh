@@ -27,7 +27,7 @@ then
 	echo "Duplicates of /boot used on IBM RS/6k hardware." > etc/README
 	#
 	echo_status "Moving image (initrd) to yaboot directory."
-	mv -v initrd.img boot/
+	mv -v initrd.gz boot/
 	#
 	echo_status "Copy more config files."
 	cp -v $base/target/$target/powerpc/mapping .
