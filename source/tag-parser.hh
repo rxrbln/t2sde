@@ -37,17 +37,23 @@ protected:
   TagParser () {}
   virtual ~TagParser () {}
 
+  // erases all tag's data
+  void Clear() {
+      for (int i = 0; i < tags.size(); ++i)
+	tags[i] -> value = "";
+  }
+
   bool Parse(const std::string& file)
   {
     int error = 0;
     
     // parse
-    std::fstream desc_file(file.c_str());
+    std::fstream src_file(file.c_str());
     
     std::string line;
     std::string tag, value;
-    for (int linenr = 0; desc_file; ++linenr) {
-      std::getline(desc_file, line);
+    for (int linenr = 0; src_file; ++linenr) {
+      std::getline(src_file, line);
       
       if (line.size() == 0)
 	continue;
@@ -59,9 +65,9 @@ protected:
       
       if (line.size() < 3) {
 	++error;
-	std::cout << "Error: Only garbage found in line "
-		  << linenr << ":" << std::endl
-		  << "  " << line << std::endl;
+	std::cerr << file << ":"
+		  << linenr << ": only garbage in this line." << std::endl
+		  << "  '" << line << "'" << std::endl;
       }
       
       std::string::size_type idx = line.find(' ');
@@ -70,9 +76,8 @@ protected:
       
       if (line[0] != '[' || line[idx - 1] != ']') {
 	++error;
-	std::cout << "Error: No tag found in line "
-		  << linenr << ":" << std::endl
-		  << "  " << line << std::endl;
+	std::cerr << file << ":" << linenr << ": this line contains no tag." << std::endl
+		  << "  '" << line << "'" << std::endl;
 	continue;
       }
       
@@ -96,9 +101,7 @@ protected:
       
       if (!tag_found) {
 	++error;
-	std::cout << line << std::endl;
-	std::cout << "Error: Unknown tag: " << tag << " in line "
-		  << linenr << std::endl;
+	std::cerr << file << ":" << linenr << ": Unknown tag '" << tag << "'" << std::endl;
       }
     }
     return error == 0;
