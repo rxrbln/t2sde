@@ -102,19 +102,21 @@ lx_config ()
 	yes '' | eval $MAKE no2modconfig > /dev/null ; cp .config .config.2
 
 	if [ -f $base/target/$target/kernel$treever.conf.sh ] ; then
-		conffiles="$base/target/$target/kernel$treever.conf.sh $conffiles"
+		confscripts="$base/target/$target/kernel$treever.conf.sh $confscripts"
 	elif [ -f $base/target/$target/kernel.conf.sh ] ; then
-		conffiles="$base/target/$target/kernel.conf.sh $conffiles"
+		confscripts="$base/target/$target/kernel.conf.sh $confscripts"
 	fi
 
-	for x in $conffiles ; do
+	for x in $confscripts ; do
 		echo "  running: $x"
 		sh $x .config
 	done
 	cp .config .config.3
 
-	# merge target config
-	if [ -f $base/config/$config/linux.cfg ] ; then
+	# merge various text/plain config files
+	for x in $base/config/$config/linux.cfg \
+	         $base/target/$target/kernel.conf ; do
+	   if [ -f $x ] ; then
 		echo "  merging: 'config/$config/linux.cfg'"
 		x="$(sed '/CONFIG_/ ! d; s,.*CONFIG_\([^ =]*\).*,\1,' \
 			$base/config/$config/linux.cfg | tr '\n' '|')"
@@ -122,7 +124,8 @@ lx_config ()
 		sed 's,\(CONFIG_.*\)=n,# \1 is not set,' \
 			$base/config/$config/linux.cfg >> .config.4
 		cp .config.4 .config
-	fi
+	   fi
+	done
 
 	# create a valid .config
 	yes '' | eval $MAKE oldconfig > /dev/null ; cp .config .config.5
