@@ -114,6 +114,6 @@ EOT
 
 echo "[$( date +%T )] Rendering finished."
 
-rm -f $TARGET/regressions.$config.$${,-2}
+rm -f $TARGET/regressions.$config.$$ $TARGET/regressions.$config.$$-2
 mv -f $TARGET/regressions.$config.html $TARGET/$config/regressions.html
 
