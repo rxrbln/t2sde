@@ -25,6 +25,10 @@ archdir="$base/download/$repository/linux$treever"
 srctar="linux-${vanilla_ver}.tar.bz2"
 
 lx_cpu=`echo "$arch" | sed -e s/x86/i386/ -e s/powerpc/ppc/`
+
+# lx_cpu overrides due to multi architecture arch defines in ROCK Linux
+[ "$lx_cpu" = i386 -a $arch_machine = x86_64 ] && lx_cpu=x86_64 
+
 MAKE="$MAKE ARCH=$lx_cpu CROSS_COMPILE=$archprefix KCC=$KCC"
 
 lx_config ()
@@ -152,7 +156,7 @@ lx_config ()
 		cp .config_modules .config
 	fi
 
-	if [[ $treever -gt 24 ]] ; then
+	if [[ $treever != 24* ]] ; then
 		echo "Create symlinks and a few headers for <$lx_cpu> ... "
 		eval $MAKE include/linux/version.h include/asm
 		eval $MAKE oldconfig > /dev/null
