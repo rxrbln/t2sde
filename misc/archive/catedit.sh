@@ -21,16 +21,15 @@ else files="$@"
 fi
 
 until
-	grep '^\[C\]' $files | sed -e 's,^[^:]*/,,;' -e 's,\.[^ ]* , ",;' \
-	     -e 's,$,",;' | sed -e 's, "$,",' | tr '\n' ' ' > $tmp
+	pkglst=$(grep '^\[C\]' $files | sed -e 's,^[^:]*/,,;' \
+	         -e 's,\.[^ ]* , ",;' -e 's,$,",;' | sed -e 's, "$,",' \
+	         | tr '\n' ' ' )
 
-
-	cat $tmp
-
-	dialog --backtitle "ROCK Linux package category editor" \
+	eval dialog --backtitle \"ROCK Linux package category editor\" \
 	       ${item:+--default-item} $item --cancel-label \
-	       Quit --menu "Choose the package you want to edit" \
-	       42 120 35 $( cat $tmp ) 2> $tmp
+	       Quit --menu \"Choose the package you want to edit\" \
+	       42 120 35 $pkglst 2> $tmp
+
 	item="$( cat $tmp )"
 	cat $tmp
 	[ -z "$item" ]
