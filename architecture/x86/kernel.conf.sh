@@ -63,8 +63,8 @@
 		dnl
 		CONFIG_RTC=y
 
-		include(`kernel-common.conf')
-		include(`kernel-scsi.conf')
+		include(`kernel-common.conf.m4')
+		include(`kernel-scsi.conf.m4')
 
 		dnl SATA stuff that is mostly x86 right now
 		dnl we need a modular kernel anyway ... :-(
@@ -81,8 +81,8 @@
 		CONFIG_SCSI_SATA_VIA=y
 		CONFIG_SCSI_SATA_VITESSE=y
 
-		include(`kernel-net.conf')
-		include(`kernel-fs.conf')
+		include(`kernel-net.conf.m4')
+		include(`kernel-fs.conf.m4')
 
 		dnl NTFS for installation on esoteric notebooks where the user
 		dnl might have the ISOs on an NTFS partition due to unsupported
