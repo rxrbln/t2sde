@@ -37,14 +37,6 @@ lx_tempdir=""
 
 MAKE="$MAKE ARCH=$lx_cpu CROSS_COMPILE=$archprefix KCC=$KCC"
 
-# correct the abolute path for patchfiles supplied in the .desc file
-for x in $patchfiles ; do
-	if [ ! -e "$x" -a -n "${x##*/*}" ] ; then
-		y="$base/download/mirror/${x:0:1}/$x"
-		patchfiles="${patchfiles/$x/$y}"
-	fi
-done
-
 auto_config ()
 {
 	if [ -f $base/architecture/$arch/kernel$treever.conf.sh ] ; then
