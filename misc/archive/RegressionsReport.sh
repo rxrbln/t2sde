@@ -58,10 +58,9 @@ cat <<EOT
 	<tr><td>Total</td><td>:</td><td>$pkgtotal</td></tr>
 </table>
 <br />
-<table border="1" cellspacing="0" width="100%">
-<tr><th colspan="2">Failed Builds</th></tr>
 EOT
 
+{
 pattern="^X "
 pkgtotal=0 pkgerr=0 pkgok=0
 for stagelevel in 0 1 2 3 4 5 6 7 8 9; do
@@ -78,15 +77,19 @@ EOT
 	done < <( grep -e "$pattern$stagelevel.*" config/$config/packages )
 	pattern="$pattern."
 done
+} > $TARGET/regressions.$config.$$-2
 
 cat <<EOT
-</table>
-<br />
 <table border="1" cellspacing="0" width="100%">
 	<tr><td>Total</td><td>:</td><td align="right">$pkgtotal</td></tr>
 	<tr><td>Built Fine</td><td>:</td><td align="right">$pkgok</td></tr>
 	<tr><td>Broken Builds</td><td>:</td><td align="right">$pkgerr</td></tr>
 	<tr><td>Pending Builds</td><td>:</td><td align="right">$( expr $pkgtotal - $pkgok - $pkgerr )</td></tr>
+</table>
+<br />
+<table border="1" cellspacing="0" width="100%">
+<tr><th colspan="2">Failed Builds</th></tr>
+$( cat $TARGET/regressions.$config.$$-2 )
 </table>
 </td><td>
 <table>
@@ -111,6 +114,6 @@ EOT
 
 echo "[$( date +%T )] Rendering finished."
 
-rm -f $TARGET/regressions.$config.$$
+rm -f $TARGET/regressions.$config.$${,-2}
 mv -f $TARGET/regressions.$config.html $TARGET/$config/regressions.html
 
