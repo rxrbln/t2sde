@@ -11,6 +11,7 @@ if [ "$ROCKCFG_X86_BITS" = 32 ] ; then
 	arch_machine="i686" ;;
   esac
 else
+  arch_sizeof_long=8
   arch_sizeof_char_p=8
   arch_machine="x86_64"
 fi
