@@ -22,7 +22,7 @@ root=
 
 show_usage() {
 	cat<<-EOT
-	usage: $0 [-v] [-cfg <config>] [-no-enabled-too] [-repository <repositories>]
+	usage: $0 [-v] [-cfg <config>] [--no-enabled-too] [-repository <repositories>]
 	EOT
 }
 
@@ -33,7 +33,7 @@ while [ $# -gt 0 ]; do
 		-w)	HTML=1			;;
 		--help)	show_usage; exit 1	;;
 		-R)	root="$2"; shift	;;
-		-no-enabled-too)
+		--no-enabled-too)
 			enabled=.		;;
 		-repository)
 			shift; repositories="$*"
@@ -71,10 +71,10 @@ expand_stages() {
 }
 
 audit_package() {
-	local pkg="$1" repo="$2" ver="$3"
+	local pkg="$1" repo="$2" ver="$3" enabled="$4"
 	local stages= svndiff= oldver= newver= lchanges= stage=
 	local lstatus= lbuild= file=
-	shift 3; stages="$*"
+	shift 4; stages="$*"
 
 	svndiff=`svn diff package/$repo/$pkg`
 	if [ "$svndiff" ]; then
@@ -90,7 +90,13 @@ audit_package() {
 		fi
 	fi
 
-	for stage in $stages; do
+	if [ "$enabled" == "O" ]; then
+		for stage in $stages; do
+			lbuild="$lbuild NO($stage)"
+		done
+		lstatus=3
+	else
+		for stage in $stages; do
 		file=`ls -1 $LOGSDIR/$stage-$pkg.{err,log,out} 2> /dev/null`
 		if [ "$file" ]; then
 			case "$file" in
@@ -107,8 +113,10 @@ audit_package() {
 		else
 			lbuild="$lbuild NO($stage)"
 		fi
-	done
+		done
+	fi
 	case "$lstatus" in
+		3)	lstatus=NOQUEUED	;;
 		2)	lstatus=FAILED		;;
 		1)	lstatus=SUCCESSFUL	;;
 		*)	lstatus=PENDING		;;
@@ -143,15 +151,15 @@ if [ "$repositories" ]; then
 		repo=${repo#package/}; repo=${repo%/}
 		if [ -d package/$repo/ ]; then
 			grep -e "^$enabled.* $repo " config/$config/packages | while \
-				read x stages x repo pkg ver x; do
-					audit_package $pkg $repo $ver `expand_stages $stages`
+				read e stages x repo pkg ver x; do
+					audit_package $pkg $repo $ver $e `expand_stages $stages`
 			done
 		fi
 	done
 else
 	grep -e "^$enabled" config/$config/packages | while \
-		read x stages x repo pkg ver x; do
-			audit_package $pkg $repo $ver `expand_stages $stages`
+		read e stages x repo pkg ver x; do
+			audit_package $pkg $repo $ver $e `expand_stages $stages`
 	done
 fi
 
