@@ -32,7 +32,6 @@ fi
 
 # default disk-size is 600 MB
 dsize=$(( 600 * 1024 ))
-
 mkdebug=0
 
 while true ; do
@@ -54,12 +53,13 @@ echo ; date "+  [%X] Removing old files with same prefix ..."
 rm -rf ${isoprefix}_*
 
 date "+  [%X] Reading configs and creating ISO index ..."
-index=`mktemp` ; dat=`mktemp`
+index=`mktemp` ; dat=`mktemp` ; pathspec=`mktemp`
+rm -f ${pathspec}*
 
 for cfg ; do
 	id="`grep '^export ROCKCFG_ID=' config/$cfg/config | cut -f2 -d\'`"
 	if ! cat build/$id/isofs.txt >> $dat
-	then rm -f $dat $index ; exit 1 ; fi
+	then rm -f $dat $index ${pathspec}_* ; exit 1 ; fi
 done
 
 # function to add a given file $1 to the place $2 on the resulting ISO
@@ -68,13 +68,13 @@ add() {
 	local from="$1" to="$2" done=0
 	if [ ! -f "$from" -a ! -d "$from" ] ; then
 		echo "No such file or directory: $from"
-		rm -f $dat $index ; exit 1
+		rm -f $dat $index ${pathspec}_* ; exit 1
 	fi
 
 	size="`du -sk $from | cut -f1`"
 	if [ $size -gt $(( $dsize - $disk_0_size )) ] ; then
-		echo "Junk $from is too big!"
-		rm -f $dat $index ; exit 1
+		echo "Chunk $from is too big!"
+		rm -f $dat $index ${pathspec}_* ; exit 1
 	fi
 
 	for x in $disks ; do
@@ -82,7 +82,7 @@ add() {
 		if [ $(( ${!ds} + $size )) -le \
 		     $(( $dsize - $disk_0_size )) ] ; then
 			eval "$ds=$(( ${!ds} + $size ))"
-			eval "$dd='${!dd} $to=$from'"
+			echo "$to=$from" >> ${pathspec}_${disk_nr}
 			done=1 ; break
 		fi
 	done
@@ -90,7 +90,14 @@ add() {
 	if [ $done = 0 ] ; then
 		disk_nr=$(( $disk_nr + 1 ))
 		ds=disk_${disk_nr}_size ; eval "$ds=$size"
-		dd=disk_${disk_nr}_data ; eval "$dd='$to=$from'"
+
+		# FIXME: if in a path-list files, mkisofs complains about
+		#        missing isolinux. Should be a mkisofs bug!
+		if [ "$to" = "isolinux/" -o "$from" = "isolinux/" ] ; then
+			echo "$to=$from" >> ${pathspec}_iso
+		else
+			echo "$to=$from" >> ${pathspec}_${disk_nr}
+		fi
 		disks="$disks $disk_nr"
 	fi
 }
@@ -101,7 +108,7 @@ while read tag data ; do
 	if [ $tag = BOOT ] ; then
 		if [ "$bootoptions" ] ; then
 			echo "Multiple boot options found!"
-			rm -f $dat $index ; exit 1
+			rm -f $dat $index ${pathspec}_* ; exit 1
 		else
 			bootoptions="$data"
 		fi
@@ -122,7 +129,7 @@ while read type from to ; do
 		add $from $to
 		if [ $disk_nr -gt 0 ] ; then
 			echo "Every-disk data is too big!"
-			rm -f $dat $index ; exit 1
+			rm -f $dat $index ${pathspec}_* ; exit 1
 		fi
 	fi
 done < $dat
@@ -135,7 +142,7 @@ while read type from to ; do
 		add $from $to
 		if [ $disk_nr -gt 1 ] ; then
 			echo "Disk 1 is too big!"
-			rm -f $dat $index ; exit 1
+			rm -f $dat $index ${pathspec}_* ; exit 1
 		fi
 	fi
 done < $dat
@@ -162,7 +169,7 @@ done < $dat
 echo -n > $index
 for x in 0 $disks ; do
 	dd=disk_${x}_data
-	for y in ${!dd} ; do
+	for y in ${!dd} `cat ${pathspec}_${x}` ; do
 		to=${y%=*} ; from=${y#*=}
 		if [ -d $from ] ; then
 			find $from -printf "disk$x	$to%P\\n" >> $index
@@ -179,8 +186,8 @@ fi
 
 xxx() {
 	if ! mkisofs "$@" &> $dat ; then
-		echo ; echo "mkisofs $*" ; echo
-		cat $dat ; rm -f $index $dat ; exit 1
+		echo ; echo "mkisofs $@" ; echo
+		cat $dat ; rm -f $index $dat; exit 1
 	fi
 }
 
@@ -208,12 +215,18 @@ date "+  [%X] Creating ${isoprefix}_index.txt ..."
 sort -tk -n -k2 < $index > ${isoprefix}_index.txt
 
 for x in $disks ; do
-	dd=disk_${x}_data ; ds=disk_${x}_size
+	ds=disk_${x}_size
 	date "+  [%X] Creating ${isoprefix}_cd$x.iso ..."
 	echo "This is disk #$x." > $dat
+	# FIXME: current mkisofs does only accept one -path-list
+	cat ${pathspec}_${x} ${pathspec}_0 > ${pathspec}_current
 	xxx -q -r -T -J -l -o ${isoprefix}_cd$x.iso -A "ROCK Linux - Disk $x" \
 	    -P 'The ROCK Linux Project - http://www.rocklinux.org' \
-	    $bootoptions -graft-points disk$x.txt=$dat $disk_0_data ${!dd}
+	    -path-list ${pathspec}_current \
+	    $bootoptions -graft-points disk$x.txt=$dat \
+	    `cat ${pathspec}_iso 2>/dev/null`
+	rm -f ${pathspec}_iso
+	rm -f ${pathspec}_current
 
 	bootoptions=""
 
@@ -300,5 +313,5 @@ fi
 date "+  [%X] Done. Have fun!"
 echo
 
-rm -f $index $dat
+rm -f $index $dat ${pathspec}_* 
 
