@@ -44,7 +44,7 @@ service_destroy() {
 	local service_name=$1 x=
 
 	for x in . log; do
-		if [ -d /service/$service_name/$x/supervice ]; then
+		if [ -d /service/$service_name/$x/supervise ]; then
         		runsvctrl d /service/$service_name/$x
         		svwaitdown /service/$service_name/$x
 		fi
