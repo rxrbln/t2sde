@@ -5,6 +5,8 @@ if [ -z "$1" ] ; then
 	exit
 fi
 
+trap 'echo "Got SIGINT (Crtl-C)." ; rm $$.log ; exit 1' INT
+
 svn diff $* | awk "
 	BEGIN { FS=\"[ /\t]\" }
 	/+++ / { pkg=\$4 }
