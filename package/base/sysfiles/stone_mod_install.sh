@@ -130,8 +130,7 @@ can't modify this disks partition table."
 vg_action() {
 	cmd="gui_menu vg 'Volume Group $1'"
 
-
-	if [ -e /proc/lvm/VGs/$1 ]; then
+	if [ -d /dev/$1 ]; then
 		cmd="$cmd 'Display attributes of $1' 'gui_cmd \"display $1\" vgdisplay $1'"
 
 		if grep -q "^/dev/$1/" /proc/swaps /proc/mounts; then
@@ -163,10 +162,10 @@ disk_add() {
 }
 
 vg_add() {
-	local x y=0
+	local x= y=0
 	cmd="$cmd 'Logical volumes of $1:' 'vg_action $1'"
-	if [ -e /proc/lvm/VGs/$1 ] ; then
-		for x in $( cd /proc/lvm/VGs/$1/LVs; ls -1 )
+	if [ -d /dev/$1 ] ; then
+		for x in $( cd /dev/$1; ls -1 )
 		do
 			part_add $1 $x ; y=1
 		done
@@ -193,8 +192,10 @@ This dialog allows you to modify your discs parition layout and to create filesy
 		  do
 			disk_add $x
 		  done
-		  for x in $( cat /etc/lvmtab 2> /dev/null )
-		  do
+		  for x in $( cat /etc/lvmtab 2> /dev/null ); do
+			vg_add "$x"
+		  done
+		  [ -x /sbin/vgs ] && for x in $( vgs --noheadings -o name 2> /dev/null ); do
 			vg_add "$x"
 		  done
 		else
