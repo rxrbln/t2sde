@@ -19,6 +19,7 @@ find $build_root -printf "%P\n" | sed '
 /\/src/		d;
 /\.a$/		d;
 /\.o$/		d;
+/\.old$/	d;
 
 /\/games/	d;
 /\/local/	d;
@@ -74,7 +75,7 @@ find $build_root -printf "%P\n" | sed '
 	[ "$file" ] || continue
 	mkdir -p `dirname $file`
 	if [ -f $build_root/$file ] ; then
-		cp -p $build_root/$file $file
+		cp -dp $build_root/$file $file
 	else
 		mkdir $file
 	fi
@@ -82,7 +83,7 @@ done
 
 echo "Creating links for identical files."
 while read ck fn ; do      
-        if [ "$oldck" = "$ck" ] ; then
+        if [ "$oldck" = "$ck" -a -s $fn ] ; then
                 echo "\"$fn -> $oldfn\""
                 rm $fn ; ln $oldfn $fn
         else    
