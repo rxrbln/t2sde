@@ -22,6 +22,10 @@
 #
 # [MAIN] 20 hardware Kernel Drivers Configuration
 
+set_hw_setup() {
+    echo "export HARDWARE_SETUP=$1" > /etc/conf/hardware
+}
+
 flip_hw_config() {
 	local tmp=`mktemp`
 	awk "\$0 == \"### $1 ###\", \$0 == \"\" {"'
@@ -63,37 +67,74 @@ add_hw_config() {
 
 main() {
     while
+        HARDWARE_SETUP=rockplug
+	if [ -f /etc/conf/hardware ]; then
+	    . /etc/conf/hardware
+	fi
+	for x in hwscan rockplug; do
+	    if [ "$HARDWARE_SETUP" = $x ]; then
+		eval "hw_$x='<*>'"
+	    else
+		eval "hw_$x='< >'"
+	    fi
+	done
+
 	cmd="gui_menu hw 'Kernel Drivers Configuration'"
-	cmd="$cmd 'Edit /etc/conf/kernel (kernel drivers config file)'"
-	cmd="$cmd \"gui_edit 'Kernel Drivers Config File' /etc/conf/kernel\""
-	cmd="$cmd 'Re-create /boot/initrd-`uname -r`.img file (mkinitrd)'"
-	cmd="$cmd 'gui_cmd mkinitrd mkinitrd' '' ''"
-	hwscan -d -s /etc/conf/kernel
+	if [ "$HARDWARE_SETUP" = rockplug ]; then
+	    cmd="$cmd \"$hw_rockplug Use ROCKPLUG to configure hardware.\""
+	    cmd="$cmd \"set_hw_setup rockplug\"";
+	    cmd="$cmd \"$hw_hwscan Use hwscan to configure hardware.\""
+	    cmd="$cmd \"set_hw_setup hwscan\"";
+	    cmd="$cmd \"\" \"\"";
+	    cmd="$cmd 'Edit/View PCI configuration'";
+	    cmd="$cmd \"gui_edit PCI /etc/conf/pci\""
+	    cmd="$cmd 'Edit/View USB configuration'";
+	    cmd="$cmd \"gui_edit USB /etc/conf/usb\""
+	    cmd="$cmd \"\" \"\"";
+	    
+	    #@FIXME single shot menu?
 
-	id=""
-	while read line; do
+	    cmd="$cmd 'Re-create initrd image (mkinitrd, `uname -r`)'"
+	    cmd="$cmd 'gui_cmd mkinitrd mkinitrd' '' ''"
+	fi
+	    
+	if [ "$HARDWARE_SETUP" = hwscan ]; then
+	    cmd="$cmd \"$hw_rockplug Use ROCKPLUG to configure hardware.\" \"set_hw_setup rockplug\"";
+	    cmd="$cmd \"$hw_hwscan Use hwscan to configure hardware.\" \"set_hw_setup hwscan\"";
+	    cmd="$cmd \"\" \"\"";
+	    cmd="$cmd 'Edit /etc/conf/kernel (kernel drivers config file)'"
+	    cmd="$cmd \"gui_edit 'Kernel Drivers Config File' /etc/conf/kernel\""
+	    cmd="$cmd 'Re-create initrd image (mkinitrd, `uname -r`)'"
+	    cmd="$cmd 'gui_cmd mkinitrd mkinitrd' '' ''"
+	    hwscan -d -s /etc/conf/kernel
+
+	    id=""
+	    while read line; do
 		if [ "${line#\#\#\# }" != "${line}" -a \
-		     "${line% \#\#\#}" != "${line}" ]
-		then
-			id="${line#\#\#\# }"; id="${id% \#\#\#}"
-			state=0; name="Unamed Kernel Driver"
+		    "${line% \#\#\#}" != "${line}" ]
+		    then
+		    id="${line#\#\#\# }"; id="${id% \#\#\#}"
+		    state=0; name="Unamed Kernel Driver"
 		elif [ -z "$id" ]; then
-			continue
+		    continue
 		elif [ "${line#\# }" != "${line}" ]; then
-			name="${line#\# }"
+		    name="${line#\# }"
 		elif [ "${line#\#[!\# ]}" != "${line}" ]; then
-			[ $state -eq 0 ] && state=1
-			[ $state -eq 2 ] && state=3
+		    [ $state -eq 0 ] && state=1
+		    [ $state -eq 2 ] && state=3
 		elif [ "${line#[!\# ]}" != "${line}" ]; then
-			[ $state -eq 0 ] && state=2
-			[ $state -eq 1 ] && state=3
+		    [ $state -eq 0 ] && state=2
+		    [ $state -eq 1 ] && state=3
 		elif [ -z "$line" ]; then
-			add_hw_config
+		    add_hw_config
 		fi
-	done < /etc/conf/kernel
-	[ -z "$id" ] || add_hw_config
-
+	    done < /etc/conf/kernel
+	    [ -z "$id" ] || add_hw_config
+	fi	   
+ 
 	eval "$cmd"
     do : ; done
+
+    return
 }
 
