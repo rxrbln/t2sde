@@ -38,7 +38,7 @@ for x in ../2nd_stage/lib/modules/*/kernel/drivers/{scsi,net}/*.{ko,o} ; do
 	if [ -f $x ]; then
 		xx=${x#../2nd_stage/}
 		mkdir -p $( dirname $xx ) ; cp $x $xx
-		strip $xx # --strip-debug --strip-unneeded $xx
+		strip --strip-debug $xx # stripping more breaks the object
 	fi
 done
 #
