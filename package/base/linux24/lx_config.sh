@@ -40,8 +40,8 @@ MAKE="$MAKE ARCH=$lx_cpu CROSS_COMPILE=$archprefix KCC=$KCC"
 # correct the abolute path for patchfiles supplied in the .desc file
 for x in $patchfiles ; do
 	if [ ! -e "$x" -a -n "${x##*/*}" ] ; then
-		var_remove patchfiles " " "$x"
-		var_append patchfiles " " "$base/download/mirror/${x:0:1}/$x"
+		y="$base/download/mirror/${x:0:1}/$x"
+		patchfiles="${patchfiles/$x/$y}"
 	fi
 done
 
