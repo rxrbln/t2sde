@@ -1,16 +1,12 @@
-             ____   ___   ___ _  __  _
-            |  _ \ / _ \ / __| |/ / | |   _ _ __  _   _ _  _
-            | . _/| | | | |  | '_/  | |  |_| '_ \| | | | \/ |
-            | |\ \| |_| | |__| . \  | |__| | | | | `_' |>  <
-            |_| \_\ ___/ \___|_|\_\ |____|_|_| |_|\___/|_/\_|
-         [============> http://www.rocklinux.org/ <============]
 
-ROCK Linux on Apple, PReP and IBM RS/6k PowerPC was brought to you by
-Rene Rebe - ROCK Linux Consulting (Germany).
+T2 SDE - System Development Environment
 
-  http://www.rocklinux-consulting.de
+  http://www.exactcode.de/t2
 
-So you are going to install ROCK Linux ...
+T2 on Apple, PReP and IBM RS/6k PowerPC hardware was primarily sponsored by
+Rene Rebe - ExactCode.
+
+So you are going to install T2 Linux ...
 
 Possible choices are:
   install ........... normal CD boot 
