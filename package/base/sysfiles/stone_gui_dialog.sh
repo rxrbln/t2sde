@@ -169,7 +169,7 @@ gui_yesno() {
 gui_edit() {
 	# find editor
 	for x in $EDITOR vi nvi emacs xemacs pico ; do
-		if which $x > /dev/null
+		if type -p $x > /dev/null
 		then xx=$x ; break ; fi
 	done
 	if [ "$xx" ] ; then

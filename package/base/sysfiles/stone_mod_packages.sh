@@ -53,7 +53,7 @@ read_ids() {
 
 	cmd="$cmd '' ''"
 
-	if mount $dev $mnt ; then
+	if mount $opt $dev $mnt ; then
 		for x in `cd $mnt; ls -d */pkgs | cut -f1 -d/` ; do
 			cmd="$cmd '$x' 'ROCKCFG_SHORTID=\"$x\"'"
 		done
@@ -66,20 +66,30 @@ read_ids() {
 }
 
 startgas() {
-	[ -z "$( cd $dir; ls )" ] && mount -v -o ro $dev $dir
+	[ -z "$( cd $dir; ls )" ] && mount $opt -v -o ro $dev $dir
 	if [ "$ROCKCFG_SHORTID" = "Automatically choose first" ]; then
 		ROCKCFG_SHORTID="$( cd $dir; ls -d */pkgs | \
 					cut -f1 -d/ | head -1 )"
 		echo "Using Config-ID <${ROCKCFG_SHORTID:-None}> .."
 	fi
-	echo
-	echo "Running: gasgui $gasguiopt \\"
-	echo "                -c '$ROCKCFG_SHORTID' \\"
-	echo "                -t '$root' \\"
-	echo "                -d '$dev' \\"
-	echo "                -s '$dir'"
-	echo
-	gasgui $gasguiopt -c "$ROCKCFG_SHORTID" -t "$root" -d "$dev" -s "$dir"
+	if [ $startgas = 1 ] ; then
+		echo
+		echo "Running: gasgui $gasguiopt \\"
+		echo "                -c '$ROCKCFG_SHORTID' \\"
+		echo "                -t '$root' \\"
+		echo "                -d '$dev' \\"
+		echo "                -s '$dir'"
+		echo
+		gasgui $gasguiopt -c "$ROCKCFG_SHORTID" -t "$root" -d "$dev" -s "$dir"
+	elif [ $startgas = 2 ] ; then
+		echo
+		echo "Running: stone gas main \\"
+		echo "               '$ROCKCFG_SHORTID' \\"
+		echo "               '$root' \\"
+		echo "               '$dev' \\"
+		echo "               '$dir'"
+		$STONE gas main "$ROCKCFG_SHORTID" "$root" "$dev" "$dir"
+	fi
 }
 
 main() {
@@ -90,6 +100,9 @@ main() {
 Note: You can install, update and remove packages (as well as query
 package information) with the command-line tool \"mine\". This is just
 a simple frontend for the \"mine\" program.'"
+
+		cmd="$cmd 'Mount Options:  $opt'"
+		cmd="$cmd 'gui_input \"Mount Options (e.g. -s -o sync) \" \"\$opt\" opt'"
 
 		cmd="$cmd 'Source Device:  $dev'"
 		cmd="$cmd 'gui_input \"Source Device\" \"\$dev\" dev'"
@@ -104,11 +117,13 @@ a simple frontend for the \"mine\" program.'"
 		read_ids
 
 		cmd="$cmd '' ''"
-		cmd="$cmd 'Start Package Manager' 'startgas=1'"
+		type -p gasgui > /dev/null &&
+			cmd="$cmd 'Start gasgui Package Manager (recommended)' 'startgas=1'"
+		cmd="$cmd 'Start gastone Package manager (minimal)'  'startgas=2'"
 
 		if eval "$cmd" ; then
-			if [ $startgas = 1 ]; then
-				startgas
+			if [ $startgas != 0 ]; then
+				startgas $startgas
 				break
 			fi
 		else
