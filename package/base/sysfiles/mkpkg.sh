@@ -18,7 +18,7 @@ slog=`mktemp` wlog=`mktemp` flog=`mktemp`
 
 strace -o $slog -F -f -q -e open,creat,`
 	`mkdir,mknod,link,symlink,rename,utime,chdir,`
-	`execve,fork,vfork,_exit -p $$ &
+	`execve,fork,vfork,_exit,exit_group -p $$ &
 strace_pid=$!; sleep 1; cd $PWD
 
 "$@"
