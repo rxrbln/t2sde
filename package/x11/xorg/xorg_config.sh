@@ -119,7 +119,8 @@ x_install() {
 	echo "Installing xfs init script ..."
 	install_init xfs $base/package/x11/xorg/xfs.init
 
-	register_xdm xdm 'X11 dislay manager' /usr/X11R6/bin/xdm
+
+	register_xdm xdm 'X11 display manager' /usr/X11R6/bin/xdm
 
 
 	echo "Installing the xdm start script (multiplexer) ..."
