@@ -7,9 +7,8 @@ mkdir -p $disksdir/2nd_stage
 cd $disksdir/2nd_stage
 mkdir -p mnt/source mnt/target
 #
-package_map='       +00-dirtree         +glibc22            +glibc23
--gcc2               -gcc3               -gcc33              -gccx
--linux24-source        -linux26-source        -linux24benh-src
+package_map='       +00-dirtree         +glibc	            -cc2
+-linux24-source     -linux26-source     -linux24benh-src
 -linux24-header     -linux26-header     -linux24benh-header
 -linux24            -linux26            -linux24benh
 -binutils           -bin86              -nasm               -dietlibc
@@ -21,7 +20,7 @@ package_map='       +00-dirtree         +glibc22            +glibc23
 +dump               +eject              +disktype
 +hdparm             +memtest86          +cpuburn            +bonnie++
 -mine               -bize               -termcap            +ncurses
-+readline           -strace             -ltrace             -perl5
++readline           -strace             -ltrace             -perl
 -m4                 -time               -gettext            -zlib
 +bash               +attr               +acl                +findutils
 +mktemp             +coreutils          -diffutils          -patch
