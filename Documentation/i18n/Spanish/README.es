@@ -8,7 +8,7 @@
 
  * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *
  *                                                                         *
- *   ROCK Linux is Copyright (C) 1998 - 2002  Clifford Wolf                *
+ *   Copyright (C) 1998 - 2002 ROCK Linux Project
  *                                                                         *
  *   Read the file 'COPYING' for licensing details.                        *
  *                                                                         *
