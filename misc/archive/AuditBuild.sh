@@ -59,7 +59,7 @@ expand_stages() {
 
 audit_package() {
 	local pkg="$1" repo="$2" ver="$3"
-	local stages= svndiff= oldver= lchanges= stage=
+	local stages= svndiff= oldver= newver= lchanges= stage=
 	local lstatus= lbuild= file=
 	shift 3; stages="$*"
 
@@ -67,10 +67,13 @@ audit_package() {
 	if [ "$svndiff" ]; then
 		lchanges="CHANGED"
 		oldver=`echo "$svndiff" | grep '^-\[V\]' | cut -d' ' -f2`
+		newver=`echo "$svndiff" | grep '^+\[V\]' | cut -d' ' -f2`
 
 		if [ "$oldver" ]; then
 			ver="$oldver -> $ver"
 			lchanges="UPDATED"
+		elif [ "$newver" ]; then
+			lchanges="ADDED"
 		fi
 	fi
 
@@ -82,7 +85,11 @@ audit_package() {
 					lbuild="$lbuild OK($stage)"	;;
 				*.out)	lbuild="$lbuild NO($stage)"	;;
 				*)	lstatus=2
-					lbuild="$lbuild ERR($stage)"	;;
+					if [ "$HTML" == "1" ]; then
+						lbuild="$lbuild <a href=\"$stage-$pkg.err\">ERR($stage)</a>"
+					else
+						lbuild="$lbuild ERR($stage)"
+					fi	;;
 			esac
 		else
 			lbuild="$lbuild NO($stage)"
