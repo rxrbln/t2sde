@@ -1,5 +1,12 @@
 #!/bin/sh
 
+if [ "$1" = -combo ] ; then
+	combo=1
+elif [ "$#" != 0 ] ; then
+	echo "usage: $0 [-combo]"
+	exit 1
+fi
+
 tmpfile=`mktemp -p $PWD`
 tmpdir=$tmpfile.dir
 mkdir $tmpdir || exit 1
@@ -45,13 +52,14 @@ do
 			if [ -f /boot/boot-text.b ]; then
 				cp /boot/boot-text.b $tmpdir/boot.b || rc=1
 			fi
-			if [ $image = boot_288 ]; then
+			liloconf=lilo-conf-${image#boot_}
+			if [ $image = boot_288 -o "$combo" = 1 ] ; then
 				cp initrd.img $tmpdir || rc=1
+				[ $image = boot_144 ] && liloconf=lilo-conf-1x2
 			fi
 			sed -e "s,/mnt/,$tmpdir/,g" \
 			    -e "s,/dev/floppy/0,$tmpdev,;" \
-				< boot/lilo-conf-${image#boot_} \
-				> $tmpdir/lilo.conf || rc=1
+				< boot/$liloconf > $tmpdir/lilo.conf || rc=1
 			lilo -C $tmpdir/lilo.conf > /dev/null || rc=1
 			;;
 	esac
