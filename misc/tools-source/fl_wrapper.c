@@ -783,7 +783,13 @@ static void * get_dl_symbol(char * symname)
 #if DLOPEN_LIBC
 	static void * libc_handle = 0;
 
-	if (!libc_handle) libc_handle=dlopen("libc.so.6", RTLD_LAZY);
+	if (!libc_handle) {
+	  char *path_libc = getenv("FLWRAPPER_LIBC");
+	  if (!path_libc) 
+	    path_libc = "libc.so.6";
+
+	  libc_handle=dlopen(path_libc, RTLD_LAZY);
+	}
 	if (!libc_handle) {
 		printf("fl_wrapper.so: Can't dlopen libc: %s\n", dlerror());
 		abort();
