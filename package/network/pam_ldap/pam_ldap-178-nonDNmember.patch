@@ -1,0 +1,51 @@
+## pam_ldap-178-nonDNmember.patch by Peter Marschall <peter@adpm.de>
+##
+## DP: search for group members with non-DN attribute username 
+## DP: after searching for DN-valued attribute failed
+
+--- ./pam_ldap.c
++++ ./pam_ldap.c	2005-03-28 11:44:52.939314905 +0200
+@@ -3871,15 +3871,39 @@
+       rc = ldap_compare_s (session->ld,
+ 			   session->conf->groupdn,
+ 			   session->conf->groupattr, session->info->userdn);
+-      if (rc != LDAP_COMPARE_TRUE)
++      
++      if (rc == LDAP_COMPARE_FALSE)
++	{
++#ifndef NO_2ND_CHANCE
++	  /* 2nd chance: compare group membership based on non-DN attributes */
++	  rc = ldap_compare_s (session->ld,
++			       session->conf->groupdn,
++                               session->conf->groupattr, username);
++#endif /* NO_2ND_CHANCE */
++
++	  if (rc != LDAP_COMPARE_TRUE)
++	    {
++	      snprintf (buf, sizeof buf, "You must be a %s of %s to login.",
++			session->conf->groupattr, session->conf->groupdn);
++	      _conv_sendmsg (appconv, buf, PAM_ERROR_MSG, no_warn);
++
++	      /* return error in case of failure, denied in case of no membership */
++	      return (rc == LDAP_COMPARE_FALSE) ? PAM_PERM_DENIED : PAM_AUTH_ERR;
++	    }
++       }
++      else if (rc == LDAP_COMPARE_TRUE)
++       {
++         rc = success;
++       }
++      else
+ 	{
+ 	  snprintf (buf, sizeof buf, "You must be a %s of %s to login.",
+ 		    session->conf->groupattr, session->conf->groupdn);
+ 	  _conv_sendmsg (appconv, buf, PAM_ERROR_MSG, no_warn);
+-	  return PAM_PERM_DENIED;
++
++	  /* return error in case of failure, denied in case of no membership */
++	  return (rc == LDAP_COMPARE_FALSE) ? PAM_PERM_DENIED : PAM_AUTH_ERR;
+ 	}
+-      else
+-	rc = success;
+     }
+ 
+   if (rc == success && session->conf->checkserviceattr)
