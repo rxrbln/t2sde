@@ -13,7 +13,7 @@
 		 "pentium	586"		\
 		 "pentium-mmx	586MMX"		\
 		 "pentiumpro	686"		\
-		 "pentium2	686"		\
+		 "pentium2	PENTIUMII"	\
 		 "pentium3	PENTIUMIII"	\
 		 "pentium4	PENTIUM4"	\
 		 "k6		K6"		\
@@ -34,7 +34,8 @@
 	#	cut -c 57- | cut -f1 -d' ' | tr -d '"'`
 	#
 	for x in 386 486 586 586TSC 586MMX 686 PENTIUMIII PENTIUM4 \
-	         K6 K7 ELAN CRUSOE WINCHIPC6 WINCHIP2 WINCHIP3D CYRIXIII
+	         K6 K7 K8 ELAN CRUSOE WINCHIPC6 WINCHIP2 WINCHIP3D \
+	         CYRIXIII VIAC3_2
 	do
 		if [ "$linux_arch" != "$x" ]
 		then echo "# CONFIG_M$x is not set"
