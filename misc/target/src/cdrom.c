@@ -6,8 +6,10 @@
 #include <sys/stat.h>
 #include <unistd.h>
 #include <sys/mount.h>
+#include <stdio.h>
 
 int cdrom_detect() {
+  FILE *f;
   char buf[PATH_MAX+1];
   const char *blank = "";
   struct stat sbuf;

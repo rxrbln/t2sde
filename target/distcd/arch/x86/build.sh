@@ -9,7 +9,7 @@ pushd $isofsdir >/dev/null
 
     # copy bootloader files
     #FIXME not only cd, compare ROCKCFG_TARGET_DISTCD_BOOTTYPE=cd
-    cp $tmpdir/usr/lib/syslinux/isolinux.bin boot/isolinux/
+    cp $build_root/usr/lib/syslinux/isolinux.bin boot/isolinux/
     #FIXME grub: cp tmp/boot/grub/* boot/grub/
 
     # prepare bootloader config
@@ -26,7 +26,7 @@ EOF
 
     # kernel
     for each in $initrd_images; do
-	[ -e $tmpdir/boot/vmlinuz_$each ] && cp $tmpdir/boot/vmlinuz_$each boot/
+	[ -e $build_root/boot/vmlinuz_$each ] && cp $build_root/boot/vmlinuz_$each boot/
     done
 
     # initrd-$kver.img ...
