@@ -32,13 +32,13 @@ echo "Creating /boot/initrd-${kernel}.img ..."
 if [ "$empty" = 0 ]; then
   grep '^modprobe ' /etc/conf/kernel |
   grep -v 'no-initrd' | sed 's,[ 	]#.*,,' |
-  while read a b; do $a -n -v $b 2> /dev/null; done |
-  while read a b c; do
+  while read a b ; do
 	# ouch - this is pretty ugly....
-	b="${b//`uname -r`/$kernel}"
+	b="`find /lib/modules/$1 -name $b.*o`"
+	echo $a $b
 	if [ ! -f $tmpdir/${b##*/} ]; then
-		echo "Adding $b."; cp $b $tmpdir
-		x="$( eval "echo ${b##*/} $c" )"
+		echo "Adding $b."; cp $b $tmpdir/
+		x="${b##*/}"
 		cat << EOT >> $tmpdir/linuxrc.c
 	/* $x */
 	if ( fork() ) wait(NULL);
@@ -71,7 +71,7 @@ else
 	# This works, but only for initrd images < 4 MB
 	dd if=/dev/zero of=/boot/initrd-${kernel}.img.tmp \
 				count=4096 bs=1024 &> /dev/null
-	mke2fs -m 0 -N 180 -F /boot/initrd-${kernel}.img.tmp &> /dev/null
+	mke2fs -F /boot/initrd-${kernel}.img.tmp &> /dev/null
 	mntpoint="`mktemp -d`"
 	mount -o loop /boot/initrd-${kernel}.img.tmp $mntpoint
 	rmdir $mntpoint/lost+found/
@@ -79,7 +79,7 @@ else
 	umount $mntpoint
 	rmdir $mntpoint
 fi
-gzip < /boot/initrd-${kernel}.img.tmp > /boot/initrd-${kernel}.img
+gzip -9 < /boot/initrd-${kernel}.img.tmp > /boot/initrd-${kernel}.img
 rm -f /boot/initrd-${kernel}.img.tmp
 
 rm -rf $tmpdir
