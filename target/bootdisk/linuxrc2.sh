@@ -1,8 +1,14 @@
 #!/bin/sh
 
-exec < /dev/console > /dev/console 2> /dev/console ; cd /
-export PATH="/sbin:/bin:/usr/sbin:/usr/bin:/usr/local/bin"
-umount /old_root/dev /old_root/proc /old_root ; rmdir /old_root
+export PATH="/sbin:/bin:/usr/sbin:/usr/bin"
+if type -p gzip > /dev/null ; then
+	umount /old_root ; rmdir /old_root
+else
+	PATH="$PATH:/old_root/bin"
+	for x in /old_root/* ; do
+		rmdir $x 2> /dev/null || rm -f $x 2> /dev/null
+	done
+fi
 grep -v "^rootfs " /proc/mounts > /etc/mtab
 freeramdisk /dev/rd/* 2> /dev/null
 
