@@ -18,7 +18,7 @@ OBJS = $(OBJS_COMMON) in_linux.o in_nids.o in_pcap.o
 default: libnids
 
 install: default
-	cp scanlogd $(ROOT)/$(PREFIX)/sbin/
+	cp -f scanlogd $(ROOT)/$(PREFIX)/sbin/
 
 linux: $(OBJS_COMMON) in_linux.o
 	$(LD) $(LDFLAGS) $(OBJS_COMMON) in_linux.o -o scanlogd
