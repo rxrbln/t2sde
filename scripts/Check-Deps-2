@@ -3,7 +3,7 @@
 use strict;
 use English;
 
-my (@pkg, %opr, %pri, %dep, %rep, %rdp, %ign, %lop);
+my (@pkg, %opr, %pri, %dep, %rep, %rdp, %ign, %lop, %deldeps);
 my @useddeps;	# deps used for visualization of cross dependencies
 my %pkg_redone; # packages built in stages 6-8
 
@@ -14,12 +14,32 @@ open(F, "./scripts/Create-PkgList |") || die $!;
 while (<F>) {
 	@_ = split /\s+/;
 	next if $_[1] =~ /[1234]/ or $_[1] !~ /5/;
-	$pkg_redone{$_[4]}  = 1 if $_[1] =~ /[678]/;
+	$pkg_redone{$_[4]} = 1 if $_[1] =~ /[678]/;
 	next if defined $ign{$_[3]} || defined $ign{$_[4]};
 	$opr{$_[4]} = $_[2];
 	$pri{$_[4]} = $_[2];
 	$rep{$_[4]} = $_[3];
 	$pkg[$#pkg+1] = $_[4];
+}
+close F;
+
+print "Reading dependency fixes ...\n";
+open(F, "scripts/dep_fixes.txt") or die $!;
+while (<F>) {
+	chomp;
+	if (/^([^#\s]\S*)\s+del\s+(.*)$/) {
+		my ($p, $l) = ($1, $2);
+		$deldeps{$p}{$_} = 1 foreach (split /\s+/, $l);
+		next;
+	}
+	if (/^([^#\s]\S*)\s+add\s+(.*)$/) {
+		my ($p, $l) = ($1, $2);
+		foreach ( split /\s+/, $l ) {
+			push @{$dep{$p}}, $_;
+			push @{$rdp{$_}}, $p;
+		}
+		next;
+	}
 }
 close F;
 
@@ -31,11 +51,13 @@ while (<F>) {
 		print "Format Error: $_\n";
 		exit 1;
 	}
-	next if defined $pkg_redone{$1};
-	@{$dep{$1}} = split /\s+/, $2;
-	foreach ( @{$dep{$1}} ) {
-		$rdp{$_} = () unless defined $rdp{$_};
-		push @{$rdp{$_}}, $1;
+	my ($p, $l) = ($1, $2);
+	next if defined $pkg_redone{$p};
+	
+	foreach ( split /\s+/, $l ) {
+		next if $deldeps{$p}{$_};
+		push @{$dep{$p}}, $_;
+		push @{$rdp{$_}}, $p;
 	}
 }
 close F;
@@ -106,6 +128,7 @@ for $iteration (1..99) {
 	open(F, ">dependencies.dot") || die $!;
 	print F "# run this thru e.g. 'dot -Tps dependencies.dot -o dependencies.ps'\n";
 	print F "digraph \"Cross-Dependencies Graph\" {\n";
+	print F "	Package_X -> Has_X_in_Dep_List;\n";
 	foreach my $p (sort keys %crossdeps) {
 		foreach my $d (sort keys %{$crossdeps{$p}}) {
 			my $p_ = $p; $p_ =~ s/[^a-z0-9]/_/g;

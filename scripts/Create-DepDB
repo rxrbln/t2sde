@@ -43,40 +43,78 @@ done
 
 echo -n "Creating dependency database ..." >&2
 
-sedscript1=`mktemp` ; sedscript2=`mktemp`
-while read package command args
-do
+perl1="" perl2=""
+while read package command args; do
 	package=${package%.desc:*}
 	package=${package##*/} ; set -- $args
-	case "$command" in
-	    group)
-		echo -e "/^$package\$/ a \\\\\n$*" >> $sedscript1
-		echo -e "/^$*\$/ a \\\\\n$package" >> $sedscript2
-	esac
-done < <( egrep '^\[(E|DEP|DEPENDENCY)\]' $descdir/*/*/*.desc )
 
-if [ -f create_depdb.cache ] ; then
-	cat create_depdb.cache
-else
-	for x in $cachedir/*/*/*.cache ; do
-		y=${x%/*.cache}   ; y=${y##*/}
-		z=${x%/*/*.cache} ; z=${z##*/}
+	perl1="$perl1 if (defined \$deps{'$package'}) {"
+	for x; do perl1="$perl1 \$deps{$x} = 1;"; done
+	for x; do perl2="$perl2 \$deps{$package} = 1 if defined \$deps{$x};"; done
+	perl1="$perl1 }"
+done < <( egrep '^\[(E|DEP|DEPENDENCY)\][ 	]+group[ 	]' $descdir/*/*/*.desc )
 
-		priority=$( egrep '^\[(P|PRI|PRIORITY)\] ' \
-						$descdir/$z/$y/$y.desc | \
-		            tr '\t' ' ' | tr -s ' ' | cut -f3,4 -d' ' | \
-		            sed 's,9 , ,; s,-,,g; s,.*\(.\) ,\1.,' )
-		buildtime=$( grep '^\[BUILDTIME\] ' $x | cut -f2 -d' ' )
-		[ "$buildtime" ] || continue
+perl -e '
 
-		deps=$( grep '^\[DEP\] ' $x | cut -f2- -d' ' | tr ' ' '\n' | \
-			sed -f $sedscript1 | sed -f $sedscript2 | \
-			sort -u | grep -vx $y )
+	my %deldeps = ();
+	my %adddeps = ();
 
-		echo $y $buildtime $priority $deps $y
+#	open(F, "scripts/dep_fixes.txt") or die $!;
+#	while (<F>) {
+#		chomp;
+#		if (/^([^#\s]\S*)\s+del\s+(.*)$/) {
+#			my ($p, $l) = ($1, $2);
+#			$deldeps{$p}{$_} = 1 foreach (split /\s+/, $l);
+#			next;
+#		}
+#		if (/^([^#\s]\S*)\s+add\s+(.*)$/) {
+#			my ($p, $l) = ($1, $2);
+#			$adddeps{$p}{$_} = 1 foreach (split /\s+/, $l);
+#			next;
+#		}
+#	}
+#	close F;
 
-	done | if [ "$debug" ] ; then tee create_depdb.cache ; else cat ; fi
-fi | gawk '
+	foreach my $c (<'$cachedir'/*/*/*.cache>) {
+		my ($pri, $time) = (1, 1);
+		my $pkg = $c; $pkg=~s,^.*/([^/]*)/[^/]*$,$1,; 
+		my %deps = ();
+
+		$deps{$_} = 1 foreach (keys %{$adddeps{$pkg}});
+
+		open(F, "$c") or die "$!: $c";
+		while (<F>) {
+			if (/^\[BUILDTIME\]/) {
+				@_ = split /\s+/;
+				$time = $_[1];
+				next;
+			}
+			if (/^\[DEP\]/) {
+				@_ = split /\s+/; shift @_;
+				foreach (@_) { $deps{$_} = 1 unless defined $deldeps{$pkg}{$_}; }
+				next;
+			}
+		}
+		close F;
+
+		$c =~ s/\.cache$/.desc/;
+		open(F, "$c") or die "$!: $c";
+		while (<F>) {
+			if (/^\[(P|PRI|PRIORITY)\]/) {
+				@_ = split /\s+/;
+				$_[2] =~ s/^.*([0-8]).*$/$1/;
+				$pri = $_[2].".".$_[3];
+				next;
+			}
+		}
+		close F;
+
+		'"$perl1 $perl2"'
+
+		print "$pkg $time $pri ", join(" ", sort keys %deps), " $pkg\n";
+	}
+
+' | gawk '
 
 function getpri(package) {
 	datafile="'$tmp1'";
@@ -170,7 +208,4 @@ END {
 	}
 }
 ' | if [ "$debug" ] ; then cat ; else sort ; fi
-
-rm -f $sedscript1
-rm -f $sedscript2
 
