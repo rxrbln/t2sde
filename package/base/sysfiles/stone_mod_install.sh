@@ -58,11 +58,15 @@ part_mkfs() {
 	cmd="$cmd 'reiserfs (journaling filesystem)'"
 	cmd="$cmd 'mkreiserfs /dev/$1/$2'"
 
-	cmd="$cmd 'IBM JFS  (journaling filesystem)'"
-	cmd="$cmd 'jfs_mkfs /dev/$1/$2'"
+	if type -p jfs_mkfs > /dev/null ; then
+		cmd="$cmd 'IBM JFS  (journaling filesystem)'"
+		cmd="$cmd 'jfs_mkfs /dev/$1/$2'"
+	fi
 
-	cmd="$cmd 'SGI XFS  (journaling filesystem)'"
-	cmd="$cmd 'mkfs.xfs /dev/$1/$2'"
+	if type -p mkfs.xfs > /dev/null ; then
+		cmd="$cmd 'SGI XFS  (journaling filesystem)'"
+		cmd="$cmd 'mkfs.xfs /dev/$1/$2'"
+	fi
 
 	eval "$cmd" && part_mount $1 $2
 }
