@@ -26,21 +26,10 @@ set_keymap() {
 	keymap=$(ls -l /etc/default.keymap 2> /dev/null | sed 's,.*/,,')
 	[ -z "$keymap" ] && keymap="none" ; keymap="${keymap%.map.gz}"
 
-	case "`uname -m`" in
-	  i*86)
-		mapdir="`echo /usr/share/kbd/keymaps/i386`"
-		;;
-	  ppc)
-		mapdir="`echo /usr/share/kbd/keymaps/mac`" # ppc is a symlink
-		;;
-	  sparc*)
-		mapdir="`echo /usr/share/kbd/keymaps/sun`"
-		;;
-	  *)
-		gui_message "Can't auto-detect your architecture and so I can't find the right /usr/share/kbd/keymaps sub-directory for your system. Sorry."
-		return
-		;;
-	esac
+	# ReneR: Attention: althought this reads i386, this is nowadays valid
+	#        for all (? - at least also on PowerPC where this was a long ugly
+	#        bug in ROCK times) - the input layer does pass "unified" events ...
+	mapdir="`echo /usr/share/kbd/keymaps/i386`"
 
 	cmd="gui_menu 'general_keymap' 'Select one of the"
 	cmd="$cmd following keyboard mappings. (Current: $keymap)'"
