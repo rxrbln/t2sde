@@ -13,6 +13,8 @@
 # GNU General Public License can be found in the file COPYING.
 # --- T2-COPYRIGHT-NOTE-END ---
 
+MATRIX=http://www.t2-project.org/packages
+
 config=default
 enabled='X'
 repositories=
@@ -142,7 +144,7 @@ audit_package() {
 	esac
 	if [ "$HTMLDIR" ]; then
 		cat <<EOT
-<tr><td><a name="$pkg">package/$repo/$pkg</a></td><td>$lchanges</td><td>(${ver//>/&gt;})</td><td>$lbuild</td><td>$lstatus</td></tr>
+<tr><td>package/$repo/<a href="$MATRIX/$pkg.html" name="$pkg">$pkg</a></td><td>$lchanges</td><td>(${ver//>/&gt;})</td><td>$lbuild</td><td>$lstatus</td></tr>
 EOT
 	else
 		echo -e "package/$repo/$pkg\t$lchanges\t($ver)\t$lbuild\t$lstatus"
