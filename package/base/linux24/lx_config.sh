@@ -25,6 +25,9 @@ lx_customconf="\$base/config/$config/linux.cfg"
 [ $arch = sparc -a "$ROCKCFG_SPARC_64BIT_KERNEL" = 1 ] && \
         lx_cpu=sparc64
 
+# inject a possible pre-/ post-release patch
+var_insert patchfiles " " `match_source_file patch-.*.bz2`
+
 MAKE="$MAKE ARCH=$lx_cpu CROSS_COMPILE=$archprefix KCC=$KCC"
 
 auto_config ()
@@ -172,9 +175,6 @@ lx_patch ()
 
 	# grab extraversion from vanilla
 	lx_grabextraversion
-
-	# inject a possible prerelease patch
-	var_insert patchfiles " " "`match_source_file patch-*.bz2`"
 
 	hook_eval prepatch
 	apply_patchfiles "lx_grabextraversion"
