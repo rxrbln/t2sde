@@ -5,8 +5,8 @@
 # the ROCK-COPYRIGHT-NOTE-END tag. Otherwise it might get removed by
 # the ./scripts/Create-CopyPatch script. Do not edit this copyright text!
 # 
-# ROCK Linux: rock-src/package/base/bdb40/bdb_config.sh
-# ROCK Linux is Copyright (C) 1998 - 2003 Clifford Wolf
+# ROCK Linux: rock-src/package/*/bdb40/bdb_config.sh
+# Copyright (C) 1998 - 2003 ROCK Linux Project
 # 
 # This program is free software; you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by

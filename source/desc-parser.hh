@@ -16,7 +16,6 @@ public:
       text("T","","TEXT"),
       url("U","","URL"),
       
-      
       author("A","AUTH","AUTHOR"),
       maintainer("M","","MAINTAINER"),
       category("C","","CATEGORY"),

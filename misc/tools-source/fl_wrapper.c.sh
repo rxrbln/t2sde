@@ -13,7 +13,7 @@ cat << EOT
  * the ./scripts/Create-CopyPatch script. Do not edit this copyright text!
  * 
  * ROCK Linux: rock-src/misc/tools-source/fl_wrapper.c.sh
- * ROCK Linux is Copyright (C) 1998 - 2003 Clifford Wolf
+ * Copyright (C) 1998 - 2003 ROCK Linux Project
  * 
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by

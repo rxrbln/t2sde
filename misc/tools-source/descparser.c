@@ -7,7 +7,7 @@
  * the ./scripts/Create-CopyPatch script. Do not edit this copyright text!
  *
  * ROCK Linux: rock-src/misc/tools-source/descparser.c
- * ROCK Linux is Copyright (C) 1998 - 2004 Clifford Wolf
+ * Copyright (C) 1998 - 2004 ROCK Linux Project
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by

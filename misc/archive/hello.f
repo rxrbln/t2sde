@@ -8,7 +8,7 @@ c the ROCK-COPYRIGHT-NOTE-END tag. Otherwise it might get removed by
 c the ./scripts/Create-CopyPatch script. Do not edit this copyright text!
 c 
 c ROCK Linux: rock-src/misc/archive/hello.f
-c ROCK Linux is Copyright (C) 1998 - 2003 Clifford Wolf
+c Copyright (C) 1998 - 2003 ROCK Linux Project
 c 
 c This program is free software; you can redistribute it and/or modify
 c it under the terms of the GNU General Public License as published by
