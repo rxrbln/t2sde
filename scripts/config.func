@@ -129,6 +129,79 @@ else
 	}
 fi
 
+# Convert a pkg selection rule into awk format
+#
+# Usage:
+#   1. call pkgsel_init
+#   2. call pkgsel_parse as often as necessary
+#   3. call pkgsel_finish
+# Result:
+#   awk script for package selection, see config.in for its usage
+#
+# Example:
+#   pkgsel X python
+#     Result: ( / [^/]*\/python / ) { $1="X"; }
+#   pkgsel "O perl/*" 
+#     Result: ( / perl\/[^/]* / ) { $1="O"; }
+#   pkgsel_parse < config/${config}/pkgsel
+#     Result: creates pkgsel.awk output
+pkgsel_parse() {
+	local action patterlist pattern
+	local address first others
+	while read action patternlist ; do
+ 		case "$action" in
+		    [xX])
+			action='$1="X"' ;;
+		    [oO])
+			action='$1="O"' ;;
+		    -)
+			action='next'   ;;
+		    *)
+			echo '{ exit; }'
+			continue ;;
+		esac
+		address="" ; first="( " ; others="&& "
+		while read pattern ; do
+			if [ -z "$address" ] && \
+			   [ "$pattern" = "!" ] ; then
+				address="! " ; others="|| \$4\"/\"\$5 ~"
+			else
+				[ "${pattern}" = "${pattern//\//}" ] && pattern="*/$pattern"
+				pattern="$( echo "$pattern" | sed \
+					-e 's,[^a-zA-Z0-9_/\*+\.-],,g' \
+					-e 's,[/\.\+],\\&,g' \
+					-e 's,\*,[^/]*,g' )"
+				[ "$pattern" ] || continue
+				address="$address$first"
+				address="$address / $pattern /"
+				first=" $others"
+			fi
+		done < <( echo "$patternlist" | tr '\t ' '\n\n' )
+		echo "$address ) { $action; }"
+	done < <( if [ "$*" ]; then echo "$*"; else cat | egrep -v "^((^#.*$)|())$"; fi)
+}
+
+pkgsel_init() {
+    cat <<EOF
+{ 
+  repo=\$4 ;
+  pkg=\$5 ;
+  \$5 = \$4 "/" \$5 ;
+  \$4 = "placeholder" ;
+}
+EOF
+}
+
+pkgsel_finish() {
+    cat <<EOF
+{ 
+  \$4=repo ;
+  \$5=pkg ;
+  print ;
+}
+EOF
+}
+
 comment() {
 	bprof comment start
 	if [ $ROCKCFG_EXPERT -eq 1 -o $expert -eq 0 ] && \
