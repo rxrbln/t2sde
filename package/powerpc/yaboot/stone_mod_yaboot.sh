@@ -67,10 +67,13 @@ magicboot=$yabootpath/lib/yaboot/ofboot
 enablecdboot
 enablenetboot
 enableofboot
-
-#macosx=/dev/ide/host0/bus0/target0/lun0/part2
-
 EOT
+
+	[ "$macosxpart" ] && \
+	  echo -e "\nmacosx=/dev/ide/host0/bus0/target0/lun0/part$macosxpart\n" \
+	    >> /etc/yaboot.conf
+
+
 	create_kernel_list
 	gui_message "This is the new /etc/yaboot.conf file:
 
@@ -90,7 +93,11 @@ device4()
 		dev="`grep \" $try \" /proc/mounts | tail -1 | \
 		      cut -d ' ' -f 1`"
 	fi
-	echo "/dev/`readlink $dev`"
+	if [ -h "$dev" ] ; then 
+	  echo "/dev/`readlink $dev`"
+	else
+	  echo $dev
+	fi
 }
 
 main() {
@@ -101,6 +108,9 @@ main() {
 	bootdev="`device4 /boot`"
 	yabootdev="`device4 /usr`"
 	bootstrapdev=/dev/ide/host0/bus0/target0/lun0/part$bootstrappart
+
+	macosxpart="`pdisk -l /dev/discs/disc0/disc  | grep Apple_HFS | head -1 | \
+	           sed -e "s/:.*//" -e "s/ //g"`"
 
 	if [ "$rootdev" = "$bootdev" ]
 	then bootpath=/boot ; else bootpath="" ; fi
@@ -114,6 +124,7 @@ main() {
 		"Yaboot partition:path . $yabootpart:$yabootpath" "" \
 		"Root Device ........... $rootdev" "" \
 		"Boot Device ........... $bootdev" "" \
+		"MacOS X partition ..... $macosxpart" "" \
 		'' '' \
 		'(Re-)Create default /etc/yaboot.conf' 'create_yaboot_conf' \
 		'(Re-)Install the yaboot boot chrp script and binary' 'yaboot_install' \
