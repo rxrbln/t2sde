@@ -93,7 +93,16 @@ gui_message() {
 # Use: gui_edit "Text" "File"
 #
 gui_edit() {
-	eval "${EDITOR:-vi} $2"
+	# find editor
+	for x in $EDITOR vi nvi emacs xemacs pico ; do
+		if which $x > /dev/null
+		then xx=$x ; break ; fi
+	done
+	if [ "$xx" ] ; then
+		eval "$xx $2"
+	else
+		gui_message "Cannot find any editor. Make sure \$EDITOR is set."
+	fi
 }
 
 # Use: gui_cmd "Title" "Command"

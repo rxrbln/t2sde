@@ -36,7 +36,16 @@ gui_dialog() {
 }
 
 gui_edit() {
-	xterm -T "STONE - $1" -n "STONE" -e bash -c "${EDITOR:-vi} $2"
+	# find editor
+	for x in $EDITOR vi nvi emacs xemacs pico ; do
+		if which $x > /dev/null
+		then xx=$x ; break ; fi
+	done
+	if [ "$xx" ] ; then
+		xterm -T "STONE - $1" -n "STONE" -e bash -c "$xx $2"
+	else
+		gui_message "Cannot find any editor. Make sure \$EDITOR is set."
+	fi
 }
 
 gui_cmd() {
