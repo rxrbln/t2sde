@@ -29,7 +29,7 @@ iptales_parse_conditions() {
 			shift; shift
 			;;
 		    *)
-			error "Unkown allow/deny condition: $1"
+			error "Unkown allow/deny/drop condition: $1"
 			shift
 		esac
 	done
@@ -44,6 +44,12 @@ public_allow() {
 public_deny() {
 	iptales_parse_conditions "$@"
 	addcode up 1 5 "iptables -A firewall_$if $iptables_cond -j REJECT"
+	iptables_init_if
+}
+
+public_drop() {
+	iptales_parse_conditions "$@"
+	addcode up 1 5 "iptables -A firewall_$if $iptables_cond -j DROP"
 	iptables_init_if
 }
 
