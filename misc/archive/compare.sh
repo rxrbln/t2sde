@@ -5,6 +5,7 @@ quiet=0
 
 ignspace=0
 ignprio=0
+ignrepo=0
 dopatch=0
 
 source=
@@ -13,12 +14,16 @@ repositories=
 packages=
 
 function show_usage() {
-	echo "usage: $0 [-q[q]] [-v] [-p [-P] [-S]] <source> <target> [-repository <repo>|<packages>|]"
-	echo "usage: $0 [-q[q]] [-v] -3 <source> <target1> <target2> [-repository <repo>|<packages>|]"
+	echo "usage: $0 [-q[q]] [-v] [-r] {action}"
+	echo
+	echo "action: [-p [-P] [-S]] <source> <target> [-repository <repo>|<packages>|]"
+	echo "        -3 <source> <target1> <target2> [-repository <repo>|<packages>|]"
 	echo
 	echo "    -q: don't show packages with the same version"
 	echo "   -qq: don't show packages missing or with the same version"
 	echo "    -v: show extra info about the packages"
+	echo "    -r: don't show repository name"
+	echo
 	echo "    -p: show patch to turn \$source into \$target"
 	echo "    -P: ignore [P]s of .desc files on patches"
 	echo "    -S: ignore spaces on patches" 
@@ -29,6 +34,7 @@ function show_usage() {
 while [ $# -gt 0 ]; do
 	case "$1" in
 		-v)	verbose=1	;;
+		-r)	ignrepo=1	;;
 		-q)	quiet=1		;;
 		-qq)	quiet=2		;;
 		-p)	dopatch=1	;;
@@ -159,8 +165,9 @@ function grabdata_cache() {
 	echo "$output"
 }
 function compare_package() {
-	local pkg=${1##*/}
 	local source=$1
+	local fullpkg=${1##*/package/}
+	local pkg=${1##*/}
 	local target= x= missing=0
 
 	local info=
@@ -168,6 +175,8 @@ function compare_package() {
 	local tgtver= tgtstatus= tgtsize=
 
 	shift;
+
+	[ $ignrepo -eq 1 ] && fullpkg=$pkg
 
 	srcver=$( grabdata $source $pkg version )
 	srcstatus=$( grabdata $source $pkg status )
@@ -194,6 +203,8 @@ function compare_package() {
 	tgtstatus="${tgtstatus#:}"
 	tgtsize="${tgtsize#:}"
 
+	# do we have different versions?
+	#
 	equalver=1 equalstatus=1
 	IFS=':' ; for x in $tgtver; do
 		[ "$x" != "$srcver" ] && equalver=0
@@ -202,6 +213,8 @@ function compare_package() {
 		[ "$x" != "$srcstatus" ] && equalstatus=0
 	done
 
+	# optimize version and status if they are the same
+	#
 	if [ $equalver -eq 1 ]; then
 		version=$srcver
 	else
@@ -214,6 +227,8 @@ function compare_package() {
 		status="$srcstatus -> $tgtstatus"
 	fi
 	
+	# acording to verbosity level, what info should i show?
+	#
 	if [ $verbose -eq 0 ]; then
 		info="($version)"
 	else
@@ -222,16 +237,19 @@ function compare_package() {
 
 	if [ $missing -eq 1 ]; then
 		if [ $quiet -le 1 ]; then
-			echo "N $pkg $info" 1>&2
+			# New - the package is not available at target tree
+			echo "N $fullpkg $info" 1>&2
 			[ $dopatch -eq 1 ] && diff_package $source $target
 		fi
 	elif [ $equalver -eq 1 ]; then
 		if [ $quiet -eq 0 ]; then
-			echo "E $pkg $info" 1>&2
+			# Equal - the versions and cache status are the same on both trees
+			echo "E $fullpkg $info" 1>&2
 			[ $dopatch -eq 1 ] && diff_package $source $target
 		fi
 	else
-		echo "U $pkg $info" 1>&2
+		# Modified - the version on both trees is different
+		echo "M $fullpkg $info" 1>&2
 		[ $dopatch -eq 1 ] && diff_package $source $target
 	fi
 }
@@ -261,7 +279,6 @@ if [ $allexist -eq 1 ]; then
 		done
 	else
 		for repo in $source/package/*; do
-			echo "repository: ${repo##*/}" 1>&2
 			for x in $repo/*; do
 				[ -d "$x" ] && compare_package $x $targets
 			done
