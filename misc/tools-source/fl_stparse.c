@@ -174,6 +174,10 @@ int main(int argc, char ** argv) {
 
 		if ( sscanf(line, "%d mkdir(\"%[^\"]\", ", &pid, buf1) == 2 ||
 		     sscanf(line, "%d utime(\"%[^\"]\", ", &pid, buf1) == 2 ||
+		     sscanf(line, "%d link(\"%[^\"]\", \"%[^\"]\"",
+						&pid, buf2, buf1) == 3 ||
+		     sscanf(line, "%d symlink(\"%[^\"]\", \"%[^\"]\"",
+						&pid, buf2, buf1) == 3 ||
 		     sscanf(line, "%d rename(\"%[^\"]\", \"%[^\"]\"",
 						&pid, buf2, buf1) == 3 ) {
 			if (buf1[0] == '/') {
