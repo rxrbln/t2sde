@@ -39,7 +39,7 @@ CONFIG_FONT_SUN8x16=y
 CONFIG_FONT_SUN12x22=y
 
 include(`kernel-common.conf.m4')
-include(`kernel-scsi.conf.m4')
+include(`kernel-block.conf.m4')
 include(`kernel-net.conf.m4')
 include(`kernel-fs.conf.m4')
 
