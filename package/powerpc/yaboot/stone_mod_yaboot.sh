@@ -23,18 +23,20 @@
 # [MAIN] 70 yaboot Yaboot Boot Loader Setup
 
 create_kernel_list() {
-	for x in `(cd /boot/ ; ls vmlinux* ) | sort` ; do
-		if [ "$x" = vmlinux ] ; then
-			label=linux
+	first=1
+	for x in `(cd /boot/ ; ls vmlinux_* ) | sort -r` ; do
+		if [ $first = 1 ] ; then
+			label=linux ; first=0
 		else
 			label=linux-${x/vmlinux_/}
 		fi
-		cat << EOT >> /etc/yaboot.conf
+
+		cat << EOT
+
 image=$bootpath/$x
 	label=$label
 	root=$rootdev
 	read-only
-
 EOT
 	done
 }
@@ -73,8 +75,8 @@ EOT
 	  echo -e "\nmacosx=$macosxdev\n" \
 	    >> /etc/yaboot.conf
 
+	create_kernel_list >> /etc/yaboot.conf
 
-	create_kernel_list
 	gui_message "This is the new /etc/yaboot.conf file:
 
 $( cat /etc/yaboot.conf )"
