@@ -23,7 +23,7 @@
 # Use: gui_menu "ID" "Title" "Text" "Action" [ "Text" "Action" [ .. ] ]
 #
 gui_menu() {
-	echo ; echo "+---" ; echo "$2" | fold -s -70 | sed 's,^,|  ,'
+	echo ; echo "+---" ; echo "$2" | fold -s -w70 | sed 's,^,|  ,'
 	echo "+---" ; echo ; shift ; shift ; local nr=1 xnr=1 y in
 
 	while [ $# -ge 2 ] ; do
@@ -55,7 +55,7 @@ gui_menu() {
 # Use: gui_input "Text" "Default" "VarName"
 #
 gui_input() {
-	echo ; echo "+---" ; echo "$1" | fold -s -66 | sed 's,^,|  ,'
+	echo ; echo "+---" ; echo "$1" | fold -s -w66 | sed 's,^,|  ,'
 	echo "+---" ; echo ; echo -n "[ $2 ] > " ; local tmp
 	read tmp && [ -z "$tmp" ] && tmp="$2" ; eval "$3=\"\$tmp\""
 }
@@ -66,7 +66,7 @@ gui_input() {
 gui_yesno() {
 	local input y="[y]" n=" n "
 
-	echo ; echo "+---"; echo "$1" | fold -s -66 | sed 's,^,|   ,'
+	echo ; echo "+---"; echo "$1" | fold -s -w66 | sed 's,^,|   ,'
 	echo "+---" ; echo
 
 	while :; do
@@ -86,7 +86,7 @@ gui_yesno() {
 # Use: gui_message "Text"
 #
 gui_message() {
-	echo ; echo "+---" ; echo "$1" | fold -s -66 | sed 's,^,|  ,'
+	echo ; echo "+---" ; echo "$1" | fold -s -w66 | sed 's,^,|  ,'
 	echo "+---" ; echo ; echo "== Press ENTER to continue ==" ; read
 }
 
