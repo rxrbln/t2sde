@@ -4,6 +4,10 @@ if [ "$1" = -reroot ] ; then
 	echo "Old PATH: $PATH"
 	PATH="../root/sbin:../root/bin:../root/usr/sbin:../usr/bin:$PATH"
 	echo "New PATH: $PATH"
+	echo "Old LD_LIBRARY_PATH: $LD_LIBRARY_PATH"
+	export LD_LIBRARY_PATH="../root/lib:../root/usr/lib:$LD_LIBRARY_PATH"
+	LD_LIBRARY_PATH=${LD_LIBRARY_PATH%:}
+	echo "New LD_LIBRARY_PATH: $LD_LIBRARY_PATH"
 	shift
 fi
 
