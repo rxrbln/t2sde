@@ -23,7 +23,7 @@
 # extract and patch base
 x_extract() {
 	echo "Extracting source (for package version $ver) ..."
-	for x in $x_files ; do
+	for x in `eval echo $x_files`; do
 		tar $taropt $archdir/$x
 	done
 
