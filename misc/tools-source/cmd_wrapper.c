@@ -31,6 +31,8 @@
  *      prefix_WRAPPER_DEBUG		0
  *      prefix_WRAPPER_BYPASS		0
  *
+ * 	prefix_WRAPPER_APPEND_PO	"-1st-opt -2nd-opt"
+ * 
  *	prefix_WRAPPER_OTHERS		"wrapper1:wrapper2:..."
  *
  *	prefix_WRAPPER_INSERT		"-1st-opt -2nd-opt"
@@ -96,7 +98,7 @@ void cleanenv(const char * name, const char ch) {
 int main(int argc, char ** argv) {
 	char **newargv;
 	int c1,c2,c3;
-	char *delim, *optbuf, *wrdir;
+	char *delim, *delim1, *optbuf, *wrdir;
 	FILE *logfile = NULL;
 
 	/* Calling the wrapper with an absolute path results in an
@@ -130,6 +132,10 @@ int main(int argc, char ** argv) {
 	if ( (delim = getenv(ENVPREFIX "_WRAPPER_OTHERS_TMP")) != NULL )
 		setenv(ENVPREFIX "_WRAPPER_OTHERS", delim, 1);
 
+	/* Has to be solved that way ... do not ask my why >_< */
+	if ( (delim = getenv(ENVPREFIX "_WRAPPER_APPEND_PO_CLEAR")) != NULL )
+		setenv(ENVPREFIX "_WRAPPER_APPEND_PO", "", 1);
+
 	/*
 	 *  Read prefix_WRAPPER_DEBUG and prefix_WRAPPER_BYPASS
 	 */
@@ -143,6 +149,7 @@ int main(int argc, char ** argv) {
 		if (debug) fprintf(stderr, "Bypassing cmd_wrapper by "
 		                           "clearing all config variables.\n");
 #endif
+		setenv(ENVPREFIX "_WRAPPER_APPEND_PO", "", 1);
 		setenv(ENVPREFIX "_WRAPPER_OTHERS", "", 1);
 		setenv(ENVPREFIX "_WRAPPER_INSERT", "", 1);
 		setenv(ENVPREFIX "_WRAPPER_REMOVE", "", 1);
@@ -150,6 +157,7 @@ int main(int argc, char ** argv) {
 		setenv(ENVPREFIX "_WRAPPER_FILTER", "", 1);
 	}
 
+	cleanenv(ENVPREFIX "_WRAPPER_APPEND_PO", ' ');
 	cleanenv(ENVPREFIX "_WRAPPER_OTHERS", ':');
 	cleanenv(ENVPREFIX "_WRAPPER_INSERT", ' ');
 	cleanenv(ENVPREFIX "_WRAPPER_REMOVE", ' ');
@@ -158,7 +166,12 @@ int main(int argc, char ** argv) {
 
 #if VERBOSE_DEBUG
 	if (debug) {
+		fprintf(stderr, "Old Command:");
+		for (c3=0; c3<argc; c3++) fprintf(stderr, " %s", argv[c3]);
+		fprintf(stderr, "\n");
 		fprintf(stderr, "ENVPREFIX = '%s'\n", ENVPREFIX);
+		fprintf(stderr, "APPEND_PO = '%s'\n",
+				getenv(ENVPREFIX "_WRAPPER_APPEND_PO"));
 		fprintf(stderr, "OTHERS = '%s'\n",
 				getenv(ENVPREFIX "_WRAPPER_OTHERS"));
 		fprintf(stderr, "INSERT = '%s'\n",
@@ -178,7 +191,20 @@ int main(int argc, char ** argv) {
 
 	if ( (delim=getenv(ENVPREFIX "_WRAPPER_OTHERS")) != NULL &&
 								delim[0] ) {
-		newargv=malloc( sizeof(char*) * (argc+10) );
+		
+		c1=argc;
+		
+		/*
+		 * If prefix__WRAPPER_APPEND_PO we need to add the count of
+		 * spaces in that variable
+		 */
+
+		if ( (delim1=getenv(ENVPREFIX "_WRAPPER_APPEND_PO")) != NULL &&
+								delim1[0] ) {
+			while (*delim1) { if (*delim1==' ') c1++; delim1++; }
+		}
+
+		newargv=malloc( sizeof(char*) * (c1+10) );
 	
 		newargv[0] = malloc(strlen(delim) + 1);
 		strcpy(newargv[0], delim);
@@ -189,6 +215,35 @@ int main(int argc, char ** argv) {
 		
 		for (c1=0; c1 < argc; c1++)
 			newargv[c1+1] = argv[c1];
+
+		/*
+		 * Append prefix_WRAPPER_APPEND_PO contents
+		 */
+
+		if ( (delim1=getenv(ENVPREFIX "_WRAPPER_APPEND_PO")) != NULL &&
+								delim1[0] ) {
+			optbuf = malloc( strlen(delim1) + 1 );
+			strcpy(optbuf, delim1);
+
+			delim1 = strtok(optbuf, " ");
+			c1=argc+1;
+			while (delim1 != NULL) {
+				if (delim1[0]) {
+#if VERBOSE_DEBUG
+					if (debug) fprintf(stderr, 
+						"Append PreOthers: %s\n",
+						delim1);
+#endif
+					newargv[c1++] = delim1;
+				}
+				delim1 = strtok(NULL, " ");
+			}
+			/* Telling next instance of the wrapper to clean
+			 * prefix_WRAPPER_APPEND_PO_RUN (argh!)
+			 */
+			setenv(ENVPREFIX "_WRAPPER_APPEND_PO_CLEAR", "1", 1);
+		}
+		
 
 #if VERBOSE_DEBUG
 		if (debug) fprintf(stderr,
@@ -275,9 +330,8 @@ int main(int argc, char ** argv) {
 	/* add 10 to be sure (3 should be enough) */
 	newargv=malloc( sizeof(char*) * (c1+10) );
 	
-	/* init newargv[] and c1 */
+	/* init newargv[], c1 and c2 */
 	newargv[0]=argv[0]; c1=1; c2=1;
-
 
 	/*
 	 *  Copy options from prefix_WRAPPER_INSERT to newargv[]

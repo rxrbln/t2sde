@@ -1,0 +1,93 @@
+--- netcat-1.10.orig/netcat.c	Tue Jun  4 15:34:16 2002
++++ netcat-1.10/netcat.c	Tue Jun  4 15:34:49 2002
+@@ -59,6 +59,14 @@
+ #define RAND rand
+ #endif /* HAVE_RANDOM */
+ 
++/* #define POSIX_SETJMP		/* If you want timeouts to work under the */
++				/* posixly correct, yet non-standard glibc-2.x*/
++				/* then define this- you may also need it for */
++				/* IRIX, and maybe some others */
++#ifdef LINUX
++#define POSIX_SETJMP
++#endif
++
+ /* includes: */
+ #include <sys/time.h>		/* timeval, time_t */
+ #include <setjmp.h>		/* jmp_buf et al */
+@@ -109,7 +117,11 @@
+ #define PINF struct port_poop
+ 
+ /* globals: */
++#ifdef POSIX_SETJMP
++sigjmp_buf jbuf;		/* timer crud */
++#else
+ jmp_buf jbuf;			/* timer crud */
++#endif
+ int jval = 0;			/* timer crud */
+ int netfd = -1;
+ int ofd = 0;			/* hexdump output fd */
+@@ -235,7 +247,11 @@
+   alarm (0);
+   if (jval == 0)
+     bail ("spurious timer interrupt!");
++#ifdef POSIX_SETJMP
++  siglongjmp (jbuf, jval);
++#else
+   longjmp (jbuf, jval);
++#endif
+ }
+ 
+ /* arm_timer :
+@@ -747,12 +763,21 @@
+ 
+ /* wrap connect inside a timer, and hit it */
+   arm_timer (1, o_wait);
++#ifdef POSIX_SETJMP
++  if (sigsetjmp (jbuf,1) == 0) {
++    rr = connect (nnetfd, (SA *)remend, sizeof (SA));
++  } else {				/* setjmp: connect failed... */
++    rr = -1;
++    errno = ETIMEDOUT;			/* fake it */
++  }
++#else
+   if (setjmp (jbuf) == 0) {
+     rr = connect (nnetfd, (SA *)remend, sizeof (SA));
+   } else {				/* setjmp: connect failed... */
+     rr = -1;
+     errno = ETIMEDOUT;			/* fake it */
+   }
++#endif
+   arm_timer (0, 0);
+   if (rr == 0)
+     return (nnetfd);
+@@ -824,7 +849,11 @@
+   if (o_udpmode) {
+     x = sizeof (SA);		/* retval for recvfrom */
+     arm_timer (2, o_wait);		/* might as well timeout this, too */
++#ifdef POSIX_SETJMP
++    if (sigsetjmp (jbuf,1) == 0) {	/* do timeout for initial connect */
++#else
+     if (setjmp (jbuf) == 0) {	/* do timeout for initial connect */
++#endif
+       rr = recvfrom		/* and here we block... */
+ 	(nnetfd, bigbuf_net, BIGSIZ, MSG_PEEK, (SA *) remend, &x);
+ Debug (("dolisten/recvfrom ding, rr = %d, netbuf %s ", rr, bigbuf_net))
+@@ -849,10 +878,17 @@
+ /* fall here for TCP */
+   x = sizeof (SA);		/* retval for accept */
+   arm_timer (2, o_wait);		/* wrap this in a timer, too; 0 = forever */
++#ifdef POSIX_SETJMP
++  if (sigsetjmp (jbuf,1) == 0) {
++    rr = accept (nnetfd, (SA *)remend, &x);
++  } else
++    goto dol_tmo;		/* timeout */
++#else
+   if (setjmp (jbuf) == 0) {
+     rr = accept (nnetfd, (SA *)remend, &x);
+   } else
+     goto dol_tmo;		/* timeout */
++#endif
+   arm_timer (0, 0);
+   close (nnetfd);		/* dump the old socket */
+   nnetfd = rr;			/* here's our new one */
