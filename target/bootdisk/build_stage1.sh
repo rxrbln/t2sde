@@ -34,66 +34,84 @@ do
 	fi
 done
 #
-echo_status "Copy scsi and network kernel modules."
-for x in ../2nd_stage/lib/modules/*/kernel/drivers/{scsi,net}/*.{ko,o} ; do
-	# this test is needed in case there are only .o or only .ko files
+if [ "$ROCKCFG_BOOTDISK_USEKISS" = 1 ]; then
+	echo_status "Adding kiss shell for expert use to the initrd image."
+	cp $build_root/bin/kiss bin/
+fi
+
+#
+# For each available kernel:
+#
+
+for x in `egrep 'X .* KERNEL .*' $base/config/$config/packages |
+          cut -d ' ' -f 5-6 | tr ' ' '_'` ; do
+
+  kernel=${x/_*/}
+  kernelver=${x/*_/}
+  initrd="initrd-${kernel/linux/}"
+
+  pushd . 2>&1 > /dev/null
+
+  echo_status "Creating linuxrc for $kernel ($kernelver) ..."
+  rm -rf lib/modules/ # remove stuff from the last loop
+
+  echo_status "  Copy scsi and network kernel modules."
+  for x in ../2nd_stage/lib/modules/$kernelver*/kernel/drivers/{scsi,net}/*.{ko,o} ; do
+	# this test is needed in case there are no .o or only .ko files
 	if [ -f $x ]; then
 		xx=${x#../2nd_stage/}
 		mkdir -p $( dirname $xx ) ; cp $x $xx
 		$STRIP --strip-debug $xx # stripping more breaks the object
 	fi
-done
-#
-for x in ../2nd_stage/lib/modules/*/modules.{dep,pcimap,isapnpmap} ; do
+  done
+
+  for x in ../2nd_stage/lib/modules/$kernelver*/modules.{dep,pcimap,isapnpmap} ; do
 	cp $x ${x#../2nd_stage/} || echo "not found: $x" ;
-done
-#
-for x in lib/modules/*/kernel/drivers/{scsi,net}; do
+  done
+
+  for x in lib/modules/*/kernel/drivers/{scsi,net}; do
 	ln -s ${x#lib/modules/} lib/modules/
-done
-rm -f lib/modules/[0-9]*/kernel/drivers/scsi/{st,scsi_debug}.{o,ko}
-rm -f lib/modules/[0-9]*/kernel/drivers/net/{dummy,ppp*}.{o,ko}
-#
-if [ "$ROCKCFG_BOOTDISK_USEKISS" = 1 ]; then
-	echo_status "Adding kiss shell for expert use of the initrd image."
-	cp $build_root/bin/kiss bin/
-	#mv linuxrc bin/; ln -s bin/kiss linuxrc
-	#rm -f lib/modules/[0-9]*/kernel/drivers/net/{dgrx,acenic}.o
-	#rm -f lib/modules/[0-9]*/kernel/drivers/scsi/{advansys,qla1280}.o
-fi
-cd ..
+  done
+  rm -f lib/modules/[0-9]*/kernel/drivers/scsi/{st,scsi_debug}.{o,ko}
+  rm -f lib/modules/[0-9]*/kernel/drivers/net/{dummy,ppp*}.{o,ko}
 
-echo_header "Creating initrd filesystem image: "
+  cd ..
 
-ramdisk_size=8192
-#[ $arch = x86 ] && ramdisk_size=4096
+  echo_header "Creating initrd filesystem image: $initrd"
 
-echo_status "Creating temporary files."
-tmpdir=initrd_$$.dir; mkdir -p $disksdir/$tmpdir; cd $disksdir
-dd if=/dev/zero of=initrd.img bs=1024 count=$ramdisk_size &> /dev/null
-tmpdev=""
-for x in /dev/loop/* ; do
+  ramdisk_size=8192
+  #[ $arch = x86 ] && ramdisk_size=4096
+
+  echo_status "Creating temporary files."
+  tmpdir=initrd_$$.dir; mkdir -p $disksdir/$tmpdir; cd $disksdir
+  dd if=/dev/zero of=initrd.img bs=1024 count=$ramdisk_size &> /dev/null
+  tmpdev=""
+  for x in /dev/loop/* ; do
         if losetup $x initrd.img 2> /dev/null ; then
                 tmpdev=$x ; break
         fi
-done
-if [ -z "$tmpdev" ] ; then
+  done
+  if [ -z "$tmpdev" ] ; then
         echo_error "No free loopback device found!"
         rm -f $tmpfile ; rmdir $tmpdir; exit 1
-fi
-echo_status "Using loopback device $tmpdev."
-#
-echo_status "Writing initrd image file."
-mke2fs -m 0 -N 180 -q $tmpdev &> /dev/null
-mount -t ext2 $tmpdev $tmpdir
-rmdir $tmpdir/lost+found/
-cp -a initrd/* $tmpdir
-umount $tmpdir
-#
-echo_status "Compressing initrd image file."
-gzip -9 initrd.img 
-mv initrd{.img,}.gz
-#
-echo_status "Removing temporary files."
-losetup -d $tmpdev
-rm -rf $tmpdir
+  fi
+  echo_status "Using loopback device $tmpdev."
+
+  echo_status "Writing initrd image file."
+  mke2fs -m 0 -N 180 -q $tmpdev &> /dev/null
+  mount -t ext2 $tmpdev $tmpdir
+  rmdir $tmpdir/lost+found/
+  cp -a initrd/* $tmpdir
+  umount $tmpdir
+
+  echo_status "Compressing initrd image file."
+  gzip -9 initrd.img 
+  mv initrd.img.gz $initrd
+
+  echo_status "Removing temporary files."
+  losetup -d $tmpdev
+  rm -rf $tmpdir
+
+  popd 2>&1 > /dev/null
+done
+
