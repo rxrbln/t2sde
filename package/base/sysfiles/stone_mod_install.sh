@@ -222,15 +222,20 @@ EOT
 			sed 's,/mnt/target/\?,/,' > /mnt/target/etc/mtab
 		cd /mnt/target ; chroot . ./tmp/stone_postinst.sh
 		rm -fv ./tmp/stone_postinst.sh
-		echo
-		echo "You might want to umount all filesystems now and reboot"
-		echo "the system now using the commands:"
-		echo
-		echo "	umount -arv"
-		echo "	reboot -f"
-		echo
-		echo "Or by executing 'shutdown -r' which will run the above commands."
-		echo
+		if gui_yesno "Do you want to un-mount the filesystems and reboot now?"
+		then
+			shutdown -r now
+		else
+			echo
+			echo "You might want to umount all filesystems now and reboot"
+			echo "the system now using the commands:"
+			echo
+			echo "	umount -arv"
+			echo "	reboot -f"
+			echo
+			echo "Or by executing 'shutdown -r now' which will run the above commands."
+			echo
+		fi
 	fi
 }
 
