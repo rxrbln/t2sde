@@ -51,6 +51,10 @@ public_key() {
 	addcode up 4 5 "iwconfig $if key $*"
 }
 
+public_enc() {
+        addcode up 4 5 "iwconfig $if enc $*"
+}
+
 public_power() {
 	addcode up 4 5 "iwconfig $if power $*"
 }
