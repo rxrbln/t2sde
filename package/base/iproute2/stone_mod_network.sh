@@ -34,8 +34,8 @@ read_section() {
 	local readit=0
 	local i=0
 
-	tags=""
-	interfaces=""
+	unset tags
+	unset interfaces
 
 
 	[ "$1" = "" ] && readit=1
@@ -81,18 +81,28 @@ write_section() {
 			# when we reached the matching section dump the
 			# mew tags ...
 			if [ $passit = 0 -a $dumped = 0 ] ; then
-				for (( i=0 ; $i < ${#tags[@]} ; i=i+1 )) ; do
-					echo "${tags[$i]}" # >> \
-					# $rocknet_base/config.new
-				done
-				dumped=1
+			  for (( i=0 ; $i < ${#tags[@]} ; i=i+1 )) ; do
+				[ $globals = 1 -o \
+				  "$netcmd" = "interface" ] || \
+				  echo -en "\t" >> \
+				  $rocknet_base/config.new
+				echo "${tags[$i]}" >> \
+				  $rocknet_base/config.new
+			  done
+			  dumped=1
 			fi
 
-			[ $passit = 1 ] && echo "$netcmd $para" # >> \
-					#$rocknet_base/config.new
+			if [ $passit = 1 ] ; then
+				[ $globals = 1 -o \
+				  "$netcmd" = "interface" ] || \
+				  echo -en "\t" >> \
+				  $rocknet_base/config.new
+				echo "$netcmd $para" >> \
+					$rocknet_base/config.new
+			fi
 		fi
 	done < <( sed 's,#.*,,' < "$rocknet_base"/config )
-	# mv $rocknet_base/config{.new,}
+	mv $rocknet_base/config{.new,}
 }
 
 edit_tag() {
