@@ -220,7 +220,7 @@ private:
   
 };
 
-void GenList (std::string file, std::ifstream& s, bool quote_mode) {
+void GenList (std::string file, std::ifstream& s) {
   // search for a matching extension
   std::string templ = file;
   std::string suffix = "";
@@ -249,11 +249,6 @@ void GenList (std::string file, std::ifstream& s, bool quote_mode) {
   else
     prefix = templ.substr(0,idx);
   
-  if (quote_mode) {
-    prefix = "\"" + prefix;
-    suffix += "\"";
-  }
-
   std::cout << file << "(" << version.str()
 	    << ") ---> " << prefix << "???" << suffix << std::endl;
 
@@ -276,11 +271,9 @@ void GenList (std::string file, std::ifstream& s, bool quote_mode) {
       }
 
       if (idx2 != std::string::npos) {
-	std::string::size_type begin = (quote_mode) ? idx+1 : idx;
-	std::string::size_type length = (idx2-idx); //+suffix.length();
-	if (quote_mode)
-	  length -= 1;
-
+	std::string::size_type begin = idx;
+	std::string::size_type length = (idx2-idx);
+	
 	std::string matched = token.substr(begin, length);
 	Version v;
 	v.ExtractFromFilename (matched);
@@ -393,7 +386,7 @@ int main (int argc, char* argv[])
 	      
 	      dl.Download(info.url, 0, 200000);
 	      std::auto_ptr<std::ifstream> s = dl.OpenFile();
-	      GenList(info.file, *s, info.protocol == "http");
+	      GenList(info.file, *s);
 	      s->close();
 	    }
 	  }
