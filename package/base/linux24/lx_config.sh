@@ -166,11 +166,16 @@ lx_injectextraversion () {
 	lx_extraversion="${lx_extraversion}-rock"
 
 	# inject final EXTRAVERSION into Makefile
-	sed -e "s,^\([ \t]*EXTRAVERSION[ \t]*\)=.*,\1= ${lx_extraversion},g" Makefile > Makefile.new
-	mv Makefile.new Makefile
+	sed -i -e "s,^\([ \t]*EXTRAVERSION[ \t]*\)=.*,\1= ${lx_extraversion},g" Makefile
 
-	# update version.h
-	eval $MAKE include/linux/version.h
+	# update version.h - we only do this, because some other freaky
+	# projects like rsbac change EXTRAVERSION in other Makefiles ...
+	rerun=""; eval $MAKE include/linux/version.h | grep -q "is up to date" && rerun=1
+	if [ "$rerun" ] ; then
+		echo "WARNING: Your system's timer resolution is too low ..."
+		sleep 1 ; touch Makefile
+		eval $MAKE include/linux/version.h
+	fi
 
 	# get kernel_release
 	lx_kernelrelease="$( echo -e "#include <linux/version.h>\nUTS_RELEASE" \
