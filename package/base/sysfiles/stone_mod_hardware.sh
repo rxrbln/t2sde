@@ -23,7 +23,7 @@
 # [MAIN] 20 hardware Kernel Drivers Configuration
 
 set_hw_setup() {
-    echo "export HARDWARE_SETUP=$1" > /etc/conf/hardware
+    echo "HARDWARE_SETUP=$1" > /etc/conf/hardware
 }
 
 flip_hw_config() {
