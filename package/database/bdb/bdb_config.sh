@@ -34,9 +34,6 @@ var_append confopt ' ' "--program-transform-name='s/db/db${ver:0:1}/'"
 # bdb doesn't like some of our make options
 makeopt="docdir=$docdir all" ; makeinstopt="docdir=$docdir install"
 
-hook_add postinstall 8 'chmod 755 $libdir/libdb-${ver:0:3}.so \
-	$libdir/libdb_cxx-${ver:0:3}.so'
-
 # create yet another alternative library name some programs use
 # this will crate a symlink in the form libdb-4.1.so -> libdb41.so
 hook_add postinstall 9 'ln -sfv libdb-${ver:0:3}.so $libdir/libdb${ver:0:1}.so'
