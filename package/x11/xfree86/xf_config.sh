@@ -112,6 +112,8 @@ xf_install() {
 	cp -fv $base/package/x11/xfree86/XF86Config.data \
 		$root/etc/X11/XF86Config.example
 	cp -fv $root/etc/X11/XF86Config{.example,}
+	cp -fv $base/package/x11/xfree86/local.conf.data \
+		$root/etc/fonts/local.conf
 
 	echo "Fixing compiled keymaps directory ..."
 	mkdir -p $root/var/lib/xkb $root/etc/X11/xkb
@@ -139,11 +141,6 @@ xf_config() {
 	cat >> config/cf/host.def << EOT
 /* Disable the internal zlib to use the system installed one */
 #define		HasZlib			YES
-
-/* Disable some internal libraries - we (normally) ship a newer one */
-#define		BuildFontconfig		NO
-#define		BuildXftLibrary		NO
-#define         BuildXft1Library	NO
 
 /* Less warnings with recent gccs ... */
 #define		DefaultCCOptions	-ansi GccWarningOptions
