@@ -20,7 +20,7 @@ package_map='       +00-dirtree
 +dump               +eject              +disktype           -patchutils
 +hdparm             +memtest86          +cpuburn            +bonnie++
 -mine               -bize               -termcap            +ncurses
-+readline           -strace             -ltrace             -perl
++readline           -strace             -perl
 -m4                 -time               -gettext            -zlib
 +bash               +attr               +acl                +findutils
 +mktemp             +coreutils          -diffutils          -patch
@@ -38,8 +38,8 @@ package_map='       +00-dirtree
 +netkit-base        +netkit-ftp         +netkit-telnet      +netkit-tftp
 +sysfiles           +libpcap            +iptables           +tcp_wrappers
 -kiss               +kbd		-syslinux           +ntfsprogs
--ethtool            -uml_utilities      -bdb                -libelf
-+joe                +libol		-schedutils         -ccache'
+-ethtool            -uml_utilities      -bdb
++libol'
 
 if [ -f ../../pkgs/bize.tar.bz2 -a ! -f ../../pkgs/mine.tar.bz2 ] ; then
 	packager=bize
@@ -85,18 +85,17 @@ rm -rf usr/{include,src} usr/*-linux-gnu {,usr/}lib/*.{a,la,o}
 for x in usr/lib/*/; do rm -rf ${x%/}; done
 #
 echo_status "Installing some terminfo databases ..."
-tar $taropt ../../pkgs/ncurses.tar.bz2	\
-	usr/share/terminfo/x/xterm	usr/share/terminfo/a/ansi	\
-	usr/share/terminfo/n/nxterm	usr/share/terminfo/l/linux	\
-	usr/share/terminfo/v/vt200	usr/share/terminfo/v/vt220	\
-	usr/share/terminfo/v/vt100	usr/share/terminfo/s/screen
+tar $taropt ../../pkgs/ncurses.tar.bz2 \
+	usr/share/terminfo/a/ansi usr/share/terminfo/l/linux \
+	usr/share/terminfo/n/nxterm usr/share/terminfo/x/{xterm,xterm-new} \
+	usr/share/terminfo/v/vt{100,200,220} \
+	usr/share/terminfo/s/screen
 #
 if [ -f ../../pkgs/kbd.tar.bz2 ] ; then
-	echo_status "Installing some keymaps ..."
+	echo_status "Installing some Kymaps ..."
 	tar $taropt ../../pkgs/kbd.tar.bz2 \
-		usr/share/kbd/keymaps/amiga	usr/share/kbd/keymaps/i386/qwerty \
-		usr/share/kbd/keymaps/atari	usr/share/kbd/keymaps/i386/qwertz \
-		usr/share/kbd/keymaps/sun
+		usr/share/kbd/keymaps/i386/{include,qwerty,qwertz} \
+		usr/share/kbd/keymaps/include
 	find usr/share/kbd -name '*dvo*' -o -name '*az*' -o -name '*fgG*' | \
 		xargs rm -f
 fi
