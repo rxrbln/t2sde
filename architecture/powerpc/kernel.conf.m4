@@ -1,6 +1,6 @@
 define(`PPC', 'PowerPC')dnl
 
-dnl System type (default=iMac)
+dnl System type (default=Macintosh)
 dnl
 CONFIG_PPC=y
 CONFIG_6xx=y
@@ -18,6 +18,12 @@ CONFIG_PMAC=y
 # CONFIG_ALTIVEC is not set
 CONFIG_MACH_SPECIFIC=y
 
+# additional 2.5 kernel configs
+CONFIG_PPC32=y
+# CONFIG_40x is not set
+# CONFIG_POWER3 is not set
+
+
 include(`kernel-common.conf')
 include(`kernel-scsi.conf')
 include(`kernel-net.conf')
@@ -33,6 +39,9 @@ dnl power management
 CONFIG_PMAC_PBOOK=y
 CONFIG_PMAC_BACKLIGHT=y
 CONFIG_PMAC_APM_EMU=y
+
+# for 2.5 kernels
+CONFIG_TAU=y
 
 CONFIG_CPU_FREQ=y
 CONFIG_CPU_FREQ_PMAC=y
