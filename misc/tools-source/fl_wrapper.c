@@ -798,7 +798,6 @@ static void * get_dl_symbol(char * symname)
 	fprintf(stderr, "fl_wrapper.so debug [%d]: Symbol '%s' in libc (%p) has been resolved to %p.\n",
 		getpid(), symname, libc_handle, rc);
 #  endif
-	dlclose(libc_handle);
 #else
         rc = dlsym(RTLD_NEXT, symname);
 #  if DEBUG == 1
