@@ -47,12 +47,12 @@ set_button() {
 main() {
     while
 	mouse_button_emulation=1
-	mouse_button2_keycode=96
-	mouse_button3_keycode=125
+	mouse_button2_keycode=68 #96
+	mouse_button3_keycode=87 #125
 	[ -f /etc/conf/mac_hid ] && . /etc/conf/mac_hid
 
 	gui_menu gpm 'Macintosh mouse button emulation.
-Select an item to change the value:' \
+Select an item to change the value:\n(Example keys: F10:68, F11: 87, Apple: 125, KP_Return: 96 - others use showkey)' \
 		"Emulation enabled ........ $mouse_button_emulation"   'set_enable' \
 		"Mouse Button 2 keycode ... $mouse_button2_keycode" 'set_button 2 mouse_button2_keycode' \
 		"Mouse Button 3 keycode ... $mouse_button3_keycode" 'set_button 3 mouse_button3_keycode' \
