@@ -25,7 +25,7 @@ archdir="$base/download/$repository/linux$treever"
 srctar="linux-${vanilla_ver}.tar.bz2"
 
 lx_cpu=`echo "$arch" | sed -e s/x86/i386/ -e s/powerpc/ppc/`
-MAKE="$MAKE CROSS_COMPILE=$archprefix KCC=$KCC ARCH=$lx_cpu"
+MAKE="$MAKE ARCH=$lx_cpu CROSS_COMPILE=$archprefix KCC=$KCC"
 
 lx_config ()
 {
@@ -59,7 +59,7 @@ lx_config ()
 
 	if [[ $treever = 24* ]] ; then
 		echo "Create symlinks and a few headers for <$lx_cpu> ... "
-		make ARCH=$lx_cpu include/linux/version.h symlinks
+		eval $MAKE include/linux/version.h symlinks
 		cp $base/package/base/linux24/autoconf.h include/linux/
 		touch include/linux/modversions.h
 	fi
@@ -99,7 +99,7 @@ lx_config ()
 	# all modules needs to be first so modules can be disabled by i.e.
 	# the targets later
 	echo "Enabling all modules ..."
-	yes '' | make ARCH=$lx_cpu no2modconfig > /dev/null ; cp .config .config.2
+	yes '' | eval $MAKE no2modconfig > /dev/null ; cp .config .config.2
 
 	if [ -f $base/target/$target/kernel$treever.conf.sh ] ; then
 		conffiles="$base/target/$target/kernel$treever.conf.sh $conffiles"
@@ -125,7 +125,7 @@ lx_config ()
 	fi
 
 	# create a valid .config
-	yes '' | make ARCH=$lx_cpu oldconfig > /dev/null ; cp .config .config.5
+	yes '' | eval $MAKE oldconfig > /dev/null ; cp .config .config.5
 
 	# last disable broken crap
 	sh $base/package/base/linux24/disable-broken.sh \
@@ -133,7 +133,7 @@ lx_config ()
 	cp config.6 .config
 
 	# create a valid .config (dependencies might need to be disabled)
-	yes '' | make ARCH=$lx_cpu oldconfig > /dev/null
+	yes '' | eval $MAKE oldconfig > /dev/null
 
 	# save final config
 	cp .config .config_modules
@@ -142,7 +142,7 @@ lx_config ()
 	sed "s,\(CONFIG_.*\)=m,# \1 is not set," .config > .config_new
 	mv .config_new .config
 	# create a valid .config (dependencies might need to be disabled)
-	yes '' | make ARCH=$lx_cpu oldconfig > /dev/null
+	yes '' | eval $MAKE oldconfig > /dev/null
 	mv .config .config_nomods
 
 	# which .config to use?
@@ -152,10 +152,10 @@ lx_config ()
 		cp .config_modules .config
 	fi
 
-	if [[ $treever = 25* ]] ; then
+	if [[ $treever -gt 24 ]] ; then
 		echo "Create symlinks and a few headers for <$lx_cpu> ... "
-		make ARCH=$lx_cpu include/linux/version.h include/asm
-		make ARCH=$lx_cpu oldconfig > /dev/null
+		eval $MAKE include/linux/version.h include/asm
+		eval $MAKE oldconfig > /dev/null
 	fi
 
 	echo "Clean up the *.orig and *~ files ... "
