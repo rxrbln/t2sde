@@ -23,8 +23,8 @@ then
 	# echo_status "Moving image (initrd) to boot directory."
 	# mv -v initrd.img boot/
 	#
-	buildroot="build/${ROCKCFG_ID}/root"
-	datadir="build/${ROCKCFG_ID}/bootdisk"
+	buildroot="build/${ROCKCFG_ID}"
+	datadir="build/${ROCKCFG_ID}/ROCK/bootdisk"
 	cat > ../isofs_arch.txt <<- EOT
 		BOOT	-G $buildroot/boot/isofs.b -B ...
 		DISK1	$datdir/boot/ boot/
