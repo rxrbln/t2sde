@@ -34,7 +34,7 @@ set_rl() {
 	  '2 ... Multi user mode without network'		'rl=2' \
 	  '3 ... Multi user mode (normal operation)'		'rl=3' \
 	  '4 ... Custom use'					'rl=4' \
-	  '5 ... Multi user mode with graphical loging manager'	'rl=5'
+	  '5 ... Multi user mode with graphical login manager'	'rl=5'
 
 	write_config
 }
