@@ -1,83 +1,194 @@
 #!/bin/bash
 
-#
-#
-
 source ./scripts/functions
 
-trg_mnemosyne_features() {
-	local xroot="$1"
-	local prefix=${2:-MNEMOSYNE}
+tgt_mnemosyne_render() {
+	local root="$1" pkgseldir="$2" prefix="$3" configin="$4" rulesin="$5"
+	local file= filename= dirname= dirvar=
+	local subdirs= onchoice= helptext= conffile=
+	local render=0 deps= depsin= 
+	local x=
 
-	for file in $xroot/*.{ask,all}; do
-		file=${file##$xroot/} ; 
-		[ -r $xroot/$file ] && trg_mnemosyne_feature
-	done
-	for dir in `find "$xroot/" -maxdepth 1 -type d ! -name CVS ! -name .svn | sed s,$xroot/,,g`; do
-		dir="${dir%$xroot/}"
-		if [ ! -f $xroot/$dir.all -a ! -f $xroot/$dir.ask -a \
-			! -f $xroot/[0-9]*-$dir.all -a ! -f $xroot/[0-9]*-$dir.ask ]; then
+	local option= var= val= desc= kind= helptext=
 
-			comment "--- ${dir/_/ }"
-			#menu_begin MENU_TGT_$prefix_$dir "${dir/_/ }"
-				block_begin 2
-				trg_mnemosyne_features "$xroot/$dir" $prefix
-				block_end
-			#menu_end
+	if [ "$pkgseldir" != "$root" ]; then
+		dirname="${pkgseldir##*/}"
+		dirvar="CFGTEMP_TRG_${prefix}_$( echo "${pkgseldir#$root/}" \
+			| tr '/' '_' | tr [a-z] [A-Z] )"
+
+		echo "$dirvar=0" >> $rulesin
+	fi
+
+	if [ "$dirname" ]; then
+	cat <<EOT >> $configin
+	if [ "\$$dirvar" == 1 ]; then
+		comment '-- ${dirname//_/ }'
+		block_begin 2
+	fi
+EOT
+	fi
+
+	for file in $pkgseldir/*; do
+		deps=
+		if [ -d $file ]; then
+			tgt_mnemosyne_render "$root" "$file" "$prefix" "$configin" "$rulesin"
+			subdirs="$subdirs ${file#$root/}"
+		else
+			filename=${file##*/}
+			kind=${filename##*.}
+			option=${filename%.$kind}
+
+			option=${option/[0-9]*-/}
+
+			# var name
+			if [ "$kind" == "choice" ]; then
+				var=${option%%.*}
+				option=${option#*.}
+
+				# new choice?
+				[ "$onchoice" -a "$onchoice" != "$var" ] && onchoice=
+
+				if [ -z "$onchoice" ]; then
+					onchoice=$var
+					var=$( echo $var | tr [a-z] [A-Z] )
+
+					# help
+					# FIXME: how do i inject this help?
+					helptext= 
+					[ -f $pkgseldir/$onchoice.hlp ] && \
+						helptext=<$pkgseldir/$onchoice.hlp
+
+					cat <<EOT >> $configin
+			if [ "\$CFGTEMP_TRG_${prefix}_${var}" == 1 ]; then
+				choice ROCKCFG_TRG_${prefix}_${var} \${CFGTEMP_TRG_${prefix}_${var}_DEFAULT:-$option} \\
+					\${CFGTEMP_TRG_${prefix}_${var}_LIST}
+			fi
+						
+EOT
+				else
+					var=$( echo $var | tr [a-z] [A-Z] )
+				fi
+				var=ROCKCFG_TRG_${prefix}_${var}
+			elif [ "$kind" == ask -o "$kind" == all ]; then
+				var=`sed -n 's/^#Variable: \(.*\)/\1/p' $file`
+				var=ROCKCFG_TRG_${prefix}_$( echo ${var:-$option} | tr [a-z] [A-Z] )
+				[ "$onchoice" ] && onchoice=
+			else
+				continue
+			fi
+
+			# description
+			desc=`sed -n 's/^#Description: \(.*\)/\1/p' $file`
+			desc=${desc:-${option//_/ }}
+			
+			# dependencies
+			for x in $( grep "^#Dependencies: " $file | cut -d':' -f2-); do
+				if [[ $x == ROCKCFG_* ]]; then
+					deps="$deps $x"
+				else
+					deps="$deps ROCKCFG_TRG_${prefix}_$x"
+				fi
+			done
+
+			[ "$kind" == "choice" ] && depsin=$rulesin || depsin=$configin
+			set -- $deps; if [ $# -gt 0 ]; then
+				echo -n -e "\t\tif [ \"\$$1\" == '1' "
+				shift
+				for x; do
+					echo -n "-a \"\$1\" == '1' "
+				done
+				echo "]; then"
+			fi >> $depsin
+
+			# help
+			helptext= conffile=
+
+			if [ -f ${file%.$kind}.conf ]; then
+				conffile="				. ${file%.$kind}.conf
+"
+			fi
+
+			# content
+			case $kind in
+				ask)	# boolean
+					val=`sed -n 's/^#Default: \(.*\)/\1/p' $file`
+					val=${val:-0}
+			
+					[ -f ${file%.$kind}.hlp ] && helptext=<${file%.$kind}.hlp
+
+					cat <<EOT >> $configin
+			bool '$desc' $var $val
+			if [ "\$$var" == 1 ]; then
+				var_append CFGTEMP_TRG_${prefix}_PKGLST ' ' $file
+$conffile			fi
+
+EOT
+					;;
+				choice) # multiple choice
+					val=`sed -n 's/^#Default: \(.*\)/\1/p' $file`
+					if [ "$val" ]; then
+						cat << EOT >> $rulesin
+			CFGTEMP${var#ROCKCFG}_DEFAULT=$val
+EOT
+					fi
+					cat << EOT >> $rulesin
+			CFGTEMP${var#ROCKCFG}=1
+			var_append CFGTEMP${var#ROCKCFG}_LIST ' ' "$option ${desc// /_}"
+EOT
+					cat << EOT >> $configin
+			if [ "\$$var" == "$option" ]; then
+				var_append CFGTEMP_TRG_${prefix}_PKGLST ' ' $file
+$conffile			fi
+EOT
+					;;
+				*)	# hidden field
+					cat <<EOT >> $configin
+			$var=1
+			var_append CFGTEMP_TRG_${prefix}_PKGLST ' ' $file
+$conffile
+EOT
+					;;
+			esac
+
+			if [ "$deps" ]; then
+				echo -e "\t\tfi" >> $depsin
+				if [ $kind = "ask" -o $kind = "choice" ]; then
+					# TODO: add rule: this directory will be shown if these deps are meet
+					true
+				fi
+			else
+				if [ $kind = "ask" ]; then
+					render=1
+				elif [ $kind = "choice" ]; then
+					render=1
+					# TODO: add rule: always display this choice
+				fi
+			fi
 		fi
 	done
-}
 
-trg_mnemosyne_feature() {
-	local option desc var default
-	local help
-	local render
-
-	if [ "$file" != "${file%.all}" ]; then
-		option=${file%.all}
-		render=0
-	else
-		option=${file%.ask}
-		render=1
+	if [ "$dirname" ]; then
+	cat <<EOT >> $configin
+	if [ "\$$dirvar" == 1 ]; then
+		block_end
 	fi
-	option=${option/[0-9]*-/}
-
-	desc=`sed -n 's/^#Description: \(.*\)/\1/p' $xroot/$file`
-	desc="${desc:-${option/_/ }}"
-
-	var=`sed -n 's/^#Variable: \(.*\)/\1/p' $xroot/$file`
-	var="${var:-`echo $option | tr [a-z] [A-Z]`}"
-	var='ROCKCFG_TRG_'$prefix'_'$var
+EOT
+	fi
 
 	if [ $render -eq 1 ]; then
-		default=`sed -n 's/^#Default: \(.*\)/\1/p' $xroot/$file`
-		default=${default:-0}
-
-		if [ -r "$xroot/$option.hlp" ]; then
-			help=<$xroot/$option.hlp
-		else
-			help=
-		fi
-
-		bool "$desc" $var $default "$help"
+		# always display this directory
+		echo "$dirvar=1" >> $rulesin
 	else
-		eval export $var=1
-	fi
-	
-	if eval "test \$$var -eq 1 "; then
-		var_append 'CFGTEMP_TRG_'$prefix'_PKGLST' ' ' "$xroot/$file"
-
-		test -r "$xroot/$option.in" && . "$xroot/$option.in"
-
-		if [ -d "$xroot/$option" ]; then
-			block_begin 2
-			comment "-- $desc Options"
-			#menu_begin 'MENU_TGT_'$prefix'_'$option "$desc Options"
-				block_begin 2
-				trg_mnemosyne_features $xroot/$option
-				block_end
-			#menu_end
-			block_end
+		# enable if any of the subdirs is enabled
+		if [ "$dirvar" ]; then
+			for x in $subdirs; do
+				x=$( echo "${x//\//_}" | tr [a-z] [A-Z] )
+				cat <<EOT >> $rulesin
+if [ "\$CFGTEMP_TRG_${prefix}_$x" == 1 ]; then
+	$dirvar=1
+fi
+EOT
+			done
 		fi
 	fi
 }
