@@ -83,12 +83,13 @@ done
 echo "Creating links for identical files."
 while read ck fn ; do      
         if [ "$oldck" = "$ck" ] ; then
-                echo "\`- Found $fn -> $oldfn."
+                echo "\"$fn -> $oldfn\""
                 rm $fn ; ln $oldfn $fn
         else    
                 oldck=$ck ; oldfn=$fn
         fi
 done < <( find -type f | xargs md5sum | sort )
+echo
 
 while read target name ; do
 	ln -s $target $name
@@ -194,6 +195,13 @@ c 7 9 vcs9
 c 1 5 zero
 EOT
 )
+
+echo "Injecting some more stuff ..."
+ln -s ash bin/sh
+cp -f $base/target/psion-pda/{passwd,group,fstab,issue,profile} etc/
+
+echo "Injecting minit config ..."
+(cd $base/target/psion-pda/minit ; tar cSp . ) | tar xSp -C etc/minit/
 
 # image size estimation ...
 s="`du -s -B 1 . | cut -f 1`"
