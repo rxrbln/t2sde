@@ -1,0 +1,59 @@
+# $conffiles is a list of patters of the form
+# ^[XO-] <pattern> [<value>]
+# X means enable, O disable, and - removes it
+# pattern can use '*' as a wildcard for [^ #]
+# optionaly can set a value different that y
+apply_conffiles() {
+	local f x; 
+	rm -f /tmp/$$.sed
+	for f in $conffiles; do if [ -f "$f" ]; then
+		while read a c v; do
+			x="${c//\\*/[^ #]*}"
+			x="^\(# \)\?\($x\)[= ].*\$"
+			
+			# value
+			if [ -z "$v" ]; then
+				v='y'
+			fi
+			case "$a" in
+				X)	echo "apply_conffiles: rule $c=$v."
+					echo "s,$x,\2=$v,g" >> /tmp/$$.sed
+					;;
+				O)	echo "apply_conffiles: rule unset $c."
+					echo "s,$x,# \2 is not set,g" >> /tmp/$$.sed
+					;;
+				-)	echo "apply_conffiles: rule remove $c."
+					echo "s,$x,,g" >> /tmp/$$.sed
+					;;
+				*)
+					echo "apply_conffiles: bad rule $a $c $v"
+					;;
+			esac
+		done < <( cat $f ); 
+	fi ; done
+	sed -f /tmp/$$.sed .config > $1
+	rm /tmp/$$.sed
+}
+
+# get default config, and filter considering <n>
+# levels, because new options can appear and other disappear
+auto_config() {
+	local j=1 n="${1:-1}"
+
+	# defconfig
+	eval "$MAKE defconfig $makeopt"
+	cp -v .config .config.$j
+
+	j=2 ; for (( i=1 ; i<n ; i++, j++ )) {
+		apply_conffiles .config.$j
+		cp -v .config.$j .config
+		
+		eval "$MAKE oldconfig $makeopt"
+		(( j++ )) ; cp -v .config .config.$j
+		}
+
+	# second round
+	apply_conffiles .config.$j
+	cp -v .config.$j .config
+}
+
