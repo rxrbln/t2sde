@@ -8,13 +8,12 @@ if [ "$pfile" ] ; then
 
 	if [ -f protector.dif ] ; then
 		patch -p0 < protector.dif
-		mv protector.{c,h} gcc/
 	elif [ -f gcc_*.dif ] ; then
 		patch -p0 < gcc_*.dif
-		# the protector.* files are already extracted into gcc/ ...
 	else
 		abord "Protector patch not found"
 	fi
+	[ -f protector.c ] && mv protector.{c,h} gcc/
 else
 	echo "No stack-protector available for $pkg ..."
 fi
