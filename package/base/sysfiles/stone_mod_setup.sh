@@ -61,11 +61,11 @@ EOT
 
 	cat << EOT > $tmp2
 ARGIND == 1 {
-    for (c=1; c<=NF; c++) if (ss[c] < length($c)) ss[c]=length($c);
+    for (c=1; c<=NF; c++) if (ss[c] < length(\$c)) ss[c]=length(\$c);
 }
 ARGIND == 2 {
-    for (c=1; c<NF; c++) printf "%-*s",ss[c]+2,$c;
-    printf "%s\n",$NF;
+    for (c=1; c<NF; c++) printf "%-*s",ss[c]+2,\$c;
+    printf "%s\n",\$NF;
 }
 EOT
 	gawk -f $tmp2 $tmp1 $tmp1 | \
