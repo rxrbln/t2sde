@@ -158,6 +158,12 @@ edit_if() {
 	write_section "$1"
 }
 
+add_interface() {
+	gui_input "The new interface name (and profile)" \
+	          "" "name"
+	echo -e "\ninterface $name" >> $rocknet_base/config
+} 
+
 main() {
     while
 
@@ -175,13 +181,15 @@ rocknet is executed.'"
 		cmd="$cmd '${tags[$i]}' 'edit_global_tag $i'"
 	done
 
-	cmd="$cmd ''' '' Add new tag' 'add_global_tag'"
+	cmd="$cmd '' '' 'Add new tag' 'add_global_tag'"
 
 	cmd="$cmd '' ''"
 
 	for if in $interfaces ; do
 		cmd="$cmd 'Edit interface ${if//_/ }' 'edit_if $if'"
 	done
+
+	cmd="$cmd '' '' 'Add new interface' 'add_interface'"
 
 	cmd="$cmd '' '' 'Configure runlevels for network service'"
 	cmd="$cmd '$STONE runlevel edit_srv network'"
