@@ -6,7 +6,7 @@ pkgloop_action() {
 	# Rebuild command line without '$cmd_maketar'
 	#
         cmd_buildpkg="./scripts/Build-Pkg -$stagelevel -cfg $config"
-        cmd_buildpkg="$cmd_buildpkg $cmd_root $cmd_prefix $pkg_name"
+        cmd_buildpkg="$cmd_buildpkg $cmd_root $cmd_prefix $pkg_basename=$pkg_name"
 
 	# Build package
 	#
@@ -15,7 +15,7 @@ pkgloop_action() {
 	# Copy *.cache file
 	#
 	if [ -f "$build_root/var/adm/cache/$pkg_name" ] ; then
-		dir="$build_result/package/$pkg_tree/$pkg_name" ; mkdir -p $dir
+		dir="$build_result/package/$pkg_tree/$pkg_basename" ; mkdir -p $dir
 		cp $build_root/var/adm/cache/$pkg_name $dir/$pkg_name.cache
 	fi
 
