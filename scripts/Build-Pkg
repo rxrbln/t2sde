@@ -255,6 +255,7 @@ fi
 
 mkdir -p $root/var/adm/logs
 mkdir -p $root/var/adm/flists
+mkdir -p $root/var/adm/olists
 mkdir -p $root/var/adm/cksums
 mkdir -p $root/var/adm/md5sums
 mkdir -p $root/var/adm/packages
@@ -620,19 +621,28 @@ abort() {
 		then : ; fi
 	fi
 
-	# merge flist of previous build
-	[ -f var/adm/flists/$xpkg ] &&
-		cut -f2- -d' ' var/adm/flists/$xpkg >> $builddir/flist.txt
-
 	# evaluate flistdel
 	egrep -v "^($flistdel)\$" $builddir/flist.txt > $builddir/flist.txt.new
-	mv $builddir/flist.txt.new $builddir/flist.txt
+	mv $builddir/flist.txt{.new,}
 
 	hook_eval postflist
+
+	# save the old flist for later orphaned file check
+	[ -e var/adm/flists/$xpkg ] &&
+        	cut -f2- -d' ' var/adm/flists/$xpkg > $builddir/flist.txt.old
 
 	fl_wrparse -D -p "$xpkg" -r "$xroot/" < $builddir/flist.txt |
 			sort -u > var/adm/flists/$xpkg
 	echo Found `wc -l < var/adm/flists/$xpkg` "files for this package."
+
+        # analyze which files have not been reinstalled and thus are (normally)
+        # no longer needed (orphaned)
+	if [ -e $builddir/flist.txt.old ]; then
+		echo "Searching for orphaned files ..."
+		cut -f2- -d' ' var/adm/flists/$xpkg > $builddir/flist.txt.new
+		diff --normal $builddir/flist.txt.{old,new} |
+		grep '^<' | sed "s/^< /$xpkg: /" >> var/adm/olists/$pkg
+	fi
 
 	echo "Clear (old) md5sums and cksums ..."
 	echo -n > var/adm/md5sums/$xpkg
