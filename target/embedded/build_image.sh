@@ -15,10 +15,10 @@
 
 set -e
 
-echo "Preparing root filesystem image ..."
+echo "Preparing root filesystem image from build result ..."
 
-rm -rf $imagedir
-mkdir -p $imagedir/rootfs ; cd $imagedir/rootfs
+rm -rf $imagelocation{,.squashfs}
+mkdir -p $imagelocation ; cd $imagelocation
 
 find $build_root -printf "%P\n" | sed '
 
@@ -77,8 +77,18 @@ find $build_root -printf "%P\n" | sed '
 	fi
 done
 
-(cd $build_root ; tar cSp --files-from=$imagedir/rootfs/tar.input ) |
- tar xvSP ; rm tar.input
+(cd $build_root ; tar cSp --files-from=$imagelocation/tar.input ) |
+ tar xvSP
+
+echo "Preparing root filesystem image from target defined files ..."
+ln -s minit sbin/init
+
+find $base/target/$target/rootfs \( -name '.svn' -prune \) -o ! -type d \
+     -printf "%P\n" > tar.input
+(cd $base/target/$target/rootfs
+ tar cSp --files-from=$imagelocation/tar.input ) | tar xvSP
+
+rm tar.input
 
 echo "Creating links for identical files."
 while read ck fn ; do      
@@ -91,10 +101,6 @@ while read ck fn ; do
 done < <( find -type f | xargs md5sum | sort )
 echo
 
-echo "Injecting some more stuff ..."
-ln -s minit sbin/init
-cp -f $base/target/$target/{passwd,group,fstab,issue,profile} etc/
-
 echo "Creating root filesystem image (squashfs) ..."
 
 if [ "$arch_bigendian" = "yes" ]; then
@@ -103,10 +109,9 @@ else
 	sqfsopts="-le"
 fi
 
-cd $imagedir
-mksquashfs rootfs rootfs.squashfs $sqfsopts
+mksquashfs $imagelocation{,.squashfs} $sqfsopts
 
-du -sh rootfs{,.squashfs}
+du -sh $imagelocation{,.squashfs}
 
-echo "The image is located at $imagedir/rootfs.squasfs."
+echo "The image is located at $imagelocation.squasfs."
 
