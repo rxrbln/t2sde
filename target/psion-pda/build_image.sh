@@ -16,7 +16,7 @@
 set -e
 
 arlo_ver="`sed -e 's,.*arlo-\(.*\).zip .*,\1,' \
-           $base/target/psion-pda/download.txt`"
+           $base/target/$target/download.txt`"
 
 rm -rf $imagedir
 mkdir -p $imagedir/initrd ; cd $imagedir/initrd
@@ -45,7 +45,6 @@ find $build_root -printf "%P\n" | sed '
 # /etc noise
 /^etc\/stone.d/	d;
 /^etc\/cron.d/	d;
-/^etc\/network/	d;
 /^etc\/init.d/	d;
 /^etc\/profile.d/	d;
 
@@ -60,6 +59,8 @@ find $build_root -printf "%P\n" | sed '
 /^home/		d;
 /^mnt/		d;
 /^opt/		d;
+
+/^lib\/network/ d;
 
 /^\/man\//	d;
 
@@ -212,7 +213,7 @@ EOT
 
 echo "Injecting some more stuff ..."
 ln -s ash bin/sh
-cp -f $base/target/psion-pda/{passwd,group,fstab,issue,profile} etc/
+cp -f $base/target/$target/{passwd,group,fstab,issue,profile} etc/
 
 # image size estimation ...
 s="`du -s -B 1 . | cut -f 1`"
@@ -241,5 +242,5 @@ cp $build_root/boot/Image_* Image
 unzip $base/download/mirror/a/arlo-$arlo_ver.zip
 rm arlo/{copying,readme.html,example.cfg}
 
-cp $base/target/psion-pda/arlo.cfg arlo/
+cp $base/target/$target/arlo.cfg arlo/
 
