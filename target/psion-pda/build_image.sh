@@ -233,20 +233,27 @@ tmpfile="`mktemp`"
 
 dd if=/dev/zero of=$tmpfile bs=$s count=1 > $tmpfile
 
-mke2fs -m 0 -N 512 -qF $tmpfile
+mke2fs -m 0 -N 512 -qF $tmpfile > /dev/null
 mount -t ext2 $tmpfile $tmpdir -o loop
 rmdir $tmpdir/lost+found/
 
-tar cSp . | (cd $tmpdir ; tar xSp)
+copy_from_source . $tmpdir
 
 umount $tmpdir
 gzip -9 -c $tmpfile > ../initrd.gz
 rmdir $tmpdir ; rm -f $tmpfile
 
-cd $imagedir ; rm -rf arlo ; mkdir arlo ; cd arlo
+du -sh . ../initrd.gz
+
+cd $imagelocation/..
+rm -rf epoc ; mkdir epoc ; cd epoc
 cp $build_root/boot/Image_* Image
-unzip $base/download/mirror/a/arlo-$arlo_ver.zip
+
+echo "Extracting ARLO ..."
+unzip $base/download/mirror/a/arlo-$arlo_ver.zip > /dev/null
 rm arlo/{copying,readme.html,example.cfg}
 
 cp $base/target/$target/arlo.cfg arlo/
+
+echo "The image is located at $imagelocation/.."
 
