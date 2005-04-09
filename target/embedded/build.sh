@@ -14,7 +14,7 @@
 
 pkgloop
 
-imagedir="$build_rock/image"
+imagelocation="$build_rock/rootfs"
 . $base/target/$target/build_image.sh
 
 echo_status "Done!"
