@@ -13,6 +13,8 @@
 # GNU General Public License can be found in the file COPYING.
 # --- T2-COPYRIGHT-NOTE-END ---
 
+. $base/misc/target/functions.in
+
 set -e
 
 echo "Preparing root filesystem image from build result ..."
@@ -77,29 +79,15 @@ find $build_root -printf "%P\n" | sed '
 	fi
 done
 
-(cd $build_root ; tar cSp --files-from=$imagelocation/tar.input ) |
- tar xvSP
+copy_with_list_from_file $build_root . $PWD/tar.input
+rm tar.input
 
 echo "Preparing root filesystem image from target defined files ..."
 ln -s minit sbin/init
-
-find $base/target/$target/rootfs \( -name '.svn' -prune \) -o ! -type d \
-     -printf "%P\n" > tar.input
-(cd $base/target/$target/rootfs
- tar cSp --files-from=$imagelocation/tar.input ) | tar xvSP
-
-rm tar.input
+copy_from_source $base/target/$target/rootfs .
 
 echo "Creating links for identical files."
-while read ck fn ; do      
-        if [ "$oldck" = "$ck" -a -s $fn -a -f $fn ] ; then
-                echo "\"$fn -> $oldfn\""
-                rm $fn ; ln $oldfn $fn
-        else    
-                oldck=$ck ; oldfn=$fn
-        fi
-done < <( find -type f | xargs md5sum | sort )
-echo
+link_identical_files
 
 echo "Creating root filesystem image (squashfs) ..."
 
@@ -109,7 +97,7 @@ else
 	sqfsopts="-le"
 fi
 
-mksquashfs $imagelocation{,.squashfs} $sqfsopts
+mksquashfs $imagelocation{,.squashfs} $sqfsopts > /dev/null
 
 du -sh $imagelocation{,.squashfs}
 
