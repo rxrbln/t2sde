@@ -86,7 +86,7 @@ echo "Preparing root filesystem image from target defined files ..."
 ln -s minit sbin/init
 copy_from_source $base/target/$target/rootfs .
 
-echo "Creating links for identical files."
+echo "Creating links for identical files ..."
 link_identical_files
 
 echo "Creating root filesystem image (squashfs) ..."
