@@ -1,0 +1,4381 @@
+If this patch does not apply cleanly to newer version of util-linux, try
+replacing original lomount.c lomount.h loop.h losetup.8 files in mount
+subdirectory with versions from util-linux that the patch is for. And then
+apply this patch.
+
+diff -urN util-linux-2.12q/mount/Makefile util-linux-2.12q-AES/mount/Makefile
+--- util-linux-2.12q/mount/Makefile	Wed Dec 22 11:32:08 2004
++++ util-linux-2.12q-AES/mount/Makefile	Wed Jan 26 17:40:12 2005
+@@ -29,7 +29,6 @@
+ 
+ MAYBE = pivot_root swapoff
+ 
+-LO_OBJS = lomount.o $(LIB)/xstrncpy.o
+ NFS_OBJS = nfsmount.o nfsmount_xdr.o nfsmount_clnt.o
+ GEN_FILES = nfsmount.h nfsmount_xdr.c nfsmount_clnt.c
+ 
+@@ -49,24 +48,33 @@
+ 
+ mount: mount.o fstab.o sundries.o xmalloc.o realpath.o mntent.o version.o \
+        get_label_uuid.o mount_by_label.o mount_blkid.o mount_guess_fstype.o \
+-       getusername.o $(LIB)/setproctitle.o $(LIB)/env.o $(NFS_OBJS) $(LO_OBJS)
++	getusername.o $(LIB)/setproctitle.o $(LIB)/env.o $(NFS_OBJS) lomount.o \
++	loumount.o loop.o sha512.o rmd160.o aes.o $(LIB)/xstrncpy.o
+ 	$(LINK) $^ -o $@ $(BLKID_LIB)
+ 
+ umount: umount.o fstab.o sundries.o xmalloc.o realpath.o mntent.o \
+ 	getusername.o get_label_uuid.o mount_by_label.o mount_blkid.o \
+-	version.o $(LIB)/env.o $(LO_OBJS)
++	version.o $(LIB)/env.o loumount.o
+ 	$(LINK) $^ -o $@ $(BLKID_LIB)
+ 
+ swapon:	swapon.o version.o xmalloc.o \
+-	get_label_uuid.o mount_by_label.o mount_blkid.o
++	get_label_uuid.o mount_by_label.o mount_blkid.o loop.o sha512.o $(LIB)/xstrncpy.o
+ 	$(LINK) $^ -o $@ $(BLKID_LIB)
+ 
+ main_losetup.o: lomount.c
+ 	$(COMPILE) -DMAIN lomount.c -o $@
+ 
+-losetup: main_losetup.o $(LIB)/xstrncpy.o
++losetup: main_losetup.o loumount.o loop.o sha512.o rmd160.o aes.o $(LIB)/xstrncpy.o
+ 	$(LINK) $^ -o $@
+ 
++loop.o lomount.o main_losetup.o swapon.o: loop.h
++
++sha512.o lomount.o main_losetup.o swapon.o: sha512.h
++
++rmd160.o lomount.o main_losetup.o: rmd160.h
++
++aes.o lomount.o main_losetup.o: aes.h
++
+ mount.o umount.o nfsmount.o losetup.o fstab.o realpath.o sundries.o: sundries.h
+ 
+ mount.o umount.o fstab.o sundries.o: fstab.h
+@@ -79,9 +87,9 @@
+ 
+ mount.o umount.o getusername.o: getusername.h
+ 
+-mount.o umount.o losetup.o lomount.o: lomount.h loop.h my_dev_t.h
++mount.o umount.o losetup.o lomount.o loumount.o: lomount.h loop.h
+ 
+-swapon.o: swap_constants.h swapargs.h
++swapon.o: swap_constants.h swapargs.h loop.h
+ 
+ sundries.o nfsmount.o nfsmount_xdr.o nfsmount_clnt.o: nfsmount.h
+ 
+diff -urN util-linux-2.12q/mount/aes.c util-linux-2.12q-AES/mount/aes.c
+--- util-linux-2.12q/mount/aes.c	Thu Jan  1 02:00:00 1970
++++ util-linux-2.12q-AES/mount/aes.c	Wed Jan 26 17:40:12 2005
+@@ -0,0 +1,299 @@
++// I retain copyright in this code but I encourage its free use provided
++// that I don't carry any responsibility for the results. I am especially 
++// happy to see it used in free and open source software. If you do use 
++// it I would appreciate an acknowledgement of its origin in the code or
++// the product that results and I would also appreciate knowing a little
++// about the use to which it is being put. I am grateful to Frank Yellin
++// for some ideas that are used in this implementation.
++//
++// Dr B. R. Gladman <brg@gladman.uk.net> 6th April 2001.
++//
++// This is an implementation of the AES encryption algorithm (Rijndael)
++// designed by Joan Daemen and Vincent Rijmen. This version is designed
++// to provide both fixed and dynamic block and key lengths and can also 
++// run with either big or little endian internal byte order (see aes.h). 
++// It inputs block and key lengths in bytes with the legal values being 
++// 16, 24 and 32.
++
++/*
++ * Modified by Jari Ruusu,  May 1 2001
++ *  - Fixed some compile warnings, code was ok but gcc warned anyway.
++ *  - Changed basic types: byte -> unsigned char, word -> u_int32_t
++ *  - Major name space cleanup: Names visible to outside now begin
++ *    with "aes_" or "AES_". A lot of stuff moved from aes.h to aes.c
++ *  - Removed C++ and DLL support as part of name space cleanup.
++ *  - Eliminated unnecessary recomputation of tables. (actual bug fix)
++ *  - Merged precomputed constant tables to aes.c file.
++ *  - Removed data alignment restrictions for portability reasons.
++ *  - Made block and key lengths accept bit count (128/192/256)
++ *    as well byte count (16/24/32).
++ *  - Removed all error checks. This change also eliminated the need
++ *    to preinitialize the context struct to zero.
++ *  - Removed some totally unused constants.
++ */
++
++/*
++ * Modified by Jari Ruusu,  June 9 2003
++ *  - Removed all code not necessary for small size
++ *    optimized encryption using 256 bit keys.
++ */
++
++#include "aes.h"
++
++#if AES_BLOCK_SIZE != 16
++#error an illegal block size has been specified
++#endif  
++
++// upr(x,n): rotates bytes within words by n positions, moving bytes 
++// to higher index positions with wrap around into low positions
++// bval(x,n): extracts a byte from a word
++
++#define upr(x,n)        (((x) << 8 * (n)) | ((x) >> (32 - 8 * (n))))
++#define bval(x,n)       ((unsigned char)((x) >> 8 * (n)))
++#define bytes2word(b0, b1, b2, b3)  \
++        ((u_int32_t)(b3) << 24 | (u_int32_t)(b2) << 16 | (u_int32_t)(b1) << 8 | (b0))
++
++#if defined(i386) || defined(_I386) || defined(__i386__) || defined(__i386)
++/* little endian processor without data alignment restrictions */
++#define word_in(x)      *(u_int32_t*)(x)
++#define word_out(x,v)   *(u_int32_t*)(x) = (v)
++#else
++/* slower but generic big endian or with data alignment restrictions */
++#define word_in(x)      ((u_int32_t)(((unsigned char *)(x))[0])|((u_int32_t)(((unsigned char *)(x))[1])<<8)|((u_int32_t)(((unsigned char *)(x))[2])<<16)|((u_int32_t)(((unsigned char *)(x))[3])<<24))
++#define word_out(x,v)   ((unsigned char *)(x))[0]=(v),((unsigned char *)(x))[1]=((v)>>8),((unsigned char *)(x))[2]=((v)>>16),((unsigned char *)(x))[3]=((v)>>24)
++#endif
++
++// the finite field modular polynomial and elements
++
++#define ff_poly 0x011b
++#define ff_hi   0x80
++
++static int tab_gen = 0;
++static unsigned char  s_box[256];            // the S box
++static u_int32_t  rcon_tab[AES_RC_LENGTH];   // table of round constants
++static u_int32_t  ft_tab[4][256];
++static u_int32_t  fl_tab[4][256];
++
++// Generate the tables for the dynamic table option
++
++// It will generally be sensible to use tables to compute finite 
++// field multiplies and inverses but where memory is scarse this 
++// code might sometimes be better.
++
++// return 2 ^ (n - 1) where n is the bit number of the highest bit
++// set in x with x in the range 1 < x < 0x00000200.   This form is
++// used so that locals within FFinv can be bytes rather than words
++
++static unsigned char hibit(const u_int32_t x)
++{   unsigned char r = (unsigned char)((x >> 1) | (x >> 2));
++    
++    r |= (r >> 2);
++    r |= (r >> 4);
++    return (r + 1) >> 1;
++}
++
++// return the inverse of the finite field element x
++
++static unsigned char FFinv(const unsigned char x)
++{   unsigned char    p1 = x, p2 = 0x1b, n1 = hibit(x), n2 = 0x80, v1 = 1, v2 = 0;
++
++    if(x < 2) return x;
++
++    for(;;)
++    {
++        if(!n1) return v1;
++
++        while(n2 >= n1)
++        {   
++            n2 /= n1; p2 ^= p1 * n2; v2 ^= v1 * n2; n2 = hibit(p2);
++        }
++        
++        if(!n2) return v2;
++
++        while(n1 >= n2)
++        {   
++            n1 /= n2; p1 ^= p2 * n1; v1 ^= v2 * n1; n1 = hibit(p1);
++        }
++    }
++}
++
++// define the finite field multiplies required for Rijndael
++
++#define FFmul02(x)  ((((x) & 0x7f) << 1) ^ ((x) & 0x80 ? 0x1b : 0))
++#define FFmul03(x)  ((x) ^ FFmul02(x))
++
++// The forward and inverse affine transformations used in the S-box
++
++#define fwd_affine(x) \
++    (w = (u_int32_t)x, w ^= (w<<1)^(w<<2)^(w<<3)^(w<<4), 0x63^(unsigned char)(w^(w>>8)))
++
++static void gen_tabs(void)
++{   u_int32_t  i, w;
++
++    for(i = 0, w = 1; i < AES_RC_LENGTH; ++i)
++    {
++        rcon_tab[i] = bytes2word(w, 0, 0, 0);
++        w = (w << 1) ^ (w & ff_hi ? ff_poly : 0);
++    }
++
++    for(i = 0; i < 256; ++i)
++    {   unsigned char    b;
++
++        s_box[i] = b = fwd_affine(FFinv((unsigned char)i));
++
++        w = bytes2word(b, 0, 0, 0);
++        fl_tab[0][i] = w;
++        fl_tab[1][i] = upr(w,1);
++        fl_tab[2][i] = upr(w,2);
++        fl_tab[3][i] = upr(w,3);
++        w = bytes2word(FFmul02(b), b, b, FFmul03(b));
++        ft_tab[0][i] = w;
++        ft_tab[1][i] = upr(w,1);
++        ft_tab[2][i] = upr(w,2);
++        ft_tab[3][i] = upr(w,3);
++    }
++}
++
++#define four_tables(x,tab,vf,rf,c) \
++ (  tab[0][bval(vf(x,0,c),rf(0,c))] \
++  ^ tab[1][bval(vf(x,1,c),rf(1,c))] \
++  ^ tab[2][bval(vf(x,2,c),rf(2,c))] \
++  ^ tab[3][bval(vf(x,3,c),rf(3,c))])
++
++#define vf1(x,r,c)  (x)
++#define rf1(r,c)    (r)
++#define rf2(r,c)    ((r-c)&3)
++
++#define ls_box(x,c)     four_tables(x,fl_tab,vf1,rf2,c)
++
++#define nc   (AES_BLOCK_SIZE / 4)
++
++// Initialise the key schedule from the user supplied key.
++// The key length is now specified in bytes, 32.
++// This corresponds to bit length of 256 bits, and
++// to Nk value of 8 respectively.
++
++void aes_set_key(aes_context *cx, const unsigned char in_key[], int n_bytes, const int f)
++{   u_int32_t    *kf, *kt, rci;
++
++    if(!tab_gen) { gen_tabs(); tab_gen = 1; }
++
++    cx->aes_Nkey = 8;
++    cx->aes_Nrnd = (cx->aes_Nkey > nc ? cx->aes_Nkey : nc) + 6; 
++
++    cx->aes_e_key[0] = word_in(in_key     );
++    cx->aes_e_key[1] = word_in(in_key +  4);
++    cx->aes_e_key[2] = word_in(in_key +  8);
++    cx->aes_e_key[3] = word_in(in_key + 12);
++
++    kf = cx->aes_e_key; 
++    kt = kf + nc * (cx->aes_Nrnd + 1) - cx->aes_Nkey; 
++    rci = 0;
++
++    switch(cx->aes_Nkey)
++    {
++    case 8: cx->aes_e_key[4] = word_in(in_key + 16);
++            cx->aes_e_key[5] = word_in(in_key + 20);
++            cx->aes_e_key[6] = word_in(in_key + 24);
++            cx->aes_e_key[7] = word_in(in_key + 28);
++            do
++            {   kf[ 8] = kf[0] ^ ls_box(kf[7],3) ^ rcon_tab[rci++];
++                kf[ 9] = kf[1] ^ kf[ 8];
++                kf[10] = kf[2] ^ kf[ 9];
++                kf[11] = kf[3] ^ kf[10];
++                kf[12] = kf[4] ^ ls_box(kf[11],0);
++                kf[13] = kf[5] ^ kf[12];
++                kf[14] = kf[6] ^ kf[13];
++                kf[15] = kf[7] ^ kf[14];
++                kf += 8;
++            }
++            while (kf < kt);
++            break;
++    }
++}
++
++// y = output word, x = input word, r = row, c = column
++// for r = 0, 1, 2 and 3 = column accessed for row r
++
++#define s(x,c) x[c]
++
++// I am grateful to Frank Yellin for the following constructions
++// which, given the column (c) of the output state variable that
++// is being computed, return the input state variables which are
++// needed for each row (r) of the state
++
++// For the fixed block size options, compilers reduce these two 
++// expressions to fixed variable references. For variable block 
++// size code conditional clauses will sometimes be returned
++
++#define fwd_var(x,r,c) \
++ ( r==0 ?			\
++    ( c==0 ? s(x,0) \
++    : c==1 ? s(x,1) \
++    : c==2 ? s(x,2) \
++    : c==3 ? s(x,3) \
++    : c==4 ? s(x,4) \
++    : c==5 ? s(x,5) \
++    : c==6 ? s(x,6) \
++    : s(x,7))		\
++ : r==1 ?			\
++    ( c==0 ? s(x,1) \
++    : c==1 ? s(x,2) \
++    : c==2 ? s(x,3) \
++    : c==3 ? nc==4 ? s(x,0) : s(x,4) \
++    : c==4 ? s(x,5) \
++    : c==5 ? nc==8 ? s(x,6) : s(x,0) \
++    : c==6 ? s(x,7) \
++    : s(x,0))		\
++ : r==2 ?			\
++    ( c==0 ? nc==8 ? s(x,3) : s(x,2) \
++    : c==1 ? nc==8 ? s(x,4) : s(x,3) \
++    : c==2 ? nc==4 ? s(x,0) : nc==8 ? s(x,5) : s(x,4) \
++    : c==3 ? nc==4 ? s(x,1) : nc==8 ? s(x,6) : s(x,5) \
++    : c==4 ? nc==8 ? s(x,7) : s(x,0) \
++    : c==5 ? nc==8 ? s(x,0) : s(x,1) \
++    : c==6 ? s(x,1) \
++    : s(x,2))		\
++ :					\
++    ( c==0 ? nc==8 ? s(x,4) : s(x,3) \
++    : c==1 ? nc==4 ? s(x,0) : nc==8 ? s(x,5) : s(x,4) \
++    : c==2 ? nc==4 ? s(x,1) : nc==8 ? s(x,6) : s(x,5) \
++    : c==3 ? nc==4 ? s(x,2) : nc==8 ? s(x,7) : s(x,0) \
++    : c==4 ? nc==8 ? s(x,0) : s(x,1) \
++    : c==5 ? nc==8 ? s(x,1) : s(x,2) \
++    : c==6 ? s(x,2) \
++    : s(x,3)))
++
++#define si(y,x,k,c) s(y,c) = word_in(x + 4 * c) ^ k[c]
++#define so(y,x,c)   word_out(y + 4 * c, s(x,c))
++
++#define fwd_rnd(y,x,k,c)    s(y,c)= (k)[c] ^ four_tables(x,ft_tab,fwd_var,rf1,c)
++#define fwd_lrnd(y,x,k,c)   s(y,c)= (k)[c] ^ four_tables(x,fl_tab,fwd_var,rf1,c)
++
++#define locals(y,x)     x[4],y[4]
++
++#define l_copy(y, x)    s(y,0) = s(x,0); s(y,1) = s(x,1); \
++                        s(y,2) = s(x,2); s(y,3) = s(x,3);
++#define state_in(y,x,k) si(y,x,k,0); si(y,x,k,1); si(y,x,k,2); si(y,x,k,3)
++#define state_out(y,x)  so(y,x,0); so(y,x,1); so(y,x,2); so(y,x,3)
++#define round(rm,y,x,k) rm(y,x,k,0); rm(y,x,k,1); rm(y,x,k,2); rm(y,x,k,3)
++
++void aes_encrypt(const aes_context *cx, const unsigned char in_blk[], unsigned char out_blk[])
++{   u_int32_t        locals(b0, b1);
++    const u_int32_t  *kp = cx->aes_e_key;
++
++    state_in(b0, in_blk, kp); kp += nc;
++
++    {   u_int32_t    rnd;
++
++        for(rnd = 0; rnd < cx->aes_Nrnd - 1; ++rnd)
++        {
++            round(fwd_rnd, b1, b0, kp); 
++            l_copy(b0, b1); kp += nc;
++        }
++
++        round(fwd_lrnd, b0, b1, kp);
++    }
++
++    state_out(out_blk, b0);
++}
+diff -urN util-linux-2.12q/mount/aes.h util-linux-2.12q-AES/mount/aes.h
+--- util-linux-2.12q/mount/aes.h	Thu Jan  1 02:00:00 1970
++++ util-linux-2.12q-AES/mount/aes.h	Wed Jan 26 17:40:12 2005
+@@ -0,0 +1,97 @@
++// I retain copyright in this code but I encourage its free use provided
++// that I don't carry any responsibility for the results. I am especially 
++// happy to see it used in free and open source software. If you do use 
++// it I would appreciate an acknowledgement of its origin in the code or
++// the product that results and I would also appreciate knowing a little
++// about the use to which it is being put. I am grateful to Frank Yellin
++// for some ideas that are used in this implementation.
++//
++// Dr B. R. Gladman <brg@gladman.uk.net> 6th April 2001.
++//
++// This is an implementation of the AES encryption algorithm (Rijndael)
++// designed by Joan Daemen and Vincent Rijmen. This version is designed
++// to provide both fixed and dynamic block and key lengths and can also 
++// run with either big or little endian internal byte order (see aes.h). 
++// It inputs block and key lengths in bytes with the legal values being 
++// 16, 24 and 32.
++
++/*
++ * Modified by Jari Ruusu,  May 1 2001
++ *  - Fixed some compile warnings, code was ok but gcc warned anyway.
++ *  - Changed basic types: byte -> unsigned char, word -> u_int32_t
++ *  - Major name space cleanup: Names visible to outside now begin
++ *    with "aes_" or "AES_". A lot of stuff moved from aes.h to aes.c
++ *  - Removed C++ and DLL support as part of name space cleanup.
++ *  - Eliminated unnecessary recomputation of tables. (actual bug fix)
++ *  - Merged precomputed constant tables to aes.c file.
++ *  - Removed data alignment restrictions for portability reasons.
++ *  - Made block and key lengths accept bit count (128/192/256)
++ *    as well byte count (16/24/32).
++ *  - Removed all error checks. This change also eliminated the need
++ *    to preinitialize the context struct to zero.
++ *  - Removed some totally unused constants.
++ */
++
++#ifndef _AES_H
++#define _AES_H
++
++#if defined(__linux__) && defined(__KERNEL__)
++#  include <linux/types.h>
++#else 
++#  include <sys/types.h>
++#endif
++
++// CONFIGURATION OPTIONS (see also aes.c)
++//
++// Define AES_BLOCK_SIZE to set the cipher block size (16, 24 or 32) or
++// leave this undefined for dynamically variable block size (this will
++// result in much slower code).
++// IMPORTANT NOTE: AES_BLOCK_SIZE is in BYTES (16, 24, 32 or undefined). If
++// left undefined a slower version providing variable block length is compiled
++
++#define AES_BLOCK_SIZE  16
++
++// The number of key schedule words for different block and key lengths
++// allowing for method of computation which requires the length to be a
++// multiple of the key length
++//
++// Nk =       4   6   8
++//        -------------
++// Nb = 4 |  60  60  64
++//      6 |  96  90  96
++//      8 | 120 120 120
++
++#if !defined(AES_BLOCK_SIZE) || (AES_BLOCK_SIZE == 32)
++#define AES_KS_LENGTH   120
++#define AES_RC_LENGTH    29
++#else
++#define AES_KS_LENGTH   4 * AES_BLOCK_SIZE
++#define AES_RC_LENGTH   (9 * AES_BLOCK_SIZE) / 8 - 8
++#endif
++
++typedef struct
++{
++    u_int32_t    aes_Nkey;      // the number of words in the key input block
++    u_int32_t    aes_Nrnd;      // the number of cipher rounds
++    u_int32_t    aes_e_key[AES_KS_LENGTH];   // the encryption key schedule
++    u_int32_t    aes_d_key[AES_KS_LENGTH];   // the decryption key schedule
++#if !defined(AES_BLOCK_SIZE)
++    u_int32_t    aes_Ncol;      // the number of columns in the cipher state
++#endif
++} aes_context;
++
++// THE CIPHER INTERFACE
++
++#if !defined(AES_BLOCK_SIZE)
++extern void aes_set_blk(aes_context *, const int);
++#endif
++extern void aes_set_key(aes_context *, const unsigned char [], const int, const int);
++extern void aes_encrypt(const aes_context *, const unsigned char [], unsigned char []);
++extern void aes_decrypt(const aes_context *, const unsigned char [], unsigned char []);
++
++// The block length inputs to aes_set_block and aes_set_key are in numbers
++// of bytes or bits.  The calls to subroutines must be made in the above
++// order but multiple calls can be made without repeating earlier calls
++// if their parameters have not changed.
++
++#endif  // _AES_H
+diff -urN util-linux-2.12q/mount/lomount.c util-linux-2.12q-AES/mount/lomount.c
+--- util-linux-2.12q/mount/lomount.c	Tue Dec 21 00:11:04 2004
++++ util-linux-2.12q-AES/mount/lomount.c	Fri Mar 11 18:45:04 2005
+@@ -1,4 +1,15 @@
+-/* Originally from Ted's losetup.c */
++/* Taken from Ted's losetup.c - Mitch <m.dsouza@mrc-apu.cam.ac.uk> */
++/* Added vfs mount options - aeb - 960223 */
++/* Removed lomount - aeb - 960224 */
++
++/*
++ * 1999-02-22 Arkadiusz Mi¶kiewicz <misiek@pld.ORG.PL>
++ * - added Native Language Support
++ * 1999-03-21 Arnaldo Carvalho de Melo <acme@conectiva.com.br>
++ * - fixed strerr(errno) in gettext calls
++ * 2001-04-11 Jari Ruusu
++ * - added AES support
++ */
+ 
+ #define LOOPMAJOR	7
+ 
+@@ -13,60 +24,74 @@
+ #include <errno.h>
+ #include <stdlib.h>
+ #include <unistd.h>
++#include <pwd.h>
++#include <sys/types.h>
+ #include <sys/ioctl.h>
+ #include <sys/stat.h>
+ #include <sys/mman.h>
+ #include <sys/sysmacros.h>
++#include <sys/wait.h>
++#include <limits.h>
++#include <fcntl.h>
++#include <mntent.h>
++#include <locale.h>
++#include <sys/time.h>
++#include <sys/utsname.h>
+ 
+ #include "loop.h"
+ #include "lomount.h"
+ #include "xstrncpy.h"
+ #include "nls.h"
++#include "sha512.h"
++#include "rmd160.h"
++#include "aes.h"
+ 
+ extern int verbose;
+-extern char *progname;
+ extern char *xstrdup (const char *s);	/* not: #include "sundries.h" */
+ extern void error (const char *fmt, ...);	/* idem */
++extern void show_all_loops(void);
++extern int read_options_from_fstab(char *, char **);
+ 
+-#ifdef LOOP_SET_FD
+-
+-static int
+-loop_info64_to_old(const struct loop_info64 *info64, struct loop_info *info)
+-{
+-        memset(info, 0, sizeof(*info));
+-        info->lo_number = info64->lo_number;
+-        info->lo_device = info64->lo_device;
+-        info->lo_inode = info64->lo_inode;
+-        info->lo_rdevice = info64->lo_rdevice;
+-        info->lo_offset = info64->lo_offset;
+-        info->lo_encrypt_type = info64->lo_encrypt_type;
+-        info->lo_encrypt_key_size = info64->lo_encrypt_key_size;
+-        info->lo_flags = info64->lo_flags;
+-        info->lo_init[0] = info64->lo_init[0];
+-        info->lo_init[1] = info64->lo_init[1];
+-        if (info->lo_encrypt_type == LO_CRYPT_CRYPTOAPI)
+-                memcpy(info->lo_name, info64->lo_crypt_name, LO_NAME_SIZE);
+-        else
+-                memcpy(info->lo_name, info64->lo_file_name, LO_NAME_SIZE);
+-        memcpy(info->lo_encrypt_key, info64->lo_encrypt_key, LO_KEY_SIZE);
+-
+-        /* error in case values were truncated */
+-        if (info->lo_device != info64->lo_device ||
+-            info->lo_rdevice != info64->lo_rdevice ||
+-            info->lo_inode != info64->lo_inode ||
+-            info->lo_offset != info64->lo_offset)
+-                return -EOVERFLOW;
++#if !defined(LOOP_PASSWORD_MIN_LENGTH)
++# define  LOOP_PASSWORD_MIN_LENGTH   20
++#endif
+ 
+-        return 0;
+-}
++char    *passFDnumber = (char *)0;
++char    *passAskTwice = (char *)0;
++char    *passSeedString = (char *)0;
++char    *passHashFuncName = (char *)0;
++char    *passIterThousands = (char *)0;
++char    *loInitValue = (char *)0;
++char    *gpgKeyFile = (char *)0;
++char    *gpgHomeDir = (char *)0;
++char    *loopOffsetBytes = (char *)0;
++char    *loopSizeBytes = (char *)0;
++char    *loopEncryptionType = (char *)0;
++
++static int  multiKeyMode = 0;   /* 0=single-key 64=multi-key-v2 65=multi-key-v3 1000=any */
++static char *multiKeyPass[66];
++static char *loopFileName;
+ 
+ #ifdef MAIN
++static char *
++crypt_name (int id, int *flags) {
++	int i;
++
++	for (i = 0; loop_crypt_type_tbl[i].id != -1; i++)
++		if(id == loop_crypt_type_tbl[i].id) {
++			*flags = loop_crypt_type_tbl[i].flags;
++			return loop_crypt_type_tbl[i].name;
++		}
++	*flags = 0;
++	if(id == 18)
++		return "CryptoAPI";
++	return "undefined";
++}
+ 
+ static int
+ show_loop(char *device) {
+-	struct loop_info loopinfo;
+-	struct loop_info64 loopinfo64;
+-	int fd, errsv;
++	struct loop_info64 loopinfo;
++	int fd;
+ 
+ 	if ((fd = open(device, O_RDONLY)) < 0) {
+ 		int errsv = errno;
+@@ -74,70 +99,60 @@
+ 			device, strerror (errsv));
+ 		return 2;
+ 	}
+-
+-	if (ioctl(fd, LOOP_GET_STATUS64, &loopinfo64) == 0) {
+-
+-		loopinfo64.lo_file_name[LO_NAME_SIZE-2] = '*';
+-		loopinfo64.lo_file_name[LO_NAME_SIZE-1] = 0;
+-		loopinfo64.lo_crypt_name[LO_NAME_SIZE-1] = 0;
+-
+-		printf("%s: [%04llx]:%llu (%s)",
+-		       device, loopinfo64.lo_device, loopinfo64.lo_inode,
+-		       loopinfo64.lo_file_name);
+-
+-		if (loopinfo64.lo_offset)
+-			printf(_(", offset %lld"), loopinfo64.lo_offset);
+-
+-		if (loopinfo64.lo_sizelimit)
+-			printf(_(", sizelimit %lld"), loopinfo64.lo_sizelimit);
+-
+-		if (loopinfo64.lo_encrypt_type ||
+-		    loopinfo64.lo_crypt_name[0]) {
+-			char *e = loopinfo64.lo_crypt_name;
+-
+-			if (*e == 0 && loopinfo64.lo_encrypt_type == 1)
+-				e = "XOR";
+-			printf(_(", encryption %s (type %d)"),
+-			       e, loopinfo64.lo_encrypt_type);
+-		}
+-		printf("\n");
++	if (loop_get_status64_ioctl(fd, &loopinfo) < 0) {
++		int errsv = errno;
++		fprintf(stderr, _("loop: can't get info on device %s: %s\n"),
++			device, strerror (errsv));
+ 		close (fd);
+-		return 0;
++		return 1;
+ 	}
+-
+-	if (ioctl(fd, LOOP_GET_STATUS, &loopinfo) == 0) {
+-		printf ("%s: [%04x]:%ld (%s)",
+-			device, loopinfo.lo_device, loopinfo.lo_inode,
+-			loopinfo.lo_name);
+-
+-		if (loopinfo.lo_offset)
+-			printf(_(", offset %d"), loopinfo.lo_offset);
+-
+-		if (loopinfo.lo_encrypt_type)
+-			printf(_(", encryption type %d\n"),
+-			       loopinfo.lo_encrypt_type);
+-
+-		printf("\n");
+-		close (fd);
+-		return 0;
++	loopinfo.lo_file_name[LO_NAME_SIZE-1] = 0;
++	loopinfo.lo_crypt_name[LO_NAME_SIZE-1] = 0;
++	printf("%s: [%04llx]:%llu (%s)", device, (unsigned long long)loopinfo.lo_device,
++		(unsigned long long)loopinfo.lo_inode, loopinfo.lo_file_name);
++	if (loopinfo.lo_offset) {
++		if ((long long)loopinfo.lo_offset < 0) {
++			printf(_(" offset=@%llu"), -((unsigned long long)loopinfo.lo_offset));
++		} else {
++			printf(_(" offset=%llu"), (unsigned long long)loopinfo.lo_offset);
++		}
+ 	}
+-
+-	errsv = errno;
+-	fprintf(stderr, _("loop: can't get info on device %s: %s\n"),
+-		device, strerror (errsv));
++	if (loopinfo.lo_sizelimit)
++		printf(_(" sizelimit=%llu"), (unsigned long long)loopinfo.lo_sizelimit);
++	if (loopinfo.lo_encrypt_type) {
++		int flags;
++		unsigned char *s = crypt_name (loopinfo.lo_encrypt_type, &flags);
++
++		printf(_(" encryption=%s"), s);
++		/* type 18 == LO_CRYPT_CRYPTOAPI */
++		if (loopinfo.lo_encrypt_type == 18) {
++			printf("/%s", loopinfo.lo_crypt_name);
++		} else {
++			if(flags & 2)
++				printf("-");
++			if(flags & 1)
++				printf("%u", (unsigned int)loopinfo.lo_encrypt_key_size << 3);
++		}
++	}
++	switch(loopinfo.lo_flags & 0x180000) {
++	case 0x180000:
++		printf(_(" multi-key-v3"));
++		break;
++	case 0x100000:
++		printf(_(" multi-key-v2"));
++		break;
++	}
++	/* type 2 == LO_CRYPT_DES */
++	if (loopinfo.lo_init[0] && (loopinfo.lo_encrypt_type != 2))
++		printf(_(" loinit=%llu"), (unsigned long long)loopinfo.lo_init[0]);
++	if (loopinfo.lo_flags & 0x200000)
++		printf(_(" read-only"));
++	printf("\n");
+ 	close (fd);
+-	return 1;
+-}
+-#endif
+-
+-int
+-is_loop_device (const char *device) {
+-	struct stat statbuf;
+ 
+-	return (stat(device, &statbuf) == 0 &&
+-		S_ISBLK(statbuf.st_mode) &&
+-		major(statbuf.st_rdev) == LOOPMAJOR);
++	return 0;
+ }
++#endif
+ 
+ #define SIZE(a) (sizeof(a)/sizeof(a[0]))
+ 
+@@ -148,9 +163,8 @@
+ 	   So, we just try /dev/loop[0-7]. */
+ 	char dev[20];
+ 	char *loop_formats[] = { "/dev/loop%d", "/dev/loop/%d" };
+-	int i, j, fd, somedev = 0, someloop = 0, permission = 0;
++	int i, j, fd, somedev = 0, someloop = 0;
+ 	struct stat statbuf;
+-	struct loop_info loopinfo;
+ 
+ 	for (j = 0; j < SIZE(loop_formats); j++) {
+ 	    for(i = 0; i < 256; i++) {
+@@ -159,16 +173,14 @@
+ 			somedev++;
+ 			fd = open (dev, O_RDONLY);
+ 			if (fd >= 0) {
+-				if(ioctl (fd, LOOP_GET_STATUS, &loopinfo) == 0)
++				if (is_unused_loop_device(fd) == 0)
+ 					someloop++;		/* in use */
+ 				else if (errno == ENXIO) {
+ 					close (fd);
+ 					return xstrdup(dev);/* probably free */
+ 				}
+ 				close (fd);
+-			} else if (errno == EACCES)
+-				permission++;
+-
++			}
+ 			continue;/* continue trying as long as devices exist */
+ 		}
+ 		break;
+@@ -176,75 +188,571 @@
+ 	}
+ 
+ 	if (!somedev)
+-		error(_("%s: could not find any device /dev/loop#"), progname);
+-	else if (!someloop && permission)
+-		error(_("%s: no permission to look at /dev/loop#"), progname);
++		error(_("mount: could not find any device /dev/loop#"));
+ 	else if (!someloop)
+-		error(_(
+-		    "%s: Could not find any loop device. Maybe this kernel "
+-		    "does not know\n"
+-		    "       about the loop device? (If so, recompile or "
+-		    "`modprobe loop'.)"), progname);
++                error(_("mount: Could not find any loop device. Maybe this kernel does not know\n"
++			"       about the loop device? (If so, recompile or `modprobe loop'.)"));
+ 	else
+-		error(_("%s: could not find any free loop device"), progname);
++		error(_("mount: could not find any free loop device"));
+ 	return 0;
+ }
+ 
+-/*
+- * A function to read the passphrase either from the terminal or from
+- * an open file descriptor.
+- */
+-static char *
+-xgetpass(int pfd, const char *prompt) {
+-	char *pass;
+-	int buflen, i;
+-
+-        if (pfd < 0) /* terminal */
+-		return getpass(prompt);
+-
+-	pass = NULL;
+-	buflen = 0;
+-	for (i=0; ; i++) {
+-		if (i >= buflen-1) {
+-				/* we're running out of space in the buffer.
+-				 * Make it bigger: */
+-			char *tmppass = pass;
+-			buflen += 128;
+-			pass = realloc(tmppass, buflen);
+-			if (pass == NULL) {
+-				/* realloc failed. Stop reading. */
+-				error("Out of memory while reading passphrase");
+-				pass = tmppass; /* the old buffer hasn't changed */
+-				break;
+-			}
+-		}
+-		if (read(pfd, pass+i, 1) != 1 ||
+-		    pass[i] == '\n' || pass[i] == 0)
++static int rd_wr_retry(int fd, char *buf, int cnt, int w)
++{
++	int x, y, z;
++
++	x = 0;
++	while(x < cnt) {
++		y = cnt - x;
++		if(w) {
++			z = write(fd, buf + x, y);
++		} else {
++			z = read(fd, buf + x, y);
++			if (!z) return x;
++		}
++		if(z < 0) {
++			if ((errno == EAGAIN) || (errno == ENOMEM) || (errno == ERESTART) || (errno == EINTR)) {
++				continue;
++			}
++			return x;
++		}
++		x += z;
++	}
++	return x;
++}
++
++static char *get_FD_pass(int fd)
++{
++	char *p = NULL, *n;
++	int x = 0, y = 0;
++
++	do {
++		if(y >= (x - 1)) {
++			x += 128;
++			/* Must enforce some max limit here -- this code   */
++			/* runs as part of mount, and mount is setuid root */
++			/* and has used mlockall(MCL_CURRENT | MCL_FUTURE) */
++			if(x > (4*1024)) return(NULL);
++			n = malloc(x);
++			if(!n) return(NULL);
++			if(p) {
++				memcpy(n, p, y);
++				memset(p, 0, y);
++				free(p);
++			}
++			p = n;
++		}
++		if(rd_wr_retry(fd, p + y, 1, 0) != 1) break;
++		if((p[y] == '\n') || !p[y]) break;
++		y++;
++	} while(1);
++	if(p) p[y] = 0;
++	return p;
++}
++
++static unsigned long long mystrtoull(char *s, int acceptAT)
++{
++	unsigned long long v = 0;
++	int negative = 0;
++
++	while ((*s == ' ') || (*s == '\t'))
++		s++;
++	if (acceptAT && (*s == '@')) {
++		s++;
++		negative = 1;
++	}
++	if (*s == '0') {
++		s++;
++		if ((*s == 'x') || (*s == 'X')) {
++			s++;
++			sscanf(s, "%llx", &v);
++		} else {
++			sscanf(s, "%llo", &v);
++		}
++	} else {
++		sscanf(s, "%llu", &v);
++	}
++	return negative ? -v : v;
++}
++
++static void warnAboutBadKeyData(int x)
++{
++	if((x > 1) && (x != 64) && (x != 65)) {
++		fprintf(stderr, _("Warning: Unknown key data format - using it anyway\n"));
++	}
++}
++
++static char *do_GPG_pipe(char *pass)
++{
++	int     x, pfdi[2], pfdo[2];
++	char    str[10], *a[16], *e[2], *h;
++	pid_t   gpid;
++	struct passwd *p;
++
++	if((getuid() == 0) && gpgHomeDir && gpgHomeDir[0]) {
++		h = gpgHomeDir;
++	} else {
++		if(!(p = getpwuid(getuid()))) {
++			fprintf(stderr, _("Error: Unable to detect home directory for uid %d\n"), (int)getuid());
++			return NULL;
++		}
++		h = p->pw_dir;
++	}
++	if(!(e[0] = malloc(strlen(h) + 6))) {
++		nomem1:
++		fprintf(stderr, _("Error: Unable to allocate memory\n"));
++		return NULL;
++	}
++	sprintf(e[0], "HOME=%s", h);
++	e[1] = 0;
++
++	if(pipe(&pfdi[0])) {
++		nomem2:
++		free(e[0]);
++		goto nomem1;
++	}
++	if(pipe(&pfdo[0])) {
++		close(pfdi[0]);
++		close(pfdi[1]);
++		goto nomem2;
++	}
++
++	/*
++	 * When this code is run as part of losetup, normal read permissions
++	 * affect the open() below because losetup is not setuid-root.
++	 *
++	 * When this code is run as part of mount, only root can set
++	 * 'gpgKeyFile' and as such, only root can decide what file is opened
++	 * below. However, since mount is usually setuid-root all non-root
++	 * users can also open() the file too, but that file's contents are
++	 * only piped to gpg. This readable-for-all is intended behaviour,
++	 * and is very useful in situations where non-root users mount loop
++	 * devices with their own gpg private key, and yet don't have access
++	 * to the actual key used to encrypt loop device.
++	 */
++	if((x = open(gpgKeyFile, O_RDONLY)) == -1) {
++		fprintf(stderr, _("Error: unable to open %s for reading\n"), gpgKeyFile);
++		nomem3:
++		free(e[0]);
++		close(pfdo[0]);
++		close(pfdo[1]);
++		close(pfdi[0]);
++		close(pfdi[1]);
++		return NULL;
++	}
++
++	/*
++	 * If someone puts a gpg key file at beginning of device and
++	 * puts the real file system at some offset into the device,
++	 * this code extracts that gpg key file into a temp file so gpg
++	 * won't end up reading whole device when decrypting the key file.
++	 *
++	 * Example of encrypted cdrom mount with 8192 bytes reserved for gpg key file:
++	 * mount -t iso9660 /dev/cdrom /cdrom -o loop=/dev/loop0,encryption=AES128,gpgkey=/dev/cdrom,offset=8192
++	 *                  ^^^^^^^^^^                                                    ^^^^^^^^^^        ^^^^
++	 */
++	if(loopOffsetBytes && !strcmp(loopFileName, gpgKeyFile)) {
++		FILE *f;
++		char b[1024];
++		long long cnt;
++		int cnt2, cnt3;
++
++		cnt = mystrtoull(loopOffsetBytes, 1);
++		if(cnt < 0) cnt = -cnt;
++		if(cnt > (1024 * 1024)) cnt = 1024 * 1024; /* sanity check */
++		f = tmpfile();
++		if(!f) {
++			fprintf(stderr, _("Error: unable to create temp file\n"));
++			close(x);
++			goto nomem3;
++		}
++		while(cnt > 0) {
++			cnt2 = sizeof(b);
++			if(cnt < cnt2) cnt2 = cnt;
++			cnt3 = rd_wr_retry(x, b, cnt2, 0);
++			if(cnt3 && (fwrite(b, cnt3, 1, f) != 1)) {
++				tmpWrErr:
++				fprintf(stderr, _("Error: unable to write to temp file\n"));
++				fclose(f);
++				close(x);
++				goto nomem3;
++			}
++			if(cnt2 != cnt3) break;
++			cnt -= cnt3;
++		}
++		if(fflush(f)) goto tmpWrErr;
++		close(x);
++		x = dup(fileno(f));
++		fclose(f);
++		lseek(x, 0L, SEEK_SET);
++	}
++
++	sprintf(str, "%d", pfdi[0]);
++	if(!(gpid = fork())) {
++		dup2(x, 0);
++		dup2(pfdo[1], 1);
++		close(x);
++		close(pfdi[1]);
++		close(pfdo[0]);
++		close(pfdo[1]);
++		if((x = open("/dev/null", O_WRONLY)) >= 0) {
++			dup2(x, 2);
++			close(x);
++		}
++		x = 0;
++		a[x++] = "gpg";
++		if(gpgHomeDir && gpgHomeDir[0]) {
++			a[x++] = "--homedir";
++			a[x++] = gpgHomeDir;
++		}
++		a[x++] = "--no-options";
++		a[x++] = "--quiet";
++		a[x++] = "--batch";
++		a[x++] = "--no-tty";
++		a[x++] = "--passphrase-fd";
++		a[x++] = str;
++		a[x++] = "--decrypt";
++		a[x] = 0;
++		setgid(getgid());
++		setuid(getuid());
++		for(x = 3; x < 1024; x++) {
++			if(x == pfdi[0]) continue;
++			close(x);
++		}
++		execve("/bin/gpg", &a[0], &e[0]);
++		execve("/usr/bin/gpg", &a[0], &e[0]);
++		execve("/usr/local/bin/gpg", &a[0], &e[0]);
++		exit(1);
++	}
++	free(e[0]);
++	close(x);
++	close(pfdi[0]);
++	close(pfdo[1]);
++	if(gpid == -1) {
++		close(pfdi[1]);
++		close(pfdo[0]);
++		goto nomem1;
++	}
++
++	x = strlen(pass);
++	rd_wr_retry(pfdi[1], pass, x, 1);
++	rd_wr_retry(pfdi[1], "\n", 1, 1);
++	close(pfdi[1]);
++	memset(pass, 0, x);
++	x = 0;
++	while(x < 66) {
++		multiKeyPass[x] = get_FD_pass(pfdo[0]);
++		if(!multiKeyPass[x]) {
++			/* mem alloc failed - abort */
++			multiKeyPass[0] = 0;
+ 			break;
++		}
++		if(strlen(multiKeyPass[x]) < LOOP_PASSWORD_MIN_LENGTH) break;
++		x++;
+ 	}
++	warnAboutBadKeyData(x);
++	if(x >= 65)
++		multiKeyMode = 65;
++	if(x == 64)
++		multiKeyMode = 64;
++	close(pfdo[0]);
++	waitpid(gpid, &x, 0);
++	if(!multiKeyPass[0]) goto nomem1;
++	return multiKeyPass[0];
++}
+ 
+-	if (pass == NULL)
+-		return "";
++static char *sGetPass(int minLen, int warnLen)
++{
++	char *p, *s, *seed;
++	int i, ask2;
+ 
+-	pass[i] = 0;
+-	return pass;
++	if(!passFDnumber) {
++		p = getpass(_("Password: "));
++		ask2 = passAskTwice ? 1 : 0;
++	} else {
++		i = atoi(passFDnumber);
++		if(gpgKeyFile && gpgKeyFile[0]) {
++			p = get_FD_pass(i);
++		} else {
++			int x = 0;
++			while(x < 66) {
++				multiKeyPass[x] = get_FD_pass(i);
++				if(!multiKeyPass[x]) goto nomem;
++				if(strlen(multiKeyPass[x]) < LOOP_PASSWORD_MIN_LENGTH) break;
++				x++;
++			}
++			warnAboutBadKeyData(x);
++			if(x >= 65) {
++				multiKeyMode = 65;
++				return multiKeyPass[0];
++			}
++			if(x == 64) {
++				multiKeyMode = 64;
++				return multiKeyPass[0];
++			}
++			p = multiKeyPass[0];
++		}
++		ask2 = 0;
++	}
++	if(!p) goto nomem;
++	if(gpgKeyFile && gpgKeyFile[0]) {
++		if(ask2) {
++			i = strlen(p);
++			s = malloc(i + 1);
++			if(!s) goto nomem;
++			strcpy(s, p);
++			p = getpass(_("Retype password: "));
++			if(!p) goto nomem;
++			if(strcmp(s, p)) goto compareErr;
++			memset(s, 0, i);
++			free(s);
++			ask2 = 0;
++		}
++		p = do_GPG_pipe(p);
++		if(!p) return(NULL);
++		if(!p[0]) {
++			fprintf(stderr, _("Error: gpg key file decryption failed\n"));
++			return(NULL);
++		}
++		if(multiKeyMode) return(p);
++	}
++	i = strlen(p);
++	if(i < minLen) {
++		fprintf(stderr, _("Error: Password must be at least %d characters.\n"), minLen);
++		return(NULL);
++	}
++	seed = passSeedString;
++	if(!seed) seed = "";
++	s = malloc(i + strlen(seed) + 1);
++	if(!s) {
++		nomem:
++		fprintf(stderr, _("Error: Unable to allocate memory\n"));
++		return(NULL);
++	}
++	strcpy(s, p);
++	memset(p, 0, i);
++	if(ask2) {
++		p = getpass(_("Retype password: "));
++		if(!p) goto nomem;
++		if(strcmp(s, p)) {
++			compareErr:
++			fprintf(stderr, _("Error: Passwords are not identical\n"));
++			return(NULL);
++		}
++		memset(p, 0, i);
++	}
++	if(i < warnLen) {
++		fprintf(stderr, _("WARNING - Please use longer password (%d or more characters)\n"), LOOP_PASSWORD_MIN_LENGTH);
++	}
++	strcat(s, seed);
++	return(s);
+ }
+ 
+-static int
+-digits_only(const char *s) {
+-	while (*s)
+-		if (!isdigit(*s++))
+-			return 0;
+-	return 1;
++/* this is for compatibility with historic loop-AES version */
++static void unhashed1_key_setup(unsigned char *keyStr, int ile, unsigned char *keyBuf, int bufSize)
++{
++	register int    x, y, z, cnt = ile;
++	unsigned char   *kp;
++
++	memset(keyBuf, 0, bufSize);
++	kp = keyStr;
++	for(x = 0; x < (bufSize * 8); x += 6) {
++		y = *kp++;
++		if(--cnt <= 0) {
++			kp = keyStr;
++			cnt = ile;
++		}
++		if((y >= '0') && (y <= '9')) y -= '0';
++		else if((y >= 'A') && (y <= 'Z')) y -= ('A' - 10);
++		else if((y >= 'a') && (y <= 'z')) y -= ('a' - 36);
++		else if((y == '.') || (y == '/')) y += (62 - '.');
++		else y &= 63;
++		z = x >> 3;
++		if(z < bufSize) {
++			keyBuf[z] |= y << (x & 7);
++		}
++		z++;
++		if(z < bufSize) {
++			keyBuf[z] |= y >> (8 - (x & 7));
++		}
++	}
++}
++
++/* this is for compatibility with mainline mount */
++static void unhashed2_key_setup(unsigned char *keyStr, int ile, unsigned char *keyBuf, int bufSize)
++{
++	memset(keyBuf, 0, bufSize);
++	strncpy(keyBuf, keyStr, bufSize - 1);
++	keyBuf[bufSize - 1] = 0;
++}
++
++static void rmd160HashTwiceWithA(unsigned char *ib, int ile, unsigned char *ob, int ole)
++{
++	char tmpBuf[20 + 20];
++	char pwdCopy[130];
++
++	if(ole < 1) return;
++	memset(ob, 0, ole);
++	if(ole > 40) ole = 40;
++	rmd160_hash_buffer(&tmpBuf[0], ib, ile);
++	pwdCopy[0] = 'A';
++	if(ile > sizeof(pwdCopy) - 1) ile = sizeof(pwdCopy) - 1;
++	memcpy(pwdCopy + 1, ib, ile);
++	rmd160_hash_buffer(&tmpBuf[20], pwdCopy, ile + 1);
++	memcpy(ob, tmpBuf, ole);
++	memset(tmpBuf, 0, sizeof(tmpBuf));
++	memset(pwdCopy, 0, sizeof(pwdCopy));
++}
++
++static int loop_create_random_keys(char *partition, int loopro, unsigned char *k)
++{
++	int x, y;
++	sha512_context s;
++	unsigned char b[4096];
++	FILE *f;
++
++	if(loopro) {
++		fprintf(stderr, _("Error: read-only device %s\n"), partition);
++		return 1;
++	}
++
++	/*
++	 * Compute SHA-512 over first 40 KB of old fs data. SHA-512 hash
++	 * output is then used as entropy for new fs encryption key.
++	 */
++	if(!(f = fopen(partition, "r+"))) {
++		fprintf(stderr, _("Error: unable to open device %s\n"), partition);
++		return 1;
++	}
++	fseek(f, (long)0, SEEK_SET);
++	sha512_init(&s);
++	for(x = 0; x < 10; x++) {
++		if(fread(&b[0], sizeof(b), 1, f) != 1) break;
++		sha512_write(&s, &b[0], sizeof(b));
++	}
++	sha512_final(&s);
++
++	/*
++	 * Overwrite 40 KB of old fs data 20 times so that recovering
++	 * SHA-512 output beyond this point is difficult and expensive.
++	 */
++	for(y = 0; y < 20; y++) {
++		int z;
++		struct {
++			struct timeval tv;
++			unsigned char h[64];
++			int x,y,z;
++		} j;
++		if(fseek(f, (long)0, SEEK_SET)) break;
++		memcpy(&j.h[0], &s.sha_out[0], 64);
++		gettimeofday(&j.tv, NULL);
++		j.y = y;
++		for(x = 0; x < 10; x++) {
++			j.x = x;
++			for(z = 0; z < sizeof(b); z += 64) {
++				j.z = z;
++				sha512_hash_buffer((unsigned char *)&j, sizeof(j), &b[z], 64);
++			}
++			if(fwrite(&b[0], sizeof(b), 1, f) != 1) break;
++		}
++		memset(&j, 0, sizeof(j));
++		if(fflush(f)) break;
++		if(fsync(fileno(f))) break;
++	}
++	fclose(f);
++
++	/*
++	 * Use all 512 bits of hash output
++	 */
++	memcpy(&b[0], &s.sha_out[0], 64);
++	memset(&s, 0, sizeof(s));
++
++	/*
++	 * Read 32 bytes of random entropy from kernel's random
++	 * number generator. This code may be executed early on startup
++	 * scripts and amount of random entropy may be non-existent.
++	 * SHA-512 of old fs data is used as workaround for missing
++	 * entropy in kernel's random number generator.
++	 */
++	if(!(f = fopen("/dev/urandom", "r"))) {
++		fprintf(stderr, _("Error: unable to open /dev/urandom\n"));
++		return 1;
++	}
++	fread(&b[64], 32, 1, f);
++
++	/* generate multi-key hashes */
++	x = 0;
++	while(x < 65) {
++		fread(&b[64+32], 16, 1, f);
++		sha512_hash_buffer(&b[0], 64+32+16, k, 32);
++		k += 32;
++		x++;
++	}
++
++	fclose(f);
++	memset(&b[0], 0, sizeof(b));
++	return 0;
+ }
+ 
++#if !defined(MAIN)
++static int loop_fork_mkfs_command(char *device, char *fstype)
++{
++	int x, y = 0;
++	char *a[10], *e[1];
++
++	sync();
++	if(!(x = fork())) {
++		if((x = open("/dev/null", O_WRONLY)) >= 0) {
++			dup2(x, 0);
++			dup2(x, 1);
++			dup2(x, 2);
++			close(x);
++		}
++		x = 0;
++		a[x++] = "mkfs";
++		a[x++] = "-t";
++		a[x++] = fstype;
++		/* mkfs.reiserfs and mkfs.xfs need -f option */
++		if(!strcmp(fstype, "reiserfs") || !strcmp(fstype, "xfs")) {
++			a[x++] = "-f";
++		}
++		a[x++] = device;
++		a[x] = 0;
++		e[0] = 0;
++		setgid(getgid());
++		setuid(getuid());
++		for(x = 3; x < 1024; x++) {
++			close(x);
++		}
++		execve("/sbin/mkfs", &a[0], &e[0]);
++		exit(1);
++	}
++	if(x == -1) {
++		fprintf(stderr, _("Error: fork failed\n"));
++		return 1;
++	}
++	waitpid(x, &y, 0);
++	sync();
++	if(!WIFEXITED(y) || (WEXITSTATUS(y) != 0)) {
++		fprintf(stderr, _("Error: encrypted file system mkfs failed\n"));
++		return 1;
++	}
++	return 0;
++}
++#endif
++
+ int
+-set_loop(const char *device, const char *file, unsigned long long offset,
+-	 const char *encryption, int pfd, int *loopro) {
+-	struct loop_info64 loopinfo64;
++set_loop(const char *device, const char *file, int *loopro, const char **fstype, unsigned int *AutoChmodPtr) {
++	struct loop_info64 loopinfo;
+ 	int fd, ffd, mode, i;
+-	char *pass;
++	char *pass, *apiName = NULL;
++	void (*hashFunc)(unsigned char *, int, unsigned char *, int);
++	unsigned char multiKeyBits[65][32];
++	int minPassLen = LOOP_PASSWORD_MIN_LENGTH;
++	int run_mkfs_command = 0;
+ 
++	loopFileName = (char *)file;
++	multiKeyMode = 0;
+ 	mode = (*loopro ? O_RDONLY : O_RDWR);
+ 	if ((ffd = open(file, mode)) < 0) {
+ 		if (!*loopro && errno == EROFS)
+@@ -256,32 +764,25 @@
+ 	}
+ 	if ((fd = open(device, mode)) < 0) {
+ 		perror (device);
+-		return 1;
++		goto close_ffd_return1;
+ 	}
+ 	*loopro = (mode == O_RDONLY);
+ 
+-	memset(&loopinfo64, 0, sizeof(loopinfo64));
+-
+-	xstrncpy(loopinfo64.lo_file_name, file, LO_NAME_SIZE);
+-
+-	if (encryption && *encryption) {
+-		if (digits_only(encryption)) {
+-			loopinfo64.lo_encrypt_type = atoi(encryption);
+-		} else {
+-			loopinfo64.lo_encrypt_type = LO_CRYPT_CRYPTOAPI;
+-			snprintf(loopinfo64.lo_crypt_name, LO_NAME_SIZE,
+-				 "%s", encryption);
+-		}
+-	}
+-
+-	loopinfo64.lo_offset = offset;
++	memset (&loopinfo, 0, sizeof (loopinfo));
++	xstrncpy (loopinfo.lo_file_name, file, LO_NAME_SIZE);
++	if (loopEncryptionType)
++		loopinfo.lo_encrypt_type = loop_crypt_type (loopEncryptionType, &loopinfo.lo_encrypt_key_size, &apiName);
++	if (loopOffsetBytes)
++		loopinfo.lo_offset = mystrtoull(loopOffsetBytes, 1);
++	if (loopSizeBytes)
++		loopinfo.lo_sizelimit = mystrtoull(loopSizeBytes, 0);
+ 
+-#ifdef MCL_FUTURE  
++#ifdef MCL_FUTURE
+ 	/*
+ 	 * Oh-oh, sensitive data coming up. Better lock into memory to prevent
+ 	 * passwd etc being swapped out and left somewhere on disk.
+ 	 */
+-                                                
++
+ 	if(mlockall(MCL_CURRENT | MCL_FUTURE)) {
+ 		perror("memlock");
+ 		fprintf(stderr, _("Couldn't lock into memory, exiting.\n"));
+@@ -289,126 +790,222 @@
+ 	}
+ #endif
+ 
+-	switch (loopinfo64.lo_encrypt_type) {
++	switch (loopinfo.lo_encrypt_type) {
+ 	case LO_CRYPT_NONE:
+-		loopinfo64.lo_encrypt_key_size = 0;
++		loopinfo.lo_encrypt_key_size = 0;
+ 		break;
+ 	case LO_CRYPT_XOR:
+-		pass = getpass(_("Password: "));
+-		goto gotpass;
++		pass = sGetPass (1, 0);
++		if(!pass) goto close_fd_ffd_return1;
++		xstrncpy (loopinfo.lo_encrypt_key, pass, LO_KEY_SIZE);
++		loopinfo.lo_encrypt_key_size = strlen(loopinfo.lo_encrypt_key);
++		break;
++	case 3:   /* LO_CRYPT_FISH2 */
++	case 4:   /* LO_CRYPT_BLOW */
++	case 7:   /* LO_CRYPT_SERPENT */
++	case 8:   /* LO_CRYPT_MARS */
++	case 11:  /* LO_CRYPT_RC6 */
++	case 12:  /* LO_CRYPT_DES_EDE3 */
++	case 16:  /* LO_CRYPT_AES */
++	case 18:  /* LO_CRYPT_CRYPTOAPI */
++		/* set default hash function */
++		hashFunc = sha256_hash_buffer;
++		if(loopinfo.lo_encrypt_key_size == 24) hashFunc = sha384_hash_buffer;
++		if(loopinfo.lo_encrypt_key_size == 32) hashFunc = sha512_hash_buffer;
++		/* possibly override default hash function */
++		if(passHashFuncName) {
++			if(!strcasecmp(passHashFuncName, "sha256")) {
++				hashFunc = sha256_hash_buffer;
++			} else if(!strcasecmp(passHashFuncName, "sha384")) {
++				hashFunc = sha384_hash_buffer;
++			} else if(!strcasecmp(passHashFuncName, "sha512")) {
++				hashFunc = sha512_hash_buffer;
++			} else if(!strcasecmp(passHashFuncName, "rmd160")) {
++				hashFunc = rmd160HashTwiceWithA;
++				minPassLen = 1;
++			} else if(!strcasecmp(passHashFuncName, "unhashed1")) {
++				hashFunc = unhashed1_key_setup;
++			} else if(!strcasecmp(passHashFuncName, "unhashed2")) {
++				hashFunc = unhashed2_key_setup;
++				minPassLen = 1;
++			} else if(!strcasecmp(passHashFuncName, "unhashed3") && passFDnumber && !gpgKeyFile) {
++				/* unhashed3 hash type reads binary key from file descriptor. */
++				/* This is not compatible with gpgkey= mount option */
++				if(rd_wr_retry(atoi(passFDnumber), (char *)&loopinfo.lo_encrypt_key[0], LO_KEY_SIZE, 0) < 1) {
++					fprintf(stderr, _("Error: couldn't read binary key\n"));
++					goto close_fd_ffd_return1;
++				}
++				break; /* out of switch(loopinfo.lo_encrypt_type) */
++			} else if(!strncasecmp(passHashFuncName, "random", 6) && ((passHashFuncName[6] == 0) || (passHashFuncName[6] == '/'))) {
++				/* random hash type sets up 65 random keys */
++				/* WARNING! DO NOT USE RANDOM HASH TYPE ON PARTITION WITH EXISTING */
++				/* IMPORTANT DATA ON IT. RANDOM HASH TYPE WILL DESTROY YOUR DATA.  */
++				if(loop_create_random_keys((char*)file, *loopro, &multiKeyBits[0][0])) {
++					goto close_fd_ffd_return1;
++				}
++				memcpy(&loopinfo.lo_encrypt_key[0], &multiKeyBits[0][0], sizeof(loopinfo.lo_encrypt_key));
++				run_mkfs_command = multiKeyMode = 1000;
++				break; /* out of switch(loopinfo.lo_encrypt_type) */
++			}
++		}
++		pass = sGetPass (minPassLen, LOOP_PASSWORD_MIN_LENGTH);
++		if(!pass) goto close_fd_ffd_return1;
++		i = strlen(pass);
++		if(hashFunc == unhashed1_key_setup) {
++			/* this is for compatibility with historic loop-AES version */
++			loopinfo.lo_encrypt_key_size = 16;             /* 128 bits */
++			if(i >= 32) loopinfo.lo_encrypt_key_size = 24; /* 192 bits */
++			if(i >= 43) loopinfo.lo_encrypt_key_size = 32; /* 256 bits */
++		}
++		(*hashFunc)(pass, i, &loopinfo.lo_encrypt_key[0], sizeof(loopinfo.lo_encrypt_key));
++		if(multiKeyMode) {
++			int r = 0, t;
++			while(r < multiKeyMode) {
++				t = strlen(multiKeyPass[r]);
++				(*hashFunc)(multiKeyPass[r], t, &multiKeyBits[r][0], 32);
++				memset(multiKeyPass[r], 0, t);
++				/*
++				 * MultiKeyMode uses md5 IV. One key mode uses sector IV. Sector IV
++				 * and md5 IV v2 and v3 are all computed differently. This first key
++				 * byte XOR with 0x55/0xF4 is needed to cause complete decrypt failure
++				 * in cases where data is encrypted with one type of IV and decrypted
++				 * with another type IV. If identical key was used but only IV was
++				 * computed differently, only first plaintext block of 512 byte CBC
++				 * chain would decrypt incorrectly and rest would decrypt correctly.
++				 * Partially correct decryption is dangerous. Decrypting all blocks
++				 * incorrectly is safer because file system mount will simply fail.
++				 */
++				if(multiKeyMode == 65) {
++					multiKeyBits[r][0] ^= 0xF4; /* version 3 */
++				} else {
++					multiKeyBits[r][0] ^= 0x55; /* version 2 */
++				}
++				r++;
++			}
++		} else if(passIterThousands) {
++			aes_context ctx;
++			unsigned long iter = 0;
++			unsigned char tempkey[32];
++			/*
++			 * Set up AES-256 encryption key using same password and hash function
++			 * as before but with password bit 0 flipped before hashing. That key
++			 * is then used to encrypt actual loop key 'itercountk' thousand times.
++			 */
++			pass[0] ^= 1;
++			(*hashFunc)(pass, i, &tempkey[0], 32);
++			aes_set_key(&ctx, &tempkey[0], 32, 0);
++			sscanf(passIterThousands, "%lu", &iter);
++			iter *= 1000;
++			while(iter > 0) {
++				/* encrypt both 128bit blocks with AES-256 */
++				aes_encrypt(&ctx, &loopinfo.lo_encrypt_key[ 0], &loopinfo.lo_encrypt_key[ 0]);
++				aes_encrypt(&ctx, &loopinfo.lo_encrypt_key[16], &loopinfo.lo_encrypt_key[16]);
++				/* exchange upper half of first block with lower half of second block */
++				memcpy(&tempkey[0], &loopinfo.lo_encrypt_key[8], 8);
++				memcpy(&loopinfo.lo_encrypt_key[8], &loopinfo.lo_encrypt_key[16], 8);
++				memcpy(&loopinfo.lo_encrypt_key[16], &tempkey[0], 8);
++				iter--;
++			}
++			memset(&ctx, 0, sizeof(ctx));
++			memset(&tempkey[0], 0, sizeof(tempkey));
++		}
++		memset(pass, 0, i);   /* erase original password */
++		break;
+ 	default:
+-		pass = xgetpass(pfd, _("Password: "));
+-	gotpass:
+-		memset(loopinfo64.lo_encrypt_key, 0, LO_KEY_SIZE);
+-		xstrncpy(loopinfo64.lo_encrypt_key, pass, LO_KEY_SIZE);
+-		memset(pass, 0, strlen(pass));
+-		loopinfo64.lo_encrypt_key_size = LO_KEY_SIZE;
++		fprintf (stderr, _("Error: don't know how to get key for encryption system %d\n"), loopinfo.lo_encrypt_type);
++		goto close_fd_ffd_return1;
++	}
++
++	if(loInitValue) {
++		/* cipher modules are free to do whatever they want with this value */
++		i = 0;
++		sscanf(loInitValue, "%d", &i);
++		loopinfo.lo_init[0] = i;
+ 	}
+ 
+ 	if (ioctl(fd, LOOP_SET_FD, ffd) < 0) {
+ 		perror("ioctl: LOOP_SET_FD");
++keyclean_close_fd_ffd_return1:
++		memset(loopinfo.lo_encrypt_key, 0, sizeof(loopinfo.lo_encrypt_key));
++		memset(&multiKeyBits[0][0], 0, sizeof(multiKeyBits));
++close_fd_ffd_return1:
++		close (fd);
++close_ffd_return1:
++		close (ffd);
+ 		return 1;
+ 	}
+-	close (ffd);
+-
+-	i = ioctl(fd, LOOP_SET_STATUS64, &loopinfo64);
+-	if (i) {
+-		struct loop_info loopinfo;
+-		int errsv = errno;
+ 
+-		i = loop_info64_to_old(&loopinfo64, &loopinfo);
+-		if (i) {
+-			errno = errsv;
+-			perror("ioctl: LOOP_SET_STATUS64");
+-		} else {
+-			i = ioctl(fd, LOOP_SET_STATUS, &loopinfo);
+-			if (i)
+-				perror("ioctl: LOOP_SET_STATUS");
++	/* type 18 == LO_CRYPT_CRYPTOAPI */
++	if ((loopinfo.lo_encrypt_type == 18) || (loop_set_status64_ioctl(fd, &loopinfo) < 0)) {
++		/* direct cipher interface failed - try CryptoAPI interface now */
++		if(!apiName || (try_cryptoapi_loop_interface(fd, &loopinfo, apiName) < 0)) {
++			fprintf(stderr, _("ioctl: LOOP_SET_STATUS: %s, requested cipher or key length (%d bits) not supported by kernel\n"), strerror(errno), loopinfo.lo_encrypt_key_size << 3);
++			loop_clr_fd_out:
++			(void) ioctl (fd, LOOP_CLR_FD, 0);
++			goto keyclean_close_fd_ffd_return1;
+ 		}
+-		memset(&loopinfo, 0, sizeof(loopinfo));
+ 	}
+-	memset(&loopinfo64, 0, sizeof(loopinfo64));
+-
+-	if (i) {
+-		ioctl (fd, LOOP_CLR_FD, 0);
+-		close (fd);
+-		return 1;
++	if(multiKeyMode >= 65) {
++		if(ioctl(fd, LOOP_MULTI_KEY_SETUP_V3, &multiKeyBits[0][0]) < 0) {
++			if(multiKeyMode == 1000) goto try_v2_setup;
++			perror("ioctl: LOOP_MULTI_KEY_SETUP_V3");
++			goto loop_clr_fd_out;
++		}
++	} else if(multiKeyMode == 64) {
++		try_v2_setup:
++		if((ioctl(fd, LOOP_MULTI_KEY_SETUP, &multiKeyBits[0][0]) < 0) && (multiKeyMode != 1000)) {
++			perror("ioctl: LOOP_MULTI_KEY_SETUP");
++			goto loop_clr_fd_out;
++		}
+ 	}
+-	close (fd);
+-
+-	if (verbose > 1)
+-		printf(_("set_loop(%s,%s,%llu): success\n"),
+-		       device, file, offset);
+-	return 0;
+-}
+ 
+-int 
+-del_loop (const char *device) {
+-	int fd;
+-
+-	if ((fd = open (device, O_RDONLY)) < 0) {
+-		int errsv = errno;
+-		fprintf(stderr, _("loop: can't delete device %s: %s\n"),
+-			device, strerror (errsv));
+-		return 1;
+-	}
+-	if (ioctl (fd, LOOP_CLR_FD, 0) < 0) {
+-		perror ("ioctl: LOOP_CLR_FD");
+-		return 1;
+-	}
++	memset(loopinfo.lo_encrypt_key, 0, sizeof(loopinfo.lo_encrypt_key));
++	memset(&multiKeyBits[0][0], 0, sizeof(multiKeyBits));
+ 	close (fd);
+-	if (verbose > 1)
+-		printf(_("del_loop(%s): success\n"), device);
+-	return 0;
+-}
+-
+-#else /* no LOOP_SET_FD defined */
+-static void
+-mutter(void) {
+-	fprintf(stderr,
+-		_("This mount was compiled without loop support. "
+-		  "Please recompile.\n"));
+-}  
+-
+-int
+-set_loop (const char *device, const char *file, unsigned long long offset,
+-	  const char *encryption, int *loopro) {
+-	mutter();
+-	return 1;
+-}
++	close (ffd);
+ 
+-int
+-del_loop (const char *device) {
+-	mutter();
+-	return 1;
+-}
++#if !defined(MAIN)
++	if(run_mkfs_command && fstype && *fstype && **fstype && (getuid() == 0)) {
++		if(!loop_fork_mkfs_command((char *)device, (char *)(*fstype))) {
++			/* !strncasecmp(passHashFuncName, "random", 6) test matched */
++			/* This reads octal mode for newly created file system root */
++			/* directory node from '-o phash=random/1777' mount option. */
++			/*                          octal mode--^^^^                */
++			sscanf(passHashFuncName + 6, "/%o", AutoChmodPtr);
++		} else {
++			if((fd = open(device, mode)) >= 0) {
++				ioctl(fd, LOOP_CLR_FD, 0);
++				close(fd);
++				return 1;
++			}
++		}
++	}
++#endif
+ 
+-char *
+-find_unused_loop_device (void) {
+-	mutter();
++	if (verbose > 1)
++		printf(_("set_loop(%s,%s): success\n"), device, file);
+ 	return 0;
+ }
+ 
+-#endif
+-
+ #ifdef MAIN
+ 
+-#ifdef LOOP_SET_FD
+-
+ #include <getopt.h>
+ #include <stdarg.h>
+ 
+ int verbose = 0;
+-char *progname;
++static char *progname;
+ 
+ static void
+ usage(void) {
+ 	fprintf(stderr, _("usage:\n\
+-  %s loop_device                                       # give info\n\
+-  %s -d loop_device                                    # delete\n\
+-  %s -f                                                # find unused\n\
+-  %s [-e encryption] [-o offset] {-f|loop_device} file # setup\n"),
+-		progname, progname, progname, progname);
++  %s [-e encryption] [options] loop_device file  # setup\n\
++  %s -F [options] loop_device [file]   # setup, read /etc/fstab\n\
++  %s loop_device                       # give info\n\
++  %s -a                                # give info of all loops\n\
++  %s -d loop_device                    # delete\n\
++options:  -o offset  -s sizelimit  -p passwdfd  -S pseed  -H phash\n\
++          -I loinit  -T  -K gpgkey  -G gpghome  -C itercountk  -v  -r\n"),
++		progname, progname, progname, progname, progname);
+ 	exit(1);
+ }
+ 
+@@ -439,107 +1036,191 @@
+ 	fprintf (stderr, "\n");
+ }
+ 
++void
++show_all_loops(void)
++{
++	char dev[20];
++	char *lfmt[] = { "/dev/loop%d", "/dev/loop/%d" };
++	int i, j, fd, x;
++	struct stat statbuf;
++
++	for(i = 0; i < 256; i++) {
++		for(j = (sizeof(lfmt) / sizeof(lfmt[0])) - 1; j >= 0; j--) {
++			sprintf(dev, lfmt[j], i);
++			if(stat(dev, &statbuf) == 0 && S_ISBLK(statbuf.st_mode)) {
++				fd = open(dev, O_RDONLY);
++				if(fd >= 0) {
++					x = is_unused_loop_device(fd);
++					close(fd);
++					if(x == 0) {
++						show_loop(dev);
++						j = 0;
++					}
++				}
++			}
++		}
++	}
++}
++
++int
++read_options_from_fstab(char *loopToFind, char **partitionPtr)
++{
++	FILE *f;
++	struct mntent *m;
++	int y, foundMatch = 0;
++	char *opt, *fr1, *fr2;
++	struct options {
++		char *name;	/* name of /etc/fstab option */
++		char **dest;	/* destination where it is written to */
++		char *line;	/* temp */
++	};
++	struct options tbl[] = {
++		{ "device/file name ",	partitionPtr },	/* must be index 0 */
++		{ "loop=",		&loopToFind },	/* must be index 1 */
++		{ "offset=",		&loopOffsetBytes },
++		{ "sizelimit=",		&loopSizeBytes },
++		{ "encryption=",	&loopEncryptionType },
++		{ "pseed=",		&passSeedString },
++		{ "phash=",		&passHashFuncName },
++		{ "loinit=",		&loInitValue },
++		{ "gpgkey=",		&gpgKeyFile },
++		{ "gpghome=",		&gpgHomeDir },
++		{ "itercountk=",	&passIterThousands },
++	};
++	struct options *p;
++
++	if (!(f = setmntent("/etc/fstab", "r"))) {
++		fprintf(stderr, _("Error: unable to open /etc/fstab for reading\n"));
++		return 0;
++	}
++	while ((m = getmntent(f)) != NULL) {
++		tbl[0].line = fr1 = xstrdup(m->mnt_fsname);
++		p = &tbl[1];
++		do {
++			p->line = NULL;
++		} while (++p < &tbl[sizeof(tbl) / sizeof(struct options)]);
++		opt = fr2 = xstrdup(m->mnt_opts);
++		for (opt = strtok(opt, ","); opt != NULL; opt = strtok(NULL, ",")) {
++			p = &tbl[1];
++			do {
++				y = strlen(p->name);
++				if (!strncmp(opt, p->name, y))
++					p->line = opt + y;
++			} while (++p < &tbl[sizeof(tbl) / sizeof(struct options)]);
++		}
++		if (tbl[1].line && !strcmp(loopToFind, tbl[1].line)) {
++			if (++foundMatch > 1) {
++				fprintf(stderr, _("Error: multiple loop=%s options found in /etc/fstab\n"), loopToFind);
++				endmntent(f);
++				return 0;
++			}
++			p = &tbl[0];
++			do {
++				if (!*p->dest && p->line) {
++					*p->dest = p->line;
++					if (verbose)
++						printf(_("using %s%s from /etc/fstab\n"), p->name, p->line);
++				}
++			} while (++p < &tbl[sizeof(tbl) / sizeof(struct options)]);
++			fr1 = fr2 = NULL;
++		}
++		if(fr1) free(fr1);
++		if(fr2) free(fr2);
++	}
++	endmntent(f);
++	if (foundMatch == 0) {
++		fprintf(stderr, _("Error: loop=%s option not found in /etc/fstab\n"), loopToFind);
++	}
++	return foundMatch;
++}
++
+ int
+ main(int argc, char **argv) {
+-	char *p, *offset, *encryption, *passfd, *device, *file;
+-	int delete, find, c;
++	char *partitionName = NULL;
++	int delete,c,option_a=0,option_F=0;
+ 	int res = 0;
+ 	int ro = 0;
+-	int pfd = -1;
+-	unsigned long long off;
+ 
+ 	setlocale(LC_ALL, "");
+ 	bindtextdomain(PACKAGE, LOCALEDIR);
+ 	textdomain(PACKAGE);
+ 
+-	delete = find = 0;
+-	off = 0;
+-	offset = encryption = passfd = NULL;
+-
++	delete = 0;
+ 	progname = argv[0];
+-	if ((p = strrchr(progname, '/')) != NULL)
+-		progname = p+1;
+-
+-	while ((c = getopt(argc, argv, "de:E:fo:p:v")) != -1) {
++	while ((c = getopt(argc,argv,"aC:de:FG:H:I:K:o:p:rs:S:Tv")) != -1) {
+ 		switch (c) {
++		case 'a':		/* show status of all loops */
++			option_a = 1;
++			break;
++		case 'C':
++			passIterThousands = optarg;
++			break;
+ 		case 'd':
+ 			delete = 1;
+ 			break;
+-		case 'E':
+ 		case 'e':
+-			encryption = optarg;
++			loopEncryptionType = optarg;
+ 			break;
+-		case 'f':
+-			find = 1;
++		case 'F':		/* read loop related options from /etc/fstab */
++			option_F = 1;
++			break;
++		case 'G':               /* GnuPG home dir */
++			gpgHomeDir = optarg;
++			break;
++		case 'H':               /* passphrase hash function name */
++			passHashFuncName = optarg;
++			break;
++		case 'I':               /* lo_init[0] value (in string form)  */
++			loInitValue = optarg;
++			break;
++		case 'K':               /* GnuPG key file name */
++			gpgKeyFile = optarg;
+ 			break;
+ 		case 'o':
+-			offset = optarg;
++			loopOffsetBytes = optarg;
++			break;
++		case 'p':               /* read passphrase from given fd */
++			passFDnumber = optarg;
+ 			break;
+-		case 'p':
+-			passfd = optarg;
++		case 'r':               /* read-only */
++			ro = 1;
++			break;
++		case 's':
++			loopSizeBytes = optarg;
++			break;
++		case 'S':               /* optional seed for passphrase */
++			passSeedString = optarg;
++			break;
++		case 'T':               /* ask passphrase _twice_ */
++			passAskTwice = "T";
+ 			break;
+ 		case 'v':
+-			verbose = 1;
++			verbose++;
+ 			break;
+ 		default:
+ 			usage();
+ 		}
+ 	}
+-
+-	if (argc == 1) {
+-		usage();
+-	} else if (delete) {
+-		if (argc != optind+1 || encryption || offset || find)
+-			usage();
+-	} else if (find) {
+-		if (argc < optind || argc > optind+1)
+-			usage();
+-	} else {
+-		if (argc < optind+1 || argc > optind+2)
+-			usage();
++	if (argc == 1) usage();
++	if (option_a) {
++		if (delete || (argc != optind)) usage();
++		show_all_loops();
++		exit(0);
+ 	}
+-
+-	if (find) {
+-		device = find_unused_loop_device();
+-		if (device == NULL)
+-			return -1;
+-		if (verbose)
+-			printf("Loop device is %s\n", device);
+-		if (argc == optind) {
+-			printf("%s\n", device);
+-			return 0;
+-		}
+-		file = argv[optind];
++	if ((delete && (argc != optind+1 || loopEncryptionType || loopOffsetBytes || loopSizeBytes || option_F)) ||
++	    (!delete && (argc < optind+1 || argc > optind+2)))
++		usage();
++	if (argc > optind+1)
++		partitionName = argv[optind+1];
++	if (option_F && (read_options_from_fstab(argv[optind], &partitionName) != 1))
++		exit(1);
++	if (delete) {
++		res = del_loop(argv[optind]);
++	} else if ((argc == optind+1) && !option_F) {
++		res = show_loop(argv[optind]);
+ 	} else {
+-		device = argv[optind];
+-		if (argc == optind+1)
+-			file = NULL;
+-		else
+-			file = argv[optind+1];
+-	}
+-
+-	if (delete)
+-		res = del_loop(device);
+-	else if (file == NULL)
+-		res = show_loop(device);
+-	else {
+-		if (offset && sscanf(offset, "%llu", &off) != 1)
+-			usage();
+-		if (passfd && sscanf(passfd, "%d", &pfd) != 1)
+-			usage();
+-		res = set_loop(device, file, off, encryption, pfd, &ro);
++		res = set_loop(argv[optind],partitionName,&ro,(const char**)0,(unsigned int *)0);
+ 	}
+ 	return res;
+ }
+-
+-#else /* LOOP_SET_FD not defined */
+-
+-int
+-main(int argc, char **argv) {
+-	fprintf(stderr,
+-		_("No loop support was available at compile time. "
+-		  "Please recompile.\n"));
+-	return -1;
+-}
+-#endif
+ #endif
+diff -urN util-linux-2.12q/mount/lomount.h util-linux-2.12q-AES/mount/lomount.h
+--- util-linux-2.12q/mount/lomount.h	Sun Jul 11 20:23:46 2004
++++ util-linux-2.12q-AES/mount/lomount.h	Wed Jan 26 17:40:12 2005
+@@ -1,6 +1,17 @@
+ extern int verbose;
+-extern int set_loop(const char *, const char *, unsigned long long,
+-		    const char *, int, int *);
++extern int set_loop(const char *, const char *, int *, const char **, unsigned int *);
+ extern int del_loop(const char *);
+ extern int is_loop_device(const char *);
+ extern char * find_unused_loop_device(void);
++
++extern char *passFDnumber;
++extern char *passAskTwice;
++extern char *passSeedString;
++extern char *passHashFuncName;
++extern char *passIterThousands;
++extern char *loInitValue;
++extern char *gpgKeyFile;
++extern char *gpgHomeDir;
++extern char *loopOffsetBytes;
++extern char *loopSizeBytes;
++extern char *loopEncryptionType;
+diff -urN util-linux-2.12q/mount/loop.c util-linux-2.12q-AES/mount/loop.c
+--- util-linux-2.12q/mount/loop.c	Thu Jan  1 02:00:00 1970
++++ util-linux-2.12q-AES/mount/loop.c	Wed Jan 26 17:40:12 2005
+@@ -0,0 +1,221 @@
++/*
++ *  loop.c
++ *
++ *  Copyright 2003 by Jari Ruusu.
++ *  Redistribution of this file is permitted under the GNU GPL
++ */
++
++/* collection of loop helper functions used by losetup, mount and swapon */
++
++#include <stdio.h>
++#include <string.h>
++#include <ctype.h>
++#include <sys/ioctl.h>
++#include <sys/types.h>
++#include <errno.h>
++#include "loop.h"
++
++static void convert_info_to_info64(struct loop_info *info, struct loop_info64 *info64)
++{
++	memset(info64, 0, sizeof(*info64));
++	info64->lo_number = info->lo_number;
++	info64->lo_device = info->lo_device;
++	info64->lo_inode = info->lo_inode;
++	info64->lo_rdevice = info->lo_rdevice;
++	info64->lo_offset = info->lo_offset;
++	info64->lo_encrypt_type = info->lo_encrypt_type;
++	info64->lo_encrypt_key_size = info->lo_encrypt_key_size;
++	info64->lo_flags = info->lo_flags;
++	info64->lo_init[0] = info->lo_init[0];
++	info64->lo_init[1] = info->lo_init[1];
++	info64->lo_sizelimit = 0;
++	if (info->lo_encrypt_type == 18) /* LO_CRYPT_CRYPTOAPI */
++		memcpy(info64->lo_crypt_name, info->lo_name, sizeof(info64->lo_crypt_name));
++	else
++		memcpy(info64->lo_file_name, info->lo_name, sizeof(info64->lo_file_name));
++	memcpy(info64->lo_encrypt_key, info->lo_encrypt_key, sizeof(info64->lo_encrypt_key));
++}
++
++static int convert_info64_to_info(struct loop_info64 *info64, struct loop_info *info)
++{
++	memset(info, 0, sizeof(*info));
++	info->lo_number = info64->lo_number;
++	info->lo_device = info64->lo_device;
++	info->lo_inode = info64->lo_inode;
++	info->lo_rdevice = info64->lo_rdevice;
++	info->lo_offset = info64->lo_offset;
++	info->lo_encrypt_type = info64->lo_encrypt_type;
++	info->lo_encrypt_key_size = info64->lo_encrypt_key_size;
++	info->lo_flags = info64->lo_flags;
++	info->lo_init[0] = info64->lo_init[0];
++	info->lo_init[1] = info64->lo_init[1];
++	if (info->lo_encrypt_type == 18) /* LO_CRYPT_CRYPTOAPI */
++		memcpy(info->lo_name, info64->lo_crypt_name, sizeof(info->lo_name));
++	else
++		memcpy(info->lo_name, info64->lo_file_name, sizeof(info->lo_name));
++	memcpy(info->lo_encrypt_key, info64->lo_encrypt_key, sizeof(info->lo_encrypt_key));
++
++	/* error in case values were truncated */
++	if (info->lo_device != info64->lo_device ||
++	    info->lo_rdevice != info64->lo_rdevice ||
++	    info->lo_inode != info64->lo_inode ||
++	    info->lo_offset != info64->lo_offset ||
++	    info64->lo_sizelimit) {
++		errno = EOVERFLOW;
++		return -1;
++	}
++	return 0;
++}
++
++int loop_set_status64_ioctl(int fd, struct loop_info64 *info64)
++{
++	struct loop_info info;
++	struct loop_info64 tmp;
++	int r;
++
++	/*
++	 * This ugly work around is needed because some
++	 * Red Hat kernels are using same ioctl code:
++	 *  	#define LOOP_CHANGE_FD 0x4C04
++	 * vs.
++	 *	#define LOOP_SET_STATUS64 0x4C04
++	 * that is used by modern loop driver.
++	 *
++	 * Attempt to detect presense of LOOP_GET_STATUS64
++	 * ioctl before issuing LOOP_SET_STATUS64 ioctl.
++	 * Red Hat kernels with above LOOP_CHANGE_FD damage
++	 * should return -1 and set errno to EINVAL.
++	 */
++	r = ioctl(fd, LOOP_GET_STATUS64, &tmp);
++	memset(&tmp, 0, sizeof(tmp));
++	if ((r == 0) || (errno != EINVAL)) {
++		r = ioctl(fd, LOOP_SET_STATUS64, info64);
++		if (!r)
++			return 0;
++	}
++	r = convert_info64_to_info(info64, &info);
++	if (!r)
++		r = ioctl(fd, LOOP_SET_STATUS, &info);
++
++	/* don't leave copies of encryption key on stack */
++	memset(&info, 0, sizeof(info));
++	return r;
++}
++
++int loop_get_status64_ioctl(int fd, struct loop_info64 *info64)
++{
++	struct loop_info info;
++	int r;
++
++	memset(info64, 0, sizeof(*info64));
++	r = ioctl(fd, LOOP_GET_STATUS64, info64);
++	if (!r)
++		return 0;
++	r = ioctl(fd, LOOP_GET_STATUS, &info);
++	if (!r)
++		convert_info_to_info64(&info, info64);
++
++	/* don't leave copies of encryption key on stack */
++	memset(&info, 0, sizeof(info));
++	return r;
++}
++
++/* returns: 1=unused 0=busy */
++int is_unused_loop_device(int fd)
++{
++	struct loop_info64 info64;
++	struct loop_info info;
++	int r;
++
++	r = ioctl(fd, LOOP_GET_STATUS64, &info64);
++	memset(&info64, 0, sizeof(info64));
++	if (!r)
++		return 0;
++	if (errno == ENXIO)
++		return 1;
++
++	r = ioctl(fd, LOOP_GET_STATUS, &info);
++	memset(&info, 0, sizeof(info));
++	if (!r)
++		return 0;
++	if (errno == ENXIO)
++		return 1;
++	if (errno == EOVERFLOW)
++		return 0;
++	return 1;
++}
++
++struct loop_crypt_type_struct loop_crypt_type_tbl[] = {
++	{  0, 0,  0, "no" },
++	{  0, 0,  0, "none" },
++	{  1, 0,  0, "xor" },
++	{  3, 1, 16, "twofish" },
++	{  4, 1, 16, "blowfish" },
++	{  7, 1, 16, "serpent" },
++	{  8, 1, 16, "mars" },
++	{ 11, 3, 16, "rc6" },
++	{ 12, 0, 21, "tripleDES" },
++	{ 12, 0, 24, "3des" },
++	{ 12, 0, 24, "des3_ede" },
++	{ 16, 1, 16, "AES" },
++	{ -1, 0,  0, NULL }
++};
++
++static char *getApiName(char *e, int *len)
++{
++	int x, y, z = 1, q = -1;
++	unsigned char *s;
++
++	*len = y = 0;
++	s = strdup(e);
++	if(!s)
++		return "";
++	x = strlen(s);
++	while(x > 0) {
++		x--;
++		if(!isdigit(s[x]))
++			break;
++		y += (s[x] - '0') * z;
++		z *= 10;
++		q = x;
++	}
++	while(x >= 0) {
++		s[x] = tolower(s[x]);
++		if(s[x] == '-')
++			s[x] = 0;
++		x--;
++	}
++	if(y >= 40) {
++		if(q >= 0)
++			s[q] = 0;
++		*len = y;
++	}
++	return(s);
++}
++
++int loop_crypt_type(const char *name, u_int32_t *kbyp, char **apiName)
++{
++	int i, k;
++
++	*apiName = getApiName((char *)name, &k);
++	if(k < 0)
++		k = 0;
++	if(k > 256)
++		k = 256;
++	for (i = 0; loop_crypt_type_tbl[i].id != -1; i++) {
++		if (!strcasecmp (*apiName , loop_crypt_type_tbl[i].name)) {
++			*kbyp = k ? k >> 3 : loop_crypt_type_tbl[i].keyBytes;
++			return loop_crypt_type_tbl[i].id;
++		}
++	}
++	*kbyp = 16; /* 128 bits */
++	return 18; /* LO_CRYPT_CRYPTOAPI */
++}
++
++int try_cryptoapi_loop_interface(int fd, struct loop_info64 *loopinfo, char *apiName)
++{
++	snprintf(loopinfo->lo_crypt_name, sizeof(loopinfo->lo_crypt_name), "%s-cbc", apiName);
++	loopinfo->lo_crypt_name[LO_NAME_SIZE - 1] = 0;
++	loopinfo->lo_encrypt_type = 18; /* LO_CRYPT_CRYPTOAPI */
++	return(loop_set_status64_ioctl(fd, loopinfo));
++}
+diff -urN util-linux-2.12q/mount/loop.h util-linux-2.12q-AES/mount/loop.h
+--- util-linux-2.12q/mount/loop.h	Wed Jul 16 23:06:02 2003
++++ util-linux-2.12q-AES/mount/loop.h	Wed Jan 26 17:40:12 2005
+@@ -1,6 +1,20 @@
+-#define LO_CRYPT_NONE	0
+-#define LO_CRYPT_XOR	1
+-#define LO_CRYPT_DES	2
++/*
++ *  loop.h
++ *
++ *  Copyright 2003 by Jari Ruusu.
++ *  Redistribution of this file is permitted under the GNU GPL
++ */
++
++#ifndef _LOOP_H
++#define _LOOP_H 1
++
++#include <sys/types.h>
++#include <linux/version.h>
++#include <linux/posix_types.h>
++
++#define LO_CRYPT_NONE   0
++#define LO_CRYPT_XOR    1
++#define LO_CRYPT_DES    2
+ #define LO_CRYPT_CRYPTOAPI 18
+ 
+ #define LOOP_SET_FD		0x4C00
+@@ -9,17 +23,25 @@
+ #define LOOP_GET_STATUS		0x4C03
+ #define LOOP_SET_STATUS64	0x4C04
+ #define LOOP_GET_STATUS64	0x4C05
++#define LOOP_MULTI_KEY_SETUP 	0x4C4D
++#define LOOP_MULTI_KEY_SETUP_V3	0x4C4E
+ 
+-#define LO_NAME_SIZE	64
+-#define LO_KEY_SIZE	32
+-
+-#include "my_dev_t.h"
++#define LO_NAME_SIZE    64
++#define LO_KEY_SIZE     32
+ 
+ struct loop_info {
+ 	int		lo_number;
+-	my_dev_t	lo_device;
++#if LINUX_VERSION_CODE >= 0x20600
++	__kernel_old_dev_t lo_device;
++#else
++	__kernel_dev_t	lo_device;
++#endif
+ 	unsigned long	lo_inode;
+-	my_dev_t	lo_rdevice;
++#if LINUX_VERSION_CODE >= 0x20600
++	__kernel_old_dev_t lo_rdevice;
++#else
++	__kernel_dev_t	lo_rdevice;
++#endif
+ 	int		lo_offset;
+ 	int		lo_encrypt_type;
+ 	int		lo_encrypt_key_size;
+@@ -30,22 +52,35 @@
+ 	char		reserved[4];
+ };
+ 
+-/*
+- * Where to get __u8, __u32, __u64? Let us use unsigned char/int/long long
+- * and get punished when someone comes with 128-bit long longs.
+- */
+ struct loop_info64 {
+-	unsigned long long	lo_device;
+-	unsigned long long	lo_inode;
+-	unsigned long long	lo_rdevice;
+-	unsigned long long	lo_offset;
+-	unsigned long long	lo_sizelimit; /* bytes, 0 == max available */
+-	unsigned int		lo_number;
+-	unsigned int		lo_encrypt_type;
+-	unsigned int		lo_encrypt_key_size;
+-	unsigned int		lo_flags;
+-	unsigned char		lo_file_name[LO_NAME_SIZE];
+-	unsigned char		lo_crypt_name[LO_NAME_SIZE];
+-	unsigned char		lo_encrypt_key[LO_KEY_SIZE];
+-	unsigned long long	lo_init[2];
++	u_int64_t	lo_device; 		/* ioctl r/o */
++	u_int64_t	lo_inode; 		/* ioctl r/o */
++	u_int64_t	lo_rdevice; 		/* ioctl r/o */
++	u_int64_t	lo_offset;		/* bytes */
++	u_int64_t	lo_sizelimit;		/* bytes, 0 == max available */
++	u_int32_t	lo_number;		/* ioctl r/o */
++	u_int32_t	lo_encrypt_type;
++	u_int32_t	lo_encrypt_key_size; 	/* ioctl w/o */
++	u_int32_t	lo_flags;		/* ioctl r/o */
++	unsigned char	lo_file_name[LO_NAME_SIZE];
++	unsigned char	lo_crypt_name[LO_NAME_SIZE];
++	unsigned char	lo_encrypt_key[LO_KEY_SIZE]; /* ioctl w/o */
++	u_int64_t	lo_init[2];
++};
++
++extern int loop_set_status64_ioctl(int, struct loop_info64 *);
++extern int loop_get_status64_ioctl(int, struct loop_info64 *);
++extern int is_unused_loop_device(int);
++
++struct loop_crypt_type_struct {
++	short int id;
++	unsigned char flags; /* bit0 = show keybits, bit1 = add '-' before keybits */
++	unsigned char keyBytes;
++	char *name;
+ };
++
++extern struct loop_crypt_type_struct loop_crypt_type_tbl[];
++extern int loop_crypt_type(const char *, u_int32_t *, char **);
++extern int try_cryptoapi_loop_interface(int, struct loop_info64 *, char *);
++
++#endif
+diff -urN util-linux-2.12q/mount/losetup.8 util-linux-2.12q-AES/mount/losetup.8
+--- util-linux-2.12q/mount/losetup.8	Sun Dec  5 03:35:54 2004
++++ util-linux-2.12q-AES/mount/losetup.8	Wed Jan 26 17:40:12 2005
+@@ -1,42 +1,28 @@
+-.TH LOSETUP 8 "2003-07-01" "Linux" "MAINTENANCE COMMANDS"
++.TH LOSETUP 8 "2004-11-25" "Linux" "MAINTENANCE COMMANDS"
+ .SH NAME
+ losetup \- set up and control loop devices
+ .SH SYNOPSIS
+ .ad l
+-Get info:
+-.sp
+-.in +5
+ .B losetup
++[
++.B \-e
++.I encryption
++] [options]
++.I loop_device
++file
++.br
++.B losetup -F
++[options]
+ .I loop_device
+-.sp
+-.in -5
+-Delete loop:
+-.sp
+-.in +5
+-.B "losetup \-d"
++[file]
++.br
++.B losetup
++[
++.B \-d
++]
+ .I loop_device
+-.sp
+-.in -5
+-Print name of first unused loop device:
+-.sp
+-.in +5
+-.B "losetup \-f"
+-.sp
+-.in -5
+-Setup loop device:
+-.sp
+-.in +5
+-.B losetup
+-.RB [{\-e | \-E}
+-.IR encryption ]
+-.RB [ \-o
+-.IR offset ]
+-.RB [ \-p
+-.IR pfd ]
+-.in +8
+-.RB { \-f | \fIloop_device\fP }
+-.I file
+-.in -13
++.br
++.B losetup -a
+ .ad b
+ .SH DESCRIPTION
+ .B losetup
+@@ -44,45 +30,108 @@
+ to detach loop devices and to query the status of a loop device. If only the
+ \fIloop_device\fP argument is given, the status of the corresponding loop
+ device is shown.
+-
+-.SS "Encryption"
+-It is possible to specify transfer functions (for encryption/decryption
+-or other purposes) using one of the
+-.B \-E
+-and
+-.B \-e
+-options.
+-There are two mechanisms to specify the desired encryption: by number
+-and by name. If an encryption is specified by number then one
+-has to make sure that the Linux kernel knows about the encryption with that
+-number, probably by patching the kernel. Standard numbers that are
+-always present are 0 (no encryption) and 1 (XOR encryption).
+-When the cryptoloop module is loaded (or compiled in), it uses number 18.
+-This cryptoloop module wil take the name of an arbitrary encryption type
+-and finds the module that knows how to perform that encryption.
+-(Thus, either one uses a number different from 18 with the
+-.B \-E
+-option, or one uses a name with the
+-.B \-e
+-option.)
+ .SH OPTIONS
+-.IP \fB\-d\fP
++.IP \fB\-a\fP
++Show status of all loop devices.
++.IP "\fB\-C \fIitercountk\fP"
++Runs hashed password through \fIitercountk\fP thousand iterations of AES-256
++before using it for loop encryption. This consumes lots of CPU cycles at
++loop setup/mount time but not thereafter. In combination with password seed
++this slows down dictionary attacks. Iteration is not done in multi-key mode.
++.IP "\fB\-d\fP"
+ Detach the file or device associated with the specified loop device.
+-.IP "\fB\-E \fIencryption_type\fP"
+-Enable data encryption with specified number.
+-.IP "\fB\-e \fIencryption_name\fP"
+-Enable data encryption with specified name.
+-.IP "\fB\-f\fP"
+-Find the first unused loop device. If a
+-.I file
+-argument is present, use this device. Otherwise, print its name.
++.IP "\fB\-e \fIencryption\fP"
++.RS
++Enable data encryption. Following encryption types are recognized:
++.IP \fBNONE\fP
++Use no encryption (default).
++.PD 0
++.IP \fBXOR\fP
++Use a simple XOR encryption.
++.IP "\fBAES128 AES\fP"
++Use 128 bit AES encryption. Password is hashed with SHA-256 by default.
++.IP \fBAES192\fP
++Use 192 bit AES encryption. Password is hashed with SHA-384 by default.
++.IP \fBAES256\fP
++Use 256 bit AES encryption. Password is hashed with SHA-512 by default.
++
++.IP "\fBtwofish128 twofish160 twofish192 twofish256\fP"
++.IP "\fBblowfish128 blowfish160 blowfish192 blowfish256\fP"
++.IP "\fBserpent128 serpent192 serpent256 mars128 mars192\fP"
++.IP "\fBmars256 rc6-128 rc6-192 rc6-256 tripleDES\fP"
++These encryption types are available if they are enabled in kernel
++configuration or corresponding modules have been loaded to kernel.
++.PD
++.RE
++.IP "\fB\-F\fP"
++Reads and uses mount options from /etc/fstab that match specified loop
++device, including offset= sizelimit= encryption= pseed= phash= loinit=
++gpgkey= gpghome= itercountk= and looped to device/file name. loop= option in
++/etc/fstab must match specified loop device name. Command line options take
++precedence in case of conflict.
++.IP "\fB\-G \fIgpghome\fP"
++Set gpg home directory to \fIgpghome\fP, so that gpg uses public/private
++keys on \fIgpghome\fP directory. This is only used when gpgkey file needs to
++be decrypted using public/private keys. If gpgkey file is encrypted with
++symmetric cipher only, public/private keys are not required and this option
++has no effect.
++.IP "\fB\-H \fIphash\fP"
++Uses \fIphash\fP function to hash password. Available hash functions are
++sha256, sha384, sha512 and rmd160. unhashed1, unhashed2 and unhashed3
++functions also exist for compatibility with some obsolete implementations.
++
++Hash function random does not ask for password but sets up random keys and
++attempts to put loop to multi-key mode. When random/1777 hash type is used
++as mount option for mount program, mount program will create new file system
++on the loop device and construct initial permissions of file system root
++directory from octal digits that follow the slash character.
++
++WARNING! DO NOT USE RANDOM HASH TYPE ON PARTITION WITH EXISTING IMPORTANT
++DATA ON IT. RANDOM HASH TYPE WILL DESTROY YOUR DATA.
++.IP "\fB\-I \fIloinit\fP"
++Passes a numeric value of \fIloinit\fP as a parameter to cipher transfer
++function. Cipher transfer functions are free to interpret value as they
++want.
++.IP "\fB\-K \fIgpgkey\fP"
++Password is piped to gpg so that gpg can decrypt file \fIgpgkey\fP which
++contains the real keys that are used to encrypt loop device. If decryption
++requires public/private keys and gpghome is not specified, all users use
++their own gpg public/private keys to decrypt \fIgpgkey\fP. Decrypted
++\fIgpgkey\fP should contain 1 or 64 or 65 keys, each key at least 20
++characters and separated by newline. If decrypted \fIgpgkey\fP contains 64
++or 65 keys, then loop device is put to multi-key mode. In multi-key mode
++first key is used for first sector, second key for second sector, and so on.
++65th key, if present, is used as additional input to MD5 IV computation.
+ .IP "\fB\-o \fIoffset\fP"
+ The data start is moved \fIoffset\fP bytes into the specified file or
+-device.
+-.IP "\fB\-p \fInum\fP"
+-Read the passphrase from file descriptor with number
+-.I num
+-instead of from the terminal.
++device. Normally offset is included in IV (initialization vector)
++computations. If offset is prefixed with @ character, then offset is not
++included in IV computations. @ prefix functionality may not be supported on
++some older kernels and/or loop drivers.
++.IP "\fB\-p \fIpasswdfd\fP"
++Read the passphrase from file descriptor \fIpasswdfd\fP instead of the
++terminal. If -K option is not being used (no gpg key file), then losetup
++attempts to read 65 keys from \fIpasswdfd\fP, each key at least 20
++characters and separated by newline. If losetup successfully reads 64 or 65
++keys, then loop device is put to multi-key mode. If losetup encounters
++end-of-file before 64 keys are read, then only first key is used in
++single-key mode.
++.IP "\fB\-r\fP"
++Read-only mode.
++.IP "\fB\-s \fIsizelimit\fP"
++Size of loop device is limited to \fIsizelimit\fP bytes. If unspecified or
++set to zero, loop device size is set to maximum available (file size minus
++offset). This option may not be supported on some older kernels and/or loop
++drivers.
++.IP "\fB\-S \fIpseed\fP"
++Sets encryption password seed \fIpseed\fP which is appended to user supplied
++password before hashing. Using different seeds for different partitions
++makes dictionary attacks slower but does not prevent them if user supplied
++password is guessable. Seed is not used in multi-key mode.
++.IP "\fB\-T\fP"
++Asks password twice.
++.IP "\fB\-v\fP"
++Verbose mode.
+ .SH RETURN VALUE
+ .B losetup
+ returns 0 on success, nonzero on failure. When
+@@ -94,43 +143,26 @@
+ 
+ .SH FILES
+ .nf
+-/dev/loop0, /dev/loop1, ...   loop devices (major=7)
++/dev/loop0,/dev/loop1,...   loop devices (major=7)
+ .fi
+ .SH EXAMPLE
+-If you are using the loadable module you must have the module loaded
+-first with the command
+-.IP
+-# insmod loop.o
+-.LP
+-Maybe also encryption modules are needed.
+-.IP
+-# insmod des.o
+-# insmod cryptoloop.o
+-.LP
+ The following commands can be used as an example of using the loop device.
+ .nf
+-.IP
+-# dd if=/dev/zero of=/file bs=1k count=100
+-# losetup -e des /dev/loop0 /file
+-Password:
+-Init (up to 16 hex digits):
+-# mkfs -t ext2 /dev/loop0 100
+-# mount -t ext2 /dev/loop0 /mnt
++
++dd if=/dev/zero of=/file bs=1k count=500
++head -c 2925 /dev/random | uuencode -m - | head -n 66 \\
++    | tail -n 65 | gpg --symmetric -a >/etc/fskey9.gpg
++losetup -e AES128 -K /etc/fskey9.gpg /dev/loop0 /file
++mkfs -t ext2 /dev/loop0
++mount -t ext2 /dev/loop0 /mnt
+  ...
+-# umount /dev/loop0
+-# losetup -d /dev/loop0
+-.fi
+-.LP
+-If you are using the loadable module you may remove the module with
+-the command
+-.IP
+-# rmmod loop
+-.LP
++umount /dev/loop0
++losetup -d /dev/loop0
+ .fi
+ .SH RESTRICTION
+-DES encryption is painfully slow. On the other hand, XOR is terribly weak.
+-.\" .SH AUTHORS
+-.\" .nf
+-.\" Original version: Theodore Ts'o <tytso@athena.mit.edu>
+-.\" Original DES by: Eric Young <eay@psych.psy.uq.oz.au>
+-.\" .fi
++XOR encryption is terribly weak.
++.SH AUTHORS
++.nf
++Original version: Theodore Ts'o <tytso@athena.mit.edu>
++AES support: Jari Ruusu
++.fi
+diff -urN util-linux-2.12q/mount/loumount.c util-linux-2.12q-AES/mount/loumount.c
+--- util-linux-2.12q/mount/loumount.c	Thu Jan  1 02:00:00 1970
++++ util-linux-2.12q-AES/mount/loumount.c	Wed Jan 26 17:40:12 2005
+@@ -0,0 +1,60 @@
++/*
++ *  loumount.c
++ *
++ *  This code was extracted to separate file from lomount.c so that umount
++ *  program doesn't have to link with all loop related setup code
++ */
++
++#define LOOPMAJOR      7
++
++#include <stdio.h>
++#include <string.h>
++#include <ctype.h>
++#include <fcntl.h>
++#include <errno.h>
++#include <stdlib.h>
++#include <unistd.h>
++#include <pwd.h>
++#include <sys/types.h>
++#include <sys/ioctl.h>
++#include <sys/stat.h>
++#include <sys/mman.h>
++#include <sys/sysmacros.h>
++#include <sys/wait.h>
++#include <fcntl.h>
++#include <mntent.h>
++#include <locale.h>
++
++#include "loop.h"
++#include "lomount.h"
++#include "xstrncpy.h"
++#include "nls.h"
++
++int
++is_loop_device (const char *device) {
++	struct stat statbuf;
++
++	return (stat(device, &statbuf) == 0 &&
++		S_ISBLK(statbuf.st_mode) &&
++		major(statbuf.st_rdev) == LOOPMAJOR);
++}
++
++int 
++del_loop (const char *device) {
++	int fd;
++
++	if ((fd = open (device, O_RDONLY)) < 0) {
++		int errsv = errno;
++		fprintf(stderr, _("loop: can't delete device %s: %s\n"),
++			device, strerror (errsv));
++		return 1;
++	}
++	if (ioctl (fd, LOOP_CLR_FD, 0) < 0) {
++		perror ("ioctl: LOOP_CLR_FD");
++		return 1;
++	}
++	close (fd);
++	if (verbose > 1)
++		printf(_("del_loop(%s): success\n"), device);
++	return 0;
++}
+diff -urN util-linux-2.12q/mount/mount.8 util-linux-2.12q-AES/mount/mount.8
+--- util-linux-2.12q/mount/mount.8	Mon Dec 20 00:30:14 2004
++++ util-linux-2.12q-AES/mount/mount.8	Wed Jan 26 17:40:12 2005
+@@ -281,6 +281,16 @@
+ .B \-v
+ Verbose mode.
+ .TP
++.B \-p "\fIpasswdfd\fP"
++If the mount requires a passphrase to be entered, read it from file
++descriptor \fIpasswdfd\fP instead of from the terminal. If mount uses
++encrypted loop device and gpgkey= mount option is not being used (no gpg key
++file), then mount attempts to read 65 keys from \fIpasswdfd\fP, each key at
++least 20 characters and separated by newline. If mount successfully reads 64
++or 65 keys, then loop device is put to multi-key mode. If mount encounters
++end-of-file before 64 keys are read, then only first key is used in
++single-key mode.
++.TP
+ .B \-a
+ Mount all filesystems (of the given types) mentioned in
+ .IR fstab .
+@@ -328,12 +338,6 @@
+ .I /etc
+ is on a read-only file system.
+ .TP
+-.BI \-p " num"
+-In case of a loop mount with encryption, read the passphrase from
+-file descriptor
+-.I num
+-instead of from the terminal.
+-.TP
+ .B \-s
+ Tolerate sloppy mount options rather than failing. This will ignore
+ mount options not supported by a filesystem type. Not all filesystems
+@@ -1841,13 +1845,17 @@
+ and then mount this device on
+ .IR /mnt .
+ 
+-This type of mount knows about three options, namely
+-.BR loop ", " offset " and " encryption ,
++This type of mount knows about 10 options, namely
++.BR loop ", " offset ", " sizelimit ", " encryption ", " pseed ", " phash ", " loinit ", " gpgkey ", " gpghome " and " itercountk
+ that are really options to
+ .BR \%losetup (8).
+ (These options can be used in addition to those specific
+ to the filesystem type.)
+ 
++If the mount requires a passphrase, you will be prompted for one unless you
++specify a file descriptor to read from instead with the
++.BR \-p
++option.
+ If no explicit loop device is mentioned
+ (but just an option `\fB\-o loop\fP' is given), then
+ .B mount
+diff -urN util-linux-2.12q/mount/mount.c util-linux-2.12q-AES/mount/mount.c
+--- util-linux-2.12q/mount/mount.c	Wed Dec 22 00:00:36 2004
++++ util-linux-2.12q-AES/mount/mount.c	Wed Jan 26 17:40:12 2005
+@@ -11,6 +11,7 @@
+ #include <string.h>
+ #include <getopt.h>
+ #include <stdio.h>
++#include <locale.h>
+ 
+ #include <pwd.h>
+ #include <grp.h>
+@@ -80,9 +81,6 @@
+ /* True if ruid != euid.  */
+ static int suid = 0;
+ 
+-/* Contains the fd to read the passphrase from, if any. */
+-static int pfd = -1;
+-
+ /* Map from -o and fstab option strings to the flag argument to mount(2).  */
+ struct opt_map {
+   const char *opt;		/* option name */
+@@ -167,7 +165,7 @@
+   { NULL,	0, 0, 0		}
+ };
+ 
+-static const char *opt_loopdev, *opt_vfstype, *opt_offset, *opt_encryption,
++static const char *opt_loopdev, *opt_vfstype,
+ 	*opt_speed, *opt_comment;
+ 
+ static struct string_opt_map {
+@@ -177,8 +175,15 @@
+ } string_opt_map[] = {
+   { "loop=",	0, &opt_loopdev },
+   { "vfs=",	1, &opt_vfstype },
+-  { "offset=",	0, &opt_offset },
+-  { "encryption=", 0, &opt_encryption },
++  { "pseed=",	1, (const char **)&passSeedString },
++  { "phash=",	0, (const char **)&passHashFuncName },
++  { "loinit=",	0, (const char **)&loInitValue },
++  { "gpgkey=",	0, (const char **)&gpgKeyFile },
++  { "gpghome=",	0, (const char **)&gpgHomeDir },
++  { "itercountk=", 1, (const char **)&passIterThousands },
++  { "offset=",	0, (const char **)&loopOffsetBytes },
++  { "sizelimit=", 0, (const char **)&loopSizeBytes },
++  { "encryption=", 0, (const char **)&loopEncryptionType },
+   { "speed=", 0, &opt_speed },
+   { "comment=", 1, &opt_comment },
+   { NULL, 0, NULL }
+@@ -580,9 +585,8 @@
+ 
+ static int
+ loop_check(const char **spec, const char **type, int *flags,
+-	   int *loop, const char **loopdev, const char **loopfile) {
++	   int *loop, const char **loopdev, const char **loopfile, unsigned int *AutoChmodPtr) {
+   int looptype;
+-  unsigned long long offset;
+ 
+   /*
+    * In the case of a loop mount, either type is of the form lo@/dev/loop5
+@@ -607,7 +611,7 @@
+       *type = opt_vfstype;
+   }
+ 
+-  *loop = ((*flags & MS_LOOP) || *loopdev || opt_offset || opt_encryption);
++  *loop = ((*flags & MS_LOOP) || *loopdev || loopOffsetBytes || loopSizeBytes || loopEncryptionType);
+   *loopfile = *spec;
+ 
+   if (*loop) {
+@@ -624,9 +628,7 @@
+ 	return EX_SYSERR;	/* no more loop devices */
+       if (verbose)
+ 	printf(_("mount: going to use the loop device %s\n"), *loopdev);
+-      offset = opt_offset ? strtoull(opt_offset, NULL, 0) : 0;
+-      if (set_loop(*loopdev, *loopfile, offset,
+-		   opt_encryption, pfd, &loopro)) {
++      if (set_loop (*loopdev, *loopfile, &loopro, type, AutoChmodPtr)) {
+ 	if (verbose)
+ 	  printf(_("mount: failed setting up loop device\n"));
+ 	return EX_FAIL;
+@@ -687,14 +689,6 @@
+ }
+ 
+ static void
+-set_pfd(char *s) {
+-	if (!isdigit(*s))
+-		die(EX_USAGE,
+-		    _("mount: argument to -p or --pass-fd must be a number"));
+-	pfd = atoi(optarg);
+-}
+-
+-static void
+ cdrom_setspeed(const char *spec) {
+ #define CDROM_SELECT_SPEED      0x5322  /* Set the CD-ROM speed */
+ 	if (opt_speed) {
+@@ -788,6 +782,7 @@
+   const char *opts, *spec, *node, *types;
+   char *user = 0;
+   int loop = 0;
++  unsigned int LoopMountAutomaticChmod = 0;
+   const char *loopdev = 0, *loopfile = 0;
+   struct stat statbuf;
+   int nfs_mount_version = 0;	/* any version */
+@@ -820,7 +815,7 @@
+        * stale assignments of files to loop devices. Nasty when used for
+        * encryption.
+        */
+-      res = loop_check(&spec, &types, &flags, &loop, &loopdev, &loopfile);
++      res = loop_check(&spec, &types, &flags, &loop, &loopdev, &loopfile, &LoopMountAutomaticChmod);
+       if (res)
+ 	  goto out;
+   }
+@@ -855,9 +850,20 @@
+ 
+   block_signals (SIG_BLOCK);
+ 
+-  if (!fake)
++  if (!fake) {
+     mnt5_res = guess_fstype_and_mount (spec, node, &types, flags & ~MS_NOSYS,
+ 				       mount_opts);
++    if(!mnt5_res && LoopMountAutomaticChmod && (getuid() == 0)) {
++      /*
++       * If loop was set up using random keys and new file system
++       * was created on the loop device, initial permissions for
++       * file system root directory need to be set here.
++       */
++      if(chmod(node, LoopMountAutomaticChmod)) {
++        error (_("Error: encrypted file system chmod() failed"));
++      }
++    }
++  }
+ 
+   if (fake || mnt5_res == 0) {
+       /* Mount succeeded, report this (if verbose) and write mtab entry.  */
+@@ -1530,8 +1536,8 @@
+ 			else
+ 				test_opts = xstrdup(optarg);
+ 			break;
+-		case 'p':		/* fd on which to read passwd */
+-			set_pfd(optarg);
++		case 'p':               /* read passphrase from given fd */
++			passFDnumber = optarg;
+ 			break;
+ 		case 'r':		/* mount readonly */
+ 			readonly = 1;
+diff -urN util-linux-2.12q/mount/mount_by_label.c util-linux-2.12q-AES/mount/mount_by_label.c
+--- util-linux-2.12q/mount/mount_by_label.c	Wed Dec 22 01:15:33 2004
++++ util-linux-2.12q-AES/mount/mount_by_label.c	Tue Mar  8 14:38:48 2005
+@@ -189,7 +189,7 @@
+ 	if (!procpt) {
+ 		static int warn = 0;
+ 		if (!warn++)
+-		    error (_("%s: could not open %s, so UUID and LABEL "
++		    fprintf(stderr, _("%s: could not open %s, so UUID and LABEL "
+ 			     "conversion cannot be done.\n"),
+ 			   progname, PROC_PARTITIONS);
+ 		return;
+diff -urN util-linux-2.12q/mount/rmd160.c util-linux-2.12q-AES/mount/rmd160.c
+--- util-linux-2.12q/mount/rmd160.c	Thu Jan  1 02:00:00 1970
++++ util-linux-2.12q-AES/mount/rmd160.c	Wed Jan 26 17:40:12 2005
+@@ -0,0 +1,532 @@
++/* rmd160.c  -	RIPE-MD160
++ *	Copyright (C) 1998 Free Software Foundation, Inc.
++ */
++
++/* This file was part of GnuPG. Modified for use within the Linux
++ * mount utility by Marc Mutz <Marc@Mutz.com>. None of this code is
++ * by myself. I just removed everything that you don't need when all
++ * you want to do is to use rmd160_hash_buffer().
++ * My comments are marked with (mm).  */
++
++/* GnuPG is free software; you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation; either version 2 of the License, or
++ * (at your option) any later version.
++ *
++ * GnuPG is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program; if not, write to the Free Software
++ * Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA */
++
++#include <string.h> /* (mm) for memcpy */
++#include <endian.h> /* (mm) for BIG_ENDIAN and BYTE_ORDER */
++#include "rmd160.h"
++
++/* (mm) these are used by the original GnuPG file. In order to modify
++ * that file not too much, we keep the notations. maybe it would be
++ * better to include linux/types.h and typedef __u32 to u32 and __u8
++ * to byte?  */
++typedef unsigned int u32; /* taken from e.g. util-linux's minix.h */
++typedef unsigned char byte;
++
++typedef struct {
++    u32  h0,h1,h2,h3,h4;
++    u32  nblocks;
++    byte buf[64];
++    int  count;
++} RMD160_CONTEXT;
++
++/****************
++ * Rotate a 32 bit integer by n bytes
++ */
++#if defined(__GNUC__) && defined(__i386__)
++static inline u32
++rol( u32 x, int n)
++{
++	__asm__("roll %%cl,%0"
++		:"=r" (x)
++		:"0" (x),"c" (n));
++	return x;
++}
++#else
++  #define rol(x,n) ( ((x) << (n)) | ((x) >> (32-(n))) )
++#endif
++
++/*********************************
++ * RIPEMD-160 is not patented, see (as of 25.10.97)
++ *   http://www.esat.kuleuven.ac.be/~bosselae/ripemd160.html
++ * Note that the code uses Little Endian byteorder, which is good for
++ * 386 etc, but we must add some conversion when used on a big endian box.
++ *
++ *
++ * Pseudo-code for RIPEMD-160
++ *
++ * RIPEMD-160 is an iterative hash function that operates on 32-bit words.
++ * The round function takes as input a 5-word chaining variable and a 16-word
++ * message block and maps this to a new chaining variable. All operations are
++ * defined on 32-bit words. Padding is identical to that of MD4.
++ *
++ *
++ * RIPEMD-160: definitions
++ *
++ *
++ *   nonlinear functions at bit level: exor, mux, -, mux, -
++ *
++ *   f(j, x, y, z) = x XOR y XOR z		  (0 <= j <= 15)
++ *   f(j, x, y, z) = (x AND y) OR (NOT(x) AND z)  (16 <= j <= 31)
++ *   f(j, x, y, z) = (x OR NOT(y)) XOR z	  (32 <= j <= 47)
++ *   f(j, x, y, z) = (x AND z) OR (y AND NOT(z))  (48 <= j <= 63)
++ *   f(j, x, y, z) = x XOR (y OR NOT(z))	  (64 <= j <= 79)
++ *
++ *
++ *   added constants (hexadecimal)
++ *
++ *   K(j) = 0x00000000	    (0 <= j <= 15)
++ *   K(j) = 0x5A827999	   (16 <= j <= 31)	int(2**30 x sqrt(2))
++ *   K(j) = 0x6ED9EBA1	   (32 <= j <= 47)	int(2**30 x sqrt(3))
++ *   K(j) = 0x8F1BBCDC	   (48 <= j <= 63)	int(2**30 x sqrt(5))
++ *   K(j) = 0xA953FD4E	   (64 <= j <= 79)	int(2**30 x sqrt(7))
++ *   K'(j) = 0x50A28BE6     (0 <= j <= 15)      int(2**30 x cbrt(2))
++ *   K'(j) = 0x5C4DD124    (16 <= j <= 31)      int(2**30 x cbrt(3))
++ *   K'(j) = 0x6D703EF3    (32 <= j <= 47)      int(2**30 x cbrt(5))
++ *   K'(j) = 0x7A6D76E9    (48 <= j <= 63)      int(2**30 x cbrt(7))
++ *   K'(j) = 0x00000000    (64 <= j <= 79)
++ *
++ *
++ *   selection of message word
++ *
++ *   r(j)      = j		      (0 <= j <= 15)
++ *   r(16..31) = 7, 4, 13, 1, 10, 6, 15, 3, 12, 0, 9, 5, 2, 14, 11, 8
++ *   r(32..47) = 3, 10, 14, 4, 9, 15, 8, 1, 2, 7, 0, 6, 13, 11, 5, 12
++ *   r(48..63) = 1, 9, 11, 10, 0, 8, 12, 4, 13, 3, 7, 15, 14, 5, 6, 2
++ *   r(64..79) = 4, 0, 5, 9, 7, 12, 2, 10, 14, 1, 3, 8, 11, 6, 15, 13
++ *   r0(0..15) = 5, 14, 7, 0, 9, 2, 11, 4, 13, 6, 15, 8, 1, 10, 3, 12
++ *   r0(16..31)= 6, 11, 3, 7, 0, 13, 5, 10, 14, 15, 8, 12, 4, 9, 1, 2
++ *   r0(32..47)= 15, 5, 1, 3, 7, 14, 6, 9, 11, 8, 12, 2, 10, 0, 4, 13
++ *   r0(48..63)= 8, 6, 4, 1, 3, 11, 15, 0, 5, 12, 2, 13, 9, 7, 10, 14
++ *   r0(64..79)= 12, 15, 10, 4, 1, 5, 8, 7, 6, 2, 13, 14, 0, 3, 9, 11
++ *
++ *
++ *   amount for rotate left (rol)
++ *
++ *   s(0..15)  = 11, 14, 15, 12, 5, 8, 7, 9, 11, 13, 14, 15, 6, 7, 9, 8
++ *   s(16..31) = 7, 6, 8, 13, 11, 9, 7, 15, 7, 12, 15, 9, 11, 7, 13, 12
++ *   s(32..47) = 11, 13, 6, 7, 14, 9, 13, 15, 14, 8, 13, 6, 5, 12, 7, 5
++ *   s(48..63) = 11, 12, 14, 15, 14, 15, 9, 8, 9, 14, 5, 6, 8, 6, 5, 12
++ *   s(64..79) = 9, 15, 5, 11, 6, 8, 13, 12, 5, 12, 13, 14, 11, 8, 5, 6
++ *   s'(0..15) = 8, 9, 9, 11, 13, 15, 15, 5, 7, 7, 8, 11, 14, 14, 12, 6
++ *   s'(16..31)= 9, 13, 15, 7, 12, 8, 9, 11, 7, 7, 12, 7, 6, 15, 13, 11
++ *   s'(32..47)= 9, 7, 15, 11, 8, 6, 6, 14, 12, 13, 5, 14, 13, 13, 7, 5
++ *   s'(48..63)= 15, 5, 8, 11, 14, 14, 6, 14, 6, 9, 12, 9, 12, 5, 15, 8
++ *   s'(64..79)= 8, 5, 12, 9, 12, 5, 14, 6, 8, 13, 6, 5, 15, 13, 11, 11
++ *
++ *
++ *   initial value (hexadecimal)
++ *
++ *   h0 = 0x67452301; h1 = 0xEFCDAB89; h2 = 0x98BADCFE; h3 = 0x10325476;
++ *							h4 = 0xC3D2E1F0;
++ *
++ *
++ * RIPEMD-160: pseudo-code
++ *
++ *   It is assumed that the message after padding consists of t 16-word blocks
++ *   that will be denoted with X[i][j], with 0 <= i <= t-1 and 0 <= j <= 15.
++ *   The symbol [+] denotes addition modulo 2**32 and rol_s denotes cyclic left
++ *   shift (rotate) over s positions.
++ *
++ *
++ *   for i := 0 to t-1 {
++ *	 A := h0; B := h1; C := h2; D = h3; E = h4;
++ *	 A' := h0; B' := h1; C' := h2; D' = h3; E' = h4;
++ *	 for j := 0 to 79 {
++ *	     T := rol_s(j)(A [+] f(j, B, C, D) [+] X[i][r(j)] [+] K(j)) [+] E;
++ *	     A := E; E := D; D := rol_10(C); C := B; B := T;
++ *	     T := rol_s'(j)(A' [+] f(79-j, B', C', D') [+] X[i][r'(j)]
++						       [+] K'(j)) [+] E';
++ *	     A' := E'; E' := D'; D' := rol_10(C'); C' := B'; B' := T;
++ *	 }
++ *	 T := h1 [+] C [+] D'; h1 := h2 [+] D [+] E'; h2 := h3 [+] E [+] A';
++ *	 h3 := h4 [+] A [+] B'; h4 := h0 [+] B [+] C'; h0 := T;
++ *   }
++ */
++
++/* Some examples:
++ * ""                    9c1185a5c5e9fc54612808977ee8f548b2258d31
++ * "a"                   0bdc9d2d256b3ee9daae347be6f4dc835a467ffe
++ * "abc"                 8eb208f7e05d987a9b044a8e98c6b087f15a0bfc
++ * "message digest"      5d0689ef49d2fae572b881b123a85ffa21595f36
++ * "a...z"               f71c27109c692c1b56bbdceb5b9d2865b3708dbc
++ * "abcdbcde...nopq"     12a053384a9c0c88e405a06c27dcf49ada62eb2b
++ * "A...Za...z0...9"     b0e20b6e3116640286ed3a87a5713079b21f5189
++ * 8 times "1234567890"  9b752e45573d4b39f4dbd3323cab82bf63326bfb
++ * 1 million times "a"   52783243c1697bdbe16d37f97f68f08325dc1528
++ */
++
++
++static void
++rmd160_init( RMD160_CONTEXT *hd )
++{
++    hd->h0 = 0x67452301;
++    hd->h1 = 0xEFCDAB89;
++    hd->h2 = 0x98BADCFE;
++    hd->h3 = 0x10325476;
++    hd->h4 = 0xC3D2E1F0;
++    hd->nblocks = 0;
++    hd->count = 0;
++}
++
++
++
++/****************
++ * Transform the message X which consists of 16 32-bit-words
++ */
++static void
++transform( RMD160_CONTEXT *hd, byte *data )
++{
++    u32 a,b,c,d,e,aa,bb,cc,dd,ee,t;
++  #if BYTE_ORDER == BIG_ENDIAN
++    u32 x[16];
++    { int i;
++      byte *p2, *p1;
++      for(i=0, p1=data, p2=(byte*)x; i < 16; i++, p2 += 4 ) {
++	p2[3] = *p1++;
++	p2[2] = *p1++;
++	p2[1] = *p1++;
++	p2[0] = *p1++;
++      }
++    }
++  #else
++   #if 0
++    u32 *x =(u32*)data;
++   #else
++    /* this version is better because it is always aligned;
++     * The performance penalty on a 586-100 is about 6% which
++     * is acceptable - because the data is more local it might
++     * also be possible that this is faster on some machines.
++     * This function (when compiled with -02 on gcc 2.7.2)
++     * executes on a 586-100 (39.73 bogomips) at about 1900kb/sec;
++     * [measured with a 4MB data and "gpgm --print-md rmd160"] */
++    u32 x[16];
++    memcpy( x, data, 64 );
++   #endif
++  #endif
++
++
++#define K0  0x00000000
++#define K1  0x5A827999
++#define K2  0x6ED9EBA1
++#define K3  0x8F1BBCDC
++#define K4  0xA953FD4E
++#define KK0 0x50A28BE6
++#define KK1 0x5C4DD124
++#define KK2 0x6D703EF3
++#define KK3 0x7A6D76E9
++#define KK4 0x00000000
++#define F0(x,y,z)   ( (x) ^ (y) ^ (z) )
++#define F1(x,y,z)   ( ((x) & (y)) | (~(x) & (z)) )
++#define F2(x,y,z)   ( ((x) | ~(y)) ^ (z) )
++#define F3(x,y,z)   ( ((x) & (z)) | ((y) & ~(z)) )
++#define F4(x,y,z)   ( (x) ^ ((y) | ~(z)) )
++#define R(a,b,c,d,e,f,k,r,s) do { t = a + f(b,c,d) + k + x[r]; \
++				  a = rol(t,s) + e;	       \
++				  c = rol(c,10);	       \
++				} while(0)
++
++    /* left lane */
++    a = hd->h0;
++    b = hd->h1;
++    c = hd->h2;
++    d = hd->h3;
++    e = hd->h4;
++    R( a, b, c, d, e, F0, K0,  0, 11 );
++    R( e, a, b, c, d, F0, K0,  1, 14 );
++    R( d, e, a, b, c, F0, K0,  2, 15 );
++    R( c, d, e, a, b, F0, K0,  3, 12 );
++    R( b, c, d, e, a, F0, K0,  4,  5 );
++    R( a, b, c, d, e, F0, K0,  5,  8 );
++    R( e, a, b, c, d, F0, K0,  6,  7 );
++    R( d, e, a, b, c, F0, K0,  7,  9 );
++    R( c, d, e, a, b, F0, K0,  8, 11 );
++    R( b, c, d, e, a, F0, K0,  9, 13 );
++    R( a, b, c, d, e, F0, K0, 10, 14 );
++    R( e, a, b, c, d, F0, K0, 11, 15 );
++    R( d, e, a, b, c, F0, K0, 12,  6 );
++    R( c, d, e, a, b, F0, K0, 13,  7 );
++    R( b, c, d, e, a, F0, K0, 14,  9 );
++    R( a, b, c, d, e, F0, K0, 15,  8 );
++    R( e, a, b, c, d, F1, K1,  7,  7 );
++    R( d, e, a, b, c, F1, K1,  4,  6 );
++    R( c, d, e, a, b, F1, K1, 13,  8 );
++    R( b, c, d, e, a, F1, K1,  1, 13 );
++    R( a, b, c, d, e, F1, K1, 10, 11 );
++    R( e, a, b, c, d, F1, K1,  6,  9 );
++    R( d, e, a, b, c, F1, K1, 15,  7 );
++    R( c, d, e, a, b, F1, K1,  3, 15 );
++    R( b, c, d, e, a, F1, K1, 12,  7 );
++    R( a, b, c, d, e, F1, K1,  0, 12 );
++    R( e, a, b, c, d, F1, K1,  9, 15 );
++    R( d, e, a, b, c, F1, K1,  5,  9 );
++    R( c, d, e, a, b, F1, K1,  2, 11 );
++    R( b, c, d, e, a, F1, K1, 14,  7 );
++    R( a, b, c, d, e, F1, K1, 11, 13 );
++    R( e, a, b, c, d, F1, K1,  8, 12 );
++    R( d, e, a, b, c, F2, K2,  3, 11 );
++    R( c, d, e, a, b, F2, K2, 10, 13 );
++    R( b, c, d, e, a, F2, K2, 14,  6 );
++    R( a, b, c, d, e, F2, K2,  4,  7 );
++    R( e, a, b, c, d, F2, K2,  9, 14 );
++    R( d, e, a, b, c, F2, K2, 15,  9 );
++    R( c, d, e, a, b, F2, K2,  8, 13 );
++    R( b, c, d, e, a, F2, K2,  1, 15 );
++    R( a, b, c, d, e, F2, K2,  2, 14 );
++    R( e, a, b, c, d, F2, K2,  7,  8 );
++    R( d, e, a, b, c, F2, K2,  0, 13 );
++    R( c, d, e, a, b, F2, K2,  6,  6 );
++    R( b, c, d, e, a, F2, K2, 13,  5 );
++    R( a, b, c, d, e, F2, K2, 11, 12 );
++    R( e, a, b, c, d, F2, K2,  5,  7 );
++    R( d, e, a, b, c, F2, K2, 12,  5 );
++    R( c, d, e, a, b, F3, K3,  1, 11 );
++    R( b, c, d, e, a, F3, K3,  9, 12 );
++    R( a, b, c, d, e, F3, K3, 11, 14 );
++    R( e, a, b, c, d, F3, K3, 10, 15 );
++    R( d, e, a, b, c, F3, K3,  0, 14 );
++    R( c, d, e, a, b, F3, K3,  8, 15 );
++    R( b, c, d, e, a, F3, K3, 12,  9 );
++    R( a, b, c, d, e, F3, K3,  4,  8 );
++    R( e, a, b, c, d, F3, K3, 13,  9 );
++    R( d, e, a, b, c, F3, K3,  3, 14 );
++    R( c, d, e, a, b, F3, K3,  7,  5 );
++    R( b, c, d, e, a, F3, K3, 15,  6 );
++    R( a, b, c, d, e, F3, K3, 14,  8 );
++    R( e, a, b, c, d, F3, K3,  5,  6 );
++    R( d, e, a, b, c, F3, K3,  6,  5 );
++    R( c, d, e, a, b, F3, K3,  2, 12 );
++    R( b, c, d, e, a, F4, K4,  4,  9 );
++    R( a, b, c, d, e, F4, K4,  0, 15 );
++    R( e, a, b, c, d, F4, K4,  5,  5 );
++    R( d, e, a, b, c, F4, K4,  9, 11 );
++    R( c, d, e, a, b, F4, K4,  7,  6 );
++    R( b, c, d, e, a, F4, K4, 12,  8 );
++    R( a, b, c, d, e, F4, K4,  2, 13 );
++    R( e, a, b, c, d, F4, K4, 10, 12 );
++    R( d, e, a, b, c, F4, K4, 14,  5 );
++    R( c, d, e, a, b, F4, K4,  1, 12 );
++    R( b, c, d, e, a, F4, K4,  3, 13 );
++    R( a, b, c, d, e, F4, K4,  8, 14 );
++    R( e, a, b, c, d, F4, K4, 11, 11 );
++    R( d, e, a, b, c, F4, K4,  6,  8 );
++    R( c, d, e, a, b, F4, K4, 15,  5 );
++    R( b, c, d, e, a, F4, K4, 13,  6 );
++
++    aa = a; bb = b; cc = c; dd = d; ee = e;
++
++    /* right lane */
++    a = hd->h0;
++    b = hd->h1;
++    c = hd->h2;
++    d = hd->h3;
++    e = hd->h4;
++    R( a, b, c, d, e, F4, KK0,	5,  8);
++    R( e, a, b, c, d, F4, KK0, 14,  9);
++    R( d, e, a, b, c, F4, KK0,	7,  9);
++    R( c, d, e, a, b, F4, KK0,	0, 11);
++    R( b, c, d, e, a, F4, KK0,	9, 13);
++    R( a, b, c, d, e, F4, KK0,	2, 15);
++    R( e, a, b, c, d, F4, KK0, 11, 15);
++    R( d, e, a, b, c, F4, KK0,	4,  5);
++    R( c, d, e, a, b, F4, KK0, 13,  7);
++    R( b, c, d, e, a, F4, KK0,	6,  7);
++    R( a, b, c, d, e, F4, KK0, 15,  8);
++    R( e, a, b, c, d, F4, KK0,	8, 11);
++    R( d, e, a, b, c, F4, KK0,	1, 14);
++    R( c, d, e, a, b, F4, KK0, 10, 14);
++    R( b, c, d, e, a, F4, KK0,	3, 12);
++    R( a, b, c, d, e, F4, KK0, 12,  6);
++    R( e, a, b, c, d, F3, KK1,	6,  9);
++    R( d, e, a, b, c, F3, KK1, 11, 13);
++    R( c, d, e, a, b, F3, KK1,	3, 15);
++    R( b, c, d, e, a, F3, KK1,	7,  7);
++    R( a, b, c, d, e, F3, KK1,	0, 12);
++    R( e, a, b, c, d, F3, KK1, 13,  8);
++    R( d, e, a, b, c, F3, KK1,	5,  9);
++    R( c, d, e, a, b, F3, KK1, 10, 11);
++    R( b, c, d, e, a, F3, KK1, 14,  7);
++    R( a, b, c, d, e, F3, KK1, 15,  7);
++    R( e, a, b, c, d, F3, KK1,	8, 12);
++    R( d, e, a, b, c, F3, KK1, 12,  7);
++    R( c, d, e, a, b, F3, KK1,	4,  6);
++    R( b, c, d, e, a, F3, KK1,	9, 15);
++    R( a, b, c, d, e, F3, KK1,	1, 13);
++    R( e, a, b, c, d, F3, KK1,	2, 11);
++    R( d, e, a, b, c, F2, KK2, 15,  9);
++    R( c, d, e, a, b, F2, KK2,	5,  7);
++    R( b, c, d, e, a, F2, KK2,	1, 15);
++    R( a, b, c, d, e, F2, KK2,	3, 11);
++    R( e, a, b, c, d, F2, KK2,	7,  8);
++    R( d, e, a, b, c, F2, KK2, 14,  6);
++    R( c, d, e, a, b, F2, KK2,	6,  6);
++    R( b, c, d, e, a, F2, KK2,	9, 14);
++    R( a, b, c, d, e, F2, KK2, 11, 12);
++    R( e, a, b, c, d, F2, KK2,	8, 13);
++    R( d, e, a, b, c, F2, KK2, 12,  5);
++    R( c, d, e, a, b, F2, KK2,	2, 14);
++    R( b, c, d, e, a, F2, KK2, 10, 13);
++    R( a, b, c, d, e, F2, KK2,	0, 13);
++    R( e, a, b, c, d, F2, KK2,	4,  7);
++    R( d, e, a, b, c, F2, KK2, 13,  5);
++    R( c, d, e, a, b, F1, KK3,	8, 15);
++    R( b, c, d, e, a, F1, KK3,	6,  5);
++    R( a, b, c, d, e, F1, KK3,	4,  8);
++    R( e, a, b, c, d, F1, KK3,	1, 11);
++    R( d, e, a, b, c, F1, KK3,	3, 14);
++    R( c, d, e, a, b, F1, KK3, 11, 14);
++    R( b, c, d, e, a, F1, KK3, 15,  6);
++    R( a, b, c, d, e, F1, KK3,	0, 14);
++    R( e, a, b, c, d, F1, KK3,	5,  6);
++    R( d, e, a, b, c, F1, KK3, 12,  9);
++    R( c, d, e, a, b, F1, KK3,	2, 12);
++    R( b, c, d, e, a, F1, KK3, 13,  9);
++    R( a, b, c, d, e, F1, KK3,	9, 12);
++    R( e, a, b, c, d, F1, KK3,	7,  5);
++    R( d, e, a, b, c, F1, KK3, 10, 15);
++    R( c, d, e, a, b, F1, KK3, 14,  8);
++    R( b, c, d, e, a, F0, KK4, 12,  8);
++    R( a, b, c, d, e, F0, KK4, 15,  5);
++    R( e, a, b, c, d, F0, KK4, 10, 12);
++    R( d, e, a, b, c, F0, KK4,	4,  9);
++    R( c, d, e, a, b, F0, KK4,	1, 12);
++    R( b, c, d, e, a, F0, KK4,	5,  5);
++    R( a, b, c, d, e, F0, KK4,	8, 14);
++    R( e, a, b, c, d, F0, KK4,	7,  6);
++    R( d, e, a, b, c, F0, KK4,	6,  8);
++    R( c, d, e, a, b, F0, KK4,	2, 13);
++    R( b, c, d, e, a, F0, KK4, 13,  6);
++    R( a, b, c, d, e, F0, KK4, 14,  5);
++    R( e, a, b, c, d, F0, KK4,	0, 15);
++    R( d, e, a, b, c, F0, KK4,	3, 13);
++    R( c, d, e, a, b, F0, KK4,	9, 11);
++    R( b, c, d, e, a, F0, KK4, 11, 11);
++
++
++    t	   = hd->h1 + d + cc;
++    hd->h1 = hd->h2 + e + dd;
++    hd->h2 = hd->h3 + a + ee;
++    hd->h3 = hd->h4 + b + aa;
++    hd->h4 = hd->h0 + c + bb;
++    hd->h0 = t;
++}
++
++
++/* Update the message digest with the contents
++ * of INBUF with length INLEN.
++ */
++static void
++rmd160_write( RMD160_CONTEXT *hd, byte *inbuf, size_t inlen)
++{
++    if( hd->count == 64 ) { /* flush the buffer */
++	transform( hd, hd->buf );
++	hd->count = 0;
++	hd->nblocks++;
++    }
++    if( !inbuf )
++	return;
++    if( hd->count ) {
++	for( ; inlen && hd->count < 64; inlen-- )
++	    hd->buf[hd->count++] = *inbuf++;
++	rmd160_write( hd, NULL, 0 );
++	if( !inlen )
++	    return;
++    }
++
++    while( inlen >= 64 ) {
++	transform( hd, inbuf );
++	hd->count = 0;
++	hd->nblocks++;
++	inlen -= 64;
++	inbuf += 64;
++    }
++    for( ; inlen && hd->count < 64; inlen-- )
++	hd->buf[hd->count++] = *inbuf++;
++}
++
++/* The routine terminates the computation
++ */
++
++static void
++rmd160_final( RMD160_CONTEXT *hd )
++{
++    u32 t, msb, lsb;
++    byte *p;
++
++    rmd160_write(hd, NULL, 0); /* flush */;
++
++    msb = 0;
++    t = hd->nblocks;
++    if( (lsb = t << 6) < t ) /* multiply by 64 to make a byte count */
++	msb++;
++    msb += t >> 26;
++    t = lsb;
++    if( (lsb = t + hd->count) < t ) /* add the count */
++	msb++;
++    t = lsb;
++    if( (lsb = t << 3) < t ) /* multiply by 8 to make a bit count */
++	msb++;
++    msb += t >> 29;
++
++    if( hd->count < 56 ) { /* enough room */
++	hd->buf[hd->count++] = 0x80; /* pad */
++	while( hd->count < 56 )
++	    hd->buf[hd->count++] = 0;  /* pad */
++    }
++    else { /* need one extra block */
++	hd->buf[hd->count++] = 0x80; /* pad character */
++	while( hd->count < 64 )
++	    hd->buf[hd->count++] = 0;
++	rmd160_write(hd, NULL, 0);  /* flush */;
++	memset(hd->buf, 0, 56 ); /* fill next block with zeroes */
++    }
++    /* append the 64 bit count */
++    hd->buf[56] = lsb	   ;
++    hd->buf[57] = lsb >>  8;
++    hd->buf[58] = lsb >> 16;
++    hd->buf[59] = lsb >> 24;
++    hd->buf[60] = msb	   ;
++    hd->buf[61] = msb >>  8;
++    hd->buf[62] = msb >> 16;
++    hd->buf[63] = msb >> 24;
++    transform( hd, hd->buf );
++
++    p = hd->buf;
++  #if BYTE_ORDER == BIG_ENDIAN
++    #define X(a) do { *p++ = hd->h##a	   ; *p++ = hd->h##a >> 8;	\
++		      *p++ = hd->h##a >> 16; *p++ = hd->h##a >> 24; } while(0)
++  #else /* little endian */
++    #define X(a) do { *(u32*)p = hd->h##a ; p += 4; } while(0)
++  #endif
++    X(0);
++    X(1);
++    X(2);
++    X(3);
++    X(4);
++  #undef X
++}
++
++/****************
++ * Shortcut functions which puts the hash value of the supplied buffer
++ * into outbuf which must have a size of 20 bytes.
++ */
++void
++rmd160_hash_buffer( char *outbuf, const char *buffer, size_t length )
++{
++    RMD160_CONTEXT hd;
++
++    rmd160_init( &hd );
++    rmd160_write( &hd, (byte*)buffer, length );
++    rmd160_final( &hd );
++    memcpy( outbuf, hd.buf, 20 );
++}
+diff -urN util-linux-2.12q/mount/rmd160.h util-linux-2.12q-AES/mount/rmd160.h
+--- util-linux-2.12q/mount/rmd160.h	Thu Jan  1 02:00:00 1970
++++ util-linux-2.12q-AES/mount/rmd160.h	Wed Jan 26 17:40:12 2005
+@@ -0,0 +1,9 @@
++#ifndef RMD160_H
++#define RMD160_H
++
++void
++rmd160_hash_buffer( char *outbuf, const char *buffer, size_t length );
++
++#endif /*RMD160_H*/
++
++
+diff -urN util-linux-2.12q/mount/sha512.c util-linux-2.12q-AES/mount/sha512.c
+--- util-linux-2.12q/mount/sha512.c	Thu Jan  1 02:00:00 1970
++++ util-linux-2.12q-AES/mount/sha512.c	Wed Jan 26 17:40:12 2005
+@@ -0,0 +1,432 @@
++/*
++ *  sha512.c
++ *
++ *  Written by Jari Ruusu, April 16 2001
++ *
++ *  Copyright 2001 by Jari Ruusu.
++ *  Redistribution of this file is permitted under the GNU Public License.
++ */
++
++#include <string.h>
++#include <sys/types.h>
++#include "sha512.h"
++
++/* Define one or more of these. If none is defined, you get all of them */
++#if !defined(SHA256_NEEDED)&&!defined(SHA512_NEEDED)&&!defined(SHA384_NEEDED)
++# define SHA256_NEEDED  1
++# define SHA512_NEEDED  1
++# define SHA384_NEEDED  1
++#endif
++
++#if defined(SHA256_NEEDED)
++static const u_int32_t sha256_hashInit[8] = {
++    0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c,
++    0x1f83d9ab, 0x5be0cd19
++};
++static const u_int32_t sha256_K[64] = {
++    0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1,
++    0x923f82a4, 0xab1c5ed5, 0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3,
++    0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174, 0xe49b69c1, 0xefbe4786,
++    0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da,
++    0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147,
++    0x06ca6351, 0x14292967, 0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13,
++    0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85, 0xa2bfe8a1, 0xa81a664b,
++    0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070,
++    0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a,
++    0x5b9cca4f, 0x682e6ff3, 0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208,
++    0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2
++};
++#endif
++
++#if defined(SHA512_NEEDED)
++static const u_int64_t sha512_hashInit[8] = {
++    0x6a09e667f3bcc908ULL, 0xbb67ae8584caa73bULL, 0x3c6ef372fe94f82bULL,
++    0xa54ff53a5f1d36f1ULL, 0x510e527fade682d1ULL, 0x9b05688c2b3e6c1fULL,
++    0x1f83d9abfb41bd6bULL, 0x5be0cd19137e2179ULL
++};
++#endif
++
++#if defined(SHA384_NEEDED)
++static const u_int64_t sha384_hashInit[8] = {
++    0xcbbb9d5dc1059ed8ULL, 0x629a292a367cd507ULL, 0x9159015a3070dd17ULL,
++    0x152fecd8f70e5939ULL, 0x67332667ffc00b31ULL, 0x8eb44a8768581511ULL,
++    0xdb0c2e0d64f98fa7ULL, 0x47b5481dbefa4fa4ULL
++};
++#endif
++
++#if defined(SHA512_NEEDED) || defined(SHA384_NEEDED)
++static const u_int64_t sha512_K[80] = {
++    0x428a2f98d728ae22ULL, 0x7137449123ef65cdULL, 0xb5c0fbcfec4d3b2fULL,
++    0xe9b5dba58189dbbcULL, 0x3956c25bf348b538ULL, 0x59f111f1b605d019ULL,
++    0x923f82a4af194f9bULL, 0xab1c5ed5da6d8118ULL, 0xd807aa98a3030242ULL,
++    0x12835b0145706fbeULL, 0x243185be4ee4b28cULL, 0x550c7dc3d5ffb4e2ULL,
++    0x72be5d74f27b896fULL, 0x80deb1fe3b1696b1ULL, 0x9bdc06a725c71235ULL,
++    0xc19bf174cf692694ULL, 0xe49b69c19ef14ad2ULL, 0xefbe4786384f25e3ULL,
++    0x0fc19dc68b8cd5b5ULL, 0x240ca1cc77ac9c65ULL, 0x2de92c6f592b0275ULL,
++    0x4a7484aa6ea6e483ULL, 0x5cb0a9dcbd41fbd4ULL, 0x76f988da831153b5ULL,
++    0x983e5152ee66dfabULL, 0xa831c66d2db43210ULL, 0xb00327c898fb213fULL,
++    0xbf597fc7beef0ee4ULL, 0xc6e00bf33da88fc2ULL, 0xd5a79147930aa725ULL,
++    0x06ca6351e003826fULL, 0x142929670a0e6e70ULL, 0x27b70a8546d22ffcULL,
++    0x2e1b21385c26c926ULL, 0x4d2c6dfc5ac42aedULL, 0x53380d139d95b3dfULL,
++    0x650a73548baf63deULL, 0x766a0abb3c77b2a8ULL, 0x81c2c92e47edaee6ULL,
++    0x92722c851482353bULL, 0xa2bfe8a14cf10364ULL, 0xa81a664bbc423001ULL,
++    0xc24b8b70d0f89791ULL, 0xc76c51a30654be30ULL, 0xd192e819d6ef5218ULL,
++    0xd69906245565a910ULL, 0xf40e35855771202aULL, 0x106aa07032bbd1b8ULL,
++    0x19a4c116b8d2d0c8ULL, 0x1e376c085141ab53ULL, 0x2748774cdf8eeb99ULL,
++    0x34b0bcb5e19b48a8ULL, 0x391c0cb3c5c95a63ULL, 0x4ed8aa4ae3418acbULL,
++    0x5b9cca4f7763e373ULL, 0x682e6ff3d6b2b8a3ULL, 0x748f82ee5defb2fcULL,
++    0x78a5636f43172f60ULL, 0x84c87814a1f0ab72ULL, 0x8cc702081a6439ecULL,
++    0x90befffa23631e28ULL, 0xa4506cebde82bde9ULL, 0xbef9a3f7b2c67915ULL,
++    0xc67178f2e372532bULL, 0xca273eceea26619cULL, 0xd186b8c721c0c207ULL,
++    0xeada7dd6cde0eb1eULL, 0xf57d4f7fee6ed178ULL, 0x06f067aa72176fbaULL,
++    0x0a637dc5a2c898a6ULL, 0x113f9804bef90daeULL, 0x1b710b35131c471bULL,
++    0x28db77f523047d84ULL, 0x32caab7b40c72493ULL, 0x3c9ebe0a15c9bebcULL,
++    0x431d67c49c100d4cULL, 0x4cc5d4becb3e42b6ULL, 0x597f299cfc657e2aULL,
++    0x5fcb6fab3ad6faecULL, 0x6c44198c4a475817ULL
++};
++#endif
++
++#define Ch(x,y,z)   (((x) & (y)) ^ ((~(x)) & (z)))
++#define Maj(x,y,z)  (((x) & (y)) ^ ((x) & (z)) ^ ((y) & (z)))
++#define R(x,y)      ((y) >> (x))
++
++#if defined(SHA256_NEEDED)
++void sha256_init(sha256_context *ctx)
++{
++    memcpy(&ctx->sha_H[0], &sha256_hashInit[0], sizeof(ctx->sha_H));
++    ctx->sha_blocks = 0;
++    ctx->sha_bufCnt = 0;
++}
++
++#define S(x,y)      (((y) >> (x)) | ((y) << (32 - (x))))
++#define uSig0(x)    ((S(2,(x))) ^ (S(13,(x))) ^ (S(22,(x))))
++#define uSig1(x)    ((S(6,(x))) ^ (S(11,(x))) ^ (S(25,(x))))
++#define lSig0(x)    ((S(7,(x))) ^ (S(18,(x))) ^ (R(3,(x))))
++#define lSig1(x)    ((S(17,(x))) ^ (S(19,(x))) ^ (R(10,(x))))
++
++static void sha256_transform(sha256_context *ctx, unsigned char *datap)
++{
++    register int    j;
++    u_int32_t       a, b, c, d, e, f, g, h;
++    u_int32_t       T1, T2, W[64], Wm2, Wm15;
++
++    /* read the data, big endian byte order */
++    j = 0;
++    do {
++        W[j] = (((u_int32_t)(datap[0]))<<24) | (((u_int32_t)(datap[1]))<<16) |
++               (((u_int32_t)(datap[2]))<<8 ) | ((u_int32_t)(datap[3]));
++        datap += 4;
++    } while(++j < 16);
++    
++    /* initialize variables a...h */
++    a = ctx->sha_H[0];
++    b = ctx->sha_H[1];
++    c = ctx->sha_H[2];
++    d = ctx->sha_H[3];
++    e = ctx->sha_H[4];
++    f = ctx->sha_H[5];
++    g = ctx->sha_H[6];
++    h = ctx->sha_H[7];
++
++    /* apply compression function */
++    j = 0;
++    do {
++        if(j >= 16) {
++            Wm2 = W[j - 2];
++            Wm15 = W[j - 15];
++            W[j] = lSig1(Wm2) + W[j - 7] + lSig0(Wm15) + W[j - 16];
++        }
++        T1 = h + uSig1(e) + Ch(e,f,g) + sha256_K[j] + W[j];
++        T2 = uSig0(a) + Maj(a,b,c);
++        h = g; g = f; f = e;
++        e = d + T1;
++        d = c; c = b; b = a;
++        a = T1 + T2;
++    } while(++j < 64);
++
++    /* compute intermediate hash value */
++    ctx->sha_H[0] += a;
++    ctx->sha_H[1] += b;
++    ctx->sha_H[2] += c;
++    ctx->sha_H[3] += d;
++    ctx->sha_H[4] += e;
++    ctx->sha_H[5] += f;
++    ctx->sha_H[6] += g;
++    ctx->sha_H[7] += h;
++
++    ctx->sha_blocks++;
++}
++
++void sha256_write(sha256_context *ctx, unsigned char *datap, int length)
++{
++    while(length > 0) {
++        if(!ctx->sha_bufCnt) {
++            while(length >= sizeof(ctx->sha_out)) {
++                sha256_transform(ctx, datap);
++                datap += sizeof(ctx->sha_out);
++                length -= sizeof(ctx->sha_out);
++            }
++            if(!length) return;
++        }
++        ctx->sha_out[ctx->sha_bufCnt] = *datap++;
++        length--;
++        if(++ctx->sha_bufCnt == sizeof(ctx->sha_out)) {
++            sha256_transform(ctx, &ctx->sha_out[0]);
++            ctx->sha_bufCnt = 0;
++        }
++    }
++}
++
++void sha256_final(sha256_context *ctx)
++{
++    register int    j;
++    u_int64_t       bitLength;
++    u_int32_t       i;
++    unsigned char   padByte, *datap;
++
++    bitLength = (ctx->sha_blocks << 9) | (ctx->sha_bufCnt << 3);
++    padByte = 0x80;
++    sha256_write(ctx, &padByte, 1);
++
++    /* pad extra space with zeroes */
++    padByte = 0;
++    while(ctx->sha_bufCnt != 56) {
++        sha256_write(ctx, &padByte, 1);
++    }
++
++    /* write bit length, big endian byte order */
++    ctx->sha_out[56] = bitLength >> 56;
++    ctx->sha_out[57] = bitLength >> 48;
++    ctx->sha_out[58] = bitLength >> 40;
++    ctx->sha_out[59] = bitLength >> 32;
++    ctx->sha_out[60] = bitLength >> 24;
++    ctx->sha_out[61] = bitLength >> 16;
++    ctx->sha_out[62] = bitLength >> 8;
++    ctx->sha_out[63] = bitLength;
++    sha256_transform(ctx, &ctx->sha_out[0]);
++    
++    /* return results in ctx->sha_out[0...31] */
++    datap = &ctx->sha_out[0];
++    j = 0;
++    do {
++        i = ctx->sha_H[j];
++        datap[0] = i >> 24;
++        datap[1] = i >> 16;
++        datap[2] = i >> 8;
++        datap[3] = i;
++        datap += 4;
++    } while(++j < 8);
++
++    /* clear sensitive information */
++    memset(&ctx->sha_out[32], 0, sizeof(sha256_context) - 32);
++}
++
++void sha256_hash_buffer(unsigned char *ib, int ile, unsigned char *ob, int ole)
++{
++    sha256_context ctx;
++
++    if(ole < 1) return;
++    memset(ob, 0, ole);
++    if(ole > 32) ole = 32;
++    sha256_init(&ctx);
++    sha256_write(&ctx, ib, ile);
++    sha256_final(&ctx);
++    memcpy(ob, &ctx.sha_out[0], ole);
++    memset(&ctx, 0, sizeof(ctx));
++}
++
++#endif
++
++#if defined(SHA512_NEEDED)
++void sha512_init(sha512_context *ctx)
++{
++    memcpy(&ctx->sha_H[0], &sha512_hashInit[0], sizeof(ctx->sha_H));
++    ctx->sha_blocks = 0;
++    ctx->sha_blocksMSB = 0;
++    ctx->sha_bufCnt = 0;
++}
++#endif
++
++#if defined(SHA512_NEEDED) || defined(SHA384_NEEDED)
++#undef S
++#undef uSig0
++#undef uSig1
++#undef lSig0
++#undef lSig1
++#define S(x,y)      (((y) >> (x)) | ((y) << (64 - (x))))
++#define uSig0(x)    ((S(28,(x))) ^ (S(34,(x))) ^ (S(39,(x))))
++#define uSig1(x)    ((S(14,(x))) ^ (S(18,(x))) ^ (S(41,(x))))
++#define lSig0(x)    ((S(1,(x))) ^ (S(8,(x))) ^ (R(7,(x))))
++#define lSig1(x)    ((S(19,(x))) ^ (S(61,(x))) ^ (R(6,(x))))
++
++static void sha512_transform(sha512_context *ctx, unsigned char *datap)
++{
++    register int    j;
++    u_int64_t       a, b, c, d, e, f, g, h;
++    u_int64_t       T1, T2, W[80], Wm2, Wm15;
++
++    /* read the data, big endian byte order */
++    j = 0;
++    do {
++        W[j] = (((u_int64_t)(datap[0]))<<56) | (((u_int64_t)(datap[1]))<<48) |
++               (((u_int64_t)(datap[2]))<<40) | (((u_int64_t)(datap[3]))<<32) |
++               (((u_int64_t)(datap[4]))<<24) | (((u_int64_t)(datap[5]))<<16) |
++               (((u_int64_t)(datap[6]))<<8 ) | ((u_int64_t)(datap[7]));
++        datap += 8;
++    } while(++j < 16);
++    
++    /* initialize variables a...h */
++    a = ctx->sha_H[0];
++    b = ctx->sha_H[1];
++    c = ctx->sha_H[2];
++    d = ctx->sha_H[3];
++    e = ctx->sha_H[4];
++    f = ctx->sha_H[5];
++    g = ctx->sha_H[6];
++    h = ctx->sha_H[7];
++
++    /* apply compression function */
++    j = 0;
++    do {
++        if(j >= 16) {
++            Wm2 = W[j - 2];
++            Wm15 = W[j - 15];
++            W[j] = lSig1(Wm2) + W[j - 7] + lSig0(Wm15) + W[j - 16];
++        }
++        T1 = h + uSig1(e) + Ch(e,f,g) + sha512_K[j] + W[j];
++        T2 = uSig0(a) + Maj(a,b,c);
++        h = g; g = f; f = e;
++        e = d + T1;
++        d = c; c = b; b = a;
++        a = T1 + T2;
++    } while(++j < 80);
++
++    /* compute intermediate hash value */
++    ctx->sha_H[0] += a;
++    ctx->sha_H[1] += b;
++    ctx->sha_H[2] += c;
++    ctx->sha_H[3] += d;
++    ctx->sha_H[4] += e;
++    ctx->sha_H[5] += f;
++    ctx->sha_H[6] += g;
++    ctx->sha_H[7] += h;
++
++    ctx->sha_blocks++;
++    if(!ctx->sha_blocks) ctx->sha_blocksMSB++;
++}
++
++void sha512_write(sha512_context *ctx, unsigned char *datap, int length)
++{
++    while(length > 0) {
++        if(!ctx->sha_bufCnt) {
++            while(length >= sizeof(ctx->sha_out)) {
++                sha512_transform(ctx, datap);
++                datap += sizeof(ctx->sha_out);
++                length -= sizeof(ctx->sha_out);
++            }
++            if(!length) return;
++        }
++        ctx->sha_out[ctx->sha_bufCnt] = *datap++;
++        length--;
++        if(++ctx->sha_bufCnt == sizeof(ctx->sha_out)) {
++            sha512_transform(ctx, &ctx->sha_out[0]);
++            ctx->sha_bufCnt = 0;
++        }
++    }
++}
++
++void sha512_final(sha512_context *ctx)
++{
++    register int    j;
++    u_int64_t       bitLength, bitLengthMSB;
++    u_int64_t       i;
++    unsigned char   padByte, *datap;
++
++    bitLength = (ctx->sha_blocks << 10) | (ctx->sha_bufCnt << 3);
++    bitLengthMSB = (ctx->sha_blocksMSB << 10) | (ctx->sha_blocks >> 54);
++    padByte = 0x80;
++    sha512_write(ctx, &padByte, 1);
++
++    /* pad extra space with zeroes */
++    padByte = 0;
++    while(ctx->sha_bufCnt != 112) {
++        sha512_write(ctx, &padByte, 1);
++    }
++
++    /* write bit length, big endian byte order */
++    ctx->sha_out[112] = bitLengthMSB >> 56;
++    ctx->sha_out[113] = bitLengthMSB >> 48;
++    ctx->sha_out[114] = bitLengthMSB >> 40;
++    ctx->sha_out[115] = bitLengthMSB >> 32;
++    ctx->sha_out[116] = bitLengthMSB >> 24;
++    ctx->sha_out[117] = bitLengthMSB >> 16;
++    ctx->sha_out[118] = bitLengthMSB >> 8;
++    ctx->sha_out[119] = bitLengthMSB;
++    ctx->sha_out[120] = bitLength >> 56;
++    ctx->sha_out[121] = bitLength >> 48;
++    ctx->sha_out[122] = bitLength >> 40;
++    ctx->sha_out[123] = bitLength >> 32;
++    ctx->sha_out[124] = bitLength >> 24;
++    ctx->sha_out[125] = bitLength >> 16;
++    ctx->sha_out[126] = bitLength >> 8;
++    ctx->sha_out[127] = bitLength;
++    sha512_transform(ctx, &ctx->sha_out[0]);
++    
++    /* return results in ctx->sha_out[0...63] */
++    datap = &ctx->sha_out[0];
++    j = 0;
++    do {
++        i = ctx->sha_H[j];
++        datap[0] = i >> 56;
++        datap[1] = i >> 48;
++        datap[2] = i >> 40;
++        datap[3] = i >> 32;
++        datap[4] = i >> 24;
++        datap[5] = i >> 16;
++        datap[6] = i >> 8;
++        datap[7] = i;
++        datap += 8;
++    } while(++j < 8);
++
++    /* clear sensitive information */
++    memset(&ctx->sha_out[64], 0, sizeof(sha512_context) - 64);
++}
++
++void sha512_hash_buffer(unsigned char *ib, int ile, unsigned char *ob, int ole)
++{
++    sha512_context ctx;
++
++    if(ole < 1) return;
++    memset(ob, 0, ole);
++    if(ole > 64) ole = 64;
++    sha512_init(&ctx);
++    sha512_write(&ctx, ib, ile);
++    sha512_final(&ctx);
++    memcpy(ob, &ctx.sha_out[0], ole);
++    memset(&ctx, 0, sizeof(ctx));
++}
++#endif
++
++#if defined(SHA384_NEEDED)
++void sha384_init(sha512_context *ctx)
++{
++    memcpy(&ctx->sha_H[0], &sha384_hashInit[0], sizeof(ctx->sha_H));
++    ctx->sha_blocks = 0;
++    ctx->sha_blocksMSB = 0;
++    ctx->sha_bufCnt = 0;
++}
++
++void sha384_hash_buffer(unsigned char *ib, int ile, unsigned char *ob, int ole)
++{
++    sha512_context ctx;
++
++    if(ole < 1) return;
++    memset(ob, 0, ole);
++    if(ole > 48) ole = 48;
++    sha384_init(&ctx);
++    sha512_write(&ctx, ib, ile);
++    sha512_final(&ctx);
++    memcpy(ob, &ctx.sha_out[0], ole);
++    memset(&ctx, 0, sizeof(ctx));
++}
++#endif
+diff -urN util-linux-2.12q/mount/sha512.h util-linux-2.12q-AES/mount/sha512.h
+--- util-linux-2.12q/mount/sha512.h	Thu Jan  1 02:00:00 1970
++++ util-linux-2.12q-AES/mount/sha512.h	Wed Jan 26 17:40:12 2005
+@@ -0,0 +1,45 @@
++/*
++ *  sha512.h
++ *
++ *  Written by Jari Ruusu, April 16 2001
++ *
++ *  Copyright 2001 by Jari Ruusu.
++ *  Redistribution of this file is permitted under the GNU Public License.
++ */
++
++#include <sys/types.h>
++
++typedef struct {
++    unsigned char   sha_out[64];    /* results are here, bytes 0...31 */
++    u_int32_t       sha_H[8];
++    u_int64_t       sha_blocks;
++    int             sha_bufCnt;
++} sha256_context;
++
++typedef struct {
++    unsigned char   sha_out[128];   /* results are here, bytes 0...63 */
++    u_int64_t       sha_H[8];
++    u_int64_t       sha_blocks;
++    u_int64_t       sha_blocksMSB;
++    int             sha_bufCnt;
++} sha512_context;
++
++/* no sha384_context, use sha512_context */
++
++/* 256 bit hash, provides 128 bits of security against collision attacks */
++extern void sha256_init(sha256_context *);
++extern void sha256_write(sha256_context *, unsigned char *, int);
++extern void sha256_final(sha256_context *);
++extern void sha256_hash_buffer(unsigned char *, int, unsigned char *, int);
++
++/* 512 bit hash, provides 256 bits of security against collision attacks */
++extern void sha512_init(sha512_context *);
++extern void sha512_write(sha512_context *, unsigned char *, int);
++extern void sha512_final(sha512_context *);
++extern void sha512_hash_buffer(unsigned char *, int, unsigned char *, int);
++
++/* 384 bit hash, provides 192 bits of security against collision attacks */
++extern void sha384_init(sha512_context *);
++/* no sha384_write(), use sha512_write() */
++/* no sha384_final(), use sha512_final(), result in ctx->sha_out[0...47]  */
++extern void sha384_hash_buffer(unsigned char *, int, unsigned char *, int);
+diff -urN util-linux-2.12q/mount/swapon.8 util-linux-2.12q-AES/mount/swapon.8
+--- util-linux-2.12q/mount/swapon.8	Tue Dec 21 22:59:42 2004
++++ util-linux-2.12q-AES/mount/swapon.8	Wed Jan 26 17:40:12 2005
+@@ -142,6 +142,22 @@
+ .I /proc/swaps
+ or
+ .IR /etc/fstab ).
++.PP
++If
++.I loop=/dev/loop?
++and
++.I encryption=AES128
++options are present in
++.I /etc/fstab
++then
++.BR "swapon -a"
++will set up loop devices using random keys, run
++.BR "mkswap"
++on them, and enable encrypted swap on specified loop devices. Encrypted loop
++devices are set up with page size offset so that unencrypted swap signatures
++on first page of swap devices are not touched.
++.BR "swapoff -a"
++will tear down such loop devices.
+ .SH NOTE
+ You should not use
+ .B swapon
+diff -urN util-linux-2.12q/mount/swapon.c util-linux-2.12q-AES/mount/swapon.c
+--- util-linux-2.12q/mount/swapon.c	Wed Dec 22 11:50:19 2004
++++ util-linux-2.12q-AES/mount/swapon.c	Wed Jan 26 17:40:12 2005
+@@ -1,22 +1,45 @@
+ /*
+  * A swapon(8)/swapoff(8) for Linux 0.99.
+  * swapon.c,v 1.1.1.1 1993/11/18 08:40:51 jrs Exp
++ *
++ * 1997-02-xx <Vincent.Renardias@waw.com>
++ * - added '-s' (summary option)
++ * 1999-02-22 Arkadiusz Mi¶kiewicz <misiek@pld.ORG.PL>
++ * - added Native Language Support
++ * 1999-03-21 Arnaldo Carvalho de Melo <acme@conectiva.com.br>
++ * - fixed strerr(errno) in gettext calls
++ * 2001-03-22 Erik Troan <ewt@redhat.com>
++ * - added -e option for -a
++ * - -a shouldn't try to add swaps that are already enabled
++ * 2002-04-14 Jari Ruusu
++ * - added encrypted swap support
+  */
+ 
+ #include <ctype.h>
+ #include <stdlib.h>
+ #include <stdio.h>
++#include <unistd.h>
+ #include <getopt.h>
+ #include <string.h>
+ #include <mntent.h>
+ #include <errno.h>
++#include <sys/types.h>
++#include <sys/wait.h>
+ #include <sys/stat.h>
++#include <fcntl.h>
++#include <sys/ioctl.h>
++#include <sys/utsname.h>
++#include <sys/time.h>
++#include <asm/page.h>
+ #include "xmalloc.h"
+ #include "swap_constants.h"
+ #include "swapargs.h"
+ #include "nls.h"
+ #include "mount_blkid.h"
+ #include "mount_by_label.h"
++#include "loop.h"
++#include "xstrncpy.h"
++#include "sha512.h"
+ 
+ #define streq(s, t)	(strcmp ((s), (t)) == 0)
+ 
+@@ -297,6 +320,260 @@
+ }
+ 
+ static int
++prepare_encrypted_swap(const char *partition, char *loop, char *encryption)
++{
++	int x, y, fd, ffd;
++	sha512_context s;
++	unsigned char b[4096], multiKeyBits[65][32];
++	char *a[10], *apiName;
++	struct loop_info64 loopinfo;
++	FILE *f;
++
++	/*
++	 * Some sanity checks
++	 */
++	if(strlen(partition) < 1) {
++		fprintf(stderr, _("swapon: invalid swap device name\n"));
++		return 0;
++	}
++	if(strlen(loop) < 1) {
++		fprintf(stderr, _("swapon: invalid loop device name\n"));
++		return 0;
++	}
++	if(strlen(encryption) < 1) {
++		fprintf(stderr, _("swapon: invalid encryption type\n"));
++		return 0;
++	}
++
++	/*
++	 * Abort if loop device does not exist or is already in use
++	 */
++	if((fd = open(loop, O_RDWR)) == -1) {
++		fprintf(stderr, _("swapon: unable to open loop device %s\n"), loop);
++		return 0;
++	}
++	if(is_unused_loop_device(fd) == 0) {
++		fprintf(stderr, _("swapon: loop device %s already in use\n"), loop);
++		goto errout0;
++	}
++
++	/*
++	 * Compute SHA-512 over first 40 KB of old swap data. This data
++	 * is mostly unknown data encrypted using unknown key. SHA-512 hash
++	 * output is then used as entropy for new swap encryption key.
++	 */
++	if(!(f = fopen(partition, "r+"))) {
++		fprintf(stderr, _("swapon: unable to open swap device %s\n"), partition);
++		goto errout0;
++	}
++	fseek(f, (long)PAGE_SIZE, SEEK_SET);
++	sha512_init(&s);
++	for(x = 0; x < 10; x++) {
++		if(fread(&b[0], sizeof(b), 1, f) != 1) break;
++		sha512_write(&s, &b[0], sizeof(b));
++	}
++	sha512_final(&s);
++
++	/*
++	 * Overwrite 40 KB of old swap data 20 times so that recovering
++	 * SHA-512 output beyond this point is difficult and expensive.
++	 */
++	for(y = 0; y < 20; y++) {
++		int z;
++		struct {
++			struct timeval tv;
++			unsigned char h[64];
++			int x,y,z;
++		} j;
++		if(fseek(f, (long)PAGE_SIZE, SEEK_SET)) break;
++		memcpy(&j.h[0], &s.sha_out[0], 64);
++		gettimeofday(&j.tv, NULL);
++		j.y = y;
++		for(x = 0; x < 10; x++) {
++			j.x = x;
++			for(z = 0; z < sizeof(b); z += 64) {
++				j.z = z;
++				sha512_hash_buffer((unsigned char *)&j, sizeof(j), &b[z], 64);
++			}
++			if(fwrite(&b[0], sizeof(b), 1, f) != 1) break;
++		}
++		memset(&j, 0, sizeof(j));
++		if(fflush(f)) break;
++		if(fsync(fileno(f))) break;
++	}
++	fclose(f);
++
++	/*
++	 * Use all 512 bits of hash output
++	 */
++	memcpy(&b[0], &s.sha_out[0], 64);
++	memset(&s, 0, sizeof(s));
++
++	/*
++	 * Read 32 bytes of random entropy from kernel's random
++	 * number generator. This code may be executed early on startup
++	 * scripts and amount of random entropy may be non-existent.
++	 * SHA-512 of old swap data is used as workaround for missing
++	 * entropy in kernel's random number generator.
++	 */
++	if(!(f = fopen("/dev/urandom", "r"))) {
++		fprintf(stderr, _("swapon: unable to open /dev/urandom\n"));
++		goto errout0;
++	}
++	fread(&b[64], 32, 1, f);
++
++	/*
++	 * Set up struct loop_info64
++	 */
++	if((ffd = open(partition, O_RDWR)) < 0) {
++		fprintf(stderr, _("swapon: unable to open swap device %s\n"), partition);
++		goto errout1;
++	}
++	memset(&loopinfo, 0, sizeof(loopinfo));
++	xstrncpy(loopinfo.lo_file_name, partition, LO_NAME_SIZE);
++	loopinfo.lo_encrypt_type = loop_crypt_type(encryption, &loopinfo.lo_encrypt_key_size, &apiName);
++	if(loopinfo.lo_encrypt_type <= 1) {
++		fprintf(stderr, _("swapon: unsupported swap encryption type %s\n"), encryption);
++errout2:
++		close(ffd);
++errout1:
++		fclose(f);
++errout0:
++		close(fd);
++		memset(&loopinfo.lo_encrypt_key[0], 0, sizeof(loopinfo.lo_encrypt_key));
++		memset(&multiKeyBits[0][0], 0, sizeof(multiKeyBits));
++		return 0;
++	}
++	loopinfo.lo_offset = PAGE_SIZE;
++	/* single-key hash */
++	sha512_hash_buffer(&b[0], 64+32, &loopinfo.lo_encrypt_key[0], sizeof(loopinfo.lo_encrypt_key));
++	/* multi-key hash */
++	x = 0;
++	while(x < 65) {
++		fread(&b[64+32], 16, 1, f);
++		sha512_hash_buffer(&b[0], 64+32+16, &multiKeyBits[x][0], 32);
++		x++;
++	}	
++
++	/*
++	 * Try to set up single-key loop
++	 */
++	if(ioctl(fd, LOOP_SET_FD, ffd) < 0) {
++		fprintf(stderr, _("swapon: LOOP_SET_FD failed\n"));
++		goto errout2;
++	}
++	if ((loopinfo.lo_encrypt_type == 18) || (loop_set_status64_ioctl(fd, &loopinfo) < 0)) {
++		if(try_cryptoapi_loop_interface(fd, &loopinfo, apiName) < 0) {
++			fprintf(stderr, _("swapon: LOOP_SET_STATUS failed\n"));
++			ioctl(fd, LOOP_CLR_FD, 0);
++			goto errout2;
++		}
++	}
++
++	/*
++	 * Try to put loop to multi-key v3 or v2 mode.
++	 * If this fails, then let it operate in single-key mode.
++	 */
++	if(ioctl(fd, LOOP_MULTI_KEY_SETUP_V3, &multiKeyBits[0][0]) < 0) {
++		ioctl(fd, LOOP_MULTI_KEY_SETUP, &multiKeyBits[0][0]);
++	}
++
++	/*
++	 * Loop is now set up. Clean up the keys.
++	 */
++	memset(&loopinfo.lo_encrypt_key[0], 0, sizeof(loopinfo.lo_encrypt_key));
++	memset(&multiKeyBits[0][0], 0, sizeof(multiKeyBits));
++	close(ffd);
++	fclose(f);
++	close(fd);
++
++	/*
++	 * Write 40 KB of zeroes to loop device. That same data is written
++	 * to underlying partition in encrypted form. This is done to guarantee
++	 * that next time encrypted swap is initialized, the SHA-512 hash will
++	 * be different. And, if encrypted swap data writes over this data, that's
++	 * even better.
++	 */
++	if(!(f = fopen(loop, "r+"))) {
++		fprintf(stderr, _("swapon: unable to open loop device %s\n"), loop);
++		return 0;
++	}
++	memset(&b[0], 0, sizeof(b));
++	for(x = 0; x < 10; x++) {
++		if(fwrite(&b[0], sizeof(b), 1, f) != 1) break;
++	}
++	fflush(f);
++	fsync(fileno(f));
++	fclose(f);
++	sync();
++
++	/*
++	 * Run mkswap on loop device so that kernel understands it as swap.
++	 * Redirect stderr to /dev/null and ignore exit value.
++	 */
++	if(!(x = fork())) {
++		if((x = open("/dev/null", O_WRONLY)) >= 0) {
++			dup2(x, 2);
++			close(x);
++		}
++		a[0] = "mkswap";
++		a[1] = loop;
++		a[2] = 0;
++		execvp(a[0], &a[0]);
++		execv("/sbin/mkswap", &a[0]);
++		/* error to stdout, stderr is directed to /dev/null */
++		printf(_("swapon: unable to execute mkswap\n"));
++		exit(1);
++	}
++	if(x == -1) {
++		fprintf(stderr, _("swapon: fork failed\n"));
++		return 0;
++	}
++	waitpid(x, &y, 0);
++	sync();
++
++	return 1;
++}
++
++static void
++shutdown_encrypted_swap(char *loop)
++{
++	int fd;
++	struct stat statbuf;
++	struct loop_info64 loopinfo;
++	unsigned char b[32];
++	FILE *f;
++
++	if(stat(loop, &statbuf) == 0 && S_ISBLK(statbuf.st_mode)) {
++		if((fd = open(loop, O_RDWR)) >= 0) {
++			if(!loop_get_status64_ioctl(fd, &loopinfo)) {
++				/*
++				 * Read 32 bytes of random data from kernel's random
++				 * number generator and write that to loop device.
++				 * This preserves some of kernel's random entropy
++				 * to next activation of encrypted swap on this
++				 * partition.
++				 */
++				if((f = fopen("/dev/urandom", "r")) != NULL) {
++					fread(&b[0], 32, 1, f);
++					fclose(f);
++					write(fd, &b[0], 32);
++					fsync(fd);
++				}
++			}
++			close(fd);
++		}
++		sync();
++		if((fd = open(loop, O_RDONLY)) >= 0) {
++			if(!loop_get_status64_ioctl(fd, &loopinfo)) {
++				ioctl(fd, LOOP_CLR_FD, 0);
++			}
++			close(fd);
++		}
++	}
++}
++
++static int
+ swapon_all(void) {
+ 	FILE *fp;
+ 	struct mntent *fstab;
+@@ -317,6 +594,8 @@
+ 		const char *special;
+ 		int skip = 0;
+ 		int pri = priority;
++		char *opt, *opts;
++		char *loop = NULL, *encryption = NULL;
+ 
+ 		if (!streq(fstab->mnt_type, MNTTYPE_SWAP))
+ 			continue;
+@@ -325,23 +604,39 @@
+ 		if (!special)
+ 			continue;
+ 
+-		if (!is_in_proc_swaps(special) &&
+-		    (!ifexists || !access(special, R_OK))) {
+-			/* parse mount options; */
+-			char *opt, *opts = strdup(fstab->mnt_opts);
+-	   
+-			for (opt = strtok(opts, ","); opt != NULL;
+-			     opt = strtok(NULL, ",")) {
+-				if (strncmp(opt, "pri=", 4) == 0)
+-					pri = atoi(opt+4);
+-				if (strcmp(opt, "noauto") == 0)
+-					skip = 1;
++		/* parse mount options; */
++		opts = strdup(fstab->mnt_opts);
++		if (!opts) {
++			fprintf(stderr, "not enough memory");
++			exit(1);
++		}
++		for (opt = strtok(opts, ","); opt != NULL; opt = strtok(NULL, ",")) {
++			if (strncmp(opt, "pri=", 4) == 0)
++				pri = atoi(opt+4);
++			if (strcmp(opt, "noauto") == 0)
++				skip = 1;
++			if (strncmp(opt, "loop=", 5) == 0)
++				loop = opt + 5;
++			if (strncmp(opt, "encryption=", 11) == 0)
++				encryption = opt + 11;
++		}
++		if(skip)
++			continue;
++		if (loop && encryption) {
++			if(!is_in_proc_swaps(loop) && (!ifexists || !access(special, R_OK))) {
++				if (!prepare_encrypted_swap(special, loop, encryption)) {
++					status |= -1;
++					continue;
++				}
++				status |= do_swapon(loop, pri);
+ 			}
+-			if (!skip)
+-				status |= do_swapon(special, pri);
++			continue;
++		}
++		if (!is_in_proc_swaps(special) && (!ifexists || !access(special, R_OK))) {
++			status |= do_swapon(special, pri);
+ 		}
+ 	}
+-	fclose(fp);
++	endmntent(fp);
+ 
+ 	return status;
+ }
+@@ -504,11 +799,49 @@
+ 			exit(2);
+ 		}
+ 		while ((fstab = getmntent(fp)) != NULL) {
+-			if (streq(fstab->mnt_type, MNTTYPE_SWAP) &&
+-			    !is_in_proc_swaps(fstab->mnt_fsname))
+-				do_swapoff(fstab->mnt_fsname, QUIET);
++			const char *orig_special = fstab->mnt_fsname;
++			const char *special;
++			int skip = 0;
++			char *opt, *opts;
++			char *loop = NULL, *encryption = NULL;
++
++			if (!streq(fstab->mnt_type, MNTTYPE_SWAP))
++				continue;
++
++			special = mount_get_devname(orig_special);
++			if (!special)
++				continue;
++
++			/* parse mount options; */
++			opts = strdup(fstab->mnt_opts);
++			if (!opts) {
++				fprintf(stderr, "not enough memory");
++				exit(1);
++			}
++			for (opt = strtok(opts, ","); opt != NULL; opt = strtok(NULL, ",")) {
++				if (strcmp(opt, "noauto") == 0)
++					skip = 1;
++				if (strncmp(opt, "loop=", 5) == 0)
++					loop = opt + 5;
++				if (strncmp(opt, "encryption=", 11) == 0)
++					encryption = opt + 11;
++			}
++			if (loop && encryption) {
++				if (!is_in_proc_swaps(loop)) {
++					if(skip)
++						continue;
++					do_swapoff(loop, QUIET);
++				}
++				shutdown_encrypted_swap(loop);
++				continue;
++			}
++			if(skip)
++				continue;
++			if (!is_in_proc_swaps(special)) {
++				do_swapoff(special, QUIET);
++			}
+ 		}
+-		fclose(fp);
++		endmntent(fp);
+ 	}
+ 
+ 	return status;
