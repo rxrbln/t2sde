@@ -56,8 +56,7 @@ while [ $# -gt 0 ]; do
 			shift 1
 			;;
 		-s|--strip)
-			if [[ "$ROCKCFG_DEBUG" = 0 || $command != *install ]]
-			then
+			if [[ $command != *install ]]; then
 				newcommand="$newcommand $1"
 			fi
 			;;
