@@ -1,0 +1,671 @@
+ this patch is based on the kde-cvs-version on 09.04.2005 and fixes build against hal_0.5.0
+
+diff -urN kdebase-3.4.0/kioslave/media/kdedmodule/halbackend.cpp kdebase-cvs/kioslave/media/kdedmodule/halbackend.cpp
+--- kdebase-3.4.0/kioslave/media/kdedmodule/halbackend.cpp	2005-02-23 12:26:41.000000000 +0100
++++ kdebase-cvs/kioslave/media/kdedmodule/halbackend.cpp	2005-03-30 23:37:21.000000000 +0200
+@@ -23,7 +23,7 @@
+ #include <kurl.h>
+ #include <kdebug.h>
+ 
+-#define MOUNT_SUFFIX	(hal_volume_is_mounted(halVolume) ? QString("_mounted") : QString("_unmounted"))
++#define MOUNT_SUFFIX	(libhal_volume_is_mounted(halVolume) ? QString("_mounted") : QString("_unmounted"))
+ 
+ /* Static instance of this class, for static HAL callbacks */
+ static HALBackend* s_HALBackend;
+@@ -33,9 +33,9 @@
+ {
+ 	char*   _ppt_string;
+ 	QString _ppt_QString;
+-	_ppt_string = hal_device_get_property_string(ctx, udi, key);
++	_ppt_string = libhal_device_get_property_string(ctx, udi, key, NULL);
+ 	_ppt_QString = QString(_ppt_string ? _ppt_string : "");
+-	hal_free_string(_ppt_string);
++	libhal_free_string(_ppt_string);
+ 	return _ppt_QString;
+ }
+ 
+@@ -55,14 +55,22 @@
+ {
+ 	/* Close HAL connection */
+ 	if (m_halContext)
++	{
++		#ifdef HAL_0_4
+ 		hal_shutdown(m_halContext);
++		#else
++		libhal_ctx_shutdown(m_halContext, NULL);
++		libhal_ctx_free(m_halContext);
++		#endif
++	}
+ 	if (m_halStoragePolicy)
+-		hal_storage_policy_free(m_halStoragePolicy);
++		libhal_storage_policy_free(m_halStoragePolicy);
+ }
+ 
+ /* Connect to the HAL */
+ bool HALBackend::InitHal()
+ {
++#ifdef HAL_0_4 /* HAL API 0.4 */
+ 	/* libhal initialization */
+ 	m_halFunctions.main_loop_integration	= HALBackend::hal_main_loop_integration;
+ 	m_halFunctions.device_added				= HALBackend::hal_device_added;
+@@ -75,19 +83,58 @@
+ 	m_halContext = hal_initialize(&m_halFunctions, FALSE);
+ 	if (!m_halContext)
+ 	{
+-		kdDebug()<<"Failed to initialize HAL!"<<endl;
++		kdDebug() << "Failed to initialize HAL!" << endl;
+ 		return false;
+ 	}
+ 
+ 	/** @todo customize watch policy */
+-	if (hal_device_property_watch_all(m_halContext))
++	/* NOTICE: this code chunk doesn't seem necessary for the .05 API... still, it should */
++	kdDebug() << "Watch properties" << endl;
++	if (libhal_device_property_watch_all(m_halContext, NULL))
++	{
++		kdDebug() << "Failed to watch HAL properties!" << endl;
++		return false;
++	}
++
++#else /* HAL API >= 0.5 */
++	kdDebug() << "Context new" << endl;
++	m_halContext = libhal_ctx_new();
++	if (!m_halContext)
+ 	{
+-		kdDebug()<<"Failed to watch HAL properties!"<<endl;
++		kdDebug() << "Failed to initialize HAL!" << endl;
+ 		return false;
+ 	}
+ 
++	// Main loop integration
++	kdDebug() << "Main loop integration" << endl;
++	DBusError error;
++	dbus_error_init(&error);
++	DBusConnection *dbus_connection = dbus_bus_get(DBUS_BUS_SYSTEM, &error);
++	if (dbus_error_is_set(&error))
++		return false;
++	MainLoopIntegration(dbus_connection);
++	libhal_ctx_set_dbus_connection(m_halContext, dbus_connection);
++
++	// HAL callback functions
++	kdDebug() << "Callback functions" << endl;
++	libhal_ctx_set_device_added(m_halContext, HALBackend::hal_device_added);
++	libhal_ctx_set_device_removed(m_halContext, HALBackend::hal_device_removed);
++	libhal_ctx_set_device_new_capability (m_halContext, NULL);
++	libhal_ctx_set_device_lost_capability (m_halContext, NULL);
++	libhal_ctx_set_device_property_modified (m_halContext, HALBackend::hal_device_property_modified);
++	libhal_ctx_set_device_condition(m_halContext, HALBackend::hal_device_condition);
++
++	kdDebug() << "Context Init" << endl;
++	if (!libhal_ctx_init(m_halContext, NULL))
++	{
++		kdDebug() << "Failed to init HAL context!" << endl;
++		return false;
++	}
++#endif
++
+ 	/* libhal-storage initialization */
+-	m_halStoragePolicy = hal_storage_policy_new();
++	kdDebug() << "Storage Policy" << endl;
++	m_halStoragePolicy = libhal_storage_policy_new();
+ 	/** @todo define libhal-storage icon policy */
+ 
+ 	/* List devices at startup */
+@@ -97,8 +144,10 @@
+ /* List devices (at startup)*/
+ bool HALBackend::ListDevices()
+ {
++	kdDebug() << "ListDevices" << endl;
++
+ 	int numDevices;
+-	char** halDeviceList = hal_get_all_devices(m_halContext, &numDevices);
++	char** halDeviceList = libhal_get_all_devices(m_halContext, &numDevices, NULL);
+ 
+ 	if (!halDeviceList)
+ 		return false;
+@@ -116,7 +165,7 @@
+ {
+ 	/* We don't deal with devices that do not expose their capabilities.
+ 	If we don't check this, we will get a lot of warning messages from libhal */
+-	if (!hal_device_property_exists(m_halContext, udi, "info.capabilities"))
++	if (!libhal_device_property_exists(m_halContext, udi, "info.capabilities", NULL))
+ 		return;
+ 
+ 	/* If the device is already listed, do not process.
+@@ -126,11 +175,11 @@
+ 		return;
+ 
+ 	/* Add volume block devices */
+-	if (hal_device_query_capability(m_halContext, udi, "volume"))
++	if (libhal_device_query_capability(m_halContext, udi, "volume", NULL))
+ 	{
+ 		/* We only list volume that have a filesystem or volume that have an audio track*/
+ 		if ( (hal_device_get_property_QString(m_halContext, udi, "volume.fsusage") != "filesystem") &&
+-		     (!hal_device_get_property_bool(m_halContext, udi, "volume.disc.has_audio")) )
++		     (!libhal_device_get_property_bool(m_halContext, udi, "volume.disc.has_audio", NULL)) )
+ 			return;
+ 		/* Query drive udi */
+ 		QString driveUdi = hal_device_get_property_QString(m_halContext, udi, "block.storage_device");
+@@ -150,7 +199,7 @@
+ 	}
+ 
+ 	/* Floppy & zip drives */
+-	if (hal_device_query_capability(m_halContext, udi, "storage"))
++	if (libhal_device_query_capability(m_halContext, udi, "storage", NULL))
+ 		if ((hal_device_get_property_QString(m_halContext, udi, "storage.drive_type") == "floppy") ||
+ 		    (hal_device_get_property_QString(m_halContext, udi, "storage.drive_type") == "zip"))
+ 		{
+@@ -162,7 +211,7 @@
+ 		}
+ 
+ 	/* Camera handled by gphoto2*/
+-	if (hal_device_query_capability(m_halContext, udi, "camera"))
++	if (libhal_device_query_capability(m_halContext, udi, "camera", NULL))
+ 
+ 		{
+ 			/* Create medium */
+@@ -229,8 +278,8 @@
+ 		return medium->id().ascii();
+ 
+ 	/* Hard part : this is a volume whose drive is registered */
+-	if (hal_device_property_exists(m_halContext, udi, "info.capabilities"))
+-		if (hal_device_query_capability(m_halContext, udi, "volume"))
++	if (libhal_device_property_exists(m_halContext, udi, "info.capabilities", NULL))
++		if (libhal_device_query_capability(m_halContext, udi, "volume", NULL))
+ 		{
+ 			QString driveUdi = hal_device_get_property_QString(m_halContext, udi, "block.storage_device");
+ 			return findMediumUdiFromUdi(driveUdi.ascii());
+@@ -244,11 +293,11 @@
+ 	kdDebug() << "HALBackend::setProperties" << endl;
+ 
+ 	Medium* m = new Medium(mediumUdi, "");
+-	if (hal_device_query_capability(m_halContext, mediumUdi, "volume"))
++	if (libhal_device_query_capability(m_halContext, mediumUdi, "volume", NULL))
+ 		setVolumeProperties(m);
+-	if (hal_device_query_capability(m_halContext, mediumUdi, "storage"))
++	if (libhal_device_query_capability(m_halContext, mediumUdi, "storage", NULL))
+ 		setFloppyProperties(m);
+-	if (hal_device_query_capability(m_halContext, mediumUdi, "camera"))
++	if (libhal_device_query_capability(m_halContext, mediumUdi, "camera", NULL))
+ 		setCameraProperties(m);
+ 
+ 	m_mediaList.changeMediumState(*m);
+@@ -262,31 +311,35 @@
+ 
+ 	const char* udi = medium->id().ascii();
+ 	/* Check if the device still exists */
+-	if (!hal_device_exists(m_halContext, udi))
++	if (!libhal_device_exists(m_halContext, udi, NULL))
+ 			return;
+ 
+ 	/* Get device information from libhal-storage */
+-	HalVolume* halVolume = hal_volume_from_udi(m_halContext, udi);
+-	QString driveUdi = hal_volume_get_storage_device_udi(halVolume);
+-	HalDrive*  halDrive  = hal_drive_from_udi(m_halContext, driveUdi.ascii());
++	LibHalVolume* halVolume = libhal_volume_from_udi(m_halContext, udi);
++	if (!halVolume)
++		return;
++	QString driveUdi = libhal_volume_get_storage_device_udi(halVolume);
++	LibHalDrive*  halDrive  = libhal_drive_from_udi(m_halContext, driveUdi.ascii());
+ 
+ 	medium->setName(
+-		generateName(hal_volume_get_device_file(halVolume)) );
++		generateName(libhal_volume_get_device_file(halVolume)) );
+ 
+ 	medium->mountableState(
+-		hal_volume_get_device_file(halVolume),		/* Device node */
+-		hal_volume_get_mount_point(halVolume),		/* Mount point */
+-		hal_volume_get_fstype(halVolume),			/* Filesystem type */
+-		hal_volume_is_mounted(halVolume) );			/* Mounted ? */
++		libhal_volume_get_device_file(halVolume),		/* Device node */
++		libhal_volume_get_mount_point(halVolume),		/* Mount point */
++		libhal_volume_get_fstype(halVolume),			/* Filesystem type */
++		libhal_volume_is_mounted(halVolume) );			/* Mounted ? */
+ 
+ 	QString mimeType;
+-	if (hal_volume_is_disc(halVolume))
++	if (libhal_volume_is_disc(halVolume))
+ 	{
+ 		mimeType = "media/cdrom" + MOUNT_SUFFIX;
+ 
+-		HalVolumeDiscType discType = hal_volume_get_disc_type(halVolume);
+-		if ((discType == HAL_VOLUME_DISC_TYPE_CDR) || (discType == HAL_VOLUME_DISC_TYPE_CDRW))
+-			if (hal_volume_disc_is_blank(halVolume))
++		LibHalVolumeDiscType discType = libhal_volume_get_disc_type(halVolume);
++		if ((discType == LIBHAL_VOLUME_DISC_TYPE_CDROM) ||
++		    (discType == LIBHAL_VOLUME_DISC_TYPE_CDR) ||
++			(discType == LIBHAL_VOLUME_DISC_TYPE_CDRW))
++			if (libhal_volume_disc_is_blank(halVolume))
+ 			{
+ 				mimeType = "media/blankcd";
+ 				medium->unmountableState("");
+@@ -294,10 +347,10 @@
+ 			else
+ 				mimeType = "media/cdwriter" + MOUNT_SUFFIX;
+ 
+-		if ((discType == HAL_VOLUME_DISC_TYPE_DVDROM) || (discType == HAL_VOLUME_DISC_TYPE_DVDRAM) ||
+-			(discType == HAL_VOLUME_DISC_TYPE_DVDR) || (discType == HAL_VOLUME_DISC_TYPE_DVDRW) ||
+-			(discType == HAL_VOLUME_DISC_TYPE_DVDPLUSR) || (discType == HAL_VOLUME_DISC_TYPE_DVDPLUSRW) )
+-			if (hal_volume_disc_is_blank(halVolume))
++		if ((discType == LIBHAL_VOLUME_DISC_TYPE_DVDROM) || (discType == LIBHAL_VOLUME_DISC_TYPE_DVDRAM) ||
++			(discType == LIBHAL_VOLUME_DISC_TYPE_DVDR) || (discType == LIBHAL_VOLUME_DISC_TYPE_DVDRW) ||
++			(discType == LIBHAL_VOLUME_DISC_TYPE_DVDPLUSR) || (discType == LIBHAL_VOLUME_DISC_TYPE_DVDPLUSRW) )
++			if (libhal_volume_disc_is_blank(halVolume))
+ 			{
+ 				mimeType = "media/blankdvd";
+ 				medium->unmountableState("");
+@@ -305,16 +358,16 @@
+ 			else
+ 				mimeType = "media/dvd" + MOUNT_SUFFIX;
+ 
+-		if (hal_volume_disc_has_audio(halVolume) && !hal_volume_disc_has_data(halVolume))
++		if (libhal_volume_disc_has_audio(halVolume) && !libhal_volume_disc_has_data(halVolume))
+ 		{
+ 			mimeType = "media/audiocd";
+-			medium->unmountableState( "audiocd:/?device=" + QString(hal_volume_get_device_file(halVolume)) );
++			medium->unmountableState( "audiocd:/?device=" + QString(libhal_volume_get_device_file(halVolume)) );
+ 		}
+ 
+ 		medium->setIconName(QString::null);
+-		
++
+ 		/* check if the disc id a vcd or a video dvd */
+-		DiscType type = LinuxCDPolling::identifyDiscType(hal_volume_get_device_file(halVolume));
++		DiscType type = LinuxCDPolling::identifyDiscType(libhal_volume_get_device_file(halVolume));
+ 		switch (type)
+ 		{
+ 		  case DiscType::VCD:
+@@ -331,44 +384,46 @@
+ 	else
+ 	{
+ 		mimeType = "media/hdd" + MOUNT_SUFFIX;
+-		if (hal_drive_is_hotpluggable(halDrive))
+-		{		
++		if (libhal_drive_is_hotpluggable(halDrive))
++		{
+ 			mimeType = "media/removable" + MOUNT_SUFFIX;
+ 			medium->needMounting();
+-			switch (hal_drive_get_type(halDrive)) {
+-			case HAL_DRIVE_TYPE_COMPACT_FLASH:
++			switch (libhal_drive_get_type(halDrive)) {
++			case LIBHAL_DRIVE_TYPE_COMPACT_FLASH:
+ 				medium->setIconName("compact_flash" + MOUNT_SUFFIX);
+ 				break;
+-			case HAL_DRIVE_TYPE_MEMORY_STICK:
++			case LIBHAL_DRIVE_TYPE_MEMORY_STICK:
+ 				medium->setIconName("memory_stick" + MOUNT_SUFFIX);
+ 				break;
+-			case HAL_DRIVE_TYPE_SMART_MEDIA:
++			case LIBHAL_DRIVE_TYPE_SMART_MEDIA:
+ 				medium->setIconName("smart_media" + MOUNT_SUFFIX);
+ 				break;
+-			case HAL_DRIVE_TYPE_SD_MMC:
++			case LIBHAL_DRIVE_TYPE_SD_MMC:
+ 				medium->setIconName("sd_mmc" + MOUNT_SUFFIX);
+ 				break;
+-			case HAL_DRIVE_TYPE_PORTABLE_AUDIO_PLAYER:
++			case LIBHAL_DRIVE_TYPE_PORTABLE_AUDIO_PLAYER:
+ 				medium->setIconName(QString::null); //FIXME need icon
+ 				break;
+-			case HAL_DRIVE_TYPE_CAMERA:
++			case LIBHAL_DRIVE_TYPE_CAMERA:
+ 				medium->setIconName("camera" + MOUNT_SUFFIX);
+-				break;			
+-			case HAL_DRIVE_TYPE_TAPE:
++				break;
++			case LIBHAL_DRIVE_TYPE_TAPE:
+ 				medium->setIconName(QString::null); //FIXME need icon
+-				break;			
+-			default:	
++				break;
++			default:
+ 				medium->setIconName(QString::null);
+ 			};
+ 		};
+ 	}
+ 	medium->setMimeType(mimeType);
+ 
+-	medium->setLabel(QString::fromUtf8( hal_volume_policy_compute_display_name(halDrive,
+-		halVolume, m_halStoragePolicy) ) );
++	QString volume_name = QString::fromUtf8(libhal_volume_policy_compute_display_name(halDrive, halVolume, m_halStoragePolicy));
++	//QString drive_name =  QString::fromUtf8(libhal_drive_policy_compute_display_name(halDrive, halVolume, m_halStoragePolicy));
++	QString media_name = volume_name;
++	medium->setLabel(media_name);
+ 
+-	hal_drive_free(halDrive);
+-	hal_volume_free(halVolume);
++	libhal_drive_free(halDrive);
++	libhal_volume_free(halVolume);
+ }
+ 
+ // Handle floppies and zip drives
+@@ -378,32 +433,34 @@
+ 
+ 	const char* udi = medium->id().ascii();
+ 	/* Check if the device still exists */
+-	if (!hal_device_exists(m_halContext, udi))
++	if (!libhal_device_exists(m_halContext, udi, NULL))
+ 		return;
+ 
+-	HalDrive*  halDrive  = hal_drive_from_udi(m_halContext, udi);
++	LibHalDrive*  halDrive  = libhal_drive_from_udi(m_halContext, udi);
++	if (!halDrive)
++		return;
+ 	int numVolumes;
+-	char** volumes = hal_drive_find_all_volumes(m_halContext, halDrive, &numVolumes);
+-	HalVolume* halVolume = NULL;
++	char** volumes = libhal_drive_find_all_volumes(m_halContext, halDrive, &numVolumes);
++	LibHalVolume* halVolume = NULL;
+ 	kdDebug() << " found " << numVolumes << " volumes" << endl;
+ 	if (numVolumes)
+-		halVolume = hal_volume_from_udi(m_halContext, volumes[0]);
++		halVolume = libhal_volume_from_udi(m_halContext, volumes[0]);
+ 
+ 	medium->setName(
+-		generateName(hal_drive_get_device_file(halDrive)) );
++		generateName(libhal_drive_get_device_file(halDrive)) );
+ 
+ 	if (halVolume)
+ 	{
+ 		medium->mountableState(
+-			hal_volume_get_device_file(halVolume),		/* Device node */
+-			hal_volume_get_mount_point(halVolume),		/* Mount point */
+-			hal_volume_get_fstype(halVolume),			/* Filesystem type */
+-			hal_volume_is_mounted(halVolume) );			/* Mounted ? */
++			libhal_volume_get_device_file(halVolume),		/* Device node */
++			libhal_volume_get_mount_point(halVolume),		/* Mount point */
++			libhal_volume_get_fstype(halVolume),			/* Filesystem type */
++			libhal_volume_is_mounted(halVolume) );			/* Mounted ? */
+ 	}
+ 	else
+ 	{
+ 		medium->mountableState(
+-			hal_drive_get_device_file(halDrive),		/* Device node */
++			libhal_drive_get_device_file(halDrive),		/* Device node */
+ 			"",											/* Mount point */
+ 			"",											/* Filesystem type */
+ 			false );									/* Mounted ? */
+@@ -416,7 +473,7 @@
+ 		else
+ 			medium->setMimeType("media/floppy_unmounted");
+ 	}
+-	
++
+ 	if (hal_device_get_property_QString(m_halContext, udi, "storage.drive_type") == "zip")
+ 	{
+ 		if (halVolume)
+@@ -424,14 +481,24 @@
+ 		else
+ 			medium->setMimeType("media/zip_unmounted");
+ 	}
+-	
++
+ 	medium->setIconName(QString::null);
+ 
+-	medium->setLabel(QString::fromUtf8( hal_drive_policy_compute_display_name(halDrive,
+-		halVolume, m_halStoragePolicy) ) );
++	QString media_name;
++	if (halVolume)
++	{
++		QString volume_name = QString::fromUtf8(libhal_drive_policy_compute_display_name(halDrive, halVolume, m_halStoragePolicy));
++		media_name = volume_name;
++	}
++	else
++	{
++		QString drive_name =  QString::fromUtf8(libhal_drive_policy_compute_display_name(halDrive, halVolume, m_halStoragePolicy));
++		media_name = drive_name;
++	}
++	medium->setLabel(media_name);
+ 
+-	hal_drive_free(halDrive);
+-	hal_volume_free(halVolume);
++	libhal_drive_free(halDrive);
++	libhal_volume_free(halVolume);
+ }
+ 
+ void HALBackend::setCameraProperties(Medium* medium)
+@@ -440,7 +507,7 @@
+ 
+ 	const char* udi = medium->id().ascii();
+ 	/* Check if the device still exists */
+-	if (!hal_device_exists(m_halContext, udi))
++	if (!libhal_device_exists(m_halContext, udi, NULL))
+ 		return;
+ 
+ 	/** @todo find name */
+@@ -462,6 +529,7 @@
+ ** HAL CALL-BACKS                        **
+ ******************************************/
+ 
++#ifdef HAL_0_4
+ void HALBackend::hal_main_loop_integration(LibHalContext *ctx,
+ 			DBusConnection *dbus_connection)
+ {
+@@ -469,6 +537,7 @@
+ 	Q_UNUSED(ctx);
+ 	s_HALBackend->MainLoopIntegration(dbus_connection);
+ }
++#endif
+ 
+ void HALBackend::hal_device_added(LibHalContext *ctx, const char *udi)
+ {
+@@ -493,8 +562,15 @@
+ 	Q_UNUSED(is_added);
+ 	s_HALBackend->ModifyDevice(udi, key);
+ }
++
+ void HALBackend::hal_device_condition(LibHalContext *ctx, const char *udi,
+-			const char *condition_name, DBusMessage *message)
++			const char *condition_name,
++			#ifdef HAL_0_4
++			DBusMessage *message
++			#else
++			const char* message
++			#endif
++			)
+ {
+ 	kdDebug() << "HALBackend::hal_device_condition " << udi << " -- " << condition_name << endl;
+ 	Q_UNUSED(ctx);
+diff -urN kdebase-3.4.0/kioslave/media/kdedmodule/halbackend.h kdebase-cvs/kioslave/media/kdedmodule/halbackend.h
+--- kdebase-3.4.0/kioslave/media/kdedmodule/halbackend.h	2004-10-26 00:35:32.000000000 +0200
++++ kdebase-cvs/kioslave/media/kdedmodule/halbackend.h	2005-03-27 15:24:33.000000000 +0200
+@@ -35,6 +35,8 @@
+ #include <qstringlist.h>
+ #include <qstring.h>
+ 
++#include <config.h>
++
+ /* We acknowledge the the dbus API is unstable */
+ #define DBUS_API_SUBJECT_TO_CHANGE
+ /* DBus-Qt bindings */
+@@ -43,6 +45,65 @@
+ #include <libhal.h>
+ #include <libhal-storage.h>
+ 
++/* The HAL API changed between 0.4 and 0.5 series.
++These defines enable backward compatibility */
++#ifdef HAL_0_4
++	// libhal-storage 0.4 API
++	#define LibHalStoragePolicy				HalStoragePolicy
++	#define LibHalDrive						HalDrive
++	#define LibHalVolume					HalVolume
++	#define LibHalVolumeDiscType			HalVolumeDiscType
++	#define libhal_storage_policy_free		hal_storage_policy_free
++	#define libhal_storage_policy_new		hal_storage_policy_new
++	#define libhal_drive_from_udi			hal_drive_from_udi
++	#define libhal_drive_find_all_volumes	hal_drive_find_all_volumes
++	#define libhal_drive_get_type			hal_drive_get_type
++	#define libhal_drive_get_device_file	hal_drive_get_device_file
++	#define libhal_drive_free				hal_drive_free
++	#define libhal_drive_policy_compute_display_name	hal_drive_policy_compute_display_name
++	#define libhal_drive_is_hotpluggable	hal_drive_is_hotpluggable
++	#define libhal_volume_from_udi			hal_volume_from_udi
++	#define libhal_volume_get_device_file	hal_volume_get_device_file
++	#define libhal_volume_get_mount_point	hal_volume_get_mount_point
++	#define libhal_volume_get_fstype		hal_volume_get_fstype
++	#define libhal_volume_is_mounted		hal_volume_is_mounted
++	#define libhal_volume_get_disc_type		hal_volume_get_disc_type
++	#define libhal_volume_free				hal_volume_free
++	#define libhal_volume_policy_compute_display_name	hal_volume_policy_compute_display_name
++	#define libhal_volume_disc_has_data		hal_volume_disc_has_data
++	#define libhal_volume_disc_has_audio	hal_volume_disc_has_audio
++	#define libhal_volume_disc_is_blank		hal_volume_disc_is_blank
++	#define libhal_volume_is_disc			hal_volume_is_disc
++	#define libhal_volume_get_storage_device_udi	hal_volume_get_storage_device_udi
++	#define LIBHAL_VOLUME_DISC_TYPE_CDROM		HAL_VOLUME_DISC_TYPE_CDROM
++	#define LIBHAL_VOLUME_DISC_TYPE_CDR			HAL_VOLUME_DISC_TYPE_CDR
++	#define LIBHAL_VOLUME_DISC_TYPE_CDRW		HAL_VOLUME_DISC_TYPE_CDRW
++	#define LIBHAL_VOLUME_DISC_TYPE_DVDROM		HAL_VOLUME_DISC_TYPE_DVDROM
++	#define LIBHAL_VOLUME_DISC_TYPE_DVDRAM		HAL_VOLUME_DISC_TYPE_DVDRAM
++	#define LIBHAL_VOLUME_DISC_TYPE_DVDR		HAL_VOLUME_DISC_TYPE_DVDR
++	#define LIBHAL_VOLUME_DISC_TYPE_DVDRW		HAL_VOLUME_DISC_TYPE_DVDRW
++	#define LIBHAL_VOLUME_DISC_TYPE_DVDPLUSR	HAL_VOLUME_DISC_TYPE_DVDPLUSR
++	#define LIBHAL_VOLUME_DISC_TYPE_DVDPLUSRW	HAL_VOLUME_DISC_TYPE_DVDPLUSRW
++	#define LIBHAL_DRIVE_TYPE_COMPACT_FLASH			HAL_DRIVE_TYPE_COMPACT_FLASH
++	#define LIBHAL_DRIVE_TYPE_MEMORY_STICK			HAL_DRIVE_TYPE_MEMORY_STICK
++	#define LIBHAL_DRIVE_TYPE_SMART_MEDIA 			HAL_DRIVE_TYPE_SMART_MEDIA
++	#define LIBHAL_DRIVE_TYPE_SD_MMC				HAL_DRIVE_TYPE_SD_MMC
++	#define LIBHAL_DRIVE_TYPE_PORTABLE_AUDIO_PLAYER	HAL_DRIVE_TYPE_PORTABLE_AUDIO_PLAYER
++	#define LIBHAL_DRIVE_TYPE_CAMERA				HAL_DRIVE_TYPE_CAMERA
++	#define LIBHAL_DRIVE_TYPE_TAPE					HAL_DRIVE_TYPE_TAPE
++
++	// libhal 0.4 API
++	#define libhal_free_string hal_free_string
++	#define libhal_device_exists(ctx, udi, error) hal_device_exists(ctx, udi)
++	#define libhal_device_property_watch_all(ctx, error) hal_device_property_watch_all(ctx)
++	#define libhal_get_all_devices(ctx, num_devices, error) hal_get_all_devices(ctx, num_devices)
++	#define libhal_device_property_exists(ctx, udi, key, error) hal_device_property_exists(ctx, udi, key)
++	#define libhal_device_get_property_bool(ctx, udi, key, error) hal_device_get_property_bool(ctx, udi, key)
++	#define libhal_device_get_property_string(ctx, udi, key, error) hal_device_get_property_string(ctx, udi, key)
++	#define libhal_device_query_capability(ctx, udi, capability, error) hal_device_query_capability(ctx, udi, capability)
++#endif
++
++
+ /**
+ * A handy function to query a hal string
+ *
+@@ -175,7 +236,13 @@
+ 	*  @param  message             D-BUS message with variable parameters depending on condition
+ 	*/
+ 	static void hal_device_condition(LibHalContext *ctx, const char *udi,
+-				const char *condition_name, DBusMessage *message);
++				const char *condition_name,
++				#ifdef HAL_0_4
++				DBusMessage *message
++				#else
++				const char* message
++				#endif
++				);
+ 
+ /* HAL and DBus structures */
+ private:
+@@ -184,15 +251,17 @@
+ 	*/
+ 	LibHalContext*		m_halContext;
+ 
++#ifdef HAL_0_4
+ 	/**
+ 	* Structure defining the hal callback function for devices events
+ 	*/
+ 	LibHalFunctions 	m_halFunctions;
++#endif
+ 
+ 	/**
+ 	* libhal-storage HAL policy, e.g. for icon names
+ 	*/
+-	HalStoragePolicy*	m_halStoragePolicy;
++	LibHalStoragePolicy*	m_halStoragePolicy;
+ 
+ 	/**
+ 	* The DBus-Qt bindings connection for mainloop integration
+diff -urN kdebase-3.4.0/kioslave/media/kdedmodule/linuxcdpolling.cpp kdebase-cvs/kioslave/media/kdedmodule/linuxcdpolling.cpp
+--- kdebase-3.4.0/kioslave/media/kdedmodule/linuxcdpolling.cpp	2005-02-23 12:26:41.000000000 +0100
++++ kdebase-cvs/kioslave/media/kdedmodule/linuxcdpolling.cpp	2005-03-25 23:02:47.000000000 +0100
+@@ -84,13 +84,15 @@
+ {
+ 	return m_type != None
+ 	    && m_type != Unknown
+-	    && m_type != UnknownType;
++	    && m_type != UnknownType
++	    && m_type != Broken;
+ }
+ 
+ bool DiscType::isDisc() const
+ {
+ 	return m_type != None
+-	    && m_type != Unknown;
++	    && m_type != Unknown
++	    && m_type != Broken;
+ }
+ 
+ bool DiscType::isNotDisc() const
+@@ -145,7 +147,7 @@
+ 	virtual void run()
+ 	{
+ 		kdDebug() << "PollingThread(" << m_dev << ") start" << endl;
+-		while (!m_stop)
++		while (!m_stop && m_lastPollType!=DiscType::Broken)
+ 		{
+ 			m_mutex.lock();
+ 			DiscType type = m_lastPollType;
+@@ -394,7 +396,7 @@
+ 
+ 	// open the device
+ 	fd = open(devNode, O_RDONLY | O_NONBLOCK);
+-	if (fd < 0) return DiscType::Unknown;
++	if (fd < 0) return DiscType::Broken;
+ 
+ 	switch (ioctl(fd, CDROM_DRIVE_STATUS, CDSL_CURRENT))
+ 	{
+diff -urN kdebase-3.4.0/kioslave/media/kdedmodule/linuxcdpolling.h kdebase-cvs/kioslave/media/kdedmodule/linuxcdpolling.h
+--- kdebase-3.4.0/kioslave/media/kdedmodule/linuxcdpolling.h	2004-12-21 10:33:18.000000000 +0100
++++ kdebase-cvs/kioslave/media/kdedmodule/linuxcdpolling.h	2005-03-25 23:02:47.000000000 +0100
+@@ -29,7 +29,7 @@
+ {
+ public:
+ 	enum Type { None, Unknown, Audio, Data, DVD, Mixed,
+-	            Blank, VCD, SVCD, UnknownType };
++	            Blank, VCD, SVCD, UnknownType, Broken };
+ 
+ 	DiscType(Type type = Unknown);
+ 
+diff -urN kdebase-3.4.0/kioslave/media/kdedmodule/mediamanager.desktop kdebase-cvs/kioslave/media/kdedmodule/mediamanager.desktop
+--- kdebase-3.4.0/kioslave/media/kdedmodule/mediamanager.desktop	2005-02-23 12:26:41.000000000 +0100
++++ kdebase-cvs/kioslave/media/kdedmodule/mediamanager.desktop	2005-03-28 05:27:53.000000000 +0200
+@@ -19,6 +19,8 @@
+ Name[hu]=KDED médiakezelő
+ Name[is]=KDED miðilstjóri
+ Name[it]=Gestore dei supporti KDED
++Name[ja]=KDED メディア マネージャ
++Name[lv]=KDED Datu nesēju menedžeris
+ Name[mk]=Менаџер на носачи KDED
+ Name[nb]=KDED mediebehandler
+ Name[nl]=KDEDED-mediabeheerder
+@@ -31,7 +33,7 @@
+ Name[se]=KDED-mediagieđahalli
+ Name[sl]=Upravitelj medijev KDED
+ Name[sr]=Менаџер медијума, KDED
+-Name[sr@Latn]=Менаџер медијума, KDED
++Name[sr@Latn]=Menadžer medijuma, KDED
+ Name[sv]=KDED-mediahanterare
+ Name[ta]=KDED மீடியா மேலாளர்
+ Name[tr]=KDED Ortam Yöneticisi
+@@ -55,7 +57,9 @@
+ Comment[hu]=Az adathordozók követése, csatlakoztatása és leválasztása (media:/)
+ Comment[is]=Fylgjast með breytingum á tækjum og bjóða upp á (af)tengingu (media:/)
+ Comment[it]=Tiene traccia delle attività dei supporti e permette di montarli o smontarli (device:/)
++Comment[ja]=メディアの活動を捕捉し、マウントしたりアンマウントします。(media:/)
+ Comment[lt]=Stebi laikmenose vykdomus veiksmus ir leidžia (iš)montuoti (media:/)
++Comment[lv]=Seko datu nesēju aktivitātēm un ļauj montēt/nomontēt tos (media:/)
+ Comment[mk]=Води сметка за активностите на носачите и дозволува (де)монтирање (media:/)
+ Comment[mt]=Żomm kont ta' attivitajiet ta' mmuntar u ippermetti (un)mount (media:/)
+ Comment[nb]=Holder styr på monteringsaktiviteter og lar deg (av)montere (media:/)
+@@ -69,7 +73,7 @@
+ Comment[se]=Gozit mii dáhpáhuvvá median ja diktá du gálgat ja čadnat daid (media:/)
+ Comment[sl]=Nadzoruj dejanja medija in dovilo priklop/odklop (media:/)
+ Comment[sr]=Прати активност медијума и омогућава (де)монтирање (media:/)
+-Comment[sr@Latn]=Прати активност медијума и омогућава (де)монтирање (media:/)
++Comment[sr@Latn]=Prati aktivnost medijuma i omogućava (de)montiranje (media:/)
+ Comment[sv]=Håll reda på mediaaktiviteter och tillåt (av)montering (media:/)
+ Comment[ta]=இடைக்காலத்திற்குரிய நடவடிக்கைகளின் வைத்திரு. (சாதனம்:/)த்தை ஏற்ற(இறக்க)கவும் அனுமதி
+ Comment[tr]=Ortam işlemlerini takip et ve bağlanma işlemlerine izin ver(media:/)
