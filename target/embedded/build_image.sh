@@ -38,8 +38,8 @@ find $build_root -printf "%P\n" | sed '
 /^boot/		d;
 
 # # stuff that would be nice - but is huge and only documentation
-# /\/man/		d;
-# /\/doc/		d;
+/\/man/		d;
+/\/doc/		d;
 
 # /etc noise
 /^etc\/stone.d/	d;
@@ -70,16 +70,19 @@ find $build_root -printf "%P\n" | sed '
 ' | while read file ; do
 	[ "$file" ] || continue
 	mkdir -p `dirname $file`
-	if [ -f $build_root/$file ] ; then
-		cp -dp $build_root/$file $file
-	else
+	if [ -d $build_root/$file ] ; then
 		mkdir $file
+	else
+		echo "$file" >> tar.input
 	fi
 done
 
+(cd $build_root ; tar cSp --files-from=$imagedir/rootfs/tar.input ) |
+ tar xvSP ; rm tar.input
+
 echo "Creating links for identical files."
 while read ck fn ; do      
-        if [ "$oldck" = "$ck" -a -s $fn ] ; then
+        if [ "$oldck" = "$ck" -a -s $fn -a -f $fn ] ; then
                 echo "\"$fn -> $oldfn\""
                 rm $fn ; ln $oldfn $fn
         else    
