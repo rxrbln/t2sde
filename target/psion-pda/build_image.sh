@@ -13,13 +13,17 @@
 # GNU General Public License can be found in the file COPYING.
 # --- T2-COPYRIGHT-NOTE-END ---
 
+. $base/misc/target/functions.in
+
 set -e
 
 arlo_ver="`sed -e 's,.*arlo-\(.*\).zip .*,\1,' \
            $base/target/$target/download.txt`"
 
-rm -rf $imagedir
-mkdir -p $imagedir/initrd ; cd $imagedir/initrd
+echo "Preparing root filesystem image from build result ..."
+
+rm -rf $imagelocation{,.squashfs}
+mkdir -p $imagelocation ; cd $imagelocation
 
 find $build_root -printf "%P\n" | sed '
 
@@ -60,7 +64,11 @@ find $build_root -printf "%P\n" | sed '
 /^mnt/		d;
 /^opt/		d;
 
+# rock net stuff
 /^lib\/network/ d;
+/^sbin\/ifup/	d;
+/^sbin\/ifdown/	d;
+/^sbin\/rocknet/	d;
 
 /^\/man\//	d;
 
@@ -88,26 +96,28 @@ find $build_root -printf "%P\n" | sed '
 ' | while read file ; do
 	[ "$file" ] || continue
 	mkdir -p `dirname $file`
-	if [ -f $build_root/$file ] ; then
-		cp -dp $build_root/$file $file
-	else
+	if [ -d $build_root/$file ] ; then
 		mkdir $file
+	else
+		echo "$file" >> tar.input
 	fi
 done
 
-echo "Creating links for identical files."
-while read ck fn ; do      
-        if [ "$oldck" = "$ck" -a -s $fn ] ; then
-                echo "\"$fn -> $oldfn\""
-                rm $fn ; ln $oldfn $fn
-        else    
-                oldck=$ck ; oldfn=$fn
-        fi
-done < <( find -type f | xargs md5sum | sort )
-echo
+copy_with_list_from_file $build_root . $PWD/tar.input
+rm tar.input
 
-while read target name ; do
-	ln -s $target $name
+echo "Preparing root filesystem image from target defined files ..."
+rm -f sbin/init ; ln -s minit sbin/init
+rm -f bin/sh ; ln -s ash bin/sh
+copy_from_source $base/target/$target/rootfs .
+
+echo "Creating links for identical files ..."
+link_identical_files
+
+echo "Creating static device nodes in /dev ..."
+
+while read trg name ; do
+	ln -s $trg $name
 done < <(cat <<-EOT
 kcore dev/core
 /proc/self/fd dev/fd
@@ -211,10 +221,6 @@ c 1 5 zero
 EOT
 )
 
-echo "Injecting some more stuff ..."
-ln -s ash bin/sh
-cp -f $base/target/$target/{passwd,group,fstab,issue,profile} etc/
-
 # image size estimation ...
 s="`du -s -B 1 . | cut -f 1`"
 s="$(( (s + 128000) / 1024 ))"
@@ -237,7 +243,7 @@ umount $tmpdir
 gzip -9 -c $tmpfile > ../initrd.gz
 rmdir $tmpdir ; rm -f $tmpfile
 
-cd $imagedir
+cd $imagedir ; rm -rf arlo ; mkdir arlo ; cd arlo
 cp $build_root/boot/Image_* Image
 unzip $base/download/mirror/a/arlo-$arlo_ver.zip
 rm arlo/{copying,readme.html,example.cfg}

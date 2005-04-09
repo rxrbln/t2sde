@@ -12,11 +12,5 @@
 # GNU General Public License can be found in the file COPYING.
 # --- T2-COPYRIGHT-NOTE-END ---
 
-. target/generic/build.sh
-
-imagedir="$build_rock/image"
-
-. $base/target/$target/build_image.sh
-
-echo_status "Done!"
+. target/embedded/build.sh
 
