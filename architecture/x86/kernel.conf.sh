@@ -97,10 +97,8 @@
 		include(`kernel-net.conf.m4')
 		include(`kernel-fs.conf.m4')
 
-		dnl NTFS for installation on esoteric notebooks where the user
-		dnl might have the ISOs on an NTFS partition due to unsupported
-		dnl floppy, CD, ... drives
-		CONFIG_NTFS_FS=y
+		dnl NTFS
+		CONFIG_NTFS_FS=m
 	EOT
 } | m4 -I $base/architecture/$arch -I $base/architecture/share
 
