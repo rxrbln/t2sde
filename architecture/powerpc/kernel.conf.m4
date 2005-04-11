@@ -82,8 +82,6 @@ CONFIG_CPU_FREQ=y
 CONFIG_CPU_FREQ_PMAC=y
 CONFIG_CPU_FREQ_26_API=y
 
-dnl does not bulid sometimes ...
-# CONFIG_MAC_FLOPPY is not set
 CONFIG_PMU_HD_BLINK=y
 # CONFIG_MAC_ADBKEYCODES is not set
 
