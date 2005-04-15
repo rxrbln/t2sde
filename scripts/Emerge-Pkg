@@ -19,14 +19,16 @@ exec 2>&1
 
 options=''
 config=default
-builddep=0
+deps=fast
 debug=0
-ignore_chksum=0
+verbose=1
+ignore_chksum=1
 update=1
 dryrun=0
 force=0
 rebuild=1
 repositories=""
+system=0
 
 #
 # ----  Functions
@@ -38,9 +40,10 @@ help_msg() {
 	spacer="                           "
 	echo
 	echo "Usage: ./scripts/Emerge-Pkg" \
-	             "[ -cfg <config> ] [ -dep ] [ -dry-run ] [ -debug ]"
-	echo "$spacer [ -ignore-chksum ] [ -norebuild ] [ -force ] [ -noupdate ]"
-	echo "$spacer [ -repository repository-name ] [ pkg-name(s) ]"
+	             "[ -cfg <config> ] [ -dry-run ] [ -force ] [ -noupdate ]"
+	echo "$spacer [ -consider-chksum ] [ -norebuild ]"
+	echo "$spacer [ -deps=none|fast|indirect ]"
+	echo "$spacer [ -repository repository-name ] [ -system ] [ pkg-name(s) ]"
 	echo "pkg-name(s) are only optional if a repository is specified!"
 	echo
 	echo "Type './scripts/Help Emerge-Pkg' for details."
@@ -58,15 +61,16 @@ fi
 
 while [ "$1" ] ; do
 	case "$1" in
-		-cfg)     options="$options $1 $2" ; config="$2"   ; shift ;;
-		-debug)   debug=1 ;;
-		-dep)     builddep=1 ;;
+		-cfg)     options="$options $1 $2" ; config="$2" ; shift ;;
+		-deps=*)  deps=${1/-deps=/} ;;
 		-dry-run) dryrun=1 ;;
 		-force)	  force=1 ;;
 		-noupdate) update=0 ;;
-		-ignore-chksum) ignore_chksum=1 ;;
+		-consider-chksum) ignore_chksum=0 ;;
 		-norebuild) rebuild=0 ;;
-		-repository) repositories="$repositories $2" ; shift ;;
+		-repository) repositories="$repositories $2"
+		             deps=none ; shift ;;
+		-system) system=1 ; deps=none ;;
 		-*) help_msg ; exit 1 ;;
 		*)  break ;;
 	esac
@@ -80,7 +84,7 @@ check4update()
 {
   addlist=""
   for package in $deplist ; do
-	[ "$debug" = 1 ] && echo "checking $package ..."
+	[ $verbose = 1 ] && echo -n "checking $package ..."
 	confdir=""
         for x in package/*/$package/$package.desc ; do
             if [ -f "$x" ] ; then
@@ -93,74 +97,74 @@ check4update()
         done
 
         if [ -z "$confdir" ] ; then
-                [ $debug = 1 ] && \
-		  echo "  $package: No such package."
+                [ $verbose = 1 ] &&
+		  echo -n " No such package."
         elif [ "$confdir" = X ] ; then
-                [ $debug = 1 ] && \
-		  echo "  $package: Package in multiple trees."
+                [ $verbose = 1 ] &&
+		  echo -n " Error: Package in multiple trees!"
         elif [ ! -f /var/adm/packages/$package ] ; then
-                [ $debug = 1 ] && \
-		  echo "  $package: Not installed. Added."
+                [ $verbose = 1 ] &&
+		  echo -n " Not installed. Added."
 		addlist="$addlist $package"
         else
                 o_ver=$(grep '^Package Name and Version' \
                                 /var/adm/packages/$package | cut -f6 -d' ')
                 n_ver=$(grep '^\[V\] ' $confdir/$package.desc | cut -f2 -d' ')
                 if [ "$o_ver" != "$n_ver" -a "$n_ver" != "0000" ] ; then
-                        [ $debug = 1 ] && \
-			  echo "  $package: New version ($o_ver -> $n_ver). Added."
+                        [ $verbose = 1 ] &&
+			  echo -n " New version ($o_ver -> $n_ver). Added."
 			addlist="$addlist $package"
                 else
                         o_ck=$(grep '^\(ROCK Linux\|T2\) Package Source Checksum' \
                                 /var/adm/packages/$package | sed 's,.*: ,,')
                         n_ck=$( pkgchksum package/*/$package )
                         if [ $ignore_chksum = 0 -a "$o_ck" != "$n_ck" ] ; then
-                                [ $debug = 1 ] && \
-				  echo "  $package: New source checksum ($n_ck). Added."
+                                [ $verbose = 1 ] &&
+				  echo -n " New source checksum. Added."
 				addlist="$addlist $package"
 			else
-				if [ -f /var/adm/cache/$package ] ; then
-				  if grep -q '\[BUILDTIME\] .* ERROR' \
-				          /var/adm/cache/$package ; then
-				    [ $debug = 1 ] && \
-				      echo -n "  $package: Former build was broken."
+				if [ -f /var/adm/cache/$package ] &&
+				   grep -q '\[BUILDTIME\] .* ERROR' \
+				        /var/adm/cache/$package
+				then
+				    [ $verbose = 1 ] &&
+				      echo -n " Former build was broken."
+
 				    if [ $rebuild = 1 ] ; then
 
-					[ $debug = 1 ] && echo " Added."
+					[ $vebose = 1 ] && echo -n " Added."
 					addlist="$addlist $package"
 				    else
-					[ $debug = 1 ] && echo " Skipped."
+					[ $verbose = 1 ] && echo -n " Skipped."
 				    fi
-					
-				  fi
 				else
-				  [ $debug = 1 ] && \
-				    echo "  $package: Equal source checksum ($n_ck), skipped."
+				  [ $debug = 1 ] &&
+				    echo -n " Installed and up-to-date."
 				fi
                         fi
                 fi
         fi
-
+	echo
   done
   deplist="$addlist"
 }
 
-dep4pkg() {
+indirect_dep4pkg() {
     gawk -v package=$1 '
 function check_package() {
 
 	found_new = 0;
 
 	for ( package in build_list ) {
-		if ( debug )
+		if ( verbose )
 			print "#DEBUG PACKAGE: " package;
 
 		if ( ! package in database ) {
-			if (debug)
+			if (verbose)
 				print "#  " package " not in database";
 		}
 		else {
-			if (debug)
+			if (verbose)
 				print "#  " package " in database";
 
 			split(database[package], a);
@@ -169,14 +173,14 @@ function check_package() {
 				# if ( a[c] == package  ) continue;
 				if ( strtonum(d) <= 3 ) continue;
 				dep = a[d];
-				if ( debug && 0)
+				if ( verbose && 0)
 					print "#    dep: " dep;
 				if ( dep in build_list ) {
-					if ( debug && 0)
+					if ( verbose && 0)
 					print "#    dep: " dep " already parsed";
 				}
 				else {
-					if (debug)
+					if (verbose)
 						print "#    dep: " dep " now added";
 					build_list [ dep ] = (package);
 					found_new = 1;
@@ -189,7 +193,7 @@ function check_package() {
 }
 
 BEGIN {
-	config="'$config'"; debug='$debug';
+	config="'$config'"; verbose='$verbose';
 	depdb_file = "scripts/dep_db.txt";
 
 	while ( (getline depline < depdb_file) > 0 )
@@ -200,7 +204,7 @@ BEGIN {
 
 	check_package();
 
-	if (debug) {
+	if (verbose) {
 		for ( bp in build_list ) {
 			print "# " bp " (" build_list[bp] ")"
 		}
@@ -213,30 +217,46 @@ BEGIN {
 '
 }
 
-# all packages
+fast_dep4pkg()
+{
+	grep '\[DEP\]' package/*/$1/$1.cache | cut -d ' ' -f 2
+}
+
+# the remaining arguments are packages to be built
 deplist="$deplist $@"
 
 # packages from repositories
 for x in $repositories ; do
-	deplist="$deplist ` egrep "^X .* $x .*" config/$config/packages | \
+	deplist="$deplist ` egrep "^X .* $x .*" config/$config/packages |
 	         cut -d ' ' -f 5`"
 done
 
-if [ $builddep = 1 ] ; then
+# all packages if a system update
+[ $system -eq 1 ] &&
+	deplist=`grep "^X" config/$config/packages | cut -d ' ' -f 5`
+
+case $deps in 
+  indirect|fast)
         # we have to create a complete dependency graph ...
-	tmp="`mktemp`"
+	tmp=`mktemp`
 	for x in $deplist ; do
-        	dep4pkg $x >> $tmp
+        	${deps}_dep4pkg $x >> $tmp
 	done
-	[ "$debug" = 1 ] && grep '^#' $tmp
+	[ $verbose = 1 ] && grep '^#' $tmp
 	deplist="$deplist `grep -v '^#' $tmp`"
 	rm $tmp
-fi
+	;;
+  none)
+	;;
+  *)
+	echo "Unknown dependency resolution mode. Valid are none, fast and indirect."
+	exit 1
+esac
 
 # only build packages that need an update
 [ $force -eq 0 ] && check4update
 
-echo "Packages scheduled to build: $deplist"
+echo "Packages scheduled to build: ${deplist:-none}"
 
 [ $dryrun = 1 ] && exit
 
