@@ -46,6 +46,9 @@ cat << EOT
 #define open64 xxx_open64
 #define mknod  xxx_mknod
 
+#define _LARGEFILE_SOURCE
+#define _LARGEFILE64_SOURCE
+
 #  include <dlfcn.h>
 #  include <errno.h>
 #  include <fcntl.h>
@@ -57,6 +60,9 @@ cat << EOT
 #  include <unistd.h>
 #  include <utime.h>
 #  include <stdarg.h>
+
+#undef _LARGEFILE64_SOURCE
+#undef _LARGEFILE_SOURC
 
 #undef mknod
 #undef open
@@ -370,7 +376,12 @@ static void handle_file_access_after(const char * func, const char * file,
 	else { logfile = rlog; }
 
 	if ( logfile == 0 ) return;
+#ifdef __USE_LARGEFILE
+	fd=open64(logfile,O_APPEND|O_WRONLY|O_LARGEFILE,0);
+#else
+#warning "The wrapper library will not work properly for large logs!"
 	fd=open(logfile,O_APPEND|O_WRONLY,0);
+#endif
 	if (fd == -1) return;
 
 	if (file[0] == '/') {
