@@ -62,7 +62,7 @@ cat << EOT
 #  include <stdarg.h>
 
 #undef _LARGEFILE64_SOURCE
-#undef _LARGEFILE_SOURC
+#undef _LARGEFILE_SOURCE
 
 #undef mknod
 #undef open
