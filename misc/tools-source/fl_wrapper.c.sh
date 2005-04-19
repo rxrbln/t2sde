@@ -363,7 +363,8 @@ static void handle_file_access_before(const char * func, const char * file,
 static void handle_file_access_after(const char * func, const char * file,
                               struct status_t * status)
 {
-	char buf[512], *buf2, *logfile;
+	char buf[1024], buf2 [512], *logfile;
+	const char *absfile;
 	int fd; struct stat st;
 
 #if DEBUG == 1
@@ -374,22 +375,30 @@ static void handle_file_access_after(const char * func, const char * file,
 	if ( rlog != 0 && !strcmp(file, rlog) ) return;
 	if ( lstat(file, &st) ) return;
 
-	/* ignore access inside the $FLWRAPPER_BASE, to keep the log smaller and reduce
-	   post processing time -ReneR */
-	if ( basedir != 0 && !strncmp(file, basedir, basedirlen) ) {
-#if DEBUG == 1
-		fprintf(stderr, "fl_wrapper.so debug [%d]: \"%s\" dropped due to basedir\n",
-	        	getpid(), file);
-#endif
-		return;
-	}
-
 	if ( (status != 0) && (status->inode != st.st_ino ||
 	     status->size  != st.st_size || status->mtime != st.st_mtime ||
 	     status->ctime != st.st_ctime) ) { logfile = wlog; }
 	else { logfile = rlog; }
+        if ( logfile == 0 ) return;
 
-	if ( logfile == 0 ) return;
+	/* make sure the filename absolute */
+	if (file[0] == '/') {
+		absfile = file;
+        } else {
+                sprintf(buf2, "%s/%s", get_current_dir_name(), file);
+		absfile = buf2;
+	}
+
+	/* ignore access inside the $FLWRAPPER_BASE, to keep the log smaller and reduce
+	   post processing time -ReneR */
+	if ( basedir != 0 && !strncmp(absfile, basedir, basedirlen) ) {
+#if DEBUG == 1
+		fprintf(stderr, "fl_wrapper.so debug [%d]: \"%s\" dropped due to basedir\n",
+	        	getpid(), absfile);
+#endif
+		return;
+	}
+
 #ifdef __USE_LARGEFILE
 	fd=open64(logfile,O_APPEND|O_WRONLY|O_LARGEFILE,0);
 #else
@@ -398,17 +407,9 @@ static void handle_file_access_after(const char * func, const char * file,
 #endif
 	if (fd == -1) return;
 
-	if (file[0] == '/') {
-		sprintf(buf,"%s.%s:\t%s\n",
-		        cmdname, func, file);
-	} else {
-		buf2=get_current_dir_name();
-		sprintf(buf,"%s.%s:\t%s%s%s\n",
-			cmdname, func, buf2,
-			strcmp(buf2,"/") ? "/" : "", file);
-		free(buf2);
-	}
+	sprintf(buf,"%s.%s:\t%s\n", cmdname, func, absfile);
 	write(fd,buf,strlen(buf));
+
 	close(fd);
 #if DEBUG == 1
 	fprintf(stderr, "fl_wrapper.so debug [%d]: end   of handle_file_access_after(\"%s\", \"%s\", xxx)\n",
