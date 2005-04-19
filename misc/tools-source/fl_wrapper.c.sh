@@ -80,7 +80,8 @@ struct status_t {
 static void handle_file_access_before(const char *, const char *, struct status_t *);
 static void handle_file_access_after(const char *, const char *, struct status_t *);
 
-char *wlog = 0, *rlog = 0, *cmdname = "unkown";
+char *basedir = 0, *wlog = 0, *rlog = 0, *cmdname = "unkown";
+int basedirlen = 0;
 
 /* Wrapper Functions */
 EOT
@@ -331,6 +332,9 @@ void __attribute__ ((constructor)) fl_wrapper_init()
 	addptree(&txtpos, cmdtxt, getpid(), basepid);
 	cmdname = strdup(cmdtxt);
 
+	basedir = getenv("FLWRAPPER_BASEDIR");
+	if (basedir)
+		basedirlen = strlen(basedir);
 	wlog = getenv("FLWRAPPER_WLOG");
 	rlog = getenv("FLWRAPPER_RLOG");
 }
@@ -369,6 +373,16 @@ static void handle_file_access_after(const char * func, const char * file,
 	if ( wlog != 0 && !strcmp(file, wlog) ) return;
 	if ( rlog != 0 && !strcmp(file, rlog) ) return;
 	if ( lstat(file, &st) ) return;
+
+	/* ignore access inside the $FLWRAPPER_BASE, to keep the log smaller and reduce
+	   post processing time -ReneR */
+	if ( basedir != 0 && !strncmp(file, basedir, basedirlen) ) {
+#if DEBUG == 1
+		fprintf(stderr, "fl_wrapper.so debug [%d]: \"%s\" dropped due to basedir\n",
+	        	getpid(), file);
+#endif
+		return;
+	}
 
 	if ( (status != 0) && (status->inode != st.st_ino ||
 	     status->size  != st.st_size || status->mtime != st.st_mtime ||
