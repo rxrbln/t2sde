@@ -215,7 +215,7 @@ add_wrapper 'int,   execv,   const char* f, char* const a[]'
 add_wrapper 'int,   execve,  const char* f, char* const a[], char* const e[]'
 
 echo
-cat fl_wrapper_execl.c
+cat misc/tools-source/fl_wrapper_execl.c
 
 echo ; cat << "EOT"
 /* Internal Functions */
