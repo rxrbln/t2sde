@@ -401,7 +401,7 @@ static void handle_file_access_after(const char * func, const char * file,
 
 	/* ignore /tmp/ to reduce post processing time */
 	if ( !strncmp(absfile, "/tmp/", 5) ) {
-#if DEBUG != 1
+#if DEBUG == 1
 		fprintf(stderr, "fl_wrapper.so debug [%d]: \"%s\" dropped due to /tmp/\n",
 		getpid(), absfile);
 #endif
