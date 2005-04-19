@@ -389,12 +389,21 @@ static void handle_file_access_after(const char * func, const char * file,
 		absfile = buf2;
 	}
 
-	/* ignore access inside the $FLWRAPPER_BASE, to keep the log smaller and reduce
-	   post processing time -ReneR */
+	/* ignore access inside the $FLWRAPPER_BASE, to keep the log smaller
+	   and reduce post processing time -ReneR */
 	if ( basedir != 0 && !strncmp(absfile, basedir, basedirlen) ) {
 #if DEBUG == 1
 		fprintf(stderr, "fl_wrapper.so debug [%d]: \"%s\" dropped due to basedir\n",
 	        	getpid(), absfile);
+#endif
+		return;
+	}
+
+	/* ignore /tmp/ to reduce post processing time */
+	if ( !strncmp(absfile, "/tmp/", 5) ) {
+#if DEBUG != 1
+		fprintf(stderr, "fl_wrapper.so debug [%d]: \"%s\" dropped due to /tmp/\n",
+		getpid(), absfile);
 #endif
 		return;
 	}
