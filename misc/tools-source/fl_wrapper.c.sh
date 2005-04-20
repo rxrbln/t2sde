@@ -81,7 +81,6 @@ static void handle_file_access_before(const char *, const char *, struct status_
 static void handle_file_access_after(const char *, const char *, struct status_t *);
 
 char *basedir = 0, *wlog = 0, *rlog = 0, *cmdname = "unkown";
-int basedirlen = 0;
 
 /* Wrapper Functions */
 EOT
@@ -333,8 +332,6 @@ void __attribute__ ((constructor)) fl_wrapper_init()
 	cmdname = strdup(cmdtxt);
 
 	basedir = getenv("FLWRAPPER_BASEDIR");
-	if (basedir)
-		basedirlen = strlen(basedir);
 	wlog = getenv("FLWRAPPER_WLOG");
 	rlog = getenv("FLWRAPPER_RLOG");
 }
@@ -363,7 +360,7 @@ static void handle_file_access_before(const char * func, const char * file,
 static void handle_file_access_after(const char * func, const char * file,
                               struct status_t * status)
 {
-	char buf[1024], buf2 [512], *logfile;
+	char buf[1024], buf2 [512], *logfile, basedir2 [2048], *tbasedir;
 	const char *absfile;
 	int fd; struct stat st;
 
@@ -389,23 +386,24 @@ static void handle_file_access_after(const char * func, const char * file,
 		absfile = buf2;
 	}
 
-	/* ignore access inside the $FLWRAPPER_BASE, to keep the log smaller
-	   and reduce post processing time -ReneR */
-	if ( basedir != 0 && !strncmp(absfile, basedir, basedirlen) ) {
+	/* We ignore access inside the collon seperated directory list
+	   $FLWRAPPER_BASE, to keep the log smaller and reduce post
+	   processing time. -ReneR */
+	if (basedir)
+		strcpy (basedir2, basedir); /* due to strtok - sigh */
+	else
+		basedir2[0] = 0;
+	tbasedir = strtok(basedir2, ":");
+	for ( ; tbasedir ; tbasedir = strtok(NULL, ":") )
+	{
+		if ( !strncmp(absfile, tbasedir, strlen(tbasedir)) ) {
 #if DEBUG == 1
-		fprintf(stderr, "fl_wrapper.so debug [%d]: \"%s\" dropped due to basedir\n",
-	        	getpid(), absfile);
+		  fprintf(stderr,
+		          "fl_wrapper.so debug [%d]: \"%s\" dropped due to basedir \"%s\"\n",
+	                  getpid(), absfile, tbasedir);
 #endif
-		return;
-	}
-
-	/* ignore /tmp/ to reduce post processing time */
-	if ( !strncmp(absfile, "/tmp/", 5) ) {
-#if DEBUG == 1
-		fprintf(stderr, "fl_wrapper.so debug [%d]: \"%s\" dropped due to /tmp/\n",
-		getpid(), absfile);
-#endif
-		return;
+		  return;
+		}
 	}
 
 #ifdef __USE_LARGEFILE
