@@ -80,7 +80,7 @@ struct status_t {
 static void handle_file_access_before(const char *, const char *, struct status_t *);
 static void handle_file_access_after(const char *, const char *, struct status_t *);
 
-char *basedir = 0, *wlog = 0, *rlog = 0, *cmdname = "unkown";
+char *filterdir = 0, *wlog = 0, *rlog = 0, *cmdname = "unkown";
 
 /* Wrapper Functions */
 EOT
@@ -331,7 +331,7 @@ void __attribute__ ((constructor)) fl_wrapper_init()
 	addptree(&txtpos, cmdtxt, getpid(), basepid);
 	cmdname = strdup(cmdtxt);
 
-	basedir = getenv("FLWRAPPER_BASEDIR");
+	filterdir = getenv("FLWRAPPER_FILTERDIR");
 	wlog = getenv("FLWRAPPER_WLOG");
 	rlog = getenv("FLWRAPPER_RLOG");
 }
@@ -360,7 +360,7 @@ static void handle_file_access_before(const char * func, const char * file,
 static void handle_file_access_after(const char * func, const char * file,
                               struct status_t * status)
 {
-	char buf[1024], buf2 [512], *logfile, basedir2 [2048], *tbasedir;
+	char buf[1024], buf2 [512], *logfile, filterdir2 [2048], *tfilterdir;
 	const char *absfile;
 	int fd; struct stat st;
 
@@ -389,18 +389,18 @@ static void handle_file_access_after(const char * func, const char * file,
 	/* We ignore access inside the collon seperated directory list
 	   $FLWRAPPER_BASE, to keep the log smaller and reduce post
 	   processing time. -ReneR */
-	if (basedir)
-		strcpy (basedir2, basedir); /* due to strtok - sigh */
+	if (filterdir)
+		strcpy (filterdir2, filterdir); /* due to strtok - sigh */
 	else
-		basedir2[0] = 0;
-	tbasedir = strtok(basedir2, ":");
-	for ( ; tbasedir ; tbasedir = strtok(NULL, ":") )
+		filterdir2[0] = 0;
+	tfilterdir = strtok(filterdir2, ":");
+	for ( ; tfilterdir ; tfilterdir = strtok(NULL, ":") )
 	{
-		if ( !strncmp(absfile, tbasedir, strlen(tbasedir)) ) {
+		if ( !strncmp(absfile, tfilterdir, strlen(tfilterdir)) ) {
 #if DEBUG == 1
 		  fprintf(stderr,
-		          "fl_wrapper.so debug [%d]: \"%s\" dropped due to basedir \"%s\"\n",
-	                  getpid(), absfile, tbasedir);
+		          "fl_wrapper.so debug [%d]: \"%s\" dropped due to filterdir \"%s\"\n",
+	                  getpid(), absfile, tfilterdir);
 #endif
 		  return;
 		}
