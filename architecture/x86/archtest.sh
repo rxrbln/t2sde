@@ -12,9 +12,9 @@
 # GNU General Public License can be found in the file COPYING.
 # --- T2-COPYRIGHT-NOTE-END ---
 
-case "$ROCKCFG_X86_OPT" in
+case "$SDECFG_X86_OPT" in
     i?86)
-	arch_machine="$ROCKCFG_X86_OPT" ;;
+	arch_machine="$SDECFG_X86_OPT" ;;
 
     pentium|pentium-mmx|k6*)
 	arch_machine="i586" ;;

@@ -23,8 +23,8 @@ diet $CC -Wall -Os -s -c $base/misc/isomd5sum/libcheckisomd5.c \
 	-o libcheckisomd5.o
 diet $CC -Wall -Os -s -I $base/misc/isomd5sum/ \
 	-c $base/target/$target/linuxrc.c \
-	-DSTAGE_2_BIG_IMAGE="\"${ROCKCFG_SHORTID}/2nd_stage.tar.gz\"" \
-	-DSTAGE_2_SMALL_IMAGE="\"${ROCKCFG_SHORTID}/2nd_stage_small.tar.gz\"" \
+	-DSTAGE_2_BIG_IMAGE="\"${SDECFG_SHORTID}/2nd_stage.tar.gz\"" \
+	-DSTAGE_2_SMALL_IMAGE="\"${SDECFG_SHORTID}/2nd_stage_small.tar.gz\"" \
 	-o linuxrc.o
 diet $CC -Os -s linuxrc.o md5.o libcheckisomd5.o -o linuxrc
 rm -f linuxrc.o md5.o libcheckisomd5.o
@@ -47,7 +47,7 @@ do
 	fi
 done
 #
-if [ "$ROCKCFG_BOOTDISK_USEKISS" = 1 ]; then
+if [ "$SDECFG_BOOTDISK_USEKISS" = 1 ]; then
 	echo_status "Adding kiss shell for expert use to the initrd image."
 	cp $build_root/bin/kiss bin/
 fi

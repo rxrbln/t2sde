@@ -45,7 +45,7 @@ elif false ; then # else
 	fi
 	rm -f $tmpfile
 	cat > ../isofs_arch.txt <<- EOT
-		BOOT	-b ${ROCKCFG_SHORTID}/boot_288.img -c ${ROCKCFG_SHORTID}/boot.catalog
+		BOOT	-b ${SDECFG_SHORTID}/boot_288.img -c ${SDECFG_SHORTID}/boot.catalog
 	EOT
 fi
 
@@ -97,7 +97,7 @@ EOT
 	cat > ../isofs_arch.txt <<- EOT
 		BOOT	-b isolinux/isolinux.bin -c isolinux/boot.catalog
 		BOOTx	-no-emul-boot -boot-load-size 4 -boot-info-table
-		DISK1	build/${ROCKCFG_ID}/TOOLCHAIN/bootdisk/isolinux/ isolinux/
+		DISK1	build/${SDECFG_ID}/TOOLCHAIN/bootdisk/isolinux/ isolinux/
 	EOT
 fi
 
