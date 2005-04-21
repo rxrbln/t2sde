@@ -50,14 +50,14 @@ if [ ! -f config/$config/packages ]; then
 	exit 1
 fi
 
-eval `grep 'ROCKCFG_ID=' config/$config/config 2> /dev/null`
+eval `grep 'SDECFG_ID=' config/$config/config 2> /dev/null`
 if [ "$root" ]; then
 	LOGSDIR=$root/var/adm/logs
 else
-	LOGSDIR=build/$ROCKCFG_ID/var/adm/logs
+	LOGSDIR=build/$SDECFG_ID/var/adm/logs
 fi
-if [ -z "$ROCKCFG_ID" -o ! -d $LOGSDIR ]; then
-	echo "ERROR: 'build/$ROCKCFG_ID/' is not a valid build root (sandbox)"
+if [ -z "$SDECFG_ID" -o ! -d $LOGSDIR ]; then
+	echo "ERROR: 'build/$SDECFG_ID/' is not a valid build root (sandbox)"
 	exit 1
 fi
 

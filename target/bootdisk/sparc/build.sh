@@ -26,7 +26,7 @@ then
 	echo_status "Extracting silo boot loader images."
 	mkdir -p boot
 	tar --use-compress-program=bzip2 \
-	    -xf $base/build/${ROCKCFG_ID}/TOOLCHAIN/pkgs/silo.tar.bz2 \
+	    -xf $base/build/${SDECFG_ID}/TOOLCHAIN/pkgs/silo.tar.bz2 \
 	    boot/second.b -O > boot/second.b
 	#
 	echo_status "Creating silo config file."
@@ -36,8 +36,8 @@ then
 	echo_status "Moving image (initrd) to boot directory."
 	mv -v initrd.gz boot/
 	#
-	buildroot="build/${ROCKCFG_ID}"
-	datadir="build/${ROCKCFG_ID}/TOOLCHAIN/bootdisk"
+	buildroot="build/${SDECFG_ID}"
+	datadir="build/${SDECFG_ID}/TOOLCHAIN/bootdisk"
 	cat > ../isofs_arch.txt <<- EOT
 		BOOT	-G $buildroot/boot/isofs.b -B ...
 		DISK1	$datdir/boot/ boot/

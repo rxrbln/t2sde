@@ -18,9 +18,9 @@ pkgloop_action() {
 
         $cmd_buildpkg ; rc=$?
 
-	admdir="build/${ROCKCFG_ID}/var/adm"
+	admdir="build/${SDECFG_ID}/var/adm"
 
-	if [ $ROCKCFG_TRG_MNEMOSYNE_COPYCACHE -eq 1 -a -r $admdir/cache/$pkg_name ]; then
+	if [ $SDECFG_TRG_MNEMOSYNE_COPYCACHE -eq 1 -a -r $admdir/cache/$pkg_name ]; then
 		if grep -q -e '^\[M\] .*Alejandro Mery' -e '^\[P\] O' ./package/*/$pkg_name/$pkg_name.desc; then
 			echo_status "mnemosyne: catching cache file."
 			cp $admdir/cache/$pkg_name ./package/$pkg_tree/$pkg_name/$pkg_name.cache

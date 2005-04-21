@@ -20,24 +20,24 @@ if [ -n "$ROCK_INSTALL_SOURCE_DEV" ] ; then
 	dir="/mnt/source" ; root="/mnt/target"
 	gasguiopt="-F"
 
-	ROCKCFG_SHORTID="Automatically choose first"
+	SDECFG_SHORTID="Automatically choose first"
 elif [ -n "$ROCK_INSTALL_SOURCE_URL" ] ; then
 	dev="NETWORK INSTALL"
 	dir="$ROCK_INSTALL_SOURCE_URL"
 	root="/mnt/target"
 	gasguiopt="-F"
 
-	ROCKCFG_SHORTID="$( grep '^export ROCKCFG_SHORTID=' \
+	SDECFG_SHORTID="$( grep '^export SDECFG_SHORTID=' \
 		/etc/ROCK-CONFIG/config 2> /dev/null | cut -f2- -d= )"
-	ROCKCFG_SHORTID="${ROCKCFG_SHORTID//\'/}"
+	SDECFG_SHORTID="${SDECFG_SHORTID//\'/}"
 else
 	dev="/dev/cdroms/cdrom0"
 	dir="/mnt/cdrom" ; root="/"
 	gasguiopt=""
 
-	ROCKCFG_SHORTID="$( grep '^export ROCKCFG_SHORTID=' \
+	SDECFG_SHORTID="$( grep '^export SDECFG_SHORTID=' \
 		/etc/ROCK-CONFIG/config 2> /dev/null | cut -f2- -d= )"
-	ROCKCFG_SHORTID="${ROCKCFG_SHORTID//\'/}"
+	SDECFG_SHORTID="${SDECFG_SHORTID//\'/}"
 fi
 
 read_ids() {
@@ -49,7 +49,7 @@ read_ids() {
 	if mount $opt $dev $mnt ; then
 		for x in `cd $mnt; ls -d */{,TOOLCHAIN/}pkgs 2> /dev/null | sed -e 's,/pkgs$,,'`
 		do
-			cmd="$cmd '$x' 'ROCKCFG_SHORTID=\"$x\"'"
+			cmd="$cmd '$x' 'SDECFG_SHORTID=\"$x\"'"
 		done
 		umount $mnt
 	else
@@ -61,28 +61,28 @@ read_ids() {
 
 startgas() {
 	[ -z "$( cd $dir; ls )" ] && mount $opt -v -o ro $dev $dir
-	if [ "$ROCKCFG_SHORTID" = "Automatically choose first" ]; then
-		ROCKCFG_SHORTID="$( cd $dir; ls -d */{,TOOLCHAIN/}pkgs 2> /dev/null | \
+	if [ "$SDECFG_SHORTID" = "Automatically choose first" ]; then
+		SDECFG_SHORTID="$( cd $dir; ls -d */{,TOOLCHAIN/}pkgs 2> /dev/null | \
 					sed -e 's,/pkgs$,,' | head -n 1 )"
-		echo "Using Config-ID <${ROCKCFG_SHORTID:-None}> .."
+		echo "Using Config-ID <${SDECFG_SHORTID:-None}> .."
 	fi
 	if [ $startgas = 1 ] ; then
 		echo
 		echo "Running: gasgui $gasguiopt \\"
-		echo "                -c '$ROCKCFG_SHORTID' \\"
+		echo "                -c '$SDECFG_SHORTID' \\"
 		echo "                -t '$root' \\"
 		echo "                -d '$dev' \\"
 		echo "                -s '$dir'"
 		echo
-		gasgui $gasguiopt -c "$ROCKCFG_SHORTID" -t "$root" -d "$dev" -s "$dir"
+		gasgui $gasguiopt -c "$SDECFG_SHORTID" -t "$root" -d "$dev" -s "$dir"
 	elif [ $startgas = 2 ] ; then
 		echo
 		echo "Running: stone gas main \\"
-		echo "               '$ROCKCFG_SHORTID' \\"
+		echo "               '$SDECFG_SHORTID' \\"
 		echo "               '$root' \\"
 		echo "               '$dev' \\"
 		echo "               '$dir'"
-		$STONE gas main "$ROCKCFG_SHORTID" "$root" "$dev" "$dir"
+		$STONE gas main "$SDECFG_SHORTID" "$root" "$dev" "$dir"
 	fi
 }
 
@@ -104,9 +104,9 @@ a simple frontend for the \"mine\" program.'"
 		cmd="$cmd 'Mountpoint:     $dir'"
 		cmd="$cmd 'gui_input \"Mountpoint\" \"\$dir\" dir'"
 
-		cmd="$cmd 'ROCK Config ID: $ROCKCFG_SHORTID'"
+		cmd="$cmd 'ROCK Config ID: $SDECFG_SHORTID'"
 		cmd="$cmd 'gui_input \"ROCK Config ID\""
-		cmd="$cmd \"\$ROCKCFG_SHORTID\" ROCKCFG_SHORTID'"
+		cmd="$cmd \"\$SDECFG_SHORTID\" SDECFG_SHORTID'"
 
 		read_ids
 
