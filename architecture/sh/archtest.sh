@@ -12,8 +12,8 @@
 # GNU General Public License can be found in the file COPYING.
 # --- T2-COPYRIGHT-NOTE-END ---
 
-case "$ROCKCFG_SH_OPT" in
-	sh|sh2|sh3|sh4) arch_machine="$ROCKCFG_SH_OPT" ;;
+case "$SDECFG_SH_OPT" in
+	sh|sh2|sh3|sh4) arch_machine="$SDECFG_SH_OPT" ;;
 esac
 
 arch_target="${arch_machine}-t2-linux-gnu"
