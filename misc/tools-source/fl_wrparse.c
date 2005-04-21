@@ -63,7 +63,7 @@ int main(int argc, char ** argv) {
 	char *package = NULL;
 	char *rootdir = NULL;
 	struct stat st;
-	int opt, nodircheck = 0/*, nodirs = 0*/;
+	int opt, nodircheck = 0;
 	int stripinfo = 0;
 	int debug = 0;
 
@@ -90,10 +90,6 @@ int main(int argc, char ** argv) {
 			rootdir = realrootdir;
 			break;
 
-		    /*case 'X':
-			nodirs = 1;
-			break;*/
-
 		    default:
 			fprintf(stderr, "Usage: %s [-D] [-r rootdir] [-s] "
 					"[-p pkg]\n", argv[0]);
@@ -118,11 +114,6 @@ int main(int argc, char ** argv) {
                 }
 
 		if ( S_ISDIR(st.st_mode) ) {
-		    /*if (nodirs) {
-			if (debug) fprintf(stderr, "DEBUG: Dir: %s.\n", fn);
-			continue;
-		    }*/
-
 		    if (!nodircheck && dir_empty(fn) ) {
 			if (debug) fprintf(stderr, "DEBUG: Non-empty dir: %s.\n", fn);
 			continue;
