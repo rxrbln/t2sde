@@ -16,18 +16,18 @@
 # --- T2-COPYRIGHT-NOTE-END ---
 
 if [ "$#" != 5 ] ; then
-	echo "Usage: $0 <rockver> <buildtime> <stage> <pkg> <var-adm-dir>" >&2
+	echo "Usage: $0 <sdever> <buildtime> <stage> <pkg> <var-adm-dir>" >&2
 	exit 1
 fi
 
-rockver=$1
+sdever=$1
 buildtime=$2
 stagelevel=$3
 pkg=$4
 varadm=$5
 
 LC_ALL=C date '+%n[TIMESTAMP] %s %c'
-echo -e "[ROCKVER] $rockver\n"
+echo -e "[ROCKVER] $sdever\n"
 
 echo "[LOGS]" $( cd ${varadm}/logs ; ls ?-$pkg.* )
 echo
