@@ -63,11 +63,11 @@ int main(int argc, char ** argv) {
 	char *package = NULL;
 	char *rootdir = NULL;
 	struct stat st;
-	int opt, nodircheck = 0;
+	int opt, nodircheck = 0/*, nodirs = 0*/;
 	int stripinfo = 0;
 	int debug = 0;
 
-	while ( (opt = getopt(argc, argv, "dDr:sp:")) != -1 ) {
+	while ( (opt = getopt(argc, argv, "dDr:sp:X")) != -1 ) {
 		switch (opt) {
 		    case 'd':
 			debug = 1;
@@ -90,6 +90,10 @@ int main(int argc, char ** argv) {
 			rootdir = realrootdir;
 			break;
 
+		    /*case 'X':
+			nodirs = 1;
+			break;*/
+
 		    default:
 			fprintf(stderr, "Usage: %s [-D] [-r rootdir] [-s] "
 					"[-p pkg]\n", argv[0]);
@@ -108,29 +112,37 @@ int main(int argc, char ** argv) {
 		if ( (n = strchr(fn, '\n')) != NULL ) *n = '\0';
 		if ( *fn == 0 ) continue;
 
-		if ( !lstat(fn,&st) )
-		{
-		    if ( !S_ISDIR(st.st_mode) || nodircheck || dir_empty(fn) )
-		    {
-			fn = get_realname(fn);
-			if (rootdir) {
-				if (! strncmp(rootdir, fn, strlen(rootdir))) {
-					fn += strlen(rootdir);
-				} else {
-					if (debug) printf("DEBUG: Outside "
-					                  "root (%s): %s.\n",
-					                   rootdir, fn);
-					continue;
-				}
-			}
-			if (! package) printf("%s\n", fn);
-			else printf("%s: %s\n", package, fn);
-		    } else {
-			if (debug) printf("DEBUG: Non-empty dir: %s.\n", fn);
+		if ( lstat(fn,&st) ) {
+		    if (debug) fprintf(stderr, "DEBUG: Can't stat file: %s.\n", fn);
+		    continue;
+                }
+
+		if ( S_ISDIR(st.st_mode) ) {
+		    /*if (nodirs) {
+			if (debug) fprintf(stderr, "DEBUG: Dir: %s.\n", fn);
+			continue;
+		    }*/
+
+		    if (!nodircheck && dir_empty(fn) ) {
+			if (debug) fprintf(stderr, "DEBUG: Non-empty dir: %s.\n", fn);
+			continue;
 		    }
-		} else {
-			if (debug) printf("DEBUG: Can't stat file: %s.\n", fn);
 		}
+
+		fn = get_realname(fn);
+		if (rootdir) {
+			if (! strncmp(rootdir, fn, strlen(rootdir))) {
+				fn += strlen(rootdir);
+			} else {
+				if (debug) fprintf(stderr, "DEBUG: Outside "
+				                  "root (%s): %s.\n",
+				                   rootdir, fn);
+				continue;
+			}
+		}
+
+		if (! package) printf("%s\n", fn);
+		else printf("%s: %s\n", package, fn);
 	}
 	return 0;
 }
