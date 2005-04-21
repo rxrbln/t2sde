@@ -67,7 +67,7 @@ int main(int argc, char ** argv) {
 	int stripinfo = 0;
 	int debug = 0;
 
-	while ( (opt = getopt(argc, argv, "dDr:sp:X")) != -1 ) {
+	while ( (opt = getopt(argc, argv, "dDr:sp:")) != -1 ) {
 		switch (opt) {
 		    case 'd':
 			debug = 1;
