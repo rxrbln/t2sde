@@ -36,6 +36,6 @@ cp initrd.gz boot/vmlinuz isolinux/
 cat > ../isofs_arch.txt <<- EOT
 	BOOT	-b isolinux/isolinux.bin -c isolinux/boot.catalog
 	BOOTx	-no-emul-boot -boot-load-size 4 -boot-info-table
-	DISK1	build/${ROCKCFG_ID}/TOOLCHAIN/livecd/isolinux/ isolinux/
+	DISK1	build/${SDECFG_ID}/TOOLCHAIN/livecd/isolinux/ isolinux/
 EOT
 

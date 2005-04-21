@@ -45,8 +45,8 @@ ln 2nd_stage.img.z isofs/
 ln *.img initrd.gz isofs/ 2>/dev/null || true
 
 echo_status "Creating isofs.txt file .."
-echo "DISK1	build/${ROCKCFG_ID}/TOOLCHAIN/livecd/isofs/ `
-	`${ROCKCFG_SHORTID}/" > ../isofs_generic.txt
+echo "DISK1	build/${SDECFG_ID}/TOOLCHAIN/livecd/isofs/ `
+	`${SDECFG_SHORTID}/" > ../isofs_generic.txt
 cat ../isofs_*.txt > ../isofs.txt
 
 echo_status "Done!"

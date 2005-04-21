@@ -19,7 +19,7 @@ cd $disksdir/initrd; ln -s bin-static sbin-static; ln -s . usr
 #
 echo_status "Create linuxrc binary."
 diet $CC $base/target/$target/linuxrc.c -Wall \
-	-DSTAGE_2_IMAGE="\"${ROCKCFG_SHORTID}/2nd_stage.img.z\"" \
+	-DSTAGE_2_IMAGE="\"${SDECFG_SHORTID}/2nd_stage.img.z\"" \
 	-o linuxrc 
 #
 echo_status "Copy various helper applications."

@@ -12,7 +12,7 @@
 # GNU General Public License can be found in the file COPYING.
 # --- T2-COPYRIGHT-NOTE-END ---
 
-case "$ROCKCFG_MIPS_ENDIANESS" in
+case "$SDECFG_MIPS_ENDIANESS" in
     EL)
     	arch_bigendian=no
 	arch_target="mipsel-t2-linux-gnu" ;;

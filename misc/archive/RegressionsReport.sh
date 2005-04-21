@@ -7,9 +7,9 @@ if [ "$1" == "-cfg" ]; then
 	config="$2"; shift 2
 fi
 
-eval `grep '^export ROCKCFG_ID=' config/$config/config`
+eval `grep '^export SDECFG_ID=' config/$config/config`
 
-if [ -z "$ROCKCFG_ID" ]; then
+if [ -z "$SDECFG_ID" ]; then
 	echo "Invalid config '$cfg'."
 	exit 1
 fi
@@ -34,7 +34,7 @@ cat <<EOT
 	<head><title>T2 r$revision - $( date )</title></head>
 <body>
 <table border="0">
-<tr><th colspan="2">$ROCKCFG_ID ($revision)</th></tr>
+<tr><th colspan="2">$SDECFG_ID ($revision)</th></tr>
 <tr><td valign="top">
 	<table border="1" cellspacing="0" width="100%">
 	<tr><td>revision</td><td>:</td><td>$revision</td></tr>
@@ -66,12 +66,12 @@ pkgtotal=0 pkgerr=0 pkgok=0
 for stagelevel in 0 1 2 3 4 5 6 7 8 9; do
 	while read x x x repo pkg x; do
 		(( pkgtotal++ ))
-		if [ -f build/$ROCKCFG_ID/var/adm/logs/$stagelevel-$pkg.err ]; then
+		if [ -f build/$SDECFG_ID/var/adm/logs/$stagelevel-$pkg.err ]; then
 			(( pkgerr++ ))
 cat <<EOT
 	<tr><td>$stagelevel</td><td><a href="log/$stagelevel-$pkg.err">$repo/$pkg</a></td></tr>
 EOT
-		elif [ -f build/$ROCKCFG_ID/var/adm/logs/$stagelevel-$pkg.log ]; then
+		elif [ -f build/$SDECFG_ID/var/adm/logs/$stagelevel-$pkg.log ]; then
 			(( pkgok++ ))
 		fi
 	done < <( grep -e "$pattern$stagelevel.*" config/$config/packages )

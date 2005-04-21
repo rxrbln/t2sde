@@ -48,7 +48,7 @@ fi
 
 if [ -z "$1" -o ! -d "$1/var/adm/dependencies" ]
 then
-	echo "Usage: $0 build/<ROCKCFGID> [ ... ] >> scripts/dep_fixes.txt"
+	echo "Usage: $0 build/<SDECFGID> [ ... ] >> scripts/dep_fixes.txt"
 	echo "       $0 merge list1 list2 list3 ..."
 	exit 1
 fi

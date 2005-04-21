@@ -41,7 +41,7 @@
 		 "athlon-mp	K7"
 	do
 		set $x
-		[ "$1" = "$ROCKCFG_X86_OPT" ] && linux_arch=$2
+		[ "$1" = "$SDECFG_X86_OPT" ] && linux_arch=$2
 	done
 
 	# echo `grep -A 20 'Processor family' \
