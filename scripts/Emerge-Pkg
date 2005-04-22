@@ -43,7 +43,7 @@ help_msg() {
 	echo
 	echo "Usage: Emerge-Pkg [ -cfg <config> ] [ -dry-run ] [ -force ] [ -noupdate ]"
 	echo "$spacer [ -consider-chksum ] [ -norebuild ]"
-	echo "$spacer [ -deps=none|fast|indirect ]"
+	echo "$spacer [ -deps=none|fast ]"
 	echo "$spacer [ -repository repository-name ] [ -system ] [ pkg-name(s) ]"
 	echo
 	echo "pkg-name(s) are only optional if a repository is specified."
@@ -80,10 +80,9 @@ done
 . ./scripts/parse-config
 . ./scripts/functions
 
-check4update()
+add_if_updated()
 {
-  addlist=""
-  for package in $deplist ; do
+  for package ; do
 	[ $verbose = 1 ] && echo -n "checking $package ..."
 	confdir=""
         for x in package/*/$package/$package.desc ; do
@@ -98,33 +97,33 @@ check4update()
 
         if [ -z "$confdir" ] ; then
                 [ $verbose = 1 ] &&
-		  echo -n " No such package."
+		  echo " No such package."
         elif [ "$confdir" = X ] ; then
                 [ $verbose = 1 ] &&
-		  echo -n " Error: Package in multiple trees!"
+		  echo " Error: Package in multiple trees!"
 	elif [ "$blacklist" != "${blacklist/ $package /}" ]; then
 		[ $verbose = 1 ] &&
-		  echo -n " Avoided during automated updates."
+		  echo " Avoided during automated updates."
         elif [ ! -f /var/adm/packages/$package ] ; then
                 [ $verbose = 1 ] &&
-		  echo -n " Not installed. Added."
-		var_append addlist " " "$package"
+		  echo " Not installed. Added."
+		var_append deplist " " "$package"
         else
                 o_ver=$(grep '^Package Name and Version' \
                                 /var/adm/packages/$package | cut -f6 -d' ')
                 n_ver=$(grep '^\[V\] ' $confdir/$package.desc | cut -f2 -d' ')
                 if [ "$o_ver" != "$n_ver" -a "$n_ver" != "0000" ] ; then
                         [ $verbose = 1 ] &&
-			  echo -n " New version ($o_ver -> $n_ver). Added."
-			var_append addlist " " "$package"
+			  echo " New version ($o_ver -> $n_ver). Added."
+			var_append deplist " " "$package"
                 else
                         o_ck=$(grep '^\(ROCK Linux\|T2\) Package Source Checksum' \
                                 /var/adm/packages/$package | sed 's,.*: ,,')
                         n_ck=$( pkgchksum package/*/$package )
                         if [ $ignore_chksum = 0 -a "$o_ck" != "$n_ck" ] ; then
                                 [ $verbose = 1 ] &&
-				  echo -n " New source checksum. Added."
-				var_append addlist " " "$package"
+				  echo " New source checksum. Added."
+				var_append deplist " " "$package"
 			else
 				if [ -f /var/adm/cache/$package ] &&
 				   grep -q '\[BUILDTIME\] .* ERROR' \
@@ -135,94 +134,29 @@ check4update()
 
 				    if [ $rebuild = 1 ] ; then
 
-					[ $verbose = 1 ] && echo -n " Added."
-					var_append addlist " " "$package"
+					[ $verbose = 1 ] && echo " Added."
+					var_append deplist " " "$package"
 				    else
-					[ $verbose = 1 ] && echo -n " Skipped."
+					[ $verbose = 1 ] && echo " Skipped."
 				    fi
 				else
-				  [ $debug = 1 ] &&
-				    echo -n " Installed and up-to-date."
+				  if [ $debug = 1 ]; then
+				    echo " Installed and up-to-date."
+				  else
+				    echo -ne "\r                           \r"
+				  fi
 				fi
                         fi
                 fi
         fi
-	echo
   done
-  deplist="$addlist"
-}
-
-indirect_dep4pkg() {
-    gawk -v package=$1 '
-function check_package() {
-
-	found_new = 0;
-
-	for ( package in build_list ) {
-		if ( verbose )
-			print "#DEBUG PACKAGE: " package;
-
-		if ( ! package in database ) {
-			if (verbose)
-				print "#  " package " not in database";
-		}
-		else {
-			if (verbose)
-				print "#  " package " in database";
-
-			split(database[package], a);
-
-			for (d in a) {
-				# if ( a[c] == package  ) continue;
-				if ( strtonum(d) <= 3 ) continue;
-				dep = a[d];
-				if ( verbose && 0)
-					print "#    dep: " dep;
-				if ( dep in build_list ) {
-					if ( verbose && 0)
-					print "#    dep: " dep " already parsed";
-				}
-				else {
-					if (verbose)
-						print "#    dep: " dep " now added";
-					build_list [ dep ] = (package);
-					found_new = 1;
-				}
-			}
-		}
-	}
-	if (found_new)
-		check_package();
-}
-
-BEGIN {
-	config="'$config'"; verbose='$verbose';
-	depdb_file = "scripts/dep_db.txt";
-
-	while ( (getline depline < depdb_file) > 0 )
-		{ $0 = depline; sub(/:/, "", $1); database[$1]=$0; }
-	close(depdb_file);
-
-	build_list [ package ] = 1;
-
-	check_package();
-
-	if (verbose) {
-		for ( bp in build_list ) {
-			print "# " bp " (" build_list[bp] ")"
-		}
-	}
-	for ( bp in build_list ) {
-		print bp
-	}
-}
-
-'
 }
 
 fast_dep4pkg()
 {
-	grep '\[DEP\]' package/*/$1/$1.cache | cut -d ' ' -f 2
+	for x in `grep '\[DEP\]' package/*/$1/$1.cache | cut -d ' ' -f 2`; do
+		add_if_updated $x
+	done
 }
 
 # the remaining arguments are packages to be built
@@ -239,31 +173,24 @@ done
 	deplist=`grep "^X" config/$config/packages | cut -d ' ' -f 5`
 
 case $deps in 
-  indirect|fast)
+  fast)
         # we have to create a complete dependency graph ...
 	tmp=`mktemp`
 	for x in $deplist ; do
-        	${deps}_dep4pkg $x >> $tmp
+        	${deps}_dep4pkg $x
 	done
-	[ $verbose = 1 ] && grep '^#' $tmp
-
-	var_append deplist " " "`grep -v '^#' $tmp`"
-
-	# sort by priority
-	deplist=`echo -n $deplist | tr '\n' ' ' | tr -s ' '`
-	deplist=`grep "^. .* .* .* \\(${deplist// /\\|}\\) " \
-	         config/$config/packages | sort -k 3 | cut -d ' ' -f 5`
-	rm $tmp
 	;;
   none)
 	;;
   *)
-	echo "Unknown dependency resolution mode. Valid are none, fast and indirect."
+	echo "Unknown dependency resolution mode. Valid are none and fast."
 	exit 1
 esac
 
-# only build packages that need an update
-[ $force -eq 0 ] && check4update
+# sort by priority
+deplist=`echo -n $deplist | tr '\n' ' ' | tr -s ' '`
+deplist=`grep "^. .* .* .* \\(${deplist// /\\|}\\) " \
+         config/$config/packages | sort -k 3 | cut -d ' ' -f 5 | tr '\n' ' '`
 
 echo "Packages scheduled to build: ${deplist:-none}"
 
