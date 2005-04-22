@@ -191,4 +191,5 @@ if [ "$HTMLDIR" ]; then
 		mv $HTMLDIR/$config $HTMLDIR/$config.$$-old
 	fi
 	mv $HTMLDIR/$config.$$ $HTMLDIR/$config/
+	rm -rf $HTMLDIR/$config.$$-old
 fi
