@@ -5,7 +5,6 @@
 # 
 # T2 SDE: scripts/Emerge-Pkg
 # Copyright (C) 2004 - 2005 The T2 SDE Project
-# Copyright (C) 1998 - 2003 ROCK Linux Project
 # 
 # More information can be found in the files COPYING and README.
 # 
@@ -43,7 +42,7 @@ help_msg() {
 	echo
 	echo "Usage: Emerge-Pkg [ -cfg <config> ] [ -dry-run ] [ -force ] [ -noupdate ]"
 	echo "$spacer [ -consider-chksum ] [ -norebuild ]"
-	echo "$spacer [ -deps=none|fast ]"
+	echo "$spacer [ -deps=none|fast|indirect ]"
 	echo "$spacer [ -repository repository-name ] [ -system ] [ pkg-name(s) ]"
 	echo
 	echo "pkg-name(s) are only optional if a repository is specified."
@@ -82,13 +81,14 @@ done
 
 add_if_updated()
 {
-  for package ; do
+	local package=$1
+	local updated=0
 
 	local var=__BEEN_HERE_${package//-/_}
 	eval local x=\$$var
-
 	if [ "$x" = 1 ]; then
 		[ $debug = 1 ] && echo "already been at $package ..."
+		return
 	else
 		eval $var=1
 	fi
@@ -117,7 +117,7 @@ add_if_updated()
         elif [ ! -f /var/adm/packages/$package ] ; then
                 [ $verbose = 1 ] &&
 		  echo " Not installed. Added."
-		var_append deplist " " "$package"
+		updated=1
         else
                 o_ver=$(grep '^Package Name and Version' \
                                 /var/adm/packages/$package | cut -f6 -d' ')
@@ -125,7 +125,7 @@ add_if_updated()
                 if [ "$o_ver" != "$n_ver" -a "$n_ver" != "0000" ] ; then
                         [ $verbose = 1 ] &&
 			  echo " New version ($o_ver -> $n_ver). Added."
-			var_append deplist " " "$package"
+			updated=1
                 else
                         o_ck=$(grep '^\(ROCK Linux\|T2\) Package Source Checksum' \
                                 /var/adm/packages/$package | sed 's,.*: ,,')
@@ -133,7 +133,7 @@ add_if_updated()
                         if [ $ignore_chksum = 0 -a "$o_ck" != "$n_ck" ] ; then
                                 [ $verbose = 1 ] &&
 				  echo " New source checksum. Added."
-				var_append deplist " " "$package"
+				updated=1
 			else
 				if [ -f /var/adm/cache/$package ] &&
 				   grep -q '\[BUILDTIME\] .* ERROR' \
@@ -145,7 +145,7 @@ add_if_updated()
 				    if [ $rebuild = 1 ] ; then
 
 					[ $verbose = 1 ] && echo " Added."
-					var_append deplist " " "$package"
+					updated=1
 				    else
 					[ $verbose = 1 ] && echo " Skipped."
 				    fi
@@ -160,12 +160,16 @@ add_if_updated()
                         fi
                 fi
         fi
-  done
+	if [ $updated = 1 ]; then
+		var_append deplist " " "$package"
+		[ $deps = indirect ] && dep4pkg $package
+	fi
 }
 
-fast_dep4pkg()
+dep4pkg()
 {
-	for x in `grep '\[DEP\]' package/*/$1/$1.cache | cut -d ' ' -f 2`; do
+	for x in `grep '\[DEP\]' package/*/$1/$1.cache 2>/dev/null |
+	          cut -d ' ' -f 2`; do
 		add_if_updated $x
 	done
 }
@@ -186,11 +190,11 @@ done
 	deplist=`grep "^X" config/$config/packages | cut -d ' ' -f 5`
 
 case $deps in 
-  fast)
+  fast|indirect)
         # we have to create a complete dependency graph ...
 	tmp=`mktemp`
 	for x in $deplist ; do
-        	${deps}_dep4pkg $x
+        	dep4pkg $x
 	done
 	;;
   none)
