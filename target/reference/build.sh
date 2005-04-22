@@ -39,10 +39,7 @@ pkgloop
 
 echo_header "Finishing build."
 
-echo_status "Creating new dependency database .."
 mkdir -p "$build_result/scripts"
-./scripts/Create-DepDB -cachedir "$build_result/package" \
-	> "$build_result/scripts/dep_db.txt" 2> /dev/null
 
 echo_status "Copying error logs and t2-debug data."
 mkdir -p $build_result/{errors,t2-debug,dep-debug}
@@ -75,7 +72,7 @@ cat <<- EOT > build/${SDECFG_ID}/TOOLCHAIN/result/copy-cache.sh
 	cd $base/build/${SDECFG_ID}/TOOLCHAIN/result
 	find package -type f | while read fn
 	do [ -f ../../../\${fn%.cache}.desc ] && cp -v \$fn ../../../\$fn; done
-	cd ../../..; ./scripts/Create-DepDB > scripts/dep_db.txt
+	cd ../../..
 EOT
 chmod +x build/${SDECFG_ID}/TOOLCHAIN/result/copy-cache.sh
 
