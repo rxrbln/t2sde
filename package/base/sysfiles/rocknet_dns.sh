@@ -38,8 +38,7 @@ public_hostname() {
 }
 
 public_domainname() {
-	# THIS IS A HACK
-	addcode up 9 5 "sed 's/`hostname`\..* /`hostname`.$1 /' /etc/hosts > \
-	                /etc/hosts.new ; mv /etc/hosts{.new,}"
+	# THIS IS (still) A HACK
+	addcode up 9 5 "sed -i 's/`hostname`\..* /`hostname`.$1 /' /etc/hosts"
 }
 
