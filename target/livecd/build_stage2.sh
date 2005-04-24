@@ -77,8 +77,10 @@ cp -f $base/target/$target/fixedfiles/inittab etc/inittab
 cp -f $base/target/$target/fixedfiles/login-shell sbin/login-shell
 cp -f $base/target/$target/fixedfiles/system etc/rc.d/init.d/system
 cp -f $base/target/$target/fixedfiles/XF86Config etc/X11/XF86Config
+
 #
-### DOC ### create_compressed_fs and mkisofs need to be in path !!! ### DOC ###
 echo_status "Creating 2nd_stage.img.z image... (this takes some time)... "
-cd .. ; ( mkisofs -R -l 2nd_stage | create_compressed_fs - 65536 > 2nd_stage.img.z ) > /dev/null 2>&1
+cd .. 
+TODO: add mksquashfs here
+
 

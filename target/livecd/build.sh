@@ -14,17 +14,8 @@
 
 disksdir="$build_rock/livecd"
 
-if [ -z "`which create_compressed_fs`" ] ; then
-	echo "Please make sure that create_compressed_fs is installed! T2 Package: filesystem/cloop"
-	exit 1;
-fi ;
-
-if [ -z "`which mkisofs`" ] ; then
-	echo "Please make sure that mkisofs is installed! T2 Package: base/cdrtools"
-	exit 1;
-fi;
-
 pkgloop
+
 rm -rf $disksdir; mkdir -p $disksdir; chmod 700 $disksdir
 
 . scripts/parse-config
@@ -50,3 +41,4 @@ echo "DISK1	build/${SDECFG_ID}/TOOLCHAIN/livecd/isofs/ `
 cat ../isofs_*.txt > ../isofs.txt
 
 echo_status "Done!"
+
