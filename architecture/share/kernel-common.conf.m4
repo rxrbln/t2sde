@@ -37,6 +37,10 @@ CONFIG_MODULE_UNLOAD=y
 # CONFIG_MODVERSIONS is not set
 CONFIG_KMOD=y
 
+dnl Firmware loader can always be useful
+dnl
+CONFIG_FW_LOADER=y
+
 dnl Loopback device can always be useful
 dnl
 CONFIG_BLK_DEV_LOOP=y
