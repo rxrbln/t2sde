@@ -11,22 +11,21 @@ dnl it under the terms of the GNU General Public License as published by
 dnl the Free Software Foundation; version 2 of the License. A copy of the
 dnl GNU General Public License can be found in the file COPYING.
 dnl --- T2-COPYRIGHT-NOTE-END ---
-dnl Widest used non-on-board network card (3Com 905)
-dnl
-CONFIG_NET_VENDOR_3COM=y
-CONFIG_VORTEX=y
 
 dnl some more module which are not activated by default
-CONFIG_NET_VENDOR_SMC=y
-CONFIG_NET_VENDOR_RACAL=y
+dnl
 CONFIG_NET_ISA=y
 CONFIG_NET_POCKET=y
 
-dnl Widest used on-board network card (Tulip)
-dnl
 CONFIG_NET_ETHERNET=y
 CONFIG_NET_EISA=y
-CONFIG_DE4X5=y
+
+dnl Enable some vedor sections
+dnl
+CONFIG_NET_VENDOR_3COM=y
+CONFIG_NET_VENDOR_SMC=y
+CONFIG_NET_VENDOR_RACAL=y
+CONFIG_8139TOO=m
 
 dnl Enable some categories so drivers are enabled as modules
 dnl
