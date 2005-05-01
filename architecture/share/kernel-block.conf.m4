@@ -53,10 +53,6 @@ dnl Enable PCMCIA SCSI (drivers themself are modules)
 dnl
 CONFIG_SCSI_PCMCIA=y
 
-dnl USB storage should be modular
-dnl
-CONFIG_USB_STORAGE=m
-
 dnl Enable non-scsi cd-rom drives (drivers themself are modules)
 dnl
 CONFIG_CD_NO_IDESCSI=y
