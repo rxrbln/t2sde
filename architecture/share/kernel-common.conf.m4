@@ -100,6 +100,11 @@ CONFIG_USB_HID=y
 CONFIG_USB_HIDINPUT=y
 CONFIG_USB_HIDDEV=y
 
+dnl USB - some others should be modular ...
+dnl
+CONFIG_USB_PRINTER=m
+CONFIG_USB_STORAGE=m
+
 dnl IEEE1394 - Firewire / iLink drivers
 dnl
 CONFIG_IEEE1394=m
