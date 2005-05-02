@@ -112,12 +112,14 @@ main() {
 	$STONE general set_locale
 	$STONE general set_vcfont
 
-	# source postinstall scripts added by misc packages
-	for x in ${SETUPD}/setup_*.sh ; do
-		[ -f $x ] && . $x
-	done
-
 	cron.run
+
+	# run the postinstall scripts right here
+	for x in /etc/postinstall.d/* ; do
+		[ -f $x ] || continue
+		echo "Running $x ..."
+		$x
+	done
 
 	unset gui_nocancel
 	exec $STONE
