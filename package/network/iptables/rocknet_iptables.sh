@@ -70,6 +70,25 @@ public_drop() {
 	iptables_init_if
 }
 
+public_conduit() {
+	# conduit (tcp|udp) port targetip[:targetport]
+	#
+	local proto=$1 port=$2
+	local targetip=$3 targetport=$2
+
+	if [ "${targetip/:/}" != "$targetip" ]; then
+		targetport=${targetip#*:}
+		targetip=${targetip%:*}
+	fi
+
+	addcode up 1 6 "iptables -t nat -A PREROUTING -i $if -p $proto \
+		 --dport $port -j DNAT --to $targetip:$targetport"
+	addcode up 1 6 "iptables -A FORWARD -i $if -p $proto -d $targetip \
+		 --dport $targetport -j ACCEPT"
+
+	iptables_init_if
+}
+
 public_clamp_mtu() {
 	addcode up 1 6 "iptables -A FORWARD -p tcp --tcp-flags SYN,RST SYN \
 	                -j TCPMSS --clamp-mss-to-pmtu"
