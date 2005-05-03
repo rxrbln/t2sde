@@ -20,6 +20,11 @@ dnl On default we build SMP kernels and mods
 dnl
 CONFIG_SMP=y
 
+dnl CPU frequency scaling is nice to have
+dnl
+CONFIG_CPU_FREQ=y
+CONFIG_CPU_FREQ_26_API=y
+
 dnl integrated .config is quite big - and we ship them in /boot/kconfig_ anyway
 dnl
 # CONFIG_IKCONFIG is not set
