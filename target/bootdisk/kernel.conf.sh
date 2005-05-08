@@ -15,7 +15,8 @@
 
 echo "bootdisk target -> disabling some settings ..."
 
-sed -e "s/CONFIG_SOUND\(.*\)=./# CONFIG_SOUND\1 is not set/" \
+sed -i \
+    -e "s/CONFIG_SOUND\(.*\)=./# CONFIG_SOUND\1 is not set/" \
     -e "s/CONFIG_VIDEO\(.*\)=./# CONFIG_VIDEO\1 is not set/" \
     -e "s/CONFIG_PHONE\(.*\)=./# CONFIG_PHONE\1 is not set/" \
     -e "s/CONFIG_RADIO\(.*\)=./# CONFIG_RADIO\1 is not set/" \
@@ -32,7 +33,6 @@ sed -e "s/CONFIG_SOUND\(.*\)=./# CONFIG_SOUND\1 is not set/" \
     -e "s/# CONFIG_EMBEDDED is not set/CONFIG_EMBEDDED=y/" \
     -e "s/CONFIG_KALLSYMS=./# CONFIG_KALLSYMS is not set/" \
     -e "s/CONFIG_IOSCHED_AS=./# CONFIG_IOSCHED_AS is not set/" \
-    $1 > .config.boot
+    $1
 
-mv .config.boot $1
 
