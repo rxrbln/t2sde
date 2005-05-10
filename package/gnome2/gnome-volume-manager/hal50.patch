@@ -1,0 +1,652 @@
+--- ./src/manager.c.orig	2005-03-30 17:20:25.000000000 -0400
++++ ./src/manager.c	2005-05-08 16:48:20.886354352 -0400
+@@ -299,6 +299,7 @@
+ 	enum { IMPORT } action = -1;
+ 	GtkWidget *askme;
+ 	int retval = FALSE;
++	DBusError error;
+ 
+ 	dcim_path = g_build_path (G_DIR_SEPARATOR_S, mount_point, "dcim", NULL);
+ 
+@@ -309,8 +310,14 @@
+ 	dbg ("Photos detected: %s\n", dcim_path);
+ 
+ 	/* add the "content.photos" capability to this device */
+-	if (!hal_device_add_capability (hal_ctx, udi, "content.photos"))
+-		warn ("failed to set content.photos on %s\n", device);
++	dbus_error_init (&error);
++	if (!libhal_device_add_capability (hal_ctx, udi, 
++					   "content.photos", 
++					   &error)) {
++		warn ("failed to set content.photos on %s: %s\n", 
++		      device, error.message);
++		dbus_error_free (&error);
++	}
+ 
+ 	if (config.autophoto) {
+ 		askme = gtk_message_dialog_new (NULL, 0, GTK_MESSAGE_WARNING,
+@@ -354,9 +361,9 @@
+ 	int retval = FALSE;
+ 
+ 	/* see if it's a camera */
+-	if (!hal_device_query_capability(hal_ctx, udi, "camera"))
++	if (!libhal_device_query_capability (hal_ctx, udi, "camera", NULL)) 
+ 		goto out;
+-
++	
+ 	retval = TRUE;
+ 	dbg ("Camera detected: %s\n", udi);
+ 
+@@ -395,17 +402,28 @@
+ {
+ 	char *device = NULL, *mount_point = NULL;
+ 	gboolean autorun_succeeded = FALSE;
++	DBusError error;
++
++	dbus_error_init (&error);
++	device = libhal_device_get_property_string (hal_ctx, udi, 
++						    "block.device",
++						    &error);
+ 
+-	device = hal_device_get_property_string (hal_ctx, udi, "block.device");
+ 	if (!device) {
+-		warn ("cannot get block.device\n");
++		warn ("cannot get block.device: %s\n", error.message);
++		if (dbus_error_is_set (&error))
++			dbus_error_free (&error);
+ 		goto out;
+ 	}
+ 
+-	mount_point = hal_device_get_property_string (hal_ctx, udi, 
+-						      "volume.mount_point");
++	mount_point = libhal_device_get_property_string (hal_ctx, udi, 
++						         "volume.mount_point",
++						         &error);
+ 	if (!mount_point) {
+-		warn ("cannot get volume.mount_point\n");
++		warn ("cannot get volume.mount_point: %s\n", error.message);
++		if (dbus_error_is_set (&error))
++			dbus_error_free (&error);
++
+ 		goto out;
+ 	}
+ 
+@@ -458,8 +476,8 @@
+ 	}
+ 
+ out:
+-	hal_free_string (device);
+-	hal_free_string (mount_point);
++	libhal_free_string (device);
++	libhal_free_string (mount_point);
+ }
+ 
+ /*
+@@ -541,10 +559,17 @@
+ {
+ 	enum { MOUNT, PLAY } action = -1;
+ 	char *device = NULL, *mount_point = NULL;
++	DBusError error;
+ 
+-	device = hal_device_get_property_string (hal_ctx, udi, "block.device");
++	dbus_error_init (&error);
++	device = libhal_device_get_property_string (hal_ctx, udi, 
++						    "block.device",
++						    &error);
+ 	if (!device) {
+-		warn ("cannot get block.device\n");
++		warn ("cannot get block.device: %s\n", error.message);
++		if (dbus_error_is_set (&error))
++			dbus_error_free (&error);
++	
+ 		goto out;
+ 	}
+ 
+@@ -588,8 +613,8 @@
+ 	}
+ 
+ out:
+-	hal_free_string (device);
+-	hal_free_string (mount_point);
++	libhal_free_string (device);
++	libhal_free_string (mount_point);
+ }
+ 
+ /*
+@@ -609,12 +634,24 @@
+ static gboolean
+ gvm_device_is_writer (const char *udi)
+ {
+-	if ((hal_device_get_property_bool (hal_ctx, udi, "storage.cdrom.cdr")) ||
+-	    (hal_device_get_property_bool (hal_ctx, udi, "storage.cdrom.cdrw")) ||
+-	    (hal_device_get_property_bool (hal_ctx, udi, "storage.cdrom.dvdr")) ||
+-	    (hal_device_get_property_bool (hal_ctx, udi, "storage.cdrom.dvdram")) ||
+-	    (hal_device_get_property_bool (hal_ctx, udi, "storage.cdrom.dvdplusr")) ||
+-	    (hal_device_get_property_bool (hal_ctx, udi, "storage.cdrom.dvdplusrw")))
++	if ((libhal_device_get_property_bool (hal_ctx, udi, 
++					      "storage.cdrom.cdr",
++					      NULL)) ||
++	    (libhal_device_get_property_bool (hal_ctx, udi, 
++	    				      "storage.cdrom.cdrw",
++					      NULL)) ||
++	    (libhal_device_get_property_bool (hal_ctx, udi, 
++	    				      "storage.cdrom.dvdr",
++					      NULL)) ||
++	    (libhal_device_get_property_bool (hal_ctx, udi, 
++	    				      "storage.cdrom.dvdram",
++					      NULL)) ||
++	    (libhal_device_get_property_bool (hal_ctx, udi, 
++	    				      "storage.cdrom.dvdplusr",
++					      NULL)) ||
++	    (libhal_device_get_property_bool (hal_ctx, udi, 
++	    				      "storage.cdrom.dvdplusrw",
++					      NULL)))
+ 		return TRUE;
+ 
+ 	return FALSE;
+@@ -632,19 +669,33 @@
+ 	dbus_bool_t has_audio;
+ 	dbus_bool_t has_data;
+ 	dbus_bool_t is_blank;
++	DBusError error;
+ 
+-	has_audio = hal_device_get_property_bool (hal_ctx, udi,
+-						  "volume.disc.has_audio");
+-	has_data = hal_device_get_property_bool (hal_ctx, udi,
+-						  "volume.disc.has_data");
+-	is_blank = hal_device_get_property_bool (hal_ctx, udi,
+-						  "volume.disc.is_blank");
+-	drive_udi = hal_device_get_property_string(hal_ctx, udi,
+-			"info.parent");
+-
+-	device = hal_device_get_property_string (hal_ctx, udi, "block.device");
++	dbus_error_init (&error);
++	has_audio = libhal_device_get_property_bool (hal_ctx, udi,
++						     "volume.disc.has_audio",
++						     NULL);
++						     
++	has_data = libhal_device_get_property_bool (hal_ctx, udi,
++						    "volume.disc.has_data",
++						    NULL);
++
++	is_blank = libhal_device_get_property_bool (hal_ctx, udi,
++						    "volume.disc.is_blank",
++						    NULL);
++
++	drive_udi = libhal_device_get_property_string (hal_ctx, udi,
++						      "info.parent",
++						      NULL);
++
++	device = libhal_device_get_property_string (hal_ctx, udi, 
++						    "block.device",
++						    &error);
+ 	if (!device) {
+-		warn ("cannot get block.device\n");
++		warn ("cannot get block.device: %s\n", error.message);
++		if (dbus_error_is_set (&error))
++			dbus_error_free (&error);
++
+ 		goto out;
+ 	}
+ 
+@@ -665,8 +716,8 @@
+ 	/** @todo enforce policy for all the new disc types now supported */
+ 
+ out:
+-	hal_free_string (device);
+-	hal_free_string (drive_udi);
++	libhal_free_string (device);
++	libhal_free_string (drive_udi);
+ }
+ 
+ /*
+@@ -683,25 +734,34 @@
+ gvm_media_changed (const char *udi, const char *storage_device, char *device)
+ {
+ 	char *media_type;
++	DBusError error;
+ 
+ 	/* Refuse to enforce policy on removable media if drive is locked */
+-	if (hal_device_property_exists (
+-		    hal_ctx, storage_device, "info.locked") &&
+-	    hal_device_get_property_bool (
+-		    hal_ctx, storage_device, "info.locked")) {
++	dbus_error_init (&error);
++	if (libhal_device_property_exists (hal_ctx, storage_device, 
++					   "info.locked",
++					   NULL) &&
++	    libhal_device_get_property_bool (hal_ctx, storage_device, 
++	    				     "info.locked",
++					     NULL)) {
+ 		dbg ("Drive with udi %s is locked through hal; "
+ 		     "skipping policy\n", storage_device);
+ 		return;
+-	}
++	} 
+ 
+ 	/*
+ 	 * Get HAL's interpretation of our media type.  Note that we must check
+ 	 * the storage device and not this UDI
+ 	 */
+-	media_type = hal_device_get_property_string (hal_ctx, storage_device, 
+-						     "storage.drive_type");
++
++	media_type = libhal_device_get_property_string (hal_ctx, storage_device,
++						        "storage.drive_type",
++						        &error);
+ 	if (!media_type) {
+-		warn ("cannot get storage.drive_type\n");
++		warn ("cannot get storage.drive_type: %s\n", error.message);
++		if (dbus_error_is_set (&error))
++			dbus_error_free (&error);
++
+ 		return;
+ 	}
+ 
+@@ -716,7 +776,7 @@
+ 		}
+ 	}
+ 
+-	hal_free_string (media_type);
++	libhal_free_string (media_type);
+ }
+ 
+ /** Invoked when a device is added to the Global Device List. 
+@@ -729,33 +789,37 @@
+ 		  const char *udi)
+ {
+ 	char *device = NULL, *storage_device = NULL;
++	DBusError error;
+ 
+ 	dbg ("New Device: %s\n", udi);
+ 
+ 	gvm_check_camera (udi);
+ 
+-	if (!hal_device_query_capability(hal_ctx, udi, "block"))
++	dbus_error_init (&error);
++	if (!libhal_device_query_capability(hal_ctx, udi, "block", NULL)) 
+ 		goto out;
+ 	
+ 	/* is this a mountable volume ? */
+-	if (!hal_device_get_property_bool (hal_ctx, udi, 
+-					   "block.is_volume"))
++	if (!libhal_device_get_property_bool (hal_ctx, udi, 
++					      "block.is_volume",
++					      NULL)) 
+ 		goto out;
+ 	
+ 	/* if it is a volume, it must have a device node */
+-	device = hal_device_get_property_string (hal_ctx, udi, 
+-						 "block.device");
++	device = libhal_device_get_property_string (hal_ctx, udi, 
++						    "block.device",
++						    &error);
+ 	if (!device) {
+-		dbg ("cannot get block.device\n");
++		dbg ("cannot get block.device: %s\n", error.message);
+ 		goto out;
+ 	}
+ 	
+ 	/* get the backing storage device */
+-	storage_device = hal_device_get_property_string (
+-		hal_ctx, udi,
+-		"block.storage_device");
++	storage_device = libhal_device_get_property_string (hal_ctx, udi,
++							"block.storage_device",
++							&error);
+ 	if (!storage_device) {
+-		dbg ("cannot get block.storage_device\n");
++		dbg ("cannot get block.storage_device: %s\n", error.message);
+ 		goto out;
+ 	}
+ 	
+@@ -763,13 +827,14 @@
+ 	 * Does this device support removable media?  Note that we
+ 	 * check storage_device and not our own UDI
+ 	 */
+-	if (hal_device_get_property_bool (hal_ctx, storage_device,
+-					  "storage.removable")) {
++	if (libhal_device_get_property_bool (hal_ctx, storage_device,
++					     "storage.removable",
++					     NULL)) {
+ 		/* we handle media change events separately */
+ 		dbg ("Changed: %s\n", device);
+ 		gvm_media_changed (udi, storage_device, device);
+ 		goto out;
+-	}
++	} 
+ 	
+ 	/* folks, we have a new device! */
+ 	dbg ("Added: %s\n", device);
+@@ -780,8 +845,11 @@
+ 	}
+ 	
+ out:
+-	hal_free_string (device);
+-	hal_free_string (storage_device);
++	if (dbus_error_is_set (&error))
++		dbus_error_free (&error);
++
++	libhal_free_string (device);
++	libhal_free_string (storage_device);
+ }
+ 
+ /** Invoked when a device is removed from the Global Device List. 
+@@ -849,7 +917,8 @@
+ 	if (g_strcasecmp (key, "volume.is_mounted") != 0)
+ 		return;
+ 
+-	val = hal_device_get_property_bool (hal_ctx, udi, key);
++	val = libhal_device_get_property_bool (hal_ctx, udi, key, NULL);
++
+ 	if (val == TRUE) {
+ 		GSList *policy_udi;
+ 
+@@ -904,40 +973,82 @@
+ {
+ }
+ 
+-/** Invoked by libhal for integration with our mainloop. 
++/** Integrate a dbus mainloop. 
+  *
+  *  @param  ctx                 LibHal context
+- *  @param  dbus_connection     D-BUS connection to integrate
++ *  @param  error     		pointer to a D-BUS error object
++ *
++ *  @return 			TRUE if we connected to the bus
+  */
+-static void
+-hal_mainloop_integration (LibHalContext *ctx __attribute__((__unused__)),
+-			  DBusConnection * dbus_connection)
++static dbus_bool_t 
++hal_mainloop_integration (LibHalContext *ctx, 
++			   DBusError *error)
+ {
+-	dbus_connection_setup_with_g_main (dbus_connection, NULL);
++	DBusConnection *dbus_connection;
++
++	dbus_connection = dbus_bus_get (DBUS_BUS_SYSTEM, error);
++
++	if (dbus_error_is_set (error))
++		return FALSE;
++	
++        dbus_connection_setup_with_g_main (dbus_connection, NULL);
++
++	libhal_ctx_set_dbus_connection (ctx, dbus_connection);
++	
++	return TRUE;
+ }
+ 
+ /** Internal HAL initialization function
+  *
+- * @functions			The LibHalFunctions to register as callbacks.
+  * @return			The LibHalContext of the HAL connection or
+  *				NULL on error.
+  */
+ static LibHalContext *
+-gvm_do_hal_init (LibHalFunctions *functions)
++gvm_do_hal_init ()
+ {
+ 	LibHalContext *ctx;
++	DBusError error;
+ 	char **devices;
+ 	int nr;
+ 
+-	ctx = hal_initialize (functions, FALSE);
++	ctx = libhal_ctx_new ();
+ 	if (!ctx) {
+ 		warn ("failed to initialize HAL!\n");
+ 		return NULL;
+ 	}
+ 
+-	if (hal_device_property_watch_all (ctx)) {
+-		warn ("failed to watch all HAL properties!\n");
+-		hal_shutdown (ctx);
++	dbus_error_init (&error);
++	if (!hal_mainloop_integration (ctx, 
++					&error)) {
++		g_warning ("hal_initialize failed: %s\n", error.message);
++		dbus_error_free (&error);
++		return NULL;
++	}
++
++	libhal_ctx_set_device_added (ctx,
++				     hal_device_added);
++	libhal_ctx_set_device_removed (ctx,
++		  		       hal_device_removed);
++	libhal_ctx_set_device_new_capability (ctx,
++					      hal_device_new_capability);
++	libhal_ctx_set_device_lost_capability (ctx,
++		  			       hal_device_lost_capability);
++	libhal_ctx_set_device_property_modified (ctx,
++		  				 hal_property_modified);
++	libhal_ctx_set_device_condition (ctx,
++					 hal_device_condition);
++
++	if (!libhal_device_property_watch_all (ctx, &error)) {
++		warn ("failed to watch all HAL properties!: %s\n", error.message);
++		dbus_error_free (&error);
++		libhal_ctx_free (ctx);
++		return NULL;
++	}
++
++	if (!libhal_ctx_init (ctx, &error)) {
++		warn ("hal_initialize failed: %s\n", error.message);
++		dbus_error_free (&error);
++		libhal_ctx_free (ctx);
+ 		return NULL;
+ 	}
+ 
+@@ -947,13 +1058,21 @@
+ 	 * want to exit silently if hald is not running, to behave on
+ 	 * pre-2.6 systems.
+ 	 */
+-	devices = hal_get_all_devices (ctx, &nr);
++	devices = libhal_get_all_devices (ctx, &nr, &error);
+ 	if (!devices) {
+-		warn ("seems that HAL is not running\n");
+-		hal_shutdown (ctx);
++		warn ("seems that HAL is not running: %s\n", error.message);
++		if (dbus_error_is_set (&error))
++			dbus_error_free (&error);
++			
++		libhal_ctx_shutdown (ctx, &error);
++
++		if (dbus_error_is_set (&error))
++			dbus_error_free (&error);
++
++		libhal_ctx_free (ctx);
+ 		return NULL;
+ 	}
+-	hal_free_string_array (devices);
++	libhal_free_string_array (devices);
+ 
+ 	return ctx;
+ }
+@@ -969,31 +1088,45 @@
+ 	char **volumes;
+ 	char *udi;
+ 	char *device_file;
++	DBusError error;
+ 
+ 	if (!config.automount_media)
+ 		return;
+ 
+-	volumes = hal_find_device_by_capability (ctx, "volume", &num_volumes);
++	dbus_error_init (&error);
++	volumes = libhal_find_device_by_capability (ctx, "volume", 
++						    &num_volumes, &error);
++	if (dbus_error_is_set (&error)) {
++		warn ("%s", error.message);
++		dbus_error_free (&error);
++		return;
++	}
++	
+ 	for (i = 0; i < num_volumes; i++) {
+ 		udi = volumes [i];
+ 
+ 		/* don't attempt to mount already mounted volumes */
+-		if (!hal_device_property_exists (ctx, udi, 
+-						"volume.is_mounted") ||
+-		    hal_device_get_property_bool (ctx, udi, 
+-						  "volume.is_mounted"))
++		if (!libhal_device_property_exists (ctx, udi, 
++						    "volume.is_mounted",
++						    NULL) ||
++		    libhal_device_get_property_bool (ctx, udi, 
++						     "volume.is_mounted",
++						     NULL)) 
+ 			continue;
+ 
+ 		/* only mount if the block device got a sensible filesystem */
+-		if (!hal_device_property_exists (ctx, udi, 
+-						"volume.fsusage") ||
+-		    strcmp (hal_device_get_property_string (ctx, udi, 
+-							    "volume.fsusage"), 
+-			    "filesystem") != 0)
++		if (!libhal_device_property_exists (ctx, udi, 
++						    "volume.fsusage",
++						    NULL) ||
++		    strcmp (libhal_device_get_property_string (ctx, udi, 
++							       "volume.fsusage",
++							       NULL), 
++			    "filesystem") != 0) 
+ 			continue;
+ 
+-		device_file = hal_device_get_property_string (ctx, udi,
+-							      "block.device");
++		device_file = libhal_device_get_property_string (ctx, udi,
++				 				 "block.device",
++								 &error);
+ 
+ 		if (device_file != NULL ) {
+ 
+@@ -1001,12 +1134,15 @@
+ 
+ 			gvm_device_mount (device_file);
+ 
+-			hal_free_string (device_file);
+-		} else
+-			warn ("no device_file for udi=%s\n", udi);
++			libhal_free_string (device_file);
++		} else {
++			warn ("no device_file for udi=%s: %s\n", udi, error.message);
++			if (dbus_error_is_set (&error))
++				dbus_error_free (&error);
++		}
+ 	}
+ 
+-	hal_free_string_array (volumes);
++	libhal_free_string_array (volumes);
+ }
+ 
+ /** Unmount all volumes that were mounted during the lifetime of this
+@@ -1020,23 +1156,27 @@
+ 	GSList *i;
+ 	char *device_file;
+ 	char *udi;
++	DBusError error;
+ 
+ 	dbg ("unmounting all volumes that we saw mounted in our life\n");
+-
++	dbus_error_init (&error);
+ 	for (i = all_mounted_volumes; i != NULL; i = g_slist_next (i)) {
+ 
+ 		udi = i->data;
+ 
+-		device_file = hal_device_get_property_string (ctx, udi,
+-							      "block.device");
++		device_file = libhal_device_get_property_string (ctx, udi,
++							         "block.device",
++								 &error);
+ 		if (device_file != NULL ) {
+ 
+ 			dbg ("unmount_all: unmounting %s\n", device_file);
+ 
+ 			gvm_device_unmount (device_file);
+-			hal_free_string (device_file);
++			libhal_free_string (device_file);
+ 		} else {
+-			warn ("no device_file for udi=%s\n", udi);
++			warn ("no device_file for udi=%s: %s\n", udi, error.message);
++			if (dbus_error_is_set (&error))
++				dbus_error_free (&error);
+ 		}
+ 	}
+ }
+@@ -1097,13 +1237,6 @@
+ main (int argc, char *argv[])
+ {
+ 	GnomeClient *client;
+-	LibHalFunctions hal_functions = { hal_mainloop_integration,
+-					  hal_device_added,
+-					  hal_device_removed,
+-					  hal_device_new_capability,
+-					  hal_device_lost_capability,
+-					  hal_property_modified,
+-					  hal_device_condition };
+ 
+ 	gnome_program_init (PACKAGE, VERSION, LIBGNOMEUI_MODULE,
+ 			    argc, argv, GNOME_PARAM_NONE);
+@@ -1124,7 +1257,7 @@
+ 	gtk_signal_connect (GTK_OBJECT (client), "die",
+ 			    GTK_SIGNAL_FUNC (gvm_die), NULL);
+ 
+-	hal_ctx = gvm_do_hal_init (&hal_functions);
++	hal_ctx = gvm_do_hal_init ();
+ 	if (!hal_ctx)
+ 		return 1;
+ 
+--- ./src/properties.c.orig	2005-03-30 17:21:10.000000000 -0400
++++ ./src/properties.c	2005-05-08 16:28:25.000000000 -0400
+@@ -329,25 +329,45 @@
+ 	LibHalContext *ctx;
+ 	char **devices;
+ 	int nr;
++	DBusError error;
++	DBusConnection *conn;
+ 
+-	ctx = hal_initialize (NULL, FALSE);
++	ctx = libhal_ctx_new ();
+ 	if (!ctx)
+ 		return FALSE;
+ 
++	dbus_error_init (&error);
++
++	conn = dbus_bus_get (DBUS_BUS_SYSTEM, &error);
++	if (dbus_error_is_set (&error)) {
++		dbus_error_free (&error);
++		return FALSE;
++	}
++
++	libhal_ctx_set_dbus_connection (ctx, conn);
++
++	if(!libhal_ctx_init (ctx, &error)) {
++		dbus_error_free (&error);
++		return FALSE;
++	}
++
+ 	/*
+ 	 * Do something to ping the HAL daemon - the above functions will
+ 	 * succeed even if hald is not running, so long as DBUS is.  But we
+ 	 * want to exit silently if hald is not running, to behave on
+ 	 * pre-2.6 systems.
+ 	 */
+-	devices = hal_get_all_devices (ctx, &nr);
++	devices = libhal_get_all_devices (ctx, &nr, &error);
+ 	if (!devices) {
+-		hal_shutdown (ctx);
++		libhal_ctx_shutdown (ctx, NULL);
++		libhal_ctx_free (ctx);
++		dbus_error_free (&error);
+ 		return FALSE;
+ 	}
+-	hal_free_string_array (devices);
++	libhal_free_string_array (devices);
+ 
+-	hal_shutdown (ctx);
++	libhal_ctx_shutdown (ctx, NULL);
++	libhal_ctx_free (ctx);
+ 	return TRUE;
+ }
+ 
