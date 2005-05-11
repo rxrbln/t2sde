@@ -34,6 +34,11 @@ if [ "$3" != "up" -a "$3" != "down" ]; then
 	exit 1
 fi
 
+if [ ! -f $rocknet_config/network ]; then
+	echo "Configuration file \"$rocknet_config/network\" missing."
+	exit 2
+fi
+
 profile=$1
 interface=$2
 mode=$3
