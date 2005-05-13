@@ -1,37 +1,28 @@
 ZOPESYSCONFDIR=/etc/opt/zope
 PRODUCTTAB=$ZOPESYSCONFDIR/producttab
 
-zope_containers=
-zope_products=
-zope_update=1
+declare -a zope_containers
+declare -a zope_products
 
 [ -f $PRODUCTTAB ] || touch $PRODUCTTAB
 
-zope_update_cache() {
-	zope_update_containers
-	zope_update_products
-	zope_update=0
-}
-
 zope_update_containers() {
-	local line=0 container=
+	local line=0 size=
 	
-	zope_containers=
-	while read container; do
-		zope_containers[ $line ]="$container"
-		(( line++ ))
-	done < $PRODUCTTAB
+	while read zope_containers[line++]; do :; done < $PRODUCTTAB
+
+	size=$line; for line in ${!zope_containers[@]}; do
+		[ $line -lt $size ] || unset zope_containers[$line]
+	done
 	}
 
 zope_containers_menu() {
-	local line=0 containers= count=
-	[ $zope_update -eq 0 ] || zope_update_cache
+	local containers= line=
 	
-	count=${#zope_containers[@]}
-
-	while [ $line -lt $count ]; do
-		containers="$containers '${zope_containers[ $line ]}' 'zope_containers_edit $line'"
-		(( line++ ))
+	for line in ${!zope_containers[@]}; do
+		[ -n "${zope_containers[$line]}" ] && \
+			containers="$containers '${zope_containers[$line]}' \
+				'zope_containers_edit $line'"
 	done
 
 	[ -z "$containers" ] || containers="$containers '' ''"
@@ -42,29 +33,36 @@ zope_containers_menu() {
 	}
 
 zope_containers_edit() {
-	local line=$1 lines=`wc -l $PRODUCTTAB`
-	# TODO: edit line $line
-	true
+	local container= line="$1"
+
+	gui_input "Please enter a directory which contains ZOPE products" "${zope_containers[$line]}" container
+	
+	if [ -z "$container" ]; then
+		unset zope_containers[$line]
+		zope_update_products
+	elif [ "${zope_containers[$line]}" != "$container" ]; then
+		zope_containers[$line]="$container"
+		zope_update_products
+	fi
 }
+
 zope_containers_add() {
 	local container=
 
 	gui_input "Please enter a directory which contains ZOPE products" '' container
 
 	if [ -n "$container" ]; then
-		zope_containers[ ${#zope_containers[@]} ]="$container"
-		echo "$container" >> $PRODUCTTAB
+		zope_containers[${#zope_containers[@]}]="$container"
+		zope_update_products
 	fi
 }
 
 zope_update_products() {
-	local container= productdir=
+	local container=0 productdir=
 	local init= product= version=
-	local entry=0 
+	local entry=0 size=
 
-	zope_products=
-
-	for container in $( cat $PRODUCTTAB ); do
+	for container in ${!zope_containers[@]}; do
 		while read init; do
 			productdir=${init%/__init__.py}
 			product=${productdir##*/}
@@ -76,18 +74,21 @@ zope_update_products() {
 				version=undefined
 			fi
 			product=${product%%-*}
-			zope_products[ $entry * 3 + 0 ]="$product"
-			zope_products[ $entry * 3 + 1 ]="$version"
-			zope_products[ $entry * 3 + 2 ]="$productdir"
+			zope_products[$entry*3+0]="$product"
+			zope_products[$entry*3+1]="$version"
+			zope_products[$entry*3+2]="$productdir"
 			(( entry++ ))
-		done < <( ls -1 $container/*/__init__.py 2> /dev/null )
+		done < <( ls -1 ${zope_containers[$container]}/*/__init__.py 2> /dev/null )
+	done
+
+	(( size=$entry*3 )); for entry in ${!zope_products[@]}; do
+		[ $entry -lt $size ] || unset zope_products[$entry]
 	done
 }
 
 zope_products_list() {
 	local entry=0 count=
 	local product= version=
-	[ $zope_update -eq 0 ] || zope_update_cache
 
 	(( count=${#zope_products[@]}/3 ))
 	while [ $entry -lt $count ]; do
@@ -105,6 +106,10 @@ zope_products_menu() {
 zope_instances() {
 	true
 }
+
+# populate caches
+zope_update_containers
+zope_update_products
 
 main() {
 	while gui_menu zope 'ZOPE Manager' \
