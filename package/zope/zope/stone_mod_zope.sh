@@ -131,7 +131,7 @@ zope_instances_menu() {
 	for line in ${!zope_instances[@]}; do
 		[ -n "${zope_instances[$line]}" ] && \
 			instances="$instances '${zope_instances[$line]}' \
-				'zope_instances_products $line'"
+				'while zope_instances_products $line; do :; done'"
 	done
 
 	[ -z "$instances" ] || instances="$instances '' ''"
@@ -144,10 +144,12 @@ zope_instances_menu() {
 zope_instances_products() {
 	local instance=$1 instancedir=${zope_instances[$1]}
 	local installed= available=
-	local productdir= products= product=
-	local installedlist=
+	local productdir= product=
+	local entry= count=
+	local productname= version=
+	local installedlist= code=
 
-	products=${#zope_products[@]}; (( products=products/3 ))
+	count=${#zope_products[@]}; (( count=count/3 ))
 
 	if [ -d $instancedir/Products ]; then
 		installed="'Installed products:' ''"
@@ -156,16 +158,18 @@ zope_instances_products() {
 			if [ -d $product/ -a -L $product ]; then
 				productdir="`readlink -f $product`"
 
-				for (( product=0; product<products; product++ )); do
-					[ "${zope_products[$product*3+2]}" != "$productdir" ] || break
+				for (( entry=0; entry<count; entry++ )); do
+					[ "${zope_products[$entry*3+2]}" != "$productdir" ] || break
 				done
 
-				if [ "${zope_products[$product*3+2]}" == "$productdir" ]; then
-					installedlist="$installedlist ${zope_products[$product*3+0]}"
+				if [ "${zope_products[$entry*3+2]}" == "$productdir" ]; then
+					productname="${zope_products[$entry*3+0]}"
+					version="${zope_products[$entry*3+1]}"
 
-					installed="$installed \
-						'${zope_products[$product*3+0]} - ${zope_products[$product*3+1]}' \
-						'zope_instances_update ${zope_products[$product*3+0]} \"${zope_products[$product*3+1]}\"'"
+					installedlist="$installedlist $productname"
+
+					code="zope_instances_update \"${productname}\" \"${product}\" \"${version}\""
+					installed="$installed '$productname - $version' '$code'"
 				else
 					installed="$installed '[$productdir] unknown' ''"
 				fi
@@ -176,15 +180,24 @@ zope_instances_products() {
 
 		available="'Other available products:' ''"
 
-		for (( product=0; product<products; product++ )); do
+		for (( entry=0; entry<count; entry++ )); do
 			set -- $installedlist
 			while [ $# -gt 0 ]; do
-				[ "$1" != "${zope_products[$product*3+0]}" ] || continue 2
+				[ "$1" != "${zope_products[$entry*3+0]}" ] || continue 2
 				shift
 			done
-			available="$available '${zope_products[$product*3+0]}' \
-				'zope_instances_install ${zope_products[$product*3+0]}'"
-			installedlist="$installedlist ${zope_products[$product*3+0]}"
+			productname="${zope_products[$entry*3+0]}"
+			product="$instancedir/Products/$productname"
+
+			installedlist="$installedlist $productname"
+
+			if [ -e "$product" ]; then
+				code=
+			else
+				code="zope_instances_install ${productname} \"$product\""
+			fi
+
+			available="$available '$productname' '$code'"
 		done
 	else
 		installed="'* NOT A VALID INSTANCE DIR*' ''"
@@ -199,10 +212,12 @@ zope_instances_products() {
 }
 
 zope_instances_install() {
-	true
+	local productname="$1" product="$2"
+	gui_message "Install $productname on $product"
 }
 zope_instances_update() {
-	true
+	local productname="$1" product="$2" version="$3"
+	gui_message "Update $productname - $version on $product"
 }
 
 zope_instances_edit() {
