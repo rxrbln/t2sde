@@ -95,13 +95,14 @@ zope_update_products() {
 
 zope_products_list() {
 	local entry=0 count=
-	local product= version=
+	local product= version= productdir=
 
 	(( count=${#zope_products[@]}/3 ))
 	while [ $entry -lt $count ]; do
 		product=${zope_products[ $entry * 3 + 0 ]}	
 		version=${zope_products[ $entry * 3 + 1 ]}	
-		echo "'$product - $version' 'true'"
+		productdir=${zope_products[ $entry * 3 + 2 ]}	
+		echo "'$product - $version' 'gui_message \"$productdir\"'"
 		(( entry++ ))
 	done
 }
