@@ -1,0 +1,95 @@
+#!/bin/sh
+
+if [ $UID != 0 ]; then
+	echo "Non root - exiting ..."
+	exit 1
+fi
+
+moddir="/lib/modules/`uname -r`"
+kernelver=`basename $moddir`
+
+while [ "$1" ]; do
+  case $1 in
+	*) echo "Usage: mkinitrd"
+	   exit 1 ;;
+  esac
+  shift
+done
+
+echo "Kernel: $kernelver, module dir: $moddir"
+
+if [ ! -d $moddir ]; then
+	echo "Module dir $moddir does not exist!"
+	exit 2
+fi
+
+tmpdir=`mktemp`
+
+# create basic structure
+#
+echo "Clean-up from previous runs ..."
+rm -rf $tmpdir >/dev/null
+
+mkdir -p $tmpdir/{dev,bin,sbin,proc,sys,lib/modules,etc/hotplug.d/default}
+mknod $tmpdir/dev/console c 5 1
+
+# copy the basic / rootfs kernel modules
+#
+echo "Copying kernel modules ..."
+find $moddir/kernel -type f | grep \
+	-e reiserfs -e ext2 -e ext3 -e isofs -e /jfs -e /xfs \
+	-e /unionfs -e ntfs -e /dos \
+	-e /ide/ -e /scsi/ -e hci -e usb-storage -e sbp2 |
+while read fn ; do
+	for x in $fn `modinfo $fn | grep depends |
+	         cut -d : -f 2- | sed -e 's/ //g' -e 's/,/ /g' `
+	do
+		# expand to full name if it was a depend
+		[ $x = ${x##*/}  ] &&
+		x=`find $moddir/kernel -name "$x.*o"`
+
+		# TODO: strip possible $root / $DESTDIR prefix later
+		mkdir -p `dirname $tmpdir/$x`
+		cp $x $tmpdir/$x 2>&1 | grep -v omitting
+	done
+done
+
+# generate map files
+#
+/sbin/depmod  --basedir $tmpdir $kernelver
+
+echo "Injecting remaining content ..."
+
+# copying config
+#
+cp -ar /etc/udev $tmpdir/etc/
+
+# setup programs
+#
+cp /sbin/hotplug++ $tmpdir/sbin/
+cp /sbin/{udev,udevstart,modprobe,insmod,insmod.old} $tmpdir/sbin/
+ln -s insmod.old $tmpdir/sbin/modprobe.old
+ln -sf /sbin/udev $tmpdir/etc/hotplug.d/default/10-udev.hotplug
+cp /bin/pdksh $tmpdir/bin/sh
+
+# hack - to be resolved
+#
+cp /opt/embutils/bin/{mount,umount,rm,mv,mkdir,ls,pivot_root,sleep,losetup,chmod,cat} \
+   $tmpdir/bin/
+ln -s mv $tmpdir/bin/cp
+
+cp /sbin/initrdinit $tmpdir/init
+
+# create the cpio image
+#
+echo "Archiving ..."
+( cd $tmpdir
+  find * | cpio -o -H newc | gzip -c9 > /boot/initrd-$kernelver.img
+)
+
+# display the resulting image
+#
+du -sh /boot/initrd-$kernelver.img
+rm -rf $tmpdir
+
+
