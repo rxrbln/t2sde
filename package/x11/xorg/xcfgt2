@@ -1,0 +1,83 @@
+#!/bin/sh
+
+# Quick T2 live X driver matching ... (C) Copyright Rene Rebe - GPL
+
+tmp=`mktemp`
+
+lspci | grep -i vga | cut -d ' ' -f 2- | cut -d : -f 2- > $tmp
+
+echo "Video card:`cat $tmp`"
+
+case `cat $tmp | tr A-Z a-z` in
+	*radeon*)       xdrv=radeon ;;
+	*ati*)          xdrv=ati ;;
+	*sis*)		xdrv=sis ;;
+	*cirrus*)	xdrv=cirrus ;;
+	*savage*)	xdrv=savage ;;
+	*virge*)	xdrv=s3virge ;;
+	*s3*)		xdrv=s3 ;;
+
+# this intel matches might not be accurate enough
+	*intel*7*)		xdrv=i740 ;;
+	*intel*8*|*intel*9*)	xdrv=i810 ;;
+
+	*via*)		xdrv=via ;;
+	*trident*)	xdrv=trident ;;
+	*rendition*)	xdrv=rendition ;;
+	*neo*)		xdrv=neomagic ;;
+	*tseng*)	xdrv=tseng ;;
+
+	*mtx*)		xdrv=mtx ;;
+	*matrox*)	xdrv=mga ;;
+
+	*cyrix*)	xdrv=cyrix ;;
+	*silicon*)	xdrv=siliconmotion ;;
+	*chips*)	xdrv=chips ;;
+
+# wmware tdfx ark glint mtx nsc tga
+
+	# must be last so *nv* does not match one of the above
+	*nv*|*geforce*)	xdrv=nv ;;
+esac
+
+# later we might use the binary only driver ...
+#[ "$xdrv" = nv -a -f /usr/X11/lib/modules/drivers/nvidia_drv.o ] &&
+#	xdrv=nvidia
+
+# no driver? fallback to either vesa or fbdev ...
+if [ -z "$xdrv" ]; then
+	if [[ `uname -m` = i*86 ]]
+	then xdrv=vesa
+	else xdrv=fbdev ; fi 
+fi
+
+echo "X Driver:   $xdrv"
+
+modes=""
+depth=16
+if [[ `uname -m` = i*86 ]]; then
+	ddcprobe > $tmp
+
+	if grep -q failed $tmp ; then
+	  echo "DDC read failed"
+	else
+	  grep "Standard timing" $tmp
+	  # -e 's/Standard timing .: .* Hz, \(.*\)/XX\1/'
+	  modes=`grep -A 1000 '^Established' $tmp |
+	         grep -B 1000 '^Standard' |
+	         sed -e 's/[\t ]*\([^ ]*\).*/\1/' -e '/^[A-Z]/d' |
+	         sort -rn | uniq | sed 's/\(.*\)/"\1"/'`
+	fi
+fi
+
+if [ -z "$modes" ]; then
+	echo "No modes from DDC detection, using defaults!"
+	modes='"1024x768" "800x600" "640x480"'
+fi
+
+echo "Using modes: $modes"
+echo "    @ depth: $depth"
+
+sed -e "s/\$xdrv/$xdrv/g" -e "s/\$modes/$modes/g" -e "s/\$depth/$depth/g" \
+    /etc/X11/xorg.conf.template > /etc/X11/xorg.conf
+
