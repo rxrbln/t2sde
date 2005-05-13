@@ -1,0 +1,81 @@
+#!/bin/sh
+
+echo "T2 early userspace ..."
+
+PATH=/sbin:/bin
+
+echo "Mounting /dev, /proc and /sys ..."
+mount -t tmpfs /dev /dev
+mount -t proc /proc /proc
+mount -t sysfs /sys /sys
+
+# later on we might reverse these, that is run udevstart first,
+# and let udev add new ones as hotplug agents ...
+
+echo "Running hotplug++ hardware detection ..."
+/sbin/hotplug++ -synth
+echo "/sbin/hotplug++" > /proc/sys/kernel/hotplug
+
+echo "Loading additional subsystem and filesystem driver ..."
+# hack to be removed
+modprobe sbp2
+
+# well some hardcoded help for now ...
+modprobe ide-disk
+modprobe ide-cd
+modprobe sd_mod
+modprobe sr_mod
+
+# the modular filesystems ...
+for x in /lib/modules/*/kernel/fs/{*/,}*.*o ; do
+	x=${x##*/} ; x=${x%.*o}
+	modprobe $x
+done
+
+sleep 2 # hope USB and IEEE1394 devices settle down ...
+
+echo "Populating /dev (udev) ..."
+/sbin/udevstart
+
+echo "Mounting rootfs ..."
+
+mkdir /rootfs
+
+# get the root device
+set `cat /proc/cmdline`
+while [ "$1" ] && [[ "$1" != root=* ]]; do
+	shift
+done
+
+if [[ "$1" = root=* ]]; then
+	eval export $1
+
+	cat /proc/filesystems | while read fs junk; do
+		[ $fs = nodev ] && continue
+		if ! mount -t $fs $root /rootfs; then
+			echo "failed mounting rootfs as $fs"
+		else
+			echo "succeed mounting rootfs as $fs"
+			break
+		fi
+	done
+
+
+	mount -m -t none /dev /rootfs/dev
+	mount -m -t none /proc /rootfs/proc
+	mount -m -t none /sys /rootfs/sys
+
+	cd /rootfs
+	pivot_root . tmp
+	cd /
+
+	if [ -f /sbin/init ]; then
+		echo rm -rf /tmp/*
+		echo umount /tmp
+		exec /sbin/init
+	fi
+fi
+
+echo "Ouhm - no root but I do not scream. Debug shell:"
+exec /bin/sh
+
