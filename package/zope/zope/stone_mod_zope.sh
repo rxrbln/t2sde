@@ -165,7 +165,7 @@ zope_instances_products() {
 
 					installed="$installed \
 						'${zope_products[$product*3+0]} - ${zope_products[$product*3+1]}' \
-						true"
+						'zope_instances_update ${zope_products[$product*3+0]} \"${zope_products[$product*3+1]}\"'"
 				else
 					installed="$installed '[$productdir] unknown' ''"
 				fi
@@ -182,7 +182,9 @@ zope_instances_products() {
 				[ "$1" != "${zope_products[$product*3+0]}" ] || continue 2
 				shift
 			done
-			available="$available '${zope_products[$product*3+0]}' true"
+			available="$available '${zope_products[$product*3+0]}' \
+				'zope_instances_install ${zope_products[$product*3+0]}'"
+			installedlist="$installedlist ${zope_products[$product*3+0]}"
 		done
 	else
 		installed="'* NOT A VALID INSTANCE DIR*' ''"
@@ -194,6 +196,13 @@ zope_instances_products() {
 		$installed \
 		'' '' \
 		$available"
+}
+
+zope_instances_install() {
+	true
+}
+zope_instances_update() {
+	true
 }
 
 zope_instances_edit() {
@@ -239,5 +248,4 @@ main() {
 
 	zope_containers_commit
 	zope_instances_commit
-	
 }
