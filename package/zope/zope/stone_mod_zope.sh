@@ -213,7 +213,29 @@ zope_instances_products() {
 
 zope_instances_install() {
 	local productname="$1" product="$2"
-	gui_message "Install $productname on $product"
+	local productdir= version=
+
+	if gui_yesno "Are you sure you want to install $productname?"; then
+		count=${#zope_products[@]}; (( count=count/3 ))
+		for (( entry=0; entry<count; entry++ )); do
+			[ "${zope_products[$entry*3+0]}" == "$productname" ] || continue
+			version="${zope_products[$entry*3+1]}"
+			productdir="${zope_products[$entry*3+2]}"
+			break
+		done
+
+		if [ ! -e "$product" -a "${zope_products[$entry*3+0]}" == "$productname" ]; then
+			if ln -s "$productdir" "$product"; then
+				gui_message "$productname - $version was succesfully installed"
+		
+				zope_instances_update "${productname}" "${product}" "${version}"
+			else
+				gui_message "Failed to install $productname - $version"
+			fi
+		else
+			gui_message "Failed to install $productname, garbage on the road."
+		fi
+	fi
 }
 zope_instances_uninstall() {
 	rm "$1"
