@@ -215,9 +215,34 @@ zope_instances_install() {
 	local productname="$1" product="$2"
 	gui_message "Install $productname on $product"
 }
+zope_instances_uninstall() {
+	rm "$1"
+}
+zope_instances_set() {
+	rm "$1"
+	ln -s "$2" "$1"
+}
+
 zope_instances_update() {
 	local productname="$1" product="$2" version="$3"
-	gui_message "Update $productname - $version on $product"
+	local versions= entry= count=
+
+	count=${#zope_products[@]}; (( count=count/3 ))
+	for (( entry=0; entry<count; entry++ )); do
+		[ "${zope_products[$entry*3+0]}" == "$productname" ] || continue
+		if [ "${zope_products[$entry*3+1]}" == "$version" ]; then
+			versions="$versions '(X) ${zope_products[$entry*3+1]}' 'true'"
+		else
+			versions="$versions '( ) ${zope_products[$entry*3+1]}' \
+				'zope_instances_set \"$product\" \"${zope_products[$entry*3+2]}\"'"
+		fi
+	done
+
+	eval "gui_menu zope_instance_update 'Update Zope Instance Product - $productname' \
+		$versions \
+		'' '' \
+		'Uninstall $productname - $version' 'zope_instances_uninstall \"$product\"'"
+	true
 }
 
 zope_instances_edit() {
