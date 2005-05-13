@@ -57,6 +57,13 @@ zope_containers_add() {
 	fi
 }
 
+zope_containers_commit() {
+	local container=
+	for container in ${!zope_containers[@]}; do
+		echo "${zope_containers[$container]}"
+	done > $PRODUCTTAB
+}
+
 zope_update_products() {
 	local container=0 productdir=
 	local init= product= version=
@@ -117,4 +124,7 @@ main() {
 		'Available Products'	'while zope_products_menu; do : ; done'		\
 		'ZOPE Instances'	zope_instances	
 		do : ; done
+
+	zope_containers_commit
+	
 }
