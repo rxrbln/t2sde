@@ -1,10 +1,13 @@
 ZOPESYSCONFDIR=/etc/opt/zope
 PRODUCTTAB=$ZOPESYSCONFDIR/producttab
+INSTANCETAB=$ZOPESYSCONFDIR/instancetab
 
 declare -a zope_containers
+declare -a zope_instances
 declare -a zope_products
 
 [ -f $PRODUCTTAB ] || touch $PRODUCTTAB
+[ -f $INSTANCETAB ] || touch $INSTANCETAB
 
 zope_update_containers() {
 	local line=0 size=
@@ -14,7 +17,7 @@ zope_update_containers() {
 	size=$line; for line in ${!zope_containers[@]}; do
 		[ $line -lt $size ] || unset zope_containers[$line]
 	done
-	}
+}
 
 zope_containers_menu() {
 	local containers= line=
@@ -30,7 +33,7 @@ zope_containers_menu() {
 	eval "gui_menu zope_container 'ZOPE Product Containers' \
 		$containers \
 		'Add new product container' zope_containers_add"
-	}
+}
 
 zope_containers_edit() {
 	local container= line="$1"
@@ -106,26 +109,80 @@ zope_products_list() {
 		(( entry++ ))
 	done
 }
+
 zope_products_menu() {
 	eval "gui_menu zope_products 'ZOPE Products List' \
 		$( zope_products_list | sort -t'	' | tr '\n' ' ' )"
 }
 
-zope_instances() {
-	true
+zope_update_instances() {
+	local line=0 size=
+	
+	while read zope_instances[line++]; do :; done < $INSTANCETAB
+
+	size=$line; for line in ${!zope_instances[@]}; do
+		[ $line -lt $size ] || unset zope_instances[$line]
+	done
+	}
+
+zope_instances_menu() {
+	local instances= line=
+	
+	for line in ${!zope_instances[@]}; do
+		[ -n "${zope_instances[$line]}" ] && \
+			instances="$instances '${zope_instances[$line]}' \
+				'zope_instances_edit $line'"
+	done
+
+	[ -z "$instances" ] || instances="$instances '' ''"
+
+	eval "gui_menu zope_instance 'ZOPE Instances' \
+		$instances \
+		'Add new instance' zope_instances_add"
+}
+
+zope_instances_edit() {
+	local instance= line="$1"
+
+	gui_input "Please enter a directory which contains the ZOPE instance" "${zope_instances[$line]}" instance
+	
+	if [ -z "$instance" ]; then
+		unset zope_instances[$line]
+	elif [ "${zope_instances[$line]}" != "$instance" ]; then
+		zope_instances[$line]="$instance"
+	fi
+}
+
+zope_instances_add() {
+	local instance=
+
+	gui_input "Please enter a directory which contains the ZOPE instance" '' instance
+
+	if [ -n "$instance" ]; then
+		zope_instances[${#zope_instances[@]}]="$instance"
+	fi
+}
+
+zope_instances_commit() {
+	local instance=
+	for instance in ${!zope_instances[@]}; do
+		echo "${zope_instances[$instance]}"
+	done > $INSTANCETAB
 }
 
 # populate caches
 zope_update_containers
 zope_update_products
+zope_update_instances
 
 main() {
 	while gui_menu zope 'ZOPE Manager' \
-		'Product Containers'	'while zope_containers_menu; do : ; done'	\
-		'Available Products'	'while zope_products_menu; do : ; done'		\
-		'ZOPE Instances'	zope_instances	
-		do : ; done
+		'Product Containers'	'while zope_containers_menu; do :; done'	\
+		'Available Products'	'while zope_products_menu; do :; done'		\
+		'ZOPE Instances'	'while zope_instances_menu; do :; done'
+		do :; done
 
 	zope_containers_commit
+	zope_instances_commit
 	
 }
