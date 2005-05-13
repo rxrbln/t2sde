@@ -143,24 +143,26 @@ zope_instances_menu() {
 
 zope_instances_products() {
 	local instance=$1 instancedir=${zope_instances[$1]}
-	local installed= notinstalled=
+	local installed= available=
 	local productdir= products= product=
+	local installedlist=
+
+	products=${#zope_products[@]}; (( products=products/3 ))
 
 	if [ -d $instancedir/Products ]; then
-		installed="$installed 'Installed products:' ''"
+		installed="'Installed products:' ''"
 
 		for product in $instancedir/Products/*; do
 			if [ -d $product/ -a -L $product ]; then
 				productdir="`readlink -f $product`"
 
-				products=${#zope_products[@]}; (( products=products/3 ))
-				product=0
-				while [ $product -lt $products ]; do
+				for (( product=0; product<products; product++ )); do
 					[ "${zope_products[$product*3+2]}" != "$productdir" ] || break
-					(( product++ ))
 				done
 
 				if [ "${zope_products[$product*3+2]}" == "$productdir" ]; then
+					installedlist="$installedlist ${zope_products[$product*3+0]}"
+
 					installed="$installed \
 						'${zope_products[$product*3+0]} - ${zope_products[$product*3+1]}' \
 						true"
@@ -171,6 +173,17 @@ zope_instances_products() {
 				installed="$installed '[${product##*/}] static' ''"
 			fi
 		done
+
+		available="'Other available products:' ''"
+
+		for (( product=0; product<products; product++ )); do
+			set -- $installedlist
+			while [ $# -gt 0 ]; do
+				[ "$1" != "${zope_products[$product*3+0]}" ] || continue 2
+				shift
+			done
+			available="$available '${zope_products[$product*3+0]}' true"
+		done
 	else
 		installed="'* NOT A VALID INSTANCE DIR*' ''"
 	fi
@@ -180,7 +193,7 @@ zope_instances_products() {
 		'' '' \
 		$installed \
 		'' '' \
-		$notinstalled"
+		$available"
 }
 
 zope_instances_edit() {
