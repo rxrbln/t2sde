@@ -131,7 +131,7 @@ zope_instances_menu() {
 	for line in ${!zope_instances[@]}; do
 		[ -n "${zope_instances[$line]}" ] && \
 			instances="$instances '${zope_instances[$line]}' \
-				'zope_instances_edit $line'"
+				'zope_instances_products $line'"
 	done
 
 	[ -z "$instances" ] || instances="$instances '' ''"
@@ -139,6 +139,48 @@ zope_instances_menu() {
 	eval "gui_menu zope_instance 'ZOPE Instances' \
 		$instances \
 		'Add new instance' zope_instances_add"
+}
+
+zope_instances_products() {
+	local instance=$1 instancedir=${zope_instances[$1]}
+	local installed= notinstalled=
+	local productdir= products= product=
+
+	if [ -d $instancedir/Products ]; then
+		installed="$installed 'Installed products:' ''"
+
+		for product in $instancedir/Products/*; do
+			if [ -d $product/ -a -L $product ]; then
+				productdir="`readlink -f $product`"
+
+				products=${#zope_products[@]}; (( products=products/3 ))
+				product=0
+				while [ $product -lt $products ]; do
+					[ "${zope_products[$product*3+2]}" != "$productdir" ] || break
+					(( product++ ))
+				done
+
+				if [ "${zope_products[$product*3+2]}" == "$productdir" ]; then
+					installed="$installed \
+						'${zope_products[$product*3+0]} - ${zope_products[$product*3+1]}' \
+						true"
+				else
+					installed="$installed '[$productdir] unknown' ''"
+				fi
+			elif [ -d $product/ ]; then
+				installed="$installed '[${product##*/}] static' ''"
+			fi
+		done
+	else
+		installed="'* NOT A VALID INSTANCE DIR*' ''"
+	fi
+
+	eval "gui_menu zope_instance_product 'Zope Instance Products' \
+		'location: $instancedir' 'zope_instances_edit $instance' \
+		'' '' \
+		$installed \
+		'' '' \
+		$notinstalled"
 }
 
 zope_instances_edit() {
