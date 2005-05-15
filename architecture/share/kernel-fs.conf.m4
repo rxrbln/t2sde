@@ -22,11 +22,18 @@ CONFIG_ZISOFS=y
 CONFIG_DEVPTS_FS=y
 CONFIG_PROC_FS=y
 
+dnl mark the usual suspects modular
+dnl
+CONFIG_EXT2_FS=m
+CONFIG_EXT3_FS=m
+CONFIG_ISO9660_FS=m
+CONFIG_FAT_FS=m
+
 dnl Network FS settings
 dnl Version 3 has several advantages ...
 dnl
-CONFIG_NFS_FS=y
-CONFIG_NFS_V3=y
+CONFIG_NFS_FS=m
+CONFIG_NFS_V3=m
 CONFIG_NFSD_V3=m
 
 dnl ROMFS, RAMFS, CRAMFS and TMPFS (for initrd, install and /tmp)

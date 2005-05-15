@@ -125,6 +125,14 @@ CONFIG_VGA_CONSOLE=y
 CONFIG_VIDEO_SELECT=y
 CONFIG_FB=y
 CONFIG_FB_VESA=y
+dnl some modules we might never need built-in the details are controlled
+dnl by the architecture, e.g. radeon/riva built-in for PowerPC ...
+CONFIG_FB_VOODOO1=m
+CONFIG_FB_TRIDENT=m
+CONFIG_FB_SIS=m
+CONFIG_FB_CYBER2000=m
+CONFIG_FB_PM2=m
+
 
 dnl Console (Serial) Options
 dnl
