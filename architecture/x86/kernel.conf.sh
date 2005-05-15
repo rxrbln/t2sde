@@ -97,8 +97,11 @@
 		include(`kernel-net.conf.m4')
 		include(`kernel-fs.conf.m4')
 
-		dnl NTFS
-		CONFIG_NTFS_FS=m
+		dnl Not all framebuffers are save to built in nor
+		dnl wanted to built-in resulting in a huge kernel
+		dnl
+		CONFIG_FB_RIVA=m
+		CONFIG_FB_RADEON=m
 	EOT
 } | m4 -I $base/architecture/$arch -I $base/architecture/share
 
