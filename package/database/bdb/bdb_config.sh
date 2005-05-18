@@ -30,6 +30,11 @@ configscript="../dist/configure"
 var_append confopt ' ' '--enable-compat185'
 var_append confopt ' ' '--enable-cxx'
 
+if [ "$JAVA_HOME" ]; then
+	pkginstalled jikes && export JAVAC=jikes
+	var_append confopt ' ' '--enable-java'
+fi
+
 # we need the install-sh here, since our gnu-install does not
 # handle the transform-name ...
 var_append confopt ' ' "--program-transform-name='s/db/db${ver:0:1}/'"
