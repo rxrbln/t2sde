@@ -81,6 +81,13 @@
 		dnl
 		CONFIG_FB_RIVA=m
 		CONFIG_FB_RADEON=m
+
+		dnl The default is to support those old ISA boxes.
+		dnl A target might get rid of it.
+		dnl
+		CONFIG_ISAPNP=y
+		CONFIG_PNPBIOS=y
+
 	EOT
 } | m4 -I $base/architecture/$arch -I $base/architecture/share
 
