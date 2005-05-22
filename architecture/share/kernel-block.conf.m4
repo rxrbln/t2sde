@@ -41,6 +41,9 @@ CONFIG_BLK_DEV_RZ1000=m
 CONFIG_BLK_DEV_PIIX=m
 
 CONFIG_SCSI_SATA=y
+dnl Make sure the drivers are modular ...
+dnl
+CONFIG_SCSI_ATA_PIIX=m
 
 CONFIG_SCSI_QLA2XXX=m
 
