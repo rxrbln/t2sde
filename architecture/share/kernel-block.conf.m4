@@ -40,7 +40,8 @@ CONFIG_BLK_DEV_GENERIC=m
 CONFIG_BLK_DEV_RZ1000=m
 CONFIG_BLK_DEV_PIIX=m
 
-CONFIG_SCSI_SATA=m
+CONFIG_SCSI_SATA=y
+
 CONFIG_SCSI_QLA2XXX=m
 
 dnl Use multi-mode and DMA since this reduces the CPU load and
