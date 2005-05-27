@@ -375,10 +375,37 @@ void Check4Updates (const Package& package)
 {
   unsigned int no_downloads = package.download.download_infos.size();
   for (unsigned int dln = 0; dln < no_downloads; ++dln) {
-    const DownloadInfo& info = package.download.download_infos[dln];
+    DownloadInfo info = package.download.download_infos[dln];
     if (info.protocol != "http" && info.protocol != "ftp")
       continue;
-    
+
+    // Apply translations ...
+    int pid;
+    int sink[2];
+    int source[2];
+    pipe (sink);
+    pipe (source);
+    if ( (pid = fork()) == 0) {
+	dup2(sink[0],0); close(sink[0]); close(sink[1]);
+	dup2(source[1],1); close(source[0]); close(source[1]);
+	execlp("sed", "sed", "-f", "misc/share/CVTranslations", NULL);
+	perror("sed");
+	_exit(1);
+    }
+
+    write (sink[1], info.url.c_str(), info.url.length()+1);
+    close(sink[0]); close(sink[1]);
+
+    char buffer [4096];
+    read (source[0], buffer, sizeof(buffer));
+    close(source[1]); close(source[0]);
+
+    std::string nice_buffer (buffer);
+    if (nice_buffer != info.url) {
+	std::cout << "Download URL translated!" << std::endl;
+        info.url = nice_buffer;
+    }
+
     std::cout << "Checking updates for " << info.url << std::endl;
     
     GenList(info);
