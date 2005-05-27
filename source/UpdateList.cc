@@ -37,7 +37,8 @@ public:
 	return;
       }
     version.clear();
-    std::cout << "No version extracted!" << std::endl;
+    if (debug)
+      std::cout << "No version extracted!" << std::endl;
   }
   
   std::string::size_type size() const {
@@ -295,8 +296,8 @@ void ParseList (std::string file, std::ifstream& s) {
 	std::string matched = token.substr(begin, length);
 	Version v;
 	v.ExtractFromFilename (matched);
-	
-	versions.push_back(v);
+	if (v.size() > 0)
+	  versions.push_back(v);
       }
 
     }
