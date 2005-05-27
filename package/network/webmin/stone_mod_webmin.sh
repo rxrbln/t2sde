@@ -16,9 +16,9 @@
 # [MAIN] 80 webmin Webmin Configuration
 
 WEBMINDIR=/opt/webmin
-USERFILE=/etc/webmin/miniserv.users
-CONFFILE=/etc/webmin/miniserv.conf
-ACLFILE=/etc/webmin/webmin.acl
+USERFILE=/etc/opt/webmin/miniserv.users
+CONFFILE=/etc/opt/webmin/miniserv.conf
+ACLFILE=/etc/opt/webmin/webmin.acl
 
 set_pw() {
 	LOGIN="$1"
