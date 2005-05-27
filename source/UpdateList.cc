@@ -326,7 +326,7 @@ void ParseList (std::string file, std::ifstream& s) {
 
   std::sort(newer_versions.begin(), newer_versions.end());
   if (newer_versions.size() > 0)
-    std::cout << "XXX " << prefix << newer_versions[0].str() << std::endl;
+    std::cout << "XXX " << prefix << newer_versions.back().str() << std::endl;
   
   std::cout << "-----------------------" << std::endl;
 }
