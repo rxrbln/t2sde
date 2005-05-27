@@ -414,13 +414,16 @@ void Check4Updates (const Package& package)
 
 int main (int argc, char* argv[])
 {
+  Package package;
+
   suffixes.push_back(".tar.bz2");
   suffixes.push_back(".tar.gz");
   suffixes.push_back(".tbz2");
   suffixes.push_back(".tgz");
   suffixes.push_back(".bz2");
   suffixes.push_back(".gz");
-  
+
+#ifdef TESTING
   std::vector<Version> versions;
   versions.push_back(Version("1.2.2"));
   versions.push_back(Version("1.2.12"));
@@ -436,8 +439,6 @@ int main (int argc, char* argv[])
   versions.push_back(Version("1.2.3-rc1"));
   versions.push_back(Version("1.2.3.1"));
 
-  Package package;
-
   std::cout << "-----------------------" << std::endl;
 
   std::sort(versions.begin(), versions.end());
@@ -446,6 +447,7 @@ int main (int argc, char* argv[])
     std::cout << "  " << versions[i].str() << std::endl;
   
   std::cout << "-----------------------" << std::endl;
+#endif
 
   for (int i = 1; i < argc; ++i)
     {
