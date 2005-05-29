@@ -395,8 +395,8 @@ void Check4Updates (const Package& package)
 	_exit(1);
     }
 
-    write (sink[1], info.url.c_str(), info.url.length()+1);
     close(sink[0]); close(sink[1]);
+    write (sink[1], info.url.c_str(), info.url.length()+1);
 
     char buffer [4096];
     read (source[0], buffer, sizeof(buffer));
