@@ -9,7 +9,8 @@
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <unistd.h>
-#include <glob.h>
+
+#include "Glob.hh"
 
 const bool debug = 0;
 
@@ -461,12 +462,11 @@ int main (int argc, char* argv[])
 	fname = "package/*/" + fname + "/" + fname + ".desc";
 	// std::cout << "Checking " << fname << std::endl;
 
-	glob_t globbuf;
-	if (glob(fname.c_str(), GLOB_ERR, NULL, &globbuf) == 0) {
-	  fname = globbuf.gl_pathv[0];
+	Utility::Glob x(fname);
+	if (x.begin() != x.end ()) {
+	  fname = *x.begin();
 	  // std::cout << "Found " << fname << std::endl;
 	}
-	globfree(&globbuf);
       }
 
       // parse package ...
