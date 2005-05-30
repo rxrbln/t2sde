@@ -150,7 +150,7 @@ public:
 	}
 	return val > other.val;
       }
-      
+
     private:
       std::string val;
     };
@@ -232,6 +232,11 @@ public:
   {
     return compare(*this, b) == 1;
   }
+
+  bool operator== (const Version& b) const
+  {
+    return version == b.version;
+  }
   
   const std::string& str () const {
     return version;
@@ -300,8 +305,11 @@ void ParseList (std::string file, std::ifstream& s) {
 	std::string matched = token.substr(begin, length);
 	Version v;
 	v.ExtractFromFilename (matched);
-	if (v.size() > 0)
-	  versions.push_back(v);
+	if (v.size() > 0) {
+          if (std::find (versions.begin(), versions.end(), v) == versions.end()) {
+	    versions.push_back(v);
+	  }
+	}
       }
 
     }
