@@ -10,7 +10,10 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
+#include "pstream.hh"
 #include "Glob.hh"
+
+using namespace Utility;
 
 const bool debug = 0;
 
@@ -382,30 +385,17 @@ void Check4Updates (const Package& package)
       continue;
 
     // Apply translations ...
-    int pid;
-    int sink[2];
-    int source[2];
-    pipe (sink);
-    pipe (source);
-    if ( (pid = fork()) == 0) {
-	dup2(sink[0],0); close(sink[0]); close(sink[1]);
-	dup2(source[1],1); close(source[0]); close(source[1]);
-	execlp("sed", "sed", "-f", "misc/share/CVTranslations", NULL);
-	perror("sed");
-	_exit(1);
-    }
+    pstream sed ("sed", (char*[]){"sed", "-f", "misc/share/CVTranslations", 0} );
 
-    close(sink[0]); close(sink[1]);
-    write (sink[1], info.url.c_str(), info.url.length()+1);
+    sed << info.url << std::endl;
+    sed.close_sink();
 
-    char buffer [4096];
-    read (source[0], buffer, sizeof(buffer));
-    close(source[1]); close(source[0]);
+    std::string translated_url;
+    sed >> translated_url;
 
-    std::string nice_buffer (buffer);
-    if (nice_buffer != info.url) {
+    if (translated_url != info.url) {
 	std::cout << "Download URL translated!" << std::endl;
-        info.url = nice_buffer;
+        info.url = translated_url;
     }
 
     std::cout << "Checking updates for " << info.url << std::endl;
