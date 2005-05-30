@@ -452,7 +452,7 @@ int main (int argc, char* argv[])
 	fname = "package/*/" + fname + "/" + fname + ".desc";
 	// std::cout << "Checking " << fname << std::endl;
 
-	Utility::Glob x(fname);
+	Glob x(fname);
 	if (x.begin() != x.end ()) {
 	  fname = *x.begin();
 	  // std::cout << "Found " << fname << std::endl;
