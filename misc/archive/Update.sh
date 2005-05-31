@@ -31,7 +31,7 @@ rm -f $$.diff
 pkg=`echo $pkg | tr [A-Z] [a-z]`
 
 if [ -d package/*/$pkg ]; then
-	./scripts/Create-PkgUpdPatch $pkg-$ver | tee $$.diff
+	./scripts/Create-PkgUpdPatch $pkg $ver | tee $$.diff
 	patch -p1 < $$.diff
 	rm -f $$.diff
 
