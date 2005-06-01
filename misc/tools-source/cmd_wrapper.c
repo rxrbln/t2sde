@@ -381,7 +381,7 @@ reread_file_finished:
 
 		if (logfile) {
 			fprintf(logfile, "+");
-			for (c3=0; c3<=c1; c3++)
+			for (c3=0; c3<c1; c3++)
 					fprintf(logfile, " %s", newargv[c3]);
 			fprintf(logfile, "\n");
 			fclose(logfile);
