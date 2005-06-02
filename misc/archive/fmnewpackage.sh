@@ -181,7 +181,7 @@ if [ "$rep" != "*" ]; then
 fi
 
 rep=${dir/\/$package/}
-maintainer='The T2 Project <t2@exactcode.de>'
+maintainer='The T2 Project <t2@t2-project.org>'
 
 echo -n "Creating package/$dir ... "
 if [ -e package/$dir ] ; then
