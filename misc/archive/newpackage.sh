@@ -62,7 +62,7 @@ fi
 
 rep=${dir/\/$package/}
 confdir="package/$dir"
-maintainer='The T2 Project <t2@exactcode.de>'
+maintainer='The T2 Project <t2@t2-project.org>'
 
 echo -n "Creating $confdir ... "
 if [ -e $confdir ] ; then
