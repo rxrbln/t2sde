@@ -227,8 +227,12 @@ fi
 	fi > $pkglst
 	for file in $( ls build/$SDECFG_ID/TOOLCHAIN/pkgs/ ) ; do
 		x="$file"
-		[ $SDECFG_CREATE_GEM = 0 ] || x=${x%.gem}
-		[ $SDECFG_CREATE_TARBZ2 = 0 ] || x=${x%.tar.bz2}
+		case $SDECFG_PKGFILE_TYPE in
+		  tarbz2)	x=${x%.tar.bz2} ;;
+		  targz)	x=${x%.tar.gz} ;;
+		  gem)		x=${x%.gem} ;;
+		  none)		: ;;
+		esac
 		if ! grep -qx "$x" $pkglst && ! test "$x" = packages.db ; then
 			file="build/$SDECFG_ID/TOOLCHAIN/pkgs/$file"
 			echo_error "$file should not be present" \
@@ -311,55 +315,48 @@ pkgloop_package() {
 		exit 1
 	fi
 
-	if [ $pkg_laststage -eq $stagelevel ] && \
-	   [ "$SDECFG_CREATE_TARBZ2" = 1 -o "$SDECFG_CREATE_GEM" = 1 ]
+	if [ $pkg_laststage -eq $stagelevel -a "$SDECFG_PKGFILE_TYPE" != none ]
 	then
 		if [ -f ${build_root}/var/adm/logs/$stagelevel-$pkg_name.err ]
 		then echo_error "Creation of binary package isn't possible, \
 because the package was not"
 		     echo_error "built successfully in (at least) the current \
 stage."
-		else	
+		else
 			echo_header "Creating binary package file for ${pkg_name}."
 			mkdir -p "${build_pkgs}"
 
-			if [ "$SDECFG_PKGFILE_VER" = 1 ]
-			then
-				v="-$( grep '^Package Name and Version:' \
-					${build_root}/var/adm/packages/$pkg_name | cut -f6 -d' ' )"
-			else
-				v=""
+			file=${pkg_name}
+			if [ "$SDECFG_PKGFILE_VER" = 1 ]; then
+				v="$( grep '^Package Name and Version:' \
+				      ${build_root}/var/adm/packages/$pkg_name | cut -f6 -d' ' )"
+				file="$file-$v"
 			fi
 
-			echo_status "Building build/.../pkgs/`
-					`${pkg_name}${v}.tar.bz2"
+			case $SDECFG_PKGFILE_TYPE in
+			  tarbz2) compressor=bzip2 ; file=$file.tar.bz2 ;;
+			  targz) compressor=gzip ; file=$file.tar.gz ;;
+			  gem) compressor=bzip2 ; file=$file.tar.bz2 ;; # intermediate
+			  # none) - will never ger here for none ...
+			esac
+
+			echo_status "Building build/.../pkgs/$file"
 			# sort var/adm before the rest - so they can be extracted, quickly
 			( cd "$build_root/"
 			  (grep    ' var/adm' var/adm/flists/$pkg_name
 			   grep -v ' var/adm' var/adm/flists/$pkg_name) | cut -f2- -d' ' |
-			  tar -cf- --no-recursion --files-from=- | bzip2
-			) > "${build_pkgs}/${pkg_name}${v}.tar.bz2.tmp"
+			  tar -cf- --no-recursion --files-from=- | $compressor
+			) > ${build_pkgs}/$file.tmp
+			mv ${build_pkgs}/$file{.tmp,}
 
-			if [ "$SDECFG_CREATE_GEM" = 1 ] ; then
-				echo_status "Building build/.../pkgs/`
-					`${pkg_name}${v}.gem"
-				mine -C "$build_root/var/adm" \
-				     "${build_pkgs}/${pkg_name}${v}.tar.bz2.tmp" \
-				     $pkg_name "$build_pkgs/${pkg_name}${v}.gem.tmp"
-			fi
+			if [ "$SDECFG_PKGFILE_TYPE" = gem ] ; then
+				echo_status "Building build/.../pkgs/${file%.tar.bz2}.gem"
+				mine -C "$build_root/var/adm" $build_pkgs/$file $pkg_name \
+				     $build_pkgs/${file%.tar.bz2}.gem.tmp
+				mv $build_pkgs/${file%.tar.bz2}.gem{.tmp,}
 
-			if [ "$SDECFG_CREATE_TARBZ2" = 1 ] ; then
-				mv "$build_pkgs/${pkg_name}${v}.tar.bz2.tmp" \
-				   "$build_pkgs/${pkg_name}${v}.tar.bz2"
-				if [ "$SDECFG_CREATE_GEM" = 1 ] ; then
-					mv "$build_pkgs/${pkg_name}${v}.gem.tmp" \
-					   "$build_pkgs/${pkg_name}${v}.gem"
-				fi
-			else
 				echo_status "Removing temporary tar.bz2."
-				rm -f "$build_pkgs/${pkg_name}${v}.tar.bz2.tmp"
-				mv "$build_pkgs/${pkg_name}${v}.gem.tmp" \
-				   "$build_pkgs/${pkg_name}${v}.gem"
+				rm -f $build_pkgs/$file
 			fi
 		fi
 	fi
