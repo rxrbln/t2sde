@@ -5,11 +5,12 @@ if [ "$1" == "-count" ]; then
 		while read maintainer; do
 			echo -n "-> '$maintainer' ..."
 			count=$( grep -l "^\[M\] $maintainer\$" package/*/*/*.desc | wc -l )
-			echo "$count"
+			echo " $count."
 		done
 elif [ "$1" == "-list" ]; then
 	grep '^\[M\]' package/*/*/*.desc | cut -d' ' -f2- | sort -u
 elif [ $# -eq 2 ]; then
+	echo "	* changed '$1' packages to '$2'" >> commit-fixmaintainer.txt
 	echo "changing '$1' to '$2'..."
 	for x in `grep -l "^\[M\] $1[ \t]*$" package/*/*/*.desc`; do
 		echo "-> $x"
