@@ -113,7 +113,7 @@ public:
 	try { // catch range exceptions ;-)
 	  if (!same_cclass(val[0], other.val[0]))
 	    return (isalpha(val[0]));
-	  
+
 	  // special case for numbers only, so real values are compared
 	  if (isdigit(val[0]) && isdigit(other.val[0])) {
 	    int int_val, other_int_val;
@@ -122,6 +122,16 @@ public:
 	    if (debug)
 	      std::cout << "Intergers only: " << int_val << " "
 			<< other_int_val << std::endl;
+
+            // do not compare overly large versions - they are most probably
+            // a data (e.g. 3-... vs 2004-...)
+            if ( std::abs(int_val - other_int_val) > 100) {
+              if (debug)
+                std::cout << "Version differ too much - skipped ..."
+                          << std::endl;
+              return true; // always lower ,-)
+            }
+
 	    return int_val < other_int_val;
 	  }
 	}
@@ -134,7 +144,7 @@ public:
 	try { // catch range exceptions ;-)
 	  if (!same_cclass(val[0], other.val[0]))
 	    return (isalpha(other.val[0]));
-	  
+
 	  // special case for numbers only, so real values are compared
 	  if (isdigit(val[0]) && isdigit(other.val[0])) {
 	    int int_val, other_int_val;
@@ -143,6 +153,16 @@ public:
 	    if (debug)
 	      std::cout << "Intergers only: " << int_val << " "
 			<< other_int_val << std::endl;
+
+            // do not compare overly large versions - they are most probably
+            // a data (e.g. 3-... vs 2004-...)
+            if ( std::abs(int_val - other_int_val) > 100) {
+              if (debug)
+                std::cout << "Version differ too much - skipped ..." 
+                          << std::endl;
+              return false;
+            }
+
 	    return int_val > other_int_val;
 	  }
 	}
@@ -438,6 +458,7 @@ int main (int argc, char* argv[])
   versions.push_back(Version("1.2.3-alpha"));
   versions.push_back(Version("1.2.3-rc1"));
   versions.push_back(Version("1.2.3.1"));
+  versions.push_back(Version("2004-12-24"));
 
   std::cout << "-----------------------" << std::endl;
 
