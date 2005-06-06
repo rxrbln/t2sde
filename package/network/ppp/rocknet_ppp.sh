@@ -59,7 +59,7 @@ chat_init_if() {
     if isfirst "chat_$if" ; then
 	addcode up 4 1 "echo -n > \$ppp_${if}_chat"
 	addcode up 4 6 "ppp_option \$ppp_${if}_config \
-	                connect \'chat -v -f \$ppp_${if}_chat\'"
+	                connect \'chat -v -s -f \$ppp_${if}_chat\'"
     fi
 }
 
