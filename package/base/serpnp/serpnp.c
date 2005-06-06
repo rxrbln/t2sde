@@ -56,7 +56,7 @@ static symtab_t pnpsymtab[] = {
     { "KYE0001",  "-ms" },		/* Genius PnP Mouse */
     { "KYE0002",  "-ms" },		/* MouseSystem (Genius?) SmartScroll */
     { "KYE0003",  "-ms3" },	/* Genius NetMouse */
-    { "LGI800)",  "-ms" },	/* Logitech FirstMouse+ */ // HACK -ReneR
+    { "LGI800",   "-ms" },	/* Logitech FirstMouse+ on ReneR's desk */
     { "LGI800C",  "-ms3" },	/* Logitech MouseMan (4 button model) */
     { "LGI8033",  "-ms3" },	/* Logitech Cordless MouseMan Wheel */
     { "LGI8050",  "-ms3" },	/* Logitech MouseMan+ */
@@ -165,12 +165,10 @@ bool pnpparse (pnpid_t* id, char* buf, int len)
     /* EISA vender and product ID */
     id->eisaid = &buf[3];
     id->neisaid = 7;
-    
+
     // workaround for my Logitech mice? only has 6 ... -ReneR
-    // if (id->eisaid [id->neisaid-1] == ')')
-    //  id->neisaid--;
-    
-    //printf ("PnP EISA ID: %s\n", id->eisaid);
+    if (id->eisaid [id->neisaid-1] == ')')
+        id->neisaid--;
     
     /* option strings */
     i = 10;
@@ -366,6 +364,9 @@ int main (int argc, char* argv[])
       ++it;
     if (it->name != 0)
       printf ("CLASS: MOUSE %s\n", it->drv);
+  }
+  if (id.ndescription > 9) {
+    printf ("DESCRIPTION: %.*s\n", id.ndescription, id.description);
   }
   
   return 0;
