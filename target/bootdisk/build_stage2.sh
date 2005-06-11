@@ -51,7 +51,7 @@ package_map='       +00-dirtree
 +netkit-base        +netkit-ftp         +netkit-telnet      +netkit-tftp
 +sysfiles           +libpcap            +iptables           +tcp_wrappers
 -kiss               +kbd		-syslinux           +ntfsprogs
--ethtool            -bdb
+-ethtool            -bdb		-ccache
 +libol'
 
 if [ -f ../../pkgs/bize.tar.bz2 -a ! -f ../../pkgs/mine.tar.bz2 ] ; then
