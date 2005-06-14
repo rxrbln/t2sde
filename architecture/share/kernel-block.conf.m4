@@ -63,5 +63,5 @@ CONFIG_CD_NO_IDESCSI=y
 
 dnl Enable software-raid
 dnl
-CONFIG_MD=m
+CONFIG_MD=y
 
