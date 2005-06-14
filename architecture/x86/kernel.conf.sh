@@ -76,12 +76,6 @@
 		include(`kernel-net.conf.m4')
 		include(`kernel-fs.conf.m4')
 
-		dnl Not all framebuffers are save to built in nor
-		dnl wanted to built-in resulting in a huge kernel
-		dnl
-		CONFIG_FB_RIVA=m
-		CONFIG_FB_RADEON=m
-
 		dnl The default is to support those old ISA boxes.
 		dnl A target might get rid of it.
 		dnl
