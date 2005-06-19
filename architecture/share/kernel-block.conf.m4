@@ -19,6 +19,7 @@ CONFIG_SCSI=y
 CONFIG_BLK_DEV_SD=m
 CONFIG_BLK_DEV_SR=m
 CONFIG_CHR_DEV_SG=m
+CONFIG_CHR_DEV_ST=m
 # CONFIG_SCSI_CONSTANTS is not set
 
 dnl Some IDE stuff
@@ -39,6 +40,7 @@ CONFIG_BLK_DEV_CMD640=m
 CONFIG_BLK_DEV_GENERIC=m
 CONFIG_BLK_DEV_RZ1000=m
 CONFIG_BLK_DEV_PIIX=m
+CONFIG_BLK_DEV_PDC202XX_NEW=m
 
 CONFIG_SCSI_SATA=y
 dnl Make sure the drivers are modular ...
@@ -46,6 +48,9 @@ dnl
 CONFIG_SCSI_ATA_PIIX=m
 
 CONFIG_SCSI_QLA2XXX=m
+CONFIG_SCSI_SYM53C8XX_2=m
+CONFIG_SCSI_QLA2XXX=m
+CONFIG_SCSI_MESH=m
 
 dnl Use multi-mode and DMA since this reduces the CPU load and
 dnl also increases the IDE I/O performance in general
