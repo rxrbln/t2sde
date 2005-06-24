@@ -97,9 +97,16 @@ public_clamp_mtu() {
 }
 
 public_masquerade() {
-	addcode up 1 6 "iptables -t nat -A POSTROUTING -o $if \
-	                -j MASQUERADE"
-	addcode down 9 6 "iptables -t nat -D POSTROUTING -o $if \
-	                  -j MASQUERADE"
+	if [ "$ip" ]; then
+		addcode up 1 6 "iptables -t nat -A POSTROUTING -o $if \
+				-j SNAT --to $ip"
+		addcode down 9 6 "iptables -t nat -D POSTROUTING -o $if \
+				-j SNAT --to $ip"
+	else
+		addcode up 1 6 "iptables -t nat -A POSTROUTING -o $if \
+				-j MASQUERADE"
+		addcode down 9 6 "iptables -t nat -D POSTROUTING -o $if \
+				-j MASQUERADE"
+	fi
 }
 
