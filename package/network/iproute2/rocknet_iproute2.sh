@@ -20,7 +20,6 @@ iproute2_init_if() {
 	fi
 }
 
-ip=
 public_ip() {
 	ip="${1%/*}"
 	addcode up 5 5 "ip addr add $1 dev $if"
