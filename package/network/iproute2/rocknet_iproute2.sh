@@ -28,7 +28,7 @@ public_ip() {
 }
 
 public_gw() {
-	code="ip route add default via $1 dev $if" ; shift
+	code="ip route append default via $1 dev $if" ; shift
 
 	case "$1" in
 	metric)
