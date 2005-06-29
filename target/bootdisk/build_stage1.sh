@@ -105,7 +105,7 @@ for x in `egrep 'X .* KERNEL .*' $base/config/$config/packages |
   dd if=/dev/zero of=initrd.img bs=1024 count=$ramdisk_size &> /dev/null
 
   echo_status "Writing initrd image file."
-  mke2fs -m 0 -N 180 -qF initrd.img &> /dev/null
+  mke2fs -m 0 -qF initrd.img &> /dev/null
   mount -t ext2 initrd.img $tmpdir -o loop
   rmdir $tmpdir/lost+found/
   cp -a initrd/* $tmpdir
