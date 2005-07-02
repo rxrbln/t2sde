@@ -80,7 +80,7 @@ struct status_t {
 static void handle_file_access_before(const char *, const char *, struct status_t *);
 static void handle_file_access_after(const char *, const char *, struct status_t *);
 
-char *filterdir = 0, *wlog = 0, *rlog = 0, *cmdname = "unkown";
+char filterdir[2048], wlog[2048], rlog[2048], *cmdname = "unkown";
 
 /* Wrapper Functions */
 EOT
@@ -319,6 +319,13 @@ static void addptree(int *txtpos, char *cmdtxt, int pid, int basepid)
 	strcpy(l, p);
 }
 
+void copy_getenv (char* var, const char* name)
+{
+	char *c = getenv(name);
+	if (c) strcpy (var, c);
+	else var[0]=0;
+}
+
 void __attribute__ ((constructor)) fl_wrapper_init()
 {
 	char cmdtxt[4096] = "";
@@ -331,9 +338,11 @@ void __attribute__ ((constructor)) fl_wrapper_init()
 	addptree(&txtpos, cmdtxt, getpid(), basepid);
 	cmdname = strdup(cmdtxt);
 
-	filterdir = getenv("FLWRAPPER_FILTERDIR");
-	wlog = getenv("FLWRAPPER_WLOG");
-	rlog = getenv("FLWRAPPER_RLOG");
+	/* we copy the vars, so evil code can not unset them ... e.g.
+	   the perl/spamassassin build ... -ReneR */
+	copy_getenv(filterdir, "FLWRAPPER_FILTERDIR");
+	copy_getenv(wlog, "FLWRAPPER_WLOG");
+	copy_getenv(rlog, "FLWRAPPER_RLOG");
 }
 
 static void handle_file_access_before(const char * func, const char * file,
@@ -360,7 +369,7 @@ static void handle_file_access_before(const char * func, const char * file,
 static void handle_file_access_after(const char * func, const char * file,
                               struct status_t * status)
 {
-	char buf[1024], buf2 [512], *logfile, filterdir2 [2048], *tfilterdir;
+	char buf[1024], buf2 [1024], *logfile, filterdir2 [1024], *tfilterdir;
 	const char *absfile;
 	int fd; struct stat st;
 
@@ -368,8 +377,8 @@ static void handle_file_access_after(const char * func, const char * file,
 	fprintf(stderr, "fl_wrapper.so debug [%d]: begin of handle_file_access_after(\"%s\", \"%s\", xxx)\n",
 		getpid(), func, file);
 #endif
-	if ( wlog != 0 && !strcmp(file, wlog) ) return;
-	if ( rlog != 0 && !strcmp(file, rlog) ) return;
+	if ( !strcmp(file, wlog) ) return;
+	if ( !strcmp(file, rlog) ) return;
 	if ( lstat(file, &st) ) return;
 
 	if ( (status != 0) && (status->inode != st.st_ino ||
@@ -378,7 +387,7 @@ static void handle_file_access_after(const char * func, const char * file,
 	else { logfile = rlog; }
         if ( logfile == 0 ) return;
 
-	/* make sure the filename absolute */
+	/* make sure the filename is absolute */
 	if (file[0] == '/') {
 		absfile = file;
         } else {
@@ -389,10 +398,7 @@ static void handle_file_access_after(const char * func, const char * file,
 	/* We ignore access inside the collon seperated directory list
 	   $FLWRAPPER_BASE, to keep the log smaller and reduce post
 	   processing time. -ReneR */
-	if (filterdir)
-		strcpy (filterdir2, filterdir); /* due to strtok - sigh */
-	else
-		filterdir2[0] = 0;
+	strcpy (filterdir2, filterdir); /* due to strtok - sigh */
 	tfilterdir = strtok(filterdir2, ":");
 	for ( ; tfilterdir ; tfilterdir = strtok(NULL, ":") )
 	{
@@ -400,7 +406,7 @@ static void handle_file_access_after(const char * func, const char * file,
 #if DEBUG == 1
 		  fprintf(stderr,
 		          "fl_wrapper.so debug [%d]: \"%s\" dropped due to filterdir \"%s\"\n",
-	                  getpid(), absfile, tfilterdir);
+		          getpid(), absfile, tfilterdir);
 #endif
 		  return;
 		}
