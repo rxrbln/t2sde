@@ -96,27 +96,7 @@ for x in `egrep 'X .* KERNEL .*' $base/config/$config/packages |
   cd ..
 
   echo_status "Creating initrd filesystem image: $initrd"
-
-  ramdisk_size=8192
-  #[ $arch = x86 ] && ramdisk_size=4096
-
-  echo_status "Creating temporary files."
-  tmpdir=initrd_$$.dir; mkdir -p $disksdir/$tmpdir; cd $disksdir
-  dd if=/dev/zero of=initrd.img bs=1024 count=$ramdisk_size &> /dev/null
-
-  echo_status "Writing initrd image file."
-  mke2fs -m 0 -qF initrd.img &> /dev/null
-  mount -t ext2 initrd.img $tmpdir -o loop
-  rmdir $tmpdir/lost+found/
-  cp -a initrd/* $tmpdir
-  umount $tmpdir
-
-  echo_status "Compressing initrd image file."
-  gzip -9 initrd.img 
-  mv initrd.img.gz $initrd
-
-  echo_status "Removing temporary files."
-  rm -rf $tmpdir
+  mkcramfs -n $initrd $disksdir/initrd $disksdir/$initrd
 
   popd 2>&1 > /dev/null
 done
