@@ -24,6 +24,9 @@ fi
 # Re-evaluate CC and other variables (as we have built the cross cc now)
 . scripts/parse-config
 
+# make mkcramfs be found
+PATH="$base/build/${SDECFG_ID}/TOOLCHAIN/tools.cross/bin:$PATH"
+
 # Add tools.cross/diet-bin/ to path so we find our 'diet' program
 PATH="$base/build/${SDECFG_ID}/TOOLCHAIN/tools.cross/diet-bin:$PATH"
 export DIETHOME="$base/build/${SDECFG_ID}/usr/dietlibc"
