@@ -104,8 +104,8 @@ a simple frontend for the \"mine\" program.'"
 		cmd="$cmd 'Mountpoint:     $dir'"
 		cmd="$cmd 'gui_input \"Mountpoint\" \"\$dir\" dir'"
 
-		cmd="$cmd 'ROCK Config ID: $SDECFG_SHORTID'"
-		cmd="$cmd 'gui_input \"ROCK Config ID\""
+		cmd="$cmd 'Config ID: $SDECFG_SHORTID'"
+		cmd="$cmd 'gui_input \"Config ID\""
 		cmd="$cmd \"\$SDECFG_SHORTID\" SDECFG_SHORTID'"
 
 		read_ids
