@@ -13,15 +13,24 @@
 # GNU General Public License can be found in the file COPYING.
 # --- T2-COPYRIGHT-NOTE-END ---
 
+# Common java configuration is needed as well.
 . $base/package/*/*/java-common-conf.in
+
+# Defaults
+auto_detect=on
+build_type=
 
 # Prevent executing normal make and install build steps.
 # Java packages have custom make and install.
 makeopt=''
 makeinstopt=''
 
+# -------------------------------------------------------------------------
 # 
+# -------------------------------------------------------------------------
 maven1_build() {
+	echo_status "Java buildstyle: Maven (version 1)"
+
 	# Maven 2 needs to be installed to be able to use it.
 	pkgprefix -t maven1
 
@@ -34,22 +43,93 @@ maven1_build() {
 		$mavengoals --pom $1
 }
 
+# -------------------------------------------------------------------------
 # 
+# -------------------------------------------------------------------------
 maven2_build() {
+	echo_status "Java buildstyle: Maven (version 2)"
+
 	# Maven 2 needs to be installed to be able to use it.
 	pkgprefix -t maven
 
 	abort "MAVEN2 building NOT yet implemented."
 }
 
-# 
+# -------------------------------------------------------------------------
+# ant_build: Starts the apache ant build tool.
+#
+# Besides starting the apache build tool. The results of building are
+# gathered and moved to right place. For this two things are considered.
+#   dist/docs	for documentation.
+#   dist/*.jar  for java jar files/libraries.
+# -------------------------------------------------------------------------
 ant_build() {
+	echo_status "Java buildstyle: Apache Ant"
+
 	# Ant needs to be installed to be able to use it.
 	pkgprefix -t apache-ant
 
 	# Invoke Ant to start building.
-	$root/$(pkgprefix bindir apache-ant)/ant -buildfile $1
+	$root/$(pkgprefix bindir apache-ant)/ant -buildfile $1 dist
+
+	# Copy all created jar files to the package libdir.
+	echo "Trying to copy package jar files."
+#	if [ ] ; then
+		cp -v dist/*.jar $(pkgprefix libdir $pkg)
+#	else
+#		# Strange. No jar files available?
+#		echo "Package $pkg produces no jar files in dist/."
+#	fi
+
+	# Copy all documentation to the package docdir.
+	echo "Trying to copy package documentaion."
+	tempdir=dist/docs
+	if [ -d $tempdir ] ; then
+		( cd $tempdir; tar -c * | tar -x -C $root/$docdir )
+	fi
+	unset tempdir
 }
+
+# -------------------------------------------------------------------------
+# set_build_type: Sets the java build type.
+# 
+# Sets the java build type to be used for building the current package.
+# -------------------------------------------------------------------------
+set_build_type() {
+	local builder_func=
+
+	# Build type can only be set once per package, check if it
+	# has already been set.
+	if [ -n "$build_type" ] ; then
+		echo "Buildtype already set ($build_type), can't set it to '$1'"
+		Abort "java-conf.in: Buildtype can only be set once."
+	fi
+	build_type="$1" 
+
+	case "$build_type" in
+		ANT)	builder_func="ant_build build.xml" ;;
+		MAVEN)  todo ;;
+		SCRIPT) todo ;;
+		*)	abort "java-conf.in: Unknown buildtype $1 specified." ;;
+	esac
+
+	# Since the built type is set, auto detection is no longer needed.
+	auto_detect=off
+
+	# Set the inmake hook to use the given builder type.
+	hook_add inmake 5 "$builder_func"
+}
+
+# Before we continue lets process all command line options.
+while [ "$1" ] ; do
+	case "$1" in
+		NO_AUTO_DETECT)		auto_detect=off ;
+					echo_status "Java buildstyle: Autodetect disabled." ;;
+		BUILD_TYPE=*)		set_build_type ${1#*=} ;;
+		*)			abort "java-conf.in: Unknown arguments" ;;
+	esac
+	shift
+done
 
 # Check if at least one of the jdk's is available right now.
 if [ -z $JAVA_HOME ]; then
@@ -71,11 +151,13 @@ detect_maven_version() {
 # the build in here we might make it easier to build packages using
 # exotic compilers like gcj or jikes.
 determine_build_type() {
+	local buildtype=
+
 	# Check if the Ant build.xml file is available.
 	if [ -f build.xml ]; then
 		# Package can be build using Ant. However this might be
 		# overruled by any of the others.
-		builder_func="ant_build build.xml"
+		buildtype="ANT"
 	fi
 
 	# Check if the Maven pom.xml or project.xml file is available.
@@ -95,15 +177,20 @@ determine_build_type() {
 	done
 
 	# Check if we have found an appropriate java builder.
-	if [ -n $builder_func ]; then
-		# Set the inmake hook to use the selected builder type.
-		hook_add inmake 5 $builder_func
+	if [ -n "$buildtype" ]; then
+		# Set the selected build type.
+		set_build_type $buildtype
+	else
+		# Auto detection of the build style resulted into
+		# nothing. So from here on it is up to the package 
+		# to decide how to continue building the package.
+		echo_status "Java buildstyle: Unknown buildstyle"
 	fi 
-
-	# If none of the supported build styles were detected,
-	# the package is on its own now.
 }
 
-# We use a postpatch hook to determine what kind of build process
-# is needed. When we know we set the inmake hook appropriately.
-hook_add postpatch 5 determine_build_type
+# Check if autodetection of the build process is required.
+if [ "$auto_detect" == "on" ] ; then
+	# We use a postpatch hook to determine what kind of build process
+	# is needed. When we know we set the inmake hook appropriately.
+	hook_add postpatch 5 determine_build_type
+fi
