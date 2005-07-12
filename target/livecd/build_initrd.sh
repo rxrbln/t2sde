@@ -76,7 +76,17 @@ pivot_root,sleep,losetup,chmod,cat} initramfs/bin/
 	# display the resulting image
 	#
 	du -sh $initrd
+	mv $initrd $isofsdir/boot/
 }
+
+# TODO: make this generic ... - no x86 ...
+
+mkdir -p $isofsdir/boot/grub
+cp -f $build_root/boot/grub/stage2_eltorito $isofsdir/boot/grub/
+cp -f $build_root/boot/t2.xpm.gz $isofsdir/boot/
+
+# header
+sed -n '/CUT/q;p' $base/target/$target/menu.lst > $isofsdir/boot/grub/menu.lst
 
 # For each available kernel:
 #
@@ -87,7 +97,23 @@ for x in `egrep 'X .* KERNEL .*' $base/config/$config/packages |
   moduledir="`grep lib/modules  $build_root/var/adm/flists/$kernel |
               cut -d ' ' -f 2 | cut -d / -f 1-3 | uniq | head -n 1`"
   kernelver=${moduledir/*\/}
-  initrd="initrd${kernel/linux/}.gz"
+  initrd="initramfs-$kernelver.gz"
   mkinitrd $kernel $kernelver $moduledir $initrd
+
+  cp $build_root/boot/vmlinuz_$kernelver $isofsdir/boot/
+
+  cat >> $isofsdir/boot/grub/menu.lst <<-EOT
+
+title	Archivista Scan Server (Kernel: $kernelver)
+kernel	(cd)/boot/vmlinuz_$kernelver
+initrd	(cd)/boot/$initrd
+
+title   Archivista Scan Server (Kernel: $kernelver) - no X
+kernel  (cd)/boot/vmlinuz_$kernelver 2
+initrd  (cd)/boot/$initrd
+EOT
+
 done
+
+sed  '1,/CUT/d' $base/target/$target/menu.lst >> $isofsdir/boot/grub/menu.lst
 

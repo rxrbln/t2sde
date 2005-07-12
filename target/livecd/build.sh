@@ -12,33 +12,22 @@
 # GNU General Public License can be found in the file COPYING.
 # --- T2-COPYRIGHT-NOTE-END ---
 
-disksdir="$build_rock/livecd"
-
 pkgloop
 
-rm -rf $disksdir; mkdir -p $disksdir; chmod 700 $disksdir
+disksdir="$build_rock/isofs"		# for the ISO9660 content
+imagelocation="$build_rock/rootfs"	# where the roofs is prepared and sq.
 
-. scripts/parse-config
+# create the live initrd's first
+. $base/target/$target/build_initrd.sh
+#. $base/target/$target/build_image.sh
 
-. $base/target/$target/build_stage2.sh
+# TODO: rushed out make arch specific and such ...
 
-. $base/target/$target/build_stage1.sh
-
-if [ -f $base/target/$target/$arch/build.sh ]; then
-	. $base/target/$target/$arch/build.sh
-fi
-
-echo_header "Creating ISO filesystem description."
-cd $disksdir; rm -rf isofs; mkdir -p isofs
-
-echo_status "Creating livecd/isofs directory.."
-ln 2nd_stage.img.z isofs/
-ln *.img initrd.gz isofs/ 2>/dev/null || true
-
-echo_status "Creating isofs.txt file .."
-echo "DISK1	build/${SDECFG_ID}/TOOLCHAIN/livecd/isofs/ `
-	`${SDECFG_SHORTID}/" > ../isofs_generic.txt
-cat ../isofs_*.txt > ../isofs.txt
+cat > $rock_root/isofs.txt <<- EOT
+BOOT	-b boot/grub/stage2_eltorito -no-emul-boot
+BOOTx	-boot-load-size 4 -boot-info-table
+DISK1	build/${SDECFG_ID}/TOOLCHAIN/isofs /
+EOT
 
 echo_status "Done!"
 
