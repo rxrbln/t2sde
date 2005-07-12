@@ -17,7 +17,7 @@
 
 set -e
 
-rm -f $imagelocation.squash
+rm -f $isofsdir/live.squash
 mkdir -p $imagelocation ; cd $imagelocation
 
 echo "Preparing root filesystem image from build result ..."
@@ -45,8 +45,7 @@ echo "Running ldconfig ..."
 chroot . /sbin/ldconfig
 
 du -sh .
-echo "Squshing root file-system (this may take some time) ..."
-mksquashfs . $imagelocation.squash
-du -sh $imagelocation.squash
-mv $imagelocation.squash $isofsdir/live.squash
+echo "Squashing root file-system (this may take some time) ..."
+mksquashfs . $isofsdir/live.squash
+du -sh $isofsdir/live.squash
 
