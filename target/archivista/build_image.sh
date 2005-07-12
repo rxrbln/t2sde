@@ -34,15 +34,19 @@ done
 echo "Copying files into the freshly prepared tree ..."
 # we need to ignore the errors for now, since the flist have a few files
 # that do not exist - TODO: track why
-rsync -a --files-from $PWD/tar.input --delete $build_root $imagelocation || true
+rsync -a --ignore-errors --delete --files-from $PWD/tar.input \
+      $build_root $imagelocation || true
 rm tar.input
 
 echo "Preparing root filesystem image from target defined files ..."
 copy_from_source $base/target/$target/rootfs .
 
+echo "Running ldconfig ..."
+chroot . /sbin/ldconfig
+
 du -sh .
+echo "Squshing root file-system (this may take some time) ..."
 mksquashfs . $imagelocation.squash
 du -sh $imagelocation.squash
-
-echo "The image is located at $imagelocation.squash."
+mv $imagelocation.squash $isofsdir/live.squash
 
