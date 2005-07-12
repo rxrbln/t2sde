@@ -35,6 +35,6 @@ DISK1	$admdir/flists/					${SDECFG_SHORTID}/info/flists/
 DISK1	$admdir/md5sums/				${SDECFG_SHORTID}/info/md5sums/
 DISK1	$admdir/packages/				${SDECFG_SHORTID}/info/packages/
 EVERY	build/${SDECFG_ID}/TOOLCHAIN/pkgs/packages.db	${SDECFG_SHORTID}/pkgs/packages.db
-SPLIT	build/${SDECFG_ID}/TOOLCHAIN/pkgs/			${SDECFG_SHORTID}/pkgs/
+SPLIT	build/${SDECFG_ID}/TOOLCHAIN/pkgs/		${SDECFG_SHORTID}/pkgs/
 EOT
 
