@@ -14,8 +14,18 @@
 
 pkgloop
 
-imagelocation="$build_rock/rootfs"
-. $base/target/$target/build_image.sh
+isofsdir="$build_rock/isofs"		# for the ISO9660 content
+imagelocation="$build_rock/rootfs"	# where the roofs is prepared and sq.
+
+# create the live initrd's first
+. $base/target/livecd/build_initrd.sh
+[ $REBUILD ] && . $base/target/$target/build_image.sh
+
+cat > $build_rock/isofs.txt <<- EOT
+BOOT	-b boot/grub/stage2_eltorito -no-emul-boot
+BOOTx	-boot-load-size 4 -boot-info-table
+DISK1	build/${SDECFG_ID}/TOOLCHAIN/isofs /
+EOT
 
 echo_status "Done!"
 
