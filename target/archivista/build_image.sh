@@ -32,11 +32,10 @@ for pkg in `grep '^X ' $base/config/$config/packages | cut -d ' ' -f 5`; do
 done
 
 echo "Copying files into the freshly prepared tree ..."
-
-set -x
+# we need to ignore the errors for now, since the flist have a few files
+# that do not exist - TODO: track why
 rsync -a --files-from $PWD/tar.input --delete $build_root $imagelocation || true
 rm tar.input
-set +x
 
 echo "Preparing root filesystem image from target defined files ..."
 copy_from_source $base/target/$target/rootfs .
