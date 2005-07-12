@@ -1,0 +1,74 @@
+#!/bin/sh
+
+echo "T2 early userspace ..."
+
+PATH=/sbin:/bin
+
+echo "Mounting /dev, /proc and /sys ..."
+mount -t tmpfs /dev /dev
+mount -t proc /proc /proc
+mount -t sysfs /sys /sys
+ln -s /proc/self/fd /dev/fd
+
+# later on we might reverse these, that is run udevstart first,
+# and let udev add new ones as hotplug agents ...
+
+echo "Running hotplug++ hardware detection ..."
+/sbin/hotplug++ -synth
+echo "/sbin/hotplug++" > /proc/sys/kernel/hotplug
+
+echo "Loading additional subsystem and filesystem driver ..."
+# hack to be removed
+modprobe sbp2
+
+# well some hardcoded help for now ...
+modprobe ide-disk
+modprobe ide-cd
+modprobe sd_mod
+modprobe sr_mod
+
+# the modular filesystems ...
+for x in /lib/modules/*/kernel/fs/{*/,}*.*o ; do
+	x=${x##*/} ; x=${x%.*o}
+	modprobe $x
+done
+
+sleep 2 # hope USB and IEEE1394 devices settle down ...
+
+echo "Populating /dev (udev) ..."
+/sbin/udevstart
+
+echo "Searching for live CD ..."
+mkdir /cdrom /live
+i=0
+while [ $i -le 9 ]; do
+  for x in /dev/cdrom* ; do
+    [ -e $x ] || continue
+    if mount -t iso9660 -o ro $x /cdrom; then
+	if [ -f /cdrom/live.squash ]; then
+	  echo "Got it ($x) ..."
+
+	  losetup /dev/loop0 /cdrom/live.squash
+	  mount -t squashfs -o ro /dev/loop0 /live
+
+	  mount -t none /dev -o move /live/dev
+	  mount -t none /proc -o move /live/proc
+	  mount -t none /sys -o move /live/sys
+
+	  cd /live
+	  pivot_root . tmp
+	  cd /
+	  exec /tmp/init2 $*
+	else
+	  echo "Did not contain a T2 Live system ... unmounting."
+	  umount /cdrom
+	fi
+    fi
+  done
+  : $(( i++ ))
+  sleep 1
+done
+
+echo "No T2 Live CD found, giving up. Debug shell:"
+exec /bin/sh
+
