@@ -63,7 +63,8 @@ pivot_root,sleep,losetup,chmod,cat} initramfs/bin/
 
 	echo "root:x:0:0:root:/:/bin/sh" > initramfs/etc/passwd
 
-	cp $base/target/$target/{init,init2} initramfs/
+	# TODO: do we need this target specific?
+	cp $base/target/livecd/{init,init2} initramfs/
 
 	# create the cpio image
 	#
