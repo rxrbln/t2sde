@@ -1,6 +1,6 @@
 #!/bin/bash
 
-boot_title="T2 @Live"
+[ "$boot_title" ] || boot_title="T2 @Live"
 
 # Function to create a custom live-cd initrd
 mkinitrd()
@@ -67,6 +67,7 @@ pivot_root,sleep,losetup,chmod,cat} initramfs/bin/
 
 	# TODO: do we need this target specific?
 	cp $base/target/livecd/{init,init2} initramfs/
+	chmod +x initramfs/{init,init2}
 
 	# create the cpio image
 	#

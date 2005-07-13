@@ -18,7 +18,7 @@
 set -e
 
 echo "Removing temporary output from last run ..."
-rm -rf $imagelocation
+#rm -rf $imagelocation
 rm -f $isofsdir/live.squash
 mkdir -p $imagelocation ; cd $imagelocation
 
@@ -38,12 +38,12 @@ echo "Copying files into the freshly prepared tree ..."
 # that do not exist - TODO: track why
 #rsync -a --ignore-errors --delete --files-from $PWD/tar.input \
 #      $build_root $imagelocation || true
-copy_with_list_from_file $build_root $imagelocation $PWD/tar.input
+#copy_with_list_from_file $build_root $imagelocation $PWD/tar.input
 rm tar.input
 
 echo "Preparing root filesystem image from target defined files ..."
 set -x
-copy_from_source $base/target/$target/rootfs .
+copy_from_source $base/target/$target/rootfs $imagelocation
 set +x
 
 echo "Running ldconfig ..."
