@@ -1,0 +1,344 @@
+
+Added a new feature to pass the image data thru a pipe to the scan script.
+This can reduce latency significantly and is useful for high volume and
+still high performance batch scans (e.g. using the Avision backend ,-).
+
+(The patch will be in the next sane-frontends release, and soon in SANE CVS.)
+
+  - Rene Rebe <rene@exactcode.de>
+
+--- sane-frontends-1.0.13/doc/scanadf.man	2004-07-09 19:02:37.000000000 +0200
++++ sane-frontends-1.0.13-adfmod/doc/scanadf.man	2005-07-11 15:33:34.000000000 +0200
+@@ -19,6 +19,7 @@
+ .IR num ]
+ .RB [ -e | --end-count
+ .IR num ]
++.RB [ -p | --pipe ]
+ .RB [ -r | --raw ]
+ .RI [ device-specific-options ]
+ .SH DESCRIPTION
+@@ -157,6 +158,9 @@
+ .B SCAN_FORMAT_ID
+ - the numeric image format identifier
+ .br
++.B SCAN_PIPE
++- non-zero if a pipe is used for data transfer (instead of files)
++.br
+ .RE
+ 
+ .PP
+@@ -191,6 +195,16 @@
+ optional frame types and the default handling of unrecognized
+ frametypes, this option becomes less and less useful.
+ 
++The
++.B -p
++or
++.B --pipe
++option allows passing the image date to the scan-script via a pipe
++rather than saving it to a file and executing the script thereafter.
++It might be useful for high-performance batch scans that should do
++post-processing, such as format convertion, on-the-fly.
++
++.PP
+ As you might imagine, much of the power of
+ .B scanadf
+ comes from the fact that it can control any SANE backend.  Thus, the
+@@ -243,6 +257,10 @@
+ 
+ .RS
+ .br
++.B sane-avision
++- Avision (and compatible) scanners. For batch scanning the --source "ADF",
++"ADF Rear" or "ADF Duplex" should be used.
++.br
+ .B sane-bh
+ - Bell+Howell Copiscan II series scanners.
+ .br
+diff -ur sane-frontends-1.0.13/src/scanadf.c sane-frontends-1.0.13-adfmod/src/scanadf.c
+--- sane-frontends-1.0.13/src/scanadf.c	2004-07-09 19:03:16.000000000 +0200
++++ sane-frontends-1.0.13-adfmod/src/scanadf.c	2005-07-11 15:17:47.000000000 +0200
+@@ -4,6 +4,7 @@
+    scanimage by Andreas Beck and David Mosberger
+ 
+    Copyright (C) 1999 Tom Martone
++   Copyright (C) 2005 Rene Rebe ([ -p | --pipe] script option)
+ 
+    This program is free software; you can redistribute it and/or
+    modify it under the terms of the GNU General Public License as
+@@ -39,6 +40,7 @@
+ #include <string.h>
+ #include <sys/types.h>
+ #include <sys/stat.h>
++#include <sys/wait.h>
+ 
+ #include "sane/sane.h"
+ #include "sane/sanei.h"
+@@ -103,10 +105,11 @@
+   { "end-count", required_argument, 0, 'e' },
+   { "scan-script", required_argument, 0, 'S' },
+   { "raw", no_argument, 0, 'r' },
++  { "pipe", no_argument, 0, 'p' },
+   {0, }
+ };
+ 
+-#define BASE_OPTSTRING	"d:hLvVNTo:s:e:S:r"
++#define BASE_OPTSTRING	"d:hLvVNTo:s:e:S:pr"
+ #define STRIP_HEIGHT	256	/* # lines we increment image height */
+ 
+ static struct option * all_options;
+@@ -872,8 +875,89 @@
+   return res;
+ }
+ 
++static int
++exec_script (const char *script, const char* fname, SANE_Bool use_pipe,
++             SANE_Parameters *parm, int *fd)
++{
++  static char cmd[PATH_MAX * 2];
++  static char env[7][PATH_MAX * 2];
++  int pid;
++  SANE_Int res;
++  SANE_Frame format;
++  extern char **environ;
++  int pipefd[2];
++
++  res = get_resolution(device);
++
++  format = parm->format;
++  if (format == SANE_FRAME_RED ||
++      format == SANE_FRAME_GREEN ||
++      format == SANE_FRAME_BLUE)
++  {
++     /* the resultant format is RGB */
++     format = SANE_FRAME_RGB;
++  }
++
++  sprintf(env[0], "SCAN_RES=%d", res); 
++  if (putenv(env[0])) 
++    fprintf(stderr, "putenv:failed\n");
++    sprintf(env[1], "SCAN_WIDTH=%d", parm->pixels_per_line);
++  if (putenv(env[1])) 
++    fprintf(stderr, "putenv:failed\n");
++    sprintf(env[2], "SCAN_HEIGHT=%d", parm->lines);
++  if (putenv(env[2])) 
++    fprintf(stderr, "putenv:failed\n");
++    sprintf(env[3], "SCAN_FORMAT_ID=%d", (int) parm->format);
++  if (putenv(env[3])) 
++    fprintf(stderr, "putenv:failed\n");
++    sprintf(env[4], "SCAN_FORMAT=%s", 
++            sane_strframe(parm->format));
++  if (putenv(env[4])) 
++      fprintf(stderr, "putenv:failed\n");
++  sprintf(env[5], "SCAN_DEPTH=%d", parm->depth);
++  if (putenv(env[5])) 
++    fprintf(stderr, "putenv:failed\n");
++  sprintf(env[6], "SCAN_PIPE=%d", use_pipe);
++  if (putenv(env[6]))
++    fprintf(stderr, "putenv:failed\n");
++
++  if (use_pipe) {
++
++    pipe(pipefd);
++  }
++
++  /*signal(SIGCHLD, SIG_IGN);*/
++  switch ((pid = fork())) 
++  {
++    case -1:	
++	/*  fork failed  */
++	fprintf(stderr, "Error forking: %s (%d)\n", strerror(errno), errno);
++	break;
++
++    case 0:
++	/*  in child process  */
++	if (use_pipe) {
++	 dup2(pipefd[0],0); close(pipefd[0]); close(pipefd[1]);
++	}
++	sprintf(cmd, "%s '%s'", script, fname);
++	execle(script, script, fname, NULL, environ);
++	exit(0);
++ 
++    default:
++	if (verbose) 
++	  fprintf(stderr, "Started script `%s' as pid=%d\n", script, pid);
++	break;
++  }
++  if (use_pipe) {
++    close(pipefd[0]);
++    *fd = pipefd[1];
++  }
++  return pid;
++}
++
+ static SANE_Status
+-scan_it_raw (const char *fname, SANE_Bool raw, const char *script)
++scan_it_raw (const char *fname, SANE_Bool raw, const char *script,
++             SANE_Bool use_pipe)
+ {
+   int i, len, first_frame = 1, offset = 0, must_buffer = 0;
+   SANE_Byte buffer[32*1024], min = 0xff, max = 0;
+@@ -881,6 +965,7 @@
+   SANE_Status status;
+   Image image = {0, };
+   FILE *fp = NULL;
++  int pid = 0;
+ 
+   do
+     {
+@@ -903,7 +988,15 @@
+ 	  goto cleanup;
+ 	}
+ 
+-      fp = fopen(fname, "wb");
++      if (script && use_pipe)
++      {
++	int fd = 0;
++	pid = exec_script(script, fname, use_pipe, &parm, &fd);
++	fp = fdopen (fd, "wb");
++      }
++      else
++        fp = fopen(fname, "wb");
++
+       if (!fp) {
+ 	fprintf(stderr, "Error opening output `%s': %s (%d)\n",
+ 		fname, strerror(errno), errno);
+@@ -1144,65 +1237,16 @@
+       fp = NULL;
+     }
+ 
+-  if (script) 
+-    {
+-      static char cmd[PATH_MAX * 2];
+-      static char env[6][PATH_MAX * 2];
+-      int pid;
+-      SANE_Int res;
+-      SANE_Frame format;
+-      extern char **environ;
+-
+-      res = get_resolution(device);
+-
+-      format = parm.format;
+-      if (format == SANE_FRAME_RED ||
+-	  format == SANE_FRAME_GREEN ||
+-	  format == SANE_FRAME_BLUE)
+-	{
+-	  /* the resultant format is RGB */
+-	  format = SANE_FRAME_RGB;
+-	}
+-      sprintf(env[0], "SCAN_RES=%d", res); 
+-      if (putenv(env[0])) 
+-	fprintf(stderr, "putenv:failed\n");
+-      sprintf(env[1], "SCAN_WIDTH=%d", parm.pixels_per_line);
+-      if (putenv(env[1])) 
+-	fprintf(stderr, "putenv:failed\n");
+-      sprintf(env[2], "SCAN_HEIGHT=%d", parm.lines);
+-      if (putenv(env[2])) 
+-	fprintf(stderr, "putenv:failed\n");
+-      sprintf(env[3], "SCAN_FORMAT_ID=%d", (int) parm.format);
+-      if (putenv(env[3])) 
+-	fprintf(stderr, "putenv:failed\n");
+-      sprintf(env[4], "SCAN_FORMAT=%s", 
+-	      sane_strframe(parm.format));
+-      if (putenv(env[4])) 
+-	fprintf(stderr, "putenv:failed\n");
+-      sprintf(env[5], "SCAN_DEPTH=%d", parm.depth);
+-      if (putenv(env[5])) 
+-	fprintf(stderr, "putenv:failed\n");
+-      signal(SIGCHLD, SIG_IGN);
+-      switch ((pid = fork())) 
+-	{
+-	case -1:	
+-	  /*  fork failed  */
+-	  fprintf(stderr, "Error forking: %s (%d)\n", strerror(errno), errno);
+-	  break;
++  if (script && !use_pipe)
++    pid = exec_script (script, fname, use_pipe, &parm, NULL);
+ 
+-	case 0:
+-	  /*  in child process  */
+-	  sprintf(cmd, "%s '%s'", script, fname);
+-	  /*	  system(cmd); */
+-	  execle(script, script, fname, NULL, environ);
+-	  exit(0);
+-      
+-	default:
+-	  if (verbose) 
+-	    fprintf(stderr, "Started script `%s' as pid=%d\n", script, pid);
+-	  break;
+-	}
+-    }
++  if (script) {
++    int exit_status = 0;
++    waitpid (pid, &exit_status, 0);
++    if (exit_status && verbose)
++      fprintf(stderr, "%s: WARNING: child exited with %d\n",
++              prog_name, exit_status);
++  }
+ 
+ cleanup:
+   if (image.data)
+@@ -1213,7 +1257,8 @@
+ }
+ 
+ static SANE_Int 
+-scan_docs (int start, int end, int no_overwrite, SANE_Bool raw, const char *outfmt, const char *script)
++scan_docs (int start, int end, int no_overwrite, SANE_Bool raw,
++           const char *outfmt, const char *script, SANE_Bool use_pipe)
+ {
+   SANE_Status status = SANE_STATUS_GOOD;
+   SANE_Int scannedPages = 0;
+@@ -1223,8 +1268,7 @@
+ 
+   while (end < 0 || start <= end) 
+     {
+-      /*!!! buffer overflow; need protection */
+-      sprintf(fname, outfmt, start);
++      snprintf(fname, sizeof (fname), outfmt, start);
+ 
+       /* does the filename already exist? */
+       if (no_overwrite) 
+@@ -1239,7 +1283,7 @@
+       
+       /* Scan the document */
+       if (status == SANE_STATUS_GOOD) 
+-	status = scan_it_raw(fname, raw, script);
++	status = scan_it_raw(fname, raw, script, use_pipe);
+ 
+       /* Any scan errors? */
+       if (status == SANE_STATUS_NO_DOCS) 
+@@ -1280,6 +1324,7 @@
+   SANE_Status status;
+   char *full_optstring;
+   SANE_Bool raw = SANE_FALSE;
++  SANE_Bool use_pipe = SANE_FALSE;
+   const char *scanScript = NULL;		/* script to run at end of scan */
+   const char *outputFile = "image-%04d";	/* file name(format) to write output to */
+   int startNum = 1, endNum = -1;		/* start/end numbers of pages to scan */
+@@ -1338,6 +1383,7 @@
+ 	case 's': startNum = atoi(optarg); break;
+ 	case 'e': endNum = atoi(optarg); break;
+ 	case 'r': raw = SANE_TRUE; break;
++	case 'p': use_pipe = SANE_TRUE; break;
+ 
+ 	case 'V':
+ 	  printf ("scanadf (%s) %s\n", PACKAGE, VERSION);
+@@ -1455,7 +1501,7 @@
+ 	      exit (1);	/* error message is printed by getopt_long() */
+ 
+ 	    case 'd': case 'h': case 'v': case 'V': case 'T':
+-	    case 'o': case 'S': case 's': case 'e': case 'r':
++	    case 'o': case 'S': case 's': case 'e': case 'p': case 'r':
+ 
+ 	      /* previously handled options */
+ 	      break;
+@@ -1569,7 +1615,8 @@
+   signal (SIGPIPE, sighandler);
+   signal (SIGTERM, sighandler);
+ 
+-  status = scan_docs (startNum, endNum, no_overwrite, raw, outputFile, scanScript);
++  status = scan_docs (startNum, endNum, no_overwrite, raw,
++                      outputFile, scanScript, use_pipe);
+ 
+   sane_cancel (device);
+   sane_close (device);
