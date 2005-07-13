@@ -17,6 +17,8 @@
 
 set -e
 
+echo "Removing temporary output from last run ..."
+rm -rf $imagelocation
 rm -f $isofsdir/live.squash
 mkdir -p $imagelocation ; cd $imagelocation
 
@@ -34,12 +36,15 @@ done
 echo "Copying files into the freshly prepared tree ..."
 # we need to ignore the errors for now, since the flist have a few files
 # that do not exist - TODO: track why
-rsync -a --ignore-errors --delete --files-from $PWD/tar.input \
-      $build_root $imagelocation || true
+#rsync -a --ignore-errors --delete --files-from $PWD/tar.input \
+#      $build_root $imagelocation || true
+copy_with_list_from_file $build_root $imagelocation $PWD/tar.input
 rm tar.input
 
 echo "Preparing root filesystem image from target defined files ..."
+set -x
 copy_from_source $base/target/$target/rootfs .
+set +x
 
 echo "Running ldconfig ..."
 chroot . /sbin/ldconfig
