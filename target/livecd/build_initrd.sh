@@ -1,5 +1,7 @@
 #!/bin/bash
 
+boot_title="T2 @Live"
+
 # Function to create a custom live-cd initrd
 mkinitrd()
 {
@@ -104,11 +106,11 @@ for x in `egrep 'X .* KERNEL .*' $base/config/$config/packages |
 
   cat >> $isofsdir/boot/grub/menu.lst <<-EOT
 
-title	Archivista Scan Server (Kernel: $kernelver)
+title	$boot_title (Kernel: $kernelver)
 kernel	(cd)/boot/vmlinuz_$kernelver
 initrd	(cd)/boot/$initrd
 
-title   Archivista Scan Server (Kernel: $kernelver) - no X
+title   $boot_title (Kernel: $kernelver) - no X
 kernel  (cd)/boot/vmlinuz_$kernelver 2
 initrd  (cd)/boot/$initrd
 EOT
