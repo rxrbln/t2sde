@@ -15,6 +15,7 @@
 echo_header "Creating initrd data:"
 rm -rf $disksdir/initrd
 mkdir -p $disksdir/initrd/{dev,proc,tmp,scsi,net,bin}
+mknod $disksdir/initrd/dev/console c 5 1
 cd $disksdir/initrd; ln -s bin sbin; ln -s . usr
 #
 echo_status "Create linuxrc binary."
