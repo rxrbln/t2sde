@@ -42,12 +42,19 @@ echo "Copying files into the freshly prepared tree ..."
 rm tar.input
 
 echo "Preparing root filesystem image from target defined files ..."
-set -x
 copy_from_source $base/target/$target/rootfs $imagelocation
-set +x
 
-echo "Running ldconfig ..."
-chroot . /sbin/ldconfig
+echo "Running ldconfig and other postinstall scripts ..."
+mount /dev dev --bind
+mount none proc -t proc
+for x in sbin/ldconfig etc/postinstall.d/*; do
+	case $x in
+		*/scrollkeeper) echo "$x left out" ;;
+		*) chroot . /$x && true
+	esac
+done
+umount proc
+umount dev
 
 du -sh .
 echo "Squashing root file-system (this may take some time) ..."
