@@ -84,7 +84,7 @@ then
 
 LABEL $kernel
 	kernel vmlinuz${kernel/linux/}
-	APPEND initrd=$initrd root=/dev/ram devfs=nocompat init=/linuxrc rw
+	APPEND initrd=$initrd root=/dev/ram devfs=nomount init=/linuxrc rw
 EOT
 	done
 
