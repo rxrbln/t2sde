@@ -68,18 +68,9 @@ char mod_loader[50];
 char mod_dir[255];
 char mod_suffix[3];
 int  mod_suffix_len=0;
+struct utsname uts_name;
 
 void mod_load_info(char *mod_loader, char *mod_dir, char *mod_suffix) {
-	struct utsname uts_name;
-
-	if (uname(&uts_name) < 0) {
-		perror("Error during uname syscall");
-		return;
-	} else if (strcmp(uts_name.sysname, "Linux") != 0) {
-		printf("Your operating system is not yet supported!\n");
-		return;
-	}
-
 	strcpy(mod_loader, "/sbin/insmod");
 	strcpy(mod_dir, "/lib/modules/");
 	strcat(mod_dir, uts_name.release);
@@ -698,17 +689,39 @@ int main(int argc, char* argv[])
 
 	printf("T2 early userspace environment.\n");
 
-	if ( mount("none", "/dev", "devfs", 0, NULL) && errno != EBUSY )
-		perror("Can't mount /dev");
-
 	if ( mount("none", "/proc", "proc", 0, NULL) && errno != EBUSY )
 		perror("Can't mount /proc");
 
-	/* Only print important stuff to console */
-	klogctl(8, NULL, 3);
+	if ( mount("none", "/sys", "sysfs", 0, NULL) && errno != EBUSY )
+		perror("Can't mount /sys");
 
+	/* get kernel uts struct */
+	if (uname(&uts_name) < 0) {
+		perror("Error during uname syscall");
+		return -1;
+	} else if (strcmp(uts_name.sysname, "Linux") != 0) {
+		printf("Your operating system is not yet supported!\n");
+		return -1;
+	}
+
+	/* start devfs or udev */
 	mod_load_info(mod_loader, mod_dir, mod_suffix);
 	mod_suffix_len = strlen(mod_suffix);
+
+	if (strncmp(uts_name.release, "2.6", 3) == 0) {
+	  if ( mount("none", "/dev", "tmpfs", 0, NULL) && errno != EBUSY )
+	    perror("Can't mount tmpfs on /dev");
+	  
+	  tryexeclp("udevstart", "udevstart", NULL);
+	  printf("\n");
+	}
+	else {
+	  if ( mount("none", "/dev", "devfs", 0, NULL) && errno != EBUSY )
+	    perror("Can't mount devfs on /dev");
+	}
+
+	/* Only print important stuff to console */
+	klogctl(8, NULL, 3);
 
 	/* since only the unrecognized command line arguements are passed
 	   to linuxrc/init, we need to re-generate a nice list out of /proc */
