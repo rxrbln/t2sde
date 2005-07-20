@@ -19,9 +19,9 @@ imagelocation="$build_rock/rootfs"	# where the roofs is prepared and sq.
 
 # create the live initrd's first
 . $base/target/$target/build_initrd.sh
-[ $REBUILD ] && . $base/target/$target/build_image.sh
+. $base/target/$target/build_image.sh
 
-# TODO: rushed out make arch specific and such ...
+# TODO: make arch specific and such ... rushed out in a hurry right now
 
 cat > $build_rock/isofs.txt <<- EOT
 BOOT	-b boot/grub/stage2_eltorito -no-emul-boot
