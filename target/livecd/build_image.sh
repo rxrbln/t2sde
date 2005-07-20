@@ -42,7 +42,8 @@ echo "Copying files into the freshly prepared tree ..."
 rm tar.input
 
 echo "Preparing root filesystem image from target defined files ..."
-copy_from_source $base/target/$target/rootfs $imagelocation
+copy_and_parse_from_source $base/target/$target/rootfs $imagelocation
+exit
 
 echo "Running ldconfig and other postinstall scripts ..."
 mount /dev dev --bind

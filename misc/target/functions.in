@@ -35,6 +35,57 @@ copy_from_source ()
 	rm -f $list
 }
 
+
+# copy out of T2 source without .svn files and does honor special files to
+# apply patches, change owner:group or permissions
+# from to
+copy_and_parse_from_source ()
+{
+        # the sed is a work around for a find issue, outputting empty rows
+        # in some versions ...
+        find $1 -name '.svn' -prune -o -printf "%P\n" | sed '/^$/d' |
+	while read file; do
+	  if [ -d $1/$file ]; then
+		echo "Dir: $file"
+		mkdir -p $2/$file
+	  else
+		cmd=`sed 2q $1/$file`
+		if [[ $cmd = \#\![a-y]* ]]; then
+			cmd=${cmd#\#\!};
+			code=${cmd%% *}
+			echo "Code $code Command: $cmd File: $file"
+			args=`echo $cmd | wc -w`
+			dirname=${file%/*}
+			basename=${file##*/}
+
+			pushd $2/$dirname > /dev/null ; set -x
+			case $code in
+				ln)
+					if [ $args -le 3 ]; then
+					  $cmd $basename
+					else
+					  $cmd
+					fi ;;
+				chmod|chown)
+					if [ $args -le 2 ]; then
+					  $cmd $basename
+					else
+					  $cmd
+					fi ;;
+				patch)  patch -R -f < $1/$file || true
+					patch -f < $1/$file
+					;;
+				*) echo "Code: $code unknown" ; exit ;;
+			esac
+			set +x ; popd > /dev/null
+		else
+			echo File $file
+			cp -af $1/$file $2/$file
+		fi
+	  fi
+        done
+}
+
 # link indentical files to save space
 link_identical_files()
 {
