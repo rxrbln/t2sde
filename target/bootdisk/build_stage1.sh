@@ -14,8 +14,9 @@
 
 echo_header "Creating initrd data:"
 rm -rf $disksdir/initrd
-mkdir -p $disksdir/initrd/{dev,proc,tmp,scsi,net,bin}
-mknod $disksdir/initrd/dev/console c 5 1
+mkdir -p $disksdir/initrd/{dev,proc,tmp,sys,scsi,net,bin}
+mknod -m 600 $disksdir/initrd/dev/console c 5 1
+mknod -m 666 $disksdir/initrd/dev/null c 1 3
 cd $disksdir/initrd; ln -s bin sbin; ln -s . usr
 #
 echo_status "Create linuxrc binary."
@@ -52,6 +53,8 @@ if [ "$SDECFG_BOOTDISK_USEKISS" = 1 ]; then
 	echo_status "Adding kiss shell for expert use to the initrd image."
 	cp $build_root/bin/kiss bin/
 fi
+#
+cp ../2nd_stage/sbin/udev* bin/
 
 #
 # For each available kernel:
