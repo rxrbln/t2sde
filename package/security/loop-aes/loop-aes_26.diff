@@ -1,6 +1,6 @@
-diff -Naur linux-2.6.11_orig/drivers/block/Kconfig linux-2.6.11/drivers/block/Kconfig
---- linux-2.6.11_orig/drivers/block/Kconfig	2005-03-02 08:37:50.000000000 +0100
-+++ linux-2.6.11/drivers/block/Kconfig	2005-04-07 10:26:11.441576784 +0200
+diff -Naur linux-2.6.12_orig/drivers/block/Kconfig linux-2.6.12/drivers/block/Kconfig
+--- linux-2.6.12_orig/drivers/block/Kconfig	2005-06-17 21:48:29.000000000 +0200
++++ linux-2.6.12/drivers/block/Kconfig	2005-07-20 21:26:43.627508624 +0200
 @@ -285,14 +285,6 @@
  	  bits of, say, a sound file). This is also safe if the file resides
  	  on a remote file server.
@@ -52,9 +52,9 @@ diff -Naur linux-2.6.11_orig/drivers/block/Kconfig linux-2.6.11/drivers/block/Kc
  
  config BLK_DEV_NBD
  	tristate "Network block device support"
-diff -Naur linux-2.6.11_orig/drivers/block/Makefile linux-2.6.11/drivers/block/Makefile
---- linux-2.6.11_orig/drivers/block/Makefile	2005-03-02 08:38:38.000000000 +0100
-+++ linux-2.6.11/drivers/block/Makefile	2005-04-07 10:26:11.441576784 +0200
+diff -Naur linux-2.6.12_orig/drivers/block/Makefile linux-2.6.12/drivers/block/Makefile
+--- linux-2.6.12_orig/drivers/block/Makefile	2005-06-17 21:48:29.000000000 +0200
++++ linux-2.6.12/drivers/block/Makefile	2005-07-20 21:26:43.629508320 +0200
 @@ -1,6 +1,9 @@
  #
  # Makefile for the kernel block device drivers.
@@ -65,13 +65,17 @@ diff -Naur linux-2.6.11_orig/drivers/block/Makefile linux-2.6.11/drivers/block/M
  # 12 June 2000, Christoph Hellwig <hch@infradead.org>
  # Rewritten to use lists instead of if-statements.
  # 
-diff -Naur linux-2.6.11_orig/drivers/block/loop.c linux-2.6.11/drivers/block/loop.c
---- linux-2.6.11_orig/drivers/block/loop.c	2005-03-02 08:38:10.000000000 +0100
-+++ linux-2.6.11/drivers/block/loop.c	2005-04-07 10:26:11.444576328 +0200
-@@ -39,18 +39,46 @@
+diff -Naur linux-2.6.12_orig/drivers/block/loop.c linux-2.6.12/drivers/block/loop.c
+--- linux-2.6.12_orig/drivers/block/loop.c	2005-06-17 21:48:29.000000000 +0200
++++ linux-2.6.12/drivers/block/loop.c	2005-07-20 21:26:43.634507560 +0200
+@@ -39,23 +39,46 @@
   * Support up to 256 loop devices
   * Heinz Mauelshagen <mge@sistina.com>, Feb 2002
   *
+- * Support for falling back on the write file operation when the address space
+- * operations prepare_write and/or commit_write are not available on the
+- * backing filesystem.
+- * Anton Altaparmakov, 16 Feb 2005
 + * AES transfer added. IV is now passed as (512 byte) sector number.
 + * Jari Ruusu, May 18 2001
 + *
@@ -98,7 +102,7 @@ diff -Naur linux-2.6.11_orig/drivers/block/loop.c linux-2.6.11/drivers/block/loo
 + * Added support for MD5 IV computation and multi-key operation.
 + * Jari Ruusu, October 8 2003
 + *
-+ *
+  *
   * Still To Fix:
   * - Advisory locking is ignored here.
   * - Should use an own CAP_* category instead of CAP_SYS_ADMIN
@@ -116,11 +120,23 @@ diff -Naur linux-2.6.11_orig/drivers/block/loop.c linux-2.6.11/drivers/block/loo
  #include <linux/stat.h>
  #include <linux/errno.h>
  #include <linux/major.h>
-@@ -66,45 +94,63 @@
- #include <linux/suspend.h>
+@@ -63,7 +86,9 @@
+ #include <linux/blkdev.h>
+ #include <linux/blkpg.h>
+ #include <linux/init.h>
+-#include <linux/devfs_fs_kernel.h>
++#ifdef CONFIG_DEVFS_FS
++# include <linux/devfs_fs_kernel.h>
++#endif
+ #include <linux/smp_lock.h>
+ #include <linux/swap.h>
+ #include <linux/slab.h>
+@@ -72,46 +97,63 @@
  #include <linux/writeback.h>
  #include <linux/buffer_head.h>		/* for invalidate_bdev() */
--#include <linux/completion.h>
+ #include <linux/completion.h>
+-#include <linux/highmem.h>
+-#include <linux/gfp.h>
 +#if LINUX_VERSION_CODE >= 0x20606
 +# include <linux/mqueue.h>
 +#endif
@@ -132,7 +148,7 @@ diff -Naur linux-2.6.11_orig/drivers/block/loop.c linux-2.6.11/drivers/block/loo
 +#include "../misc/aes.h"
 +#include "../misc/md5.h"
 +
-+#if defined(CONFIG_COMPAT)
++#if defined(CONFIG_COMPAT) && !defined(HAVE_COMPAT_IOCTL)
 +# include <linux/ioctl32.h>
 +# define IOCTL32_COMPATIBLE_PTR ((void*)0)
 +#endif
@@ -173,14 +189,14 @@ diff -Naur linux-2.6.11_orig/drivers/block/loop.c linux-2.6.11/drivers/block/loo
  {
 -	char *raw_buf = kmap_atomic(raw_page, KM_USER0) + raw_off;
 -	char *loop_buf = kmap_atomic(loop_page, KM_USER1) + loop_off;
-+	/* this code is only called from file backed loop  */
-+	/* and that code expects this function to be no-op */
- 
+-
 -	if (cmd == READ)
 -		memcpy(loop_buf, raw_buf, size);
 -	else
 -		memcpy(raw_buf, loop_buf, size);
--
++	/* this code is only called from file backed loop  */
++	/* and that code expects this function to be no-op */
+ 
 -	kunmap_atomic(raw_buf, KM_USER0);
 -	kunmap_atomic(loop_buf, KM_USER1);
  	cond_resched();
@@ -204,7 +220,7 @@ diff -Naur linux-2.6.11_orig/drivers/block/loop.c linux-2.6.11/drivers/block/loo
  
  	if (cmd == READ) {
  		in = raw_buf;
-@@ -118,14 +164,11 @@
+@@ -125,16 +167,13 @@
  	keysize = lo->lo_encrypt_key_size;
  	for (i = 0; i < size; i++)
  		*out++ = *in++ ^ key[(i & 511) % keysize];
@@ -218,9 +234,12 @@ diff -Naur linux-2.6.11_orig/drivers/block/loop.c linux-2.6.11/drivers/block/loo
 -static int xor_init(struct loop_device *lo, const struct loop_info64 *info)
 +static int xor_init(struct loop_device *lo, struct loop_info64 *info)
  {
- 	if (info->lo_encrypt_key_size <= 0)
+-	if (unlikely(info->lo_encrypt_key_size <= 0))
++	if (info->lo_encrypt_key_size <= 0)
  		return -EINVAL;
-@@ -135,337 +178,1272 @@
+ 	return 0;
+ }
+@@ -142,433 +181,1293 @@
  static struct loop_func_table none_funcs = {
  	.number = LO_CRYPT_NONE,
  	.transfer = transfer_none,
@@ -330,16 +349,17 @@ diff -Naur linux-2.6.11_orig/drivers/block/loop.c linux-2.6.11/drivers/block/loo
 +    write_unlock(&m->rwlock);
 +}
  
--	if ((loff_t)x != size)
+-	if (unlikely((loff_t)x != size))
 -		return -EFBIG;
++static void keyScrubTimerFn(unsigned long);
+ 
+-	set_capacity(disks[lo->lo_number], x);
+-	return 0;					
 +static void keyScrubTimerInit(struct loop_device *lo)
 +{
 +    AESmultiKey     *m;
 +    unsigned long   expire;
-+    static void keyScrubTimerFn(unsigned long);
- 
--	set_capacity(disks[lo->lo_number], x);
--	return 0;					
++
 +    m = (AESmultiKey *)lo->key_data;
 +    expire = jiffies + HZ;
 +    init_timer(&m->timer);
@@ -357,7 +377,7 @@ diff -Naur linux-2.6.11_orig/drivers/block/loop.c linux-2.6.11/drivers/block/loo
 +/* called only from timer handler context */
 +static void keyScrubTimerFn(unsigned long d)
  {
--	if (!lo->transfer)
+-	if (unlikely(!lo->transfer))
 -		return 0;
 +    struct loop_device *lo = (struct loop_device *)d;
 +    extern void loop_add_keyscrub_fn(struct loop_device *, void (*)(void *), void *);
@@ -370,32 +390,23 @@ diff -Naur linux-2.6.11_orig/drivers/block/loop.c linux-2.6.11/drivers/block/loo
  }
 +#endif
  
--static int
--do_lo_send(struct loop_device *lo, struct bio_vec *bvec, int bsize, loff_t pos)
+-/**
+- * do_lo_send_aops - helper for writing data to a loop device
+- *
+- * This is the fast version for backing filesystems which implement the address
+- * space operations prepare_write and commit_write.
+- */
+-static int do_lo_send_aops(struct loop_device *lo, struct bio_vec *bvec,
+-		int bsize, loff_t pos, struct page *page)
 +static AESmultiKey *allocMultiKey(void)
  {
 -	struct file *file = lo->lo_backing_file; /* kudos to NFsckingS */
 -	struct address_space *mapping = file->f_mapping;
 -	struct address_space_operations *aops = mapping->a_ops;
--	struct page *page;
 -	pgoff_t index;
--	unsigned size, offset, bv_offs;
--	int len;
--	int ret = 0;
-+    AESmultiKey *m;
-+    aes_context *a;
-+    int x = 0, n;
-+
-+    m = (AESmultiKey *) kmalloc(sizeof(AESmultiKey), GFP_KERNEL);
-+    if(!m) return 0;
-+    memset(m, 0, sizeof(AESmultiKey));
-+#if CONFIG_BLK_DEV_LOOP_KEYSCRUB
-+    m->partialMD5 = &m->partialMD5buf[0];
-+    rwlock_init(&m->rwlock);
-+    init_timer(&m->timer);
-+    again:
-+#endif
- 
+-	unsigned offset, bv_offs;
+-	int len, ret = 0;
+-
 -	down(&mapping->host->i_sem);
 -	index = pos >> PAGE_CACHE_SHIFT;
 -	offset = pos & ((pgoff_t)PAGE_CACHE_SIZE - 1);
@@ -403,23 +414,22 @@ diff -Naur linux-2.6.11_orig/drivers/block/loop.c linux-2.6.11/drivers/block/loo
 -	len = bvec->bv_len;
 -	while (len > 0) {
 -		sector_t IV;
+-		unsigned size;
 -		int transfer_result;
 -
 -		IV = ((sector_t)index << (PAGE_CACHE_SHIFT - 9))+(offset >> 9);
--
 -		size = PAGE_CACHE_SIZE - offset;
 -		if (size > len)
 -			size = len;
--
 -		page = grab_cache_page(mapping, index);
--		if (!page)
+-		if (unlikely(!page))
 -			goto fail;
--		if (aops->prepare_write(file, page, offset, offset+size))
+-		if (unlikely(aops->prepare_write(file, page, offset,
+-				offset + size)))
 -			goto unlock;
 -		transfer_result = lo_do_transfer(lo, WRITE, page, offset,
--						 bvec->bv_page, bv_offs,
--						 size, IV);
--		if (transfer_result) {
+-				bvec->bv_page, bv_offs, size, IV);
+-		if (unlikely(transfer_result)) {
 -			char *kaddr;
 -
 -			/*
@@ -433,9 +443,10 @@ diff -Naur linux-2.6.11_orig/drivers/block/loop.c linux-2.6.11/drivers/block/loo
 -			kunmap_atomic(kaddr, KM_USER0);
 -		}
 -		flush_dcache_page(page);
--		if (aops->commit_write(file, page, offset, offset+size))
+-		if (unlikely(aops->commit_write(file, page, offset,
+-				offset + size)))
 -			goto unlock;
--		if (transfer_result)
+-		if (unlikely(transfer_result))
 -			goto unlock;
 -		bv_offs += size;
 -		len -= size;
@@ -445,19 +456,32 @@ diff -Naur linux-2.6.11_orig/drivers/block/loop.c linux-2.6.11/drivers/block/loo
 -		unlock_page(page);
 -		page_cache_release(page);
 -	}
--	up(&mapping->host->i_sem);
 -out:
+-	up(&mapping->host->i_sem);
 -	return ret;
-+    n = PAGE_SIZE / sizeof(aes_context);
-+    if(!n) n = 1;
- 
 -unlock:
 -	unlock_page(page);
 -	page_cache_release(page);
 -fail:
--	up(&mapping->host->i_sem);
 -	ret = -1;
 -	goto out;
++    AESmultiKey *m;
++    aes_context *a;
++    int x = 0, n;
++
++    m = (AESmultiKey *) kmalloc(sizeof(AESmultiKey), GFP_KERNEL);
++    if(!m) return 0;
++    memset(m, 0, sizeof(AESmultiKey));
++#if CONFIG_BLK_DEV_LOOP_KEYSCRUB
++    m->partialMD5 = &m->partialMD5buf[0];
++    rwlock_init(&m->rwlock);
++    init_timer(&m->timer);
++    again:
++#endif
++
++    n = PAGE_SIZE / sizeof(aes_context);
++    if(!n) n = 1;
++
 +    a = (aes_context *) kmalloc(sizeof(aes_context) * n, GFP_KERNEL);
 +    if(!a) {
 +#if CONFIG_BLK_DEV_LOOP_KEYSCRUB
@@ -479,22 +503,31 @@ diff -Naur linux-2.6.11_orig/drivers/block/loop.c linux-2.6.11/drivers/block/loo
 +    return m;
  }
  
--static int
--lo_send(struct loop_device *lo, struct bio *bio, int bsize, loff_t pos)
+-/**
+- * __do_lo_send_write - helper for writing data to a loop device
+- *
+- * This helper just factors out common code between do_lo_send_direct_write()
+- * and do_lo_send_write().
+- */
+-static inline int __do_lo_send_write(struct file *file,
+-		u8 __user *buf, const int len, loff_t pos)
 +static void clearAndFreeMultiKey(AESmultiKey *m)
  {
--	struct bio_vec *bvec;
--	int i, ret = 0;
+-	ssize_t bw;
+-	mm_segment_t old_fs = get_fs();
 +    aes_context *a;
 +    int x, n;
  
--	bio_for_each_segment(bvec, bio, i) {
--		ret = do_lo_send(lo, bvec, bsize, pos);
--		if (ret < 0)
--			break;
--		pos += bvec->bv_len;
--	}
--	return ret;
+-	set_fs(get_ds());
+-	bw = file->f_op->write(file, buf, len, &pos);
+-	set_fs(old_fs);
+-	if (likely(bw == len))
+-		return 0;
+-	printk(KERN_ERR "loop: Write error at byte offset %llu, length %i.\n",
+-			(unsigned long long)pos, len);
+-	if (bw >= 0)
+-		bw = -EIO;
+-	return bw;
 +#if CONFIG_BLK_DEV_LOOP_KEYSCRUB
 +    /* stop scrub timer. loop thread was killed earlier */
 +    del_timer_sync(&m->timer);
@@ -608,14 +641,24 @@ diff -Naur linux-2.6.11_orig/drivers/block/loop.c linux-2.6.11/drivers/block/loo
 +    return err;
  }
  
--struct lo_read_data {
--	struct loop_device *lo;
--	struct page *page;
--	unsigned offset;
--	int bsize;
--};
+-/**
+- * do_lo_send_direct_write - helper for writing data to a loop device
+- *
+- * This is the fast, non-transforming version for backing filesystems which do
+- * not implement the address space operations prepare_write and commit_write.
+- * It uses the write file operation which should be present on all writeable
+- * filesystems.
+- */
+-static int do_lo_send_direct_write(struct loop_device *lo,
+-		struct bio_vec *bvec, int bsize, loff_t pos, struct page *page)
 +void loop_compute_sector_iv(sector_t devSect, u_int32_t *ivout)
-+{
+ {
+-	ssize_t bw = __do_lo_send_write(lo->lo_backing_file,
+-			(u8 __user *)kmap(bvec->bv_page) + bvec->bv_offset,
+-			bvec->bv_len, pos);
+-	kunmap(bvec->bv_page);
+-	cond_resched();
+-	return bw;
 +    if(sizeof(sector_t) == 8) {
 +        ivout[0] = cpu_to_le32(devSect);
 +        ivout[1] = cpu_to_le32((u_int64_t)devSect>>32);
@@ -624,24 +667,80 @@ diff -Naur linux-2.6.11_orig/drivers/block/loop.c linux-2.6.11/drivers/block/loo
 +        ivout[0] = cpu_to_le32(devSect);
 +        ivout[3] = ivout[2] = ivout[1] = 0;
 +    }
-+}
+ }
  
--static int
--lo_read_actor(read_descriptor_t *desc, struct page *page,
--	      unsigned long offset, unsigned long size)
+-/**
+- * do_lo_send_write - helper for writing data to a loop device
+- *
+- * This is the slow, transforming version for filesystems which do not
+- * implement the address space operations prepare_write and commit_write.  It
+- * uses the write file operation which should be present on all writeable
+- * filesystems.
+- *
+- * Using fops->write is slower than using aops->{prepare,commit}_write in the
+- * transforming case because we need to double buffer the data as we cannot do
+- * the transformations in place as we do not have direct access to the
+- * destination pages of the backing file.
+- */
+-static int do_lo_send_write(struct loop_device *lo, struct bio_vec *bvec,
+-		int bsize, loff_t pos, struct page *page)
 +void loop_compute_md5_iv_v3(sector_t devSect, u_int32_t *ivout, u_int32_t *data)
  {
--	unsigned long count = desc->count;
--	struct lo_read_data *p = desc->arg.data;
--	struct loop_device *lo = p->lo;
--	sector_t IV;
+-	int ret = lo_do_transfer(lo, WRITE, page, 0, bvec->bv_page,
+-			bvec->bv_offset, bvec->bv_len, pos >> 9);
+-	if (likely(!ret))
+-		return __do_lo_send_write(lo->lo_backing_file,
+-				(u8 __user *)page_address(page), bvec->bv_len,
+-				pos);
+-	printk(KERN_ERR "loop: Transfer error at byte offset %llu, "
+-			"length %i.\n", (unsigned long long)pos, bvec->bv_len);
+-	if (ret > 0)
+-		ret = -EIO;
+-	return ret;
+-}
+-
+-static int lo_send(struct loop_device *lo, struct bio *bio, int bsize,
+-		loff_t pos)
+-{
+-	int (*do_lo_send)(struct loop_device *, struct bio_vec *, int, loff_t,
+-			struct page *page);
+-	struct bio_vec *bvec;
+-	struct page *page = NULL;
+-	int i, ret = 0;
+-
+-	do_lo_send = do_lo_send_aops;
+-	if (!(lo->lo_flags & LO_FLAGS_USE_AOPS)) {
+-		do_lo_send = do_lo_send_direct_write;
+-		if (lo->transfer != transfer_none) {
+-			page = alloc_page(GFP_NOIO | __GFP_HIGHMEM);
+-			if (unlikely(!page))
+-				goto fail;
+-			kmap(page);
+-			do_lo_send = do_lo_send_write;
+-		}
+-	}
+-	bio_for_each_segment(bvec, bio, i) {
+-		ret = do_lo_send(lo, bvec, bsize, pos, page);
+-		if (ret < 0)
+-			break;
+-		pos += bvec->bv_len;
+-	}
+-	if (page) {
+-		kunmap(page);
+-		__free_page(page);
+-	}
+-out:
+-	return ret;
+-fail:
+-	printk(KERN_ERR "loop: Failed to allocate temporary page for write.\n");
+-	ret = -ENOMEM;
+-	goto out;
 +    int         x;
 +#if defined(__BIG_ENDIAN)
 +    int         y, e;
 +#endif
 +    u_int32_t   buf[16];
- 
--	IV = ((sector_t) page->index << (PAGE_CACHE_SHIFT - 9))+(offset >> 9);
++
 +#if defined(__BIG_ENDIAN)
 +    y = 7;
 +    e = 16;
@@ -705,10 +804,14 @@ diff -Naur linux-2.6.11_orig/drivers/block/loop.c linux-2.6.11/drivers/block/loo
 +    buf[15] = 0;
 +    md5_transform_CPUbyteorder(&ivout[0], &buf[0]);
 +#endif
-+}
+ }
  
--	if (size > count)
--		size = count;
+-struct lo_read_data {
+-	struct loop_device *lo;
+-	struct page *page;
+-	unsigned offset;
+-	int bsize;
+-};
 +/* this function exists for compatibility with old external cipher modules */
 +void loop_compute_md5_iv(sector_t devSect, u_int32_t *ivout, u_int32_t *data)
 +{
@@ -874,14 +977,15 @@ diff -Naur linux-2.6.11_orig/drivers/block/loop.c linux-2.6.11/drivers/block/loo
 +    return(0);
 +}
  
--	if (lo_do_transfer(lo, READ, page, offset, p->page, p->offset, size, IV)) {
--		size = 0;
--		printk(KERN_ERR "loop: transfer error block %ld\n",
--		       page->index);
--		desc->error = -EINVAL;
--	}
+-static int
+-lo_read_actor(read_descriptor_t *desc, struct page *page,
+-	      unsigned long offset, unsigned long size)
 +static int keyClean_aes(struct loop_device *lo)
-+{
+ {
+-	unsigned long count = desc->count;
+-	struct lo_read_data *p = desc->arg.data;
+-	struct loop_device *lo = p->lo;
+-	sector_t IV;
 +    if(lo->key_data) {
 +        clearAndFreeMultiKey((AESmultiKey *)lo->key_data);
 +        lo->key_data = 0;
@@ -889,15 +993,13 @@ diff -Naur linux-2.6.11_orig/drivers/block/loop.c linux-2.6.11/drivers/block/loo
 +    return(0);
 +}
  
--	flush_dcache_page(p->page);
+-	IV = ((sector_t) page->index << (PAGE_CACHE_SHIFT - 9))+(offset >> 9);
 +static int handleIoctl_aes(struct loop_device *lo, int cmd, unsigned long arg)
 +{
 +    int err;
  
--	desc->count = count - size;
--	desc->written += size;
--	p->offset += size;
--	return size;
+-	if (size > count)
+-		size = count;
 +    switch (cmd) {
 +    case LOOP_MULTI_KEY_SETUP:
 +        err = multiKeySetup(lo, (unsigned char *)arg, 0);
@@ -909,11 +1011,14 @@ diff -Naur linux-2.6.11_orig/drivers/block/loop.c linux-2.6.11/drivers/block/loo
 +        err = -EINVAL;
 +    }
 +    return err;
- }
++}
  
--static int
--do_lo_receive(struct loop_device *lo,
--	      struct bio_vec *bvec, int bsize, loff_t pos)
+-	if (lo_do_transfer(lo, READ, page, offset, p->page, p->offset, size, IV)) {
+-		size = 0;
+-		printk(KERN_ERR "loop: transfer error block %ld\n",
+-		       page->index);
+-		desc->error = -EINVAL;
+-	}
 +static struct loop_func_table funcs_aes = {
 +    number:     16,     /* 16 == AES */
 +    transfer:   transfer_aes,
@@ -927,7 +1032,8 @@ diff -Naur linux-2.6.11_orig/drivers/block/loop.c linux-2.6.11/drivers/block/loo
 +EXPORT_SYMBOL(loop_compute_md5_iv);
 +EXPORT_SYMBOL(md5_transform_CPUbyteorder_C);
 +#endif /* CONFIG_BLK_DEV_LOOP_AES */
-+
+ 
+-	flush_dcache_page(p->page);
 +/* xfer_funcs[0] is special - its release function is never called */
 +static struct loop_func_table *xfer_funcs[MAX_LO_CRYPT] = {
 +	&none_funcs,
@@ -936,7 +1042,11 @@ diff -Naur linux-2.6.11_orig/drivers/block/loop.c linux-2.6.11/drivers/block/loo
 +        [LO_CRYPT_AES] = &funcs_aes,
 +#endif
 +};
-+
+ 
+-	desc->count = count - size;
+-	desc->written += size;
+-	p->offset += size;
+-	return size;
 +/*
 + *  First number of 'lo_prealloc' is the default number of RAM pages
 + *  to pre-allocate for each device backed loop. Every (configured)
@@ -969,10 +1079,13 @@ diff -Naur linux-2.6.11_orig/drivers/block/loop.c linux-2.6.11/drivers/block/loo
 +			break;
 +	}
 +	return 1;
-+}
+ }
 +__setup("lo_prealloc=", lo_prealloc_setup);
 +#endif
-+
+ 
+-static int
+-do_lo_receive(struct loop_device *lo,
+-	      struct bio_vec *bvec, int bsize, loff_t pos)
 +/*
 + * This is loop helper thread nice value in range
 + * from 0 (low priority) to -20 (high priority).
@@ -988,7 +1101,8 @@ diff -Naur linux-2.6.11_orig/drivers/block/loop.c linux-2.6.11/drivers/block/loo
 -	struct lo_read_data cookie;
 -	struct file *file;
 -	int retval;
--
++	int y;
+ 
 -	cookie.lo = lo;
 -	cookie.page = bvec->bv_page;
 -	cookie.offset = bvec->bv_offset;
@@ -997,8 +1111,6 @@ diff -Naur linux-2.6.11_orig/drivers/block/loop.c linux-2.6.11/drivers/block/loo
 -	retval = file->f_op->sendfile(file, &pos, bvec->bv_len,
 -			lo_read_actor, &cookie);
 -	return (retval < 0)? retval: 0;
-+	int y;
-+
 +	if (get_option(&str, &y) == 1)
 +		lo_nice = y;
 +	return 1;
@@ -1690,39 +1802,22 @@ diff -Naur linux-2.6.11_orig/drivers/block/loop.c linux-2.6.11/drivers/block/loo
 +static void loop_unplug_backingdev(request_queue_t *bq)
  {
 -	struct loop_device *lo = q->queuedata;
--
--	clear_bit(QUEUE_FLAG_PLUGGED, &q->queue_flags);
--	blk_run_address_space(lo->lo_backing_file->f_mapping);
 +#if defined(QUEUE_FLAG_PLUGGED)
 +	if(bq && bq->unplug_fn)
 +		bq->unplug_fn(bq);
 +#else
 +	blk_run_queues();
 +#endif
- }
++}
  
--struct switch_request {
--	struct file *file;
--	struct completion wait;
--};
--
--static void do_loop_switch(struct loop_device *, struct switch_request *);
--
--static inline void loop_handle_bio(struct loop_device *lo, struct bio *bio)
+-	clear_bit(QUEUE_FLAG_PLUGGED, &q->queue_flags);
+-	blk_run_address_space(lo->lo_backing_file->f_mapping);
 +#if defined(QUEUE_FLAG_PLUGGED)
 +static void loop_unplug_loopdev(request_queue_t *mq)
- {
--	int ret;
++{
 +	struct loop_device	*lo;
 +	struct file		*f;
- 
--	if (unlikely(!bio->bi_bdev)) {
--		do_loop_switch(lo, bio->bi_private);
--		bio_put(bio);
--	} else {
--		ret = do_bio_filebacked(lo, bio);
--		bio_endio(bio, bio->bi_size, ret);
--	}
++
 +	clear_bit(QUEUE_FLAG_PLUGGED, &mq->queue_flags);
 +	lo = mq->queuedata;
 +	if(!lo)
@@ -1734,9 +1829,42 @@ diff -Naur linux-2.6.11_orig/drivers/block/loop.c linux-2.6.11/drivers/block/loo
  }
 +#endif
  
+-struct switch_request {
++struct loop_switch_request {
+ 	struct file *file;
+ 	struct completion wait;
+ };
+ 
+-static void do_loop_switch(struct loop_device *, struct switch_request *);
+-
+-static inline void loop_handle_bio(struct loop_device *lo, struct bio *bio)
++static void do_loop_switch(struct loop_device *lo, struct loop_switch_request *p)
+ {
+-	int ret;
+-
+-	if (unlikely(!bio->bi_bdev)) {
+-		do_loop_switch(lo, bio->bi_private);
+-		bio_put(bio);
+-	} else {
+-		ret = do_bio_filebacked(lo, bio);
+-		bio_endio(bio, bio->bi_size, ret);
+-	}
++	struct file *file = p->file;
++	struct file *old_file=lo->lo_backing_file;
++	struct address_space *mapping = file->f_dentry->d_inode->i_mapping;
++	
++	/* This code runs on file backed loop only */
++	/* no need to worry about -1 old_gfp_mask */
++	mapping_set_gfp_mask(old_file->f_dentry->d_inode->i_mapping, lo->old_gfp_mask);
++	lo->lo_backing_file = file;
++	memset(lo->lo_file_name, 0, LO_NAME_SIZE);
++	lo->old_gfp_mask = mapping_gfp_mask(mapping);
++	mapping_set_gfp_mask(mapping, (lo->old_gfp_mask & ~(__GFP_IO|__GFP_FS)) | __GFP_HIGH);
++	complete(&p->wait);
+ }
+ 
  /*
-  * worker thread that handles reads/writes to file backed loop devices,
-@@ -476,20 +1454,45 @@
+@@ -580,20 +1479,45 @@
  static int loop_thread(void *data)
  {
  	struct loop_device *lo = data;
@@ -1786,7 +1914,7 @@ diff -Naur linux-2.6.11_orig/drivers/block/loop.c linux-2.6.11/drivers/block/loo
  	atomic_inc(&lo->lo_pending);
  
  	/*
-@@ -498,23 +1501,152 @@
+@@ -602,23 +1526,158 @@
  	up(&lo->lo_sem);
  
  	for (;;) {
@@ -1916,9 +2044,15 @@ diff -Naur linux-2.6.11_orig/drivers/block/loop.c linux-2.6.11/drivers/block/loo
 +
 +		if (lo->lo_flags & LO_FLAGS_DO_BMAP) {
 +			/* request is for file backed device */
-+			y = do_bio_filebacked(lo, bio);
-+			bio->bi_next = NULL;
-+			bio_endio(bio, bio->bi_size, y);
++			if(unlikely(!bio->bi_bdev)) {
++				do_loop_switch(lo, bio->bi_private);
++				bio->bi_next = NULL;
++				bio_put(bio);
++			} else {
++				y = do_bio_filebacked(lo, bio);
++				bio->bi_next = NULL;
++				bio_endio(bio, bio->bi_size, y);
++			}
 +		} else {
 +			/* device backed read has completed, do decrypt now */
 +			extension = bio->bi_private;
@@ -1946,7 +2080,7 @@ diff -Naur linux-2.6.11_orig/drivers/block/loop.c linux-2.6.11/drivers/block/loo
  		 * will hit zero then
  		 */
  		if (atomic_dec_and_test(&lo->lo_pending))
-@@ -525,249 +1657,223 @@
+@@ -629,250 +1688,297 @@
  	return 0;
  }
  
@@ -1974,7 +2108,8 @@ diff -Naur linux-2.6.11_orig/drivers/block/loop.c linux-2.6.11/drivers/block/loo
 - * Do the actual switch; called from the BIO completion routine
 - */
 -static void do_loop_switch(struct loop_device *lo, struct switch_request *p)
--{
++static void loop_set_softblksz(struct loop_device *lo, struct block_device *bdev)
+ {
 -	struct file *file = p->file;
 -	struct file *old_file = lo->lo_backing_file;
 -	struct address_space *mapping = file->f_mapping;
@@ -1986,7 +2121,8 @@ diff -Naur linux-2.6.11_orig/drivers/block/loop.c linux-2.6.11/drivers/block/loo
 -	mapping_set_gfp_mask(mapping, lo->old_gfp_mask & ~(__GFP_IO|__GFP_FS));
 -	complete(&p->wait);
 -}
--
++	int	bs, x;
+ 
 -
 -/*
 - * loop_change_fd switched the backing store of a loopback device to
@@ -1995,65 +2131,6 @@ diff -Naur linux-2.6.11_orig/drivers/block/loop.c linux-2.6.11/drivers/block/loo
 - * an alternative location for the content in case of server meltdown.
 - * This can only work if the loop device is used read-only, and if the
 - * new backing store is the same size and type as the old backing store.
-- */
--static int loop_change_fd(struct loop_device *lo, struct file *lo_file,
--		       struct block_device *bdev, unsigned int arg)
--{
--	struct file	*file, *old_file;
--	struct inode	*inode;
--	int		error;
--
--	error = -ENXIO;
--	if (lo->lo_state != Lo_bound)
--		goto out;
--
--	/* the loop device has to be read-only */
--	error = -EINVAL;
--	if (lo->lo_flags != LO_FLAGS_READ_ONLY)
--		goto out;
--
--	error = -EBADF;
--	file = fget(arg);
--	if (!file)
--		goto out;
--
--	inode = file->f_mapping->host;
--	old_file = lo->lo_backing_file;
--
--	error = -EINVAL;
--
--	if (!S_ISREG(inode->i_mode) && !S_ISBLK(inode->i_mode))
--		goto out_putf;
--
--	/* new backing store needs to support loop (eg sendfile) */
--	if (!inode->i_fop->sendfile)
--		goto out_putf;
--
--	/* size of the new backing store needs to be the same */
--	if (get_loop_size(lo, file) != get_loop_size(lo, old_file))
--		goto out_putf;
--
--	/* and ... switch */
--	error = loop_switch(lo, file);
--	if (error)
--		goto out_putf;
--
--	fput(old_file);
--	return 0;
--
-- out_putf:
--	fput(file);
-- out:
--	return error;
--}
--
--static inline int is_loop_device(struct file *file)
-+static void loop_set_softblksz(struct loop_device *lo, struct block_device *bdev)
- {
--	struct inode *i = file->f_mapping->host;
-+	int	bs, x;
- 
--	return i && S_ISBLK(i->i_mode) && MAJOR(i->i_rdev) == LOOP_MAJOR;
 +	if (lo->lo_device)
 +		bs = block_size(lo->lo_device);
 +	else
@@ -2070,8 +2147,111 @@ diff -Naur linux-2.6.11_orig/drivers/block/loop.c linux-2.6.11/drivers/block/loo
 +			bs = 512;
 +	}
 +	set_blocksize(bdev, bs);
++}
++
++/* 
++ * loop_change_fd switches the backing store of a loopback device to a 
++ * new file. This is useful for operating system installers to free up the
++ * original file and in High Availability environments to switch to an 
++ * alternative location for the content in case of server meltdown.
++ * This can only work if the loop device is used read-only, file backed,
++ * and if the new backing store is the same size and type as the old
++ * backing store.
+  */
+-static int loop_change_fd(struct loop_device *lo, struct file *lo_file,
+-		       struct block_device *bdev, unsigned int arg)
++static int loop_change_fd(struct loop_device *lo, unsigned int arg)
+ {
+-	struct file	*file, *old_file;
+-	struct inode	*inode;
+-	int		error;
+-
+-	error = -ENXIO;
+-	if (lo->lo_state != Lo_bound)
+-		goto out;
++	struct file *file, *old_file;
++	struct inode *inode;
++	struct loop_switch_request w;
++	struct bio *bio;
++	int error;
+ 
+-	/* the loop device has to be read-only */
+ 	error = -EINVAL;
++	/* loop must be read-only */
+ 	if (!(lo->lo_flags & LO_FLAGS_READ_ONLY))
+ 		goto out;
+ 
++	/* loop must be file backed */
++	if (!(lo->lo_flags & LO_FLAGS_DO_BMAP))
++		goto out;
++
+ 	error = -EBADF;
+ 	file = fget(arg);
+ 	if (!file)
+ 		goto out;
+ 
+-	inode = file->f_mapping->host;
++	inode = file->f_dentry->d_inode;
+ 	old_file = lo->lo_backing_file;
+ 
+ 	error = -EINVAL;
++	/* new backing store must be file backed */
++	if (!S_ISREG(inode->i_mode))
++		goto out_putf;
+ 
+-	if (!S_ISREG(inode->i_mode) && !S_ISBLK(inode->i_mode))
++	/* new backing store must support reads */
++	if (!file->f_op || !file->f_op->read)
+ 		goto out_putf;
+ 
+-	/* new backing store needs to support loop (eg sendfile) */
+-	if (!inode->i_fop->sendfile)
++	/* new backing store must be same size as the old one */
++	if(i_size_read(inode) != i_size_read(old_file->f_dentry->d_inode))
+ 		goto out_putf;
+ 
+-	/* size of the new backing store needs to be the same */
+-	if (get_loop_size(lo, file) != get_loop_size(lo, old_file))
++	/* loop must be in properly initialized state */
++	if(lo->lo_queue->make_request_fn != loop_make_request_real)
+ 		goto out_putf;
+ 
+-	/* and ... switch */
+-	error = loop_switch(lo, file);
+-	if (error)
++	error = -ENOMEM;
++	bio = bio_alloc(GFP_KERNEL, 1);
++	if (!bio)
+ 		goto out_putf;
+ 
++	/* wait for loop thread to do the switch */
++	init_completion(&w.wait);
++	w.file = file;
++	bio->bi_private = &w;
++	bio->bi_bdev = NULL;
++	bio->bi_rw = 0;
++	loop_make_request_real(lo->lo_queue, bio);
++	wait_for_completion(&w.wait);
++
+ 	fput(old_file);
+ 	return 0;
+-
+- out_putf:
++	
++out_putf:
+ 	fput(file);
+- out:
++out:
+ 	return error;
  }
  
+-static inline int is_loop_device(struct file *file)
+-{
+-	struct inode *i = file->f_mapping->host;
+-
+-	return i && S_ISBLK(i->i_mode) && MAJOR(i->i_rdev) == LOOP_MAJOR;
+-}
+-
  static int loop_set_fd(struct loop_device *lo, struct file *lo_file,
  		       struct block_device *bdev, unsigned int arg)
  {
@@ -2169,8 +2349,10 @@ diff -Naur linux-2.6.11_orig/drivers/block/loop.c linux-2.6.11/drivers/block/loo
 -		if (!file->f_op->sendfile)
 +		if (!file->f_op || !file->f_op->read)
  			goto out_putf;
- 
--		if (!aops->prepare_write || !aops->commit_write)
+-		if (aops->prepare_write && aops->commit_write)
+-			lo_flags |= LO_FLAGS_USE_AOPS;
+-		if (!(lo_flags & LO_FLAGS_USE_AOPS) && !file->f_op->write)
++
 +		if (!file->f_op->write)
  			lo_flags |= LO_FLAGS_READ_ONLY;
  
@@ -2185,9 +2367,9 @@ diff -Naur linux-2.6.11_orig/drivers/block/loop.c linux-2.6.11/drivers/block/loo
 +	} else
  		goto out_putf;
 -	}
- 
--	size = get_loop_size(lo, file);
 -
+-	size = get_loop_size(lo, file);
+ 
 -	if ((loff_t)(sector_t)size != size) {
 -		error = -EFBIG;
 -		goto out_putf;
@@ -2338,7 +2520,7 @@ diff -Naur linux-2.6.11_orig/drivers/block/loop.c linux-2.6.11/drivers/block/loo
  			return -EINVAL;
  		if (xfer->init)
  			err = xfer->init(lo, i);
-@@ -784,59 +1890,57 @@
+@@ -889,59 +1995,57 @@
  	struct file *filp = lo->lo_backing_file;
  	int gfp = lo->old_gfp_mask;
  
@@ -2419,7 +2601,7 @@ diff -Naur linux-2.6.11_orig/drivers/block/loop.c linux-2.6.11/drivers/block/loo
  	if ((unsigned int) info->lo_encrypt_key_size > LO_KEY_SIZE)
  		return -EINVAL;
  
-@@ -844,6 +1948,22 @@
+@@ -949,6 +2053,22 @@
  	if (err)
  		return err;
  
@@ -2442,7 +2624,7 @@ diff -Naur linux-2.6.11_orig/drivers/block/loop.c linux-2.6.11/drivers/block/loo
  	if (info->lo_encrypt_type) {
  		unsigned int type = info->lo_encrypt_type;
  
-@@ -852,31 +1972,20 @@
+@@ -957,31 +2077,20 @@
  		xfer = xfer_funcs[type];
  		if (xfer == NULL)
  			return -EINVAL;
@@ -2480,7 +2662,7 @@ diff -Naur linux-2.6.11_orig/drivers/block/loop.c linux-2.6.11/drivers/block/loo
  	lo->lo_encrypt_key_size = info->lo_encrypt_key_size;
  	lo->lo_init[0] = info->lo_init[0];
  	lo->lo_init[1] = info->lo_init[1];
-@@ -886,18 +1995,16 @@
+@@ -991,18 +2100,16 @@
  		lo->lo_key_owner = current->uid;
  	}	
  
@@ -2501,7 +2683,7 @@ diff -Naur linux-2.6.11_orig/drivers/block/loop.c linux-2.6.11/drivers/block/loo
  	error = vfs_getattr(file->f_vfsmnt, file->f_dentry, &stat);
  	if (error)
  		return error;
-@@ -906,17 +2013,18 @@
+@@ -1011,17 +2118,18 @@
  	info->lo_device = huge_encode_dev(stat.dev);
  	info->lo_inode = stat.ino;
  	info->lo_rdevice = huge_encode_dev(lo->lo_device ? stat.rdev : stat.dev);
@@ -2523,7 +2705,7 @@ diff -Naur linux-2.6.11_orig/drivers/block/loop.c linux-2.6.11/drivers/block/loo
  	}
  	return 0;
  }
-@@ -930,7 +2038,6 @@
+@@ -1035,7 +2143,6 @@
  	info64->lo_inode = info->lo_inode;
  	info64->lo_rdevice = info->lo_rdevice;
  	info64->lo_offset = info->lo_offset;
@@ -2531,7 +2713,7 @@ diff -Naur linux-2.6.11_orig/drivers/block/loop.c linux-2.6.11/drivers/block/loo
  	info64->lo_encrypt_type = info->lo_encrypt_type;
  	info64->lo_encrypt_key_size = info->lo_encrypt_key_size;
  	info64->lo_flags = info->lo_flags;
-@@ -944,7 +2051,7 @@
+@@ -1049,7 +2156,7 @@
  }
  
  static int
@@ -2540,7 +2722,7 @@ diff -Naur linux-2.6.11_orig/drivers/block/loop.c linux-2.6.11/drivers/block/loo
  {
  	memset(info, 0, sizeof(*info));
  	info->lo_number = info64->lo_number;
-@@ -967,14 +2074,15 @@
+@@ -1072,14 +2179,15 @@
  	if (info->lo_device != info64->lo_device ||
  	    info->lo_rdevice != info64->lo_rdevice ||
  	    info->lo_inode != info64->lo_inode ||
@@ -2558,7 +2740,7 @@ diff -Naur linux-2.6.11_orig/drivers/block/loop.c linux-2.6.11/drivers/block/loo
  {
  	struct loop_info info;
  	struct loop_info64 info64;
-@@ -982,21 +2090,22 @@
+@@ -1087,21 +2195,22 @@
  	if (copy_from_user(&info, arg, sizeof (struct loop_info)))
  		return -EFAULT;
  	loop_info64_from_old(&info, &info64);
@@ -2585,7 +2767,7 @@ diff -Naur linux-2.6.11_orig/drivers/block/loop.c linux-2.6.11/drivers/block/loo
  	struct loop_info info;
  	struct loop_info64 info64;
  	int err = 0;
-@@ -1014,7 +2123,7 @@
+@@ -1119,7 +2228,7 @@
  }
  
  static int
@@ -2594,7 +2776,7 @@ diff -Naur linux-2.6.11_orig/drivers/block/loop.c linux-2.6.11/drivers/block/loo
  	struct loop_info64 info64;
  	int err = 0;
  
-@@ -1028,61 +2137,65 @@
+@@ -1133,61 +2242,84 @@
  	return err;
  }
  
@@ -2629,10 +2811,11 @@ diff -Naur linux-2.6.11_orig/drivers/block/loop.c linux-2.6.11/drivers/block/loo
  	switch (cmd) {
  	case LOOP_SET_FD:
 -		err = loop_set_fd(lo, file, inode->i_bdev, arg);
--		break;
--	case LOOP_CHANGE_FD:
--		err = loop_change_fd(lo, file, inode->i_bdev, arg);
 +		err = loop_set_fd(lo, file, bdev, arg);
+ 		break;
+ 	case LOOP_CHANGE_FD:
+-		err = loop_change_fd(lo, file, inode->i_bdev, arg);
++		err = loop_change_fd(lo, arg);
  		break;
  	case LOOP_CLR_FD:
 -		err = loop_clr_fd(lo, inode->i_bdev);
@@ -2663,14 +2846,29 @@ diff -Naur linux-2.6.11_orig/drivers/block/loop.c linux-2.6.11/drivers/block/loo
  	return err;
  }
  
- static int lo_open(struct inode *inode, struct file *file)
+-static int lo_open(struct inode *inode, struct file *file)
++#if defined(CONFIG_COMPAT) && defined(HAVE_COMPAT_IOCTL)
++static long lo_compat_ioctl(struct file * file, unsigned int cmd, unsigned long arg)
  {
 -	struct loop_device *lo = inode->i_bdev->bd_disk->private_data;
--
++	struct inode *inode =  file->f_dentry->d_inode;
++	int err = -ENOIOCTLCMD;
+ 
 -	down(&lo->lo_ctl_mutex);
 -	lo->lo_refcnt++;
 -	up(&lo->lo_ctl_mutex);
--
++	switch (cmd) {
++	case LOOP_MULTI_KEY_SETUP:
++	case LOOP_MULTI_KEY_SETUP_V3:
++		err = lo_ioctl(inode, file, cmd, arg);
++		break;
++	}
++	return err;
++}
++#endif
+ 
++static int lo_open(struct inode *inode, struct file *file)
++{
  	return 0;
  }
  
@@ -2686,7 +2884,15 @@ diff -Naur linux-2.6.11_orig/drivers/block/loop.c linux-2.6.11/drivers/block/loo
  	return 0;
  }
  
-@@ -1096,8 +2209,6 @@
+@@ -1196,13 +2328,14 @@
+ 	.open =		lo_open,
+ 	.release =	lo_release,
+ 	.ioctl =	lo_ioctl,
++#if defined(CONFIG_COMPAT) && defined(HAVE_COMPAT_IOCTL)
++	.compat_ioctl = lo_compat_ioctl,
++#endif
+ };
+ 
  /*
   * And now the modules code and kernel interface.
   */
@@ -2695,7 +2901,7 @@ diff -Naur linux-2.6.11_orig/drivers/block/loop.c linux-2.6.11/drivers/block/loo
  MODULE_LICENSE("GPL");
  MODULE_ALIAS_BLOCKDEV_MAJOR(LOOP_MAJOR);
  
-@@ -1116,21 +2227,18 @@
+@@ -1221,32 +2354,29 @@
  	unsigned int n = number;
  	struct loop_device *lo;
  	struct loop_func_table *xfer;
@@ -2722,7 +2928,11 @@ diff -Naur linux-2.6.11_orig/drivers/block/loop.c linux-2.6.11/drivers/block/loo
  	return 0;
  }
  
-@@ -1141,7 +2249,7 @@
+ EXPORT_SYMBOL(loop_register_transfer);
+ EXPORT_SYMBOL(loop_unregister_transfer);
+ 
+-static int __init loop_init(void)
++int __init loop_init(void)
  {
  	int	i;
  
@@ -2731,7 +2941,7 @@ diff -Naur linux-2.6.11_orig/drivers/block/loop.c linux-2.6.11/drivers/block/loo
  		printk(KERN_WARNING "loop: invalid max_loop (must be between"
  				    " 1 and 256), using default (8)\n");
  		max_loop = 8;
-@@ -1150,62 +2258,87 @@
+@@ -1255,94 +2385,130 @@
  	if (register_blkdev(LOOP_MAJOR, "loop"))
  		return -EIO;
  
@@ -2781,7 +2991,9 @@ diff -Naur linux-2.6.11_orig/drivers/block/loop.c linux-2.6.11/drivers/block/loo
 +	register_ioctl32_conversion(LOOP_MULTI_KEY_SETUP_V3, IOCTL32_COMPATIBLE_PTR);
 +#endif
 +
++#ifdef CONFIG_DEVFS_FS
  	devfs_mk_dir("loop");
++#endif
  
  	for (i = 0; i < max_loop; i++) {
 -		struct loop_device *lo = &loop_dev[i];
@@ -2803,7 +3015,9 @@ diff -Naur linux-2.6.11_orig/drivers/block/loop.c linux-2.6.11/drivers/block/loo
  		disk->first_minor = i;
  		disk->fops = &lo_fops;
  		sprintf(disk->disk_name, "loop%d", i);
++#ifdef CONFIG_DEVFS_FS
  		sprintf(disk->devfs_name, "loop/%d", i);
++#endif
  		disk->private_data = lo;
 -		disk->queue = lo->lo_queue;
 +		add_disk(disk);
@@ -2841,7 +3055,13 @@ diff -Naur linux-2.6.11_orig/drivers/block/loop.c linux-2.6.11/drivers/block/loo
  out_mem1:
  	unregister_blkdev(LOOP_MAJOR, "loop");
  	printk(KERN_ERR "loop: ran out of memory\n");
-@@ -1218,26 +2351,31 @@
+ 	return -ENOMEM;
+ }
+ 
+-static void loop_exit(void)
++void loop_exit(void)
+ {
+ 	int i;
  
  	for (i = 0; i < max_loop; i++) {
  		del_gendisk(disks[i]);
@@ -2850,10 +3070,12 @@ diff -Naur linux-2.6.11_orig/drivers/block/loop.c linux-2.6.11/drivers/block/loo
 +		blk_put_queue(loop_dev_ptr_arr[i]->lo_queue);
 +		kfree(loop_dev_ptr_arr[i]);
  	}
++#ifdef CONFIG_DEVFS_FS
  	devfs_remove("loop");
 -	if (unregister_blkdev(LOOP_MAJOR, "loop"))
 -		printk(KERN_WARNING "loop: cannot unregister blkdev\n");
 -
++#endif
 +	unregister_blkdev(LOOP_MAJOR, "loop");
  	kfree(disks);
 -	kfree(loop_dev);
@@ -2884,13 +3106,13 @@ diff -Naur linux-2.6.11_orig/drivers/block/loop.c linux-2.6.11/drivers/block/loo
 -__setup("max_loop=", max_loop_setup);
 +EXPORT_SYMBOL(loop_add_keyscrub_fn);
  #endif
-diff -Naur linux-2.6.11_orig/drivers/misc/Makefile linux-2.6.11/drivers/misc/Makefile
---- linux-2.6.11_orig/drivers/misc/Makefile	2005-03-02 08:38:26.000000000 +0100
-+++ linux-2.6.11/drivers/misc/Makefile	2005-04-07 10:26:11.445576176 +0200
-@@ -4,3 +4,24 @@
- obj- := misc.o	# Dummy rule to force built-in.o to be made
- 
- obj-$(CONFIG_IBM_ASM)	+= ibmasm/
+diff -Naur linux-2.6.12_orig/drivers/misc/Makefile linux-2.6.12/drivers/misc/Makefile
+--- linux-2.6.12_orig/drivers/misc/Makefile	2005-06-17 21:48:29.000000000 +0200
++++ linux-2.6.12/drivers/misc/Makefile	2005-07-20 21:26:43.634507560 +0200
+@@ -1,6 +1,28 @@
+ #
+ # Makefile for misc devices that really don't fit anywhere else.
+ #
 +
 +ifeq ($(CONFIG_BLK_DEV_LOOP_AES),y)
 +AES_X86_ASM=n
@@ -2912,9 +3134,13 @@ diff -Naur linux-2.6.11_orig/drivers/misc/Makefile linux-2.6.11/drivers/misc/Mak
 +endif
 +endif
 +endif
-diff -Naur linux-2.6.11_orig/drivers/misc/aes-amd64.S linux-2.6.11/drivers/misc/aes-amd64.S
---- linux-2.6.11_orig/drivers/misc/aes-amd64.S	1970-01-01 01:00:00.000000000 +0100
-+++ linux-2.6.11/drivers/misc/aes-amd64.S	2005-04-07 10:26:11.446576024 +0200
++
+ obj- := misc.o	# Dummy rule to force built-in.o to be made
+ 
+ obj-$(CONFIG_IBM_ASM)	+= ibmasm/
+diff -Naur linux-2.6.12_orig/drivers/misc/aes-amd64.S linux-2.6.12/drivers/misc/aes-amd64.S
+--- linux-2.6.12_orig/drivers/misc/aes-amd64.S	1970-01-01 01:00:00.000000000 +0100
++++ linux-2.6.12/drivers/misc/aes-amd64.S	2005-07-20 21:26:43.636507256 +0200
 @@ -0,0 +1,893 @@
 +//
 +// Copyright (c) 2001, Dr Brian Gladman <brg@gladman.uk.net>, Worcester, UK.
@@ -3809,9 +4035,9 @@ diff -Naur linux-2.6.11_orig/drivers/misc/aes-amd64.S linux-2.6.11/drivers/misc/
 +	im_data5(v3)
 +	im_data6(v3)
 +	im_data7(v3)
-diff -Naur linux-2.6.11_orig/drivers/misc/aes-x86.S linux-2.6.11/drivers/misc/aes-x86.S
---- linux-2.6.11_orig/drivers/misc/aes-x86.S	1970-01-01 01:00:00.000000000 +0100
-+++ linux-2.6.11/drivers/misc/aes-x86.S	2005-04-07 10:26:11.448575720 +0200
+diff -Naur linux-2.6.12_orig/drivers/misc/aes-x86.S linux-2.6.12/drivers/misc/aes-x86.S
+--- linux-2.6.12_orig/drivers/misc/aes-x86.S	1970-01-01 01:00:00.000000000 +0100
++++ linux-2.6.12/drivers/misc/aes-x86.S	2005-07-20 21:26:43.638506952 +0200
 @@ -0,0 +1,922 @@
 +//
 +// Copyright (c) 2001, Dr Brian Gladman <brg@gladman.uk.net>, Worcester, UK.
@@ -4735,9 +4961,9 @@ diff -Naur linux-2.6.11_orig/drivers/misc/aes-x86.S linux-2.6.11/drivers/misc/ae
 +	im_data5(v3)
 +	im_data6(v3)
 +	im_data7(v3)
-diff -Naur linux-2.6.11_orig/drivers/misc/aes.c linux-2.6.11/drivers/misc/aes.c
---- linux-2.6.11_orig/drivers/misc/aes.c	1970-01-01 01:00:00.000000000 +0100
-+++ linux-2.6.11/drivers/misc/aes.c	2005-04-07 10:26:11.451575264 +0200
+diff -Naur linux-2.6.12_orig/drivers/misc/aes.c linux-2.6.12/drivers/misc/aes.c
+--- linux-2.6.12_orig/drivers/misc/aes.c	1970-01-01 01:00:00.000000000 +0100
++++ linux-2.6.12/drivers/misc/aes.c	2005-07-20 21:26:43.641506496 +0200
 @@ -0,0 +1,1479 @@
 +// I retain copyright in this code but I encourage its free use provided
 +// that I don't carry any responsibility for the results. I am especially 
@@ -6218,9 +6444,9 @@ diff -Naur linux-2.6.11_orig/drivers/misc/aes.c linux-2.6.11/drivers/misc/aes.c
 +
 +    state_out(out_blk, b0);
 +}
-diff -Naur linux-2.6.11_orig/drivers/misc/aes.h linux-2.6.11/drivers/misc/aes.h
---- linux-2.6.11_orig/drivers/misc/aes.h	1970-01-01 01:00:00.000000000 +0100
-+++ linux-2.6.11/drivers/misc/aes.h	2005-04-07 10:26:11.452575112 +0200
+diff -Naur linux-2.6.12_orig/drivers/misc/aes.h linux-2.6.12/drivers/misc/aes.h
+--- linux-2.6.12_orig/drivers/misc/aes.h	1970-01-01 01:00:00.000000000 +0100
++++ linux-2.6.12/drivers/misc/aes.h	2005-07-20 21:26:43.642506344 +0200
 @@ -0,0 +1,113 @@
 +// I retain copyright in this code but I encourage its free use provided
 +// that I don't carry any responsibility for the results. I am especially 
@@ -6335,9 +6561,9 @@ diff -Naur linux-2.6.11_orig/drivers/misc/aes.h linux-2.6.11/drivers/misc/aes.h
 +// if their parameters have not changed.
 +
 +#endif  // _AES_H
-diff -Naur linux-2.6.11_orig/drivers/misc/crypto-ksym.c linux-2.6.11/drivers/misc/crypto-ksym.c
---- linux-2.6.11_orig/drivers/misc/crypto-ksym.c	1970-01-01 01:00:00.000000000 +0100
-+++ linux-2.6.11/drivers/misc/crypto-ksym.c	2005-04-07 10:26:11.452575112 +0200
+diff -Naur linux-2.6.12_orig/drivers/misc/crypto-ksym.c linux-2.6.12/drivers/misc/crypto-ksym.c
+--- linux-2.6.12_orig/drivers/misc/crypto-ksym.c	1970-01-01 01:00:00.000000000 +0100
++++ linux-2.6.12/drivers/misc/crypto-ksym.c	2005-07-20 21:26:43.643506192 +0200
 @@ -0,0 +1,7 @@
 +#include <linux/module.h>
 +#include "aes.h"
@@ -6346,9 +6572,9 @@ diff -Naur linux-2.6.11_orig/drivers/misc/crypto-ksym.c linux-2.6.11/drivers/mis
 +EXPORT_SYMBOL(aes_encrypt);
 +EXPORT_SYMBOL(aes_decrypt);
 +EXPORT_SYMBOL(md5_transform_CPUbyteorder);
-diff -Naur linux-2.6.11_orig/drivers/misc/md5-amd64.S linux-2.6.11/drivers/misc/md5-amd64.S
---- linux-2.6.11_orig/drivers/misc/md5-amd64.S	1970-01-01 01:00:00.000000000 +0100
-+++ linux-2.6.11/drivers/misc/md5-amd64.S	2005-04-07 10:26:11.452575112 +0200
+diff -Naur linux-2.6.12_orig/drivers/misc/md5-amd64.S linux-2.6.12/drivers/misc/md5-amd64.S
+--- linux-2.6.12_orig/drivers/misc/md5-amd64.S	1970-01-01 01:00:00.000000000 +0100
++++ linux-2.6.12/drivers/misc/md5-amd64.S	2005-07-20 21:26:43.643506192 +0200
 @@ -0,0 +1,200 @@
 +//
 +//  md5-amd64.S
@@ -6550,9 +6776,9 @@ diff -Naur linux-2.6.11_orig/drivers/misc/md5-amd64.S linux-2.6.11/drivers/misc/
 +	addl	%ecx,8(%rdi)
 +	addl	%edx,12(%rdi)
 +	ret
-diff -Naur linux-2.6.11_orig/drivers/misc/md5-x86.S linux-2.6.11/drivers/misc/md5-x86.S
---- linux-2.6.11_orig/drivers/misc/md5-x86.S	1970-01-01 01:00:00.000000000 +0100
-+++ linux-2.6.11/drivers/misc/md5-x86.S	2005-04-07 10:26:11.453574960 +0200
+diff -Naur linux-2.6.12_orig/drivers/misc/md5-x86.S linux-2.6.12/drivers/misc/md5-x86.S
+--- linux-2.6.12_orig/drivers/misc/md5-x86.S	1970-01-01 01:00:00.000000000 +0100
++++ linux-2.6.12/drivers/misc/md5-x86.S	2005-07-20 21:26:43.644506040 +0200
 @@ -0,0 +1,207 @@
 +//
 +//  md5-x86.S
@@ -6761,9 +6987,9 @@ diff -Naur linux-2.6.11_orig/drivers/misc/md5-x86.S linux-2.6.11/drivers/misc/md
 +	pop	%ebx
 +	pop	%ebp
 +	ret
-diff -Naur linux-2.6.11_orig/drivers/misc/md5.c linux-2.6.11/drivers/misc/md5.c
---- linux-2.6.11_orig/drivers/misc/md5.c	1970-01-01 01:00:00.000000000 +0100
-+++ linux-2.6.11/drivers/misc/md5.c	2005-04-07 10:26:11.453574960 +0200
+diff -Naur linux-2.6.12_orig/drivers/misc/md5.c linux-2.6.12/drivers/misc/md5.c
+--- linux-2.6.12_orig/drivers/misc/md5.c	1970-01-01 01:00:00.000000000 +0100
++++ linux-2.6.12/drivers/misc/md5.c	2005-07-20 21:26:43.645505888 +0200
 @@ -0,0 +1,106 @@
 +/*
 + * MD5 Message Digest Algorithm (RFC1321).
@@ -6871,9 +7097,9 @@ diff -Naur linux-2.6.11_orig/drivers/misc/md5.c linux-2.6.11/drivers/misc/md5.c
 +    hash[2] += c;
 +    hash[3] += d;
 +}
-diff -Naur linux-2.6.11_orig/drivers/misc/md5.h linux-2.6.11/drivers/misc/md5.h
---- linux-2.6.11_orig/drivers/misc/md5.h	1970-01-01 01:00:00.000000000 +0100
-+++ linux-2.6.11/drivers/misc/md5.h	2005-04-07 10:26:11.453574960 +0200
+diff -Naur linux-2.6.12_orig/drivers/misc/md5.h linux-2.6.12/drivers/misc/md5.h
+--- linux-2.6.12_orig/drivers/misc/md5.h	1970-01-01 01:00:00.000000000 +0100
++++ linux-2.6.12/drivers/misc/md5.h	2005-07-20 21:26:43.645505888 +0200
 @@ -0,0 +1,11 @@
 +/* md5.h */
 +
@@ -6886,9 +7112,9 @@ diff -Naur linux-2.6.11_orig/drivers/misc/md5.h linux-2.6.11/drivers/misc/md5.h
 + asmlinkage
 +#endif
 +extern void md5_transform_CPUbyteorder(u_int32_t *, u_int32_t const *);
-diff -Naur linux-2.6.11_orig/include/linux/loop.h linux-2.6.11/include/linux/loop.h
---- linux-2.6.11_orig/include/linux/loop.h	2005-03-02 08:38:33.000000000 +0100
-+++ linux-2.6.11/include/linux/loop.h	2005-04-07 10:26:11.453574960 +0200
+diff -Naur linux-2.6.12_orig/include/linux/loop.h linux-2.6.12/include/linux/loop.h
+--- linux-2.6.12_orig/include/linux/loop.h	2005-06-17 21:48:29.000000000 +0200
++++ linux-2.6.12/include/linux/loop.h	2005-07-20 21:26:43.646505736 +0200
 @@ -16,54 +16,57 @@
  #ifdef __KERNEL__
  #include <linux/bio.h>
@@ -6970,17 +7196,20 @@ diff -Naur linux-2.6.11_orig/include/linux/loop.h linux-2.6.11/include/linux/loo
  };
  
  #endif /* __KERNEL__ */
-@@ -71,7 +74,8 @@
+@@ -71,10 +74,8 @@
  /*
   * Loop flags
   */
--#define LO_FLAGS_READ_ONLY	1
+-enum {
+-	LO_FLAGS_READ_ONLY	= 1,
+-	LO_FLAGS_USE_AOPS	= 2,
+-};
 +#define LO_FLAGS_DO_BMAP	1
 +#define LO_FLAGS_READ_ONLY	2
  
  #include <asm/posix_types.h>	/* for __kernel_old_dev_t */
  #include <asm/types.h>		/* for __u64 */
-@@ -121,26 +125,25 @@
+@@ -124,26 +125,25 @@
  #define LO_CRYPT_IDEA		6
  #define LO_CRYPT_DUMMY		9
  #define LO_CRYPT_SKIPJACK	10
@@ -7015,7 +7244,7 @@ diff -Naur linux-2.6.11_orig/include/linux/loop.h linux-2.6.11/include/linux/loo
  
  #endif
  /*
-@@ -155,4 +158,6 @@
+@@ -158,4 +158,6 @@
  #define LOOP_GET_STATUS64	0x4C05
  #define LOOP_CHANGE_FD		0x4C06
  
