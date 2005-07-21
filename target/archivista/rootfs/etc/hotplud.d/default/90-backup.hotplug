@@ -1,0 +1,66 @@
+#!/bin/bash
+
+# Automated backup of Archivista files. Either exporting PDFs or dumping the
+# MySQL database, depending on how the USB device is formated, with graphical
+# interaction thru Xdialog.
+#
+# Copyright (C) 2005 Archivista GmbH
+# Copyright (C) 2005 Rene Rebe
+
+export DISPLAY=:0
+
+if [ "$ACTION" = add -a "$1" = "block" ]; then
+	logger "ADDED block device"
+	name=${DEVPATH/*\/}
+	logger "name $name"
+
+  # work around USB issue failing to read partition table
+	if [[ $name = sd[a-z] ]]; then
+		sleep 3
+	  logger "triggering read of partition table"
+		logger sfdisk -l /dev/$name | logger
+		sfdisk -l /dev/$name | logger
+		exit
+	fi
+
+	if [[ $name != sd[a-z]1 ]] ; then
+		loger "Partition $name ignored for backup."
+	fi
+
+#  sleep 1
+
+	# peform backup, depending on the type DB or PDFs
+	type=""
+	if mount /dev/$name /mnt/usbdisk -t vfat 2> /dev/null ; then
+		type=PDF
+  elif mount /dev/$name /mnt/usbdisk -t ext2 2> /dev/null ; then
+		type=DB
+	else
+		logger "unknown format"
+		exit
+  fi
+
+  logger "Backup type: $type"
+
+  su archivista -c "Xdialog --yesno 'Perform $type backup?' 8 20"
+	if [ $? -eq 0 ]; then
+	  logger "Performing backup ..."
+		case $type in
+		PDF)
+		  /usr/bin/perl /home/cvs/archivista/jobs/exportpdf.pl ;;
+		DB)
+		  /usr/bin/perl /home/cvs/archivista/jobs/backup-mysql.pl ;;
+		esac
+		umount /mnt/usbdisk
+		su archivista -c "Xdialog --msgbox 'Backup successfully finished. The USB
+storage device can be safely removed, now.' 8 40"
+		logger "backup done"
+	else
+	  logger "Backup skipped by user ..."
+		umount /mnt/usbdisk
+	fi
+
+	#maybe user change (su)
+	#mysql, perl, ...
+	logger "hotplug backup script end"
+fi
