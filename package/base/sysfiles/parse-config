@@ -13,6 +13,11 @@
 # GNU General Public License can be found in the file COPYING.
 # --- T2-COPYRIGHT-NOTE-END ---
 
+# We need to store some bookkeeping for later runs. With this
+# information better error messages are possible, but most 
+# importantly it allows packages to be updated (with possibly 
+# different mimetypes).
+parse_config_data=$root/usr/share/rock-registry/parse-config
 
 if [ "$pkg" != "sysfiles" ]; then
 	var_append flistdel "|" "etc/mtab"
@@ -22,6 +27,9 @@ if [ -f $confdir/postsysfiles.in -a $stagelevel -gt 1 ] ; then
 	var_append flistdel "|" "etc/passwd"
 	var_append flistdel "|" "etc/shadow"
 	var_append flistdel "|" "etc/gshadow"
+	var_append flistdel "|" "etc/mime.types"
+	var_append flistdel "|" "etc/mailcap"
+	var_append flistdel "|" "usr/share/rock-registry/parse-config.*"
 	hook_add preconf 2 ". $confdir/postsysfiles.in"
 fi
 
@@ -58,3 +66,114 @@ safe_groupadd() {
 	fi
 }
 
+# Usage: safe_mimetypeadd mimetype exts cmd 
+#
+#	mimetype is the type to be registered
+#	exts is one of more extension to be tied to the mimetype.
+#	cmd the command to be tied to the mimetype
+#
+# Bookkeeping files:
+# -----------------
+# mimetypes: <mimetype> <package>
+# extensions: <extension> <mimetype>
+#
+# Configuration files:  (simplified)
+# -------------------
+# /etc/mime.types <mimetype> <extensions>
+# /etc/mailcap <mimetype>; <command>
+#
+safe_mimetypeadd() {
+	# Get the arguments.
+	local mimetype=$1
+	local extensions=$2
+	local command=$3
+
+	# If bookkeeping dir does not exist, create it.
+	mkdir -p $parse_config_data
+
+	# Check if the mimetype has been registered before.
+	local add_allowed=yes;		# until we know better.
+	if grep -q "^$mimetype" $root/etc/mime.types; then
+		# The mime type has already been registered. Determine
+		# what package registered the mimetype.
+		local package=$(grep "^$mimetype" $parse_config_data/mimetypes | cut -d' ' -f2) 
+
+		# Is it the current package, in other words is the
+		# package being updated?
+		if [ "$package" == "$pkg" ] ; then
+			# Apparently the package needs to be updated. To
+			# smoothen this process we remove any current mimetype
+			# information for the package.
+			remove_mimetype $mimetype
+		else
+			# Some other package has registered the mimetype.
+			# Since we practise first come first served, we are
+			# not allowed to change it.
+			echo "Mime type '$mimetype' already registered by $package"
+			add_allowed=no
+		fi
+		unset package
+	fi
+
+	# Are we allowed to add the mimetype.
+	if [ "$add_allowed" == "yes" ] ; then
+		# Before doing all necessary mimetype binding, we first have
+		# to check if the requested extensions are still free.
+		free_extensions=
+		local mt=
+		# Loop though all extensions and try to bind them to the
+		# given mimetype. However, first check if the extension
+		# is already bound to another mimetype.
+		for extension in $extensions; do
+			mt=$(grep "^$extention" $parse_config_data/extensions | cut -d' ' -f2)
+			if [ -n "$mt" ] ; then
+				# The extension is already bound to another
+				# mimetype.
+				echo "Extension '$extension' already bound to $mt"
+			else
+				# Add this extensions to the list.
+				var_append free_extensions " " "$extension"
+
+				# Register this binding in our bookkeeping.
+				echo "$extension $mimetype" >> $parse_config_data/extensions 
+			fi
+		done
+		# Bind all remaining extensions to the mimetype
+		echo "Adding mime type '$mimetype' ..."
+		echo "$mimetype $free_extensions" >> $root/etc/mime.types
+		unset free_extensions
+		unset extension
+
+		# Now the mimetype is set we can set the mailcap as well.
+		echo "$mimetype; $command" >> $root/etc/mailcap
+
+		# Also do the necessary bookkeeping.
+		echo "$mimetype $pkg" >> $parse_config_data/mimetypes
+	fi
+}
+
+# Usage: remove_mimetype <mimetype>
+#
+#	safely removes the given mimetype from both mimetype and mailcap
+#	configuration files. Also the proprietary T2 information regarding
+#	mimetypes is updated.
+#
+#	<mimetype> The mimetype to be removed.
+#
+remove_mimetype() {
+	local mimetype=$1
+	mimetype=${mimetype//\//\\/}
+
+	# Remove the mimetype from /etc/mime.types
+	sed -i "/^$mimetype .*\$/d" $root/etc/mime.types 
+
+	# Remove the mimetype from /etc/mailcap
+	# TODO: mailcap entries can be multiline.
+	sed -i "/^$mimetype; .*\$/d" $root/etc/mailcap
+
+	# Remove the mimetype from .../mimetypes
+	sed -i "/^$mimetype .*\$/d" $parse_config_data/mimetypes 
+
+	# Remove the extensions binding to the given mimetype.
+	sed -i "/^.* $mimetype\$/d" $parse_config_data/extensions 
+}
