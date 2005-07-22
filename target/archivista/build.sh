@@ -17,6 +17,9 @@ pkgloop
 isofsdir="$build_rock/isofs"		# for the ISO9660 content
 imagelocation="$build_rock/rootfs"	# where the roofs is prepared and sq.
 
+# inject the archivista grub logo
+cp -f $base/target/$target/archivista.xpm.gz $build_root/boot/
+
 # create the live initrd's first and the actual root file-system, re-using
 # the livecd code
 . $base/target/$target/build_initrd.sh
