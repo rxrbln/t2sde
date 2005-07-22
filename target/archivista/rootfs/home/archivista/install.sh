@@ -12,6 +12,8 @@ parts=
 
 mkdir -p /mnt/target
 
+initdata=0
+
 # collect partitions normally intended for archivista
 for x in /dev/hd? /dev/sd? ; do
 	[ -e $x ] || continue
@@ -57,6 +59,7 @@ EOT
 		mkswap ${part%[0-9]}3
 		# initialize data partition
 		mkfs.ext3 ${part%[0-9]}4
+                initdata=1
 	else
 		exit
 	fi
@@ -80,9 +83,8 @@ echo ok
 
 mkfs.ext3 $part
 mount $part		/mnt/target
-mkdir			/mnt/target/home/data
-# TODO: handle error and only mount for fresh installs!!!
-mount ${part%[0-9]}4	/mnt/target/home/data
+mkdir -p		/mnt/target/home/data
+[ $initdata -eq 1 ] && mount ${part%[0-9]}4	/mnt/target/home/data
 
 rsync  -arvP /mnt/live/ /mnt/target/ |
   sed -n 's/.* \([0-9]\+.[0-9]\)% .*/\1/p' |
@@ -90,7 +92,7 @@ rsync  -arvP /mnt/live/ /mnt/target/ |
 
 cat >> /mnt/target/etc/fstab <<-EOT
 ${part%[0-9]}3	swap		swap	defaults        0 0
-${part%[0-9]}4	/home/data	ext2	defaults	0 0
+${part%[0-9]}4	/home/data	auto	defaults	0 0
 EOT
 
 echo installing boot loader ...
