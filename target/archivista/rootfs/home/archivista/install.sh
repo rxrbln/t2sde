@@ -52,13 +52,21 @@ All data will be lost!" 8 38; then
 EOT
 		# install into the first partition on fresh installs ...
 		part=/dev/hda1
+
+		# initialize the swap
+		mkswap ${part%[0-9]}3
+		# initialize data partition
+		mkfs.ext3 ${part%[0-9]}4
 	else
 		exit
 	fi
 fi
 
+# TODO: copy the passwords if existing
 # grep 'root\|archivista' /mnt/target/etc/shadow > $shadow
 #                        cat $shadow
+
+# maybe TODO: take a look which archivista setup is activated in grub ...
 
 part=${part%-*}
 
@@ -71,11 +79,19 @@ fi
 echo ok
 
 mkfs.ext3 $part
-mount $part /mnt/target
+mount $part		/mnt/target
+mkdir			/mnt/target/home/data
+# TODO: handle error and only mount for fresh installs!!!
+mount ${part%[0-9]}4	/mnt/target/home/data
 
 rsync  -arvP /mnt/live/ /mnt/target/ |
   sed -n 's/.* \([0-9]\+.[0-9]\)% .*/\1/p' |
   Xdialog --progress "Installing ..." 8 28
+
+cat >> /mnt/target/etc/fstab <<-EOT
+${part%[0-9]}3	swap		swap	defaults        0 0
+${part%[0-9]}4	/home/data	ext2	defaults	0 0
+EOT
 
 echo installing boot loader ...
 
@@ -93,6 +109,7 @@ EOT
 
 umount /mnt/target/dev
 umount /mnt/target/proc
+umount /mnt/target/home/data
 umount /mnt/target
 
 Xdialog --infobox "Installation finished. You
