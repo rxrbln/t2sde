@@ -7,6 +7,8 @@
 # Copyright (C) 2005 Archivista GmbH
 # Copyright (C) 2005 Rene Rebe
 
+PATH=/sbin:/usr/sbin:$PATH
+
 shadow=`mktemp`-shadow
 parts=
 
