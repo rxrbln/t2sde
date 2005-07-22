@@ -14,6 +14,18 @@
  		fi
  
  		cat << EOT
+@@ -84,6 +84,11 @@
+ timeout 8
+ default 0
+ fallback 1
++
++foreground  = 000000
++background  = FFFFFF
++splashimage $bootdrive$bootpath/t2.xpm.gz
++
+ EOT
+ 	create_kernel_list >> /boot/grub/menu.lst
+ 
 @@ -89,7 +89,7 @@
  
  	[ -f /boot/memtest86.bin ] && cat << EOT >> /boot/grub/menu.lst
