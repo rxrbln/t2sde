@@ -5,6 +5,8 @@
 # Copyright (C) 2005 Archivista GmbH
 # Copyright (C) 2005 Rene Rebe
 
+PATH=/sbin:/usr/sbin:$PATH
+
 get_ip()
 {
 	x=$2
@@ -63,6 +65,17 @@ prefix in CIDR notation
 	[ "$gw" ] && ns=`get_ip "Nameserver address
 (e.g. 192.168.0.1):" ${gw}`
 
-	echo IP: $ip GW: $gw NS: $ns
+	cat > /etc/conf/network <<EOT
+interface eth0
+        ip $ip
+EOT
+	[ "$gw" ] && cat >> /etc/conf/network <<EOT
+	gw $gw
+EOT
+	[ "$ns" ] && cat >> /etc/conf/network <<EOT
+        nameserver $nameserver
+EOT
+
 fi
 
+ifup eth0
