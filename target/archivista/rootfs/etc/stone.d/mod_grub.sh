@@ -10,7 +10,7 @@
 +			label="Archivista" ; first=0
  		else
 -			label=linux-$ver
-+			label="Archivista (Kernel: $ver)
++			label="Archivista (Kernel: $ver)"
  		fi
  
  		cat << EOT
