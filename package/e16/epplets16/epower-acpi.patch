@@ -1,0 +1,263 @@
+--- epplets-0.7/epplets/E-Power.c	2001-10-13 20:32:19.000000000 +0200
++++ epplets-0.7-jsaw/epplets/E-Power.c	2005-07-26 00:05:04.000000000 +0200
+@@ -1,22 +1,40 @@
+ #include "epplet.h"
+ 
++int                use_acpi = 0;
++#define MAX_ACPI_BAT 4
++struct __acpibat {
++  /* info */
++  int present[MAX_ACPI_BAT];
++  int design_capacity[MAX_ACPI_BAT];
++
++  int last_full_capacity[MAX_ACPI_BAT];
++  int design_capacity_warning[MAX_ACPI_BAT];
++  int design_capacity_low[MAX_ACPI_BAT];  
++} acpibat;
++
+ int                prev_bat_val = 110;
+-int                bat_val = 0;
+-int                time_val = 0;
++int                bat_num = 0;
++int                bat_val = 0, ac_stat, bat_stat, bat_flags;
++
++int                up2, time_val = 0;
+ int                prev_up[16] = 
+ {0, 0, 0, 0, 0, 0, 0, 0, 
+    0, 0, 0, 0, 0, 0, 0, 0};
+ int                prev_count = 0;
+ Epplet_gadget      b_close, b_suspend, b_sleep,  b_help, image, label;
+ 
++static void power_setup(void);
++
+ static void cb_timer(void *data);
+ static void cb_close(void *data);
+ static void cb_in(void *data, Window w);
+ static void cb_out(void *data, Window w);
+ static void cb_help(void *data);
+ 
+-static void
+-cb_timer(void *data)
++static int cb_apm();
++static int cb_acpi();
++
++static int cb_apm()
+ {
+    static FILE *f;
+ 
+@@ -24,8 +42,8 @@
+    if (f)
+      {
+ 	char s[256], s1[32], s2[32], s3[32];
+-	int apm_flags, ac_stat, bat_stat, bat_flags;
+-	int  i, hours, minutes, up, up2;
++	int apm_flags;
++	int  i, up;
+ 	char *s_ptr;
+ 	
+ 	fgets(s, 255, f);
+@@ -49,13 +67,111 @@
+ 	prev_count++;
+ 	if (prev_count >= 16)
+ 	   prev_count = 0;
++     }
++}
++
++#define TAG(tag) !strncmp(tag, s, strlen(tag))
++static int cb_acpi()
++{
++  FILE *f;
++  char s[256], *s_val;
++  int rate = 0, remain = 0;
++
++  bat_num++;
++  while ((bat_num < MAX_ACPI_BAT) && (acpibat.present[bat_num] < 0)) bat_num++;
++  if (bat_num >= MAX_ACPI_BAT) 
++    bat_num = 0;
++
++  if (acpibat.present[bat_num] <= 0) {
++    bat_flags = 0x80;
++    return 0;
++  } 
++
++  bat_flags = 0x00;
++
++  /* parse state */
++  snprintf(s, 256, "/proc/acpi/battery/BAT%d/state", bat_num);
++  f = fopen(s, "r");
++  if (!f) {
++    bat_flags = 0x80;
++    return 0;
++  }
++
++  while (!feof(f)) {
++    if (fgets(s, 256, f))
++      {
++	s_val = s;
++	while(*s_val != ':') s_val++; s_val++;
++	while((*s_val == ' ')||(*s_val == '\t')) s_val++;
+ 	
+-        s_ptr = s;
++	/* FIXME "capacity state:" ??? */
++	if (TAG("charging state:")) 
++	  {
++	    if (!strncmp(s_val, "char", 4)) {
++	      ac_stat = 1;
++	      bat_stat = 3; /* CHARGING */
++	    }
++	    else {
++	      ac_stat = 0;
++	      bat_stat = 0;
++	    }
++	  }
++	else if (TAG("present rate:")) {
++	  rate = strtol(s_val, NULL, 10);
++	}
++	else if (TAG("remaining capacity:")) {
++	  remain = strtol(s_val, NULL, 10);
++	}
++	else if (TAG("present rate:")) {
++	  rate = strtol(s_val, NULL, 10);
++	}
++      }
++  }
++  fclose(f);
++
++  bat_val = (remain * 100) / acpibat.last_full_capacity[bat_num];
++  if (bat_stat != 3) {
++    if (remain < acpibat.design_capacity_low[bat_num])
++      bat_stat = 2;
++    else if (remain < acpibat.design_capacity_warning[bat_num])
++      bat_stat = 1;
++    else
++      bat_stat = 0;
++
++    time_val = (remain * 3600)/rate;
++  }
++  else {
++    time_val = ((acpibat.last_full_capacity[bat_num]-remain) * 3600)/rate;
++  }
++
++  /* 
++     up2 ????
++  */
++
++  return 0;
++}
+ 
++static void
++cb_timer(void *data)
++{
++  int fail;
++  char s[256];
++  char *s_ptr = s;
++  int hours, minutes;
++
++  if (use_acpi) fail = cb_acpi();
++  else fail = cb_apm();
++
++  if (!fail) 
++    {
++	/* convert to display */
+         if( bat_flags != 0xff
+ 	    && bat_flags & 0x80 )
+ 	  {
+-	    s_ptr += sprintf( s_ptr, "no battery" );
++	    if (use_acpi)
++	      s_ptr += sprintf( s_ptr, "no bat. [%d]", bat_num );
++	    else
++	      s_ptr += sprintf( s_ptr, "no battery" );
+ 	  }
+ 	else
+ 	  {
+@@ -97,9 +213,10 @@
+ 	    else
+ 	       s_ptr += sprintf(s_ptr, "%i:%02i", hours, minutes);
+           }
++	s_ptr += sprintf( s_ptr, " [%d]", bat_num );
+ 	Epplet_change_label(label, s);
+ 
+-	sprintf(s, EROOT"/epplet_data/E-Power//E-Power-Bat-%i.png", 
++	sprintf(s, EROOT"/epplet_data/E-Power/E-Power-Bat-%i.png", 
+ 		((bat_val + 5) / 10) * 10);
+ 	Epplet_change_image(image, 44, 24, s);
+ 	Epplet_timer(cb_timer, NULL, 30.0, "TIMER");   
+@@ -170,6 +287,8 @@
+ int
+ main(int argc, char **argv)
+ {
++  power_setup();
++
+    Epplet_Init("E-Power", "0.1", "Enlightenment Laptop Power Epplet",
+ 	       3, 3, argc, argv, 0);
+    atexit(Epplet_cleanup);
+@@ -200,3 +319,69 @@
+    Epplet_Loop();
+    return 0;
+ }
++
++static void power_setup(void)
++{
++  FILE *f;
++
++  f = fopen("/proc/apm", "r");
++  if (f) 
++    {
++      fclose(f);
++    }
++  else
++    { /* try acpi */
++      int i;
++      char s[256];
++      char *s_val;
++
++      memset(&acpibat, 0, sizeof(struct __acpibat));
++      
++      for(i=0; i<MAX_ACPI_BAT; i++) {
++	snprintf(s, 256, "/proc/acpi/battery/BAT%d/info", i);
++	acpibat.present[i] = -1;
++
++	f = fopen(s, "r");
++	if (f)
++	  {
++	    use_acpi++;
++			
++	    while (!feof(f)) {
++	      if (fgets(s, 256, f))
++		{
++		  s_val = s;
++		  while(*s_val != ':') s_val++; s_val++;
++		  while((*s_val == ' ')||(*s_val == '\t')) s_val++;
++		  
++		  if (TAG("present:")) 
++		    {
++		      if (!strncmp(s_val, "yes", 3)) 
++			acpibat.present[i] = 1;
++		      else
++			acpibat.present[i] = 0;
++		    }
++		  else if (TAG("design capacity:")) 
++		    {
++		      acpibat.design_capacity[i] = strtol(s_val, NULL, 10);
++		    }
++		  else if (TAG("last full capacity:")) 
++		    {
++		      acpibat.last_full_capacity[i] = strtol(s_val, NULL, 10);
++		    }
++		  else if (TAG("design capacity warning:")) 
++		    {
++		      acpibat.design_capacity_warning[i] = strtol(s_val, NULL, 10);
++		    }
++		  else if (TAG("design capacity low:")) 
++		    {
++		      acpibat.design_capacity_low[i] = strtol(s_val, NULL, 10);
++		    }
++		}
++
++	    }
++
++	    fclose(f);
++	  }
++      }
++    }
++}
