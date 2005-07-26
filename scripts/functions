@@ -694,6 +694,27 @@ apply_patchfiles() {
         done
 }
 
+# -------------------------------------------------------------------
+# The automatic extraction of archive (prior to building) supports 
+# multiple archive types. For every archive type we have a separate
+# func that knows how to extract the archive. However, every func
+# should deliver two file: untar.txt and xsrcdir.txt.
+#
+# untar.txt needs to contain all extracted files.
+# xsrcdir.txt need to contain the top level extraction directories.
+# -------------------------------------------------------------------
+
+autoextract_tar_bz2() {
+	echo "Extracting $xsrctar ($taropt) ... "
+	tar -v $taropt $1 > untar.txt 
+}
+
+autoextract_zip() {
+	echo "Extracting $xsrctar ($zipopt) ... "
+	unzip $zipopt $1 | sed 's,^.*/$,,' |
+		cut -f4 -d" " | grep -v "^$" > untar.txt 
+}
+
 # Main program for building a package
 #
 build_this_package() {
@@ -723,11 +744,21 @@ build_this_package() {
 		var_append patchfiles " " \
 		           "`ls $confdir/*.patch.${xsrctar/-[v0-9]*/} 2> /dev/null`"
 		if [ $autoextract = 1 ]; then
-			echo "Extracting $xsrctar ($taropt) ... "
-			cd $builddir
-			tar -v $taropt $archdir/$xsrctar | tee untar.txt |
-				sed 's,^\./,,' | cut -f1 -d/ |
-				sort -u > xsrcdir.txt
+			if [ -z "$custextract" ]; then
+				# No custum extraction, so determine what
+				# autoextraction to use.
+				case "$xsrctar" in
+				*.tar.bz2|*.tbz2) custextract="autoextract_tar_bz2" ;;
+				*.zip) custextract="autoextract_zip" ;;
+				esac
+			fi
+			if [ -n "$custextract" ]; then
+				# Do the actual extraction of the archive.
+				eval "$custextract $archdir/$xsrctar"
+				cat untar.txt | 
+					sed 's,^\./,,' | cut -f1 -d/ |
+					sort -u > xsrcdir.txt
+			fi
 			#
 			if [ "$srcdir" = auto ]; then
 				xsrcdir=${xsrctar%.tar.bz2}
