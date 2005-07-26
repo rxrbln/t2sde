@@ -28,8 +28,8 @@
 #	- package/*/*/preconfig.in
 #
 #	* Selecting Target
-#	- target/$SDECFG_TARGET/pkgsel
 #	* target/$SDECFG_TARGET/config.in
+#	- target/$SDECFG_TARGET/pkgsel{,.sed,.awk,.in}
 #
 #	* {package/*,misc}/*/config-n.in (n<500)
 #
@@ -90,35 +90,49 @@ block_begin 7
 	choice SDECFG_TARGET generic $CFGTEMP_TARGETLIST
 	SDECFG_ID="$SDECFG_ID-$SDECFG_TARGET"
 
-	if [ -f target/$SDECFG_TARGET/config.in ]
-	then . target/$SDECFG_TARGET/config.in ; fi
+	# detect the target chain
+	targetchain="$SDECFG_TARGET"; x="$SDECFG_TARGET"
+	while [ -f "target/$x/extends" ]; do
+		x="`cat target/$x/extends`"
+		targetchain="$targetchain $x"
+	done
 
-	if [ -f target/$SDECFG_TARGET/pkgsel ]; then
-		if [ target/$SDECFG_TARGET/pkgsel -nt $cfgtmpdir/pkgsel.$SDECFG_TARGET.awk ]
-		then
-		( echo "# created from 'target-pkgsel'"
-		  pkgsel_init
-		  pkgsel_parse < target/$SDECFG_TARGET/pkgsel
-		  pkgsel_finish
-		) > $cfgtmpdir/pkgsel.$SDECFG_TARGET.awk
-		fi
+	# config.in it foreward order
+	for target in $targetchain; do
+		if [ -f target/$target/config.in ]
+		then . target/$target/config.in ; fi
+	done
 
-		if [ -s $cfgtmpdir/pkgsel.$SDECFG_TARGET.awk ]; then
-			pkgfilter awk -f $cfgtmpdir/pkgsel.$SDECFG_TARGET.awk
+	# pkgsel in backward order
+	for target in $( get_reverted $targetchain ); do
+		if [ -f target/$target/pkgsel ]; then
+			if [ target/$target/pkgsel -nt $cfgtmpdir/pkgsel.$target.awk ]
+			then
+				( echo "# created from 'target-pkgsel'"
+				  pkgsel_init
+				  pkgsel_parse < target/$target/pkgsel
+				  pkgsel_finish
+				) > $cfgtmpdir/pkgsel.$target.awk
+			fi
+
+			if [ -s $cfgtmpdir/pkgsel.$target.awk ]; then
+				pkgfilter awk -f $cfgtmpdir/pkgsel.$target.awk
+				[ "$SDECFG_LICENSE_ISSUE" = 0 ] && pkgchecklicense
+			else
+				comment 'WARNING! something went wrong with target-pkgsel'
+			fi
+		elif [ -f target/$target/pkgsel.awk ]; then
+			pkgfilter awk -f target/$target/pkgsel.awk
 			[ "$SDECFG_LICENSE_ISSUE" = 0 ] && pkgchecklicense
-		else
-			comment 'WARNING! something went wrong with target-pkgsel'
+		elif [ -f target/$target/pkgsel.sed ]; then
+			pkgfilter sed -f target/$target/pkgsel.sed
+			[ "$SDECFG_LICENSE_ISSUE" = 0 ] && pkgchecklicense
+		elif [ -f target/$target/pkgsel.in ]; then
+			. target/$target/pkgsel.in
+			[ "$SDECFG_LICENSE_ISSUE" = 0 ] && pkgchecklicense
 		fi
-	elif [ -f target/$SDECFG_TARGET/pkgsel.awk ]; then
-		pkgfilter awk -f target/$SDECFG_TARGET/pkgsel.awk
-		[ "$SDECFG_LICENSE_ISSUE" = 0 ] && pkgchecklicense
-	elif [ -f target/$SDECFG_TARGET/pkgsel.sed ]; then
-		pkgfilter sed -f target/$SDECFG_TARGET/pkgsel.sed
-		[ "$SDECFG_LICENSE_ISSUE" = 0 ] && pkgchecklicense
-	elif [ -f target/$SDECFG_TARGET/pkgsel.in ]; then
-		. target/$SDECFG_TARGET/pkgsel.in
-		[ "$SDECFG_LICENSE_ISSUE" = 0 ] && pkgchecklicense
-	fi
+	done
+
 block_end
 
 if test -f config/$config/license-issue.ask; then
