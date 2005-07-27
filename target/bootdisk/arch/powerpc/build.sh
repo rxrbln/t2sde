@@ -71,7 +71,7 @@ EOT
 	#
 	datadir="build/${SDECFG_ID}/TOOLCHAIN/bootdisk"
 	cat > ../isofs_arch.txt <<- EOT
-		BOOT	-hfs -part -map $datadir/mapping -hfs-volid "ROCK_Linux_CD"
+		BOOT	-hfs -part -map $datadir/mapping -hfs-volid "T2SDE_Linux_CD"
 		BOOTx	-hfs-bless boot -sysid PPC -l -L -r -T -chrp-boot
 		BOOTx   --prep-boot install.bin
 		DISK1	$datadir/boot/ boot/
