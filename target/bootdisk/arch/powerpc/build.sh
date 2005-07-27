@@ -33,7 +33,7 @@ if [ $use_yaboot -eq 1 ]; then
 	cp boot/yaboot.rs6k install.bin
 	#
 	echo_status "Creating yaboot config files."
-	cp -v $base/target/$target/powerpc/{boot.msg,ofboot.b} \
+	cp -v $base/target/$target/arch/powerpc/{boot.msg,ofboot.b} \
 	  boot
 	#
 	# IBM RS/6000
@@ -67,7 +67,7 @@ EOT
 
 	#
 	echo_status "Copy more config files."
-	cp -v $base/target/$target/powerpc/mapping .
+	cp -v $base/target/$target/arch/powerpc/mapping .
 	#
 	datadir="build/${SDECFG_ID}/TOOLCHAIN/bootdisk"
 	cat > ../isofs_arch.txt <<- EOT
@@ -78,6 +78,6 @@ EOT
 		DISK1	$datadir/etc/ etc/
 		DISK1	$datadir/install.bin install.bin
 	EOT
-#		SCRIPT  sh $base/target/bootdisk/powerpc/bless-rs6k.sh $disksdir
+#		SCRIPT  sh $base/target/bootdisk/arch/powerpc/bless-rs6k.sh $disksdir
 fi
 

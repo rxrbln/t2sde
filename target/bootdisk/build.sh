@@ -41,8 +41,8 @@ then
 	. $base/target/$target/build_stage1.sh
 fi
 
-if [ -f $base/target/$target/$arch/build.sh ]; then
-	. $base/target/$target/$arch/build.sh
+if [ -f $base/target/$target/arch/$arch/build.sh ]; then
+	. $base/target/$target/arch/$arch/build.sh
 fi
 
 
