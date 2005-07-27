@@ -30,7 +30,7 @@ then
 	    boot/second.b -O > boot/second.b
 	#
 	echo_status "Creating silo config file."
-	cp -v $base/target/$target/sparc/{silo.conf,boot.msg} \
+	cp -v $base/target/$target/arch/sparc/{silo.conf,boot.msg} \
 	  boot
 	#
 	echo_status "Moving image (initrd) to boot directory."
