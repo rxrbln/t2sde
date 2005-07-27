@@ -22,11 +22,11 @@ mdlbl_ver="`sed -n 's,.*mdlbl-\(.*\).tar.*,\1,p' \
 cd $disksdir
 
 echo_header "Creating lilo config and cleaning boot directory:"
-cp $base/target/$target/x86/lilo-* boot/
+cp $base/target/$target/arch/x86/lilo-* boot/
 rm -rfv boot/grub boot/System.map boot/kconfig boot/*.24**
 
 #echo_header "Creating floppy disk images:"
-#cp $base/target/$target/x86/makeimages.sh .
+#cp $base/target/$target/arch/x86/makeimages.sh .
 #chmod +x makeimages.sh
 
 if false ; then # [ $use_mdlbl -eq 1 ]
@@ -64,8 +64,8 @@ then
         cp initrd[0-9]* isolinux/
 
 	echo_status "Creating isolinux config file."
-	cp $base/target/$target/x86/isolinux.cfg isolinux/
-	cp $base/target/$target/x86/help?.txt isolinux/
+	cp $base/target/$target/arch/x86/isolinux.cfg isolinux/
+	cp $base/target/$target/arch/x86/help?.txt isolinux/
 
 	first=1
 	for x in `egrep 'X .* KERNEL .*' $base/config/$config/packages |
