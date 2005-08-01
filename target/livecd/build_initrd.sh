@@ -13,7 +13,7 @@ mkinitrd()
 	echo "Kernel: $kernel Ver: $kernelver Modules: $moduledir"\
 	     "Initrd: $initrd"
 
-	cd $build_rock
+	cd $build_toolchain
 
 	# create basic structure
 	#
