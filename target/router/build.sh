@@ -19,7 +19,7 @@ pkgloop
 echo_header "Creating the router ramdisk..."
 
 echo_status "Creating the directory structure."
-outdir="$build_rock/router"
+outdir="$build_toolchain/router"
 rm -rf $outdir
 mkdir -p $outdir/initrd/bin
 mkdir -p $outdir/initrd/lib

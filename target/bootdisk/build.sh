@@ -12,7 +12,7 @@
 # GNU General Public License can be found in the file COPYING.
 # --- T2-COPYRIGHT-NOTE-END ---
 
-disksdir="$build_rock/bootdisk"
+disksdir="$build_toolchain/bootdisk"
 
 if [ "$SDEDEBUG_BOOTDISK_NOSTAGE2" != 1 -a \
      "$SDEDEBUG_BOOTDISK_NOSTAGE1" != 1 ]
