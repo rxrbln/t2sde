@@ -15,6 +15,11 @@ inject_archivista()
 	# example db
 	cd $imagelocation/home/data/archivista
 	tar xvfz $base/target/$target/mysql.tar.gz
+
+	# firefox junk
+	cd $imagelocation/home/archivista
+	tar xvfz $base/target/$target/firefox.tar.gz
+
 	popd
 }
 
