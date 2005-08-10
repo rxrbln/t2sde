@@ -13,8 +13,6 @@
 # GNU General Public License can be found in the file COPYING.
 # --- T2-COPYRIGHT-NOTE-END ---
 
-#source ./scripts/functions
-
 sub tgt_mnemosyne_parser {
 =for comment
 	local output=$( sed -n "s,^#$1: \(.*\),\1,p" $2 )
@@ -62,7 +60,7 @@ sub tgt_mnemosyne_render {
 			/$root\/(.*)/i;
 			push @subdirs,($_);
 		} else {
-			tgt_mnemosyne_render_option("$pkgseldir/$_");
+			tgt_mnemosyne_render_option($_);
 		}
 	}
         closedir $DIR;
@@ -93,22 +91,22 @@ sub tgt_mnemosyne_render {
 }
 
 sub tgt_mnemosyne_render_option {
-=for comment
-	local file="$1" var0= var= kind= option= dir=
-	local desc= conffile= forced= implied= val=
-	local deps= depsin= pkgselfiles=
-	local x= y=
+	my $file=$_[0];
+	my ($var0,$var,$kind,$option,$dir);
+	my ($dec,$conffile,$forced,$implied,$val);
+	my ($deps,$depsin,$pkgselfiles);
+	my ($x,$y);
 
 	# this defines dir,var0,option and kind acording to the following format.
 	# $dir/[$prio-]$var[$option].$kind
-	eval `echo $file | \
-	sed -n 's|\(.*\)/\([0-9]*\-\)\{0,1\}\([^\.]*\)\(.*\)\{0,1\}\.\([^\.]*\)|dir="\1" var0="\3" option="\4" kind="\5"|p'`
-	option=${option#.}
-	var=$( echo $var0 | tr [a-z] [A-Z] )
-	
+	$_=$file;
+	/^(.*)\/(\d+-)?([^\.]*).?([^\.]*)?\.([^\/\.]*)/i;
+	($dir,$var0,$var,$kind) = ($1,$3,uc $3,$5);
+
 	# external data: configin rulesin prefix 
 	# global variables: onchoice render
 
+=for comment
 	# var name and description
 	case "$kind" in
 		choice)
