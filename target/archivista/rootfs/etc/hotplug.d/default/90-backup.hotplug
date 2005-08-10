@@ -1,66 +1,110 @@
 #!/bin/bash
 
-# Automated backup of Archivista files. Either exporting PDFs or dumping the
-# MySQL database, depending on how the USB device is formated, with graphical
+# Automated action based on the directory present. Either exporting PDFs or the
+# MySQL database or even import, export keys or encrypt data. Graphical
 # interaction thru Xdialog.
 #
 # Copyright (C) 2005 Archivista GmbH
 # Copyright (C) 2005 Rene Rebe
 
+logger $0
+
+# PATH and co
+. /etc/profile
+
+# Xdialog and friends
 export DISPLAY=:0
 
-if [ "$ACTION" = add -a "$1" = "block" ]; then
-	logger "ADDED block device"
-	name=${DEVPATH/*\/}
-	logger "name $name"
+# something for us?
+[ "$ACTION" == add -a "$1" == "block" ] || exit
 
-  # work around USB issue failing to read partition table
-	if [[ $name = sd[a-z] ]]; then
-		sleep 3
-	  logger "triggering read of partition table"
-		logger sfdisk -l /dev/$name | logger
-		sfdisk -l /dev/$name | logger
-		exit
-	fi
+logger "ADDED block device"
 
-	if [[ $name != sd[a-z]1 ]] ; then
-		loger "Partition $name ignored for backup."
-	fi
+name=${DEVPATH/*\/}
+logger "name $name"
 
-#  sleep 1
+# work around USB issue failing to read partition table
+if [[ $name = sd[a-z] ]]; then
+	sleep 3
 
-	# peform backup, depending on the type DB or PDFs
-	type=""
-	if mount /dev/$name /mnt/usbdisk -t vfat 2> /dev/null ; then
-		type=PDF
-  elif mount /dev/$name /mnt/usbdisk -t ext2 2> /dev/null ; then
-		type=DB
-	else
-		logger "unknown format"
-		exit
-  fi
+	logger "triggering read of partition table"
+	logger sfdisk -l /dev/$name | logger
+	sfdisk -l /dev/$name | logger
 
-  logger "Backup type: $type"
-
-  su archivista -c "Xdialog --yesno 'Perform $type backup?' 8 20"
-	if [ $? -eq 0 ]; then
-	  logger "Performing backup ..."
-		case $type in
-		PDF)
-		  /usr/bin/perl /home/cvs/archivista/jobs/exportpdf.pl ;;
-		DB)
-		  /usr/bin/perl /home/cvs/archivista/jobs/backup-mysql.pl ;;
-		esac
-		umount /mnt/usbdisk
-		su archivista -c "Xdialog --msgbox 'Backup successfully finished. The USB
-storage device can be safely removed, now.' 8 40"
-		logger "backup done"
-	else
-	  logger "Backup skipped by user ..."
-		umount /mnt/usbdisk
-	fi
-
-	#maybe user change (su)
-	#mysql, perl, ...
-	logger "hotplug backup script end"
+	exit
 fi
+
+if [[ $name != sd[a-z]1 ]] ; then
+	logger "Partition $name ignored for backup."
+	exit
+fi
+
+# peform action, depending on the existing directory:
+# DB or PDF export, enc. key import/export, ...
+type=""
+mkdir /mnt/usbdisk
+if mount /dev/$name /mnt/usbdisk 2> /dev/null ; then
+	trap "cd / ; umount /mnt/usbdisk" EXIT
+	dir=`ls -d /mnt/usbdisk/*/ | head -n 1 | cut -d / -f 4`
+	type=`echo $dir | tr A-Z a-z`
+
+	[ -z "$type" ] && type="pdf"
+	logger $type
+
+	case "$type" in
+		# mysql backup
+		backup) msg="To backup the database" ;;
+		# ecrypted export
+		crypt) msg="To export an encrypted database" ;;
+		# key export / import
+		key)
+			# import or export ?
+			if ls /mnt/usbdisk/$dir/[a-zA-Z]* 2>&1 > /dev/null
+			then
+				msg="To import the public encryption key"
+				type=key-import
+			else
+				msg="To export the public encryption key"
+				type=key-export
+			fi
+			;;
+		# pdf export
+		pdf) msg="To export in PDF form" ;;
+		*)
+		Xdialog --msgbox 'The directory structure of the USB
+device was not recognized.' 8 40
+		exit
+	esac
+
+	msg="$msg,^please enter the system password."
+
+	# authenticate via archivista ...
+	if ! su archivista -c "`which gnomesu` -t Authentication \
+	   -m ${msg// /\\ } -c /bin/true" ; then
+		logger "User could not be authenticated."
+		exit
+	fi
+fi
+
+logger "authenticated for type: $type in dir $dir"
+
+case $type in
+	backup)
+		/usr/bin/perl /home/cvs/archivista/jobs/backup-mysql.pl \
+		              /mnt/usbdisk/$dir
+		;;
+	pdf)
+		/usr/bin/perl /home/cvs/archivista/jobs/exportpdf.pl \
+		              /mnt/usbdisk/$dir
+		;;
+	key-import) : ;;
+	key-export) : ;;
+	crypt) : ;;
+	*)
+		logger "type not recognized in the 2nd place - should be a typo"
+esac
+
+# Xdialog --msgbox 'Backup successfully finished. The USB
+storage device can be safely removed, now.' 8 40
+
+logger "$0 end"
