@@ -36,7 +36,7 @@ sub tgt_mnemosyne_render {
 	if ( ($pkgseldir cmp $root) != 0 ) {
 		$_=$pkgseldir;
 		/^$root\/(.*)/i;
-		$dirvar=uc "CFGTEMP_TRG_$prefix"."_$1" ;
+		$dirvar=uc "CFGTEMP_TRG_$prefix\_$1" ;
 		$_=$1;
 		/^.*\/([^\/]*)/i;
 		$dirname=$1;
@@ -84,9 +84,9 @@ sub tgt_mnemosyne_render {
 			for (@subdirs) {
 				$x = uc $_;
 				$x =~ s/\//_/g;
-				print $RULESIN "\tif [ \"\$CFGTEMP_TRG_$prefix\_$x\" == 1 ]; then\n";
-				print $RULESIN "\t\t$dirvar=1\n";
-				print $RULESIN "\tfi\n";
+				print $RULESIN "if [ \"\$CFGTEMP_TRG_$prefix\_$x\" == 1 ]; then\n";
+				print $RULESIN "\t$dirvar=1\n";
+				print $RULESIN "fi\n";
 			}
 		}
 	}
