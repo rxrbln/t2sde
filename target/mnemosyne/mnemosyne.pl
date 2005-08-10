@@ -27,32 +27,34 @@ sub tgt_mnemosyne_parser {
 }
 
 sub tgt_mnemosyne_render {
-	($root,$pkgseldir,$prefix,$configin,$rulesin) = @_;
-	print "($root,$pkgseldir,$prefix,$configin,$rulesin)\n";
-	
-=for comment
-	local file= dirname= dirvar= subdirs= x=
+	my ($root,$pkgseldir,$prefix,$configin,$rulesin) = @_;
+	my ($file,$dirname,$dirvar,$subdirs,$x);
 
 	# exported variables
-	local onchoice= render=0
+	my ($onchoice,$render)=(0,0);
 
-	if [ "$pkgseldir" != "$root" ]; then
+	if ( ! $pkgseldir cmp $root ) {
+=for comment
 		dirname="${pkgseldir##*/}"
 		dirvar="CFGTEMP_TRG_${prefix}_$( echo "${pkgseldir#$root/}" \
 			| tr '/' '_' | tr [a-z] [A-Z] )"
 
 		echo "$dirvar=0" >> $rulesin
-	fi
+=cut
+	}
 
-	if [ "$dirname" ]; then
+	if ( $dirname ) {
+=for comment
 		cat <<-EOT >> $configin
 		if [ "\$$dirvar" == 1 ]; then
 		   comment '-- ${dirname//_/ }'
 		   block_begin 2
 		fi
 		EOT
-	fi
+=cut
+	}
 
+=for comment
 	for file in $pkgseldir/*; do
 		if [ -d $file ]; then
 			tgt_mnemosyne_render "$root" "$file" "$prefix" "$configin" "$rulesin"
@@ -61,19 +63,25 @@ sub tgt_mnemosyne_render {
 			tgt_mnemosyne_render_option $file
 		fi
 	done
+=cut
 
-	if [ "$dirname" ]; then
+	if ( $dirname ) {
+=for comment
 		cat <<-EOT >> $configin
 		if [ "\$$dirvar" == 1 ]; then
 		   block_end
 		fi
 		EOT
-	fi
+=cut
+	}
 
-	if [ $render -eq 1 ]; then
+	if ( $render ) {
+=for comment
 		# always display this directory
 		echo "$dirvar=1" >> $rulesin
-	else
+=cut
+	} else {
+=for comment
 		# enable if any of the subdirs is enabled
 		if [ "$dirvar" ]; then
 			for x in $subdirs; do
@@ -85,8 +93,8 @@ sub tgt_mnemosyne_render {
 				EOT
 			done
 		fi
-	fi
 =cut
+	}
 }
 
 sub tgt_mnemosyne_render_option {
