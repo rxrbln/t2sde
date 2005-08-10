@@ -27,8 +27,10 @@ sub tgt_mnemosyne_parser {
 }
 
 sub tgt_mnemosyne_render {
+	($root,$pkgseldir,$prefix,$configin,$rulesin) = @_;
+	print "($root,$pkgseldir,$prefix,$configin,$rulesin)\n";
+	
 =for comment
-	local root="$1" pkgseldir="$2" prefix="$3" configin="$4" rulesin="$5"
 	local file= dirname= dirvar= subdirs= x=
 
 	# exported variables
@@ -309,3 +311,11 @@ sub trg_mnemosyne_filter {
 	pkgsel_finish
 =cut
 }
+
+if ($#ARGV != 3) {
+	print "Usage mnemosyne.pl: <pkgseldir> <prefix> <configin> <rulesin>\n";
+	exit (1);
+	}
+
+($pkgseldir,$prefix,$configin,$rulesin) = @ARGV;
+&tgt_mnemosyne_render($pkgseldir,$pkgseldir,$prefix,$configin,$rulesin)
