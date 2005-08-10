@@ -7,6 +7,8 @@
 # Copyright (C) 2005 Archivista GmbH
 # Copyright (C) 2005 Rene Rebe
 
+gpg="gpg --homedir /home/archivista/.gnupg"
+
 logger $0
 
 # PATH and co
@@ -45,22 +47,26 @@ type=""
 mkdir /mnt/usbdisk
 if mount /dev/$name /mnt/usbdisk 2> /dev/null ; then
 	trap "cd / ; umount /mnt/usbdisk" EXIT
-	dir=`ls -d /mnt/usbdisk/*/ | head -n 1 | cut -d / -f 4`
+	dir=/`ls -d /mnt/usbdisk/*/ | head -n 1 | cut -d / -f 4`
 	type=`echo $dir | tr A-Z a-z`
-
 	[ -z "$type" ] && type="pdf"
 	logger $type
+	dir=/mnt/usbdisk/$dir
 
 	case "$type" in
 		# mysql backup
 		backup) msg="To backup the database" ;;
 		# ecrypted export
-		crypt) msg="To export an encrypted database" ;;
-		# key export / import
-		key)
-			# import or export ?
-			if ls /mnt/usbdisk/$dir/[a-zA-Z]* 2>&1 > /dev/null
-			then
+		crypt) # export or import?
+			if [ -e $dir/exchange ]; then
+				msg="To import encrypted data"
+				type=encrypt
+			else
+				msg="To crypt and export data"
+			fi
+			;;
+		key) # export or import?
+			if [ -e $dir/ade-key.asc ]; then
 				msg="To import the public encryption key"
 				type=key-import
 			else
@@ -90,16 +96,27 @@ logger "authenticated for type: $type in dir $dir"
 
 case $type in
 	backup)
-		/usr/bin/perl /home/cvs/archivista/jobs/backup-mysql.pl \
-		              /mnt/usbdisk/$dir
+		/usr/bin/perl /home/cvs/archivista/jobs/backup-mysql.pl $dir
 		;;
 	pdf)
-		/usr/bin/perl /home/cvs/archivista/jobs/exportpdf.pl \
-		              /mnt/usbdisk/$dir
+		/usr/bin/perl /home/cvs/archivista/jobs/exportpdf.pl $dir
 		;;
-	key-import) : ;;
-	key-export) : ;;
-	crypt) : ;;
+	# ade == archivista-data-exchange
+	key-import)
+		$gpg --import < $dir/ade-key.asc
+		chown -R archivista:users /home/archivista/.gnupg
+		;;
+	key-export)
+		# TODO: check if key exists
+		gpg -a --export ade > $dir/ade-key.asc
+		;;
+	crypt)
+		# TODO: deliver database data to dump ...
+		echo "the-data" | $gpg --encrypt --default-recipient ade \
+		> /mnt/usbdisk/$dir/exchange
+	decrypt)
+		# TODO: really use encrypted data ...
+		$gpg --decrypt < $dir/exchange > /dev/null
 	*)
 		logger "type not recognized in the 2nd place - should be a typo"
 esac
