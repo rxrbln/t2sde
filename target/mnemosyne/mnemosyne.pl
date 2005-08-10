@@ -27,39 +27,38 @@ sub tgt_mnemosyne_parser {
 }
 
 sub tgt_mnemosyne_render {
-	my ($root,$pkgseldir,$prefix,$configin,$rulesin) = @_;
+	my ($root,$pkgseldir,$prefix) = @_;
 	my ($file,$dirname,$dirvar,@subdirs,$x);
 
 	# exported variables
 	my ($onchoice,$render)=(0,0);
 
-	if ( ! $pkgseldir cmp $root ) {
-=for comment
-		dirname="${pkgseldir##*/}"
-		dirvar="CFGTEMP_TRG_${prefix}_$( echo "${pkgseldir#$root/}" \
-			| tr '/' '_' | tr [a-z] [A-Z] )"
+	if ( ($pkgseldir cmp $root) != 0 ) {
+		$_=$pkgseldir;
+		/^$root\/(.*)/i;
+		$dirvar=uc "CFGTEMP_TRG_$prefix"."_$1" ;
+		$_=$1;
+		/^.*\/([^\/]*)/i;
+		$dirname=$1;
+		$dirvar=~s/\//_/g;
 
-		echo "$dirvar=0" >> $rulesin
-=cut
+		print $RULESIN "$dirvar=0\n";
 	}
 
 	if ( $dirname ) {
-=for comment
-		cat <<-EOT >> $configin
-		if [ "\$$dirvar" == 1 ]; then
-		   comment '-- ${dirname//_/ }'
-		   block_begin 2
-		fi
-		EOT
-			#@subdirs += ="$subdirs ${file#$root/}"
-=cut
+		print $CONFIGIN "if [ \"\$$dirvar\" == 1 ]; then\n";
+		$_ = $dirname;
+		$_ =~ s/_/ /g;
+		print $CONFIGIN "\tcomment '-- $_'\n";
+		print $CONFIGIN "\tblock_begin 2\n";
+		print $CONFIGIN "fi\n";
 	}
 
 	opendir(my $DIR, $pkgseldir);
 	foreach( grep { ! /^\./ } readdir($DIR) ) {
 		$_ = "$pkgseldir/$_";
 		if ( -d $_ ) {
-			tgt_mnemosyne_render($root,$_,$prefix,$configin,$rulesin);
+			tgt_mnemosyne_render($root,$_,$prefix);
 			/$root\/(.*)/i;
 			push @subdirs,($_);
 		} else {
@@ -69,34 +68,27 @@ sub tgt_mnemosyne_render {
         closedir $DIR;
 
 	if ( $dirname ) {
-=for comment
-		cat <<-EOT >> $configin
-		if [ "\$$dirvar" == 1 ]; then
-		   block_end
-		fi
-		EOT
-=cut
+		print $CONFIGIN "if [ \"\$$dirvar\" == 1 ]; then\n";
+		$_ = $dirname;
+		$_ =~ s/_/ /g;
+		print $CONFIGIN "\tblock_end\n";
+		print $CONFIGIN "fi\n";
 	}
 
 	if ( $render ) {
-=for comment
 		# always display this directory
-		echo "$dirvar=1" >> $rulesin
-=cut
+		print $RULESIN "$dirvar=1\n";
 	} else {
-=for comment
 		# enable if any of the subdirs is enabled
-		if [ "$dirvar" ]; then
-			for x in $subdirs; do
-				x=$( echo "${x//\//_}" | tr [a-z] [A-Z] )
-				cat <<-EOT >> $rulesin
-				if [ "\$CFGTEMP_TRG_${prefix}_$x" == 1 ]; then
-				   $dirvar=1
-				fi
-				EOT
-			done
-		fi
-=cut
+		if ($dirvar) {
+			for (@subdirs) {
+				$x = uc $_;
+				$x =~ s/\//_/g;
+				print $RULESIN "\tif [ \"\$CFGTEMP_TRG_$prefix\_$x\" == 1 ]; then\n";
+				print $RULESIN "\t\t$dirvar=1\n";
+				print $RULESIN "\tfi\n";
+			}
+		}
 	}
 }
 
@@ -330,4 +322,8 @@ if ($#ARGV != 3) {
 
 ($pkgseldir,$prefix,$configin,$rulesin) = @ARGV;
 
-tgt_mnemosyne_render($pkgseldir,$pkgseldir,$prefix,$configin,$rulesin)
+open($CONFIGIN,'>',$configin);
+open($RULESIN,'>',$rulesin);
+tgt_mnemosyne_render($pkgseldir,$pkgseldir,$prefix);
+close($CONFIGIN);
+close($RULESIN);
