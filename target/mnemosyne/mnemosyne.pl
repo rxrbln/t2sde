@@ -28,7 +28,7 @@ sub tgt_mnemosyne_parser {
 
 sub tgt_mnemosyne_render {
 	my ($root,$pkgseldir,$prefix,$configin,$rulesin) = @_;
-	my ($file,$dirname,$dirvar,$subdirs,$x);
+	my ($file,$dirname,$dirvar,@subdirs,$x);
 
 	# exported variables
 	my ($onchoice,$render)=(0,0);
@@ -51,19 +51,22 @@ sub tgt_mnemosyne_render {
 		   block_begin 2
 		fi
 		EOT
+			#@subdirs += ="$subdirs ${file#$root/}"
 =cut
 	}
 
-=for comment
-	for file in $pkgseldir/*; do
-		if [ -d $file ]; then
-			tgt_mnemosyne_render "$root" "$file" "$prefix" "$configin" "$rulesin"
-			subdirs="$subdirs ${file#$root/}"
-		else
-			tgt_mnemosyne_render_option $file
-		fi
-	done
-=cut
+	opendir(my $DIR, $pkgseldir);
+	foreach( grep { ! /^\./ } readdir($DIR) ) {
+		$_ = "$pkgseldir/$_";
+		if ( -d $_ ) {
+			tgt_mnemosyne_render($root,$_,$prefix,$configin,$rulesin);
+			/$root\/(.*)/i;
+			push @subdirs,($_);
+		} else {
+			tgt_mnemosyne_render_option("$pkgseldir/$_");
+		}
+	}
+        closedir $DIR;
 
 	if ( $dirname ) {
 =for comment
@@ -326,4 +329,5 @@ if ($#ARGV != 3) {
 	}
 
 ($pkgseldir,$prefix,$configin,$rulesin) = @ARGV;
-&tgt_mnemosyne_render($pkgseldir,$pkgseldir,$prefix,$configin,$rulesin)
+
+tgt_mnemosyne_render($pkgseldir,$pkgseldir,$prefix,$configin,$rulesin)
