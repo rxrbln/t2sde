@@ -73,7 +73,7 @@ EOT
 	gw $gw
 EOT
 	[ "$ns" ] && cat >> /etc/conf/network <<EOT
-        nameserver $nameserver
+        nameserver $ns
 EOT
 
 fi
