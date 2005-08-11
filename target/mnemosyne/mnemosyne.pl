@@ -13,6 +13,10 @@
 # GNU General Public License can be found in the file COPYING.
 # --- T2-COPYRIGHT-NOTE-END ---
 
+use warnings;
+use strict;
+use constant {ALL => 0, ASK => 1, CHOICE => 2 };
+
 sub tgt_mnemosyne_parser {
 	my ($field,$file,$default) = @_;
 	my $output;
@@ -30,6 +34,7 @@ sub tgt_mnemosyne_parser {
 	return $output;
 }
 
+
 sub tgt_mnemosyne_render {
 	my ($root,$pkgseldir,$prefix) = @_;
 	my ($file,$dirname,$dirvar,@subdirs,$x);
@@ -37,7 +42,7 @@ sub tgt_mnemosyne_render {
 	# exported variables
 	my ($onchoice,$render)=(0,0);
 
-	if ( ($pkgseldir cmp $root) != 0 ) {
+	if ( ($pkgseldir cmp $::ROOT) != 0 ) {
 		$_=$pkgseldir;
 		/^$root\/(.*)/i;
 		$dirvar=uc "CFGTEMP_TRG_$prefix\_$1" ;
@@ -46,16 +51,16 @@ sub tgt_mnemosyne_render {
 		$dirname=$1;
 		$dirvar=~s/\//_/g;
 
-		print $RULESIN "$dirvar=0\n";
+		print $::RULES "$dirvar=0\n";
 	}
 
 	if ( $dirname ) {
-		print $CONFIGIN "if [ \"\$$dirvar\" == 1 ]; then\n";
+		print $::CONFIG "if [ \"\$$dirvar\" == 1 ]; then\n";
 		$_ = $dirname;
 		$_ =~ s/_/ /g;
-		print $CONFIGIN "\tcomment '-- $_'\n";
-		print $CONFIGIN "\tblock_begin 2\n";
-		print $CONFIGIN "fi\n";
+		print $::CONFIG "\tcomment '-- $_'\n";
+		print $::CONFIG "\tblock_begin 2\n";
+		print $::CONFIG "fi\n";
 	}
 
 	opendir(my $DIR, $pkgseldir);
@@ -66,38 +71,38 @@ sub tgt_mnemosyne_render {
 			/$root\/(.*)/i;
 			push @subdirs,($_);
 		} else {
-			tgt_mnemosyne_render_option($_);
+			tgt_mnemosyne_render_option($_,$prefix);
 		}
 	}
         closedir $DIR;
 
 	if ( $dirname ) {
-		print $CONFIGIN "if [ \"\$$dirvar\" == 1 ]; then\n";
-		print $CONFIGIN "\tblock_end\n";
-		print $CONFIGIN "fi\n";
+		print $::CONFIG "if [ \"\$$dirvar\" == 1 ]; then\n";
+		print $::CONFIG "\tblock_end\n";
+		print $::CONFIG "fi\n";
 	}
 
 	if ( $render ) {
 		# always display this directory
-		print $RULESIN "$dirvar=1\n";
+		print $::RULES "$dirvar=1\n";
 	} else {
 		# enable if any of the subdirs is enabled
 		if ($dirvar) {
 			for (@subdirs) {
 				$x = uc $_;
 				$x =~ s/\//_/g;
-				print $RULESIN "if [ \"\$CFGTEMP_TRG_$prefix\_$x\" == 1 ]; then\n";
-				print $RULESIN "\t$dirvar=1\n";
-				print $RULESIN "fi\n";
+				print $::RULES "if [ \"\$CFGTEMP_TRG_$prefix\_$x\" == 1 ]; then\n";
+				print $::RULES "\t$dirvar=1\n";
+				print $::RULES "fi\n";
 			}
 		}
 	}
 }
 
 sub tgt_mnemosyne_render_option {
-	my $file=$_[0];
+	my ($file,$prefix)=@_;
 	my ($var0,$var,$kind,$option,$dir);
-	my ($dec,$conffile,@forced,$implied,$val);
+	my ($desc,$conffile,@forced,$implied,$val);
 	my (@deps,$depsin,@pkgselfiles);
 	my ($x,$y);
 
@@ -115,26 +120,26 @@ sub tgt_mnemosyne_render_option {
 		/^choice$/ && do {
 			# new choice?
 
-			$onchoice=0 if ($onchoice && ($onchoice cmp $var) != 0);
+		#	$onchoice=0 if ($onchoice && ($onchoice cmp $var) != 0);
 
 			($x = $var0) =~ s/_/ /g;
 			($y = $option) =~ s/_/ /g;
 			$desc=tgt_mnemosyne_parser('Description',$file,"$x ($y)");
 
-			if ( ! $onchoice ) {
-				$onchoice=$var;
+		#	if ( ! $onchoice ) {
+		#		$onchoice=$var;
 
-				print $RULESIN	"\tCFGTEMP_TRG_$prefix\_$var=0\n";
-				print $CONFIGIN	"\tif [ \"\$CFGTEMP_TRG_$prefix\_$var\" == 1 ]; then\n";
-				print $CONFIGIN	"\t\tchoice SDECFG_TRG_$prefix\_$var \${CFGTEMP_TRG_$prefix\_$var\_DEFAULT:-$option} \${CFGTEMP_TRG_$prefix\_$var\_LIST}\n";
-				print $CONFIGIN "\tfi\n";
-				}
+				print $::RULES	"\tCFGTEMP_TRG_$prefix\_$var=0\n";
+				print $::CONFIG	"\tif [ \"\$CFGTEMP_TRG_$prefix\_$var\" == 1 ]; then\n";
+				print $::CONFIG	"\t\tchoice SDECFG_TRG_$prefix\_$var \${CFGTEMP_TRG_$prefix\_$var\_DEFAULT:-$option} \${CFGTEMP_TRG_$prefix\_$var\_LIST}\n";
+				print $::CONFIG "\tfi\n";
+		#		}
 			last SWITCH; };
 		/^(?:ask|all )$/ && do {
 			$var=tgt_mnemosyne_parser('Variable',$file,$var);
 			($x = $var0) =~ s/_/ /g;
 			$desc=tgt_mnemosyne_parser('Description',$file,$x);
-			$onchoice=0;
+		#	$onchoice=0;
 			last SWITCH; };
 		do { return; };
 		}
@@ -172,13 +177,13 @@ sub tgt_mnemosyne_render_option {
 	# config script file
 	$_=$file;
 	/^(.*).$kind/i;
-	$conffile=$1.conf if ( -f $1.conf );
+	$conffile="$1\.conf" if ( -f "$1\.conf" );
 
 	print "($dir,$var0,$var,$option,$kind)\n";
 	# pkgsel files
 	@pkgselfiles=($file);
 	print "$file ($kind)\n";
-	if ( $kind = 'choice' ) {
+	if ( $kind == 'choice' ) {
 		print "$file is a choice.\n";
 =for comment
 		for x in $( tgt_mnemosyne_parser Imply $file ); do
@@ -316,14 +321,12 @@ sub trg_mnemosyne_filter {
 }
 
 if ($#ARGV != 3) {
-	print "Usage mnemosyne.pl: <pkgseldir> <prefix> <configin> <rulesin>\n";
+	print "Usage mnemosyne.pl: <pkgseldir> <prefix> <configfile> <rulesfile>\n";
 	exit (1);
 	}
 
-($pkgseldir,$prefix,$configin,$rulesin) = @ARGV;
-
-open($CONFIGIN,'>',$configin);
-open($RULESIN,'>',$rulesin);
-tgt_mnemosyne_render($pkgseldir,$pkgseldir,$prefix);
-close($CONFIGIN);
-close($RULESIN);
+$::ROOT=$ARGV[0];
+open($::CONFIG,'>',$ARGV[2]);
+open($::RULES,'>',$ARGV[3]);
+#tgt_mnemosyne_render($ARGV[0],$ARGV[1]);
+close($_) for ($::CONFIG,$::RULES);
