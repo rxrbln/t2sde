@@ -19,6 +19,8 @@ inject_archivista()
 	# firefox junk
 	cd $imagelocation/home/archivista
 	tar xvfz $base/target/$target/firefox.tar.gz
+	# wine config and archivista "rich-client" installation
+	tar xvfz $base/target/$target/wine-archivista.tar.gz
 
 	popd
 }
