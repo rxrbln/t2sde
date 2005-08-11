@@ -8,6 +8,8 @@ impossible.
 Do you really like to create a new key pair?" 10 65 || exit
 fi
 
+# flush previous keys
+rm -rf ~/.gnupg/*
 (gpg --gen-key --batch <<-EOT
      %echo Generating a standard key
      Key-Type: DSA
