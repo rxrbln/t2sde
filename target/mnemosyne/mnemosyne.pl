@@ -20,7 +20,7 @@ sub tgt_mnemosyne_parser {
 	open(my $FILE,'<',$file);
 	while(<$FILE>) {
 		/^#$field/ && do {
-			/^#field: (.*)$/i;
+			/^\#$field: (.*)$/i;
 			$output=$1;
 			};
 		}
@@ -73,8 +73,6 @@ sub tgt_mnemosyne_render {
 
 	if ( $dirname ) {
 		print $CONFIGIN "if [ \"\$$dirvar\" == 1 ]; then\n";
-		$_ = $dirname;
-		$_ =~ s/_/ /g;
 		print $CONFIGIN "\tblock_end\n";
 		print $CONFIGIN "fi\n";
 	}
@@ -99,15 +97,15 @@ sub tgt_mnemosyne_render {
 sub tgt_mnemosyne_render_option {
 	my $file=$_[0];
 	my ($var0,$var,$kind,$option,$dir);
-	my ($dec,$conffile,$forced,$implied,$val);
-	my ($deps,$depsin,$pkgselfiles);
+	my ($dec,$conffile,@forced,$implied,$val);
+	my (@deps,$depsin,@pkgselfiles);
 	my ($x,$y);
 
 	# this defines dir,var0,option and kind acording to the following format.
 	# $dir/[$prio-]$var[$option].$kind
 	$_=$file;
 	/^(.*)\/(\d+-)?([^\.]*).?([^\.]*)?\.([^\/\.]*)/i;
-	($dir,$var0,$var,$kind) = ($1,$3,uc $3,$5);
+	($dir,$var0,$var,$option,$kind) = ($1,$3,uc $3,$4,$5);
 
 	# external data: configin rulesin prefix 
 	# global variables: onchoice render
@@ -119,85 +117,80 @@ sub tgt_mnemosyne_render_option {
 
 			$onchoice=0 if ($onchoice && ($onchoice cmp $var) != 0);
 
-=for comment
-			desc=$( tgt_mnemosyne_parser Description $file "${var0//_/ } (${option//_/ })" )
+			($x = $var0) =~ s/_/ /g;
+			($y = $option) =~ s/_/ /g;
+			$desc=tgt_mnemosyne_parser('Description',$file,"$x ($y)");
 
-			if [ -z "$onchoice" ]; then
-				onchoice=$var
+			if ( ! $onchoice ) {
+				$onchoice=$var;
 
-				cat <<-EOT >> $rulesin
-				  CFGTEMP_TRG_${prefix}_${var}=0
-				EOT
-				cat <<-EOT >> $configin
-				  if [ "\$CFGTEMP_TRG_${prefix}_${var}" == 1 ]; then
-				    choice SDECFG_TRG_${prefix}_${var} \${CFGTEMP_TRG_${prefix}_${var}_DEFAULT:-$option} \\
-				       \${CFGTEMP_TRG_${prefix}_${var}_LIST}
-				  fi
-				EOT
-			fi
-=cut
+				print $RULESIN	"\tCFGTEMP_TRG_$prefix\_$var=0\n";
+				print $CONFIGIN	"\tif [ \"\$CFGTEMP_TRG_$prefix\_$var\" == 1 ]; then\n";
+				print $CONFIGIN	"\t\tchoice SDECFG_TRG_$prefix\_$var \${CFGTEMP_TRG_$prefix\_$var\_DEFAULT:-$option} \${CFGTEMP_TRG_$prefix\_$var\_LIST}\n";
+				print $CONFIGIN "\tfi\n";
+				}
 			last SWITCH; };
-		/^(?:ask|all)$/ && do {
-=for comment
-			var=$( tgt_mnemosyne_parser Variable $file $var )
-			desc=$( tgt_mnemosyne_parser Description $file "${var0//_/ }" )
-			[ "$onchoice" ] && onchoice=
-=cut
+		/^(?:ask|all )$/ && do {
+			$var=tgt_mnemosyne_parser('Variable',$file,$var);
+			($x = $var0) =~ s/_/ /g;
+			$desc=tgt_mnemosyne_parser('Description',$file,$x);
+			$onchoice=0;
 			last SWITCH; };
 		do { return; };
 		}
-=for comment
-	var=SDECFG_TRG_${prefix}_${var}
+	$var="SDECFG_TRG_$prefix\_$var";
 
+	print "($dir,$var0,$var,$option,$kind)\n";
+	
 	# dependencies
 	# NOTE: don't use spaces on the pkgsel file, only to delimite different dependencies
-	deps=
-	for x in $( tgt_mnemosyne_parser Dependencies $file ); do
-		case "$x" in
-			*!=*)	x=${x/!=/ != }	;;
-			*==*)	x=${x/==/ == }	;;
-			*=*)	x=${x/=/ == }	;;
-			*)	x="$x == '1'"	;;
-		esac
-		if [ "$deps" ]; then
-			if [[ "$x" == SDECFG_* ]]; then
-				deps="$deps -a \$$x"
-			else
-				deps="$deps -a \$SDECFG_TRG_${prefix}_$x"
-			fi
-		else
-			if [[ "$x" == SDECFG_* ]]; then
-				deps="\$$x"
-			else
-				deps="\$SDECFG_TRG_${prefix}_$x"
-			fi
-		fi
-	done
+	for ( split (/\s/,tgt_mnemosyne_parser('Dependencies',$file,)) ) {
+		$_="SDECFG_TRG_$prefix\_$_" unless /^SDECFG/;
 
-	forced=
+		if (/=/) {
+			m/(.*)(==|!=|=)(.*)/i;
+			$_="\"\$$1\" $2 $3";
+			}
+		else {
+			$_="\"\$$_\" == '1'";
+			}
+
+		push @deps,$_;
+		}
+
+	print "($dir,$var0,$var,$option,$kind)\n";
+
 	# forced options
-	for x in $( tgt_mnemosyne_parser Forced $file ); do
-		[[ $x != *=* ]] && x="$x='1'"
-		forced="$forced SDECFGSET_TRG_${prefix}_${x}"
-	done
+	for ( split (/\s/,tgt_mnemosyne_parser('Forced',$file,)) ) {
+		$_="SDECFG_TRG_$prefix\_$_" unless /^SDECFG/;
 
+		$_="$_='1'" unless /=/;
+		push @forced,$_;
+	}
+
+	print "($dir,$var0,$var,$option,$kind)\n";
 	# config script file
-	conffile=
-	if [ -f ${file%.$kind}.conf ]; then
-		conffile="${file%.$kind}.conf"
-	fi
+	$_=$file;
+	/^(.*).$kind/i;
+	$conffile=$1.conf if ( -f $1.conf );
 
+	print "($dir,$var0,$var,$option,$kind)\n";
 	# pkgsel files
-	pkgselfiles=$file
-	if [ "$kind" = "choice" ]; then
+	@pkgselfiles=($file);
+	print "$file ($kind)\n";
+	if ( $kind = 'choice' ) {
+		print "$file is a choice.\n";
+=for comment
 		for x in $( tgt_mnemosyne_parser Imply $file ); do
 			y=`echo $dir/*$var0.$x.choice`
 			if [ -f "$y" ]; then
 				pkgselfiles="$pkgselfiles $y"
 			fi
 		done
-	fi
+=cut
+	}
 
+=for comment
 	# content
 	case "$kind" in
 		ask)	val=$( tgt_mnemosyne_parser Default $file 0 )	;;
