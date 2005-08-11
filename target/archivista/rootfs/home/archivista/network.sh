@@ -7,6 +7,14 @@
 
 PATH=/sbin:/usr/sbin:$PATH
 
+reconfig=0
+
+if [ "$1" = -reconfig ]; then
+	reconfig=1
+	shift
+fi
+
+
 get_ip()
 {
 	x=$2
@@ -25,13 +33,17 @@ get_ip()
 	echo $x
 }
 
-
-if [ -e /etc/conf/network ]; then
-	echo "Config exists - exiting."
+# initial config or reconfig requested?
+if [ -e /etc/conf/network -a $reconfig = 0 ]; then
+	echo "Config exists, no reconfig -> exiting."
 	exit
 fi
 
-if ! Xdialog --yesno "The network connection is not yet
+# if exists get default values ...
+if [ -e /etc/conf/network ]; then
+        tip=`sed '/ip /s,.*ip ,,p;d' /etc/conf/network`
+	ifdown eth0
+elif ! Xdialog --yesno "The network connection is not yet
 configured. Configure now?" 8 34; then
 	echo not yet
 	touch /etc/conf/network
@@ -44,7 +56,7 @@ interface eth0
 	dhcp
 EOT
 else
-	tip=192.168.0.100/24
+	tip=${tip:-192.168.0.100/24}
 	until [ "$ip" ]; do
 		tip=`Xdialog  --stdout --inputbox "Internet address and network
 prefix in CIDR notation
