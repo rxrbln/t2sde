@@ -47,11 +47,12 @@ type=""
 mkdir /mnt/usbdisk
 if mount /dev/$name /mnt/usbdisk 2> /dev/null ; then
 	trap "cd / ; umount /mnt/usbdisk" EXIT
-	dir=/`ls -d /mnt/usbdisk/*/ | head -n 1 | cut -d / -f 4`
+	dir=`ls -d /mnt/usbdisk/*/ | head -n 1 | cut -d / -f 4`
 	type=`echo $dir | tr A-Z a-z`
 	[ -z "$type" ] && type="pdf"
 	logger $type
 	dir=/mnt/usbdisk/$dir
+	user=archivista
 
 	case "$type" in
 		# mysql backup
@@ -66,6 +67,7 @@ if mount /dev/$name /mnt/usbdisk 2> /dev/null ; then
 			fi
 			;;
 		key) # export or import?
+			user=root
 			if [ -e $dir/ade-key.asc ]; then
 				msg="To import the public encryption key"
 				type=key-import
@@ -82,46 +84,67 @@ device was not recognized.' 8 40
 		exit
 	esac
 
-	msg="$msg,^please enter the system password."
+	if [ "$user" = root ]; then
+		msg="$msg,^please enter the system password (root user)."
+	else
+		msg="$msg,^please enter the password for the archivista user."
+	fi
 
 	# authenticate via archivista ...
 	if ! su archivista -c "`which gnomesu` -t Authentication \
-	   -m ${msg// /\\ } -c /bin/true" ; then
-		logger "User could not be authenticated."
+	   -m ${msg// /\\ } -u $user -c /bin/true" ; then
+		logger "User $user could not be authenticated."
 		exit
 	fi
 fi
 
 logger "authenticated for type: $type in dir $dir"
 
+error=1
+msg='An unspecified error occured during the operation. '
+
 case $type in
 	backup)
 		/usr/bin/perl /home/cvs/archivista/jobs/backup-mysql.pl $dir
+		error=$?
 		;;
 	pdf)
 		/usr/bin/perl /home/cvs/archivista/jobs/exportpdf.pl $dir
+		error=$?
 		;;
 	# ade == archivista-data-exchange
 	key-import)
 		$gpg --import < $dir/ade-key.asc
+		error=$?
 		chown -R archivista:users /home/archivista/.gnupg
 		;;
 	key-export)
 		# TODO: check if key exists
 		gpg -a --export ade > $dir/ade-key.asc
+		error=$?
 		;;
 	crypt)
 		# TODO: deliver database data to dump ...
 		echo "the-data" | $gpg --encrypt --default-recipient ade \
 		> /mnt/usbdisk/$dir/exchange
+		error=$?
+		;;
 	decrypt)
 		# TODO: really use encrypted data ...
 		$gpg --decrypt < $dir/exchange > /dev/null
+		error=$?
+		;;
 	*)
 		logger "type not recognized in the 2nd place - should be a typo"
 esac
 
-# Xdialog --msgbox 'Backup successfully finished. The USB
+cd / ; umount /mnt/usbdisk
+
+if [ $error -eq 0 ]; then
+	Xdialog --msgbox 'Operation finished. The USB
 storage device can be safely removed, now.' 8 40
+else
+	Xdialog --msgbox "$msg" 8 40
+fi
 
 logger "$0 end"
