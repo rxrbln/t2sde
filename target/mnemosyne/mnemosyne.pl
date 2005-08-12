@@ -15,7 +15,10 @@
 
 use warnings;
 use strict;
+
 use constant {ALL => 0, ASK => 1, CHOICE => 2 };
+%::FOLDER=();
+%::MODULE=();
 
 sub tgt_mnemosyne_parser {
 	my ($field,$file,$default) = @_;
@@ -35,83 +38,72 @@ sub tgt_mnemosyne_parser {
 }
 
 
-sub tgt_mnemosyne_render {
-	my ($root,$pkgseldir,$prefix) = @_;
-	my ($file,$dirname,$dirvar,@subdirs,$x);
+sub scandir {
+	my ($pkgseldir,$prefix) = @_;
+	my %current=('location', $pkgseldir, 'var', "CFGTEMP_$prefix");
 
-	# exported variables
-	my ($onchoice,$render)=(0,0);
+	# $current{desc,var} for sub-pkgsel dirs
+	if ($pkgseldir ne $::ROOT) {
+		my ($relative,$dirvar,$dirname);
+		$_ = $pkgseldir;
+		$relative = (m/^$::ROOT\/(.*)/i)[0];
 
-	if ( ($pkgseldir cmp $::ROOT) != 0 ) {
-		$_=$pkgseldir;
-		/^$root\/(.*)/i;
-		$dirvar=uc "CFGTEMP_TRG_$prefix\_$1" ;
-		$_=$1;
-		/^.*\/([^\/]*)/i;
-		$dirname=$1;
-		$dirvar=~s/\//_/g;
+		$dirvar =  "CFGTEMP_$prefix\_$relative";
+		$dirvar =~ tr,a-z\/,A-Z_,;
 
-		print $::RULES "$dirvar=0\n";
+		$dirname=$relative;
+		$dirname=~ s/.*\///g;
+
+		$current{desc} = $dirname;
+		$current{var}  = $dirvar;
 	}
+	$::FOLDER{$current{var}} = \%current;
 
-	if ( $dirname ) {
-		print $::CONFIG "if [ \"\$$dirvar\" == 1 ]; then\n";
-		$_ = $dirname;
-		$_ =~ s/_/ /g;
-		print $::CONFIG "\tcomment '-- $_'\n";
-		print $::CONFIG "\tblock_begin 2\n";
-		print $::CONFIG "fi\n";
-	}
-
+	{
+	# make scandir recursive
+	my @subdirs;
 	opendir(my $DIR, $pkgseldir);
 	foreach( grep { ! /^\./ } sort readdir($DIR) ) {
 		$_ = "$pkgseldir/$_";
 		if ( -d $_ ) {
-			tgt_mnemosyne_render($root,$_,$prefix);
-			/$root\/(.*)/i;
-			push @subdirs,($_);
+			my $subdir = scandir($_,$prefix);
+			push @subdirs,$subdir;
 		} else {
-			tgt_mnemosyne_render_option($_,$prefix);
+			scanoption($_,$prefix);
 		}
 	}
         closedir $DIR;
-
-	if ( $dirname ) {
-		print $::CONFIG "if [ \"\$$dirvar\" == 1 ]; then\n";
-		print $::CONFIG "\tblock_end\n";
-		print $::CONFIG "fi\n";
+	$current{subdirs} = \@subdirs;
+	return $current{var};
 	}
 
-	if ( $render ) {
-		# always display this directory
-		print $::RULES "$dirvar=1\n";
-	} else {
-		# enable if any of the subdirs is enabled
-		if ($dirvar) {
-			for (@subdirs) {
-				$x = uc $_;
-				$x =~ s/\//_/g;
-				print $::RULES "if [ \"\$CFGTEMP_TRG_$prefix\_$x\" == 1 ]; then\n";
-				print $::RULES "\t$dirvar=1\n";
-				print $::RULES "fi\n";
-			}
-		}
-	}
 }
 
-sub tgt_mnemosyne_render_option {
+sub scanoption {
 	my ($file,$prefix)=@_;
-	my ($var0,$var,$kind,$option,$dir);
-	my ($desc,$conffile,@forced,$implied,$val);
-	my (@deps,$depsin,@pkgselfiles);
-	my ($x,$y);
+	my %current;
 
+	#keep it compiling
+	#my ($x,$y,$desc,@forced,@deps,$conffile,@pkgselfiles);
+	
 	# this defines dir,var0,option and kind acording to the following format.
 	# $dir/[$prio-]$var[$option].$kind
-	$_=$file;
-	/^(.*)\/(\d+-)?([^\.]*).?([^\.]*)?\.([^\/\.]*)/i;
-	($dir,$var0,$var,$option,$kind) = ($1,$3,uc $3,$4,$5);
+	do {
+		my ($dir,$var0,$var,$option,$kind);
+		m/^(.*)\/(\d+-)?([^\.]*).?([^\.]*)?\.([^\/\.]*)/i;
+		($dir,$var0,$option,$kind) = ($1,$3,$4,$5);
 
+		if ($kind eq 'choice') { $current{kind} = CHOICE; }
+		elsif ($kind eq 'all') { $current{kind} = ALL; }
+		elsif ($kind eq 'ask') { $current{kind} = ASK; }
+		else { return; }
+	
+	} for $file;
+
+
+	return;
+
+=for reference
 	# external data: configin rulesin prefix 
 	# global variables: onchoice render
 
@@ -145,8 +137,6 @@ sub tgt_mnemosyne_render_option {
 		}
 	$var="SDECFG_TRG_$prefix\_$var";
 
-	print "($dir,$var0,$var,$option,$kind)\n";
-	
 	# dependencies
 	# NOTE: don't use spaces on the pkgsel file, only to delimite different dependencies
 	for ( split (/\s/,tgt_mnemosyne_parser('Dependencies',$file,)) ) {
@@ -163,8 +153,6 @@ sub tgt_mnemosyne_render_option {
 		push @deps,$_;
 		}
 
-	print "($dir,$var0,$var,$option,$kind)\n";
-
 	# forced options
 	for ( split (/\s/,tgt_mnemosyne_parser('Forced',$file,)) ) {
 		$_="SDECFG_TRG_$prefix\_$_" unless /^SDECFG/;
@@ -173,7 +161,6 @@ sub tgt_mnemosyne_render_option {
 		push @forced,$_;
 	}
 
-	print "($dir,$var0,$var,$option,$kind)\n";
 	# config script file
 	$_=$file;
 	/^(.*).$kind/i;
@@ -183,7 +170,7 @@ sub tgt_mnemosyne_render_option {
 	# pkgsel files
 	@pkgselfiles=($file);
 	print "$file ($kind)\n";
-	if ( $kind == 'choice' ) {
+	if ( $kind eq 'choice' ) {
 		print "$file is a choice.\n";
 =for comment
 		for x in $( tgt_mnemosyne_parser Imply $file ); do
@@ -192,10 +179,10 @@ sub tgt_mnemosyne_render_option {
 				pkgselfiles="$pkgselfiles $y"
 			fi
 		done
-=cut
+#=cut
 	}
 
-=for comment
+#=for comment
 	# content
 	case "$kind" in
 		ask)	val=$( tgt_mnemosyne_parser Default $file 0 )	;;
@@ -305,7 +292,7 @@ sub tgt_mnemosyne_render_option {
 				;;
 		esac
 	fi
-=cut
+#=cut
 }
 
 sub trg_mnemosyne_filter {
@@ -320,6 +307,29 @@ sub trg_mnemosyne_filter {
 =cut
 }
 
+# print the content of a hash
+sub printhash {
+	my ($hash,$offset) = @_;
+	for (sort keys %{ $hash }) {
+		print "$offset$_";
+		if (ref($hash->{$_}) eq '') {
+			print ": $hash->{$_}\n";
+			}
+		elsif (ref($hash->{$_}) eq 'HASH') {
+			print ":\n";
+			printhash( $hash->{$_}, "$offset\t" );
+			}
+		elsif (ref($hash->{$_}) eq 'ARRAY') {
+			print ": (";
+			print join (',', @{ $hash->{$_} });
+			print ")\n";
+			}
+		else {
+			print ": -> ".ref($hash->{$_})."\n";
+			}
+	}
+}
+
 if ($#ARGV != 3) {
 	print "Usage mnemosyne.pl: <pkgseldir> <prefix> <configfile> <rulesfile>\n";
 	exit (1);
@@ -328,5 +338,7 @@ if ($#ARGV != 3) {
 $::ROOT=$ARGV[0];
 open($::CONFIG,'>',$ARGV[2]);
 open($::RULES,'>',$ARGV[3]);
-#tgt_mnemosyne_render($ARGV[0],$ARGV[1]);
+scandir($ARGV[0],$ARGV[1]);
+printhash(\%::FOLDER,'');
+printhash(\%::MODULE,'');
 close($_) for ($::CONFIG,$::RULES);
