@@ -39,6 +39,8 @@ sub scandir {
 		$current{desc} = $dirname;
 		$current{var}  = $dirvar;
 	}
+
+	# make this folder global
 	$::FOLDER{$current{var}} = \%current;
 
 	{
@@ -63,12 +65,9 @@ sub scandir {
 
 sub scanmodule {
 	my ($file,$prefix)=@_;
-	my %current;
+	my (%current,$FILE);
 
-	#keep it compiling
-	#my ($x,$y,$desc,@forced,@deps,$conffile,@pkgselfiles);
-	
-	# this defines dir,var0,option and kind acording to the following format.
+	# this defines dir,key,option and kind acording to the following format.
 	# $dir/[$prio-]$var[$option].$kind
 	do {
 		my ($dir,$key,$option,$kind);
@@ -82,10 +81,11 @@ sub scanmodule {
 
 		$current{location} = $dir;
 		$current{key} = $key;
+		$current{file} = $file;
 	
 	} for $file;
 
-	open( my $FILE, '<', $file );
+	open($FILE,'<',$file);
 	while(<$FILE>) {
 		if (/^#[^#: ]+: /) {
 			my ($field,$value) = m/^#([^#: ]+): (.*)$/i;
@@ -101,19 +101,24 @@ sub scanmodule {
 				$current{imply} = $value;
 			} elsif ($field eq 'Dependencies') {
 				$current{deps} = $value;
-			} else {
-				print "$file:$field:$value.\n";
+		#	} else {
+		#		print "$file:$field:$value.\n";
 				}
 			}
 		}
 	close($FILE);
-	return;
-
-=for reference
-	# external data: configin rulesin prefix 
-	# global variables: onchoice render
 
 	# var name and description
+	$current{var} = uc $current{key} unless exists $current{var};
+	($current{desc} = $current{key}) =~ s/_/ /g unless exists $current{desc};
+
+	$current{var} = "SDECFG_$prefix\_" . $current{var} unless $current{var} =~ /^SDECFG_$prefix\_/;
+
+	# make this module global
+	$::MODULE{$current{var}} = \%current;
+	
+=for reference
+
 	SWITCH: for ($kind) {
 		/^choice$/ && do {
 			# new choice?
