@@ -9,9 +9,13 @@ fi
 # PATH and co
 . /etc/profile
 
-# TODO: read previous settings
-tdays="1-5"
-ttime="2"
+# read previous settings
+line=`grep "archivista.*backup.sh" /etc/crontab`
+tdays=`echo "$line" | cut -d ' ' -f 5`
+ttime=`echo "$line" | cut -d ' ' -f 2`
+
+[ "$tdays" ] || tdays="2-6"
+[ "$ttime" ] || ttime="2"
 
 until [ "$days" ]; do
 	tdays=`Xdialog --stdout --inputbox "Days the backup should be run on.
