@@ -1,8 +1,9 @@
 #!/bin/bash
 
-if [ $UID -ne 0 ]; then
-	echo "This script must be run as root ..."
-	exit
+if [ "$UID" -ne 0 ]; then
+        exec gnomesu -t "Perform backup" \
+        -m "Please enter the system password (root user)^\
+in order to immediatly perform a backup." -c $0
 fi
 
 # PATH and co
