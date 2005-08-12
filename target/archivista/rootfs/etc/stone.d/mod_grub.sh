@@ -20,7 +20,7 @@
  fallback 1
 +
 +foreground  = 000000
-+background  = FFFFFF
++background  = CCCCCC
 +splashimage $bootdrive$bootpath/t2.xpm.gz
 +
  EOT
