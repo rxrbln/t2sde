@@ -19,7 +19,7 @@ get_ip()
 {
 	x=$2
         until [ "$set" ]; do
-                x=`Xdialog  --stdout --inputbox "$1" 10 38 $x`
+                x=`Xdialog --stdout --inputbox "$1" 10 38 $x`
 
                 # check ip
                 if [ `echo $x |
@@ -58,7 +58,7 @@ EOT
 else
 	tip=${tip:-192.168.0.100/24}
 	until [ "$ip" ]; do
-		tip=`Xdialog  --stdout --inputbox "Internet address and network
+		tip=`Xdialog --stdout --inputbox "Internet address and network
 prefix in CIDR notation
 (e.g. 192.168.0.100/24 or 10.0.0.100/16):" 10 38 $tip`
 
