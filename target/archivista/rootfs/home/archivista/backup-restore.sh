@@ -1,7 +1,5 @@
 #!/bin/bash
 
-set -x
-
 if [ "$UID" -ne 0 ]; then
         exec gnomesu -t "Restore backup" \
         -m "Please enter the system password (root user)^\
