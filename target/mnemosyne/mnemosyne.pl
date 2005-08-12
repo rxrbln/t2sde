@@ -20,24 +20,6 @@ use constant {ALL => 0, ASK => 1, CHOICE => 2 };
 %::FOLDER=();
 %::MODULE=();
 
-sub tgt_mnemosyne_parser {
-	my ($field,$file,$default) = @_;
-	my $output;
-
-	open(my $FILE,'<',$file);
-	while(<$FILE>) {
-		/^#$field/ && do {
-			/^\#$field: (.*)$/i;
-			$output=$1;
-			};
-		}
-	close($FILE);
-
-	$output=$default unless $output;
-	return $output;
-}
-
-
 sub scandir {
 	my ($pkgseldir,$prefix) = @_;
 	my %current=('location', $pkgseldir, 'var', "CFGTEMP_$prefix");
@@ -69,7 +51,7 @@ sub scandir {
 			my $subdir = scandir($_,$prefix);
 			push @subdirs,$subdir;
 		} else {
-			scanoption($_,$prefix);
+			scanmodule($_,$prefix);
 		}
 	}
         closedir $DIR;
@@ -79,7 +61,7 @@ sub scandir {
 
 }
 
-sub scanoption {
+sub scanmodule {
 	my ($file,$prefix)=@_;
 	my %current;
 
@@ -89,18 +71,42 @@ sub scanoption {
 	# this defines dir,var0,option and kind acording to the following format.
 	# $dir/[$prio-]$var[$option].$kind
 	do {
-		my ($dir,$var0,$var,$option,$kind);
+		my ($dir,$key,$option,$kind);
 		m/^(.*)\/(\d+-)?([^\.]*).?([^\.]*)?\.([^\/\.]*)/i;
-		($dir,$var0,$option,$kind) = ($1,$3,$4,$5);
+		($dir,$key,$option,$kind) = ($1,$3,$4,$5);
 
-		if ($kind eq 'choice') { $current{kind} = CHOICE; }
+		if ($kind eq 'choice') { $current{kind} = CHOICE; $current{option} = $option; }
 		elsif ($kind eq 'all') { $current{kind} = ALL; }
 		elsif ($kind eq 'ask') { $current{kind} = ASK; }
 		else { return; }
+
+		$current{location} = $dir;
+		$current{key} = $key;
 	
 	} for $file;
 
-
+	open( my $FILE, '<', $file );
+	while(<$FILE>) {
+		if (/^#[^#: ]+: /) {
+			my ($field,$value) = m/^#([^#: ]+): (.*)$/i;
+			if ($field eq 'Description') {
+				$current{desc} = $value;
+			} elsif ($field eq 'Variable') {
+				$current{var} = $value;
+			} elsif ($field eq 'Default') {
+				$current{default} = $value;
+			} elsif ($field eq 'Forced') {
+				$current{forced} = $value;
+			} elsif ($field eq 'Imply') {
+				$current{imply} = $value;
+			} elsif ($field eq 'Dependencies') {
+				$current{deps} = $value;
+			} else {
+				print "$file:$field:$value.\n";
+				}
+			}
+		}
+	close($FILE);
 	return;
 
 =for reference
@@ -339,6 +345,6 @@ $::ROOT=$ARGV[0];
 open($::CONFIG,'>',$ARGV[2]);
 open($::RULES,'>',$ARGV[3]);
 scandir($ARGV[0],$ARGV[1]);
-printhash(\%::FOLDER,'');
+#printhash(\%::FOLDER,'');
 printhash(\%::MODULE,'');
 close($_) for ($::CONFIG,$::RULES);
