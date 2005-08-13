@@ -185,7 +185,7 @@ sub scanmodule {
 
 	} else {
 		$::MODULE{$current{var}} = {};
-		for ('key','location','var','desc','forced','deps','file') {
+		for ('key','location','var','desc','forced','deps','file','kind') {
 			$::MODULE{$current{var}}{$_}=$current{$_}
 				if exists $current{$_};
 			}
@@ -197,6 +197,39 @@ sub scanmodule {
 
 	}
 	
+sub process_dependencies {
+	my $module = $_[0];
+	if (! exists $module->{lower}) {
+		my @lower;
+		if ($module->{kind} == CHOICE) {
+			for my $option (@{ $module->{options} }) {
+				if (exists $option->{deps}) {
+					for (@{ $option->{deps} }) {
+						my $dep = (m/"\$([^"]+)"/i)[0];
+						my $sublower = process_dependencies($::MODULE{$dep});
+						push @lower, $dep;
+						push @lower, @{$sublower} if $#{$sublower} >= 0;
+						}
+					}
+				}
+		} elsif (exists $module->{deps}) {
+			for (@{ $module->{deps} }) {
+				my $dep = (m/"\$([^"]+)"/i)[0];
+				my $sublower = process_dependencies($::MODULE{$dep});
+				push @lower, $dep;
+				push @lower, @{$sublower} if $#{$sublower} >= 0;
+				}
+			}
+		$module->{lower}=\@lower;
+		}
+	return $module->{lower};
+}
+
+sub process_modules { 
+	# populate {lower} list
+	for (values %::MODULE) { process_dependencies( $_ ) unless $_->{lower}; }
+}
+
 sub trg_mnemosyne_filter {
 =for comment
 	echo "# generated for $SDECFG_TARGET target"
@@ -240,9 +273,6 @@ if ($#ARGV != 3) {
 	}
 
 $::ROOT=$ARGV[0];
-open($::CONFIG,'>',$ARGV[2]);
-open($::RULES,'>',$ARGV[3]);
 scandir($ARGV[0],$ARGV[1]);
-printref('%::FOLDER',\%::MODULE,'');
+process_modules();
 printref('%::MODULE',\%::MODULE,'');
-close($_) for ($::CONFIG,$::RULES);
