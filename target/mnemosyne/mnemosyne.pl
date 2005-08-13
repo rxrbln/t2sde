@@ -243,6 +243,6 @@ $::ROOT=$ARGV[0];
 open($::CONFIG,'>',$ARGV[2]);
 open($::RULES,'>',$ARGV[3]);
 scandir($ARGV[0],$ARGV[1]);
-#printhash(\%::FOLDER,'');
-printhash(\%::MODULE,'');
+printref('%::FOLDER',\%::MODULE,'');
+printref('%::MODULE',\%::MODULE,'');
 close($_) for ($::CONFIG,$::RULES);
