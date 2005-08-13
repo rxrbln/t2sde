@@ -108,204 +108,95 @@ sub scanmodule {
 		}
 	close($FILE);
 
-	# var name and description
-	$current{var} = uc $current{key} unless exists $current{var};
-	($current{desc} = $current{key}) =~ s/_/ /g unless exists $current{desc};
+	# var name
+	$current{var} = uc $current{key}
+		unless exists $current{var};
+	$current{var} = "SDECFG_$prefix\_" . $current{var}
+		unless $current{var} =~ /^SDECFG_$prefix\_/;
 
-	$current{var} = "SDECFG_$prefix\_" . $current{var} unless $current{var} =~ /^SDECFG_$prefix\_/;
-
-	# make this module global
-	$::MODULE{$current{var}} = \%current;
-	
-=for reference
-
-	SWITCH: for ($kind) {
-		/^choice$/ && do {
-			# new choice?
-
-		#	$onchoice=0 if ($onchoice && ($onchoice cmp $var) != 0);
-
-			($x = $var0) =~ s/_/ /g;
-			($y = $option) =~ s/_/ /g;
-			$desc=tgt_mnemosyne_parser('Description',$file,"$x ($y)");
-
-		#	if ( ! $onchoice ) {
-		#		$onchoice=$var;
-
-				print $::RULES	"\tCFGTEMP_TRG_$prefix\_$var=0\n";
-				print $::CONFIG	"\tif [ \"\$CFGTEMP_TRG_$prefix\_$var\" == 1 ]; then\n";
-				print $::CONFIG	"\t\tchoice SDECFG_TRG_$prefix\_$var \${CFGTEMP_TRG_$prefix\_$var\_DEFAULT:-$option} \${CFGTEMP_TRG_$prefix\_$var\_LIST}\n";
-				print $::CONFIG "\tfi\n";
-		#		}
-			last SWITCH; };
-		/^(?:ask|all )$/ && do {
-			$var=tgt_mnemosyne_parser('Variable',$file,$var);
-			($x = $var0) =~ s/_/ /g;
-			$desc=tgt_mnemosyne_parser('Description',$file,$x);
-		#	$onchoice=0;
-			last SWITCH; };
-		do { return; };
-		}
-	$var="SDECFG_TRG_$prefix\_$var";
+	# for choices, we use $option instead of $key as description
+	($current{desc} = $current{option}) =~ s/_/ /g
+		if exists $current{option} && ! exists $current{desc};
+	($current{desc} = $current{key}) =~ s/_/ /g
+		unless exists $current{desc};
 
 	# dependencies
 	# NOTE: don't use spaces on the pkgsel file, only to delimite different dependencies
-	for ( split (/\s/,tgt_mnemosyne_parser('Dependencies',$file,)) ) {
-		$_="SDECFG_TRG_$prefix\_$_" unless /^SDECFG/;
+	if (exists $current{deps}) {
+		my @deps;
+		for ( split (/\s+/,$current{deps}) ) {
+			$_="SDECFG_$prefix\_$_" unless /^SDECFG/;
 
-		if (/=/) {
-			m/(.*)(==|!=|=)(.*)/i;
-			$_="\"\$$1\" $2 $3";
-			}
-		else {
-			$_="\"\$$_\" == '1'";
-			}
+			if (/=/) {
+				m/(.*)(==|!=|=)(.*)/i;
+				$_="\"\$$1\" $2 $3";
+			} else {
+				$_="\"\$$_\" == 1";
+				}
 
-		push @deps,$_;
+			push @deps,$_;
+			}
+		$current{deps} = \@deps;
 		}
 
-	# forced options
-	for ( split (/\s/,tgt_mnemosyne_parser('Forced',$file,)) ) {
-		$_="SDECFG_TRG_$prefix\_$_" unless /^SDECFG/;
+	# forced modules
+	if (exists $current{forced}) {
+		my @forced;
+		for ( split (/\s+/,$current{forced}) ) {
+			$_="SDECFG_$prefix\_$_" unless /^SDECFG/;
 
-		$_="$_='1'" unless /=/;
-		push @forced,$_;
-	}
-
-	# config script file
-	$_=$file;
-	/^(.*).$kind/i;
-	$conffile="$1\.conf" if ( -f "$1\.conf" );
-
-	print "($dir,$var0,$var,$option,$kind)\n";
-	# pkgsel files
-	@pkgselfiles=($file);
-	print "$file ($kind)\n";
-	if ( $kind eq 'choice' ) {
-		print "$file is a choice.\n";
-=for comment
-		for x in $( tgt_mnemosyne_parser Imply $file ); do
-			y=`echo $dir/*$var0.$x.choice`
-			if [ -f "$y" ]; then
-				pkgselfiles="$pkgselfiles $y"
-			fi
-		done
-#=cut
-	}
-
-#=for comment
-	# content
-	case "$kind" in
-		ask)	val=$( tgt_mnemosyne_parser Default $file 0 )	;;
-		choice)	val=$( tgt_mnemosyne_parser Default $file )	;;
-		*)	val=1	;;
-	esac
-
-	#
-	# output to rules file
-	#
-	{
-	if [ "$deps" -a "$kind" != "choice" ]; then
-		echo "CFGTEMP${var#SDECFG}=\${CFGTEMP${var#SDECFG}:-0}"
-	fi
-
-	# dependencies
-	[ "$deps" ] && echo "if [ $deps ]; then"
-	echo -e "  CFGTEMP${var#SDECFG}=1"
-
-	# choice option
-	if [ "$kind" == "choice" ]; then
-		echo "  var_append CFGTEMP${var#SDECFG}_LIST ' ' '$option ${desc// /_}'"
-		if [ "$val" ]; then
-			echo "  CFGTEMP${var#SDECFG}_DEFAULT=$val"
-		fi
-	fi
-
-	# forced
-	if [ "$forced" ]; then
-		if [ "$kind" == "choice" ]; then
-			if [ "$val" ]; then
-				cat <<-EOT
-				  if [ "\${$var:-$val}" == "$option" ]; then
-				EOT
-			else
-				cat <<-EOT
-				  if [ "\$$var" == "$option" ]; then
-				EOT
-			fi
-		elif [ "$val" ]; then
-			cat <<-EOT
-			  if [ "\${$var:-$val}" == 1 ]; then
-			EOT
-		else
-			cat <<-EOT
-			  if [ "\$$var" == 1 ]; then
-			EOT
-		fi
-
-		for x in $forced; do
-			echo "    $x"
-		done
-		echo "  fi"
-	fi
-
-	[ "$deps" ] && echo "fi"
-	} >> $rulesin
-
-
-	#
-	# output to config file
-	#
-	{
-	echo "if [ \$CFGTEMP${var#SDECFG} == 1 ]; then"
+			$_="$_=1" unless /=/;
+			push @forced,$_;
+			}
+		$current{forced} = \@forced;
+		}
 	
-	case "$kind" in
-		ask)	echo "   bool '$desc' $var $val"	;;
-		choice)	true	;;
-		*)	echo "   $var=1"	;;
-	esac
+	# implied options
+	if (exists $current{imply}) {
+		my @imply = split (/\s+/,$current{imply});
+		$current{imply} = \@imply;
+		}
 
-	if [ "$kind" == "choice" ]; then
-		cat <<-EOT
-		  if [ "\$$var" == "$option" ]; then
-		EOT
-	else
-		cat <<-EOT
-		   if [ "\$$var" == 1 ]; then
-		EOT
-	fi
-	cat <<-EOT
-	      var_append CFGTEMP_TRG_${prefix}_PKGLST ' ' "$pkgselfiles"
-	EOT
+	# make this module global
+	if ( $current{kind} == CHOICE ) {
 
-	# conffiles
-	for x in $conffile; do
-		echo "      . $x"
-	done
+		# prepare the option for this choice
+		my %option;
+		for ('desc','forced','imply','deps','option','file') {
+			$option{$_}=$current{$_} if exists $current{$_};
+			}
 
-	cat <<-EOT
-	   fi
-	fi
-	EOT
-	} >> $configin
+		if ( exists $::MODULE{$current{var}} ) {
+			push @{ $::MODULE{$current{var}}{options} },\%option;
+		} else {
+			# prepare and add this choice module
+			my @options = (\%option);
 
-	if [ "$deps" ]; then
-		case "$kind" in
-			ask|choice)
-				# TODO: add rule: this directory will be shown if these deps are meet
-				true	;;
-		esac
-	else
-		case "$kind" in
-			ask)	render=1	;;
-			choice)	render=1
-				# TODO: add rule: always display this choice
-				;;
-		esac
-	fi
-#=cut
-}
+			$::MODULE{$current{var}} = {
+				'kind', CHOICE,
+				'options', \@options,
+				};
 
+			for ('key','location','var') {
+				$::MODULE{$current{var}}{$_}=$current{$_}
+					if exists $current{$_};
+				}
+			}
+
+	} else {
+		$::MODULE{$current{var}} = {};
+		for ('key','location','var','desc','forced','deps','file') {
+			$::MODULE{$current{var}}{$_}=$current{$_}
+				if exists $current{$_};
+			}
+		}
+
+	# default value
+	$::MODULE{$current{var}}{default} = $current{default} 
+		if exists $current{default};
+
+	}
+	
 sub trg_mnemosyne_filter {
 =for comment
 	echo "# generated for $SDECFG_TARGET target"
@@ -319,26 +210,28 @@ sub trg_mnemosyne_filter {
 }
 
 # print the content of a hash
-sub printhash {
-	my ($hash,$offset) = @_;
-	for (sort keys %{ $hash }) {
-		print "$offset$_";
-		if (ref($hash->{$_}) eq '') {
-			print ": $hash->{$_}\n";
+sub printref {
+	my ($name,$ref,$offset) = @_;
+	my $typeof = ref($ref);
+
+	print "$offset$name:";
+	if ($typeof eq '') {
+		print " '$ref'\n";
+	} elsif ($typeof eq 'HASH') {
+		print "\n";
+		for (sort keys %{ $ref }) {
+			printref($_,$ref->{$_},"$offset\t");
 			}
-		elsif (ref($hash->{$_}) eq 'HASH') {
-			print ":\n";
-			printhash( $hash->{$_}, "$offset\t" );
-			}
-		elsif (ref($hash->{$_}) eq 'ARRAY') {
-			print ": (";
-			print join (',', @{ $hash->{$_} });
-			print ")\n";
-			}
-		else {
-			print ": -> ".ref($hash->{$_})."\n";
-			}
-	}
+	} elsif ($typeof eq 'ARRAY') {
+		my $i=0;
+		print "\n";
+		for (@{ $ref }) {
+			printref("[$i]",$_,"$offset\t");
+			$i++;
+		}
+	} else {
+		print " -> $typeof\n";
+		}
 }
 
 if ($#ARGV != 3) {
