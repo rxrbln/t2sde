@@ -197,6 +197,34 @@ sub scanmodule {
 
 	}
 	
+sub process_forced {
+	my $module = $_[0];
+	if (! exists $module->{higher}) {
+		my @higher;
+		if ($module->{kind} == CHOICE) {
+			for my $option (@{ $module->{options} }) {
+				if (exists $option->{forced}) {
+					for (@{ $option->{forced} }) {
+						my $force = (m/([^=]+)=/i)[0];
+						my $superhi = process_forced($::MODULE{$force});
+						push @higher, $force;
+						push @higher, @{$superhi} if $#{$superhi} >= 0;
+						}
+					}
+				}
+		} elsif (exists $module->{forced}) {
+			for (@{ $module->{forced} }) {
+				my $force = (m/([^=]+)=/i)[0];
+				my $superhi = process_forced($::MODULE{$force});
+				push @higher, $force;
+				push @higher, @{$superhi} if $#{$superhi} >= 0;
+				}
+			}
+		$module->{higher}=\@higher;
+		}
+	return $module->{higher};
+}
+
 sub process_dependencies {
 	my $module = $_[0];
 	if (! exists $module->{lower}) {
@@ -228,6 +256,7 @@ sub process_dependencies {
 sub process_modules { 
 	# populate {lower} list
 	for (values %::MODULE) { process_dependencies( $_ ) unless $_->{lower}; }
+	for (values %::MODULE) { process_forced( $_ ) unless $_->{higher}; }
 }
 
 sub trg_mnemosyne_filter {
