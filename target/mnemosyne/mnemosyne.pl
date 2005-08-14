@@ -15,6 +15,7 @@
 
 use warnings;
 use strict;
+use IPC::Open2;
 
 use constant {ALL => 0, ASK => 1, CHOICE => 2 };
 %::FOLDER=();
@@ -197,66 +198,54 @@ sub scanmodule {
 
 	}
 	
-sub process_forced {
-	my $module = $_[0];
-	if (! exists $module->{higher}) {
-		my @higher;
-		if ($module->{kind} == CHOICE) {
-			for my $option (@{ $module->{options} }) {
-				if (exists $option->{forced}) {
-					for (@{ $option->{forced} }) {
-						my $force = (m/([^=]+)=/i)[0];
-						my $superhi = process_forced($::MODULE{$force});
-						push @higher, $force;
-						push @higher, @{$superhi} if $#{$superhi} >= 0;
-						}
-					}
-				}
-		} elsif (exists $module->{forced}) {
-			for (@{ $module->{forced} }) {
-				my $force = (m/([^=]+)=/i)[0];
-				my $superhi = process_forced($::MODULE{$force});
-				push @higher, $force;
-				push @higher, @{$superhi} if $#{$superhi} >= 0;
-				}
-			}
-		$module->{higher}=\@higher;
-		}
-	return $module->{higher};
-}
-
-sub process_dependencies {
-	my $module = $_[0];
-	if (! exists $module->{lower}) {
-		my @lower;
-		if ($module->{kind} == CHOICE) {
-			for my $option (@{ $module->{options} }) {
-				if (exists $option->{deps}) {
-					for (@{ $option->{deps} }) {
-						my $dep = (m/"\$([^"]+)"/i)[0];
-						my $sublower = process_dependencies($::MODULE{$dep});
-						push @lower, $dep;
-						push @lower, @{$sublower} if $#{$sublower} >= 0;
-						}
-					}
-				}
-		} elsif (exists $module->{deps}) {
-			for (@{ $module->{deps} }) {
-				my $dep = (m/"\$([^"]+)"/i)[0];
-				my $sublower = process_dependencies($::MODULE{$dep});
-				push @lower, $dep;
-				push @lower, @{$sublower} if $#{$sublower} >= 0;
-				}
-			}
-		$module->{lower}=\@lower;
-		}
-	return $module->{lower};
-}
-
 sub process_modules { 
-	# populate {lower} list
-	for (values %::MODULE) { process_dependencies( $_ ) unless $_->{lower}; }
-	for (values %::MODULE) { process_forced( $_ ) unless $_->{higher}; }
+	my ($READ,$WRITE);
+
+	open2($READ, $WRITE, 'tsort');
+	# prepare topographic modules map
+	for my $module (values %::MODULE) { 
+		print $WRITE "$module->{var}\n";
+		for (@{exists $module->{deps} ? $module->{deps} : []} ) {
+			my $dep = (m/"\$([^"]+)"/i)[0];
+			print $WRITE "$dep $module->{var}\n";
+			}
+		for (@{exists $module->{forced} ? $module->{forced} : []} ) {
+			my $forced = (m/([^"]+)=/i)[0];
+			print $WRITE "$module->{var} $forced\n";
+			}
+		}
+	close($WRITE);
+
+	# and populate the sorted list
+	my @sorted;
+	while(<$READ>) {
+		if (/(.*)\n/) { push @sorted, $1; }
+		}
+
+	# and remember the sorted list
+	$::MODULES=\@sorted;
+}
+
+sub process_folders { 
+	my ($READ,$WRITE);
+
+	open2($READ, $WRITE, 'tsort | tac');
+	# prepare topographic modules map
+	for my $folder (values %::FOLDER) { 
+		for (@{exists $folder->{subdirs} ? $folder->{subdirs} : []} ) {
+			print $WRITE "$folder->{var} $_\n";
+			}
+		}
+	close($WRITE);
+
+	# and populate the sorted list
+	my @sorted;
+	while(<$READ>) {
+		if (/(.*)\n/) { push @sorted, $1; }
+		}
+
+	# and remember the sorted list
+	$::FOLDERS=\@sorted;
 }
 
 sub trg_mnemosyne_filter {
@@ -304,4 +293,5 @@ if ($#ARGV != 3) {
 $::ROOT=$ARGV[0];
 scandir($ARGV[0],$ARGV[1]);
 process_modules();
+process_folders();
 printref('%::MODULE',\%::MODULE,'');
