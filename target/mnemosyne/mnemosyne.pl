@@ -248,6 +248,109 @@ sub process_folders {
 	$::FOLDERS=\@sorted;
 }
 
+sub render_widgets {
+	open(my $FILE,'<',$_[0]);
+	close($FILE);
+	}
+	
+sub render_rules_module {
+	my ($module,$offset,$pkgsellist) = @_;
+	my $var    = $module->{var};
+
+	if ($module->{kind} == CHOICE) {
+		my $listvar = "CFGTEMP_$1_LIST" if $var =~ m/^SDECFG_(.*)/i;
+		# initialize the list
+		print "${offset}$listvar=\n";
+
+		print "${offset}[ -n \"\$$var\" ] || $var=
+
+		for ( @{ $module->{options} } ) {
+			my $option = $_;
+			(my $desc = $option->{desc}) =~ s/ /_/g;
+
+			if (exists $option->{deps}) {
+				print "${offset}if [ " .
+					join(' -a ', @{ $option->{deps} } ) .
+					" ]; then\n";
+				print "${offset}\t$listvar=\"\$$listvar $option->{option} $desc\"\n";
+				print "${offset}fi\n";
+			} else {
+				print "${offset}$listvar=\"\$$listvar $option->{option} $desc\"\n"
+				}
+			}
+		
+	#	printref($var,$module,$offset);
+	} elsif ($module->{kind} == ASK) {
+		my $default=0;
+		$default = $module->{default} if exists $module->{default};
+
+		# and set the default value if none is set.
+		print "$offset\[ -n \"\$$var\" \] || $var=$default\n";
+
+		# if enabled, append pkgsel and force the forced
+		print "\n${offset}if [ \"\$$var\" == 1 ]; then\n";
+
+		if (exists $module->{forced}) {
+			for ( @{ $module->{forced} } ) {
+				print "$offset\t$_\n";
+				print "$offset\tSDECFGSET_$1\n" if $_ =~ m/^SDECFG_(.*)/i;
+				}
+			}
+		print "$offset\t$pkgsellist=\"\$$pkgsellist $module->{file}\"\n";
+
+		print $offset."fi\n";
+	} else {
+		# just enable the feature
+		print "$offset$var=1\n";
+		print "$pkgsellist=\"\$$pkgsellist $module->{file}\"\n";
+
+		# forced list doesn't make sense for {kind} == ALL
+		}
+
+	}
+sub render_rules_nomodule {
+	my ($module,$offset) = @_;
+	my $var = $module->{var};
+
+	# unset the choice list, and the var
+	if ($module->{kind} == CHOICE) {
+		my $tmpvar = "CFGTEMP_$1" if $var =~ m/^SDECFG_(.*)/i;
+		print "${offset}unset $tmpvar\n";
+		}
+	print "${offset}unset SDECFGSET_$1\n" if $var =~ m/^SDECFG_(.*)/i;
+	print "${offset}unset $var\n";
+	}
+
+sub render_rules {
+	open(my $FILE,'<',$_[0]);
+
+	# pkgsel list
+	my $pkgsellist = "CFGTEMP_$_[1]_PKGLIST";
+	print "$pkgsellist=\n";
+
+	for (@$::MODULES) {
+		my $module = $::MODULE{$_};
+		print "\n#\n# $module->{var} ("
+			. ($module->{kind} == ALL ? "ALL" : ($module->{kind} == ASK ? "ASK" : "CHOICE" ) )
+			.  ")\n#\n";
+
+		
+		if (exists $module->{deps}) {
+			print "if [ " . join(' -a ', @{ $module->{deps} } ) . " ]; then\n";
+			render_rules_module($module,"\t",$pkgsellist);
+			print "else\n";
+			render_rules_nomodule($module,"\t");
+			print "fi\n";
+		} else {
+			render_rules_module($module,"",$pkgsellist);
+			}
+		}
+#	for (@$::FOLDERS) {
+#		my $folder = %{ $::FOLDER{$_} };
+#		}
+	close($FILE);
+	}
+	
 sub trg_mnemosyne_filter {
 =for comment
 	echo "# generated for $SDECFG_TARGET target"
@@ -294,4 +397,6 @@ $::ROOT=$ARGV[0];
 scandir($ARGV[0],$ARGV[1]);
 process_modules();
 process_folders();
-printref('%::MODULE',\%::MODULE,'');
+render_rules($ARGV[3],$ARGV[1]);
+render_widgets($ARGV[2]);
+#printref('%::MODULE',\%::MODULE,'');
