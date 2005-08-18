@@ -258,11 +258,12 @@ sub render_rules_module {
 	my $var    = $module->{var};
 
 	if ($module->{kind} == CHOICE) {
-		my $listvar = "CFGTEMP_$1_LIST" if $var =~ m/^SDECFG_(.*)/i;
+		my $tmpvar = "CFGTEMP_$1" if $var =~ m/^SDECFG_(.*)/i;
+		my $listvar = "$tmpvar\_LIST";
+
 		# initialize the list
 		print "${offset}$listvar=\n";
-
-		print "${offset}[ -n \"\$$var\" ] || $var=
+		print "${offset}$tmpvar=\" \"\n";
 
 		for ( @{ $module->{options} } ) {
 			my $option = $_;
@@ -273,11 +274,23 @@ sub render_rules_module {
 					join(' -a ', @{ $option->{deps} } ) .
 					" ]; then\n";
 				print "${offset}\t$listvar=\"\$$listvar $option->{option} $desc\"\n";
+				print "${offset}\t$tmpvar=\"\${$tmpvar}$option->{option} \"\n"; 
 				print "${offset}fi\n";
 			} else {
-				print "${offset}$listvar=\"\$$listvar $option->{option} $desc\"\n"
+				print "\n${offset}$listvar=\"\$$listvar $option->{option} $desc\"\n";
+				print "${offset}$tmpvar=\"\${$tmpvar}$option->{option} \"\n"; 
 				}
 			}
+
+		print "\n";
+		if (exists $module->{default}) {
+			print "${offset}if [ \"\${$tmpvar// \$$var /}\" == \"\$$tmpvar\" ]; then\n";
+			print "${offset}\t$var=$module->{default}\n";
+			print "${offset}fi\n";
+			}
+		print "${offset}if [ \"\${$tmpvar// \$$var /}\" == \"\$$tmpvar\" ]; then\n";
+		print "$offset\t$var=`echo \"\$$tmpvar\" | cut -d' ' -f2`\n";
+		print "${offset}fi\n";
 		
 	#	printref($var,$module,$offset);
 	} elsif ($module->{kind} == ASK) {
