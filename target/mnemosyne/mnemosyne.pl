@@ -254,43 +254,58 @@ sub render_widgets {
 	}
 	
 sub render_rules_module {
-	my ($module,$offset,$pkgsellist) = @_;
+	my ($module,$offset) = @_;
 	my $var    = $module->{var};
 
 	if ($module->{kind} == CHOICE) {
 		my $tmpvar = "CFGTEMP_$1" if $var =~ m/^SDECFG_(.*)/i;
 		my $listvar = "$tmpvar\_LIST";
+		my $defaultvar = "$tmpvar\_DEFAULT";
+		my $default = "undefined";
+		my $forcer;
+
+		$default = $module->{default} if exists $module->{default};
 
 		# initialize the list
 		print "${offset}$listvar=\n";
-		print "${offset}$tmpvar=\" \"\n";
+		
+		print "${offset}$defaultvar=$default\n";
+		print "${offset}\[ -n \"\$$var\" \] || $var=$default\n\n";
 
 		for ( @{ $module->{options} } ) {
 			my $option = $_;
 			(my $desc = $option->{desc}) =~ s/ /_/g;
+
+			# has something to force?
+			if (exists $option->{forced}) { $forcer = 1; }
 
 			if (exists $option->{deps}) {
 				print "${offset}if [ " .
 					join(' -a ', @{ $option->{deps} } ) .
 					" ]; then\n";
 				print "${offset}\t$listvar=\"\$$listvar $option->{option} $desc\"\n";
-				print "${offset}\t$tmpvar=\"\${$tmpvar}$option->{option} \"\n"; 
 				print "${offset}fi\n";
 			} else {
-				print "\n${offset}$listvar=\"\$$listvar $option->{option} $desc\"\n";
-				print "${offset}$tmpvar=\"\${$tmpvar}$option->{option} \"\n"; 
+				print "${offset}$listvar=\"\$$listvar $option->{option} $desc\"\n";
 				}
 			}
 
-		print "\n";
-		if (exists $module->{default}) {
-			print "${offset}if [ \"\${$tmpvar// \$$var /}\" == \"\$$tmpvar\" ]; then\n";
-			print "${offset}\t$var=$module->{default}\n";
-			print "${offset}fi\n";
+		# has something to force?
+		if ($forcer) {
+			print "\n${offset}case \"\$$var\" in\n";
+			for ( @{ $module->{options} } ) {
+				my $option = $_;
+				if (exists $option->{forced}) {
+					print "${offset}\t$option->{option})\n";
+					for ( @{ $option->{forced} } ) {
+						print "$offset\t\t$_\n";
+						print "$offset\t\tSDECFGSET_$1\n" if $_ =~ m/^SDECFG_(.*)/i;
+						}
+					print "${offset}\t\t;;\n";
+					}
+				}
+			print "${offset}esac\n";
 			}
-		print "${offset}if [ \"\${$tmpvar// \$$var /}\" == \"\$$tmpvar\" ]; then\n";
-		print "$offset\t$var=`echo \"\$$tmpvar\" | cut -d' ' -f2`\n";
-		print "${offset}fi\n";
 		
 	#	printref($var,$module,$offset);
 	} elsif ($module->{kind} == ASK) {
@@ -301,21 +316,18 @@ sub render_rules_module {
 		print "$offset\[ -n \"\$$var\" \] || $var=$default\n";
 
 		# if enabled, append pkgsel and force the forced
-		print "\n${offset}if [ \"\$$var\" == 1 ]; then\n";
 
 		if (exists $module->{forced}) {
+			print "\n${offset}if [ \"\$$var\" == 1 ]; then\n";
 			for ( @{ $module->{forced} } ) {
 				print "$offset\t$_\n";
 				print "$offset\tSDECFGSET_$1\n" if $_ =~ m/^SDECFG_(.*)/i;
 				}
+			print $offset."fi\n";
 			}
-		print "$offset\t$pkgsellist=\"\$$pkgsellist $module->{file}\"\n";
-
-		print $offset."fi\n";
 	} else {
 		# just enable the feature
 		print "$offset$var=1\n";
-		print "$pkgsellist=\"\$$pkgsellist $module->{file}\"\n";
 
 		# forced list doesn't make sense for {kind} == ALL
 		}
@@ -338,9 +350,6 @@ sub render_rules {
 	open(my $FILE,'<',$_[0]);
 
 	# pkgsel list
-	my $pkgsellist = "CFGTEMP_$_[1]_PKGLIST";
-	print "$pkgsellist=\n";
-
 	for (@$::MODULES) {
 		my $module = $::MODULE{$_};
 		print "\n#\n# $module->{var} ("
@@ -350,12 +359,12 @@ sub render_rules {
 		
 		if (exists $module->{deps}) {
 			print "if [ " . join(' -a ', @{ $module->{deps} } ) . " ]; then\n";
-			render_rules_module($module,"\t",$pkgsellist);
+			render_rules_module($module,"\t");
 			print "else\n";
 			render_rules_nomodule($module,"\t");
 			print "fi\n";
 		} else {
-			render_rules_module($module,"",$pkgsellist);
+			render_rules_module($module,"");
 			}
 		}
 #	for (@$::FOLDERS) {
