@@ -46,19 +46,22 @@ sub scandir {
 
 	{
 	# make scandir recursive
-	my @subdirs;
+	my @children;
 	opendir(my $DIR, $pkgseldir);
 	foreach( grep { ! /^\./ } sort readdir($DIR) ) {
 		$_ = "$pkgseldir/$_";
 		if ( -d $_ ) {
 			my $subdir = scandir($_,$prefix);
-			push @subdirs,$subdir;
+			push @children,$subdir;
 		} else {
-			scanmodule($_,$prefix,$current{var});
+			my $module=scanmodule($_,$prefix,$current{var});
+			if ($module) {
+				push @children,$module unless grep(/^$module$/,@children);
+				}
 		}
 	}
         closedir $DIR;
-	$current{subdirs} = \@subdirs;
+	$current{children} = \@children;
 	return $current{var};
 	}
 
@@ -197,6 +200,7 @@ sub scanmodule {
 	$::MODULE{$current{var}}{default} = $current{default} 
 		if exists $current{default};
 
+	return $current{var};
 	}
 	
 sub process_modules { 
@@ -233,8 +237,8 @@ sub process_folders {
 	open2($READ, $WRITE, 'tsort | tac');
 	# prepare topographic modules map
 	for my $folder (values %::FOLDER) { 
-		for (@{exists $folder->{subdirs} ? $folder->{subdirs} : []} ) {
-			print $WRITE "$folder->{var} $_\n";
+		for (@{exists $folder->{children} ? $folder->{children} : []} ) {
+			print $WRITE "$folder->{var} $_\n" unless /^SDECFG/;
 			}
 		}
 	close($WRITE);
@@ -250,7 +254,7 @@ sub process_folders {
 }
 
 sub render_widgets {
-	open(my $FILE,'<',$_[0]);
+	open(my $FILE,'>',$_[0]);
 	close($FILE);
 	}
 	
@@ -383,8 +387,9 @@ sub render_rules {
 	print "\n#\n# enable folder with enabled subfolders\n#\n";
 	for (@$::FOLDERS) {
 		my $folder = $::FOLDER{$_};
-		if ( $#{ $folder->{subdirs} } >= 0 ) {
-			print "if [ -n \"\$".join('$', @{$folder->{subdirs}} )."\" ]; then\n";
+		my @subdirs = grep(/^CFGTEMP/,@{$folder->{children}});
+		if ( @subdirs ) {
+			print "if [ -n \"\$".join('$', @subdirs )."\" ]; then\n";
 			print "\t$folder->{var}=1\n";
 			print "fi\n";
 			}
