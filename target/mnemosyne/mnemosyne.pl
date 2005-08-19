@@ -54,7 +54,7 @@ sub scandir {
 			my $subdir = scandir($_,$prefix);
 			push @subdirs,$subdir;
 		} else {
-			scanmodule($_,$prefix);
+			scanmodule($_,$prefix,$current{var});
 		}
 	}
         closedir $DIR;
@@ -65,7 +65,7 @@ sub scandir {
 }
 
 sub scanmodule {
-	my ($file,$prefix)=@_;
+	my ($file,$prefix,$folder)=@_;
 	my (%current,$FILE);
 
 	# this defines dir,key,option and kind acording to the following format.
@@ -193,6 +193,7 @@ sub scanmodule {
 		}
 
 	# default value
+	$::MODULE{$current{var}}{folder}  = $folder;
 	$::MODULE{$current{var}}{default} = $current{default} 
 		if exists $current{default};
 
@@ -290,6 +291,9 @@ sub render_rules_module {
 				}
 			}
 
+		# enable the folder display
+		print "${offset}\[ -n \"\$$listvar\" \] && $module->{folder}=1\n";
+		
 		# has something to force?
 		if ($forcer) {
 			print "\n${offset}case \"\$$var\" in\n";
@@ -311,6 +315,9 @@ sub render_rules_module {
 	} elsif ($module->{kind} == ASK) {
 		my $default=0;
 		$default = $module->{default} if exists $module->{default};
+
+		#enable the folder display
+		print "$offset$module->{folder}=1\n";
 
 		# and set the default value if none is set.
 		print "$offset\[ -n \"\$$var\" \] || $var=$default\n";
@@ -349,6 +356,10 @@ sub render_rules_nomodule {
 sub render_rules {
 	open(my $FILE,'<',$_[0]);
 
+	# clean folder enablers
+	print "# folder enablers\n#\n\n";
+	for (@$::FOLDERS) { print "$_=\n"; }
+
 	# pkgsel list
 	for (@$::MODULES) {
 		my $module = $::MODULE{$_};
@@ -367,9 +378,14 @@ sub render_rules {
 			render_rules_module($module,"");
 			}
 		}
-#	for (@$::FOLDERS) {
-#		my $folder = %{ $::FOLDER{$_} };
-#		}
+	for (@$::FOLDERS) {
+		my $folder = $::FOLDER{$_};
+		if ( $#{ $folder->{subdirs} } >= 0 ) {
+			print "if [ -n \"\$".join('$', @{$folder->{subdirs}} )."\" ]; then\n";
+			print "\t$folder->{var}=1\n";
+			print "fi\n";
+			}
+		}
 	close($FILE);
 	}
 	
