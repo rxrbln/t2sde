@@ -176,7 +176,7 @@ main() {
 
 	local cmd install_now=0
 	while
-		cmd="gui_menu install 'Partitioning your discs
+		cmd="gui_menu install 'Disc setup (partitions and mount-points)
 
 This dialog allows you to modify your discs parition layout and to create filesystems and swap-space - as well as mouting / activating it. Everything you can do using this tool can also be done manually on the command line.'"
 
