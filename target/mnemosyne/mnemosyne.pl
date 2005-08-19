@@ -354,10 +354,11 @@ sub render_rules_nomodule {
 	}
 
 sub render_rules {
-	open(my $FILE,'<',$_[0]);
+	open(my $FILE,'>',$_[0]);
+	select $FILE;
 
 	# clean folder enablers
-	print "# folder enablers\n#\n\n";
+	print "#\n# folder enablers\n#\n\n";
 	for (@$::FOLDERS) { print "$_=\n"; }
 
 	# pkgsel list
@@ -378,6 +379,8 @@ sub render_rules {
 			render_rules_module($module,"");
 			}
 		}
+
+	print "\n#\n# enable folder with enabled subfolders\n#\n";
 	for (@$::FOLDERS) {
 		my $folder = $::FOLDER{$_};
 		if ( $#{ $folder->{subdirs} } >= 0 ) {
@@ -386,6 +389,8 @@ sub render_rules {
 			print "fi\n";
 			}
 		}
+
+	select STDOUT;
 	close($FILE);
 	}
 	
