@@ -254,7 +254,7 @@ sub process_folders {
 }
 
 sub render_widgets_folder {
-	my ($folder,$pkgsel,$offset) = @_;
+	my ($folder,$offset) = @_;
 	for (@{$folder->{children}}) {
 		if (/^CFGTEMP/) {
 			my $subfolder=$::FOLDER{$_};
@@ -266,7 +266,8 @@ sub render_widgets_folder {
 			print "${offset}\tblock_begin 2\n";
 			print "${offset}fi\n";
 
-			render_widgets_folder($::FOLDER{$_},$pkgsel,"$offset\t");
+			render_widgets_folder($::FOLDER{$_},"$offset\t");
+
 			# closing
 			print "${offset}if [ \"\$$subfolder->{var}\" == 1 ]; then\n";
 			print "${offset}\tblock_end\n";
@@ -279,47 +280,97 @@ sub render_widgets_folder {
 
 			print "${offset}# $var\n";
 
-			print "${offset}if \[ -n \"\$$var\" \]; then\n";
 			if ($module->{kind} == CHOICE) {
+				# CHOICE
 				my $tmpvar = "CFGTEMP_$1" if $var =~ m/^SDECFG_(.*)/i;
 				my $listvar = "$tmpvar\_LIST";
 				my $defaultvar = "$tmpvar\_DEFAULT";
 
+				print "${offset}if \[ -n \"\$$var\" \]; then\n";
 				print "${offset}\tchoice $var \$$defaultvar \$$listvar\n";
-				print "${offset}\tcase \"\$$var\" in\n";
-				for (@{ $module->{options} }) {
-					print "${offset}\t\t$_->{option})";
-					print "\tvar_append $pkgsel ' ' $_->{file} ;;\n";
-					}
-				print "${offset}\tesac\n";
 				print "${offset}\t. $conffile\n" if $conffile;
+				print "${offset}fi\n";
 
 			} elsif ($module->{kind} == ASK) {
+				# ASK
 				my $default=0;
 				$default = $module->{default} if exists $module->{default};
+
+				print "${offset}if \[ -n \"\$$var\" \]; then\n";
 				print "${offset}\tbool '$module->{desc}' $module->{var} $default\n";
-				print "${offset}\tif \[ \"\$$var\" == 1 \]; then\n";
-				print "${offset}\t\tvar_append $pkgsel ' ' $module->{file}\n";
-				print "${offset}\t\t. $conffile\n" if $conffile;
-				print "${offset}\tfi\n";
-			} else {
-				print "${offset}\tvar_append $pkgsel ' ' $module->{file}\n";
+				print "${offset}\t\[ \"\$$var\" == 1 \] && . $conffile\n" if $conffile;
+				print "${offset}fi\n";
+			} elsif ($conffile) {
+				# ALL, only if $conffile
+				print "${offset}if \[ -n \"\$$var\" \]; then\n";
 				print "${offset}\t. $conffile\n" if $conffile;
+				print "${offset}fi\n";
 				}
-			print "${offset}fi\n";
 			}
 		}
 	}
 sub render_widgets {
 	open(my $FILE,'>',$_[0]);
 	my $root="CFGTEMP_$_[1]";
-	my $pkgsel="CFGTEMP_$_[1]_PKGLST";
 
 	select $FILE;
-	print "$pkgsel=\n";
-	render_widgets_folder($::FOLDER{$root},$pkgsel,'');
+	render_widgets_folder($::FOLDER{$root},'');
 	select STDOUT;
 	close($FILE);
+	}
+
+sub pkgsel_parse {
+	return "#$_";
+}
+sub render_awkgen {
+#	open(my $OUTPUT,'>',$_[0]);
+	for (values %::MODULE) {
+		my $module=$_;
+		if ($module->{kind} == CHOICE) {
+			my %options;
+
+			# the list of options and their implyed options
+			for (@{ $module->{options} }) {
+				my $option = $_;
+				my @array=($_->{option});
+				$options{$_->{option}} = \@array;
+				if (exists $option->{imply}) {
+					for (@{ $option->{imply} }) {
+						push @{$options{$option->{option}}}, $_;
+						}
+					}
+				}
+
+			print "\n";
+			# and finally, render.
+			for (@{ $module->{options} }) {
+				if ( $#{ $options{ $_->{option} } } == 0 ) {
+					print "if [ \"\$$module->{var}\" == $_->{option} ]; then\n";
+				} else {
+					print "if [[ \$$module->{var} == (".
+						join('|',@{ $options{ $_->{option} }}).
+						") ]]; then\n";
+					}
+
+				open(my $FILE,'<',$_->{file});
+				while(<$FILE>) {
+					print pkgsel_parse($_) if /^(X|O|-) /;
+				}
+				close($FILE);
+
+				print "fi\n";
+				}
+		} else {
+			print "\nif [ \"\$$module->{var}\" == 1 ]; then\n";
+				open(my $FILE,'<',$module->{file});
+				while(<$FILE>) {
+					print pkgsel_parse($_) if /^(X|O|-) /;
+				}
+				close($FILE);
+			print "fi\n";
+			}
+		}
+#	close($OUTPUT);
 	}
 	
 sub render_rules_module {
@@ -467,18 +518,6 @@ sub render_rules {
 	close($FILE);
 	}
 	
-sub trg_mnemosyne_filter {
-=for comment
-	echo "# generated for $SDECFG_TARGET target"
-	pkgsel_init
-	echo '{ $1="O"; }'
-	for file; do
-		pkgsel_parse < $file
-	done
-	pkgsel_finish
-=cut
-}
-
 # print the content of a hash
 sub printref {
 	my ($name,$ref,$offset) = @_;
@@ -504,10 +543,12 @@ sub printref {
 		}
 }
 
-if ($#ARGV != 3) {
-	print "Usage mnemosyne.pl: <pkgseldir> <prefix> <configfile> <rulesfile>\n";
+if ($#ARGV != 4) {
+	print "Usage mnemosyne.pl: <pkgseldir> <prefix> <configfile> <rulesfile> <awkgenerator>\n";
 	exit (1);
 	}
+
+$| = 1;
 
 $::ROOT=$ARGV[0];
 scandir($ARGV[0],$ARGV[1]);
@@ -515,4 +556,4 @@ process_modules();
 process_folders();
 render_rules($ARGV[3],$ARGV[1]);
 render_widgets($ARGV[2],$ARGV[1]);
-#printref('%::MODULE',\%::MODULE,'');
+render_awkgen($ARGV[4],$ARGV[1]);
