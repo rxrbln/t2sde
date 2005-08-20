@@ -253,8 +253,72 @@ sub process_folders {
 	$::FOLDERS=\@sorted;
 }
 
+sub render_widgets_folder {
+	my ($folder,$pkgsel,$offset) = @_;
+	for (@{$folder->{children}}) {
+		if (/^CFGTEMP/) {
+			my $subfolder=$::FOLDER{$_};
+			print "\n${offset}# $_\n${offset}#\n";
+
+			# opening
+			print "${offset}if [ \"\$$subfolder->{var}\" == 1 ]; then\n";
+			print "${offset}\tcomment '-- $subfolder->{desc}'\n";
+			print "${offset}\tblock_begin 2\n";
+			print "${offset}fi\n";
+
+			render_widgets_folder($::FOLDER{$_},$pkgsel,"$offset\t");
+			# closing
+			print "${offset}if [ \"\$$subfolder->{var}\" == 1 ]; then\n";
+			print "${offset}\tblock_end\n";
+			print "${offset}fi\n";
+		} else {
+			my $module=$::MODULE{$_};
+			my $var=$module->{var};
+			my $conffile="$module->{location}/$module->{key}.conf"
+				if -f "$module->{location}/$module->{key}.conf";
+
+			print "${offset}# $var\n";
+
+			print "${offset}if \[ -n \"\$$var\" \]; then\n";
+			if ($module->{kind} == CHOICE) {
+				my $tmpvar = "CFGTEMP_$1" if $var =~ m/^SDECFG_(.*)/i;
+				my $listvar = "$tmpvar\_LIST";
+				my $defaultvar = "$tmpvar\_DEFAULT";
+
+				print "${offset}\tchoice $var \$$defaultvar \$$listvar\n";
+				print "${offset}\tcase \"\$$var\" in\n";
+				for (@{ $module->{options} }) {
+					print "${offset}\t\t$_->{option})";
+					print "\tvar_append $pkgsel ' ' $_->{file} ;;\n";
+					}
+				print "${offset}\tesac\n";
+				print "${offset}\t. $conffile\n" if $conffile;
+
+			} elsif ($module->{kind} == ASK) {
+				my $default=0;
+				$default = $module->{default} if exists $module->{default};
+				print "${offset}\tbool '$module->{desc}' $module->{var} $default\n";
+				print "${offset}\tif \[ \"\$$var\" == 1 \]; then\n";
+				print "${offset}\t\tvar_append $pkgsel ' ' $module->{file}\n";
+				print "${offset}\t\t. $conffile\n" if $conffile;
+				print "${offset}\tfi\n";
+			} else {
+				print "${offset}\tvar_append $pkgsel ' ' $module->{file}\n";
+				print "${offset}\t. $conffile\n" if $conffile;
+				}
+			print "${offset}fi\n";
+			}
+		}
+	}
 sub render_widgets {
 	open(my $FILE,'>',$_[0]);
+	my $root="CFGTEMP_$_[1]";
+	my $pkgsel="CFGTEMP_$_[1]_PKGLST";
+
+	select $FILE;
+	print "$pkgsel=\n";
+	render_widgets_folder($::FOLDER{$root},$pkgsel,'');
+	select STDOUT;
 	close($FILE);
 	}
 	
@@ -296,7 +360,11 @@ sub render_rules_module {
 			}
 
 		# enable the folder display
-		print "${offset}\[ -n \"\$$listvar\" \] && $module->{folder}=1\n";
+		print "${offset}if \[ -n \"\$$listvar\" \]; then\n";
+		print "${offset}\t$module->{folder}=1\n";
+		print "${offset}else\n";
+		print "${offset}\tunset $module->{var}\n";
+		print "${offset}fi\n";
 		
 		# has something to force?
 		if ($forcer) {
@@ -350,8 +418,8 @@ sub render_rules_nomodule {
 
 	# unset the choice list, and the var
 	if ($module->{kind} == CHOICE) {
-		my $tmpvar = "CFGTEMP_$1" if $var =~ m/^SDECFG_(.*)/i;
-		print "${offset}unset $tmpvar\n";
+		my $listvar = "CFGTEMP_$1_LIST" if $var =~ m/^SDECFG_(.*)/i;
+		print "${offset}unset $listvar\n";
 		}
 	print "${offset}unset SDECFGSET_$1\n" if $var =~ m/^SDECFG_(.*)/i;
 	print "${offset}unset $var\n";
@@ -446,5 +514,5 @@ scandir($ARGV[0],$ARGV[1]);
 process_modules();
 process_folders();
 render_rules($ARGV[3],$ARGV[1]);
-render_widgets($ARGV[2]);
+render_widgets($ARGV[2],$ARGV[1]);
 #printref('%::MODULE',\%::MODULE,'');
