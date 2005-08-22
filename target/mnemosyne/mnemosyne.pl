@@ -254,7 +254,7 @@ sub process_folders {
 			$i++;
 			}
 		}
-	print "$first\n" if ( $i % 2 );
+	print $WRITE "$first\n" unless ( $i % 2 );
 	close($WRITE);
 
 	# and populate the sorted list
@@ -384,6 +384,12 @@ sub render_awkgen {
 	print "echo '\tpkg=\$5 ;'\n";
 	print "echo '\t\$5 = \$4 \"/\" \$5 ;'\n";
 	print "echo '\t\$4 = \"placeholder\" ;'\n";
+
+	# for mnemosyne we disable everything before starting
+	print "if [ \"\$SDECFG_TARGET\" == mnemosyne ]; then\n";
+	print "\techo '\t\$1=\"O\" ;'\n";
+	print "fi\n";
+
 	print "echo '}'\n";
 
 	for (values %::MODULE) {
@@ -394,11 +400,12 @@ sub render_awkgen {
 			# the list of options and their implyed options
 			for (@{ $module->{options} }) {
 				my $option = $_;
-				my @array=($_->{option});
+				my @array=("\$$module->{var} == $_->{option}");
 				$options{$_->{option}} = \@array;
 				if (exists $option->{imply}) {
 					for (@{ $option->{imply} }) {
-						push @{$options{$option->{option}}}, $_;
+						push @{$options{$option->{option}}},
+							"\$module->{var} == $_";
 						}
 					}
 				}
@@ -406,13 +413,7 @@ sub render_awkgen {
 			print "\n";
 			# and finally, render.
 			for (@{ $module->{options} }) {
-				if ( $#{ $options{ $_->{option} } } == 0 ) {
-					print "if [ \"\$$module->{var}\" == $_->{option} ]; then\n";
-				} else {
-					print "if [[ \$$module->{var} == (".
-						join('|',@{ $options{ $_->{option} }}).
-						") ]]; then\n";
-					}
+				print "if [ " . join(' -o ',@{ $options{ $_->{option} }}). " ]; then\n";
 
 				open(my $FILE,'<',$_->{file});
 				my $hasrules=0;
