@@ -205,20 +205,29 @@ sub scanmodule {
 	
 sub process_modules { 
 	my ($READ,$WRITE);
+	my $i=0;
+	my $first;
 
 	open2($READ, $WRITE, 'tsort');
 	# prepare topographic modules map
 	for my $module (values %::MODULE) { 
+		$first=$module->{var} unless $first;
+
 		print $WRITE "$module->{var}\n";
+		$i++;
 		for (@{exists $module->{deps} ? $module->{deps} : []} ) {
 			my $dep = (m/"\$([^"]+)"/i)[0];
 			print $WRITE "$dep $module->{var}\n";
+			$i++
 			}
 		for (@{exists $module->{forced} ? $module->{forced} : []} ) {
 			my $forced = (m/([^"]+)=/i)[0];
 			print $WRITE "$module->{var} $forced\n";
+			$i++
 			}
 		}
+	print $WRITE "$first\n" if ( $i % 2 );
+
 	close($WRITE);
 
 	# and populate the sorted list
@@ -233,14 +242,19 @@ sub process_modules {
 
 sub process_folders { 
 	my ($READ,$WRITE);
+	my $i=0;
+	my $first;
 
 	open2($READ, $WRITE, 'tsort | tac');
 	# prepare topographic modules map
 	for my $folder (values %::FOLDER) { 
 		for (@{exists $folder->{children} ? $folder->{children} : []} ) {
+			$first=$folder->{var} unless $first;
 			print $WRITE "$folder->{var} $_\n" unless /^SDECFG/;
+			$i++;
 			}
 		}
+	print "$first\n" if ( $i % 2 );
 	close($WRITE);
 
 	# and populate the sorted list
@@ -320,10 +334,58 @@ sub render_widgets {
 	}
 
 sub pkgsel_parse {
-	return "#$_";
+	my ($action,$patternlist) = @_;
+	if ($action eq 'X' or $action eq 'x' ) {
+		$action = '$1="X"';
+	} elsif ($action eq 'O' or $action eq 'o') {
+		$action = '$1="O"';
+	} elsif ($action eq '-') {
+		$action = 'next';
+	} else {
+		$action = '{ exit; }';
+		}
+
+	my ($address,$first,$others)= ('','( ','&& ');
+
+	for (split(/\s+/,$patternlist)) {
+		if (! $address and $_ eq '!') {
+			$address = '! ';
+			$others  = '|| $4"/"$5 ~';
+		} else {
+			$_="\*/$_" unless /\//;
+			s,[^a-zA-Z0-9_/\*+\.-],,g;
+			s,([/\.\+]),\\$1,g;
+			s,\*,[^/]*,g;
+			next unless $_;
+			$address = "$address$first";
+			$address = "$address / $_ /";
+			$first   = "$others";
+			}
+			
+=for nobody
+				[ "$pattern" ] || continue
+				address="$address$first"
+				address="$address / $pattern /"
+				first=" $others"
+
+=cut
+		}
+
+	print "\techo '$address ) { $action; }'\n";
+	return 1;
 }
 sub render_awkgen {
-#	open(my $OUTPUT,'>',$_[0]);
+	open(my $OUTPUT,'>',$_[0]);
+	select $OUTPUT;
+
+	# initially change packages $4 and $5 to be able to correctly match repo based.
+	print "echo '{'\n";
+	print "echo '\trepo=\$4 ;'\n";
+	print "echo '\tpkg=\$5 ;'\n";
+	print "echo '\t\$5 = \$4 \"/\" \$5 ;'\n";
+	print "echo '\t\$4 = \"placeholder\" ;'\n";
+	print "echo '}'\n";
+
 	for (values %::MODULE) {
 		my $module=$_;
 		if ($module->{kind} == CHOICE) {
@@ -353,24 +415,43 @@ sub render_awkgen {
 					}
 
 				open(my $FILE,'<',$_->{file});
+				my $hasrules=0;
 				while(<$FILE>) {
-					print pkgsel_parse($_) if /^(X|O|-) /;
+					next if /^#/;
+					next if /^\s*$/;
+					pkgsel_parse($1,$2) if m/^([^\s]+)\s+(.*)\s*\n?$/i;
+					$hasrules=1;
 				}
 				close($FILE);
+				print "\ttrue\n" unless $hasrules;
 
 				print "fi\n";
 				}
 		} else {
 			print "\nif [ \"\$$module->{var}\" == 1 ]; then\n";
 				open(my $FILE,'<',$module->{file});
+				my $hasrules=0;
 				while(<$FILE>) {
-					print pkgsel_parse($_) if /^(X|O|-) /;
-				}
+					next if /^#/;
+					next if /^\s*$/;
+					pkgsel_parse($1,$2) if m/^([^\s]+)\s+(.*)\s*\n?$/i;
+					$hasrules=1;
+					}
 				close($FILE);
+				print "\ttrue\n" unless $hasrules;
 			print "fi\n";
 			}
 		}
-#	close($OUTPUT);
+
+	# ... restore $4 and $5, and print the resulting line
+	print "echo '{'\n";
+	print "echo '\t\$4=repo ;'\n";
+	print "echo '\t\$5=pkg ;'\n";
+	print "echo '\tprint ;'\n";
+	print "echo '}'\n";
+
+	select STDOUT;
+	close($OUTPUT);
 	}
 	
 sub render_rules_module {
