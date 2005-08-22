@@ -208,6 +208,7 @@ sub process_modules {
 	my $i=0;
 	my $first;
 
+#	print STDERR "process_modules...\n";
 	open2($READ, $WRITE, 'tsort');
 	# prepare topographic modules map
 	for my $module (values %::MODULE) { 
@@ -226,7 +227,9 @@ sub process_modules {
 			$i++
 			}
 		}
-	print $WRITE "$first\n" if ( $i % 2 );
+#	print STDERR "\t... $i ". ($i % 2) . "\n";
+
+	print $WRITE "$first\n$first\n" unless ( $i % 2 );
 
 	close($WRITE);
 
@@ -245,6 +248,7 @@ sub process_folders {
 	my $i=0;
 	my $first;
 
+#	print STDERR "process_folders...\n";
 	open2($READ, $WRITE, 'tsort | tac');
 	# prepare topographic modules map
 	for my $folder (values %::FOLDER) { 
@@ -254,7 +258,9 @@ sub process_folders {
 			$i++;
 			}
 		}
-	print $WRITE "$first\n" unless ( $i % 2 );
+#	print STDERR "\t... $i ". ($i % 2) . "\n";
+	print $WRITE "$first\n$first\n" unless ( $i % 2 );
+
 	close($WRITE);
 
 	# and populate the sorted list
