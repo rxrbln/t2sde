@@ -385,8 +385,9 @@ sub render_awkgen {
 	print "echo '\t\$5 = \$4 \"/\" \$5 ;'\n";
 	print "echo '\t\$4 = \"placeholder\" ;'\n";
 
-	# for mnemosyne we disable everything before starting
-	print "if [ \"\$SDECFG_TARGET\" == mnemosyne ]; then\n";
+	# if awkgen is sourced with DISABLE_ALL as argument
+	# we disable everything before starting
+	print "if [ \"\$1\" == DISABLE_ALL ]; then\n";
 	print "\techo '\t\$1=\"O\" ;'\n";
 	print "fi\n";
 
