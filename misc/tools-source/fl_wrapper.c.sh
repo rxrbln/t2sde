@@ -77,6 +77,9 @@ struct status_t {
 	time_t  ctime;
 };
 
+#ifdef FLWRAPPER_BASEDIR
+static void check_write_access(const char * , const char * );
+#endif
 static void handle_file_access_before(const char *, const char *, struct status_t *);
 static void handle_file_access_after(const char *, const char *, struct status_t *);
 
@@ -112,6 +115,11 @@ $ret_type $function($p1)
 	int old_errno=errno;
 	$ret_type rc;
 	mode_t b = 0;
+
+#ifdef FLWRAPPER_BASEDIR
+	if (a & (O_WRONLY|O_CREAT|O_APPEND))
+		check_write_access("$function", f);
+#endif
 
 	handle_file_access_before("$function", f, &status);
 	if (!orig_$function) orig_$function = get_dl_symbol("$function");
@@ -344,6 +352,23 @@ void __attribute__ ((constructor)) fl_wrapper_init()
 	copy_getenv(wlog, "FLWRAPPER_WLOG");
 	copy_getenv(rlog, "FLWRAPPER_RLOG");
 }
+
+#ifdef FLWRAPPER_BASEDIR
+static void check_write_access(const char * func, const char * file)
+{
+	if (*file == '/') { /* do only check rooted paths */
+		while (file[1] == '/') file++;
+
+		if (!strcmp(file, "/dev/null") || !strncmp(file, "/tmp", 4)) {
+		}
+		else if (strncmp(file, FLWRAPPER_BASEDIR, sizeof(FLWRAPPER_BASEDIR)-1)) {
+			fprintf(stderr, "fl_wrapper.so: write outside basedir (%s): %s\n", FLWRAPPER_BASEDIR, file);
+			fflush(stderr);
+			exit(-1);
+		}
+	}
+}
+#endif
 
 static void handle_file_access_before(const char * func, const char * file,
                                struct status_t * status)
