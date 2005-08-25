@@ -20,11 +20,14 @@ ttime=`echo "$line" | cut -d ' ' -f 2`
 until [ "$days" ]; do
 	tdays=`Xdialog --stdout --inputbox "Days the backup should be run on.
 Allowed are ranges from 1 (Monday) to
-7 (Sunday) and 0 to disable the backup:" 10 40 "$tdays"`
-	if [ "$tdays" = 0 ] || [ "$tdays" = [1-7]-[1-7] ]]; then
+7 (Sunday) (e.g. 2-6) and 0 to disable the backup:" 10 40 "$tdays"` || exit
+	# remove spaces ...
+        tdays="${tdays// /}"
+        # remove invalid content
+        if echo "$tdays" | grep -q "^\([1-7]\+-[1-7]\+\|[0-7]\+\)$" ; then
 		days=$tdays
 	else
-		Xdialog --infobox "Ragne not valid!" 8 28
+		Xdialog --infobox "Range not valid!" 8 28
 	fi
 done
 
@@ -38,7 +41,7 @@ fi
 
 until [ "$time" ]; do
 	ttime=`Xdialog --stdout --inputbox "Time the backup should be run on
-the specified days:" 10 40 "$ttime"`
+the specified days:" 10 40 "$ttime"` || exit
 	if [ $ttime -gt 0 -a $ttime -le 24 ]; then
 		time=$ttime
 	else
