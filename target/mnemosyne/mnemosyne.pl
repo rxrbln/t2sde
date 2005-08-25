@@ -204,33 +204,34 @@ sub scanmodule {
 	}
 	
 sub process_modules { 
-	my ($READ,$WRITE);
+	my ($READ,$WRITE,$pid);
 	my $i=0;
 	my $first;
 
-#	print STDERR "process_modules...\n";
-	open2($READ, $WRITE, 'tsort');
+	$pid = open2($READ, $WRITE, 'tsort');
 	# prepare topographic modules map
 	for my $module (values %::MODULE) { 
-		$first=$module->{var} unless $first;
+		my $related;
 
-		print $WRITE "$module->{var}\n";
-		$i++;
 		for (@{exists $module->{deps} ? $module->{deps} : []} ) {
 			my $dep = (m/"\$([^"]+)"/i)[0];
 			print $WRITE "$dep $module->{var}\n";
-			$i++
+			$related=1;
 			}
 		for (@{exists $module->{forced} ? $module->{forced} : []} ) {
 			my $forced = (m/([^"]+)=/i)[0];
 			print $WRITE "$module->{var} $forced\n";
-			$i++
+			$related=1;
+			}
+
+		if (! $related) {
+			$first=$module->{var} unless $first;
+			print $WRITE "$module->{var}\n";
+			$i++;
 			}
 		}
-#	print STDERR "\t... $i ". ($i % 2) . "\n";
 
-	print $WRITE "$first\n$first\n" unless ( $i % 2 );
-
+	print $WRITE "$first\n" unless ( $i % 2 == 0);
 	close($WRITE);
 
 	# and populate the sorted list
@@ -238,29 +239,24 @@ sub process_modules {
 	while(<$READ>) {
 		if (/(.*)\n/) { push @sorted, $1; }
 		}
+
+	waitpid $pid,0;
+	die if $?;
 
 	# and remember the sorted list
 	$::MODULES=\@sorted;
 }
 
 sub process_folders { 
-	my ($READ,$WRITE);
-	my $i=0;
-	my $first;
+	my ($READ,$WRITE,$pid);
 
-#	print STDERR "process_folders...\n";
-	open2($READ, $WRITE, 'tsort | tac');
+	$pid = open2($READ, $WRITE, 'tsort | tac');
 	# prepare topographic modules map
 	for my $folder (values %::FOLDER) { 
-		for (@{exists $folder->{children} ? $folder->{children} : []} ) {
-			$first=$folder->{var} unless $first;
-			print $WRITE "$folder->{var} $_\n" unless /^SDECFG/;
-			$i++;
+		for ( exists $folder->{children} ? grep(!/^SDECFG/, @{$folder->{children}}) : [] ) {
+			print $WRITE "$folder->{var} $_\n";
 			}
 		}
-#	print STDERR "\t... $i ". ($i % 2) . "\n";
-	print $WRITE "$first\n$first\n" unless ( $i % 2 );
-
 	close($WRITE);
 
 	# and populate the sorted list
@@ -268,6 +264,9 @@ sub process_folders {
 	while(<$READ>) {
 		if (/(.*)\n/) { push @sorted, $1; }
 		}
+
+	waitpid $pid,0;
+	die if $?;
 
 	# and remember the sorted list
 	$::FOLDERS=\@sorted;
@@ -407,12 +406,12 @@ sub render_awkgen {
 			# the list of options and their implyed options
 			for (@{ $module->{options} }) {
 				my $option = $_;
-				my @array=("\$$module->{var} == $_->{option}");
+				my @array=("\"\$$module->{var}\" == $_->{option}");
 				$options{$_->{option}} = \@array;
 				if (exists $option->{imply}) {
 					for (@{ $option->{imply} }) {
 						push @{$options{$option->{option}}},
-							"\$module->{var} == $_";
+							"\"\$module->{var}\" == $_";
 						}
 					}
 				}
@@ -452,7 +451,7 @@ sub render_awkgen {
 		}
 
 	# ... restore $4 and $5, and print the resulting line
-	print "echo '{'\n";
+	print "echo '\n{'\n";
 	print "echo '\t\$4=repo ;'\n";
 	print "echo '\t\$5=pkg ;'\n";
 	print "echo '\tprint ;'\n";
