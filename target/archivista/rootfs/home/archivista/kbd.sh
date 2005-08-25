@@ -15,8 +15,9 @@ if [ -e ~/.xkb-layout ]; then
 	[ $reconfig -eq 0 ] && exit
 fi
 
-layout=`Xdialog --stdout --combobox "Please choose your keyboard layout." 8 38 \
-        US German Switzerland other`
+layout=`Xdialog --stdout --cancel-label=Other \
+        --combobox "Please choose your keyboard layout." 8 38 \
+        US German Switzerland`
 
 case "$layout" in
 	US) layout=us ;;
@@ -29,7 +30,9 @@ if [ "$layout" = other ]; then
 	layout=""
 	until [ "$layout" ]; do
 		tlayout=`Xdialog --stdout --inputbox \
-		         "Enter your keyboad layout code:" 8 38 $tlayout`
+		         "Enter your keyboad layout code:
+(e.g. es, fr, ...)" 8 38 $tlayout` \
+		         || exit
 		if setxkbmap "$tlayout"; then
 			layout="$tlayout"
 		fi
