@@ -19,7 +19,8 @@ get_ip()
 {
 	x=$2
         until [ "$set" ]; do
-                x=`Xdialog --stdout --inputbox "$1" 10 38 $x`
+                x=`Xdialog --stdout --cancel-label=None \
+		   --inputbox "$1" 10 38 $x` || return
 
                 # check ip
                 if [ `echo $x |
@@ -58,7 +59,8 @@ EOT
 else
 	tip=${tip:-192.168.0.100/24}
 	until [ "$ip" ]; do
-		tip=`Xdialog --stdout --inputbox "Internet address and network
+		tip=`Xdialog --stdout --no-cancel \
+		     --inputbox "Internet address and network
 prefix in CIDR notation
 (e.g. 192.168.0.100/24 or 10.0.0.100/16):" 10 38 $tip`
 
@@ -74,18 +76,20 @@ prefix in CIDR notation
 
 	gw=`get_ip "Gateway address
 (e.g. 192.168.0.1):" ${ip%.*}.1`
-	[ "$gw" ] && ns=`get_ip "Nameserver address
+	if [ "$ns" ]; then gw="$ns"
+	else gw="${ip%.*}.1"; fi
+	ns=`get_ip "Nameserver address
 (e.g. 192.168.0.1):" ${gw}`
 
 	cat > /etc/conf/network <<EOT
 interface eth0
-        ip $ip
+	ip $ip
 EOT
 	[ "$gw" ] && cat >> /etc/conf/network <<EOT
 	gw $gw
 EOT
 	[ "$ns" ] && cat >> /etc/conf/network <<EOT
-        nameserver $ns
+	nameserver $ns
 EOT
 
 fi
