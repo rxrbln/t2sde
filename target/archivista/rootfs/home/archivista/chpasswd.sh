@@ -31,24 +31,36 @@ if [ "$user" != root ]; then
 	PASSWD=`cat $tmp0` ; rm $tmp0
 fi
 
+# now the old root or user password is in the PASSWD variable - either
+# via the patched gnomesu and the -p switch exporting it - or for the user
+# with the above Xdialog
+
+
+# get the new password:
 tmp1=`mktemp`
 tmp2=`mktemp`
 
-Xdialog --nocancel --passwordbox "Enter the new system-wide password" 8 40 \
+Xdialog --nocancel --passwordbox "Enter the new $user password" 8 40 \
         2> $tmp1
-Xdialog --nocancel --passwordbox "Re-enter the new system-wide password" 8 40 \
+Xdialog --nocancel --passwordbox "Re-enter the new $user password" 8 40 \
         2> $tmp2
 
-# TODO: change MySQL first, since only there we will see if the old password
-#       was specified correct for the non-root user case ...
-
-
 if [ -s $tmp1 ] && cmp -s $tmp1 $tmp2 ; then
-	passwd=`cat $tmp1` ; rm $tmp1 $tmp2
-	echo "root:$passwd" | chpasswd
+	newpasswd=`cat $tmp1` ; rm $tmp1 $tmp2
 
-	sed -i "s/\(.*MYSQL_PWD.* = \).*/\1\"$passwd\";/" \
-	    /usr/lib/perl5/*/Archivista/Config.pm 
+
+	# TODO: change MySQL first, since only there we will see if the old
+	# password was specified correct for the non-root user case ...
+
+	# mysql ... bla ... -oldpasswd $PASSWD -newpassword $newpassword
+
+	echo "$user:$newpasswd" | chpasswd
+
+	# change the perl class-library password:
+	if [ $user = root ]; then
+		sed -i "s/\(.*MYSQL_PWD.* = \).*/\1\"$passwd\";/" \
+		    /usr/lib/perl5/*/Archivista/Config.pm 
+	fi
 else
 	Xdialog --msgbox 'Supplied passwords did not match!' 8 40
 fi
