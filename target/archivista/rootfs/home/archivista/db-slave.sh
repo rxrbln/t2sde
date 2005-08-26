@@ -3,7 +3,8 @@
 if [ "$UID" -ne 0 ]; then
 	exec gnomesu -t "Database slave mode" \
 	-m "Please enter the system password (root user)^\
-in order to bring the database into slave mode." -c "/usr/X11/bin/xterm -e $0"
+in order to bring the database into slave mode." \
+	-c "/usr/X11/bin/xterm -fa Mono -e $0"
 fi
 
 # PATH and co
