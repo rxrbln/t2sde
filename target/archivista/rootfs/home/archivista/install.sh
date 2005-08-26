@@ -68,7 +68,7 @@ EOT
 		part=/dev/hda1
 
 		Xdialog --infobox "Formating filesystems,
-this may take some seconds." 8 38 20000
+this may take some seconds." 8 38 20000 &
 
 		# initialize the swap
 		mkswap ${part%[0-9]}3
