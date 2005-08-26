@@ -61,13 +61,19 @@ All data will be lost!" 8 38; then
 ,1024,S
 ,,L
 EOT
+		# u/dev needs some time to regenerate the device-nodes
+		sleep 2
+
 		# install into the first partition on fresh installs ...
 		part=/dev/hda1
+
+		Xdialog --infobox "Formating filesystems,
+this may take some seconds." 8 38 20000
 
 		# initialize the swap
 		mkswap ${part%[0-9]}3
 		# format the partitions
-		mkfs.ext3 ${part%[0-9]}3
+		mkfs.ext3 ${part%[0-9]}1
 		mkfs.ext3 ${part%[0-9]}4
 	else
 		exit
