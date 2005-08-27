@@ -7,7 +7,8 @@
 # Copyright (C) 2005 Archivista GmbH
 # Copyright (C) 2005 Rene Rebe
 
-PATH=/sbin:/usr/sbin:$PATH
+# PATH and co.
+. /etc/profile
 
 shadow=`mktemp`-shadow
 parts=
@@ -15,6 +16,19 @@ parts=
 mkdir -p /mnt/target
 
 installall=0
+
+
+# This is a bit tricky to filter and does not look too smooth
+# due to the new linux pipe implementation ...
+format_w_progress ()
+{
+	( echo scale=3
+	  mkfs.ext3 $1 |
+	  tr '\b' '\n' | tr ' ' '\n' |
+	  sed -n '/[0-9]\+\/[0-9]\+/p'
+	) | bc | Xdialog --progress "Formating $1 ..." 8 30
+}
+
 
 # collect partitions normally intended for archivista
 for x in /dev/hd? /dev/sd? ; do
@@ -72,9 +86,9 @@ this may take some seconds." 8 38 20000 &
 
 		# initialize the swap
 		mkswap ${part%[0-9]}3
-		# format the partitions
-		mkfs.ext3 ${part%[0-9]}1
-		mkfs.ext3 ${part%[0-9]}4
+
+		format_w_progress ${part%[0-9]}1
+		format_w_progress ${part%[0-9]}4
 	else
 		exit
 	fi
@@ -95,21 +109,25 @@ All data will be lost!" 8 28; then
 		exit
 	fi
 
-	mkfs.ext3 $part
+	format_w_progress $part
 fi
 
-set -x
 mount $part /mnt/target
 
 # sanity check to not install into the running system's RAM-disk
 if ! grep -q /mnt/target /proc/mounts; then
-	Xdialog --infobox "Partiton could not be mounted. Exiting." 8 30
+	Xdialog --msgbox "Partiton could not be mounted. Aborting." 8 40
 	exit
 fi
 
 if [ $installall -eq 1 ]; then
 	mkdir -p		/mnt/target/home/data
 	mount ${part%[0-9]}4	/mnt/target/home/data
+
+	if ! grep -q /mnt/target/home/data /proc/mounts; then
+		Xdialog --msgbox "Partiton could not be mounted. Aborting." 8 40
+		exit
+	fi
 
 	# stop mysql for rsync
 	rc mysql stop
@@ -148,6 +166,10 @@ if [ $installall -eq 1 ]; then
 	rc mysql start
 fi
 
-Xdialog --infobox "Installation finished. You
-can safely reboot now." 8 28 200
-
+if ! grep -q /mnt/target /proc/mounts; then
+	Xdialog --msgbox "Installation finished!
+You can safely reboot now." 8 28
+else
+	Xdialog --msgbox "Target partition still mounted -
+this indicates an error during installation." 8 38
+fi
