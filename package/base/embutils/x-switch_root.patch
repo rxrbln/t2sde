@@ -1,0 +1,173 @@
+
+pivot_root'ing rootfs does uncover kernel inf. loops, thus I extraced some
+bits form the Fedora Core's nash to trick around with moving the mount point
+and chroot to move the real root device to / - yuck.
+
+   - Rene Rebe <rene@exactcode.de>
+
+--- embutils-0.17/switch_root.c	1970-01-01 00:00:00.000000000 +0000
++++ embutils-0.17-more/switch_root.c	2005-08-27 09:05:22.000000000 +0000
+@@ -0,0 +1,152 @@
++
++/* inspired by Fedora Core's mkinitrd/nash beast
++     - to pivot_root alike functionality with initramfs
++
++   2005 by Rene Rebe 
++ */
++
++#include <sys/types.h>
++#include <sys/stat.h>
++#include <fcntl.h>
++#include <dirent.h>
++#include <stdio.h>
++#include <errno.h>
++
++#ifndef MS_REMOUNT
++#define MS_REMOUNT      32
++#endif
++
++#ifndef MS_BIND
++#define MS_BIND 4096
++#endif
++
++#ifndef MS_MOVE
++#define MS_MOVE 8192
++#endif
++
++/* remove all files/directories below dirName -- don't cross mountpoints */
++int recursiveRemove(char * dirName) {
++    struct stat sb,rb;
++    DIR * dir;
++    struct dirent * d;
++    char * strBuf = alloca(strlen(dirName) + 1024);
++
++    if (!(dir = opendir(dirName))) {
++	fprintf(stderr, "error opening %s: %d\n", dirName, errno);
++	return 0;
++    }
++
++    if (fstat(dirfd(dir),&rb)) {
++	fprintf(stderr, "unable to stat %s: %d\n", dirName, errno);
++	return 0;
++    }
++
++    errno = 0;
++    while ((d = readdir(dir))) {
++	errno = 0;
++
++	if (!strcmp(d->d_name, ".") || !strcmp(d->d_name, "..")) {
++	    errno = 0;
++	    continue;
++	}
++
++	strcpy(strBuf, dirName);
++	strcat(strBuf, "/");
++	strcat(strBuf, d->d_name);
++
++	if (lstat(strBuf, &sb)) {
++	    fprintf(stderr, "failed to stat %s: %d\n", strBuf, errno);
++	    errno = 0;
++	    continue;
++	}
++
++	/* only descend into subdirectories if device is same as dir */
++	if (S_ISDIR(sb.st_mode)) {
++	    if (sb.st_dev == rb.st_dev) {
++	        recursiveRemove(strBuf);
++	        if (rmdir(strBuf))
++		    fprintf(stderr, "failed to rmdir %s: %d\n", strBuf, errno);
++	    }
++	    errno = 0;
++	    continue;
++	}
++
++	if (unlink(strBuf)) {
++	    fprintf(stderr, "failed to remove %s: %d\n", strBuf, errno);
++	    errno = 0;
++	    continue;
++	}
++    }
++
++    if (errno) {
++	closedir(dir);
++	printf("error reading from %s: %d\n", dirName, errno);
++	return 1;
++    }
++
++    closedir(dir);
++
++    return 0;
++}
++
++/* 2.6 magic not-pivot-root but kind of similar stuff.
++ * This is based on code from klibc/utils/run_init.c
++ */
++int main (int argc, char* argv[]) {
++    char * new;
++
++    if (!*++argv) {
++        printf("switch_root: new root mount point expected\n");
++        return 1;
++    }
++    new = *argv;
++
++    if (! argv[1]) {
++        printf("switch_root: new init expected\n");
++	return 1;
++    }
++    *argv = argv[1]; /* for execvp */
++
++    int fd, i = 0;
++
++    if (chdir(new)) {
++        printf("switch_root: chdir(%s) failed: %d\n", new, errno);
++        return 1;
++    }
++
++    if ((fd = open("./dev/console", O_RDWR)) < 0) {
++        printf("ERROR opening /dev/console!!!!: %d\n", errno);
++        fd = 0;
++    }
++
++    if (dup2(fd, 0) != 0) printf("error dup2'ing fd of %d to 0\n", fd);
++    if (dup2(fd, 1) != 1) printf("error dup2'ing fd of %d to 1\n", fd);
++    if (dup2(fd, 2) != 2) printf("error dup2'ing fd of %d to 2\n", fd);
++    if (fd > 2)
++        close(fd);
++
++//    recursiveRemove("/");
++
++    fd = open("/", O_RDONLY);
++
++    if (mount(".", "/", NULL, MS_MOVE, NULL)) {
++        printf("switch_root: mount failed: %d\n", errno);
++        close(fd);
++        return 1;
++    }
++
++    if (chroot(".") || chdir("/")) {
++        printf("switch_root: chroot() failed: %d\n", errno);
++        close(fd);
++        return 1;
++    }
++
++    /* release the old "/" */
++    close(fd);
++
++    /* exec the init */
++    fd = execvp (argv[0], argv);
++    printf ("switch_root: execvp failed: %d\n", fd);
++    return fd;
++}
++
+--- embutils-0.17/Makefile	2005-08-27 18:34:54.000000000 +0000
++++ embutils-0.17-more/Makefile	2005-08-27 18:36:59.000000000 +0000
+@@ -11,7 +11,7 @@
+ install sosrm soscp sosmv sosln soslns md5sum sleep2 allinone kill uniq \
+ dd tr mesg write touch du tail uuencode uudecode nohup nice cmp mktemp \
+ truncate test date mount printenv umount pivot_root insmod rmmod \
+-lsmod free losetup
++lsmod free losetup switch_root
+ 
+ OBJDIR:=bin
+ TARGETS=$(patsubst %,$(OBJDIR)/%,$(PRGS))
