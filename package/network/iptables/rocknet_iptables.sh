@@ -14,14 +14,31 @@
 
 iptables_init_if() {
 	if isfirst "iptables_$if"; then
+		# prepare INPUT
 		addcode up   1 1 "iptables -N firewall_$if"
-		addcode up   1 2 "iptables -A INPUT -i $if -j firewall_$if"
-		addcode up   1 3 "iptables -A firewall_$if `
+		addcode up   1 2 "iptables -A INPUT -i $if `
 			`-m state --state ESTABLISHED,RELATED -j ACCEPT"
+		addcode up   1 3 "iptables -A INPUT -i $if -j firewall_$if"
 
+		# prepare FORWARD
+		addcode up   1 1 "iptables -N forward_$if"
+		addcode up   1 2 "iptables -A FORWARD -i $if `
+			`-m state --state ESTABLISHED,RELATED -j ACCEPT"
+		addcode up   1 3 "iptables -A FORWARD -i $if -j forward_$if"
+
+		# clean INPUT
 		addcode down 1 3 "iptables -F firewall_$if"
 		addcode down 1 2 "iptables -D INPUT -i $if -j firewall_$if"
+		addcode down 1 2 "iptables -D INPUT -i $if `
+			`-m state --state ESTABLISHED,RELATED -j ACCEPT"
 		addcode down 1 1 "iptables -X firewall_$if"
+
+		# clean FORWARD
+		addcode down 1 3 "iptables -F forward_$if"
+		addcode down 1 2 "iptables -D FORWARD -i $if -j forward_$if"
+		addcode down 1 2 "iptables -D FORWARD -i $if `
+			`-m state --state ESTABLISHED,RELATED -j ACCEPT"
+		addcode down 1 1 "iptables -X forward_$if"
 	fi
 }
 
@@ -54,19 +71,29 @@ iptables_parse_conditions() {
 
 public_accept() {
 	iptables_parse_conditions "$@"
-	addcode up 1 ${ip:-6} ${ip:+5} "iptables -A firewall_$if ${ip:+-d $ip} $iptables_cond -j ACCEPT"
+	local level=6; [ "$ip" ] && level=5
+	addcode up 1 $level "iptables -A firewall_$if ${ip:+-d $ip} $iptables_cond -j ACCEPT"
 	iptables_init_if
 }
 
 public_reject() {
 	iptables_parse_conditions "$@"
-	addcode up 1 ${ip:-6} ${ip:+5} "iptables -A firewall_$if ${ip:+-d $ip} $iptables_cond -j REJECT"
+	local level=6; [ "$ip" ] && level=5
+	addcode up 1 $level "iptables -A firewall_$if ${ip:+-d $ip} $iptables_cond -j REJECT"
 	iptables_init_if
 }
 
 public_drop() {
 	iptables_parse_conditions "$@"
-	addcode up 1 ${ip:-6} ${ip:+5} "iptables -A firewall_$if ${ip:+-d $ip} $iptables_cond -j DROP"
+	local level=6; [ "$ip" ] && level=5
+	addcode up 1 $level "iptables -A firewall_$if ${ip:+-d $ip} $iptables_cond -j DROP"
+	iptables_init_if
+}
+
+public_restrict() {
+	iptables_parse_conditions "$@"
+	local level=6; [ "$ip" ] && level=5
+	addcode up 1 $level "iptables -A forward_$if ${ip:+-d $ip} $iptables_cond -j DROP"
 	iptables_init_if
 }
 
@@ -81,31 +108,31 @@ public_conduit() {
 		targetip=${targetip%:*}
 	fi
 
-	addcode up 1 ${ip:-7} ${ip:+6} "iptables -t nat -A PREROUTING -i $if ${ip:+-d $ip} -p $proto \
+	addcode up 1 4 "iptables -t nat -A PREROUTING -i $if ${ip:+-d $ip} -p $proto \
 		 --dport $port -j DNAT --to $targetip:$targetport"
-	addcode up 1 ${ip:-7} ${ip:+6} "iptables -A FORWARD -i $if  ${ip:+-d $ip} -p $proto -d $targetip \
+	addcode up 1 4 "iptables -A forward_$if  ${ip:+-d $ip} -p $proto -d $targetip \
 		 --dport $targetport -j ACCEPT"
 
 	iptables_init_if
 }
 
 public_clamp_mtu() {
-	addcode up 1 6 "iptables -A FORWARD -p tcp --tcp-flags SYN,RST SYN \
+	addcode up 1 3 "iptables -A FORWARD -p tcp --tcp-flags SYN,RST SYN \
 	                -j TCPMSS --clamp-mss-to-pmtu"
-	addcode down 9 6 "iptables -D FORWARD -p tcp --tcp-flags SYN,RST SYN \
+	addcode down 9 3 "iptables -D FORWARD -p tcp --tcp-flags SYN,RST SYN \
 	                  -j TCPMSS --clamp-mss-to-pmtu"
 }
 
 public_masquerade() {
 	if [ "$ip" ]; then
-		addcode up 1 6 "iptables -t nat -A POSTROUTING -o $if \
+		addcode up   1 6 "iptables -t nat -A POSTROUTING ${1:+-s $1} -o $if \
 				-j SNAT --to $ip"
-		addcode down 9 6 "iptables -t nat -D POSTROUTING -o $if \
+		addcode down 9 6 "iptables -t nat -D POSTROUTING ${1:+-s $1} -o $if \
 				-j SNAT --to $ip"
 	else
-		addcode up 1 6 "iptables -t nat -A POSTROUTING -o $if \
+		addcode up   1 6 "iptables -t nat -A POSTROUTING ${1:+-s $1} -o $if \
 				-j MASQUERADE"
-		addcode down 9 6 "iptables -t nat -D POSTROUTING -o $if \
+		addcode down 9 6 "iptables -t nat -D POSTROUTING ${1:+-s $1} -o $if \
 				-j MASQUERADE"
 	fi
 }
