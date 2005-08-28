@@ -77,12 +77,15 @@ All data will be lost!" 8 38; then
 EOT
 		# u/dev needs some time to regenerate the device-nodes
 		sleep 2
+		i=0
+		while [ $i -le 10 ]; do
+			[ -e /dev/hda1 ] && break
+			echo "waiting for u/dev node to come back"
+			sleep 1
+		done
 
 		# install into the first partition on fresh installs ...
 		part=/dev/hda1
-
-		Xdialog --infobox "Formating filesystems,
-this may take some seconds." 8 38 20000 &
 
 		# initialize the swap
 		mkswap ${part%[0-9]}3
