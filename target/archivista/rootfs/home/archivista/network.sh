@@ -5,7 +5,8 @@
 # Copyright (C) 2005 Archivista GmbH
 # Copyright (C) 2005 Rene Rebe
 
-PATH=/sbin:/usr/sbin:$PATH
+# PATH and co
+. /etc/profile
 
 reconfig=0
 
@@ -13,7 +14,6 @@ if [ "$1" = -reconfig ]; then
 	reconfig=1
 	shift
 fi
-
 
 get_ip()
 {
@@ -76,10 +76,10 @@ prefix in CIDR notation
 
 	gw=`get_ip "Gateway address
 (e.g. 192.168.0.1):" ${ip%.*}.1`
-	if [ "$ns" ]; then gw="$ns"
-	else gw="${ip%.*}.1"; fi
+	if [ "$gw" ]; then ns="$gw"
+	else ns="${ip%.*}.1"; fi
 	ns=`get_ip "Nameserver address
-(e.g. 192.168.0.1):" ${gw}`
+(e.g. 192.168.0.1):" ${ns}`
 
 	cat > /etc/conf/network <<EOT
 interface eth0
