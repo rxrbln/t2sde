@@ -5,8 +5,17 @@
 # Copyright (C) 2005 Archivista GmbH
 # Copyright (C) 2005 Rene Rebe
 
+
 # PATH and co
 . /etc/profile
+
+if [ "$UID" -ne 0 ]; then
+        exec gnomesu -t "Setup network" \
+        -m "Please enter the system password (root user)^\
+in order to setup the network." -c "$0 $*"
+fi
+
+set -x
 
 reconfig=0
 
