@@ -17,7 +17,6 @@ mkdir -p /mnt/target
 
 installall=0
 
-
 # This is a bit tricky to filter and does not look too smooth
 # due to the new linux pipe implementation ...
 format_w_progress ()
@@ -60,6 +59,9 @@ else
 	echo "no partitions"
 	exit
 fi
+
+# turn off write cache (just to be sure)
+hdparm -W 0 /dev/hda
 
 # empty or reformat?
 if [[  $part = *Reformat* ]]; then
@@ -159,10 +161,14 @@ chroot /mnt/target stone -text grub <<-EOT
 
 EOT
 
+sync
+
 umount /mnt/target/dev
 umount /mnt/target/proc
 umount /mnt/target/home/data
 umount /mnt/target
+
+sync
 
 if [ $installall -eq 1 ]; then
 	# restart mysql
