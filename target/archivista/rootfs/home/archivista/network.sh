@@ -12,7 +12,7 @@ reconfig=0
 
 if [ "$1" = -reconfig ]; then
 	reconfig=1
-	shift
+	# we do not shift the arguments so they are avail for gnomesu
 fi
 
 # initial config or reconfig requested?
