@@ -20,7 +20,7 @@ ttime=`echo "$line" | cut -d ' ' -f 2`
 until [ "$days" ]; do
 	tdays=`Xdialog --stdout --inputbox "Days the backup should be run on.
 Allowed are ranges from 1 (Monday) to
-7 (Sunday) (e.g. 2-6) and 0 to disable the backup:" 10 40 "$tdays"` || exit
+7 (Sunday) (e.g. 2-6) and 0 to disable the backup:" 10 48 "$tdays"` || exit
 	# remove spaces ...
         tdays="${tdays// /}"
         # remove invalid content
