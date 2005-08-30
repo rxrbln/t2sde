@@ -19,7 +19,7 @@ if [ ! "$THIS_IS_THE_2ND_RUN" ]; then
 	export THIS_IS_THE_2ND_RUN=1
 	exec gnomesu -t "Password setup" \
 	-m "Please enter the current system password (root user)^\
-in order to set a new." $p -c $0
+in order to set a new one." $p -c $0
 fi
 
 . /etc/profile
