@@ -19,9 +19,12 @@ ethtool eth0 >> $tmp
 	echo
 
 	grep -e Speed -e Duplex -e "Link detect" $tmp
-) | sed -e 's/^[[:space:]]\+//' \
+
+	echo
+	cat /etc/VERSION
+) | sed -e 's/^[[:space:]]\+//' -e 's/inet /Inet /' -e 's/HWaddr /HWaddr:/' \
         -e 's/Bcast:/Bcast: /' -e 's/Mask:/Mask: /' -e 's/addr:/addr: /' |
 
-Xdialog --no-cancel --title "Network status" --logbox - 16 48
+Xdialog --no-cancel --title "Network status" --logbox - 20 48
 
 rm -f $tmp
