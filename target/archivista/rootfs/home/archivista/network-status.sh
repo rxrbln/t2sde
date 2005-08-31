@@ -1,6 +1,6 @@
 #!/bin/bash
 
-PATH=/sbin:/usr/sbin:$PATH
+. /etc/profile
 
 tmp=`mktemp`
 
