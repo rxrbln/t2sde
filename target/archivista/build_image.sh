@@ -22,6 +22,10 @@ inject_archivista()
 	# wine config and archivista "rich-client" installation
 	tar xvfz $base/target/$target/wine-archivista.tar.gz
 
+	# inject versions we do not have immediate control over
+	sed -i "s/^\(title.*label.*\)/\1 - $build_date/" $imagelocation/etc/stone.d/mod_grub.sh
+	sed -i "s/^\(T2.*\)/\1 - $build_date/" $imagelocation/etc/VERSION
+
 	popd
 }
 
