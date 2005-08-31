@@ -117,7 +117,7 @@ All data will be lost!" 8 28; then
 	format_w_progress $part
 fi
 
-mount $part /mnt/target -o sync
+mount $part /mnt/target
 
 # sanity check to not install into the running system's RAM-disk
 if ! grep -q /mnt/target /proc/mounts; then
@@ -148,7 +148,7 @@ fi
 # 2nd install data
 
 if [ $installall -eq 1 ]; then
-	mount ${part%[0-9]}4    /mnt/target -o sync
+	mount ${part%[0-9]}4    /mnt/target
 
         if ! grep -q /mnt/target /proc/mounts; then
                 Xdialog --msgbox "DB partiton could not be mounted. Aborting." 8 40
@@ -171,7 +171,7 @@ fi
 
 # 3rd install boot loader
 
-mount $part /mnt/target -o sync
+mount $part /mnt/target
 
 # sanity check to not install into the running system's RAM-disk
 if ! grep -q /mnt/target /proc/mounts; then
