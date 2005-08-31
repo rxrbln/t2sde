@@ -121,64 +121,26 @@ mount $part /mnt/target
 
 # sanity check to not install into the running system's RAM-disk
 if ! grep -q /mnt/target /proc/mounts; then
-	Xdialog --msgbox "Sys partiton could not be mounted. Aborting." 8 40
+	Xdialog --msgbox "Partiton could not be mounted. Aborting." 8 40
 	exit
 fi
 
-# stop mysql for rsync
-rc mysql stop
+if [ $installall -eq 1 ]; then
+	mkdir -p		/mnt/target/home/data
+	mount ${part%[0-9]}4	/mnt/target/home/data
 
-# 1st install the system
+	if ! grep -q /mnt/target/home/data /proc/mounts; then
+		Xdialog --msgbox "Partiton could not be mounted. Aborting." 8 40
+		exit
+	fi
+
+	# stop mysql for rsync
+	rc mysql stop
+fi
 
 rsync  -arvP /mnt/live/ /mnt/target/ |
   sed -n 's/.* \([0-9]\+.[0-9]\)% .*/\1/p' |
-  Xdialog --progress "Installing system ..." 8 28
-
-# for now remove home/data/* afterwards
-rm -rf /mnt/target/home/data/*
-
-umount /mnt/target
-
-if grep -q /mnt/target /proc/mounts; then
-        Xdialog --msgbox "Sys partition still mounted -
-this indicates an error during installation." 8 38
-	exit
-fi
-
-# 2nd install data
-
-if [ $installall -eq 1 ]; then
-	mount ${part%[0-9]}4    /mnt/target
-
-        if ! grep -q /mnt/target /proc/mounts; then
-                Xdialog --msgbox "DB partiton could not be mounted. Aborting." 8 40
-                exit
-        fi
-
-rsync  -arvP /mnt/live/home/data/ /mnt/target/ |
-  sed -n 's/.* \([0-9]\+.[0-9]\)% .*/\1/p' |
-  Xdialog --progress "Installing db ..." 8 28
-
-	umount /mnt/target
-
-if grep -q /mnt/target /proc/mounts; then
-        Xdialog --msgbox "DB partition still mounted -
-this indicates an error during installation." 8 38
-fi
-
-
-fi
-
-# 3rd install boot loader
-
-mount $part /mnt/target
-
-# sanity check to not install into the running system's RAM-disk
-if ! grep -q /mnt/target /proc/mounts; then
-        Xdialog --msgbox "Sys partiton could not be mounted. Aborting." 8 40
-        exit
-fi
-
+  Xdialog --progress "Installing ..." 8 28
 
 cat >> /mnt/target/etc/fstab <<-EOT
 ${part%[0-9]}3	swap		swap	defaults        0 0
@@ -203,26 +165,18 @@ sync
 
 umount /mnt/target/dev
 umount /mnt/target/proc
+umount /mnt/target/home/data
 umount /mnt/target
 
-# restart mysql
-rc mysql start
-
-sync
-
-if grep -q /mnt/target /proc/mounts; then
-	Xdialog --msgbox "Sys partition still mounted -
-this indicates an error during installation." 8 38
+if [ $installall -eq 1 ]; then
+	# restart mysql
+	rc mysql start
 fi
 
-# now - check filesystems because we became paranoid
-
-(
-	echo "$part ..."
-	e2fsck -fn $part
-	echo "${part%[0-9]}4 ..."
-	e2fsck -fn ${part%[0-9]}4 
-) 2>&1 | Xdialog --title="Checking filesystems" --no-cancel --log - 50 60
-
-Xdialog --msgbox "Installation finished." 8 28
-
+if ! grep -q /mnt/target /proc/mounts; then
+	Xdialog --msgbox "Installation finished!
+You can safely reboot now." 8 28
+else
+	Xdialog --msgbox "Target partition still mounted -
+this indicates an error during installation." 8 38
+fi
