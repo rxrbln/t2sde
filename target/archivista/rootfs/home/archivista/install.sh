@@ -219,11 +219,10 @@ fi
 
 (
 	echo "$part ..."
-	e2fsck -f $part
+	e2fsck -fn $part
 	echo "${part%[0-9]}4 ..."
-	e2fsck -f ${part%[0-9]}4 
-) 2>&1 | Xdialog --title="Checking filesystems" --log - 50 60
+	e2fsck -fn ${part%[0-9]}4 
+) 2>&1 | Xdialog --title="Checking filesystems" --no-cancel --log - 50 60
 
 Xdialog --msgbox "Installation finished." 8 28
-else
 
