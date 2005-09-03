@@ -53,7 +53,8 @@ function parse_desc(fname)
       if tag then
 	 for t, d in pairs(pkg_desc_format) do
 	    if t == tag then
-	       retval[d.name] = cnt
+	       retval[d.name] = retval[d.name] or {}
+	       table.insert(retval[d.name], cnt)
 	    end
 	 end
       end
@@ -78,6 +79,10 @@ for pkg,tab in pairs(pkgs) do
    printf("Package %s:\n", pkg);
 
    for k,v in pairs(tab) do
-      printf("  %s %s\n", k, v);
+      if type(v) == "table" then
+	 printf("  %s %s\n", k, table.concat(v,"\n    "));
+      else
+	 printf("  %s %s\n", k, v);
+      end
    end
 end
