@@ -51,11 +51,10 @@ function parse_desc(fname)
 
       _,_,tag,cnt = string.find(line, "([[][^]]*[]])[ ]+(.*)")
       if tag then
-	 for t, d in pairs(pkg_desc_format) do
-	    if t == tag then
-	       retval[d.name] = retval[d.name] or {}
-	       table.insert(retval[d.name], cnt)
-	    end
+	 local fmt = pkg_desc_format[tag]
+	 if fmt then
+	    retval[fmt.name] = retval[fmt.name] or {}
+	    table.insert(retval[fmt.name], cnt)
 	 end
       end
    end
@@ -80,9 +79,9 @@ for pkg,tab in pairs(pkgs) do
 
    for k,v in pairs(tab) do
       if type(v) == "table" then
-	 printf("  %s %s\n", k, table.concat(v,"\n    "));
+	 printf("  %s: %s\n", k, table.concat(v,"\n    "));
       else
-	 printf("  %s %s\n", k, v);
+	 printf("  %s: %s\n", k, v);
       end
    end
 end
