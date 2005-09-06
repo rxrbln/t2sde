@@ -52,14 +52,17 @@ if [ -s $tmp1 ] && cmp -s $tmp1 $tmp2 ; then
 	# TODO: change MySQL first, since only there we will see if the old
 	# password was specified correct for the non-root user case ...
 
-	# mysql ... bla ... -oldpasswd $PASSWD -newpassword $newpassword
+	setpw="localhost archivista $user $PASSWD newpw $newpasswd"
+	/home/cvs/archivista/jobs/avdbutility.pl $setpw
 
 	echo "$user:$newpasswd" | chpasswd
 
 	# change the perl class-library password:
 	if [ $user = root ]; then
-		sed -i "s/\(.*MYSQL_PWD.* = \).*/\1\"$passwd\";/" \
+		sed -i "s/\(.*MYSQL_PWD.* = \).*/\1\"$newpasswd\";/" \
 		    /usr/lib/perl5/*/Archivista/Config.pm 
+		killall firefox-bin
+		rc apache restart
 	fi
 else
 	Xdialog --msgbox 'Supplied passwords did not match!' 8 40
