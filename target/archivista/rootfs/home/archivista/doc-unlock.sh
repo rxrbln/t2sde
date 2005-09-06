@@ -3,13 +3,20 @@
 if [ "$UID" -ne 0 ]; then
         exec gnomesu -t "Document unlocking" \
         -m "Please enter the system password (root user)^\
-in order to unlock documents." -c $0
+in order to unlock documents." -c $0 -p
 fi
 
 # PATH and co
 . /etc/profile
 
-until [ "$range" ]; do
+until [ "$db" ]; do
+        db=`Xdialog --stdout --inputbox "Database to unlock documents:" \
+	        10 40 "$db"` || exit
+	db="${db// /}"
+done
+
+
+until [ "$trange" ]; do
         trange=`Xdialog --stdout --inputbox "Document range to unlock:
 (e.g. 1-3 or 4)" \
 	        10 40 "$trange"` || exit
@@ -23,4 +30,5 @@ until [ "$range" ]; do
         fi
 done
 
-echo $range
+unlock="localhost $db root $PASSWD unlock $range"
+/home/cvs/archivista/jobs/avdbutility.pl $unlock 
