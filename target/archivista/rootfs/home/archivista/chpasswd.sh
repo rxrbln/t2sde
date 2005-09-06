@@ -61,6 +61,10 @@ if [ -s $tmp1 ] && cmp -s $tmp1 $tmp2 ; then
 	if [ $user = root ]; then
 		sed -i "s/\(.*MYSQL_PWD.* = \).*/\1\"$newpasswd\";/" \
 		    /usr/lib/perl5/*/Archivista/Config.pm 
+
+		sed -i "/sub avdb_pwd/ { N ; s/\".*\"/\"$newpasswd\"/ }" \
+		    /home/cvs/archivista/webclient/perl/inc/Global.pm
+
 		killall firefox-bin
 		rc apache restart
 	fi
