@@ -8,6 +8,9 @@ inject_archivista()
 	# cvs code
 	cd $imagelocation/home
 	tar xvfz $base/target/$target/cvs.tar.gz
+	# set the correct permissions
+	chgrp -R 80   cvs
+	chmod -R o-rx cvs
 
 	# configuration
 	cd cvs ; patch -p1 < $base/target/$target/config.patch ; cd ..
