@@ -40,8 +40,48 @@ else
 			tr '\t' ' ' | tr -s ' ' | cut -f2 -d' '`"
 	tmpfile=`mktemp` ; tmpfile2=`mktemp`
 	echo "Update patch for $pkg ($pkgdir): $oldver -> $ver"
-	sed "s/${oldver//./\\.}/$ver/g" < $pkgdir/$pkg.desc | \
-	sed "s/^\[\(D\|DOWN\|DOWNLOAD\)\] [0-9]\+/[\1] 0/" > $tmpfile
+
+	# [V]
+ 	expression="-e 's,^\[\(V\|VER\|VERSION\)\].*,[\1] $ver,'"
+	# file at [D]
+	expression="$expression -e '/^\[\(D\|DOWN\|DOWNLOAD\)\]/ s,${oldver//./\\.},$ver,g;'"
+
+	# detect download location structure
+	sed -n -e 's,^\[\(D\|DOWN\|DOWNLOAD\)\].*[ \t]\([^ \t]*\)[ \t]*$,\2,p' $pkgdir/$pkg.desc > $tmpfile
+
+	if grep -q "/$oldver/$" $tmpfile; then
+		# $ver -> /$ver/
+		oldver="${oldver//./\\.}"
+		expression="$expression -e '/^\[\(D\|DOWN\|DOWNLOAD\)\]/ s,/$oldver/[^ \t]*\$,/$ver/,g;'"
+	elif [ "$oldver" != "${oldver//-/}" ] && grep -q "/${oldver//-/}/\$" $tmpfile; then
+		# $ver-$extra -> /$ver/
+		oldver="${oldver%%-*}"; oldver="${oldver//./\\.}"
+		ver="${ver%%-*}"
+		expression="$expression -e '/^\[\(D\|DOWN\|DOWNLOAD\)\]/ s,/$oldver/[^ \t]*\$,/$ver/,g;'"
+	else
+		# $ver.$extra -> /$ver/
+		oldver="${oldver%%-*}"
+		ver="${ver%%-*}"
+
+		oldauxver=
+		auxver=
+		pattern="[^\.]*"
+		while [ "${oldver#$oldauxver}" ]; do
+			eval $( echo "$oldver $ver" | sed -e "s,\($pattern\).* \($pattern\).*,oldauxver=\1 auxver=\2," )
+			if grep -q "/$oldauxver/\$" $tmpfile; then
+				oldver="${oldauxver%%-*}"; oldauxver="${oldauxver//./\\.}"
+				ver="${auxver%%-*}"
+				expression="$expression -e '/^\[\(D\|DOWN\|DOWNLOAD\)\]/ s,/$oldver/[^ \t]*\$,/$ver/,g;'"
+				break
+			fi
+			pattern="$pattern\.[^\.]*"
+		done
+	fi
+
+	# checksum at [D]
+	expression="$expression -e 's,^\[\(D\|DOWN\|DOWNLOAD\)\] [0-9]\+,[\1] 0,'"
+
+	eval "sed $expression $pkgdir/$pkg.desc" > $tmpfile
 	diff -u ./$pkgdir/$pkg.desc $tmpfile | tee $tmpfile2
 	[ -s $tmpfile2 ] || echo "Patch for '$x' is empty!" >&2
 	rm -f $tmpfile $tmpfile2
