@@ -64,7 +64,7 @@ end
 
 -- parse all files
 pkgs = {}
-for i,file in pairs(arg) do
+for i,file in ipairs(arg) do
    if i > 0 then
       _,_,repo,pkg = string.find(file, "package/([^/]*)/([^/]*)/*");
 
