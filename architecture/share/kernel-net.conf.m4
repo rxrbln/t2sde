@@ -27,6 +27,7 @@ CONFIG_NET_VENDOR_SMC=y
 CONFIG_NET_VENDOR_RACAL=y
 CONFIG_8139TOO=m
 CONFIG_NET_TULIP=m
+CONFIG_FORCEDETH=m
 
 dnl Enable some categories so drivers are enabled as modules
 dnl
