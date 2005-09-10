@@ -102,8 +102,8 @@ audit_package() {
 			echo "$svnst"
 			echo ""
 			echo "$svndiff"
-			} > $HTMLDIR/$config.$$/diff/$pkg.diff
-			lchanges="<a href=\"diff/$pkg.diff\">$lchanges</a>"
+			} > $HTMLDIR/$config.$$/diff/$pkg.diff.txt
+			lchanges="<a href=\"diff/$pkg.diff.txt\">$lchanges</a>"
 		fi
 	fi
 
@@ -124,8 +124,8 @@ audit_package() {
 					lbuild="$lbuild NO($stage)"	;;
 				*)	lstatus=2
 					if [ "$HTMLDIR" ]; then
-						lbuild="$lbuild <a href=\"log/$stage-$pkg.err\">ERR($stage)</a>"
-						cp $file $HTMLDIR/$config.$$/log/$stage-$pkg.err
+						lbuild="$lbuild <a href=\"log/$stage-$pkg.err.txt\">ERR($stage)</a>"
+						cp $file $HTMLDIR/$config.$$/log/$stage-$pkg.err.txt
 					else
 						lbuild="$lbuild ERR($stage)"
 					fi	;;
