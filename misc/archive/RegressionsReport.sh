@@ -56,8 +56,8 @@ EOT
 
 mkdir -p $TARGET/$config/config
 for x in config/$config/*; do
-	cp $x $TARGET/$config/config/${x##config/$config/}
-	echo -e "\t\t<a href=\"config/${x##config/$config/}\">${x##config/$config/}</a><br />"
+	cp $x $TARGET/$config/${x##config/$config/}.txt
+	echo -e "\t\t<a href=\"${x##config/$config/}.txt\">${x##config/$config/}</a><br />"
 done
 
 pkgenabled=$( grep '^X' config/$config/packages | wc -l )
@@ -82,7 +82,7 @@ for stagelevel in 0 1 2 3 4 5 6 7 8 9; do
 		if [ -f build/$SDECFG_ID/var/adm/logs/$stagelevel-$pkg.err ]; then
 			(( pkgerr++ ))
 cat <<EOT
-	<tr><td>$stagelevel</td><td><a href="log/$stagelevel-$pkg.err">$repo/$pkg</a></td></tr>
+	<tr><td>$stagelevel</td><td><a href="log/$stagelevel-$pkg.err.txt">$repo/$pkg</a></td></tr>
 EOT
 		elif [ -f build/$SDECFG_ID/var/adm/logs/$stagelevel-$pkg.log ]; then
 			(( pkgok++ ))
