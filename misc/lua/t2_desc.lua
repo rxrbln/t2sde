@@ -26,7 +26,7 @@ end
 local function parse_file (fname)
    local retval = {}
    printf("Parsing %s...\n", fname)
-   return t2_desc.parse( io.open(fname):lines() );
+   return parse( io.open(fname):lines() );
 end
 
 
