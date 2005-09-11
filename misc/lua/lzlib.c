@@ -1,6 +1,8 @@
+// compilation: gcc --shared lzlib.c -o lzlib.so -lz
 // contains some slightly addapted code pieces from lua's liolib.c
 
 #include <stdio.h>
+#include <string.h>
 #include <errno.h>
 #include <zlib.h>
 #include <lua.h>
@@ -54,7 +56,7 @@ static gzFile *tozfile (lua_State *L)
 
   if (*zf == NULL)
     luaL_error(L, "attempt to use a closed gz file");
-  return *zf;
+  return zf;
 }
 
 // -------------------------- API ------------------------------
@@ -77,7 +79,7 @@ static int gz_close (lua_State *L)
 {
   gzFile *zf = tozfile(L);
   int result = gzclose(*zf);
-  int value_count = pushresult(L, *zf, NULL);
+  int value_count = pushresult(L, zf, NULL);
   if (result == 0)
     *zf = NULL;
   return value_count;
@@ -87,6 +89,7 @@ static int gz_close (lua_State *L)
 
 static const luaL_reg R[] = {
   {"open", gz_open},
+  {"close", gz_close},
   {NULL, NULL}
 };
 
