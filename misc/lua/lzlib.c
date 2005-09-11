@@ -92,6 +92,7 @@ static const luaL_reg R[] = {
 
 static const luaL_Reg zlib[] = {
   {"close", gz_close},
+  {"__gc", gz_close},
   {NULL, NULL}
 };
 
