@@ -2,6 +2,7 @@
 // contains some slightly addapted code pieces from lua's liolib.c
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <errno.h>
 #include <zlib.h>
@@ -45,6 +46,7 @@ static int pushresult (lua_State *L, gzFile* zf, const char *filename)
 
     lua_pushinteger(L, zlib_result);
     lua_pushinteger(L, errno);
+
     return 4;
   }
 }
@@ -58,6 +60,47 @@ static gzFile *tozfile (lua_State *L)
     luaL_error(L, "attempt to use a closed gz file");
   return zf;
 }
+
+// ----------------- poor man buffer in C ---------------------
+
+char* content_buffer = NULL;
+size_t content_buffer_length = 0;
+size_t content_length = 0;
+
+static inline void ResetBuffer ()
+{ 
+  content_length = 0;
+}
+
+static inline void ExtendBuffer (size_t min_size)
+{
+  if (min_size > content_buffer_length) {
+    if (content_buffer_length == 0)
+      content_buffer = malloc (min_size);
+    else
+      content_buffer = realloc (content_buffer, min_size);
+    content_buffer_length = min_size;
+  }
+}
+
+static inline void AddToBuffer (char c)
+{
+  if (content_buffer_length == content_length)
+    ExtendBuffer ((content_buffer_length < 256) ? 256 : 2 * content_buffer_length);
+  content_buffer [content_length++] = c;
+}
+
+static inline const char* FinishBuffer ()
+{
+  AddToBuffer ('\0');
+  return content_buffer;
+}
+
+static inline int BufferFill ()
+{
+  return content_length;
+}
+
 
 // -------------------------- API ------------------------------
 
@@ -79,10 +122,77 @@ static int gz_close (lua_State *L)
 {
   gzFile *zf = tozfile(L);
   int result = gzclose(*zf);
-  int value_count = pushresult(L, zf, NULL);
-  if (result == 0)
-    *zf = NULL;
-  return value_count;
+  *zf = NULL;
+
+  // need to emulate pushresult behavior, because gzerror
+  // does not work anymore after closing stream *grrrr*
+
+  if (result == Z_OK) {
+    lua_pushboolean (L, 1);
+    return 1;
+  } else {
+    const char* zmessage;
+    if (result == Z_ERRNO) // error is a file io error
+      zmessage = strerror(errno);
+    else
+      zmessage = zError(result);
+
+    lua_pushnil(L);
+    lua_pushfstring(L, zmessage);
+    lua_pushinteger(L, result);
+    lua_pushinteger(L, errno);
+    return 4;
+  }
+}
+
+
+static int __gz_lines_iterator (lua_State *L)
+{
+  gzFile zf = (gzFile) lua_topointer (L, lua_upvalueindex(1));
+  int ch;
+  ResetBuffer ();
+
+  while ( (ch = gzgetc(zf)) != -1 && ch != '\n') {
+    AddToBuffer ((char) ch);
+  }
+
+  if (ch == '\n' || BufferFill () > 0) {
+    lua_pushstring (L, FinishBuffer ());
+    return 1;
+  } else {
+    return pushresult(L, &zf, NULL);
+  }
+}
+
+
+static int gz_lines (lua_State *L)
+{
+  gzFile *zf = tozfile(L);
+  lua_pushlightuserdata (L, *zf);
+  lua_pushcclosure (L, __gz_lines_iterator, 1);
+  return 1;
+}
+
+static int gz_status (lua_State *L)
+{
+  gzFile *zf = tozfile(L);
+  return pushresult (L, zf, NULL);
+}
+
+static int gz_eof (lua_State *L)
+{
+  gzFile *zf = tozfile(L);
+  int eof = gzeof (*zf);
+  lua_pushboolean(L, eof);
+  if (eof == 1) {
+    const char* eof_reason;
+    int eof_reason_code;
+    eof_reason = gzerror (*zf, &eof_reason_code);
+    lua_pushboolean (L, eof_reason_code == Z_STREAM_END);
+    lua_pushstring (L, eof_reason);
+    return 3;
+  }
+  return 0;
 }
 
 // ------------------- init and registering --------------------
@@ -90,11 +200,17 @@ static int gz_close (lua_State *L)
 static const luaL_reg R[] = {
   {"open", gz_open},
   {"close", gz_close},
+  {"lines", gz_lines},
+  {"status", gz_status},
+  {"eof", gz_eof},
   {NULL, NULL}
 };
 
 static const luaL_Reg zlib[] = {
   {"close", gz_close},
+  {"lines", gz_lines},
+  {"status", gz_status},
+  {"eof", gz_eof},
   {"__gc", gz_close},
   {NULL, NULL}
 };
