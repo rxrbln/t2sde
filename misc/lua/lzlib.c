@@ -72,7 +72,7 @@ static inline void ResetBuffer ()
   content_length = 0;
 }
 
-static inline void ExtendBuffer (size_t min_size)
+static inline void ExtendBufferBySize (size_t min_size)
 {
   if (min_size > content_buffer_length) {
     if (content_buffer_length == 0)
@@ -83,10 +83,16 @@ static inline void ExtendBuffer (size_t min_size)
   }
 }
 
+static inline void ExtendBuffer ()
+{
+  ExtendBufferBySize ((content_buffer_length < 256) ? 256 : 2 * content_buffer_length);
+  // for testing:  ExtendBufferBySize ((content_buffer_length < 10) ? 10 : 2 + content_buffer_length);
+}
+
 static inline void AddToBuffer (char c)
 {
   if (content_buffer_length == content_length)
-    ExtendBuffer ((content_buffer_length < 256) ? 256 : 2 * content_buffer_length);
+    ExtendBuffer ();
   content_buffer [content_length++] = c;
 }
 
@@ -101,6 +107,10 @@ static inline int BufferFill ()
   return content_length;
 }
 
+static inline int BufferFree () 
+{
+  return (content_buffer_length - content_length);
+}
 
 // -------------------------- API ------------------------------
 
@@ -149,14 +159,42 @@ static int gz_close (lua_State *L)
 static int __gz_lines_iterator (lua_State *L)
 {
   gzFile zf = (gzFile) lua_topointer (L, lua_upvalueindex(1));
-  int ch;
-  ResetBuffer ();
+  int ch = '\0';
+  char* ret;
+
+  if (content_buffer_length == 0)
+    ExtendBuffer ();
+  else
+    ResetBuffer ();
+
+  #ifdef READ_LINE_ONE_BY_ONE
 
   while ( (ch = gzgetc(zf)) != -1 && ch != '\n') {
     AddToBuffer ((char) ch);
   }
 
+  #else
+
+  do {
+    ret = gzgets (zf, content_buffer + BufferFill (), BufferFree ());
+    if (ret == Z_NULL)
+      break;
+    int l = strlen (content_buffer);
+    content_length = l;
+    if (l > 0) {
+      ch = content_buffer[l - 1];
+      if (ch != '\n')
+	ExtendBuffer ();
+      else
+	content_buffer[l-1] = '\0';
+    }
+  } while (ret && ch != '\n');
+
+  #endif
+
   if (ch == '\n' || BufferFill () > 0) {
+    if (ch == '\n')
+      
     lua_pushstring (L, FinishBuffer ());
     return 1;
   } else {
