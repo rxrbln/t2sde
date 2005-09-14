@@ -1,6 +1,17 @@
 #!/bin/sh
 
-if gpg --list-keys ade > /dev/null; then
+if [ "$UID" -ne 0 ]; then
+        exec gnomesu -t "Setup backup" \
+        -m "Please enter the system password (root user)^\
+in order to generate encryption keys." -c $0
+fi
+
+# PATH and co
+. /etc/profile
+
+export gpg="gpg --homedir /home/archivista/.gnupg"
+
+if $gpg --list-keys ade > /dev/null; then
 	Xdialog --default-no --yesno \
 "Warning: A data exchange key pair does already exist! Overwriting this key
 will make importing previously encrypted data, encrypted with the current key,
@@ -9,8 +20,8 @@ Do you really like to create a new key pair?" 10 65 || exit
 fi
 
 # flush previous keys
-rm -rf ~/.gnupg/*
-(gpg --gen-key --batch <<-EOT
+rm -rf /home/archivista/.gnupg
+($gpg --gen-key --batch <<-EOT
      %echo Generating a standard key
      Key-Type: DSA
      Key-Length: 1024
