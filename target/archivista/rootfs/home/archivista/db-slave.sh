@@ -40,9 +40,7 @@ done
 
 rc mysql stop
 sleep 2
-killall mysqld
-sleep 2
-killall -9 mysqld
+killall mysqld 2>/dev/null && sleep 2 && killall -9 mysqld 2>/dev/null
 
 # copy the db and perform other needed tasks on the master
 echo "Please enter the master server system (root user) password in order to
