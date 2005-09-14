@@ -28,7 +28,10 @@ inject_archivista()
 
         # copy the manual to /home/archivista
         cp $imagelocation/home/cvs/archivista/webclient/www/*.pdf . 
-        chown live.users *.pdf
+        chown 500:100 *.pdf
+
+	# make sure the scripts can not be modified by the user
+	chown 0:0 *.sh
 
 	# inject versions we do not have immediate control over
 	sed -i "s/^\(title.*label.*\)/\1 - $build_date/" $imagelocation/etc/stone.d/mod_grub.sh
