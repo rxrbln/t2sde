@@ -38,9 +38,9 @@ done
 sed -i -e "s/.*log-bin$/log-bin/" \
        -e "s/.*max-binlog-size.*/max-binlog-size = 300M/" /etc/my.cnf
 
-mysql -u root -p $PASSWD -h localhost <<-EOT
-grant replication slave on *.* to $user@$slaveip identified by $passwd
-flush privileges
+mysql -uroot -p$PASSWD -hlocalhost <<-EOT
+grant replication slave on *.* to '$user'@'$slaveip' identified by '$passwd';
+flush privileges;
 EOT
 
 rc mysql restart
