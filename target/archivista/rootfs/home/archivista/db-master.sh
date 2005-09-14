@@ -1,7 +1,7 @@
 #!/bin/bash
 
 if [ "$UID" -ne 0 ]; then
-	exec gnomesu -t "Enable database master mode" \
+	exec gnomesu -p -t "Enable database master mode" \
 	-m "Please enter the system password (root user)^\
 in order to enable the database master mode." -c $0
 fi
@@ -38,7 +38,10 @@ done
 sed -i -e "s/.*log-bin$/log-bin/" \
        -e "s/.*max-binlog-size.*/max-binlog-size = 300M/" /etc/my.cnf
 
-echo TODO: mysql grant $user $passwd $slaveip ...
+mysql -u root -p $PASSWD -h localhost <<-EOT
+grant replication slave on *.* to $user@$slaveip identified by $passwd
+flush privileges
+EOT
 
 rc mysql restart
 
