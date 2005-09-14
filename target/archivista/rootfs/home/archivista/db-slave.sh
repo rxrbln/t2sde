@@ -1,10 +1,10 @@
 #!/bin/bash
 
 if [ "$UID" -ne 0 ]; then
-	exec gnomesu -t "Database slave mode" \
+	exec gnomesu -t "Enable database slave mode" \
 	-m "Please enter the system password (root user)^\
-in order to bring the database into slave mode." \
-	-c "/usr/X11/bin/xterm -fa Mono -e $0"
+in order to enable the database slave mode." \
+	-c "/usr/X11/bin/xterm -rv -fa Mono -e $0"
 fi
 
 # PATH and co
@@ -13,7 +13,7 @@ fi
 # get master ip
 until [ "$masterip" ]; do
 	tmasterip=`Xdialog --stdout --inputbox \
-	"Enter IP or hostname of master server:" 10 38 $tmasterip`
+	"Enter IP or hostname of master server:" 10 38 $tmasterip` || exit
 
 	if ! ping -c 1 $tmasterip ; then
 		Xdialog --infobox 'Master not answering (pings)!' 8 28
@@ -22,6 +22,18 @@ until [ "$masterip" ]; do
 	fi
 done 
 
+user=""
+until [ "$user" ]; do
+        user=`Xdialog --stdout --inputbox \
+              "Name used for the replication account:" 10 38` || exit
+done
+
+passwd=""
+until [ "$passwd" ]; do
+        passwd=`Xdialog --stdout --inputbox \
+                "Password for the replication account:" 10 38` || exit
+done
+
 rc mysql stop
 
 # copy the db and perform other needed tasks on the master
@@ -29,19 +41,24 @@ echo "Please enter the master server system (root user) password in order to
 copy the initial database:"
 rsync -arve ssh $masterip:/home/data/archivista/mysql \
                           /home/data/archivista/mysql
-echo Return code: $?
+error=$?
 
-if [ $? -ne 0 ]; then
-	Xdialog --infobox 'Error obtaining initial database from master!' 8 28
+if [ $error -ne 0 ]; then
+	echo Return code: $error
+	Xdialog --msgbox 'Error obtaining initial
+database from master!' 8 28
 	exit
 fi
 
-# bring into slave mode
+# configure slave mode
 sed -i -e "s/.*server-id.*/server-id = 2/" \
-       -e "s/.*log-bin$/log-bin/" /etc/my.cnf
+       -e "s/.*log-bin$/log-bin/" \
+       -e "s/.*master-host.*$/master-host = $masterip/" \
+       -e "s/.*master-user.*$/master-user = $user/" \
+       -e "s/.*master-password.*$/master-password = $passwd/" /etc/my.cnf
 
 rc mysql start
 
-echo "Press enter or close the window."
+echo "Press enter or close this window."
 read in
 
