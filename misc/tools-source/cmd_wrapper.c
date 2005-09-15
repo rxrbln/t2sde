@@ -290,8 +290,9 @@ int main(int argc, char ** argv) {
 
 		delim = strtok(optbuf, " ");
 		while (delim != NULL) {
+			delim = eval_cond_arg (delim, argc, argv);
+
 			if (delim[0]) {
-			    delim = eval_cond_arg (delim, argc, argv);
 #if VERBOSE_DEBUG
 			    if (debug) fprintf(stderr, "Insert: %s\n", delim);
 #endif
@@ -344,8 +345,8 @@ int main(int argc, char ** argv) {
 
 		delim = strtok(optbuf, " ");
 		while (delim != NULL) {
+			delim = eval_cond_arg (delim, argc, argv);
 			if (delim[0]) {
-			    delim = eval_cond_arg (delim, argc, argv);
 #if VERBOSE_DEBUG
 			    if (debug) fprintf(stderr, "Append: %s\n", delim);
 #endif
