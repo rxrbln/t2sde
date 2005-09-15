@@ -86,6 +86,53 @@ void cleanenv(const char * name, const char ch) {
 }
 
 /*
+ * Evaluate conditional argument in the form:
+ * "condition?matched-value:unmatched-value"
+ */
+
+char* eval_cond_arg (char * arg, int argc, char ** argv)
+{
+	char * c = arg;
+	char * lhs = NULL, * rhs = NULL;
+
+	/* look for '?' */
+	while (*c && *c != '?') c++;
+
+	if (*c != '?') {
+		return arg;
+	}
+#if VERBOSE_DEBUG
+	if (debug) fprintf(stderr, "conditonal arg: %s.\n", arg);
+#endif
+
+	/* split conditional (arg), left hand and right hand statement */
+	*c++ = 0;
+	lhs = c;
+
+	/* look for ':' */
+	while (*c && *c != ':') c++;
+	if (*c == ':')
+		*c++ = 0;
+	rhs = c;
+
+	if (debug) fprintf(stderr, "conditonal: %s, lhs: %s, rhs: %s.\n", arg, lhs, rhs);
+
+	/* match arguments against conditional */
+	while (argc--)
+	{
+		if (!fnmatch(arg, *argv, 0)) {
+#if VERBOSE_DEBUG
+			if (debug) fprintf(stderr, "conditonal: %s, matched: %s.\n", arg, *argv);
+#endif
+			return lhs;
+		}
+		argv++;
+	}
+
+	return rhs;
+}
+
+/*
  *  Main function.
  */
 int main(int argc, char ** argv) {
@@ -244,6 +291,7 @@ int main(int argc, char ** argv) {
 		delim = strtok(optbuf, " ");
 		while (delim != NULL) {
 			if (delim[0]) {
+			    delim = eval_cond_arg (delim, argc, argv);
 #if VERBOSE_DEBUG
 			    if (debug) fprintf(stderr, "Insert: %s\n", delim);
 #endif
@@ -266,6 +314,7 @@ int main(int argc, char ** argv) {
 
 			delim = strtok(optbuf, " ");
 			while (delim != NULL) {
+				delim = eval_cond_arg (delim, argc, argv);
 				if ( delim[0] &&
 				     !fnmatch(delim, argv[c2], 0) ) break;
 				delim = strtok(NULL, " ");
@@ -296,6 +345,7 @@ int main(int argc, char ** argv) {
 		delim = strtok(optbuf, " ");
 		while (delim != NULL) {
 			if (delim[0]) {
+			    delim = eval_cond_arg (delim, argc, argv);
 #if VERBOSE_DEBUG
 			    if (debug) fprintf(stderr, "Append: %s\n", delim);
 #endif
