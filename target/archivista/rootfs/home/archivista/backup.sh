@@ -15,8 +15,7 @@ export DISPLAY=:0
 (
 	rc mysql stop > /dev/null
 	/home/archivista/rescan-scsi-bus.sh
-	flexbackup -set all 2>&1
-	mt -f /dev/nst0 rewoffl
+	flexbackup -set all && mt -f /dev/nst0 rewoffl
 	rc mysql start > /dev/null
-) | Xdialog --no-cancel --log - 20 60
+) 2>&1 | Xdialog --no-cancel --log - 20 60
 
