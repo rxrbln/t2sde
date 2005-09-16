@@ -9,7 +9,7 @@ ethtool eth0 >> $tmp
 
 (
 	if grep -q UP $tmp; then
-		grep "inet addr" $tmp | sed 's/[[:alnum:]]  /\n/g'
+		grep "inet addr" $tmp | sed 's/\([[:alnum:]]\)  /\1\n/g'
 	else
 		echo not activated
 	fi
