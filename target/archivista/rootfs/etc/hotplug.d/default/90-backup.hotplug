@@ -7,9 +7,11 @@
 # Copyright (C) 2005 Archivista GmbH
 # Copyright (C) 2005 Rene Rebe
 
+exec >> /var/log/hot.log 2>&1 
+
 gpg="gpg --homedir /home/archivista/.gnupg"
 
-logger $0
+echo begin $*
 
 # PATH and co
 . /etc/profile
@@ -20,24 +22,23 @@ export DISPLAY=:0
 # something for us?
 [ "$ACTION" == add -a "$1" == "block" ] || exit
 
-logger "ADDED block device"
+echo "ADDED block device"
 
 name=${DEVPATH/*\/}
-logger "name $name"
+echo "name $name"
 
 # work around USB issue failing to read partition table
 if [[ $name = sd[a-z] ]]; then
 	sleep 3
 
-	logger "triggering read of partition table"
-	logger sfdisk -l /dev/$name | logger
-	sfdisk -l /dev/$name | logger
+	echo "triggering read of partition table"
+	sfdisk -l /dev/$name
 
 	exit
 fi
 
 if [[ $name != sd[a-z]1 ]] ; then
-	logger "Partition $name ignored for backup."
+	echo "Partition $name ignored for backup."
 	exit
 fi
 
@@ -50,7 +51,7 @@ if mount /dev/$name /mnt/usbdisk 2> /dev/null ; then
 	dir=`ls -d /mnt/usbdisk/*/ | head -n 1 | cut -d / -f 4`
 	type=`echo $dir | tr A-Z a-z`
 	[ -z "$type" ] && type="pdf"
-	logger $type
+	echo $type
 	dir=/mnt/usbdisk/$dir
 	user=archivista
 
@@ -85,7 +86,7 @@ a new database backup?" 8 30 || exit
 			;;
 		# ecrypted export
 		crypt) # export or import?
-			if [ -e $dir/exchange ]; then
+			if [ -s $dir/exchange ]; then
 				msg="To import encrypted data"
 				type=decrypt
 			else
@@ -128,12 +129,12 @@ device was not recognized.' 8 40
 	# authenticate via archivista ...
 	if ! su archivista -c "`which gnomesu` -t Authentication \
 	   -m ${msg// /\\ } -u $user -c /bin/true" ; then
-		logger "User $user could not be authenticated."
+		echo "User $user could not be authenticated."
 		exit
 	fi
 fi
 
-logger "authenticated for type: $type in dir $dir"
+echo "authenticated for type: $type in dir $dir"
 
 # now perform the action
 
@@ -150,7 +151,7 @@ get_range ()
 	# remove spaces ...
 	tx="${tx// /}"
 	# remove invalid content
-	if echo "$tx" | grep -q "^\([1-7]\+-[1-7]\+\|[0-7]\+\)$" ; then
+	if echo "$tx" | grep -q "^\([0-9]\+-[0-9]\+\|[0-9]\+\)$" ; then
 		x=$tx
 	else
 		Xdialog --infobox "Range not valid!" 8 28
@@ -183,17 +184,21 @@ case $type in
 	pdf)
 		range=`get_range "Range of documents to export
 (e.g. 2-4 or just 5):"`
-		/usr/bin/perl /home/cvs/archivista/jobs/exportpdf.pl $dir $range
+                db=`get_db`
+		/usr/bin/perl /home/cvs/archivista/jobs/exportpdf.pl $db $dir $range
 		error=$?
 		;;
 	export)
 		db=`get_db`
 		range=`get_range "Range of documents to export
 (e.g. 2-4 or just 5):"`
-		echo export code
+                /usr/bin/perl /home/cvs/archivista/jobs/avimpexport.pl exportdb $db $dir $range
+		error=$?
 		;;
 	import)
-		echo import code
+		db=`get_db`
+		/usr/bin/perl /home/cvs/archivista/jobs/avimpexport.pl importdb $db $dir
+		error=$?
 		;;
 	# ade == archivista-data-exchange
 	key-import)
@@ -201,9 +206,9 @@ case $type in
 		error=$?
 		;;
 	key-export)
-		if ! $gpg --list-keys ade > /dev/null; then
+		if ! $gpg --list-secret-keys ade > /dev/null; then
 			error=1
-			msg="A key pair was not yet generated.
+			msg="A secret key was not yet generated.
 The key generation can be found
 in the System context menu."
 		else
@@ -212,22 +217,42 @@ in the System context menu."
 		fi
 		;;
 	crypt)
+	  if ! $gpg --list-keys ade > /dev/null; then
+		error=1
+		msg="A public key was not yet imported.
+Either import one via the USB drive or
+generate a key pair via the
+System context menu."
+	  else
 		db=`get_db`
 		range=`get_range "Range of documents to crypt
 (e.g. 2-4 or just 5):"`
-
-		# TODO: deliver database data to dump ...
-		echo "thy-data" | $gpg --encrypt --default-recipient ade \
+                rm -Rf /home/data/archivista/expo
+		/usr/bin/perl /home/cvs/archivista/jobs/avimpexport.pl exportdb $db /home/data/archivista/expo $range
+		cd /home/data/archivista/expo/
+		tar -cv . | $gpg --encrypt --default-recipient ade \
 		> $dir/exchange
 		error=$?
+	  fi
 		;;
 	decrypt)
-		# TODO: really use encrypted data ...
-		$gpg --decrypt < $dir/exchange | logger
+	  if ! $gpg --list-secret-keys ade > /dev/null; then
+		error=1
+		msg="A secret pair was not yet generated.
+The key generation can be found
+in the System context menu."
+          else
+		db=`get_db`
+                mkdir -p /home/data/archivista/expo
+		cd /home/data/archivista/expo && rm -rf *
+		$gpg --decrypt < $dir/exchange | tar -xv
+		/usr/bin/perl /home/cvs/archivista/jobs/avimpexport.pl importdb $db /home/data/archivista/expo
 		error=$?
+                rm -Rf /home/data/archivista/expo
+	  fi
 		;;
 	*)
-		logger "type not recognized in the 2nd place - should be a typo"
+		echo "type not recognized in the 2nd place - should be a typo"
 esac
 
 cd / ; umount /mnt/usbdisk
@@ -239,4 +264,4 @@ else
 	Xdialog --msgbox "$msg" 8 40
 fi
 
-logger "$0 end"
+echo "end $*"
