@@ -6,16 +6,26 @@ COMMANDDIR=/command
 
 # u|d|o|p|c|h|a|i|q|1|2|t|k|x|e
 runit_svctrl_menu() {
-	local dir= actions= service=$1 stats=
-	actions="'location: $(readlink -f $service)' ''"
-	for dir in $1/ $1/log/; do
-		if [ -d $dir ]; then
-			actions="$actions '' '' \
-				'service: $dir' '' \
-				'  stats: $( $COMMANDDIR/runsvstat $dir/ 2> /dev/null | cut -d' ' -f2- )' ''"
-		fi
+	local service=$1 errno=0 name= dir=
+	local prefix=${service%/*} location=$(readlink -f $service)
+
+	while [ $errno -eq 0 ]; do
+		local actions=
+		for dir in $service/ $service/log/; do
+			if [ -d $dir ]; then
+				name=${dir#$prefix/}
+				[ "$actions" ] && actions="$actions '' ''"
+
+				actions="$actions 'service: $dir' '' \
+					'  stats: $( $COMMANDDIR/runsvstat $dir/ 2> /dev/null | cut -d' ' -f2- )' ''"
+				actions="$actions 'runsvctrl $name u (up)'   '$COMMANDDIR/runsvctrl u $dir; sleep 1'"
+				actions="$actions 'runsvctrl $name d (down)' '$COMMANDDIR/runsvctrl d $dir; sleep 1'"
+				actions="$actions 'runsvctrl $name h (hup)'  '$COMMANDDIR/runsvctrl h $dir; sleep 1'"
+			fi
+		done
+		eval "gui_menu runit_sc_menu '$service -> $location' $actions"
+		errno=$?
 	done
-	while eval "gui_menu runit_sc_menu '$service' $actions"; do :; done || true
 }
 
 main() {
