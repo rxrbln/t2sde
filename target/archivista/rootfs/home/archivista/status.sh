@@ -23,7 +23,7 @@ ethtool eth0 >> $tmp
 	if ps ax | grep -q sshd; then
 		echo "Remote access (SSH) active"
 	else
-		echo "Remote access (SSH not active"
+		echo "Remote access (SSH) not active"
 	fi
 
 	read m h junk  < <(grep "archivista.backup" /etc/crontab)
