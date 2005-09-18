@@ -45,3 +45,17 @@ EOT
 
 rc mysql restart
 
+# enable ssh?
+ssh_enabled=0
+if ! ps ax | grep -q sshd; then
+	ssh_enabled=1
+	/home/archivista/ssh-enable.sh
+	Xdialog --msgbox "Remote access (SSH) started
+for replication." 8 30
+fi
+
+Xdialog --msgbox "Replication can now be performed
+on the slave." 8 30
+
+[ $ssh_enabled = 1 ] && /home/archivista/ssh-disable.sh
+
