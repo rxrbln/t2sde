@@ -43,7 +43,10 @@ grant replication slave on *.* to '$user'@'$slaveip' identified by '$passwd';
 flush privileges;
 EOT
 
-rc mysql restart
+rc mysql stop
+sleep 2
+killall mysqld 2>/dev/null && sleep 2 && killall -9 mysqld 2>/dev/null
+rc mysql start
 
 # enable ssh?
 ssh_enabled=0
@@ -54,8 +57,12 @@ if ! ps -C sshd ; then
 for replication." 8 30
 fi
 
+rc mysql stop
+
 Xdialog --msgbox "Replication can now be performed
 on the slave." 8 30
 
 [ $ssh_enabled = 1 ] && /home/archivista/ssh-disable.sh
+
+rc mysql start
 
