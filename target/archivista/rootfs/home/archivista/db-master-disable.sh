@@ -32,9 +32,7 @@ done
 sed -i -e "s/^log-bin$/# log-bin/" \
        -e "s/^max-binlog-size.*/# max-binlog-size = 300M/" /etc/my.cnf
 
-set -x
-#mysql -uroot -p$PASSWD -hlocalhost <<-EOT
-cat <<-EOT
+mysql -uroot -p$PASSWD -hlocalhost <<-EOT
 revoke all on *.* from '$user'@'$slaveip';
 flush privileges;
 EOT
