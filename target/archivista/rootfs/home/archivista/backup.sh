@@ -12,10 +12,14 @@ fi
 # Xdialog and friends
 export DISPLAY=:0
 
+log=`mktemp`
 (
 	rc mysql stop > /dev/null
 	/home/archivista/rescan-scsi-bus.sh
 	flexbackup -set all && mt -f /dev/nst0 rewoffl
 	rc mysql start > /dev/null
-) 2>&1 | Xdialog --no-cancel --log - 20 60
+) > $log 2>&1
+
+Xdialog --no-cancel --log - 20 60 < $log
+rm $log
 
