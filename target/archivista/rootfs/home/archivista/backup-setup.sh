@@ -12,10 +12,11 @@ fi
 # read previous settings
 line=`grep "archivista.*backup.sh" /etc/crontab`
 tdays=`echo "$line" | cut -d ' ' -f 5`
-ttime=`echo "$line" | cut -d ' ' -f 2`
+read m h < <(echo "$line" | cut -d ' ' -f 1-2)
+ttime="$h:$m"
 
 [ "$tdays" ] || tdays="2-6"
-[ "$ttime" ] || ttime="2"
+[ "$ttime" = ":" ] && ttime="2:00"
 
 until [ "$days" ]; do
 	tdays=`Xdialog --stdout --inputbox "Days the backup should be run on.
@@ -41,8 +42,10 @@ fi
 
 until [ "$time" ]; do
 	ttime=`Xdialog --stdout --inputbox "Time the backup should be run on
-the specified days:" 10 40 "$ttime"` || exit
-	if [ $ttime -gt 0 -a $ttime -le 24 ]; then
+the specified days (e.g. 2:30):" 10 40 "$ttime"` || exit
+	read h m < <( echo ${ttime/:/ } )
+	echo "'$h' '$m'"
+	if [ $h -le 24 -a $m -le 60 ]; then
 		time=$ttime
 	else
 		Xdialog --infobox "Time not valid!" 8 28
@@ -51,6 +54,6 @@ done
 
 #remove previous line and add new entry ...
 sed -i "/archivista.*backup.sh/d" /etc/crontab
-echo "0 $time * * $days root /home/archivista/backup.sh" >> /etc/crontab
+echo "$m $h * * $days root /home/archivista/backup.sh" >> /etc/crontab
 rc cron restart
 
