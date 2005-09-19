@@ -47,7 +47,7 @@ rc mysql restart
 
 # enable ssh?
 ssh_enabled=0
-if ! ps ax | grep -q sshd; then
+if ! ps -C sshd ; then
 	ssh_enabled=1
 	/home/archivista/ssh-enable.sh
 	Xdialog --msgbox "Remote access (SSH) started

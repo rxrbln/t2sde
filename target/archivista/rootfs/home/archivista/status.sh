@@ -21,7 +21,7 @@ ethtool eth0 >> $tmp
 	grep -e Speed -e Duplex -e "Link detect" $tmp
 	echo
 
-	if ps ax | grep -q sshd; then
+	if ps -C sshd >/dev/null; then
 		echo "Remote access (SSH) active"
 	else
 		echo "Remote access (SSH) not active"
@@ -30,7 +30,7 @@ ethtool eth0 >> $tmp
 	read m h junk  < <(grep "archivista.backup" /etc/crontab)
 	if [ "$h" -a "$m" ]; then
 		[[ $m = [0-9] ]] && m=0$m
-		echo "Tape Backup enabled at $h:$m"
+		echo "Tape Backup enabled at $h:$m o'clock"
 	else
 		echo "Tape Backup not enabled"
 	fi
