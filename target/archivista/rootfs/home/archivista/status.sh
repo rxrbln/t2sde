@@ -19,6 +19,7 @@ ethtool eth0 >> $tmp
 	echo
 
 	grep -e Speed -e Duplex -e "Link detect" $tmp
+	echo
 
 	if ps ax | grep -q sshd; then
 		echo "Remote access (SSH) active"
@@ -28,12 +29,13 @@ ethtool eth0 >> $tmp
 
 	read m h junk  < <(grep "archivista.backup" /etc/crontab)
 	if [ "$h" -a "$m" ]; then
+		[[ $m = [0-9] ]] && m=0$m
 		echo "Tape Backup enabled at $h:$m"
 	else
 		echo "Tape Backup not enabled"
 	fi
 
-	read junk junk id < <(grep 'server-id' /etc/my.cnf)
+	read junk junk id < <(grep '^server-id' /etc/my.cnf)
 	case $id in
 	1) echo "Database in master mode" ;;
 	2) echo "Database in slave mode" ;;
@@ -45,6 +47,6 @@ ethtool eth0 >> $tmp
 ) | sed -e 's/^[[:space:]]\+//' -e 's/inet /Inet /' -e 's/HWaddr /HWaddr:/' \
         -e 's/Bcast:/Bcast: /' -e 's/Mask:/Mask: /' -e 's/addr:/addr: /' |
 
-Xdialog --no-cancel --title "Network status" --logbox - 20 48
+Xdialog --no-cancel --title "System status" --logbox - 20 48
 
 rm -f $tmp
