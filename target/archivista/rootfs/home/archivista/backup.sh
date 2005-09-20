@@ -15,7 +15,8 @@ export DISPLAY=:0
 log=`mktemp`
 (
 	rc mysql stop > /dev/null
-	/home/archivista/rescan-scsi-bus.sh
+	/home/archivista/rescan-scsi-bus.sh > /dev/null 2>&1
+	cat /proc/scsi/scsi
 	flexbackup -set all && mt -f /dev/nst0 rewoffl
 	rc mysql start > /dev/null
 ) > $log 2>&1
