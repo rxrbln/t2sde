@@ -10,7 +10,10 @@ inject_archivista()
 	tar xvfz $base/target/$target/cvs.tar.gz
 
 	# configuration
-	cd cvs ; patch -p1 < $base/target/$target/config.patch ; cd ..
+	cd cvs
+	patch -p1 < $base/target/$target/config.patch
+	patch -p1 < $base/target/$target/pdf.patch
+	cd ..
 	
         # set the correct permissions after patching the files
 	chgrp -R 80   cvs
