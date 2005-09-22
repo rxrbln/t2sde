@@ -37,9 +37,14 @@ ethtool eth0 >> $tmp
 
 	read junk junk id < <(grep '^server-id' /etc/my.cnf)
 	case $id in
-	1) echo "Database in master mode" ;;
+	1) 
+	   if grep -q '^log-bin' /etc/my.cnf; then
+		echo "Database in master mode"
+	   else
+		echo "Database in single mode"
+	   fi
+	   ;;
 	2) echo "Database in slave mode" ;;
-	*) echo "Databse in normal mode" ;;
 	esac
 
 	echo
@@ -47,6 +52,6 @@ ethtool eth0 >> $tmp
 ) | sed -e 's/^[[:space:]]\+//' -e 's/inet /Inet /' -e 's/HWaddr /HWaddr:/' \
         -e 's/Bcast:/Bcast: /' -e 's/Mask:/Mask: /' -e 's/addr:/addr: /' |
 
-Xdialog --no-cancel --title "System status" --logbox - 20 48
+Xdialog --no-cancel --title "System status" --logbox - 30 50
 
 rm -f $tmp
