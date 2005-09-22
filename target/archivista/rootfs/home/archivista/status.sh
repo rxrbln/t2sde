@@ -41,7 +41,7 @@ ethtool eth0 >> $tmp
 	   if grep -q '^log-bin' /etc/my.cnf; then
 		echo "Database in master mode"
 	   else
-		echo "Database in single mode"
+		echo "Database in normal mode"
 	   fi
 	   ;;
 	2) echo "Database in slave mode" ;;
