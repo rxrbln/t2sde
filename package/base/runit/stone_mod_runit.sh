@@ -61,7 +61,13 @@ runit_svc() {
 }
 
 runit_install() {
-	true
+	local entry="$1" count= 
+	(( count=${#runit_installed[@]}/3 ))
+	runit_installed[$count*3+0]="${runit_available[$entry*3+0]}"
+	runit_installed[$count*3+1]="${runit_available[$entry*3+1]}"
+	runit_installed[$count*3+2]=$entry
+	runit_available[$entry*3+2]=$count
+	ln -snf "${runit_available[$entry*3+1]}" $SERVICEDIR/"${runit_available[$entry*3+0]}"
 }
 
 main() {
@@ -98,7 +104,7 @@ main() {
 					text="$text [BLOCKED]"
 					action=
 				else
-					action="runit_install ${runit_available[$entry*3+1]}"
+					action="runit_install $entry"
 				fi
 				available="$available '$text' '$action'"
 			fi
