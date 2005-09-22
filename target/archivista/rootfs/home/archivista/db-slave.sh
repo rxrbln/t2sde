@@ -34,7 +34,7 @@ done
 
 passwd=""
 until [ "$passwd" ]; do
-        passwd=`Xdialog --stdout --inputbox \
+        passwd=`Xdialog --stdout --passwordbox \
                 "Password for the replication account:" 10 38` || exit
 done
 
