@@ -117,9 +117,9 @@ public_conduit() {
 }
 
 public_clamp_mtu() {
-	addcode up 1 3 "iptables -A FORWARD -p tcp --tcp-flags SYN,RST SYN \
+	addcode up 1 3 "iptables -A FORWARD ${if:+-o $if} -p tcp --tcp-flags SYN,RST SYN \
 	                -j TCPMSS --clamp-mss-to-pmtu"
-	addcode down 9 3 "iptables -D FORWARD -p tcp --tcp-flags SYN,RST SYN \
+	addcode down 9 3 "iptables -D FORWARD ${if:+-o $if} -p tcp --tcp-flags SYN,RST SYN \
 	                  -j TCPMSS --clamp-mss-to-pmtu"
 }
 
