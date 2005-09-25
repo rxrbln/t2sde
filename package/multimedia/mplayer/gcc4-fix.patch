@@ -1,0 +1,187 @@
+diff -Nur MPlayer-1.0pre7.orig/configure MPlayer-1.0pre7/configure
+--- MPlayer-1.0pre7.orig/configure	2005-04-13 14:46:35.000000000 +0300
++++ MPlayer-1.0pre7/configure	2005-09-25 10:31:27.000000000 +0300
+@@ -605,7 +605,7 @@
+       cc_version="v. ?.??, bad"
+       cc_verc_fail=yes
+       ;;
+-    2.95.[2-9]|2.95.[2-9][-.]*|3.[0-9]|3.[0-9].[0-9])
++    2.95.[2-9]|2.95.[2-9][-.]*|3.[0-9]|3.[0-9].[0-9]|4.*)
+       _cc_major=`echo $cc_version | cut -d '.' -f 1`
+       _cc_minor=`echo $cc_version | cut -d '.' -f 2`
+       _cc_mini=`echo $cc_version | cut -d '.' -f 3`
+diff -Nur MPlayer-1.0pre7.orig/liba52/imdct.c MPlayer-1.0pre7/liba52/imdct.c
+--- MPlayer-1.0pre7.orig/liba52/imdct.c	2005-03-23 01:27:18.000000000 +0200
++++ MPlayer-1.0pre7/liba52/imdct.c	2005-09-25 10:31:27.000000000 +0300
+@@ -937,7 +937,8 @@
+     /* 4-7. iterations */
+     for (m=3; m < 7; m++) {
+ 	two_m = (1 << m);
+-	two_m_plus_one = two_m<<1;
++	int two_m_plus_four=two_m<<4;
++	complex_t* buf_plus_128=buf+128;
+ 	asm volatile(
+ 		"movl %0, %%esi				\n\t"
+ 		".balign 16				\n\t"
+@@ -963,7 +964,7 @@
+ 		"addl %2, %%esi				\n\t"
+ 		"cmpl %1, %%esi				\n\t"
+ 		" jb 1b					\n\t"
+-		:: "g" (buf), "m" (buf+128), "m" (two_m_plus_one<<3), "r" (two_m<<3),
++		:: "g" (buf), "m" (buf_plus_128), "m" (two_m_plus_four), "r" (two_m<<3),
+ 		   "r" (sseW[m])
+ 		: "%esi", "%edi", "%edx"
+ 	);
+diff -Nur MPlayer-1.0pre7.orig/libavcodec/libpostproc/postprocess_template.c MPlayer-1.0pre7/libavcodec/libpostproc/postprocess_template.c
+--- MPlayer-1.0pre7.orig/libavcodec/libpostproc/postprocess_template.c	2005-04-16 23:41:13.000000000 +0300
++++ MPlayer-1.0pre7/libavcodec/libpostproc/postprocess_template.c	2005-09-25 10:31:27.000000000 +0300
+@@ -2648,6 +2648,8 @@
+ static always_inline void RENAME(do_a_deblock)(uint8_t *src, int step, int stride, PPContext *c){
+ 	int64_t dc_mask, eq_mask;
+ 	int64_t sums[10*8*2];
++	int64_t dc_and_eq_mask;
++
+ 	src+= step*3; // src points to begin of the 8x8 Block
+ //START_TIMER
+ asm volatile(
+@@ -2754,8 +2756,9 @@
+ 		: "r" (src), "r" ((long)step), "m" (c->pQPb), "m"(c->ppMode.flatnessThreshold)
+ 		: "%"REG_a
+ 		);
++	dc_and_eq_mask=dc_mask & eq_mask;
+ 
+-	if(dc_mask & eq_mask){
++	if(dc_and_eq_mask){
+ 		long offset= -8*step;
+ 		int64_t *temp_sums= sums;
+ 
+@@ -2930,7 +2933,7 @@
+ 		" js 1b						\n\t"
+ 
+ 		: "+r"(offset), "+r"(temp_sums)
+-		: "r" ((long)step), "r"(src - offset), "m"(dc_mask & eq_mask)
++		: "r" ((long)step), "r"(src - offset), "m"(dc_and_eq_mask)
+ 		);
+ 	}else
+ 		src+= step; // src points to begin of the 8x8 Block
+diff -Nur MPlayer-1.0pre7.orig/libmpdemux/frequencies.h MPlayer-1.0pre7/libmpdemux/frequencies.h
+--- MPlayer-1.0pre7.orig/libmpdemux/frequencies.h	2001-11-17 00:06:48.000000000 +0200
++++ MPlayer-1.0pre7/libmpdemux/frequencies.h	2005-09-25 10:31:27.000000000 +0300
+@@ -104,7 +104,7 @@
+ /* --------------------------------------------------------------------- */
+ 
+ extern struct CHANLISTS   chanlists[];
+-extern struct STRTAB chanlist_names[];
++/* extern struct STRTAB chanlist_names[]; */
+ 
+ extern int                chantab;
+ extern struct CHANLIST   *chanlist;
+diff -Nur MPlayer-1.0pre7.orig/libvo/aclib_template.c MPlayer-1.0pre7/libvo/aclib_template.c
+--- MPlayer-1.0pre7.orig/libvo/aclib_template.c	2005-01-21 23:11:35.000000000 +0200
++++ MPlayer-1.0pre7/libvo/aclib_template.c	2005-09-25 10:31:27.000000000 +0300
+@@ -249,8 +249,8 @@
+ 		MOVNTQ" %%mm6, 48(%1)\n"
+ 		MOVNTQ" %%mm7, 56(%1)\n"
+ 		:: "r" (from), "r" (to) : "memory");
+-		((const unsigned char *)from)+=64;
+-		((unsigned char *)to)+=64;
++		from+=64;
++		to+=64;
+ 	}
+ 
+ //	printf(" %d %d\n", (int)from&1023, (int)to&1023);
+@@ -338,8 +338,8 @@
+ 		MOVNTQ" %%mm6, 48(%1)\n"
+ 		MOVNTQ" %%mm7, 56(%1)\n"
+ 		:: "r" (from), "r" (to) : "memory");
+-		((const unsigned char *)from)+=64;
+-		((unsigned char *)to)+=64;
++		from+=64;
++		to+=64;
+ 	}
+ 
+ #endif /* Have SSE */
+diff -Nur MPlayer-1.0pre7.orig/mmx.h MPlayer-1.0pre7/mmx.h
+--- MPlayer-1.0pre7.orig/mmx.h	2001-10-28 13:47:21.000000000 +0200
++++ MPlayer-1.0pre7/mmx.h	2005-09-25 10:31:27.000000000 +0300
+@@ -353,11 +353,11 @@
+ #define	mmx_m2r(op, mem, reg) \
+ 	__asm__ __volatile__ (#op " %0, %%" #reg \
+ 			      : /* nothing */ \
+-			      : "X" (mem))
++			      : "m" (mem))
+ 
+ #define	mmx_r2m(op, reg, mem) \
+ 	__asm__ __volatile__ (#op " %%" #reg ", %0" \
+-			      : "=X" (mem) \
++			      : "=m" (mem) \
+ 			      : /* nothing */ )
+ 
+ #define	mmx_r2r(op, regs, regd) \
+@@ -367,8 +367,8 @@
+ 	__asm__ __volatile__ ("movq %0, %%mm0\n\t" \
+ 			      #op " %1, %%mm0\n\t" \
+ 			      "movq %%mm0, %0" \
+-			      : "=X" (memd) \
+-			      : "X" (mems))
++			      : "=m" (memd) \
++			      : "m" (mems))
+ 
+ #endif
+ 
+diff -Nur MPlayer-1.0pre7.orig/postproc/swscale_template.c MPlayer-1.0pre7/postproc/swscale_template.c
+--- MPlayer-1.0pre7.orig/postproc/swscale_template.c	2005-02-17 01:47:00.000000000 +0200
++++ MPlayer-1.0pre7/postproc/swscale_template.c	2005-09-25 10:31:27.000000000 +0300
+@@ -2136,6 +2136,7 @@
+ 	else
+ 	{
+ 		long counter= -2*dstW;
++		uint8_t* ptr=src+filterSize;
+ //		filter-= counter*filterSize/2;
+ 		filterPos-= counter/2;
+ 		dst-= counter/2;
+@@ -2177,7 +2178,7 @@
+ 			" jnc 1b			\n\t"
+ 
+ 			: "+r" (counter), "+r" (filter)
+-			: "m" (filterPos), "m" (dst), "m"(src+filterSize),
++			: "m" (filterPos), "m" (dst), "m"(ptr),
+ 			  "m" (src), "r" ((long)filterSize*2)
+ 			: "%"REG_b, "%"REG_a, "%"REG_c
+ 		);
+@@ -2320,6 +2321,8 @@
+ 	{
+ #endif
+ 	//NO MMX just normal asm ...
++	  int xInc_hi=xInc>>16;
++	  int xInc_lo=xInc&0xffff;
+ 	asm volatile(
+ 		"xor %%"REG_a", %%"REG_a"	\n\t" // i
+ 		"xor %%"REG_b", %%"REG_b"	\n\t" // xx
+@@ -2356,7 +2359,7 @@
+ 		" jb 1b				\n\t"
+ 
+ 
+-		:: "r" (src), "m" (dst), "m" (dstWidth), "m" (xInc>>16), "m" (xInc&0xFFFF)
++		:: "r" (src), "m" (dst), "m" (dstWidth), "m" (xInc_hi), "m" (xInc_lo)
+ 		: "%"REG_a, "%"REG_b, "%ecx", "%"REG_D, "%esi"
+ 		);
+ #ifdef HAVE_MMX2
+@@ -2515,6 +2518,8 @@
+ 	else
+ 	{
+ #endif
++	  int xInc_hi=xInc>>16;
++	  int xInc_lo=xInc&0xffff;
+ 	asm volatile(
+ 		"xor %%"REG_a", %%"REG_a"	\n\t" // i
+ 		"xor %%"REG_b", %%"REG_b"		\n\t" // xx
+@@ -2548,7 +2553,7 @@
+ 		"cmp %2, %%"REG_a"		\n\t"
+ 		" jb 1b				\n\t"
+ 
+-		:: "m" (src1), "m" (dst), "m" ((long)dstWidth), "m" ((long)(xInc>>16)), "m" ((xInc&0xFFFF)),
++		:: "m" (src1), "m" (dst), "m" ((long)dstWidth), "m" ((long)(xInc_hi)), "m" ((xInc_lo)),
+ 		"r" (src2)
+ 		: "%"REG_a, "%"REG_b, "%ecx", "%"REG_D, "%esi"
+ 		);
