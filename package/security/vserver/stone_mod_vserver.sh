@@ -137,18 +137,32 @@ vserver_conf_rl_manage() {
 
 	while [ $errno -eq 0 ]; do
 		local options=
-		eval "gui_menu vserver_conf_uts 'VServer \`$server\` uname Configuration' $options"
+		options="$options 'resource      $( flag_if_empty $rldir/resource )' \
+			'gui_edit_deleteable resource $rldir/resource'"
+		options="$options 'resource.min  $( flag_if_empty $rldir/resource.min )' \
+			'gui_edit_deleteable resource $rldir/resource.min'"
+		options="$options 'resource.hard $( flag_if_empty $rldir/resource.hard )' \
+			'gui_edit_deleteable resource $rldir/resource.hard'"
+		options="$options 'resource.soft $( flag_if_empty $rldir/resource.soft )' \
+			'gui_edit_deleteable resource $rldir/resource.soft'"
+		eval "gui_menu vserver_conf_rl 'VServer \`$server\` (2.6) Resource Limits Configuration' $options"
 		errno=$?
 	done
 	}
 
 vserver_conf_ul_manage() {
 	local server="$1" errno=0
-	local uldir=$CONFDIR/$server/ulimits
+	local rldir=$CONFDIR/$server/ulimits
 
 	while [ $errno -eq 0 ]; do
 		local options=
-		eval "gui_menu vserver_conf_uts 'VServer \`$server\` uname Configuration' $options"
+		options="$options 'resource      $( flag_if_empty $rldir/resource )' \
+			'gui_edit_deleteable resource $rldir/resource'"
+		options="$options 'resource.hard $( flag_if_empty $rldir/resource.hard )' \
+			'gui_edit_deleteable resource $rldir/resource.hard'"
+		options="$options 'resource.soft $( flag_if_empty $rldir/resource.soft )' \
+			'gui_edit_deleteable resource $rldir/resource.soft'"
+		eval "gui_menu vserver_conf_ul 'VServer \`$server\` (2.4) Resource Limits Configuration' $options"
 		errno=$?
 	done
 	}
