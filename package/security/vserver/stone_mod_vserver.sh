@@ -36,49 +36,62 @@ gui_edit_deleteable() {
 	[ ! -s $2 ] && rm -f $2
 }
 
+flag_if_empty() {
+	[ -s $1 ] || echo '[N/A]'
+}
+
 vserver_conf_manage() {
 	local server="$1" errno=0
+	local vdir=$CONFDIR/$server
 
 	while [ $errno -eq 0 ]; do
 		local options=
 		
-		options="$options 'Name ......: $( oneliner $CONFDIR/$server/name )' ''"
-		options="$options 'XID .......: $( oneliner $CONFDIR/$server/run )' ''"
-		options="$options 'Directory .: $( readlink -f $CONFDIR/$server/vdir )' ''"
-		options="$options 'Context ...: $( oneliner $CONFDIR/$server/context )' \
-			'gui_edit_oneliner context $CONFDIR/$server/context'"
-		options="$options 'Namespace .: $( oneliner $CONFDIR/$server/namespace )' \
-			'gui_edit_oneliner namespace $CONFDIR/$server/namespace'"
+		options="$options 'Name ......: $( oneliner $vdir/name )' ''"
+		options="$options 'XID .......: $( oneliner $vdir/run )' ''"
+		options="$options 'Directory .: $( readlink -f $vdir/vdir )' ''"
+		options="$options 'Context ...: $( oneliner $vdir/context )' \
+			'gui_edit_oneliner context $vdir/context'"
+		options="$options 'Namespace .: $( oneliner $vdir/namespace )' \
+			'gui_edit_oneliner namespace $vdir/namespace'"
 			
 		options="$options '' ''"
 		case "`uname -r`" in
-			2.4*)	options="$options 'System Capabilities' \
-					'gui_edit_deleteable capabilities $CONFDIR/$server/capabilities'"
+			2.4*)	options="$options 'System Capabilities  $( flag_if_empty $vdir/capabilities )' \
+					'gui_edit_deleteable capabilities $vdir/capabilities'"
 				;;
-			*)	options="$options 'System Capabilities' \
-					'gui_edit_deleteable bcapabilities $CONFDIR/$server/bcapabilities'"
+			*)	options="$options 'System Capabilities  $( flag_if_empty $vdir/bcapabilities )' \
+					'gui_edit_deleteable bcapabilities $vdir/bcapabilities'"
 				;;
 		esac
-		options="$options 'Context Capabilities' \
-			'gui_edit_deleteable ccapabilities $CONFDIR/$server/ccapabilities'"
-		options="$options 'Flags' \
-			'gui_edit_deleteable flags $CONFDIR/$server/flags'"
-		options="$options 'Personalities' \
-			'gui_edit_deleteable personality $CONFDIR/$server/personality'"
-		options="$options 'Scheduler Parameters' \
-			'gui_edit_deleteable schedule $CONFDIR/$server/schedule'"
+		options="$options 'Context Capabilities $( flag_if_empty $vdir/ccapabilities )' \
+			'gui_edit_deleteable ccapabilities $vdir/ccapabilities'"
+		options="$options 'Flags                $( flag_if_empty $vdir/flags )' \
+			'gui_edit_deleteable flags $vdir/flags'"
+		options="$options 'Personalities        $( flag_if_empty $vdir/personality )' \
+			'gui_edit_deleteable personality $vdir/personality'"
+		options="$options 'Scheduler Parameters $( flag_if_empty $vdir/schedule )' \
+			'gui_edit_deleteable schedule $vdir/schedule'"
 
 		options="$options '' ''"
-		options="$options 'Nice Level ...: $( oneliner $CONFDIR/$server/nice )' \
-			'gui_edit_oneliner nice $CONFDIR/$server/nice'"
-		options="$options 'Default Shell : $( oneliner $CONFDIR/$server/shell )' \
-			'gui_edit_oneliner shell $CONFDIR/$server/shell'"
+		options="$options 'Nice Level ...: $( oneliner $vdir/nice )' \
+			'gui_edit_oneliner nice $vdir/nice'"
+		options="$options 'Default Shell : $( oneliner $vdir/shell )' \
+			'gui_edit_oneliner shell $vdir/shell'"
 
 		options="$options '' ''"
-		options="$options 'fstab' \
-			'gui_edit fstab $CONFDIR/$server/fstab'"
-		options="$options 'fstab.remote' \
-			'gui_edit fstab_remote $CONFDIR/$server/fstab.remote'"
+		options="$options '==> uts/'	    'vserver_conf_uts_manage  $server'"
+		options="$options '==> apps/'       'vserver_conf_apps_manage $server'"
+		options="$options '==> rlimits/'    'vserver_conf_rl_manage   $server'"
+		options="$options '==> ulimits/'    'vserver_conf_ul_manage   $server'"
+		options="$options '==> scripts/'    'vserver_conf_sc_manage   $server'"
+		options="$options '==> interfaces/' 'vserver_conf_if_manage   $server'"
+
+		options="$options '' ''"
+		options="$options 'fstab        $( flag_if_empty $vdir/fstab )' \
+			'gui_edit fstab $vdir/fstab'"
+		options="$options 'fstab.remote $( flag_if_empty $vdir/fstab.remote )' \
+			'gui_edit fstab_remote $vdir/fstab.remote'"
 
 		eval "gui_menu vserver_conf 'VServer \`$server\` Configuration' $options"
 		errno=$?
