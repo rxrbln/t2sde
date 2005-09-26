@@ -80,12 +80,14 @@ vserver_conf_manage() {
 			'gui_edit_oneliner shell $vdir/shell'"
 
 		options="$options '' ''"
-		options="$options '==> uts/'	    'vserver_conf_uts_manage  $server'"
-		options="$options '==> apps/'       'vserver_conf_apps_manage $server'"
-		options="$options '==> rlimits/'    'vserver_conf_rl_manage   $server'"
-		options="$options '==> ulimits/'    'vserver_conf_ul_manage   $server'"
-		options="$options '==> scripts/'    'vserver_conf_sc_manage   $server'"
-		options="$options '==> interfaces/' 'vserver_conf_if_manage   $server'"
+		options="$options '==> uname (uts)' 'vserver_conf_uts_manage  $server'"
+		case "`uname -r`" in
+			2.4*)	options="$options '==> Resource Limits'    'vserver_conf_ul_manage   $server'"	;;
+			*)	options="$options '==> Resource Limits'    'vserver_conf_rl_manage   $server'"	;;
+		esac
+		options="$options '==> Network Interfaces' 'vserver_conf_if_manage   $server'"
+		options="$options '==> Applications'       'vserver_conf_apps_manage $server'"
+		options="$options '==> Scripts'            'vserver_conf_sc_manage   $server'"
 
 		options="$options '' ''"
 		options="$options 'fstab        $( flag_if_empty $vdir/fstab )' \
@@ -97,6 +99,81 @@ vserver_conf_manage() {
 		errno=$?
 	done
 }
+
+vserver_conf_uts_manage() {
+	local server="$1" errno=0
+	local utsdir=$CONFDIR/$server/uts
+
+	while [ $errno -eq 0 ]; do
+		local options=
+
+		options="$options 'Context Name .: $( oneliner $utsdir/context )' 'gui_edit_oneliner context $utsdir/context'"
+		options="$options 'Node Name ....: $( oneliner $utsdir/nodename )' 'gui_edit_oneliner machine $utsdir/nodename'"
+		options="$options 'Domain Name ..: $( oneliner $utsdir/domainname )' 'gui_edit_oneliner domainname $utsdir/domainname'"
+		options="$options 'Machine Type .: $( oneliner $utsdir/machine )' 'gui_edit_oneliner machine $utsdir/machine'"
+		options="$options 'Sysname ......: $( oneliner $utsdir/sysname )' 'gui_edit_oneliner machine $utsdir/sysname'"
+		options="$options 'OS Release ...: $( oneliner $utsdir/release )' 'gui_edit_oneliner machine $utsdir/release'"
+		options="$options 'OS Version ...: $( oneliner $utsdir/version )' 'gui_edit_oneliner machine $utsdir/version'"
+
+		eval "gui_menu vserver_conf_uts 'VServer \`$server\` uname Configuration' $options"
+		errno=$?
+	done
+	}
+
+vserver_conf_apps_manage() {
+	local server="$1" errno=0
+	local appsdir=$CONFDIR/$server/apps
+
+	while [ $errno -eq 0 ]; do
+		local options=
+		eval "gui_menu vserver_conf_uts 'VServer \`$server\` uname Configuration' $options"
+		errno=$?
+	done
+	}
+
+vserver_conf_rl_manage() {
+	local server="$1" errno=0
+	local rldir=$CONFDIR/$server/rlimits
+
+	while [ $errno -eq 0 ]; do
+		local options=
+		eval "gui_menu vserver_conf_uts 'VServer \`$server\` uname Configuration' $options"
+		errno=$?
+	done
+	}
+
+vserver_conf_ul_manage() {
+	local server="$1" errno=0
+	local uldir=$CONFDIR/$server/ulimits
+
+	while [ $errno -eq 0 ]; do
+		local options=
+		eval "gui_menu vserver_conf_uts 'VServer \`$server\` uname Configuration' $options"
+		errno=$?
+	done
+	}
+
+vserver_conf_sc_manage() {
+	local server="$1" errno=0
+	local scdir=$CONFDIR/$server/scripts
+
+	while [ $errno -eq 0 ]; do
+		local options=
+		eval "gui_menu vserver_conf_uts 'VServer \`$server\` uname Configuration' $options"
+		errno=$?
+	done
+	}
+
+vserver_conf_if_manage() {
+	local server="$1" errno=0
+	local ifdir=$CONFDIR/$server/interfaces
+
+	while [ $errno -eq 0 ]; do
+		local options=
+		eval "gui_menu vserver_conf_uts 'VServer \`$server\` uname Configuration' $options"
+		errno=$?
+	done
+	}
 
 vserver_new() {
 	local server= action= errno=
