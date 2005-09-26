@@ -126,7 +126,43 @@ vserver_conf_apps_manage() {
 
 	while [ $errno -eq 0 ]; do
 		local options=
-		eval "gui_menu vserver_conf_uts 'VServer \`$server\` uname Configuration' $options"
+		options="$options '$server/apps/init/' ''"
+		options="$options '  - style ..........: $( oneliner $appsdir/init/style )' \
+			'gui_edit_oneliner init_style $appsdir/init/style'"
+		options="$options '  - mark ...........: $( oneliner $appsdir/init/mark )' \
+			'gui_edit_oneliner init_mark $appsdir/init/mark'"
+		options="$options '  - tty ............: $( readlink -f $appsdir/init/tty )' ''"
+		options="$options '  - runlevel .......: $( oneliner $appsdir/init/runlevel )' \
+			'gui_edit_oneliner init_runlevel $appsdir/init/runlevel'"
+		options="$options '  - runlevel.start .: $( oneliner $appsdir/init/runlevel.start )' \
+			'gui_edit_oneliner init_runlevel_start $appsdir/init/runlevel.start'"
+		options="$options '  - runlevel.stop ..: $( oneliner $appsdir/init/runlevel.stop )' \
+			'gui_edit_oneliner init_runlevel_stop $appsdir/init/runlevel.stop'"
+
+		options="$options '' ''"
+		options="$options '  * cmd.prepare    $( flag_if_empty $appsdir/init/cmd.prepare )' \
+			'gui_edit_deleteable init_prepare $appsdir/init/cmd.prepare'"
+		options="$options '  * cmd.start      $( flag_if_empty $appsdir/init/cmd.start )' \
+			'gui_edit_deleteable init_start $appsdir/init/cmd.start'"
+		options="$options '  * cmd.stop       $( flag_if_empty $appsdir/init/cmd.stop )' \
+			'gui_edit_deleteable init_stop $appsdir/init/cmd.stop'"
+
+		if [ -e $appsdir/init/sync ]; then
+		options="$options '  * cmd.start-sync $( flag_if_empty $appsdir/init/cmd.start-sync )' \
+			'gui_edit_deleteable init_start_sync $appsdir/init/cmd.start-sync'"
+		options="$options '  * cmd.stop-sync  $( flag_if_empty $appsdir/init/cmd.stop-sync )' \
+			'gui_edit_deleteable init_stop_sync $appsdir/init/cmd.stop-sync'"
+		fi
+		options="$options '  * mtab           $( flag_if_empty $appsdir/init/mtab )' \
+			'gui_edit_deleteable init_mtab $appsdir/init/mtab'"
+
+		options="$options '' ''"
+		options="$options '  * depends        $( flag_if_empty $appsdir/init/depends )' \
+			'gui_edit_deleteable init_depends $appsdir/init/depends'"
+		options="$options '  * killseq        $( flag_if_empty $appsdir/init/killseq )' \
+			'gui_edit_deleteable init_killseq $appsdir/init/killseq'"
+
+		eval "gui_menu vserver_conf_uts 'VServer \`$server\` Applications Configuration' $options"
 		errno=$?
 	done
 	}
