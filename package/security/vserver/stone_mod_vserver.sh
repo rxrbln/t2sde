@@ -90,10 +90,12 @@ vserver_conf_manage() {
 		options="$options '==> Scripts'            'vserver_conf_sc_manage   $server'"
 
 		options="$options '' ''"
+		options="$options 'mtab         $( flag_if_empty $appsdir/init/mtab )' \
+			'gui_edit_deleteable init_mtab $vdir/apps/init/mtab'"
 		options="$options 'fstab        $( flag_if_empty $vdir/fstab )' \
 			'gui_edit fstab $vdir/fstab'"
 		options="$options 'fstab.remote $( flag_if_empty $vdir/fstab.remote )' \
-			'gui_edit fstab_remote $vdir/fstab.remote'"
+			'gui_edit_deleteable fstab_remote $vdir/fstab.remote'"
 
 		eval "gui_menu vserver_conf 'VServer \`$server\` Configuration' $options"
 		errno=$?
@@ -131,7 +133,7 @@ vserver_conf_apps_manage() {
 			'gui_edit_oneliner init_style $appsdir/init/style'"
 		options="$options '  - mark ...........: $( oneliner $appsdir/init/mark )' \
 			'gui_edit_oneliner init_mark $appsdir/init/mark'"
-		options="$options '  - tty ............: $( readlink -f $appsdir/init/tty )' ''"
+		options="$options '  - tty ............: $( readlink -f $appsdir/init/tty 2> /dev/null )' ''"
 		options="$options '  - runlevel .......: $( oneliner $appsdir/init/runlevel )' \
 			'gui_edit_oneliner init_runlevel $appsdir/init/runlevel'"
 		options="$options '  - runlevel.start .: $( oneliner $appsdir/init/runlevel.start )' \
@@ -140,11 +142,16 @@ vserver_conf_apps_manage() {
 			'gui_edit_oneliner init_runlevel_stop $appsdir/init/runlevel.stop'"
 
 		options="$options '' ''"
-		options="$options '  * cmd.prepare    $( flag_if_empty $appsdir/init/cmd.prepare )' \
+		options="$options '  * depends     $( flag_if_empty $appsdir/init/depends )' \
+			'gui_edit_deleteable init_depends $appsdir/init/depends'"
+		options="$options '  * killseq     $( flag_if_empty $appsdir/init/killseq )' \
+			'gui_edit_deleteable init_killseq $appsdir/init/killseq'"
+
+		options="$options '  * cmd.prepare $( flag_if_empty $appsdir/init/cmd.prepare )' \
 			'gui_edit_deleteable init_prepare $appsdir/init/cmd.prepare'"
-		options="$options '  * cmd.start      $( flag_if_empty $appsdir/init/cmd.start )' \
+		options="$options '  * cmd.start   $( flag_if_empty $appsdir/init/cmd.start )' \
 			'gui_edit_deleteable init_start $appsdir/init/cmd.start'"
-		options="$options '  * cmd.stop       $( flag_if_empty $appsdir/init/cmd.stop )' \
+		options="$options '  * cmd.stop    $( flag_if_empty $appsdir/init/cmd.stop )' \
 			'gui_edit_deleteable init_stop $appsdir/init/cmd.stop'"
 
 		if [ -e $appsdir/init/sync ]; then
@@ -153,14 +160,6 @@ vserver_conf_apps_manage() {
 		options="$options '  * cmd.stop-sync  $( flag_if_empty $appsdir/init/cmd.stop-sync )' \
 			'gui_edit_deleteable init_stop_sync $appsdir/init/cmd.stop-sync'"
 		fi
-		options="$options '  * mtab           $( flag_if_empty $appsdir/init/mtab )' \
-			'gui_edit_deleteable init_mtab $appsdir/init/mtab'"
-
-		options="$options '' ''"
-		options="$options '  * depends        $( flag_if_empty $appsdir/init/depends )' \
-			'gui_edit_deleteable init_depends $appsdir/init/depends'"
-		options="$options '  * killseq        $( flag_if_empty $appsdir/init/killseq )' \
-			'gui_edit_deleteable init_killseq $appsdir/init/killseq'"
 
 		eval "gui_menu vserver_conf_uts 'VServer \`$server\` Applications Configuration' $options"
 		errno=$?
