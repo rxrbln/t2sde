@@ -48,7 +48,7 @@ vserver_conf_manage() {
 		local options=
 		
 		options="$options 'Name ......: $( oneliner $vdir/name )' ''"
-		options="$options 'XID .......: $( oneliner $vdir/run )' ''"
+		options="$options 'Context ID.: $( oneliner $vdir/run )' ''"
 		options="$options 'Directory .: $( readlink -f $vdir/vdir )' ''"
 		options="$options 'Context ...: $( oneliner $vdir/context )' \
 			'gui_edit_oneliner context $vdir/context'"
@@ -218,12 +218,47 @@ vserver_conf_if_manage() {
 	local ifdir=$CONFDIR/$server/interfaces
 
 	while [ $errno -eq 0 ]; do
-		local options=
-		eval "gui_menu vserver_conf_uts 'VServer \`$server\` uname Configuration' $options"
+		local options= iface=
+		options="$options 'default broadcast ..: $( oneliner $ifdir/bcast )'  'gui_edit_oneliner bcast $ifdir/bcast'"
+		options="$options 'default device .....: $( oneliner $ifdir/dev )'    'gui_edit_oneliner device $ifdir/dev'"
+		options="$options 'default netmask ....: $( oneliner $ifdir/prefix )' 'gui_edit_oneliner prefix $ifdir/prefix'"
+		options="$options 'default scope ......: $( oneliner $ifdir/scope )'  'gui_edit_oneliner scope $ifdir/scope'"
+		for iface in $( cd $ifdir; ls -1 ); do
+			if [ -d $ifdir/$iface/ ]; then
+				options="$options '' ''"
+				if [ -e $ifdir/$iface/disabled ]; then
+					options="$options 'interface/$iface: DISABLED' 'rm -f $ifdir/$iface/disabled'"  
+				else
+					options="$options 'interface/$iface: ENABLED'  'touch $ifdir/$iface/disabled'"  
+				fi
+				options="$options '   broadcast ..: $( oneliner $ifdir/$iface/bcast )' \
+					'gui_edit_oneliner bcast $ifdir/$iface/bcast'"
+				options="$options '   device .....: $( oneliner $ifdir/$iface/dev )' \
+					'gui_edit_oneliner dev $ifdir/$iface/dev'"
+				options="$options '   ip .........: $( oneliner $ifdir/$iface/ip )' \
+					'gui_edit_oneliner ip $ifdir/$iface/ip'"
+				options="$options '   netmask ....: $( oneliner $ifdir/$iface/prefix )' \
+					'gui_edit_oneliner prefix $ifdir/$iface/prefix'"
+				options="$options '   scope ......: $( oneliner $ifdir/$iface/scope )' \
+					'gui_edit_oneliner scope $ifdir/$iface/scope'"
+		fi
+		done
+		options="$options '' ''"
+		options="$options 'Add new interface' 'vserver_if_new $server'"
+
+		eval "gui_menu vserver_conf_uts 'VServer \`$server\` Network Interfaces Configuration' $options"
 		errno=$?
 	done
 	}
 
+vserver_if_new() {
+	local server="$1"
+	local iface=
+	gui_input "Enter a name for the new interface" '' iface
+	if [ "$iface" ]; then
+		mkdir -p "$CONFDIR/$server/interfaces/$iface"
+	fi
+}
 vserver_new() {
 	local server= action= errno=
 	gui_input "Enter a name for the new vserver" '' server
