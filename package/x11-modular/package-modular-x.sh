@@ -6,7 +6,6 @@ curl http://xorg.freedesktop.org/X11R7.0-RC0/everything/ |
 while read pkg ver
 do
 	echo $pkg $ver
-	rm -rf package/x11-modular/$pkg
 	file=$pkg
 	pkg=`echo $pkg | tr A-Z a-z`
 	mkdir -p package/x11-modular/$pkg
