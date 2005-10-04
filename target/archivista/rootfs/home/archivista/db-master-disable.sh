@@ -43,6 +43,6 @@ killall mysqld 2>/dev/null && sleep 2 && killall -9 mysqld 2>/dev/null
 rc mysql start
 
 Xdialog --msgbox "Database in normal mode. Replication
-rights for $user from $slaveip revoken." 8 38
+rights for $user from $slaveip revoked." 10 48
 
 

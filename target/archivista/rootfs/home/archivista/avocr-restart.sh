@@ -10,8 +10,9 @@ fi
 . /etc/profile
 
 killall wine-preloader
-cd  /home/archivista/.wine/drive_c/Program\ Files/Av5e
-rm -rf AV5AUTO.{WRK,STP,END}
+cd  /home/archivista/.wine/drive_c/Programs/Av5e
+cat AV5AUTO.LOG >>/home/data/archivista/images/AV5AUTO.LOG
+rm -rf AV5AUTO.{WRK,STP,END,LOG}
 
 # TODO: s.th. like:?
 # wine avocr $*

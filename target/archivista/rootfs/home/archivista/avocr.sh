@@ -2,7 +2,7 @@
 
 tmp=`mktemp`
 
-cd ~/.wine/drive_c/Program\ Files/Av5e
+cd ~/.wine/drive_c/Programs/Av5e
 
 # run wine in the background, to display a dialog if the fonts are processed
 wine avocr $* 2> $tmp &
