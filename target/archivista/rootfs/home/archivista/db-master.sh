@@ -59,8 +59,9 @@ fi
 
 rc mysql stop
 
-Xdialog --msgbox "Replication can now be performed
-on the slave." 8 30
+Xdialog --msgbox "Replication can now be performed on the slave. ATTENTION:
+Click 'OK' only after the slave is configured and all database information has
+been transferred!" 10 70
 
 [ $ssh_enabled = 1 ] && /home/archivista/ssh-disable.sh
 
