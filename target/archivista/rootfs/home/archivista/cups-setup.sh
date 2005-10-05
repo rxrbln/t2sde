@@ -9,7 +9,13 @@ fi
 # PATH and co
 . /etc/profile
 
-tip=${tip:-192.168.0.100/24}
+tip=`ifconfig eth0 | sed -n "s/.*inet addr:\([^ ]\+\) .*/\1/p"`
+if [ "$tip" ]; then
+	tip=${tip%.[0-9]*}.0/24
+else
+	tip="192.168.0.0/24"
+fi
+
 until [ "$ip" ]; do
 	tip=`Xdialog --stdout --no-cancel \
 	     --inputbox "Internet address and network
@@ -53,9 +59,10 @@ rm /etc/cups/cupsd.conf.new
 rc cups start
 
 # add printer to CUPS (CUPS needs to be running for this)
-lpadmin -p virtualpdf -L "Archivista Box" -D "PDF print into database." \
+lpadmin -p archivista -L "Archivista Box" -D "PDF print into database." \
         -E -v "cups-pdf:/" -m PostscriptColor.ppd.gz
 
 # enable CUPS at startup
 ln -sf ../init.d/cups /etc/rc.d/rc5.d/S30cups
 ln -sf ../init.d/cups /etc/rc.d/rc5.d/K70cups
+

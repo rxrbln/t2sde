@@ -10,7 +10,7 @@ fi
 . /etc/profile
 
 # remove the printer from CUPS
-lpadmin -x virtualpdf
+lpadmin -x archivista
 
 # disable CUPS at startup
 rm -f /etc/rc.d/rc5.d/S30cups /etc/rc.d/rc5.d/K70cups
