@@ -60,40 +60,37 @@ else
 	exit
 fi
 
-# turn off write cache (just to be sure)
-hdparm -W 0 /dev/hda
-
 # empty or reformat?
 if [[  $part = *Reformat* ]]; then
-	x=${part%-*}
-	if Xdialog --yesno "Formating the whole disk $x.
+	disk=${part%-*}
+	if Xdialog --yesno "Formating the whole disk $disk.
 All data will be lost!" 8 38; then
 
 		installall=1
 
-		sfdisk -uM $x << EOT
+		sfdisk -uM $disk << EOT
 ,4096,L
 ,4096,L
 ,1024,S
 ,,L
 EOT
+		# install into the first partition on fresh installs ...
+		part=${disk}1
+
 		# u/dev needs some time to regenerate the device-nodes
 		sleep 2
 		i=0
 		while [ $i -le 10 ]; do
-			[ -e /dev/hda1 ] && break
-			echo "waiting for u/dev node to come back"
+			[ -e $part ] && break
+			echo "waiting for u/dev nodes to come back"
 			sleep 1
 		done
 
-		# install into the first partition on fresh installs ...
-		part=/dev/hda1
-
 		# initialize the swap
-		mkswap ${part%[0-9]}3
+		mkswap ${disk}3
 
-		format_w_progress ${part%[0-9]}1
-		format_w_progress ${part%[0-9]}4
+		format_w_progress ${disk}1
+		format_w_progress ${disk}4
 	else
 		exit
 	fi
