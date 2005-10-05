@@ -15,7 +15,7 @@ until [ "$ip" ]; do
 	     --inputbox "Internet address and network
 prefix in CIDR notation of
 computers allowed to print
-(e.g. 192.168.0.100/24 or 10.0.0.100/16):" 10 38 $tip`
+(e.g. 192.168.0.0/24 or 10.0.0.0/16):" 10 38 $tip`
 
 	# check ip
 	if [ `echo $tip |
