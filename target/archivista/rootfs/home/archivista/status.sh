@@ -47,6 +47,12 @@ ethtool eth0 >> $tmp
 	2) echo "Database in slave mode" ;;
 	esac
 
+	if [ -e /etc/rc.d/rc5.d/S*cups ]; then
+		echo
+		echo "PDF priting enabled"
+		# TODO: Maybe parse cups config for allowed IP ranges ...
+	fi
+
 	echo
 	cat /etc/VERSION
 ) | sed -e 's/^[[:space:]]\+//' -e 's/inet /Inet /' -e 's/HWaddr /HWaddr:/' \
