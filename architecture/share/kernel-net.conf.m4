@@ -25,9 +25,13 @@ dnl
 CONFIG_NET_VENDOR_3COM=y
 CONFIG_NET_VENDOR_SMC=y
 CONFIG_NET_VENDOR_RACAL=y
+
+dnl make sure those are modular (built-in by default)
+dnl
 CONFIG_8139TOO=m
 CONFIG_NET_TULIP=m
 CONFIG_FORCEDETH=m
+CONFIG_E1000=m
 
 dnl Enable some categories so drivers are enabled as modules
 dnl

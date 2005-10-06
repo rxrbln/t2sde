@@ -51,6 +51,8 @@ CONFIG_SCSI_QLA2XXX=m
 CONFIG_SCSI_SYM53C8XX_2=m
 CONFIG_SCSI_QLA2XXX=m
 CONFIG_SCSI_MESH=m
+dnl "High end" SCSI not enabled by default
+CONFIG_FUSION=m
 
 dnl Use multi-mode and DMA since this reduces the CPU load and
 dnl also increases the IDE I/O performance in general
