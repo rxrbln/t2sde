@@ -21,11 +21,13 @@ installall=0
 # due to the new linux pipe implementation ...
 format_w_progress ()
 {
-	( echo scale=3
+	(
 	  mkfs.ext3 $1 |
 	  tr '\b' '\n' | tr ' ' '\n' |
-	  sed -n '/[0-9]\+\/[0-9]\+/p'
-	) | bc | Xdialog --progress "Formating $1 ..." 8 30
+	  sed -n 's/\([0-9]\+\/[0-9]\+\)/100*\1/p' |
+	  bc | # binary calculator, evaluating the above generated math
+	  sed 's/^\([1-9]\)$/0\1/' # append a 0 for single digits for Xdialog :-(
+	) | Xdialog --progress "Formating $1 ..." 8 30
 }
 
 
@@ -128,6 +130,7 @@ if [ $installall -eq 1 ]; then
 
 	if ! grep -q /mnt/target/home/data /proc/mounts; then
 		Xdialog --msgbox "Partiton could not be mounted. Aborting." 8 40
+		umount /mnt/target
 		exit
 	fi
 
