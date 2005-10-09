@@ -8,13 +8,17 @@ fi
 
 log=`mktemp`
 (
-	rc mysql stop
+	rc mysql stop > /dev/null
+	sleep 5 # TODO: ...
+
 	mkdir -p /home/data
 	rm -rf /home/data/*
 	cd /home/data
+
         mt -f /dev/nst0 asf 1
 	flexbackup -extract
-	rc mysql start
+
+	rc mysql start > /dev/null
 ) > $log 2>&1
 
 Xdialog --no-cancel --log - 20 60 < $log
