@@ -9,8 +9,10 @@ fi
 # PATH and co
 . /etc/profile
 
+set -x
+
 # include shared code
-. ${0%/*}/backup-setup.in
+. ${0%/*}/backup-setup.in /home/archivista/net-backup.sh
 
 get_days
 

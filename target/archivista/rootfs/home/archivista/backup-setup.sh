@@ -10,7 +10,7 @@ fi
 . /etc/profile
 
 # include shared code
-. ${0%/*}/backup-setup.in
+. ${0%/*}/backup-setup.in /home/archivista/backup.sh
 
 get_days
 
