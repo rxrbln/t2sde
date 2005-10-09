@@ -12,18 +12,25 @@ fi
 # Xdialog and friends
 export DISPLAY=:0
 
-mkdir -p /mnt/net
+# include shared code
+. ${0%/*}/net-backup.in
 
 log=`mktemp`
 (
+	# shared function, included on top
+	mount_net /mnt/net || exit
+	
 	rc mysql stop > /dev/null
-
-	# mount -t $type $from /mnt/net $options
+	sleep 5 # give mysql some time to shut down fully - can be removed later
+		# , when we have a loop waiting for mysql in the init script
 
 	# no -a since we can not store user/group on most CIFS shares
-	# rsync -rv /home/data /mnt/net/
+	rsync -rvt /home/data /mnt/net/
+	error=$?
+	[ $error -ne 0 ] && echo "Error $error during rsync run.
+Not all files might be transfered."
 
-	# umount /mnt/net
+	umount /mnt/net
 
 	rc mysql start > /dev/null
 ) > $log 2>&1
