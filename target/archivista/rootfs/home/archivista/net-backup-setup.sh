@@ -1,16 +1,16 @@
 #!/bin/bash
 
 if [ "$UID" -ne 0 ]; then
-	exec gnomesu -t "Setup backup" \
+	exec gnomesu -t "Setup backup to network location" \
 	-m "Please enter the system password (root user)^\
-in order to setup the backup." -c $0
+in order to setup the network backup." -c $0
 fi
 
 # PATH and co
 . /etc/profile
 
 # read previous settings
-line=`grep "archivista.*/backup.sh" /etc/crontab`
+line=`grep "archivista.*/net-backup.sh" /etc/crontab`
 tdays=`echo "$line" | cut -d ' ' -f 5`
 read m h < <(echo "$line" | cut -d ' ' -f 1-2)
 ttime="$h:$m"
@@ -52,8 +52,12 @@ the specified days (e.g. 2:30):" 10 40 "$ttime"` || exit
 	fi
 done
 
-#remove previous line and add new entry ...
-sed -i "/archivista.*\/backup.sh/d" /etc/crontab
-echo "$m $h * * $days root /home/archivista/backup.sh" >> /etc/crontab
+# type: cifs / nfs / ...
+
+# server / user / pass / ...
+
+# remove previous line and add new entry ...
+sed -i "/archivista.*\/net-backup.sh/d" /etc/crontab
+echo "$m $h * * $days root /home/archivista/net-backup.sh" >> /etc/crontab
 rc cron restart
 
