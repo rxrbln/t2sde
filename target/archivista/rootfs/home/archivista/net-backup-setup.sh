@@ -37,7 +37,7 @@ NFS is usually used in Unix environments." 0 0 CIFS NFS | tr A-Z a-z` || exit
 server=`Xdialog --stdout --inputbox "Server IP (or hostname):" 0 0 $server` || exit
 share=`Xdialog --stdout --inputbox "Share:" 0 0 $share` || exit
 
-if [ $type = cfs ]; then
+if [ $type = cifs ]; then
 	user=`Xdialog --stdout --inputbox "User account:" 0 0 $user` || exit
 	passwd=`Xdialog --stdout --passwordbox "Password:" 0 0 $passwd` || exit
 	domain=`Xdialog --stdout --cancel-label=None --inputbox "Domain:" 0 0 $domain`
