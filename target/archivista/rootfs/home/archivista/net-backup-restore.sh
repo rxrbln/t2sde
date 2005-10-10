@@ -31,7 +31,9 @@ log=`mktemp`
 	# no -a since we can not store user/group on most CIFS shares
 	rsync -rvt --delete /mnt/net/data/ /home/data/
 
-	# TODO: permission fixup, since not backed up
+	# permission fixup, since not backed up due cifs
+	chown -R archivista:users /home/data/archivista/images
+	chown -R mysql:mysql /home/data/archivista/mysql
 
 	umount /mnt/net
 

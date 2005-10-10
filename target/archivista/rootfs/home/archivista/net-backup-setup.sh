@@ -30,14 +30,14 @@ get_time
 type=`Xdialog --stdout --combobox "Protocol used to access the remote server.
 CIFS stands for Common Internet Filesystem (formerly
 known as SMB) is used on Microsoft servers, where
-NFS is usually used in Unix environments." 0 0 CIFS NFS` || exit
+NFS is usually used in Unix environments." 0 0 CIFS NFS | tr A-Z a-z` || exit
 
 # server / user / pass / ...
 
 server=`Xdialog --stdout --inputbox "Server IP (or hostname):" 0 0 $server` || exit
+share=`Xdialog --stdout --inputbox "Share:" 0 0 $share` || exit
 
-if [ $type = CIFS ]; then
-	share=`Xdialog --stdout --inputbox "Share:" 0 0 $share` || exit
+if [ $type = cfs ]; then
 	user=`Xdialog --stdout --inputbox "User account:" 0 0 $user` || exit
 	passwd=`Xdialog --stdout --passwordbox "Password:" 0 0 $passwd` || exit
 	domain=`Xdialog --stdout --cancel-label=None --inputbox "Domain:" 0 0 $domain`
@@ -48,8 +48,9 @@ fi
 (
   echo "type=$type"
   echo "server=$server"
-  if [ $type = CIFS ]; then
-	[ "$share" ] && echo "share=$share"
+  echo "share=$share"
+
+  if [ $type = cifs ]; then
 	[ "$user" ] && echo "user=$user"
 	[ "$passwd" ] && echo "passwd=$passwd"
 	[ "$domain" ] && echo "domain=$domain"
