@@ -35,6 +35,9 @@ log=`mktemp`
 	chown -R archivista:users /home/data/archivista/images
 	chown -R mysql:mysql /home/data/archivista/mysql
 
+	# potentially fixup naming (case) - just to be sure
+	/home/archivista/mysql-case-fixup.sh /home/data/archivista/mysql
+
 	umount /mnt/net
 
 	rc mysql start > /dev/null
