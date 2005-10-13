@@ -1,5 +1,5 @@
 #!/bin/bash
 
-boot_title="Archivista Scan Server - $build_date"
+boot_title="Archivista Box - $build_date"
 . $base/target/livecd/build_initrd.sh
 

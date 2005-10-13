@@ -7,10 +7,10 @@
  		ver=${x/vmlinuz_/}
  		if [ $first = 1 ] ; then
 -			label=linux ; first=0
-+			label="Archivista" ; first=0
++			label="Archivista Box" ; first=0
  		else
 -			label=linux-$ver
-+			label="Archivista (Kernel: $ver)"
++			label="Archivista Box (Kernel: $ver)"
  		fi
  
  		cat << EOT
