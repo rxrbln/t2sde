@@ -9,6 +9,12 @@ fi
 # PATH and co
 . /etc/profile
 
+# sanity check for user response
+if grep -q DSSL /sbin/init.d/apache; then
+        Xdialog --default-no --yesno "Support for https is already enabled.
+Create new a new X.509 certificate?" 0 0 || exit
+fi
+
 cd /etc/opt/apache
 mkdir -p ssl.{crt,key}
 
@@ -44,6 +50,9 @@ org=$org
 dep=$dep
 mail=$mail
 EOT
+
+Xdialog --no-cancel --msgbox "X.509 certificate for https created." 0 0
+
 
 # tweak init script to start with SSL suport
 sed -i "s/apachectl .*start/apachectl -DSSL -k start/" /sbin/init.d/apache

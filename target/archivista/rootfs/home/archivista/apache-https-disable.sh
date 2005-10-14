@@ -9,6 +9,12 @@ fi
 # PATH and co
 . /etc/profile
 
+# sanity check for user response
+if ! grep -q DSSL /sbin/init.d/apache; then
+	Xdialog --no-cancel --msgbox "Support for https was not enabled" 0 0
+	exit
+fi
+
 # tweak init script to start without SSL suport
 sed -i "s/apachectl .*start/apachectl -k start/" /sbin/init.d/apache
 
