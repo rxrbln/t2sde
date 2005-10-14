@@ -4,6 +4,18 @@
 
 tmp=`mktemp`
 
+cron_status ()
+{
+	read m h x x days junk < <(grep "$1" /etc/crontab)
+
+	if [ "$h" -a "$m" ]; then
+		[[ $m = [0-9] ]] && m=0$m
+		echo "$2 enabled at $h:$m o'clock for days $days"
+	else
+		echo "$2 not enabled"
+	fi
+}
+
 ifconfig eth0 > $tmp
 ethtool eth0 >> $tmp
 
@@ -21,18 +33,10 @@ ethtool eth0 >> $tmp
 	grep -e Speed -e Duplex -e "Link detect" $tmp
 	echo
 
-	if ps -C sshd >/dev/null; then
-		echo "Remote access (SSH) active"
+	if grep -q DSSL /sbin/init.d/apache; then
+		echo "Web server https (SSL) enabled"
 	else
-		echo "Remote access (SSH) not active"
-	fi
-
-	read m h junk  < <(grep "archivista.backup" /etc/crontab)
-	if [ "$h" -a "$m" ]; then
-		[[ $m = [0-9] ]] && m=0$m
-		echo "Tape Backup enabled at $h:$m o'clock"
-	else
-		echo "Tape Backup not enabled"
+		echo "Web server https (SSL) disabled"
 	fi
 
 	read junk junk id < <(grep '^server-id' /etc/my.cnf)
@@ -46,14 +50,33 @@ ethtool eth0 >> $tmp
 	   ;;
 	2) echo "Database in slave mode" ;;
 	esac
+	echo
 
 	if [ -e /etc/rc.d/rc5.d/S*cups ]; then
-		echo
 		echo "PDF priting enabled"
 		# TODO: Maybe parse cups config for allowed IP ranges ...
+	else
+		echo "PDF printing disabled"
+	fi
+	echo
+
+	if ps -C sshd >/dev/null; then
+		echo "Remote access (SSH) active"
+	else
+		echo "Remote access (SSH) not active"
 	fi
 
+	if ps -C x11vnc >/dev/null; then
+		echo "Graphical remote access (VNC) active"
+	else
+		echo "Graphical remote access (VNC) not active"
+	fi
 	echo
+
+	cron_status "/backup.sh" "Tape Backup"
+	cron_status "/net-backup.sh" "Network Backup"
+	echo
+
 	cat /etc/VERSION
 ) | sed -e 's/^[[:space:]]\+//' -e 's/inet /Inet /' -e 's/HWaddr /HWaddr:/' \
         -e 's/Bcast:/Bcast: /' -e 's/Mask:/Mask: /' -e 's/addr:/addr: /' |
