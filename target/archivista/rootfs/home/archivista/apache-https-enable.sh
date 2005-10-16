@@ -53,12 +53,11 @@ EOT
 
 Xdialog --no-cancel --msgbox "X.509 certificate for https created." 0 0
 
-
 # tweak init script to start with SSL suport
 sed -i "s/apachectl .*start/apachectl -DSSL -k start/" /sbin/init.d/apache
 
 # tweak the window manager references to http - menu, keys, startup
-sed -i s/http:/https:/g /home/archivista/.fluxbox/*
+sed -i 's,http://localhost/,https://localhost/,g' /home/archivista/.fluxbox/*
 
 rc apache stop
 rc apache start
