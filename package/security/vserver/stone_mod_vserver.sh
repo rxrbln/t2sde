@@ -263,7 +263,7 @@ vserver_new() {
 	local server= action= errno=
 	gui_input "Enter a name for the new vserver" '' server
 	if [ "$server" ]; then
-		action="vserver '$server' build -m skeleton"
+		action="vserver '$server' build -m skeleton --initstyle plain"
 		eval "$action"; errno=$?
 		if [ $errno -eq 0 ]; then
 			vserver_conf_manage "$server"
