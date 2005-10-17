@@ -23,7 +23,22 @@ mkdir -p ssl.{crt,key}
 
 [ "$ip" ] || ip=`ifconfig eth0 | sed -n "s/.*inet addr:\([^ ]\+\) .*/\1/p"`
 ip=`Xdialog --stdout --inputbox "Server IP or hostname:" 0 0 $ip` || exit
-country=`Xdialog --stdout --inputbox "Country (code):" 0 0 $country` || exit
+
+tcountry="$country"; country=""
+until [ "$country" ]; do
+	tcountry="`Xdialog --stdout --inputbox "Country (code):" \
+	          0 0 $tcountry`" || exit
+	# upper case
+	tcountry="`echo $tcountry | tr a-z A-Z`"
+	# valid two letter code?
+	if [[ "$tcountry" = [A-Z][A-Z] ]]; then
+		country="$tcountry"
+	else
+		Xdialog --msgbox "The country must be a two letter
+ISO 3166 code, for example US, DE or CH." 0 0
+	fi
+done
+
 state=`Xdialog --stdout --inputbox "State or Province:" 0 0 $state` || exit
 city=`Xdialog --stdout --inputbox "City:" 0 0 $city` || exit
 org=`Xdialog --stdout --inputbox "Organization:" 0 0 $org` || exit
@@ -51,7 +66,14 @@ dep=$dep
 mail=$mail
 EOT
 
-Xdialog --no-cancel --msgbox "X.509 certificate for https created." 0 0
+# size greater than zero?
+if [ -s ssl.key/server.key -a -s ssl.crt/server.crt ]; then
+	Xdialog --no-cancel --msgbox "X.509 certificate for https created." 0 0
+else
+	Xdialog --no-cancel --msgbox "An error occured creating the secret key
+or X.509 certificate for https." 0 0
+	exit
+fi
 
 # tweak init script to start with SSL suport
 sed -i "s/apachectl .*start/apachectl -DSSL -k start/" /sbin/init.d/apache
