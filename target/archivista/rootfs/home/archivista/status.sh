@@ -39,6 +39,12 @@ ethtool eth0 >> $tmp
 		echo "Web server https (SSL) disabled"
 	fi
 
+	if grep -q '^ftp' /etc/inetd.conf; then
+		echo "FTP server enabled"
+	else
+		echo "FTP server disabled"
+	fi
+
 	read junk junk id < <(grep '^server-id' /etc/my.cnf)
 	case $id in
 	1) 
@@ -81,6 +87,6 @@ ethtool eth0 >> $tmp
 ) | sed -e 's/^[[:space:]]\+//' -e 's/inet /Inet /' -e 's/HWaddr /HWaddr:/' \
         -e 's/Bcast:/Bcast: /' -e 's/Mask:/Mask: /' -e 's/addr:/addr: /' |
 
-Xdialog --no-cancel --title "System status" --logbox - 30 50
+Xdialog --no-cancel --title "System status" --logbox - 35 45
 
 rm -f $tmp
