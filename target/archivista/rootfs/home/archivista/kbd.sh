@@ -21,8 +21,12 @@ layout=`Xdialog --stdout --cancel-label=Other \
 
 case "$layout" in
 	US) layout=us ;;
+	French) layout=fr ;;
 	German) layout=de ;;
-	Switzerland) layout=de_CH ;;
+	Italian) layout=it ;;
+	Swiss German) layout=de_CH ;;
+	Swiss French) layout=fr_CH ;;
+	Swiss Italian) layout=it_CH ;;
 	*) layout=other
 esac
 
