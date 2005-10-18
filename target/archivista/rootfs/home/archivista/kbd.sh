@@ -17,16 +17,16 @@ fi
 
 layout=`Xdialog --stdout --cancel-label=Other \
         --combobox "Please choose your keyboard layout." 8 38 \
-        US German Switzerland`
+        US French German Italian SwissGerman SwissFrench SwissItalian`
 
 case "$layout" in
 	US) layout=us ;;
 	French) layout=fr ;;
 	German) layout=de ;;
 	Italian) layout=it ;;
-	Swiss German) layout=de_CH ;;
-	Swiss French) layout=fr_CH ;;
-	Swiss Italian) layout=it_CH ;;
+	SwissGerman) layout=de_CH ;;
+	SwissFrench) layout=fr_CH ;;
+	SwissItalian) layout=it_CH ;;
 	*) layout=other
 esac
 
