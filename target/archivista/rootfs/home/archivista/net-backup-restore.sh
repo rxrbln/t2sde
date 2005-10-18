@@ -32,6 +32,7 @@ log=`mktemp`
 	rsync -rvt --delete /mnt/net/data/ /home/data/
 
 	# permission fixup, since not backed up due cifs
+	cgown -R ftp:users /home/data/archivista/ftp
 	chown -R archivista:users /home/data/archivista/images
 	chown -R mysql:mysql /home/data/archivista/mysql
 
