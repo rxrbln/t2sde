@@ -21,7 +21,6 @@ log=`mktemp`
 	mount_net /mnt/net || exit
 
 	rc mysql stop > /dev/null
-	sleep 5 # TODO: fix mysql init stop
 
 	mkdir -p /home/data
 	# rm -rf /home/data/* # we skip this due rsync -
@@ -32,7 +31,7 @@ log=`mktemp`
 	rsync -rvt --delete /mnt/net/data/ /home/data/
 
 	# permission fixup, since not backed up due cifs
-	cgown -R ftp:users /home/data/archivista/ftp
+	chown -R ftp:users /home/data/archivista/ftp
 	chown -R archivista:users /home/data/archivista/images
 	chown -R mysql:mysql /home/data/archivista/mysql
 
