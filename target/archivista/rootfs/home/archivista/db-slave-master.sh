@@ -10,11 +10,17 @@ fi
 # PATH and co
 . /etc/profile
 
+# stop slave mode
+mysql -uroot -p$PASSWD -hlocalhost <<-EOT
+SLAVE STOP;
+RESET SLAVE;
+EOT
+
 rc mysql stop
 
-# bring into normal mode
+# configure normal, master mode
 sed -i -e "s/.*server-id.*/server-id = 1/" \
-       -e "s/.*log-bin$/#log-bin/" /etc/my.cnf
+       -e "s/.*\(master-.*\)/# \1/" /etc/my.cnf
 
 rc mysql start
 
