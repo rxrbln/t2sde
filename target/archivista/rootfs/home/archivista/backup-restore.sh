@@ -9,7 +9,6 @@ fi
 log=`mktemp`
 (
 	rc mysql stop > /dev/null
-	sleep 5 # TODO: ...
 
 	mkdir -p /home/data
 	rm -rf /home/data/*
