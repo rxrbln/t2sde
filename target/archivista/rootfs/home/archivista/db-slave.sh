@@ -39,8 +39,6 @@ until [ "$passwd" ]; do
 done
 
 rc mysql stop
-sleep 2
-killall mysqld 2>/dev/null && sleep 2 && killall -9 mysqld 2>/dev/null
 
 # copy the db and perform other needed tasks on the master
 echo "Please enter the master server system (root user) password in order to
@@ -58,7 +56,6 @@ fi
 
 # configure slave mode
 sed -i -e "s/.*server-id.*/server-id = 2/" \
-       -e "s/.*log-bin$/log-bin/" \
        -e "s/.*master-host.*$/master-host = $masterip/" \
        -e "s/.*master-user.*$/master-user = $user/" \
        -e "s/.*master-password.*$/master-password = $passwd/" /etc/my.cnf
