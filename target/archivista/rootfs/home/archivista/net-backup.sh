@@ -21,8 +21,6 @@ log=`mktemp`
 	mount_net /mnt/net || exit
 	
 	rc mysql stop > /dev/null
-	sleep 5 # give mysql some time to shut down fully - can be removed later
-		# , when we have a loop waiting for mysql in the init script
 
 	# no -a since we can not store user/group on most CIFS shares
 	rsync -rvt /home/data /mnt/net/
