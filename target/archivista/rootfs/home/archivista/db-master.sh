@@ -35,17 +35,20 @@ until [ "$passwd" ]; do
                 "Password for the replication account:" 0 0` || exit
 done
 
-# always on now
-#sed -i -e "s/.*log-bin$/log-bin/" \
-#       -e "s/.*max-binlog-size.*/max-binlog-size = 300M/" /etc/my.cnf
-
+# setup access rights
 mysql -uroot -p$PASSWD -hlocalhost <<-EOT
 grant replication slave on *.* to '$user'@'$slaveip' identified by '$passwd';
 flush privileges;
 EOT
 
+# read lock for replication
 mysql -uroot -p$PASSWD -hlocalhost <<-EOT
 FLUSH TABLES WITH READ LOCK;
+EOT
+
+# save log position for slave :-(
+mysql -uroot -p$PASSWD -hlocalhost > /home/data/archivista/mysql/log-pos <<-EOT
+SHOW MASTER STATUS;
 EOT
 
 # enable ssh?
@@ -64,6 +67,7 @@ all database information has been transferred!" 0 0
 
 [ $ssh_enabled = 1 ] && /home/archivista/ssh-disable.sh
 
+# finally unlock tables
 mysql -uroot -p$PASSWD -hlocalhost <<-EOT
 UNLOCK TABLES;
 EOT
