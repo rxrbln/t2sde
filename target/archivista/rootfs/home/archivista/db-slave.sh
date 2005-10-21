@@ -1,7 +1,7 @@
 #!/bin/bash
 
 if [ "$UID" -ne 0 ]; then
-	exec gnomesu -t "Enable database slave mode" \
+	exec gnomesu -p -t "Enable database slave mode" \
 	-m "Please enter the system password (root user)^\
 in order to enable the database slave mode." \
 	-c "/usr/X11/bin/xterm -rv -fa Mono -e $0"
@@ -9,6 +9,10 @@ fi
 
 # PATH and co
 . /etc/profile
+
+Xdialog --default-no --yesno "Enabling slave mode will erase
+the current database!
+Are you sure you want to proceed?" 10 38 || exit
 
 # get master ip
 until [ "$masterip" ]; do
@@ -21,10 +25,6 @@ until [ "$masterip" ]; do
 		export masterip=$tmasterip
 	fi
 done 
-
-Xdialog --yesno "Enabling slave mode will erase
-the current database!
-Are you sure you want to proceed?" 10 38 || exit
 
 user=""
 until [ "$user" ]; do
@@ -43,8 +43,10 @@ rc mysql stop
 # copy the db and perform other needed tasks on the master
 echo "Please enter the master server system (root user) password in order to
 copy the initial database:"
-rsync -arve ssh --delete $masterip:/home/data/archivista/mysql \
-                                   /home/data/archivista/
+rsync -arve ssh --delete --exclude '*-bin.*' --exclude '*.info' \
+      --delete-excluded \
+      $masterip:/home/data/archivista/mysql \
+                /home/data/archivista/
 error=$?
 
 if [ $error -ne 0 ]; then
@@ -60,7 +62,21 @@ sed -i -e "s/.*server-id.*/server-id = 2/" \
        -e "s/.*master-user.*$/master-user = $user/" \
        -e "s/.*master-password.*$/master-password = $passwd/" /etc/my.cnf
 
-rc mysql start
+#TODO allow: rc mysql start --skip-slave-start ...
+/opt/mysql/bin/mysqld_safe --pid-file=/var/opt/mysql/pid --skip-slave-start &
+sleep 2
+
+read log pos < <(tail -n 1 /home/data/archivista/mysql/log-pos)
+
+mysql -uroot -p$PASSWD -hlocalhost <<-EOT
+CHANGE MASTER TO
+       MASTER_HOST='$masterip',
+       MASTER_USER='$user',
+       MASTER_PASSWORD='$passwd',
+       MASTER_LOG_FILE='$log',
+       MASTER_LOG_POS=$pos;
+START SLAVE;
+EOT
 
 echo "Press enter or close this window."
 read in
