@@ -48,7 +48,7 @@ rm -f $$.diff
 # Only package names in lowercase are supported. As an additional
 # service any package names supplied in capitols will be converted
 # to lowercase.
-pkg=`echo $pkg | tr [A-Z] [a-z]`
+pkg=`echo $pkg | tr A-Z a-z`
 
 # Of course we can only update packages we know about.
 if [ -d package/*/$pkg ]; then
