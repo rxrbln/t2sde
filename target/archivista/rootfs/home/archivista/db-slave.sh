@@ -12,15 +12,15 @@ fi
 
 Xdialog --default-no --yesno "Enabling slave mode will erase
 the current database!
-Are you sure you want to proceed?" 10 38 || exit
+Are you sure you want to proceed?" 0 0 || exit
 
 # get master ip
 until [ "$masterip" ]; do
 	tmasterip=`Xdialog --stdout --inputbox \
-	"Enter IP or hostname of master server:" 10 38 $tmasterip` || exit
+	"Enter IP or hostname of master server:" 0 0 $tmasterip` || exit
 
 	if ! ping -c 1 $tmasterip ; then
-		Xdialog --infobox 'Master not answering (pings)!' 8 28
+		Xdialog --infobox 'Master not answering (pings)!' 0 0
 	else
 		export masterip=$tmasterip
 	fi
@@ -29,13 +29,13 @@ done
 user=""
 until [ "$user" ]; do
         user=`Xdialog --stdout --inputbox \
-              "Name used for the replication account:" 10 38` || exit
+              "Name used for the replication account:" 0 0` || exit
 done
 
 passwd=""
 until [ "$passwd" ]; do
         passwd=`Xdialog --stdout --passwordbox \
-                "Password for the replication account:" 10 38` || exit
+                "Password for the replication account:" 0 0` || exit
 done
 
 rc mysql stop
@@ -51,9 +51,16 @@ error=$?
 
 if [ $error -ne 0 ]; then
 	echo Return code: $error
-	Xdialog --msgbox 'Error obtaining initial
-database from master!' 8 28
+	Xdialog --ok-label=Quit \
+	        --msgbox 'Error obtaining initial database from master!' 0 0
 	exit
+fi
+
+if [ !-f /home/data/archivista/mysql/log-pos ]; then
+	Xdialog --ok-label=Quit \
+--msgbox 'The master was not prepared to replicate
+to a client (no log position found).' 0 0
+        exit
 fi
 
 # configure slave mode

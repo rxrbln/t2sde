@@ -1,9 +1,9 @@
 #!/bin/bash
 
 if [ "$UID" -ne 0 ]; then
-	exec gnomesu -p -t "Database slave -> normal mode" \
+	exec gnomesu -p -t "Database slave -> master mode" \
 	-m "Please enter the system password (root user)^\
-in order to bring the database from slave into normal mode." \
+in order to bring the database from slave into master mode." \
 	-c $0
 fi
 
