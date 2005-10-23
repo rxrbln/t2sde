@@ -65,6 +65,8 @@ Xdialog --ok-label="Continue" \
 Click 'Continue' when the slave is configured and
 all database information has been transferred!" 0 0
 
+rm -fv /home/data/archivista/mysql/log-pos
+
 [ $ssh_enabled = 1 ] && /home/archivista/ssh-disable.sh
 
 # finally unlock tables
