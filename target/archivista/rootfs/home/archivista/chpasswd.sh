@@ -24,6 +24,9 @@ fi
 
 . /etc/profile
 
+# include shared code (to modify the Global.pm)
+. ${0%/*}/Global.pm.in
+
 tmp0=`mktemp`
 if [ "$user" != root ]; then
 	Xdialog --nocancel --passwordbox "Enter the current user password" 8 40\
@@ -59,11 +62,11 @@ if [ -s $tmp1 ] && cmp -s $tmp1 $tmp2 ; then
 
 	# change the perl class-library password:
 	if [ $user = root ]; then
+		# maybe shared code for this as well?
 		sed -i "s/\(.*MYSQL_PWD.* = \).*/\1\"$newpasswd\";/" \
 		    /usr/lib/perl5/*/Archivista/Config.pm 
 
-		sed -i "/sub avdb_pwd/ { N ; s/\".*\"/\"$newpasswd\"/ }" \
-		    /home/cvs/archivista/webclient/perl/inc/Global.pm
+		set_Global.pm_string avdb_pwd $newpasswd
 
 		killall firefox-bin
 		rc apache restart
