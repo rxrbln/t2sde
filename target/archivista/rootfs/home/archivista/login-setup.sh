@@ -1,7 +1,5 @@
 #!/bin/bash
 
-# Functions to get and set default values in Perl code.
-#
 # Copyright (C) 2005 Archivista GmbH
 # Copyright (C) 2005 Rene Rebe
 
@@ -12,34 +10,10 @@ in order to configure the web client login." -c $0
 fi
 
 # PATH and co
-
-
 . /etc/profile
 
-get_Global.pm_string ()
-{
-	sed -n "/sub $1/ { N ; s/.*\"\(.*\)\".*/\1/p }" \
-	    /home/cvs/archivista/webclient/perl/inc/Global.pm
-}
-
-get_Global.pm_var ()
-{
-        sed -n "/sub $1/ { N ; s/.*return \(.*\);$/\1/p }" \
-            /home/cvs/archivista/webclient/perl/inc/Global.pm
-}
-
-set_Global.pm_string ()
-{
-	sed -i "/sub $1/ { N ; s/\".*\"/\"$2\"/ }" \
-	    /home/cvs/archivista/webclient/perl/inc/Global.pm
-}
-
-set_Global.pm_var ()
-{
-	sed -i "/sub $1/ { N ; s/return .*/return $2;/ }" \
-	    /home/cvs/archivista/webclient/perl/inc/Global.pm
-}
-
+# include shared code
+. ${0%/*}/Global.pm.in
 
 
 onlyLocalhost=`get_Global.pm_var onlyLocalhost`
