@@ -12,9 +12,5 @@
 # GNU General Public License can be found in the file COPYING.
 # --- T2-COPYRIGHT-NOTE-END ---
 
-. target/generic/build.sh
-
-# TODO: create an image containing an initial ram disk and a bootloader
-
-echo_status "Done!"
+. target/embedded/build.sh
 
