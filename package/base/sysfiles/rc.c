@@ -86,13 +86,13 @@ int main(int argc, char ** argv) {
 	}
 
 	/* Display help message */
-	if ( argc != 3 ) {
+	if ( argc < 3 ) {
 		fprintf(stderr,
 "\n"
 "  Run SystemV Init-Scripts with a clean environment and detached from\n"
 "  the terminal.\n"
 "\n"
-"  Usage: rc [ --nobtee ] <service> { start | stop | ... | help }\n");
+"  Usage: rc [ --nobtee ] <service> { start | stop | ... | help } [ script options ]\n");
 	}
 	if ( argc == 1 ) {
 		fprintf(stderr, "\n"
@@ -101,7 +101,7 @@ int main(int argc, char ** argv) {
 		fflush(stderr);
 		system("ls /etc/rc.d/init.d >&2");
 	}
-	if ( argc != 3 ) {
+	if ( argc < 3 ) {
 		fprintf(stderr, "\n");
 		return 1;
 	}
@@ -176,9 +176,12 @@ int main(int argc, char ** argv) {
 	/* Run the command in a (non-interactive) login shell (i.e. read
 	 * /etc/profile) and send \004 after running the script if we are
 	 * using btee. */
-	snprintf(command, 1024, "%s%s %s </dev/null 2>&1%s",
-	         strchr(argv[1], '/') ? "" : "/etc/rc.d/init.d/",
-	         argv[1], argv[2], use_btee ? "; echo -ne '\004'" : "");
+	i = snprintf(command, sizeof(command), "%s%s",
+	         strchr(argv[1], '/') ? "" : "/etc/rc.d/init.d/", argv[1]);
+	while (argv[2]) /* copy args */
+		i += snprintf(command+i, sizeof(command)-i, " %s", argv++[2]);
+	i+=snprintf(command+i, sizeof(command)-i, " </dev/null 2>&1%s",
+	         use_btee ? "; echo -ne '\004'" : "");
 	execle("/bin/bash", "-bash", "-l", "-c", command, NULL, clean_env);
 
 	/* Oups! Can't exec the shell. */
