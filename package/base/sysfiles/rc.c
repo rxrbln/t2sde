@@ -153,7 +153,7 @@ int main(int argc, char ** argv) {
 	for (i=1; i<NSIG; i++) {
 		if ( i == SIGKILL ) continue;
 		if ( i == SIGSTOP ) continue;
-		if ( i > SIGUNUSED && i < SIGRTMIN ) continue;
+		if ( i >= __SIGRTMIN && i < SIGRTMIN ) continue;
 		if( signal(i, SIG_DFL) == SIG_ERR ) {
 			fprintf(stderr, "rc: Can't reset signal #%d: "
 			        "%s\n", i, strerror(errno) );
