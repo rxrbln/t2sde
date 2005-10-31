@@ -79,14 +79,17 @@ int main(int argc, char ** argv) {
 	if ( getenv("TERM") )
 		sprintf(env_TERM, "TERM=%.50s", getenv("TERM"));
 
+	/* we never need argv[0] - skipt it */
+	argv++; argc--;
+
 	/* Handle --nobtee option */
-	if ( argc > 1 && !strcmp(argv[1], "--nobtee") ) {
+	if ( argc > 0 && !strcmp(*argv, "--nobtee") ) {
 		use_btee = 0;
 		argv++; argc--;
 	}
 
 	/* Display help message */
-	if ( argc < 3 ) {
+	if ( argc < 2 ) {
 		fprintf(stderr,
 "\n"
 "  Run SystemV Init-Scripts with a clean environment and detached from\n"
@@ -94,20 +97,20 @@ int main(int argc, char ** argv) {
 "\n"
 "  Usage: rc [ --nobtee ] <service> { start | stop | ... | help } [ script options ]\n");
 	}
-	if ( argc == 1 ) {
+	if ( argc == 0 ) {
 		fprintf(stderr, "\n"
 "  <service> might be one of:\n"
 "\n");
 		fflush(stderr);
 		system("ls /etc/rc.d/init.d >&2");
 	}
-	if ( argc < 3 ) {
+	if ( argc < 2 ) {
 		fprintf(stderr, "\n");
 		return 1;
 	}
 
 	/* No btee when viewing the help screen for this service */
-	if ( !strcmp(argv[2], "help") ) use_btee = 0;
+	if ( !strcmp(argv[1], "help") ) use_btee = 0;
 
 	/* Forward output to a 'btee' process */
 	if ( use_btee ) {
@@ -177,9 +180,10 @@ int main(int argc, char ** argv) {
 	 * /etc/profile) and send \004 after running the script if we are
 	 * using btee. */
 	i = snprintf(command, sizeof(command), "%s%s",
-	         strchr(argv[1], '/') ? "" : "/etc/rc.d/init.d/", argv[1]);
-	while (argv[2]) /* copy args */
-		i += snprintf(command+i, sizeof(command)-i, " %s", argv++[2]);
+	         strchr(*argv, '/') ? "" : "/etc/rc.d/init.d/", *argv);
+	argv++;
+	while (*argv) /* copy args */
+		i += snprintf(command+i, sizeof(command)-i, " %s", *argv++);
 	i+=snprintf(command+i, sizeof(command)-i, " </dev/null 2>&1%s",
 	         use_btee ? "; echo -ne '\004'" : "");
 	execle("/bin/bash", "-bash", "-l", "-c", command, NULL, clean_env);
