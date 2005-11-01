@@ -13,7 +13,7 @@
 shadow=`mktemp`-shadow
 parts=
 
-mkdir -p /mnt/target
+mkdir -p /mnt/{target,update}
 
 installall=0
 
@@ -27,46 +27,100 @@ format_w_progress ()
 	  sed -n 's/\([0-9]\+\/[0-9]\+\)/100*\1/p' |
 	  bc | # binary calculator, evaluating the above generated math
 	  sed 's/^\([1-9]\)$/0\1/' # append a 0 for single digits for Xdialog :-(
-	) | Xdialog --progress "Formating $1 ..." 8 30
+	) | Xdialog --progress "Formating $1 ..." 0 0
 }
 
-
 # collect partitions normally intended for archivista
+i=0; j=0
+updates[$((j++))]="no"
 for x in /dev/hd? /dev/sd? ; do
 	[ -e $x ] || continue
 	x=${x#/dev/}
-	# skip CD-ROMs
+	# skip CD-ROMs - TODO extend this to SCSI
 	grep -q cdrom /proc/ide/$x/media 2>/dev/null && continue
 
-	parts="$parts /dev/${x}-Reformat_whole_disk"
+	# is it set up by our installer?
+	reason=
+	if [ `disktype /dev/$x | grep Partition | wc -l` != 4 ] ; then
+		reason="Not exactly four partitions."
+	elif [ `sfdisk -s /dev/${x}1` != `sfdisk -s /dev/${x}2` ]; then
+		reason="First two partitions differ in size."
+	elif [ `sfdisk -s /dev/${x}1` -le 4000000 ]; then
+		reason="System partitions less than 4GB."
+	elif [[ `disktype /dev/${x}3` != *swap* ]]; then
+		reason="Third partition is not SWAP space."
+	elif [[ `disktype /dev/${x}1` != *Ext[34]* ]] &&
+	     [[ `disktype /dev/${x}2` != *Ext[34]* ]]; then
+		reason="No system partition is initialized."
+	elif [[ `disktype /dev/${x}4` != *Ext[34]* ]]; then
+		reason="Data partition is not initialized."
+	fi
 
-	for y in /dev/$x[12]; do
+	parts[$((i++))]="/dev/$x - Reformat whole disk"
+	
+	if [ "$reason" ]; then
+		Xdialog --msgbox "/dev/$x does not appear to be formated for Archivista:
+$reason" 0 0
+	else
+	    for y in /dev/$x[12]; do
 		if mount $y /mnt/target 2>/dev/null; then
-			if [ -e /mnt/target/home/archivista ]; then
-				parts="$parts ${y}-(Archivista)"
+			ver=`sed 's/.*) - //' /mnt/target/etc/VERSION`
+			if [ -e /mnt/target/home/archivista -a "$ver" ]; then
+				parts[$((i++))]="${y} - Archivista ($ver)"
+				updates[$((j++))]="${y} - Archivista ($ver)"
 			else
-				parts="$parts ${y}-(used)"
+				parts[$((i++))]="${y} - Formated but not Archivista"
 			fi
 			umount /mnt/target
 		else
-			parts="$parts ${y}-(unknown)"
+			parts[$((i++))]="${y} - Not formated"
 		fi
-	done
+	    done
+	fi
 done
 
-if [ "$parts" ]; then
-	part=`Xdialog --combobox "Please choose the disc partition
-to install to:" 8 38 $parts 2>&1`
+echo "Partitions: ${parts[@]}"
+echo "Updates possible: ${updates[@]}"
+
+# partitions?
+if [ ${#parts[@]} -gt 0 ]; then
+	part=`Xdialog --stdout --combobox "Please choose the disc partition
+to install to:" 0 0 "${parts[@]}"` || exit
 else
-	echo "no partitions"
+	Xdialog --msgbox "No hard disk / partitions recognized." 0 0
 	exit
 fi
 
+if [ ${#updates[@]} -gt 1 ]; then
+  update=`Xdialog --stdout --combobox "Take over configuration from a
+previous Archivista installation?" 0 0 "${updates[@]}"` || exit
+fi
+
+echo "Parition: $part"
+echo "Update: $update"
+
+if [ "$update" != "no" ]; then
+	updatedev=${update%% *}
+	rm -rf /tmp/update
+	mkdir /tmp/update
+
+	# not /mnt/target as safeguard if something fails
+	if mount $updatedev /mnt/update; then
+		${0%/*}/update-store.sh /mnt/update /tmp/update
+		umount /mnt/update
+		# TODO: window with list of extracted configs
+	else
+		Xdialog --msgbox "Partition $update, selected to take
+over the configuration, could not be mounted." 0 0
+        	exit
+	fi
+fi
+
 # empty or reformat?
-if [[  $part = *Reformat* ]]; then
-	disk=${part%-*}
+if [[ "$part" = *Reformat* ]]; then
+	disk=${part%% *}
 	if Xdialog --yesno "Formating the whole disk $disk.
-All data will be lost!" 8 38; then
+All data will be lost!" 0 0; then
 
 		installall=1
 
@@ -99,28 +153,20 @@ EOT
 fi
 
 if [ $installall = 0 ]; then
-	# TODO: copy the passwords if existing
-	# grep 'root\|archivista' /mnt/target/etc/shadow > $shadow
-	#                        cat $shadow
+	part=${part%% *}
 
-	# maybe TODO: take a look which archivista setup is activated in grub
-
-	part=${part%-*}
-
-	if ! Xdialog --yesno "Format partition $part.
-All data will be lost!" 8 28; then
+	if ! Xdialog --yesno "Installing to partition $part.
+All data will be lost!" 0 0; then
 		echo cancelled
 		exit
 	fi
-
-	format_w_progress $part
 fi
 
 mount $part /mnt/target
 
 # sanity check to not install into the running system's RAM-disk
 if ! grep -q /mnt/target /proc/mounts; then
-	Xdialog --msgbox "Partiton could not be mounted. Aborting." 8 40
+	Xdialog --msgbox "Partiton could not be mounted. Aborting." 0 0
 	exit
 fi
 
@@ -129,7 +175,7 @@ if [ $installall -eq 1 ]; then
 	mount ${part%[0-9]}4	/mnt/target/home/data
 
 	if ! grep -q /mnt/target/home/data /proc/mounts; then
-		Xdialog --msgbox "Partiton could not be mounted. Aborting." 8 40
+		Xdialog --msgbox "Partiton could not be mounted. Aborting." 0 0
 		umount /mnt/target
 		exit
 	fi
@@ -138,16 +184,24 @@ if [ $installall -eq 1 ]; then
 	rc mysql stop
 fi
 
-rsync  -arvP /mnt/live/ /mnt/target/ |
+rsync  -arvP --delete /mnt/live/ /mnt/target/ |
   sed -n 's/.* \([0-9]\+.[0-9]\)% .*/\1/p' |
-  Xdialog --progress "Installing ..." 8 28
+  Xdialog --progress "Installing ..." 0 0
 
 cat >> /mnt/target/etc/fstab <<-EOT
 ${part%[0-9]}3	swap		swap	defaults        0 0
 ${part%[0-9]}4	/home/data	auto	defaults	0 0
 EOT
 
-echo installing boot loader ...
+if [ "$update" ]; then
+	echo "restore config"
+	${0%/*}/update-restore.sh /tmp/update /mnt/target
+	Xdialog --msgbox "Configuration restored." 0 0
+fi
+
+echo "installing boot loader ..."
+
+# TODO: if there is another useful Archivista system add it to grub
 
 mount --bind /dev /mnt/target/dev
 mount --bind /proc /mnt/target/proc
@@ -175,8 +229,9 @@ fi
 
 if ! grep -q /mnt/target /proc/mounts; then
 	Xdialog --msgbox "Installation finished!
-You can safely reboot now." 8 28
+You can safely reboot now." 0 0
 else
 	Xdialog --msgbox "Target partition still mounted -
-this indicates an error during installation." 8 38
+this indicates an error during installation." 0 0
 fi
+
