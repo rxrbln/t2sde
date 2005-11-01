@@ -92,7 +92,7 @@ else
 fi
 
 if [ ${#updates[@]} -gt 1 ]; then
-  update=`Xdialog --stdout --combobox "Take over configuration from a
+	update=`Xdialog --stdout --combobox "Take over configuration from a
 previous Archivista installation?" 0 0 "${updates[@]}"` || exit
 fi
 
@@ -108,7 +108,10 @@ if [ "$update" != "no" ]; then
 	if mount $updatedev /mnt/update; then
 		${0%/*}/update-store.sh /mnt/update /tmp/update
 		umount /mnt/update
-		# TODO: window with list of extracted configs
+
+		# display extracted info
+		${0%/*}/update-restore.sh -dry /tmp/update |
+		Xdialog --title "Recognized configuration --logbox - 0 0 || exit
 	else
 		Xdialog --msgbox "Partition $update, selected to take
 over the configuration, could not be mounted." 0 0
