@@ -111,7 +111,7 @@ if [ "$update" != "no" ]; then
 
 		# display extracted info
 		${0%/*}/update-restore.sh -dry /tmp/update |
-		Xdialog --title "Recognized configuration --logbox - 0 0 || exit
+		Xdialog --title "Recognized configuration" --logbox - 0 0 || exit
 	else
 		Xdialog --msgbox "Partition $update, selected to take
 over the configuration, could not be mounted." 0 0
@@ -204,11 +204,10 @@ fi
 
 echo "installing boot loader ..."
 
-# TODO: if there is another useful Archivista system add it to grub
-
 mount --bind /dev /mnt/target/dev
 mount --bind /proc /mnt/target/proc
 
+# let the T2 stone module setup grub ,-)
 chroot /mnt/target stone -text grub <<-EOT
 1
 
@@ -218,7 +217,26 @@ chroot /mnt/target stone -text grub <<-EOT
 
 EOT
 
-sync
+# other possible system partition
+otherpart=`echo $part | tr 12 21`
+
+if mount $otherpart /mnt/update; then
+	echo "injecting other system's boot options into the grub menu"
+	tmp=`mktemp`
+
+	# save the other systems' grub entries
+	grep -A 1000 title /mnt/update/boot/grub/menu.lst | sed "/MemTest/Q" > $tmp
+	# insert the other system's entries
+	sed -i "/MemTest/ { H; r $tmp
+	       N }" /mnt/target/boot/grub/menu.lst
+
+	umount /mnt/update
+
+	Xdialog --msgbox "The alternative system partition
+was added to the boot menu." 0 0
+fi
+
+sync # just paranoid
 
 umount /mnt/target/dev
 umount /mnt/target/proc
