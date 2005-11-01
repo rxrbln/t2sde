@@ -80,7 +80,7 @@ fi
 
 # https
 if [ "$update_apache_https" ]; then
-	echo "Apache https"
+	echo "https enabled"
 	if [ $doit = 1 ]; then
 	  # tweak init script to start with SSL suport
 	  sed -i "s/apachectl .*start/apachectl -DSSL -k start/" sbin/init.d/apache
@@ -117,3 +117,16 @@ if [ "$update_net_backup" ]; then
 	fi
 fi
 
+# ftp
+if [ "$update_ftp_enabled" ]; then
+	echo "ftp enabled"
+	[ $doit = 1 ] &&
+          sed -i 's,.*\(ftp[[:blank:]].*\)$,\1,' etc/inetd.conf
+fi
+
+# OCR reg key
+if [ -e $from/av5.con ]; then
+	echo "OCR registration"
+	[ $doit = 1 ] &&
+	  cp -fv $from/av5.con "home/archivista/.wine/dosdevices/c:/Programs/Av5e/"
+fi

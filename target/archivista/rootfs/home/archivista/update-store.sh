@@ -45,9 +45,11 @@ update_net_backup=`grep archivista/net-backup.sh etc/crontab |
                    cut -d ' ' -f 1-5`
 cp -fv etc/net-backup.conf $to/ 2>/dev/null
 
+# ftp
 grep -q '^ftp' etc/inetd.conf && update_ftp_enabled=1
 
-# OCR reg key?
+# OCR reg key
+cp -fv "home/archivista/.wine/dosdevices/c:/Programs/Av5e/av5.con" $to/ 2>/dev/null
 
 # store all update variables
 for var in ${!update_*}; do
