@@ -31,6 +31,7 @@
 		 "pentium2	PENTIUMII"	\
 		 "pentium3	PENTIUMIII"	\
 		 "pentium4	PENTIUM4"	\
+		 "pentium-m	MPENTIUMM"	\
 		 "k6		K6"		\
 		 "k6-2		K6"		\
 		 "k6-3		K6"		\
