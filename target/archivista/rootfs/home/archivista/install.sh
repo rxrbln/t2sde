@@ -43,10 +43,10 @@ for x in /dev/hd? /dev/sd? ; do
 	reason=
 	if [ `disktype /dev/$x | grep Partition | wc -l` != 4 ] ; then
 		reason="Not exactly four partitions."
-	elif [ `sfdisk -s /dev/${x}1` != `sfdisk -s /dev/${x}2` ]; then
-		reason="First two partitions differ in size."
 	elif [ `sfdisk -s /dev/${x}1` -le 4000000 ]; then
-		reason="System partitions less than 4GB."
+		reason="First system partitions less than 4GB."
+        elif [ `sfdisk -s /dev/${x}2` -le 4000000 ]; then
+                reason="Second system partitions less than 4GB."
 	elif [[ `disktype /dev/${x}3` != *swap* ]]; then
 		reason="Third partition is not SWAP space."
 	elif [[ `disktype /dev/${x}1` != *Ext[34]* ]] &&
