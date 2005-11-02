@@ -85,13 +85,13 @@ read_fm_config() {
 # download package fm-page and grep for the author
 	html="http://freshmeat.net/projects/$fmname/"
 	curl -I -s "$html" -o "header.log"
-	html_new="`grep Location: header.log | sed 's,Location:[ ]\([.0-9A-Za-z-:/%?_= ]*\).*,\1,'`"
-	[ ! -z html_new ] && html="$html_new"
+	html_new="`grep Location: header.log | sed 's,Location:[ ]\([.0-9A-Za-z:/%?_= -]*\).*,\1,'`"
+	[ ! -z "$html_new" ] && html="$html_new"
 	unset html_new
 	rm -f header.log
 	curl -s "$html" -o "$fmname.html"
 	dev_name="`grep 'contact developer' "$fmname.html" | sed 's,^[[:blank:]]*\(.*\)[[:blank:]]<a.*$,\1,' | sed 's, *$,,g'`"
-	dev_mail="<`grep 'contact developer' "$fmname.html" | sed 's,^.*<a href=\"mailto:\(.*\)\">.*$,\1,'`>"
+	dev_mail="`grep 'contact developer' "$fmname.html" | sed 's,^.*<a href=\"mailto:\(.*\)\">.*$,\1,'`"
 	echo "__at__ @" >subst
 	echo "__dot__ ." >>subst
 	echo "|at| @" >>subst
@@ -115,9 +115,14 @@ read_fm_config() {
 	dev_mail="`cat dev_mail`"
 	rm -f subst $fmname.html dev_mail
 
-	if [ -z "$dev_mail" -o -z "$dev_name" ] ; then
-		dev_name="TODO: "
+	if [ -z "$dev_name" ]; then
+		dev_name="TODO:"
 		dev_mail="Author"
+	elif [ -z "$dev_mail" ]; then
+		dev_name="TODO: $dev_name"
+		dev_mail="Mail Address"
+	else
+		dev_mail="<$dev_mail>"
 	fi
 
 	#cleanup license
@@ -225,9 +230,13 @@ cat >>$package.desc <<EOF
 [S] ${status:-TODO: Status}
 [V] ${version:-TODO: Version}
 [P] X -----5---9 800.000
-
-[D] 0 $download_file $download_url
 EOF
+if [ "$download_file" ]; then
+	cat >>$package.conf <<-EOF
+
+	[D] 0 $download_file $download_url
+	EOF
+fi
 
 echo "ok"
 echo -n "Creating $package.conf ... "
