@@ -23,8 +23,8 @@
 	linux_arch=386
 	for x in "i386		386"		\
 		 "i486		486"		\
-		 "via-c3	MCYRIXIII"	\
-		 "via-c3-2	MVIAC3_2"	\
+		 "c3		MCYRIXIII"	\
+		 "c3-2		MVIAC3_2"	\
 		 "pentium	586"		\
 		 "pentium-mmx	586MMX"		\
 		 "pentiumpro	686"		\
