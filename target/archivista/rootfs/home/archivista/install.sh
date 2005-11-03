@@ -150,6 +150,8 @@ EOT
 
 		format_w_progress ${disk}1
 		format_w_progress ${disk}4
+
+		mount $part /mnt/target
 	else
 		exit
 	fi
@@ -158,14 +160,25 @@ fi
 if [ $installall = 0 ]; then
 	part=${part%% *}
 
-	if ! Xdialog --yesno "Installing to partition $part.
+	# might not be yet formated ...
+	if ! mount $part /mnt/target; then
+		if ! Xdialog --yesno "Partition $part is not yet formated.
+Format now?" 0 0; then
+			echo cancelled
+			exit
+		fi
+
+		format_w_progress $part
+		mount $part /mnt/target
+	else
+		if ! Xdialog --yesno "Installing to partition $part.
 All data will be lost!" 0 0; then
-		echo cancelled
-		exit
+			echo cancelled
+			umount /mnt/target
+			exit
+		fi
 	fi
 fi
-
-mount $part /mnt/target
 
 # sanity check to not install into the running system's RAM-disk
 if ! grep -q /mnt/target /proc/mounts; then
