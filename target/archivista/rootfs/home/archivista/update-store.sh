@@ -41,6 +41,7 @@ if grep -q '^<DefaultPrinter' etc/cups/printers.conf; then
 	update_cups_allow=`sed -n '/<Location \/>/{n;n;n;n;s/Allow From //p}' \
 	                   etc/cups/cupsd.conf`
 	cp -fv etc/cups/printers.conf $to/cups/
+	cp -rv etc/cups/ppd/*.ppd $to/cups/
 fi
 
 # backup
