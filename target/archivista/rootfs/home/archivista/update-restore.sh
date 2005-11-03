@@ -88,13 +88,33 @@ if [ "$update_apache_https" ]; then
 	  # tweak the window manager references to http - menu, keys, startup
 	  sed -i 's,http://localhost/,https://localhost/,g' home/archivista/.fluxbox/*
 
-	  cp -rv $from/ssl.{crt,key} etc/opt/apache/
+	  cp -rfv $from/ssl.{crt,key} etc/opt/apache/
 	  chmod 600 etc/opt/apache/ssl.key/*.key
 	fi
 fi
 
-# cups
-# TODO
+# cups - this might need adaptions for future CUPS versions ...
+if [ "$update_cups_allow" ]; then
+	echo "PDF print"
+	if [ $doit = 1 ]; then
+	  # insert IP - TODO: share code
+	  sed -i "/^<Location \/>/{
+n;n;n;n
+i Allow From $update_cups_allow
+
+:loop
+/^<\/Location>/b end
+d; b loop
+
+:end
+
+}" etc/cups/cupsd.conf
+
+	  cp -fv $from/cups/printers.conf etc/cups/
+	  gunzip -c /usr/share/cups/model/PostscriptColor.ppd.gz > \
+	            etc/cups/ppd/archivista.ppd
+	fi
+fi
 
 # backup
 if [ "$update_backup" ]; then
@@ -127,7 +147,7 @@ fi
 # OCR reg key
 if [ -e $from/av5.con ]; then
 	echo "OCR registration"
-	if [ $doit = 1 ];
+	if [ $doit = 1 ]; then
 	  cp -fv $from/av5.con home/archivista/.wine/drive_c/Programs/Av5e/
 	  chmod archivista:users home/archivista/.wine/drive_c/Programs/Av5e/av5.con
 	fi
