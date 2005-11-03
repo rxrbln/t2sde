@@ -95,7 +95,7 @@ fi
 
 # cups - this might need adaptions for future CUPS versions ...
 if [ "$update_cups_allow" ]; then
-	echo "PDF print"
+	echo "printer configuration (CUPS)"
 	if [ $doit = 1 ]; then
 	  # insert IP - TODO: share code
 	  sed -i "/^<Location \/>/{
@@ -110,9 +110,9 @@ d; b loop
 
 }" etc/cups/cupsd.conf
 
+	  # configuration and PPDs
 	  cp -fv $from/cups/printers.conf etc/cups/
-	  gunzip -c /usr/share/cups/model/PostscriptColor.ppd.gz > \
-	            etc/cups/ppd/archivista.ppd
+	  cp -fv $from/cups/*.ppd etc/cups/ppd/
 	  # enable CUPS at startup
 	  ln -sf ../init.d/cups etc/rc.d/rc5.d/S30cups
 	  ln -sf ../init.d/cups etc/rc.d/rc5.d/K70cups
