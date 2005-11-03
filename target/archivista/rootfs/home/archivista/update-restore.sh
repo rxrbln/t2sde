@@ -127,6 +127,8 @@ fi
 # OCR reg key
 if [ -e $from/av5.con ]; then
 	echo "OCR registration"
-	[ $doit = 1 ] &&
-	  cp -fv $from/av5.con "home/archivista/.wine/drive_c/Programs/Av5e/"
+	if [ $doit = 1 ];
+	  cp -fv $from/av5.con home/archivista/.wine/drive_c/Programs/Av5e/
+	  chmod archivista:users home/archivista/.wine/drive_c/Programs/Av5e/av5.con
+	fi
 fi
