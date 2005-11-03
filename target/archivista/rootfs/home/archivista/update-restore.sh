@@ -46,7 +46,7 @@ if [ "$update_root_perl_passwd" ]; then
 	echo "archivista class password"
 	if [ $doit = 1 ]; then
 	  sed -i "s/\(.*MYSQL_PWD.* = \).*/\1\"$update_root_perl_passwd\";/" \
-	         usr/lib/perl5/*/Archivista/Config.pm
+	         home/cvs/archivista/apcl/Archivista/Config.pm
 
 	  sed -i "/sub avdb_pwd/ { N ; s/\".*\"/\"$update_root_perl_passwd\"/ }" \
 	         home/cvs/archivista/webclient/perl/inc/Global.pm
@@ -128,5 +128,5 @@ fi
 if [ -e $from/av5.con ]; then
 	echo "OCR registration"
 	[ $doit = 1 ] &&
-	  cp -fv $from/av5.con "home/archivista/.wine/dosdevices/c:/Programs/Av5e/"
+	  cp -fv $from/av5.con "home/archivista/.wine/drive_c/Programs/Av5e/"
 fi

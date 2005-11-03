@@ -19,7 +19,7 @@ update_ftp_hash=`grep '^ftp:' etc/shadow | cut -d : -f 2`
 
 # perl class
 update_root_perl_passwd=`grep 'MYSQL_PWD' \
-                         usr/lib/perl5/*/Archivista/Config.pm | cut -d \" -f 2`
+                         home/cvs/archivista/apcl/Archivista/Config.pm | cut -d \" -f 2`
 
 # gnupg key
 cp -rfv home/archivista/.gnupg $to/ 2>/dev/null
@@ -49,7 +49,7 @@ cp -fv etc/net-backup.conf $to/ 2>/dev/null
 grep -q '^ftp' etc/inetd.conf && update_ftp_enabled=1
 
 # OCR reg key
-cp -fv "home/archivista/.wine/dosdevices/c:/Programs/Av5e/av5.con" $to/ 2>/dev/null
+cp -fv "home/archivista/.wine/drive_c/Programs/Av5e/av5.con" $to/ 2>/dev/null
 
 # store all update variables
 for var in ${!update_*}; do
