@@ -113,6 +113,9 @@ d; b loop
 	  cp -fv $from/cups/printers.conf etc/cups/
 	  gunzip -c /usr/share/cups/model/PostscriptColor.ppd.gz > \
 	            etc/cups/ppd/archivista.ppd
+	  # enable CUPS at startup
+	  ln -sf ../init.d/cups etc/rc.d/rc5.d/S30cups
+	  ln -sf ../init.d/cups etc/rc.d/rc5.d/K70cups
 	fi
 fi
 
