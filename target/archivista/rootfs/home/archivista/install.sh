@@ -235,11 +235,11 @@ otherpart=`echo $part | tr 12 21`
 
 if mount $otherpart /mnt/update; then
 	echo "injecting other system's boot options into the grub menu"
-	tmp=`mktemp`
 
-	# save the other systems' grub entries
-	grep -A 1000 title /mnt/update/boot/grub/menu.lst | sed "/MemTest/Q" > $tmp
-	# insert the other system's entries
+	tmp=`mktemp`
+	# save the other system' 1st grub entry
+	sed -n "/title/ {N; N; p; q}" /mnt/update/boot/grub/menu.lst > $tmp
+	# insert the other system's entry
 	sed -i "/MemTest/ { H; r $tmp
 	       N }" /mnt/target/boot/grub/menu.lst
 
