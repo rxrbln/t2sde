@@ -35,7 +35,13 @@ grep -q '\-DSSL' sbin/init.d/apache && update_apache_https=1
 cp -rfv etc/opt/apache/ssl.{crt,key} $to/ 2>/dev/null
 
 # cups
-# TODO
+if grep -q '^<DefaultPrinter' etc/cups/printers.conf; then
+	# this is all we need for setup right now
+	mkdir -p $to/cups
+	update_cups_allow=`sed -n '/<Location \/>/{n;n;n;n;s/Allow From //p}' \
+	                   etc/cups/cupsd.conf`
+	cp -fv etc/cups/printers.conf $to/cups/
+fi
 
 # backup
 update_backup=`grep archivista/backup.sh etc/crontab | cut -d ' ' -f 1-5`
