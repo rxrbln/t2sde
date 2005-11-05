@@ -17,32 +17,34 @@
 
 set -e
 
-echo "Removing temporary output from last run ..."
-[ "$SDEDEBUG_NOREBUILD" ] || rm -rf $imagelocation
-rm -f $isofsdir/live.squash
 mkdir -p $imagelocation ; cd $imagelocation
 
-echo "Preparing root filesystem image from build result ..."
+echo "Creating root file-system file lists ..."
 
 pkg_skip=" ccache distcc "
-
 for pkg in `grep '^X ' $base/config/$config/packages | cut -d ' ' -f 5`; do
 	# include the package?
 	if [ "${pkg_skip/ $pkg /}" == "$pkg_skip" ] ; then
-		cut -d ' ' -f 2 $build_root/var/adm/flists/$pkg >> tar.input
+		cut -d ' ' -f 2 $build_root/var/adm/flists/$pkg
 	fi
-done
+done | sort -u > ../files-wanted
 
-echo "Copying files into the freshly prepared tree ..."
-# we need to ignore the errors for now, since the flist have a few files
-# that do not exist - TODO: track why
-#rsync -a --ignore-errors --delete --files-from $PWD/tar.input \
-#      $build_root $imagelocation || true
-[ "$SDEDEBUG_NOREBUILD" ] ||
-	copy_with_list_from_file $build_root $imagelocation $PWD/tar.input
-rm tar.input
+# for rsync with --delete we can not use file lists, since rsync does not
+# delete in that mode - instead we need to generate a negative list
 
-echo "Preparing root filesystem image from target defined files ..."
+find $build_root -wholename $build_root/TOOLCHAIN -prune -o -printf '%P\n' |
+	sort -u > ../files-all
+# the difference
+diff -u ../files-all ../files-wanted | grep '^-' | sed 's/^-//' > ../files-exclude
+
+echo "Syncing root file-system (this may take some time) ..."
+# we need to ignore the errors for now, since the some flists have a files
+# that do not exist anymore - TODO: track why - post install moves?
+rsync -artH --ignore-errors --delete --exclude-from ../files-exclude \
+      --exclude TOOLCHAIN $build_root/ $imagelocation/ || true
+rm ../files-{wanted,all,exclude}
+
+echo "Overlaying root file-system with target defined files ..."
 copy_and_parse_from_source $base/target/$target/rootfs $imagelocation
 
 [ "$inject_hook" ] && "$inject_hook"
@@ -61,6 +63,6 @@ umount dev
 
 du -sh .
 echo "Squashing root file-system (this may take some time) ..."
-mksquashfs . $isofsdir/live.squash
+mksquashfs . $isofsdir/live.squash -noappend
 du -sh $isofsdir/live.squash
 
