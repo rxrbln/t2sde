@@ -61,7 +61,6 @@ done
 umount proc
 umount dev
 
-du -sh .
 echo "Squashing root file-system (this may take some time) ..."
 mksquashfs * $isofsdir/live.squash -noappend
 du -sh $isofsdir/live.squash
