@@ -25,7 +25,7 @@ public_ip() {
 	# common config error sanity check
 	[ $ip = $1 ] &&
 		echo "WARNING: IP has no CIDR network prefix (e.g. /24)!"
-	addcode up 5 5 "ip addr add $1 dev $if"
+	addcode up 5 5 "ip addr add $1 broadcast + dev $if"
 	iproute2_init_if
 }
 
