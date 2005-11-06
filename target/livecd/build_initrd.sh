@@ -73,7 +73,7 @@ mkinitrd()
 
 	cp $build_root/bin/pdksh initramfs/bin/sh
 	cp $build_root/usr/embutils/{mount,umount,rm,mv,mkdir,ls,ln,\
-pivot_root,sleep,losetup,chmod,cat} initramfs/bin/
+pivot_root,rm,sleep,losetup,chmod,cat} initramfs/bin/
 	ln -s mv initramfs/bin/cp
 
 	echo "root:x:0:0:root:/:/bin/sh" > initramfs/etc/passwd
