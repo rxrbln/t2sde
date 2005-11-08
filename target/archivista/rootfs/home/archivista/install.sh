@@ -79,8 +79,8 @@ $reason" 0 0
 	fi
 done
 
-echo "Partitions: ${parts[@]}"
-echo "Updates possible: ${updates[@]}"
+echo "Partitions: '${parts[@]}'"
+echo "Updates possible: '${updates[@]}'"
 
 # partitions?
 if [ ${#parts[@]} -gt 0 ]; then
@@ -91,13 +91,14 @@ else
 	exit
 fi
 
+update="${updates[0]}"
 if [ ${#updates[@]} -gt 1 ]; then
 	update=`Xdialog --stdout --combobox "Take over configuration from a
 previous Archivista installation?" 0 0 "${updates[@]}"` || exit
 fi
 
-echo "Parition: $part"
-echo "Update: $update"
+echo "Parition: '$part'"
+echo "Update: '$update"
 
 if [ "$update" != "no" ]; then
 	updatedev=${update%% *}
