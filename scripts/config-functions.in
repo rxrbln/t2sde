@@ -214,6 +214,8 @@ pkgsel_parse() {
 			action='$1="O"' ;;
 		    -)
 			action='next'   ;;
+		    =)
+			action='$1=def' ;;
 		    include)
 			pkgsel_parse < $patternlist
 			continue ;;
@@ -221,30 +223,29 @@ pkgsel_parse() {
 			echo '{ exit; }'
 			continue ;;
 		esac
-		address="" ; first="( " ; others="&& "
-		while read pattern ; do
-			if [ -z "$address" ] && \
-			   [ "$pattern" = "!" ] ; then
-				address="! " ; others="|| \$4\"/\"\$5 ~"
+		address=""
+		while read xpattern ; do
+			pattern="${xpattern#\!}"
+			[ "$pattern" = "$xpattern" ]; neg=$?
+			[ "${pattern}" = "${pattern//\//}" ] && pattern="*/$pattern"
+			pattern="$( echo "$pattern" | sed \
+			            -e 's,[^a-zA-Z0-9_/\*+\-],,g' \
+			            -e 's,[/\.\+],\\\\&,g' \
+			            -e 's,\*,[^/]*,g' )"
+			if [ $neg -eq 0 ]; then
+				address="if ( \$5 ~ \"^${pattern}\$\" )"
 			else
-				[ "${pattern}" = "${pattern//\//}" ] && pattern="*/$pattern"
-				pattern="$( echo "$pattern" | sed \
-					-e 's,[^a-zA-Z0-9_/\*+\.-],,g' \
-					-e 's,[/\.\+],\\&,g' \
-					-e 's,\*,[^/]*,g' )"
-				[ "$pattern" ] || continue
-				address="$address$first"
-				address="$address / $pattern /"
-				first=" $others"
+				address="if ( \$5 !~ \"^${pattern}\$\" )"
 			fi
 		done < <( echo "$patternlist" | tr '\t ' '\n\n' )
-		echo "$address ) { $action; }"
+		echo "{ $address { $action; } }"
 	done < <( if [ "$*" ]; then echo "$*"; else cat | egrep -v "^((^#.*$)|())$"; fi)
 }
 
 pkgsel_init() {
     cat <<EOF
 { 
+  def=\$1 ;
   repo=\$4 ;
   pkg=\$5 ;
   \$5 = \$4 "/" \$5 ;
