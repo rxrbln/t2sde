@@ -27,7 +27,10 @@ for pkg in `grep '^X ' $base/config/$config/packages | cut -d ' ' -f 5`; do
 	if [ "${pkg_skip/ $pkg /}" == "$pkg_skip" ] ; then
 		cut -d ' ' -f 2 $build_root/var/adm/flists/$pkg
 	fi
-done | sort -u > ../files-wanted
+done | (
+	# quick and dirty filter
+	grep  -v -e 'lib/[^/]*\.a$'
+) | sort -u > ../files-wanted
 
 # for rsync with --delete we can not use file lists, since rsync does not
 # delete in that mode - instead we need to generate a negative list
