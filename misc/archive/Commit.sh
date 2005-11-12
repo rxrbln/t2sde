@@ -25,15 +25,17 @@ svn diff $* | grep -v === | awk "
 	BEGIN { FS=\"[ /]\" }
 
 	/^\+\+\+ / { pkg = \$4 }
+	{ if (sub(/^\+\[I\]/,\"\") ) { info = \$0 } }
 
 	/^\-\[V\] / { oldver=\$2 }
 	/^\+\[V\] / {
 		newver=\$2
 		if ( oldver )
 		  print \"\t* updated \" pkg \" (\" oldver \" -> \" newver \")\"
-		else
-		  print \"\t* added \" pkg \" (\" newver \")\"
-		oldver=\"\" ; newver=\"\"
+		else {
+		  print \"\t* added \" pkg \" (\" newver \")\" info
+		}
+		oldver=\"\" ; newver=\"\" ; info=\"\"
 	}
 
 " > $$.log
