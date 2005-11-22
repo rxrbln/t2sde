@@ -170,7 +170,7 @@ if [ "$update_onlyLocalhost" ]; then
 		set_Global.pm_var onlyLocalhost $update_onlyLocalhost
 		set_Global.pm_var onlyDefaultDb $update_onlyDefaultDb
 		set_Global.pm_string defaultLoginHost $update_defaultLoginHost
-		set_Global.pm_string defaultLoginDb $dupdate_efaultLoginDb
+		set_Global.pm_string defaultLoginDb $update_defaultLoginDb
 		set_Global.pm_string defaultLoginUser $update_defaultLoginUser
 	fi
 fi
