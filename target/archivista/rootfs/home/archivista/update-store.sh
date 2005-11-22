@@ -8,6 +8,10 @@ if [ -z "$from" -o -z "$to" ]; then
 	exit
 fi
 
+# include shared code
+. ${0%/*}/Global.pm.in
+
+
 cd $from
 
 # passwords
@@ -60,8 +64,6 @@ cp -fv "home/archivista/.wine/drive_c/Programs/Av5e/av5.con" $to/ 2>/dev/null
 
 
 # other, fine grained cnfiguration values
-. ${0%/*}/Global.pm.in # include shared code
-
 root=$from
 update_onlyLocalhost=`get_Global.pm_var onlyLocalhost`
 update_onlyDefaultDb=`get_Global.pm_var onlyDefaultDb`
