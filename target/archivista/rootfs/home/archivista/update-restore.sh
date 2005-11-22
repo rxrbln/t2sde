@@ -155,3 +155,20 @@ if [ -e $from/av5.con ]; then
 	  chmod archivista:users home/archivista/.wine/drive_c/Programs/Av5e/av5.con
 	fi
 fi
+
+
+# other, fine grained configuration values
+. ${0%/*}/Global.pm.in # include shared code
+
+root=$to
+if [ "$update_onlyLocalhost" ]; then
+	echo "Login mask configuration"
+	if [ $doit = 1 ]; then
+		set_Global.pm_var onlyLocalhost $update_onlyLocalhost
+		set_Global.pm_var onlyDefaultDb $update_onlyDefaultDb
+		set_Global.pm_string defaultLoginHost $update_defaultLoginHost
+		set_Global.pm_string defaultLoginDb $dupdate_efaultLoginDb
+		set_Global.pm_string defaultLoginUser $update_defaultLoginUser
+	fi
+fi
+

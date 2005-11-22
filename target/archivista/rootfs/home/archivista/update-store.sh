@@ -58,6 +58,18 @@ grep -q '^ftp' etc/inetd.conf && update_ftp_enabled=1
 # OCR reg key
 cp -fv "home/archivista/.wine/drive_c/Programs/Av5e/av5.con" $to/ 2>/dev/null
 
+
+# other, fine grained cnfiguration values
+. ${0%/*}/Global.pm.in # include shared code
+
+root=$from
+update_onlyLocalhost=`get_Global.pm_var onlyLocalhost`
+update_onlyDefaultDb=`get_Global.pm_var onlyDefaultDb`
+update_defaultLoginHost=`get_Global.pm_string defaultLoginHost`
+update_defaultLoginDb=`get_Global.pm_string defaultLoginDb`
+update_defaultLoginUser=`get_Global.pm_string defaultLoginUser`
+
+
 # store all update variables
 for var in ${!update_*}; do
 	declare -p $var
