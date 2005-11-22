@@ -12,6 +12,11 @@ if [ -z "$from" ] || [ -z "$to" -a $doit -ne 0 ]; then
 	exit
 fi
 
+# include shared code
+. ${0%/*}/Global.pm.in
+
+
+
 # include specified configuration values
 if [ ! -e $from/config ]; then
 	echo "$from/config does not exist"
@@ -158,8 +163,6 @@ fi
 
 
 # other, fine grained configuration values
-. ${0%/*}/Global.pm.in # include shared code
-
 root=$to
 if [ "$update_onlyLocalhost" ]; then
 	echo "Login mask configuration"
