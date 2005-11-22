@@ -43,3 +43,5 @@ set_Global.pm_string defaultLoginHost $defaultLoginHost
 set_Global.pm_string defaultLoginDb $defaultLoginDb
 set_Global.pm_string defaultLoginUser $defaultLoginUser
 
+rc apache restart
+
