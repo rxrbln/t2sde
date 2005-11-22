@@ -10,6 +10,7 @@ fi
 
 # include shared code
 . ${0%/*}/Global.pm.in
+. ${0%/*}/perl-var.in
 
 
 cd $from
@@ -71,6 +72,10 @@ update_defaultLoginHost=`get_Global.pm_string defaultLoginHost`
 update_defaultLoginDb=`get_Global.pm_string defaultLoginDb`
 update_defaultLoginUser=`get_Global.pm_string defaultLoginUser`
 
+update_button_host=`get_perl_var '\$val{host1}' $from/home/cvs/archivista/jobs/sane-button.pl`
+update_button_db=`get_perl_var '\$val{db1}' $from/home/cvs/archivista/jobs/sane-button.pl`
+update_button_user=`get_perl_var '\$val{user1}' $from/home/cvs/archivista/jobs/sane-button.pl`
+update_button_pw=`get_perl_var '\$val{pw1}' $from/home/cvs/archivista/jobs/sane-button.pl`
 
 # store all update variables
 for var in ${!update_*}; do

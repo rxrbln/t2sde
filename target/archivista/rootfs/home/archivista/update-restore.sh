@@ -14,7 +14,7 @@ fi
 
 # include shared code
 . ${0%/*}/Global.pm.in
-
+. ${0%/*}/perl-var.in
 
 
 # include specified configuration values
@@ -165,7 +165,7 @@ fi
 # other, fine grained configuration values
 root=$to
 if [ "$update_onlyLocalhost" ]; then
-	echo "Login mask configuration"
+	echo "login mask configuration"
 	if [ $doit = 1 ]; then
 		set_Global.pm_var onlyLocalhost $update_onlyLocalhost
 		set_Global.pm_var onlyDefaultDb $update_onlyDefaultDb
@@ -175,3 +175,16 @@ if [ "$update_onlyLocalhost" ]; then
 	fi
 fi
 
+if [ "$update_button_host" ]; then
+	echo "scan button configuration"
+	if [ $doit = 1 ]; then
+		set_perl_var '\$val{host1}' $to/home/cvs/archivista/jobs/sane-button.pl \
+		             "$update_button_host"
+		set_perl_var '\$val{db1}' $to/home/cvs/archivista/jobs/sane-button.pl \
+		             "$update_button_db"
+		set_perl_var '\$val{user1}' $to/home/cvs/archivista/jobs/sane-button.pl \
+		             "$update_button_user"
+		set_perl_var '\$val{pw1}' $to/home/cvs/archivista/jobs/sane-button.pl \
+		             "$update_button_pw"
+	fi
+fi
