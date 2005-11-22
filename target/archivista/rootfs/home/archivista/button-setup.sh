@@ -15,7 +15,6 @@ fi
 # include shared code
 . ${0%/*}/perl-var.in
 
-set -x
 host=`get_perl_var '\$val{host1}' /home/cvs/archivista/jobs/sane-button.pl`
 db=`get_perl_var '\$val{db1}' /home/cvs/archivista/jobs/sane-button.pl`
 user=`get_perl_var '\$val{user1}' /home/cvs/archivista/jobs/sane-button.pl`
