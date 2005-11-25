@@ -1,69 +1,178 @@
 -- Copyright (C) 2005 Juergen "George" Sawinski
 -- Licensed under the GPL, see end of file
 
--- file interface
-hook = {}
-local hook_meta = { __index = {} }
+-- Description:
+-- 1. Create a new hook
+--    h = hook() or h = hook.new()
+--
+-- 2. Using hooks
+--
+-- Access to the hooks with a given hook level (from 1 to 9):
+--    h[num]:add(function-or-string)
+--      Add a function to the hook with a hook level (num).
+--
+--    h[num]:set(function-or-string)
+--      Replace the contents of hook-order "num" with a new function
+--
+--    h[num]:clear()
+--      Clear all hooks.
+--
+--    h[num]:run()
+--      Run a specific hook level
+--
+-- Access without hook level:
+--    h:add(function-or-string) 
+--      Equivalent to h[5]:add(function-or-string)
+-- 
+--    h:set(function-or-string)
+--      Equivalent to h[5]:set(function-or-string), however, clears
+--      all other levels
+--
+--    h:clear()
+--      Clear all hooks in all levels.
+--
+--    h:run()
+--      Execute the hooks in all levels, starting at hook level 1.
 
-setmetatable(hook, hook_meta)
+-- INTERFACE -------------------------------------------------------------------
+hook = { level = {} }
+meta = {}
 
--- functions
 function hook.new()
-   local h = { data = {} }
-   return setmetatable(h, hook_meta)
+   local h = hook
+   return setmetatable(h, meta)
 end
 
--- methods
-function hook_meta.__call()
-   return hook.new()
+function hook:add(data)
+   self[5]:add(data)
 end
 
-function hook_meta.__index:add(f)
-   if type(f) == "table" then
-      for _,v in pairs(f) do
-	 self:add(v)
+function hook:set(data)
+   self:clear()
+   self[5]:set(data)
+end
+
+function hook:run()
+   for _,l in pairs(self.level) do l:run() end
+end
+
+function hook:clear()
+   for _,l in pairs(self.level) do l:clear() end
+end
+
+-- h = hook()
+setmetatable(hook, { __call = hook.new })
+
+-- INTERNAL HOOKS __hook -------------------------------------------------------
+local __hook = {}
+local __meta = { __index = {} }
+
+-- create a new __hook
+function __hook.new()
+   local h = { hooks = {} }
+   return setmetatable(h, __meta)
+end
+
+-- __hook.add(hook-table, function-or-string)
+-- add a function to the __hook
+function __hook.add(h, data)
+   if type(data) == "table" then
+      for _,f in pairs(data) do
+	 __hook.add(h, f)
       end
+      return
+   end
+
+   -- insert hook
+   if type(data) == "function" then
+      table.insert(h.hooks, data)
+   elseif type(data) == "string" then
+      local f = loadstring(data)
+      table.insert(h.hooks, f)
    else
-      if type(f) == "string" then
-	 local x = loadstring(f)
-	 table.insert(self.data, x)
-      elseif type(f) == "function" then
-	 table.insert(self.data, f)
-      else
-	 assert(type(f) ~= "function", "argument must be a function (or string)")
-      end
+      assert(type(data) == "function", 
+	     "function or string expected in hook.add(table, pos, function-or-string)")
    end
 end
 
-function hook_meta.__index:clear()
-   self.data = {}
+-- __hook.set(hook-table, function-or-string-or-nil)
+-- add a function to the __hook
+function __hook.set(h, data)
+   h.hooks = {}
+   __hook.add(h, data)
 end
 
-function hook_meta.__index:run()
-   for k,v in pairs(self.data) do
-      if v then v() end
+-- __hook.run(hook-table)
+-- execute the hooks
+function __hook.run(h)
+   for _,f in pairs(h.hooks) do
+      if f then f() end
    end
 end
 
--- TEST:
+-- __hook.clear(hook-table)
+-- clear all hooks
+function __hook.clear(h)
+   h.hooks = {}
+end
 
+-- METATABLE -------------------------------------------------------------------
+function __meta.__index:add(data) __hook.add(self, data) end
+function __meta.__index:set(data) __hook.set(self, data) end
+function __meta.__index:clear()   __hook.clear(self) end
+function __meta.__index:run()     __hook.run(self) end
+
+function meta.__index(self, pos, data)
+   -- clamp position
+   if pos < 1 then pos = 1 end
+   if pos > 9 then pos = 9 end
+
+   -- create if it does not exist
+   if not self.level[pos] then
+      table.insert(self.level, pos, __hook.new())
+   end
+
+   return self.level[pos]
+end
+
+function meta.__newindex(self, pos, data)
+   self[pos]:set(data)
+end
+
+-- -----------------------------------------------------------------------------
+-- TEST ------------------------------------------------------------------------
+-- -----------------------------------------------------------------------------
 h = hook()
 
-function some_hook()
-   print "some_hook"
-end
+h[1] = [[ print("Good morning!") ]]
 
-h:add( some_hook )
-h:add [[ print("another hook") ]]
+h[5]:add(function() print("Hello") end)
+
+h:add(function() print("World!") end)
+
 h:add{
    function()
-      print("hello world!")
-   end
+      print"f1"
+   end,
+
+   [[print"f2"]],
 }
 
+function good_evening() print("Good evening!") end
+h[9]:set(good_evening)
+
 h:run()
+print("----")
+
+h[5] = function() print("Hello world") end
+
+h:run()
+print("----")
+
 h:clear()
+
 h:run()
+
 
 -- This program is free software; you can redistribute it and/or modify
 -- it under the terms of the GNU General Public License as published by
