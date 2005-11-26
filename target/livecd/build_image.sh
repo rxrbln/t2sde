@@ -18,6 +18,8 @@
 set -e
 
 mkdir -p $imagelocation ; cd $imagelocation
+# just in case it is still there from the last run
+(umount proc ; umount dev) 2>/dev/null
 
 echo "Creating root file-system file lists ..."
 
@@ -25,7 +27,7 @@ pkg_skip=" ccache distcc "
 for pkg in `grep '^X ' $base/config/$config/packages | cut -d ' ' -f 5`; do
 	# include the package?
 	if [ "${pkg_skip/ $pkg /}" == "$pkg_skip" ] ; then
-		cut -d ' ' -f 2 $build_root/var/adm/flists/$pkg
+		cut -d ' ' -f 2 $build_root/var/adm/flists/$pkg || true
 	fi
 done | (
 	# quick and dirty filter
@@ -35,16 +37,24 @@ done | (
 # for rsync with --delete we can not use file lists, since rsync does not
 # delete in that mode - instead we need to generate a negative list
 
-find $build_root -wholename $build_root/TOOLCHAIN -prune -o -printf '%P\n' |
+time find $build_root -mount -wholename $build_root/TOOLCHAIN -prune -o -printf '%P\n' |
 	sort -u > ../files-all
 # the difference
-diff -u ../files-all ../files-wanted | grep '^-' | sed 's/^-//' > ../files-exclude
+diff -u ../files-all ../files-wanted |
+sed -n -e '/var\/adm\/olist/d' -e '/var\/adm\/logs/d' \
+       -e '/var\/adm\/dep-debug/d' -e '/var\/adm\/cache/d' -e 's/^-//p' > ../files-exclude
+echo "proc/*
+dev/*
+*/share/doc/*
+var/adm/olist
+var/adm/logs
+var/adm/dep-debug
+var/adm/cache" >> ../files-exclude
 
 echo "Syncing root file-system (this may take some time) ..."
-# we need to ignore the errors for now, since the some flists have a files
-# that do not exist anymore - TODO: track why - post install moves?
-rsync -artH --ignore-errors --delete --exclude-from ../files-exclude \
-      --exclude TOOLCHAIN $build_root/ $imagelocation/ || true
+[ -e $imagelocation/bin ] && v="-v" || v=""
+time rsync -artH $v --delete --exclude-from ../files-exclude \
+      --exclude TOOLCHAIN --delete-excluded $build_root/ $imagelocation/
 rm ../files-{wanted,all,exclude}
 
 echo "Overlaying root file-system with target defined files ..."
@@ -65,6 +75,6 @@ umount proc
 umount dev
 
 echo "Squashing root file-system (this may take some time) ..."
-mksquashfs * $isofsdir/live.squash -noappend
+time mksquashfs * $isofsdir/live.squash -noappend
 du -sh $isofsdir/live.squash
 
