@@ -13,7 +13,7 @@ fi
 lpadmin -x archivista
 
 # disable CUPS at startup
-rm -f /etc/rc.d/rc5.d/S30cups /etc/rc.d/rc5.d/K70cups
+rm -f /etc/rc.d/rc5.d/[KS]??cups
 
 # stop CUPS now
 rc cups stop
