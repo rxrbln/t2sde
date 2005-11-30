@@ -12,6 +12,6 @@ fi
 # disable EXIM at startup
 rm -f /etc/rc.d/rc5.d/[KS]??exim
 
-# stop CUPS now
+# stop EXIM now
 rc exim stop
 
