@@ -5,9 +5,10 @@ echo "T2 early userspace ..."
 PATH=/sbin:/bin
 
 echo "Mounting /dev, /proc and /sys ..."
-mount -t tmpfs /dev /dev
-mount -t proc /proc /proc
-mount -t sysfs /sys /sys
+mount -t tmpfs none /dev
+mount -t proc  none /proc
+mount -t usbfs none /proc/bus/usb
+mount -t sysfs none /sys
 ln -s /proc/self/fd /dev/fd
 
 # later on we might reverse these, that is run udevstart first,
@@ -34,51 +35,47 @@ for x in /lib/modules/*/kernel/fs/{*/,}*.*o ; do
 	modprobe $x
 done
 
-sleep 2 # hope USB and IEEE1394 devices settle down ...
-
 echo "Populating /dev (udev) ..."
 /sbin/udevstart
 
 echo "Mounting rootfs ..."
 
-mkdir /rootfs
-
 # get the root device and init
 root="root= `cat /proc/cmdline`" ; root=${root##*root=} ; root=${root%% *}
 init="init= `cat /proc/cmdline`" ; init=${init##*init=} ; init=${init%% *}
 
+# try best match / detected rootfs first, all the others thereafter
+filesystems=`disktype $root 2>/dev/null |
+             sed -e '/file system/!d' -e 's/file system.*//' -e 's/ //g' \
+                 -e 'y/ABCDEFGHIJKLMNOPQRSTUVWXYZ/abcdefghijklmnopqrstuvwxyz/'
+             sed '1!G ; $p ; h ; d' /proc/filesystems | sed /^nodev/d`
+
+mkdir /rootfs
+
 if [ "$root" ]; then
-	# try best match / detected rootfs first, all the others thereafter
-	(
-	 disktype $root |
-	 sed -e '/file system/!d' -e 's/file system.*//' -e 's/ //g' \
-	     -e 'y/ABCDEFGHIJKLMNOPQRSTUVWXYZ/abcdefghijklmnopqrstuvwxyz/'
-	 sed '1!G ; $p ; h ; d' /proc/filesystems | sed /^nodev/d
-	) | while read fs ; do
-		if ! mount -t $fs $root /rootfs -o ro 2> /dev/null; then
-			echo "failed mounting rootfs as $fs"
+  i=0
+  while [ $i -le 9 ]; do
+	for fs in $filesystems ; do
+	  if mount -t $fs $root /rootfs -o ro 2> /dev/null; then
+		echo "Successfully mounted rootfs as $fs"
+
+		# TODO: later on search other places if we want 100% backward compat.
+		[ "$init" ] || init=/sbin/init
+		if [ -f /rootfs/$init ]; then
+			mount -t none /dev -o move /rootfs/dev
+			mount -t none /proc -o move /rootfs/proc
+			mount -t none /sys -o move /rootfs/sys
+			exec switch_root /rootfs $init
 		else
-			echo "succeed mounting rootfs as $fs"
-			break
+			echo "specified init ($init) does not exist"
 		fi
+	  fi
 	done
-
-	mount -t none /dev -o move /rootfs/dev
-	mount -t none /proc -o move /rootfs/proc
-	mount -t none /sys -o move /rootfs/sys
-
-	# TODO: later on search other places if we want 100% backward compat.
-	[ "$init" ] || init=/sbin/init
-	if [ -f /rootfs/$init ]; then
-		mount -t none /dev -o move /rootfs/dev
-		mount -t none /proc -o move /rootfs/proc
-		mount -t none /sys -o move /rootfs/sys
-		exec switch_root /rootfs $init
-	else
-		echo "specified init ($init) does not exist"
-	fi
+  : $(( i++ ))
+  sleep 1
+  done
 fi
 
-echo "Ouhm - some bootup problem but I do not scream. Debug shell:"
+echo "Ouhm - some boot problem, but I do not scream. Debug shell:"
 exec /bin/sh
 
