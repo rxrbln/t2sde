@@ -33,16 +33,25 @@ public:
   }
   
   void ExtractFromFilename (const std::string& filename) {
-    for (std::string::size_type i = 0; i < filename.size(); ++i)
-      if (isdigit(filename[i])) {
-	version = filename.substr(i);
-	if (debug)
-	  std::cout << "Vesion set to: " << version << std::endl;
-	return;
-      }
     version.clear();
-    if (debug)
-      std::cout << "No version extracted!" << std::endl;
+    // start scan at index once, since there must be a package name
+    for (std::string::size_type i = 1; i < filename.size(); ++i) {
+      // match the first digit or -digit if present
+      if (isdigit(filename[i])) {
+        if (version.empty())
+	  version = filename.substr(i);
+        else if (filename[i-1] == '-' || filename[i-1] == '_') {
+          version = filename.substr(i);
+          break;
+        }
+      }
+    }
+    if (debug) {
+      if (version.empty())
+         std::cout << "No version extracted!" << std::endl;
+      else
+         std::cout << "Vesion set to: " << version << std::endl;
+    }
   }
   
   std::string::size_type size() const {
@@ -268,7 +277,7 @@ private:
   
 };
 
-void ParseList (std::string file, std::ifstream& s) {
+void ParseList (std::string file, std::istream& s) {
   // search for a matching extension
   std::string templ = file;
   std::string suffix = "";
