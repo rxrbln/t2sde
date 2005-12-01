@@ -20,6 +20,7 @@ sed -i "s/apachectl .*start/apachectl -k start/" /sbin/init.d/apache
 
 # tweak the window manager references to https - menu, keys, startup
 sed -i 's,https://localhost/,http://localhost/,g' /home/archivista/.fluxbox/*
+killall -USR2 fluxbox
 
 rc apache stop
 rc apache start
