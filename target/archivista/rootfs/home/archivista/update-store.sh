@@ -49,6 +49,9 @@ if grep -q '^<DefaultPrinter' etc/cups/printers.conf; then
 	cp -rv etc/cups/ppd/*.ppd $to/cups/
 fi
 
+# exim
+[ -e etc/rc.d/rc5.d/S??exim ] && update_mail=1
+
 # backup
 update_backup=`grep archivista/backup.sh etc/crontab | cut -d ' ' -f 1-5`
 
