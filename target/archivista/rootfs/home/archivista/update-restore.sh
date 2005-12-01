@@ -124,6 +124,15 @@ d; b loop
 	fi
 fi
 
+# exim
+if [ "$update_mail" ]; then
+	echo "mail server enabled"
+	if [ $doit = 1 ]; then
+		ln -sf ../init.d/exim etc/rc.d/rc5.d/S25exim
+		ln -sf ../init.d/exim etc/rc.d/rc5.d/K75exim
+	fi
+fi
+
 # backup
 if [ "$update_backup" ]; then
 	echo "backup time and date"
