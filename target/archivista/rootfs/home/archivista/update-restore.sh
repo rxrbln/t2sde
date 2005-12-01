@@ -1,8 +1,10 @@
 #!/bin/bash
 
 doit=1
+full=0
 
 [ "$1" == "-dry" ] && doit=0 && shift
+[ "$1" == "-full" ] && full=1 && shift
 
 from="$1" ; shift
 to="$1" ; shift
@@ -27,13 +29,13 @@ fi
 [ $doit = 1 ] && cd $to
 
 # passwords
-if [ "$update_root_hash" ]; then
+if [ "$update_root_hash" -a $full = 0 ]; then
 	echo "root password hash"
 	[ $doit = 1 ] &&
 	  sed -i "s,root:[^:]*,root:$update_root_hash," etc/shadow 
 fi
 
-if [ "$update_archivista_hash" ]; then
+if [ "$update_archivista_hash" -a $full = 0 ]; then
 	echo "archivista password hash"
 	[ $doit = 1 ] &&
 	  sed -i "s,archivista:[^:]*,archivista:$update_archivista_hash," \
@@ -47,7 +49,7 @@ if [ "$update_ftp_hash" ]; then
 fi
 
 # perl class
-if [ "$update_root_perl_passwd" ]; then
+if [ "$update_root_perl_passwd" -a $full = 0 ]; then
 	echo "archivista class password"
 	if [ $doit = 1 ]; then
 	  sed -i "s/\(.*MYSQL_PWD.* = \).*/\1\"$update_root_perl_passwd\";/" \

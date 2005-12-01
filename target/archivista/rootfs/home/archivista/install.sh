@@ -16,6 +16,7 @@ parts=
 mkdir -p /mnt/{target,update}
 
 installall=0
+full=""
 
 # This is a bit tricky to filter and does not look too smooth
 # due to the new linux pipe implementation ...
@@ -91,6 +92,12 @@ else
 	exit
 fi
 
+if [[ "$part" = *Reformat* ]]; then
+	installall=1
+	full="-full"
+fi
+
+
 update="${updates[0]}"
 if [ ${#updates[@]} -gt 1 ]; then
 	update=`Xdialog --stdout --combobox "Take over configuration from a
@@ -111,7 +118,7 @@ if [ "$update" != "no" ]; then
 		umount /mnt/update
 
 		# display extracted info
-		${0%/*}/update-restore.sh -dry /tmp/update |
+		${0%/*}/update-restore.sh -dry $full /tmp/update |
 		Xdialog --title "Recognized configuration" --logbox - 0 0 || exit
 	else
 		Xdialog --msgbox "Partition $update, selected to take
@@ -121,12 +128,10 @@ over the configuration, could not be mounted." 0 0
 fi
 
 # empty or reformat?
-if [[ "$part" = *Reformat* ]]; then
+if [ $installall = 1 ]; then
 	disk=${part%% *}
 	if Xdialog --yesno "Formating the whole disk $disk.
 All data will be lost!" 0 0; then
-
-		installall=1
 
 		sfdisk -uM $disk << EOT
 ,4096,L
@@ -212,7 +217,7 @@ EOT
 
 if [ "$update" ]; then
 	echo "restore config"
-	${0%/*}/update-restore.sh /tmp/update /mnt/target
+	${0%/*}/update-restore.sh $full /tmp/update /mnt/target
 	Xdialog --msgbox "Configuration restored." 0 0
 fi
 
