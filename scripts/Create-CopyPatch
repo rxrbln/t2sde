@@ -37,6 +37,11 @@ EOT
 
 echo "Creating copy.patch (this may take a while) ..." >&2
 
+usesvn=
+if [ "$1" = "-svn" ]; then
+	usesvn=1; shift
+fi
+
 if [ $# = 0 ]; then
     set architecture/. misc/. package/. scripts/. target/.
 else
@@ -95,9 +100,6 @@ while read filename ; do
 
 	tag=$( sed -n -e '/^\(.*\)--- \(T2\|ROCK\)-COPYRIGHT-NOTE-BEGIN ---.*/{s//\1/;p;q;}' "$filename" )
 	thisyear=`date +%Y`
-	copyright="Copyright (C) $thisyear The T2 SDE Project"
-	action='i'
-	pretag= posttag=
 
 	if [ -n "$tag" ]; then
 		# has a note, catch copyrights
@@ -105,22 +107,42 @@ while read filename ; do
 		 	-e '/.*\(Copyright (C) .*\)/!d;s//\1/;' \
 			-e 's/Clifford Wolf/ROCK Linux Project/' \
 			$oldfile`
+	else
+		oldcopyright=
+	fi
 
-		if echo "$oldcopyright" | grep -q 'T2 SDE'; then
-			# if has T2 copyright, renew if necesary
-			since=$( echo "$oldcopyright" | sed -n -e 's,.* (C) \([^ ]*\) .*T2 SDE.*,\1,p' )
+	if echo "$oldcopyright" | grep -q 'T2 SDE'; then
+		# if has T2 copyright, renew if necesary
+		since=$( echo "$oldcopyright" | sed -n -e 's,.* (C) \([^ ]*\) .*T2 SDE.*,\1,p' )
 
-			if [ $since -lt $thisyear ]; then
-				copyright=`echo "$oldcopyright" | sed -e \
-				"s,.*T2 SDE.*,Copyright (C) $since - $thisyear The T2 SDE Project,"`
-			else
-				copyright="$oldcopyright"
-			fi
+		if [ $since -lt $thisyear ]; then
+			copyright=`echo "$oldcopyright" | sed -e \
+			"s,.*T2 SDE.*,Copyright (C) $since - $thisyear The T2 SDE Project,"`
 		else
-			# else, add one
-			copyright="$copyright\\n$oldcopyright"
+			copyright="$oldcopyright"
 		fi
 	else
+		# else, add one...
+		# but, since when the file exist?
+		if [ "$usesvn" = 1 ]; then
+			since=`TZ=UTC svn log -q "$filename" |
+				grep '^r' | tail -n 1 | cut -d'|' -f3 | cut -c2-5`
+		else
+			since=$thisyear
+		fi
+
+		# prepare a copyright tag
+		if [ $since -lt $thisyear ]; then
+			copyright="Copyright (C) $since - $thisyear The T2 SDE Project"
+		else
+			copyright="Copyright (C) $thisyear The T2 SDE Project"
+		fi
+		copyright="$copyright${oldcopyright:+\\n$oldcopyright}"
+	fi
+
+	action='i'
+	pretag= posttag=
+	if [ -z "$tag" ]; then
 		# doesn't have a note
 		if head -n 1 "$filename" | grep -q '^#!'; then
 			action='a'
