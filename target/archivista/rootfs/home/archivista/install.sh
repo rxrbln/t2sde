@@ -215,7 +215,7 @@ ${part%[0-9]}3	swap		swap	defaults        0 0
 ${part%[0-9]}4	/home/data	auto	defaults	0 0
 EOT
 
-if [ "$update" ]; then
+if [ "$update" != "no" ]; then
 	echo "restore config"
 	${0%/*}/update-restore.sh $full /tmp/update /mnt/target
 	Xdialog --msgbox "Configuration restored." 0 0
