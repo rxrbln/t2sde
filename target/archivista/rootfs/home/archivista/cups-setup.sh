@@ -60,7 +60,7 @@ rc cups start
 
 # add printer to CUPS (CUPS needs to be running for this)
 lpadmin -p archivista -L "Archivista Box" -D "PDF print into database." \
-        -E -v "cups-pdf:/" -m PostscriptColor.ppd.gz
+        -E -v "cups-pdf:/" # -m PostscriptColor.ppd.gz # <- we use raw, now
 
 # enable CUPS at startup
 ln -sf ../init.d/cups /etc/rc.d/rc5.d/S30cups
