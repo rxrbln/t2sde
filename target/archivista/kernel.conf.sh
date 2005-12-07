@@ -13,10 +13,13 @@
 # --- T2-COPYRIGHT-NOTE-END ---
 # here we disable all OSS modules - because they suck
 
-echo "desktop target -> disabling oss sound modules ..."
+echo "disabling oss sound modules ..."
 
 sed -i -e "s/CONFIG_SOUND_OSS=./# CONFIG_SOUND_OSS is not set/" \
-       -e"s/CONFIG_SOUND_PRIME=./# CONFIG_SOUND_PRIME is not set/" $1
+       -e "s/CONFIG_SOUND_PRIME=./# CONFIG_SOUND_PRIME is not set/" $1
+
+echo "disableing eth1394 ethernet to not interfere eth0 ..."
+sed -i -e "s/CONFIG_IEEE1394_ETH1394./# CONFIG_IEEE1394_ETH1394 is not set/" $1
 
 # preemtion is not stable on PowerPC - so only enable it for x86 for now
 if [ $SDECFG_ARCH = x86 ] ; then
