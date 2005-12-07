@@ -1,0 +1,146 @@
+
+This allows forcing all files to be created with a specific user or, if a
+unknown user is forced, to create the files as AnonUser, if allowed.
+
+  - Rene Rebe <rene@exactcode.de>
+
+diff -ur cups-pdf-2.0beta2/extra/cups-pdf.conf cups-pdf-2.0beta2-imp/extra/cups-pdf.conf
+--- cups-pdf-2.0beta2/extra/cups-pdf.conf	2005-10-26 14:15:51.000000000 +0200
++++ cups-pdf-2.0beta2-imp/extra/cups-pdf.conf	2005-12-06 19:20:01.000000000 +0100
+@@ -106,6 +106,13 @@
+ 
+ #AnonUser nobody
+ 
++### Key: ForcedUser
++##  fixed user for PDF creation (this might be a security issue)
++##  set this to an empty value to use the username supplied by CUPS
++### Default: <empty>
++
++#AnonUser archiver
++
+ ### Key: LowerCase
+ ##  This options allows to check user names given to CUPS-PDF additionally 
+ ##  against their lower case variants. This is necessary since in some 
+diff -ur cups-pdf-2.0beta2/src/cups-pdf.c cups-pdf-2.0beta2-imp/src/cups-pdf.c
+--- cups-pdf-2.0beta2/src/cups-pdf.c	2005-10-23 16:04:45.000000000 +0200
++++ cups-pdf-2.0beta2-imp/src/cups-pdf.c	2005-12-06 19:44:50.000000000 +0100
+@@ -350,11 +350,12 @@
+ }
+ 
+ int main(int argc, char *argv[]) {
+-  char *user, *dirname, *spoolfile, *outfile, *gscall, *ppcall;
++  char *dirname, *spoolfile, *outfile, *gscall, *ppcall;
+   cp_string title="";
+-  int size;
++  cp_string user="";
+   mode_t mode;
+   struct passwd *passwd;
++  int size;
+   pid_t pid;
+ 
+   if (getuid()) {
+@@ -376,15 +377,12 @@
+     log_event(CPSTATUS, "call contained illegal number of arguments", NULL);
+   return 0;
+   }
+-  size=strlen(conf.userprefix)+strlen(argv[2])+1;
+-  user=calloc(size, sizeof(char));
+-  if (user == NULL) {
+-    fputs("CUPS-PDF: failed to allocate memory\n", stderr);
+-    return -2;
+-  }  
+-  snprintf(user, size, "%s%s", conf.userprefix, argv[2]);
++  if (*conf.forceduser != 0)
++    snprintf(user, BUFSIZE, "%s", conf.forceduser);
++  else
++    snprintf(user, BUFSIZE, "%s%s", conf.userprefix, argv[2]);
+   passwd=getpwnam(user);
+-  if (passwd == NULL && conf.lowercase) {
++  if (passwd == NULL && conf.lowercase && *conf.forceduser == 0) {
+     log_event(CPDEBUG, "unknown user", user);
+     for (size=0;size<(int) strlen(argv[2]);size++) 
+       argv[2][size]=tolower(argv[2][size]);
+@@ -398,7 +396,6 @@
+       passwd=getpwnam(conf.anonuser);
+       if (passwd == NULL) {
+         log_event(CPERROR, "username for anonymous access unknown", conf.anonuser);
+-        free(user);
+         fclose(logfp);
+         return -2;
+       }
+@@ -408,7 +405,6 @@
+         dirname=calloc(size, sizeof(char));
+         if (dirname == NULL) {
+           fputs("CUPS-PDF: failed to allocate memory\n", stderr);
+-          free(user);
+           fclose(logfp);
+           return -2;
+         }  
+@@ -419,7 +415,6 @@
+         dirname=calloc(size, sizeof(char));
+         if (dirname == NULL) {
+           fputs("CUPS-PDF: failed to allocate memory\n", stderr);
+-          free(user);
+           fclose(logfp);
+           return -2;
+         }  
+@@ -428,7 +423,6 @@
+     }
+     else {
+       log_event(CPSTATUS, "anonymous access denied", user);
+-      free(user);
+       fclose(logfp);
+       return 0;
+     }
+@@ -441,7 +435,6 @@
+       dirname=calloc(size, sizeof(char));
+       if (dirname == NULL) {
+         fputs("CUPS-PDF: failed to allocate memory\n", stderr);
+-        free(user);
+         fclose(logfp);
+         return -2;
+       }  
+@@ -452,7 +445,6 @@
+       dirname=calloc(size, sizeof(char));
+       if (dirname == NULL) {
+         fputs("CUPS-PDF: failed to allocate memory\n", stderr);
+-        free(user);
+         fclose(logfp);
+         return -2;
+       }  
+@@ -463,7 +455,6 @@
+     }
+     mode=(0666&~conf.userumask);
+   }
+-  free(user);
+   if (prepareuser(passwd, dirname)) return -2;
+   log_event(CPDEBUG, "user information prepared", NULL);
+ 
+diff -ur cups-pdf-2.0beta2/src/cups-pdf.h cups-pdf-2.0beta2-imp/src/cups-pdf.h
+--- cups-pdf-2.0beta2/src/cups-pdf.h	2005-10-23 16:03:20.000000000 +0200
++++ cups-pdf-2.0beta2-imp/src/cups-pdf.h	2005-12-06 19:14:22.000000000 +0100
+@@ -40,6 +40,7 @@
+ struct {
+   cp_string	anondirname;
+   cp_string	anonuser;
++  cp_string	forceduser;
+   cp_string 	ghostscript;
+   cp_string	gscall;
+   cp_string	grp;
+@@ -63,6 +64,7 @@
+ void _set_defaults() {
+   snprintf(conf.anondirname,BUFSIZE,"%s","/var/spool/cups-pdf/ANONYMOUS");
+   snprintf(conf.anonuser,BUFSIZE,"%s","nobody");
++  snprintf(conf.forceduser,BUFSIZE,"%s","");
+   snprintf(conf.ghostscript,BUFSIZE,"/usr/bin/gs");
+   snprintf(conf.gscall,BUFSIZE,"%s","%s -q -dCompatibilityLevel=%s -dNOPAUSE -dBATCH -dSAFER -sDEVICE=pdfwrite -sOutputFile=\"%s\" -dAutoRotatePages=/PageByPage -dAutoFilterColorImages=false -dColorImageFilter=/FlateEncode -dPDFSETTINGS=/prepress -c save pop -f %s");
+   snprintf(conf.grp,BUFSIZE,"%s","lp");
+@@ -91,6 +93,8 @@
+     strncpy(conf.anondirname,value,BUFSIZE);
+   else if (!strcmp("AnonUser",key))
+     strncpy(conf.anonuser,value,BUFSIZE);
++  else if (!strcmp("ForcedUser",key))
++    strncpy(conf.forceduser,value,BUFSIZE);
+   else if (!strcmp("GhostScript",key))
+     strncpy(conf.ghostscript,value,BUFSIZE);
+   else if (!strcmp("GSCall",key))
