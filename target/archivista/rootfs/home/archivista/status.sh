@@ -45,6 +45,13 @@ ethtool eth0 >> $tmp
 		echo "FTP server disabled"
 	fi
 
+	if [ -e /etc/rc.d/rc5.d/S*exim ]; then
+		echo "Mali server enabled"
+	else
+		echo "Mail server disabled"
+	fi
+	echo
+
 	read junk junk id < <(grep '^server-id' /etc/my.cnf)
 	case $id in
 	1) 
