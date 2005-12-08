@@ -127,11 +127,11 @@ d; b loop
 fi
 
 # exim
-if [ "$update_mail" ]; then
-	echo "mail server enabled"
+if [ "$update_incoming_mail" ]; then
+	echo "incoming mail server enabled"
 	if [ $doit = 1 ]; then
-		ln -sf ../init.d/exim etc/rc.d/rc5.d/S25exim
-		ln -sf ../init.d/exim etc/rc.d/rc5.d/K75exim
+		sed -i 's/^\([^# ]*local_interfaces \)/# \1/' \
+		    etc/exim/configure
 	fi
 fi
 

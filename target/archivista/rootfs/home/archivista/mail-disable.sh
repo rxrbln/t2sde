@@ -1,17 +1,17 @@
 #!/bin/bash
 
 if [ "$UID" -ne 0 ]; then
-	exec gnomesu -t "Disable mail" \
+	exec gnomesu -t "Disable incoming mail" \
 	-m "Please enter the system password (root user)^\
-in order to disable the mail server." -c $0
+in order to disable the incoming mail server." -c $0
 fi
 
 # PATH and co
 . /etc/profile
 
-# disable EXIM at startup
-rm -f /etc/rc.d/rc5.d/[KS]??exim
+# close for the public
+sed -i 's/#[ ]*\(.*local_interfaces \)/\1/' /etc/exim/configure
 
-# stop EXIM now
-rc exim stop
+# restart EXIM now
+rc exim restart
 
