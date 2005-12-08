@@ -45,10 +45,10 @@ ethtool eth0 >> $tmp
 		echo "FTP server disabled"
 	fi
 
-	if [ -e /etc/rc.d/rc5.d/S*exim ]; then
-		echo "Mali server enabled"
+	if grep -q '^# *local_interface' /etc/exim/configure; then
+		echo "Incomming mail server enabled"
 	else
-		echo "Mail server disabled"
+		echo "Incomming mail server disabled"
 	fi
 	echo
 
