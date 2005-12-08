@@ -12,13 +12,10 @@ noreconfig=0
 # PATH and co
 . /etc/profile
 
-set -x
-
 [ -e /etc/mail.conf ] && . /etc/mail.conf
-
 [ "$To" -a $noreconfig = 1 ] && exit
 
-To=`Xdialog --stdout --inputbox "Mail address to send notifications to:" \
-    0 0 $To`
+To=`Xdialog --stdout --inputbox "Mail address(es) to send event \
+notifications to:" 0 0 $To` || exit
 
 echo "To=\"$To\"" > /etc/mail.conf
