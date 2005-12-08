@@ -126,7 +126,7 @@ d; b loop
 	fi
 fi
 
-# exim
+# exim, incoming
 if [ "$update_incoming_mail" ]; then
 	echo "incoming mail server enabled"
 	if [ $doit = 1 ]; then
@@ -134,6 +134,15 @@ if [ "$update_incoming_mail" ]; then
 		    etc/exim/configure
 	fi
 fi
+
+# admin mail
+if [ "$update_mail_to" ]; then
+	echo "mail notification address"
+	if [ $doit = 1 ]; then
+		echo "To=\"$update_mail_to\"" > etc/mail.conf
+	fi
+fi
+
 
 # backup
 if [ "$update_backup" ]; then
