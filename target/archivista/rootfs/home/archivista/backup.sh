@@ -21,6 +21,12 @@ log=`mktemp`
 	rc mysql start > /dev/null
 ) > $log 2>&1
 
-Xdialog --no-cancel --log - 20 60 < $log
+# mail or display?
+[ -e /etc/mail.conf ] && . /etc/mail.conf
+if [ "$To" ]; then
+	mail -s "SCSI Backup" $To < $log
+else
+	Xdialog --no-cancel --log - 20 60 < $log
+fi
 rm $log
 

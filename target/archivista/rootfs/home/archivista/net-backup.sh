@@ -23,7 +23,7 @@ log=`mktemp`
 	rc mysql stop > /dev/null
 
 	# no -a since we can not store user/group on most CIFS shares
-	rsync -rvt /home/data /mnt/net/
+	rsync -rt --stats /home/data /mnt/net/
 	error=$?
 	[ $error -ne 0 ] && echo "Error $error during rsync run.
 Not all files might be transfered."
@@ -33,6 +33,14 @@ Not all files might be transfered."
 	rc mysql start > /dev/null
 ) > $log 2>&1
 
-Xdialog --no-cancel --log - 20 60 < $log
+# mail or display?
+[ -e /etc/mail.conf ] && . /etc/mail.conf
+if [ "$To" ]; then
+cat $log
+	mail -s "Network backup" $To < $log
+else
+	Xdialog --no-cancel --log - 20 60 < $log
+fi
+
 rm $log
 
