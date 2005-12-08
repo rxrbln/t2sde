@@ -52,6 +52,10 @@ fi
 # exim
 grep -q '^# *local_interface' etc/exim/configure && update_incoming_mail=1
 
+# admin mail
+. etc/mail.conf
+[ "$To" ] && update_mail_to="$To"
+
 # backup
 update_backup=`grep archivista/backup.sh etc/crontab | cut -d ' ' -f 1-5`
 
