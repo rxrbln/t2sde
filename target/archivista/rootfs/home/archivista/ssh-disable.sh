@@ -11,3 +11,5 @@ fi
 
 rc sshd stop
 
+Xdialog --title "" --msgbox "Remote access (SSH) disabled." 0 0
+

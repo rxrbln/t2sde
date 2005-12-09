@@ -1,9 +1,9 @@
 #!/bin/bash
 
 if [ "$UID" -ne 0 ]; then
-	exec gnomesu -t "Enable ftp" \
+	exec gnomesu -t "Enable FTP" \
 	-m "Please enter the system password (root user)^\
-in order to setup the ftp server." -c $0
+in order to setup the FTP server." -c $0
 fi
 
 # PATH and co
@@ -31,4 +31,6 @@ if [ -s $tmp1 ] && cmp -s $tmp1 $tmp2 ; then
 else
 	Xdialog --msgbox 'Supplied passwords did not match!' 8 40
 fi
+
+Xdialog --title "" --msgbox "FTP server enabled." 0 0
 
