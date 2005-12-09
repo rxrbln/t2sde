@@ -3,7 +3,7 @@
 if [ "$UID" -ne 0 ]; then
 	exec gnomesu -t "Configure mail" \
 	-m "Please enter the system password (root user)^\
-in order to configure the notification mail address." -c "$*"
+in order to configure the notification mail address." -c "$0 $*"
 fi
 
 noreconfig=0
