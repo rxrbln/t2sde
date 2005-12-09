@@ -25,3 +25,5 @@ fi
 
 rc sshd start
 
+Xdialog --title "" --msgbox "Remote access (SSH) enabled." 0 0
+

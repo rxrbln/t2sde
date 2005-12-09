@@ -14,6 +14,5 @@ cd  /home/archivista/.wine/drive_c/Programs/Av5e
 cat AV5AUTO.LOG >>/home/data/archivista/images/AV5AUTO.LOG
 rm -rf AV5AUTO.{WRK,STP,END,LOG}
 
-# TODO: s.th. like:?
-# wine avocr $*
+Xdialog --title "" --msgbox "OCR server restarted." 0 0
 

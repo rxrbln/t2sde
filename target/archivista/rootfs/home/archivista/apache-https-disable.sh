@@ -1,9 +1,9 @@
 #!/bin/bash
 
 if [ "$UID" -ne 0 ]; then
-	exec gnomesu -t "Disable https (SSL)" \
+	exec gnomesu -t "Disable HTTPS (SSL)" \
 	-m "Please enter the system password (root user)^\
-in order to disable https (SSL) for the web server." -c $0
+in order to disable HTTPS (SSL) for the web server." -c $0
 fi
 
 # PATH and co
@@ -11,7 +11,7 @@ fi
 
 # sanity check for user response
 if ! grep -q DSSL /sbin/init.d/apache; then
-	Xdialog --no-cancel --msgbox "Support for https was not enabled" 0 0
+	Xdialog --msgbox "Support for HTTPS was not enabled" 0 0
 	exit
 fi
 
@@ -24,4 +24,6 @@ killall -USR2 fluxbox
 
 rc apache stop
 rc apache start
+
+Xdialog --title "" --msgbox "HTTPS (SSL) disabled." 0 0
 

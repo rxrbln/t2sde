@@ -3,7 +3,7 @@
 if [ "$UID" -ne 0 ]; then
 	exec gnomesu -t "Disable PDF printing" \
 	-m "Please enter the system password (root user)^\
-in order to disable PDF printing." -c $0
+in order to disable PDF printing (CUPS)." -c $0
 fi
 
 # PATH and co
@@ -17,4 +17,6 @@ rm -f /etc/rc.d/rc5.d/[KS]??cups
 
 # stop CUPS now
 rc cups stop
+
+Xdialog --title "" --msgbox "PDF printing (CUPS) disabled." 0 0
 
