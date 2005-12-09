@@ -24,3 +24,5 @@ sed -i -e "s/.*server-id.*/server-id = 1/" \
 
 rc mysql start
 
+Xdialog --title "" --msgbox "Database in master mode." 0 0
+

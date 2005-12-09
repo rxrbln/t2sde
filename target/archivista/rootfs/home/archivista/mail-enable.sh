@@ -15,3 +15,5 @@ sed -i 's/^\([^# ]*local_interfaces \)/# \1/' /etc/exim/configure
 # restart EXIM now
 rc exim restart
 
+Xdialog --title "" --msgbox "Incoming mail server enabled." 0 0
+

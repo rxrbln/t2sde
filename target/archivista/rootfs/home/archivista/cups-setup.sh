@@ -3,7 +3,7 @@
 if [ "$UID" -ne 0 ]; then
 	exec gnomesu -t "Enable PDF printing" \
 	-m "Please enter the system password (root user)^\
-in order to setup PDF printing." -c $0
+in order to setup PDF printing (CUPS)." -c $0
 fi
 
 # PATH and co
@@ -65,4 +65,6 @@ lpadmin -p archivista -L "Archivista Box" -D "PDF print into database." \
 # enable CUPS at startup
 ln -sf ../init.d/cups /etc/rc.d/rc5.d/S30cups
 ln -sf ../init.d/cups /etc/rc.d/rc5.d/K70cups
+
+Xdialog --title "" --msgbox "PFD printing (CUPS) enabled." 0 0
 

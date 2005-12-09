@@ -85,6 +85,6 @@ CHANGE MASTER TO
 START SLAVE;
 EOT
 
-echo "Press enter or close this window."
+echo "Database slave mode enabled, press enter or close this window."
 read in
 
