@@ -1,9 +1,9 @@
 #!/bin/bash
 
 if [ "$UID" -ne 0 ]; then
-	exec gnomesu -t "Enable https (SSL)" \
+	exec gnomesu -t "Enable HTTPS (SSL)" \
 	-m "Please enter the system password (root user)^\
-in order to setup https (SSL) for the web server." -c $0
+in order to setup HTTPS (SSL) for the web server." -c $0
 fi
 
 # PATH and co
@@ -67,10 +67,8 @@ mail=$mail
 EOT
 
 # size greater than zero?
-if [ -s ssl.key/server.key -a -s ssl.crt/server.crt ]; then
-	Xdialog --no-cancel --msgbox "X.509 certificate for https created." 0 0
-else
-	Xdialog --no-cancel --msgbox "An error occured creating the secret key
+if [ ! -s ssl.key/server.key -o ! -s ssl.crt/server.crt ]; then
+	Xdialog --msgbox "An error occured creating the private key
 or X.509 certificate for https." 0 0
 	exit
 fi
@@ -84,4 +82,6 @@ killall -USR2 fluxbox
 
 rc apache stop
 rc apache start
+
+Xdialog --title "" --msgbox "HTTPS (SSL) enabled." 0 0
 

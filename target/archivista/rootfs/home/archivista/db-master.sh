@@ -55,8 +55,7 @@ EOT
 ssh_enabled=0
 if ! ps -C sshd ; then
 	ssh_enabled=1
-	Xdialog --msgbox "Starting remote access (SSH)
-for replication." 0 0
+	Xdialog --msgbox "Starting remote access (SSH) for replication." 0 0
 	/home/archivista/ssh-enable.sh
 fi
 
