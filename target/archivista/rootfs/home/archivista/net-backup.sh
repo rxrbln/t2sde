@@ -36,8 +36,12 @@ Not all files might be transfered."
 # mail or display?
 [ -e /etc/mail.conf ] && . /etc/mail.conf
 if [ "$To" ]; then
-cat $log
-	mail -s "Network backup" $To < $log
+	sendmail $To <<-EOT
+		From: $From
+		To: $To
+		Subject: Network backup
+		$(cat $log)
+	EOT
 else
 	Xdialog --no-cancel --log - 20 60 < $log
 fi
