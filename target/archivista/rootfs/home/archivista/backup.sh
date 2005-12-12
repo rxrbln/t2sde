@@ -24,7 +24,12 @@ log=`mktemp`
 # mail or display?
 [ -e /etc/mail.conf ] && . /etc/mail.conf
 if [ "$To" ]; then
-	mail -s "SCSI Backup" $To < $log
+	sendmail $To <<-EOT
+		From: $From
+		To: $To
+		Subject: SCSI backup
+		$(cat $log)
+	EOT
 else
 	Xdialog --no-cancel --log - 20 60 < $log
 fi
