@@ -16,6 +16,13 @@ noreconfig=0
 [ "$To" -a $noreconfig = 1 ] && exit
 
 To=`Xdialog --stdout --inputbox "Mail address(es) to send event \
-notifications to:" 0 0 $To` || exit
+notifications to:" 0 0 "$To"` || exit
 
-echo "To=\"$To\"" > /etc/mail.conf
+[ "$From" ] || From="Archivista Box"
+From=`Xdialog --stdout --inputbox "Address used as identification (From:):" \
+0 0 "$From"` || exit
+
+
+echo "To=\"$To\"
+From=\"$From\"" > /etc/mail.conf
+
