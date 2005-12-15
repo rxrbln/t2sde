@@ -14,25 +14,25 @@
 # --- T2-COPYRIGHT-NOTE-END ---
 
 part_mounted_action() {
-	if gui_yesno "Do you want to un-mount the filesystem on $1/$2?"
-	then umount /dev/$1/$2; fi
+	if gui_yesno "Do you want to un-mount the filesystem on $1?"
+	then umount /dev/$1; fi
 }
 
 part_swap_action() {
-	if gui_yesno "Do you want to de-activate the swap space on $1/$2?"
-	then swapoff /dev/$1/$2; fi
+	if gui_yesno "Do you want to de-activate the swap space on $1?"
+	then swapoff /dev/$1; fi
 }
 
 part_mount() {
 	local dir
-	gui_input "Mount device $1/$2 on directory
+	gui_input "Mount device $1 on directory
 (for example /, /home, /var, ...)" '/' dir
 	if [ "$dir" ] ; then
 		dir="$( echo $dir | sed 's,^/*,,; s,/*$,,' )"
 		if [ -z "$dir" ] || grep -q " /mnt/target " /proc/mounts
 		then
 			mkdir -p /mnt/target/$dir
-			mount /dev/$1/$2 /mnt/target/$dir
+			mount /dev/$1 /mnt/target/$dir
 		else
 			gui_message "Please mount a root filesystem first."
 		fi
@@ -40,55 +40,49 @@ part_mount() {
 }
 
 part_mkfs() {
-	cmd="gui_menu part_mkfs 'Create filesystem on $1/$2'"
+	dev=$1
+	cmd="gui_menu part_mkfs 'Create filesystem on $dev'"
 
-	cmd="$cmd 'ext3fs   (journaling filesystem)'"
-	cmd="$cmd 'mke2fs -j /dev/$1/$2'"
+	maybe_add () {
+	  if grep -q $1 /proc/filesystems -a type -p $3 > /dev/null ; then
+		cmd="$cmd '$1 ($2)' '$3 $4 /dev/$dev'"
+	  fi
+	}
 
-	cmd="$cmd 'ext2fs   (non-journaling fs)'"
-	cmd="$cmd 'mke2fs /dev/$1/$2'"
+	maybe_add ext3	'journaling filesystem'		'mke2fs' '-j'
+	maybe_add ext2	'non-journaling fs'		'mke2fs'
+	maybe_add reiserfs 'journaling filesystem'	'mkreiserfs'
+	maybe_add jfs	'IBM journaling filesystem'	'jfs_mkfs'
+	maybe_add xfs	'Sgi journaling filesystem'	'mkfs.xfs' '-f'
 
-	cmd="$cmd 'reiserfs (journaling filesystem)'"
-	cmd="$cmd 'mkreiserfs /dev/$1/$2'"
-
-	if type -p jfs_mkfs > /dev/null ; then
-		cmd="$cmd 'IBM JFS  (journaling filesystem)'"
-		cmd="$cmd 'jfs_mkfs /dev/$1/$2'"
-	fi
-
-	if type -p mkfs.xfs > /dev/null ; then
-		cmd="$cmd 'SGI XFS  (journaling filesystem)'"
-		cmd="$cmd 'mkfs.xfs -f /dev/$1/$2'"
-	fi
-
-	eval "$cmd" && part_mount $1 $2
+	eval "$cmd" && part_mount $dev
 }
 
 part_unmounted_action() {
-	gui_menu part "$1/$2" \
+	gui_menu part "$1" \
 		"Create a filesystem on the partition" \
-				"part_mkfs $1 $2" \
+				"part_mkfs $1" \
 		"Mount an existing filesystem from the partition" \
-				"part_mount $1 $2" \
+				"part_mount $1" \
 		"Create a swap space on the partition" \
-				"mkswap /dev/$1/$2; swapon /dev/$1/$2" \
+				"mkswap /dev/$1; swapon /dev/$1" \
 		"Activate an existing swap space on the partition" \
-				"swapon /dev/$1/$2"
+				"swapon /dev/$1"
 }
 
 part_add() {
 	local action="unmounted" location="currently not mounted"
-	if grep -q "^/dev/$1/$2 " /proc/swaps; then
+	if grep -q "^/dev/$1 " /proc/swaps; then
 		action=swap ; location="swap  <no mount point>"
-	elif grep -q "^/dev/$1/$2 " /proc/mounts; then
+	elif grep -q "^/dev/$1 " /proc/mounts; then
 		action=mounted
-		location="`grep "^/dev/$1/$2 " /proc/mounts | cut -d ' ' -f 2 | \
+		location="`grep "^/dev/$1 " /proc/mounts | cut -d ' ' -f 2 |
 			  sed "s,^/mnt/target,," `"
 		[ "$location" ] || location="/"
 	fi
 
 	# save partition information
-	disktype /dev/$1/$2 > /tmp/stone-install
+	disktype /dev/$1 > /tmp/stone-install
 	type="`grep /tmp/stone-install -v -e '^  ' -e '^Block device' \
 	       -e '^Partition' -e '^---' | \
 	       sed -e 's/[,(].*//' -e '/^$/d' -e 's/ $//' | tail -n 1`"
@@ -100,7 +94,7 @@ part_add() {
 }
 
 disk_action() {
-	if grep -q "^/dev/$1/" /proc/swaps /proc/mounts; then
+	if grep -q "^/dev/$1 " /proc/swaps /proc/mounts; then
 		gui_message "Partitions from $1 are currently in use, so you
 can't modify this disks partition table."
 		return
@@ -109,7 +103,7 @@ can't modify this disks partition table."
 	cmd="gui_menu disk 'Edit partition table of $1'"
 	for x in parted cfdisk fdisk pdisk mac-fdisk ; do
 		type -p $x > /dev/null &&
-		  cmd="$cmd \"Edit partition table using '$x'\" \"$x /dev/$1/disc\""
+		  cmd="$cmd \"Edit partition table using '$x'\" \"$x /dev/$1\""
 	done
 
 	eval $cmd
@@ -139,13 +133,11 @@ de-activate it.\" ''"
 disk_add() {
 	local x y=0
 	cmd="$cmd 'Partition table of $1:' 'disk_action $1'"
-	for x in $( cd /dev/$1 ; ls part* 2> /dev/null )
+	for x in $( cd /dev/ ; ls $1[0-9]* 2> /dev/null )
 	do
-		part_add $1 $x ; y=1
+		part_add $x ; y=1
 	done
-	if [ $y = 0 ]; then
-		cmd="$cmd 'Partition table is empty.' ''"
-	fi
+	[ $y = 0 ] && cmd="$cmd 'Partition table is empty.' ''"
 	cmd="$cmd '' ''"
 }
 
@@ -176,19 +168,20 @@ main() {
 This dialog allows you to modify your discs parition layout and to create filesystems and swap-space - as well as mouting / activating it. Everything you can do using this tool can also be done manually on the command line.'"
 
 		# protect for the case no discs are present ...
-		if [ -e /dev/discs ] ; then
-		  for x in $( cd /dev/discs
-		            ls -l * | grep ' -> ' | cut -f2- -d/ | sort )
-		  do
+		found=0
+		for x in $( cd /dev/; ls hd[a-z] sd[a-z] ); do
 			disk_add $x
-		  done
-		  for x in $( cat /etc/lvmtab 2> /dev/null ); do
+			found=1
+		done
+		for x in $( cat /etc/lvmtab 2> /dev/null ); do
 			vg_add "$x"
-		  done
-		  [ -x /sbin/vgs ] && for x in $( vgs --noheadings -o name 2> /dev/null ); do
+			found=1
+		done
+		[ -x /sbin/vgs ] && for x in $( vgs --noheadings -o name 2> /dev/null ); do
 			vg_add "$x"
-		  done
-		else
+			found=1
+		done
+		if [ $found = 0 ]; then
 		  cmd="$cmd 'No hard-disc found!' ''"
 		fi
 
