@@ -108,12 +108,7 @@ can't modify this disks partition table."
 
 	cmd="gui_menu disk 'Edit partition table of $1'"
 	for x in parted cfdisk fdisk pdisk mac-fdisk ; do
-		fn=""
-		[ -f /bin/$x ] && fn="/bin/$x"
-		[ -f /sbin/$x ] && fn="/sbin/$x"
-		[ -f /usr/bin/$x ] && fn="/usr/bin/$x"
-		[ -f /usr/sbin/$x ] && fn="/usr/sbin/$x"
-		[ "$fn" ] && \
+		type -p $x > /dev/null &&
 		  cmd="$cmd \"Edit partition table using '$x'\" \"$x /dev/$1/disc\""
 	done
 
