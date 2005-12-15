@@ -107,7 +107,7 @@ can't modify this disks partition table."
 	fi
 
 	cmd="gui_menu disk 'Edit partition table of $1'"
-	for x in cfdisk fdisk pdisk mac-fdisk ; do
+	for x in parted cfdisk fdisk pdisk mac-fdisk ; do
 		fn=""
 		[ -f /bin/$x ] && fn="/bin/$x"
 		[ -f /sbin/$x ] && fn="/sbin/$x"
