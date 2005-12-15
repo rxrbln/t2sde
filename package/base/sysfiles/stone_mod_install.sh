@@ -44,7 +44,7 @@ part_mkfs() {
 	cmd="gui_menu part_mkfs 'Create filesystem on $dev'"
 
 	maybe_add () {
-	  if grep -q $1 /proc/filesystems -a type -p $3 > /dev/null ; then
+	  if grep -q $1 /proc/filesystems && type -p $3 > /dev/null ; then
 		cmd="$cmd '$1 ($2)' '$3 $4 /dev/$dev'"
 	  fi
 	}
@@ -90,7 +90,7 @@ part_add() {
 	       sed 's/.* size \(.*\) (.*/\1/'`"
 
 	[ "$type" ] || type="undetected"
-	cmd="$cmd '`printf "%-6s %-24s %-10s" $2 "$location" "$size"` $type' 'part_${action}_action $1 $2'"
+	cmd="$cmd '`printf "%-6s %-24s %-10s" $1 "$location" "$size"` $type' 'part_${action}_action $1 $2'"
 }
 
 disk_action() {
@@ -132,7 +132,7 @@ de-activate it.\" ''"
 
 disk_add() {
 	local x y=0
-	cmd="$cmd 'Partition table of $1:' 'disk_action $1'"
+	cmd="$cmd 'Edit partition table of $1:' 'disk_action $1'"
 	for x in $( cd /dev/ ; ls $1[0-9]* 2> /dev/null )
 	do
 		part_add $x ; y=1
@@ -169,7 +169,7 @@ This dialog allows you to modify your discs parition layout and to create filesy
 
 		# protect for the case no discs are present ...
 		found=0
-		for x in $( cd /dev/; ls hd[a-z] sd[a-z] ); do
+		for x in $( cd /dev/; ls hd[a-z] sd[a-z] 2> /dev/null ); do
 			disk_add $x
 			found=1
 		done
