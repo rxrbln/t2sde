@@ -15,7 +15,7 @@
 disksdir="$build_toolchain/bootdisk"
 #rm -rf $disksdir; mkdir -p $disksdir; chmod 700 $disksdir
 
-# create the live initrd's first
+# create the 1st stage loader initrd's first
 . $base/target/install/build_initrd.sh
 . $base/target/install/build_image.sh
 
@@ -31,4 +31,3 @@ echo "DISK1	build/${SDECFG_ID}/TOOLCHAIN/bootdisk/isofs/ `
 	`${SDECFG_SHORTID}/" > ../isofs_generic.txt
 cat ../isofs_*.txt > ../isofs.txt
 
-echo_status "Done!"
