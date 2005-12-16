@@ -79,7 +79,7 @@ pivot_root,rm,sleep,losetup,chmod,cat} initramfs/bin/
 	echo "root:x:0:0:root:/:/bin/sh" > initramfs/etc/passwd
 
 	# TODO: do we need this target specific?
-	cp $base/target/livecd/{init,init2} initramfs/
+	cp $base/target/install/{init,init2} initramfs/
 	chmod +x initramfs/{init,init2}
 
 	# create the cpio image
@@ -124,12 +124,9 @@ title	$boot_title (Kernel: $kernelver)
 kernel	(cd)/boot/vmlinuz_$kernelver
 initrd	(cd)/boot/$initrd
 
-title   $boot_title (Kernel: $kernelver) - no X
-kernel  (cd)/boot/vmlinuz_$kernelver 2
-initrd  (cd)/boot/$initrd
 EOT
 
 done
 
-sed  '1,/CUT/d' $base/target/livecd/menu.lst >> $isofsdir/boot/grub/menu.lst
+sed  '1,/CUT/d' $base/target/install/menu.lst >> $isofsdir/boot/grub/menu.lst
 
