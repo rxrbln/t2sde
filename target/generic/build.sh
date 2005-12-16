@@ -15,7 +15,7 @@
 # This is the shortest possible target build.sh script. Some targets will
 # add code after calling pkgloop() or modify pkgloop's behavior by defining
 # a new pkgloop_action() function.
-#
+
 pkgloop
 
 echo_header "Finishing build."
@@ -24,6 +24,11 @@ echo_status "Creating package database ..."
 admdir="build/${SDECFG_ID}/var/adm"
 create_package_db $admdir build/${SDECFG_ID}/TOOLCHAIN/pkgs \
                   build/${SDECFG_ID}/TOOLCHAIN/pkgs/packages.db
+
+if [ "$SDECFG_IMAGE" -a -e target/$SDECFG_IMAGE/build.sh ]; then
+	echo_status "Creating output image ..."
+	. target/$SDECFG_IMAGE/build.sh
+fi
 
 echo_status "Creating isofs.txt file .."
 cat << EOT > build/${SDECFG_ID}/TOOLCHAIN/isofs.txt
