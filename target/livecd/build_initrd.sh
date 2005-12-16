@@ -102,7 +102,7 @@ cp -f $build_root/boot/grub/stage2_eltorito $isofsdir/boot/grub/
 cp -f $build_root/boot/t2.xpm.gz $isofsdir/boot/
 
 # header
-sed -n '/CUT/q;p' $base/target/$target/menu.lst > $isofsdir/boot/grub/menu.lst
+sed -n '/CUT/q;p' $base/target/livecd/menu.lst > $isofsdir/boot/grub/menu.lst
 
 # For each available kernel:
 #
@@ -131,5 +131,5 @@ EOT
 
 done
 
-sed  '1,/CUT/d' $base/target/$target/menu.lst >> $isofsdir/boot/grub/menu.lst
+sed  '1,/CUT/d' $base/target/livecd/menu.lst >> $isofsdir/boot/grub/menu.lst
 
