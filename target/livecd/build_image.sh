@@ -58,6 +58,7 @@ time rsync -artH $v --delete --exclude-from ../files-exclude \
 rm ../files-{wanted,all,exclude}
 
 echo "Overlaying root file-system with target defined files ..."
+copy_and_parse_from_source $base/target/livecd/rootfs $imagelocation
 copy_and_parse_from_source $base/target/$target/rootfs $imagelocation
 
 [ "$inject_hook" ] && "$inject_hook"

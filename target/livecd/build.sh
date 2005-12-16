@@ -18,8 +18,8 @@ isofsdir="$build_toolchain/isofs"		# for the ISO9660 content
 imagelocation="$build_toolchain/rootfs"	# where the roofs is prepared and sq.
 
 # create the live initrd's first
-. $base/target/$target/build_initrd.sh
-. $base/target/$target/build_image.sh
+. $base/target/livecd/build_initrd.sh
+. $base/target/livecd/build_image.sh
 
 # TODO: make arch specific and such ... rushed out in a hurry right now
 
