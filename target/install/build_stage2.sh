@@ -15,6 +15,7 @@
 set -e
 taropt="--use-compress-program=bzip2 -xf"
 
+set -x
 echo_header "Creating 2nd stage filesystem:"
 mkdir -p $disksdir/2nd_stage
 cd $disksdir/2nd_stage
@@ -50,13 +51,13 @@ kbd		   ntfsprogs
 libol              embutils           hotplug++          memtester
 minised            serpnp             udev'
 
-if [ -f ../../pkgs/bize.tar.bz2 -a ! -f ../../pkgs/mine.tar.bz2 ] ; then
-	packager=bize
-else
+if pkginstalled mine ; then
 	packager=mine
+else
+	packager=bize
 fi
 
-package_map="$( echo "+$packager $package_map" | tr "\t" " " | tr -s ' ' | tr ' ' '\n')"
+package_map="$( echo "$packager $package_map" | tr "\t" " " | tr -s ' ' | tr ' ' '\n')"
 
 echo_status "Extracting the packages archives."
 for x in $( ls ../../pkgs/*.tar.bz2 | tr . / | cut -f8 -d/ )
