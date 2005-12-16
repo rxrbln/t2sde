@@ -69,6 +69,7 @@ mkinitrd()
 	#
 	cp $build_root/sbin/{hotplug++,udev,udevstart,modprobe,insmod} \
 	   initramfs/sbin/
+# TODO: add tar gzip ip fget 
 	ln -sf /sbin/udev initramfs/etc/hotplug.d/default/10-udev.hotplug
 
 	cp $build_root/bin/pdksh initramfs/bin/sh
