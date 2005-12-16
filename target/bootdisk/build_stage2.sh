@@ -20,41 +20,35 @@ mkdir -p $disksdir/2nd_stage
 cd $disksdir/2nd_stage
 mkdir -p mnt/source mnt/target
 #
-package_map='       +00-dirtree
-+glibc	            -gcc                -linux-header
-+linux24            +linux26            +linux24benh
--binutils           -bin86              -nasm               -dietlibc
-+lilo               +yaboot             +aboot              +grub
-+silo               +parted             +mac-fdisk          +pdisk
-+xfsprogs           +mkdosfs            +jfsutils
-+e2fsprogs          +reiserfsprogs      +reiser4progs       +genromfs
-+popt               +raidtools          +mdadm
-+lvm                +lvm2               +device-mapper
-+dump               +eject              +disktype           -patchutils
-+hdparm             +memtest86          +cpuburn            +bonnie++
--mine               -bize               -termcap            +ncurses
-+readline           -strace             -perl
--m4                 -time               -gettext            -zlib
-+bash               +attr               +acl                +findutils
-+mktemp             +coreutils          -diffutils          -patch
--make               +grep               +sed                +gzip
-+tar                +gawk               -flex               +bzip2
--texinfo            +less               -groff              -man
-+nvi                -bison              +bc                 +cpio
-+ed                 -autoconf           -automake           -libtool
-+curl               +wget               +dialog             +minicom
-+lrzsz              +rsync              +tcpdump            +module-init-tools
-+sysvinit           +shadow             +util-linux         +wireless-tools
-+net-tools          +procps             +psmisc             +rockplug
-+modutils           +pciutils           -cron               +portmap
-+sysklogd           +devfsd             +setserial          +iproute2
-+netkit-base        +netkit-ftp         +netkit-telnet      +netkit-tftp
-+sysfiles           +libpcap            +iptables           +tcp_wrappers
--kiss               +kbd		-syslinux           +ntfsprogs
--ethtool            -bdb		-ccache
-+libol              +embutils           +hotplug++          +memtester
-+minised            +serpnp             +udev               -pdksh
--cramfs-tools'
+package_map='00-dirtree
+glibc
+linux24            linux26
+lilo               yaboot             aboot              grub
+silo               parted             mac-fdisk          pdisk
+xfsprogs           mkdosfs            jfsutils
+e2fsprogs          reiserfsprogs      reiser4progs       genromfs
+popt               raidtools          mdadm
+lvm                lvm2               device-mapper
+dump               eject              disktype
+hdparm             memtest86          cpuburn            bonnie++
+ncurses            readline
+bash               attr               acl                findutils
+mktemp             coreutils
+grep               sed                gzip               bzip2
+tar                gawk
+less               nvi                bc                 cpio
+ed
+curl               wget               dialog             minicom
+lrzsz              rsync              tcpdump            module-init-tools
+sysvinit           shadow             util-linux         wireless-tools
+net-tools          procps             psmisc
+modutils           pciutils           portmap
+sysklogd           setserial          iproute2
+netkit-base        netkit-ftp         netkit-telnet      netkit-tftp
+sysfiles           libpcap            iptables           tcp_wrappers
+kbd		   ntfsprogs
+libol              embutils           hotplug++          memtester
+minised            serpnp             udev'
 
 if [ -f ../../pkgs/bize.tar.bz2 -a ! -f ../../pkgs/mine.tar.bz2 ] ; then
 	packager=bize
@@ -63,29 +57,18 @@ else
 fi
 
 package_map="$( echo "+$packager $package_map" | tr "\t" " " | tr -s ' ' | tr ' ' '\n')"
-forgotten_packages=
 
 echo_status "Extracting the packages archives."
 for x in $( ls ../../pkgs/*.tar.bz2 | tr . / | cut -f8 -d/ )
 do
 	y=$( echo "$package_map" | sed -n -e "s,^\([-+]\)$x$,\1,p" )
 
-	if [ -z "$y" ]; then
-		echo_error "\`- Not found in \$package_map: $x"
-		echo_error "    ... fix target/$target/build_stage2.sh"
-		var_append forgotten_packages ' ' $x
-	elif [ "$y" != "-" ]; then
+	if [ ! -z "$y" ]; then
 		echo_status "\`- Extracting $x.tar.bz2 ..."
 		tar -p $taropt ../../pkgs/$x.tar.bz2
 	fi
 done
 
-if [ "$forgotten_packages" ]; then
-	echo_status "Forgotten packages summary:"
-	for x in $forgotten_packages; do
-		echo_error "\`- $x"
-	done
-fi
 #
 echo_status "Saving boot/ lib/modules/ - for the 2nd stage ..."
 rm -rf ../boot ; mkdir ../boot
