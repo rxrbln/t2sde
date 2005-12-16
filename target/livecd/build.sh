@@ -12,8 +12,6 @@
 # GNU General Public License can be found in the file COPYING.
 # --- T2-COPYRIGHT-NOTE-END ---
 
-pkgloop
-
 isofsdir="$build_toolchain/isofs"		# for the ISO9660 content
 imagelocation="$build_toolchain/rootfs"	# where the roofs is prepared and sq.
 
