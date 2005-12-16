@@ -13,38 +13,11 @@
 # --- T2-COPYRIGHT-NOTE-END ---
 
 disksdir="$build_toolchain/bootdisk"
+#rm -rf $disksdir; mkdir -p $disksdir; chmod 700 $disksdir
 
-if [ "$SDEDEBUG_BOOTDISK_NOSTAGE2" != 1 -a \
-     "$SDEDEBUG_BOOTDISK_NOSTAGE1" != 1 ]
-then
-	pkgloop
-	rm -rf $disksdir; mkdir -p $disksdir; chmod 700 $disksdir
-fi
-
-# Re-evaluate CC and other variables (as we have built the cross cc now)
-. scripts/parse-config
-
-# make mkcramfs be found
-PATH="$base/build/${SDECFG_ID}/TOOLCHAIN/tools.cross/bin:$PATH"
-
-# Add tools.cross/diet-bin/ to path so we find our 'diet' program
-PATH="$base/build/${SDECFG_ID}/TOOLCHAIN/tools.cross/diet-bin:$PATH"
-export DIETHOME="$base/build/${SDECFG_ID}/usr/dietlibc"
-
-if [ "$SDEDEBUG_BOOTDISK_NOSTAGE2" != 1 ]
-then
-	. $base/target/$target/build_stage2.sh
-fi
-
-if [ "$SDEDEBUG_BOOTDISK_NOSTAGE1" != 1 ]
-then
-	. $base/target/$target/build_stage1.sh
-fi
-
-if [ -f $base/target/$target/arch/$arch/build.sh ]; then
-	. $base/target/$target/arch/$arch/build.sh
-fi
-
+# create the live initrd's first
+. $base/target/install/build_initrd.sh
+. $base/target/install/build_image.sh
 
 echo_header "Creating ISO filesystem description."
 cd $disksdir; rm -rf isofs; mkdir -p isofs
