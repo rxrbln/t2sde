@@ -70,10 +70,43 @@ doboot()
 	fi
 }
 
-trymount ()
+trymount()
 {
 	for fs in iso9660 ext3 ext2 minix vfat; do
 		mount $1 $2 -t $fs -o ro && return
+	done
+}
+
+select_2nd_stage()
+{
+	# choices
+	case $1 in
+	  http://|ftp://)
+		images=`fget $1/ | tr '"' '\n' | grep 2nd_stage`
+		;;
+	  *)
+		mkdir /mnt_source
+		trymount $1 /mnt_source
+		images=`cd /mnt_source ; ls 2nd_stage*.tar.gz`
+		umount /mnt_source; rmdir /mnt_source
+		;;
+	esac
+
+	i=1
+        echo "Select a stage 2 image file:"
+	for x in $images; do
+		echo "     $(( i++ )). $x"
+	done
+        echo -n "Enter number or image file name (default=1): "
+
+	read in; [ "$in" ] || in=1
+
+	i=1
+	for x in $images; do
+		if [ "$(( i++ ))" = $in ]; then
+			eval $2=$x
+			return
+		fi
 	done
 }
 
@@ -88,15 +121,7 @@ httpload()
 	read baseurl
 	[ "$baseurl" ] || return
 
-	echo "Select a stage 2 image file:
-	            1. BIG_IMAGE   2. SMALL_IMAGE\n\n
-	       Enter number or image file name (default=1): "
-
-	read filename
-	case $filename in
-	  ""|1) filename=BIG_IMAGE ;;
-	  2) filename=SMALL_IMAGE
-	esac
+	select_2nd_stage "$baseurl" filename
 
 	exit_init=1
 	url=$baseurl/$filename
@@ -104,12 +129,12 @@ httpload()
 	echo -e "[ $url ]\n"
 	export ROCK_INSTALL_SOURCE_URL=baseurl
 
-	exit_linuxrc=1;
+	exit_linuxrc=1
 	mkdir /mnt_root || exit_linuxrc=0
 
 	mount none /mnt_root -t tmpfs || exit_linuxrc=0
 
-	curl $url | tar $STAGE_2_COMPRESS_ARG -C /mnt_root -x 
+	curl $url | ( cd /mnt_root; tar -xz )
 	
 	echo "finished ... continuing execution of 2nd stage"
 	doboot
@@ -129,7 +154,7 @@ getdevice()
 		return
 	fi
 
-	i=0
+	i=1
 	for dev in $devicelist ; do
 		x=`readlink $dev`; [ "$x" ] && [[ "$x" != /dev/* ]] && x=/dev/$x
 		[ "$x" ] && dev=$x
@@ -145,15 +170,15 @@ getdevice()
 		: $(( i++ ))
 	done
 
-	echo -en "\nEnter number or device file name (default=0): "
+	echo -en "\nEnter number or device file name (default=1): "
 
-	read in ; [ "$in" ] || in=0
+	read in ; [ "$in" ] || in=1
 	while [ -z "$device" ]; do
 		[ -z "$in" ] && return
 		if [ -e $in ]; then
 			device=$in
 		else
-			i=0
+			i=1
 			for x in $devicelist; do
 				[ $in = $i ] && device=$x
 				: $(( i++ ))
@@ -182,27 +207,19 @@ load_ramdisk_file()
 		return
 	fi
 
-	echo "Select a stage 2 image file:
-	            1. BIG_IMAGE     2. SMALL_IMAGE
-	       Enter number or image file name (default=1): "
-
-	read in
-	case $in in
-	  ""|1) filename=BIG_IMAGE ;;
-	  2) filename=SMALL_IMAGE ;;
-	esac
+	select_2nd_stage $devicefile filename
 
 	exit_linuxrc=1
 	echo "Using $devicefile:$filename"
 
 	mkdir /mnt_source || exit_linuxrc=0
-	trymount devicefile /mnt_source || exit_linuxrc=0
+	trymount $devicefile /mnt_source || exit_linuxrc=0
 
 	mkdir /mnt_root || exit_linuxrc=0
 	mount none /mnt_root -t tmpfs || exit_linuxrc=0
 
 	echo "Extracting 2nd stage filesystem to ram ..."
-	tar $STAGE_2_COMPRESS_ARG -C /mnt_root -x  $filename ||
+	cat $filename | ( cd /mnt_root; tar -xz ) ||
 	echo "Can't run tar on $fielname."
 	
 	umount /mnt_source || exit_linuxrc=0
@@ -303,7 +320,7 @@ done
 
 sleep 1 # ???
 
-exec /init /init
+exec /sbin/init /sbin/init
 
-echo -e "\nCan't start /linuxrc!! Life sucks.\n\n"
+echo -e "\nPanic: Can't start /sbin/init!\n\n"
 
