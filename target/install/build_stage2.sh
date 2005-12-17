@@ -12,18 +12,18 @@
 # GNU General Public License can be found in the file COPYING.
 # --- T2-COPYRIGHT-NOTE-END ---
 
-set -e
-taropt="--use-compress-program=bzip2 -xf"
+. $base/misc/target/functions.in
 
-set -x
+set -e
+
 echo_header "Creating 2nd stage filesystem:"
 mkdir -p $disksdir/2nd_stage
+rm -rf $diskdir/2nd_stage/*
 cd $disksdir/2nd_stage
-mkdir -p mnt/source mnt/target
+
 #
 package_map='00-dirtree
 glibc
-linux24            linux26
 lilo               yaboot             aboot              grub
 silo               parted             mac-fdisk          pdisk
 xfsprogs           mkdosfs            jfsutils
@@ -34,11 +34,11 @@ dump               eject              disktype
 hdparm             memtest86          cpuburn            bonnie++
 ncurses            readline
 bash               attr               acl                findutils
-mktemp             coreutils
+mktemp             coreutils          pciutils
 grep               sed                gzip               bzip2
-tar                gawk
+tar                gawk               lzo                lzop
 less               nvi                bc                 cpio
-ed
+ed                 zile
 curl               wget               dialog             minicom
 lrzsz              rsync              tcpdump            module-init-tools
 sysvinit           shadow             util-linux         wireless-tools
@@ -48,8 +48,9 @@ sysklogd           setserial          iproute2
 netkit-base        netkit-ftp         netkit-telnet      netkit-tftp
 sysfiles           libpcap            iptables           tcp_wrappers
 kbd		   ntfsprogs
-libol              embutils           hotplug++          memtester
-minised            serpnp             udev'
+libol              hotplug++          memtester
+serpnp             udev
+openssl            openssh            iproute2'
 
 if pkginstalled mine ; then
 	packager=mine
@@ -57,54 +58,44 @@ else
 	packager=bize
 fi
 
-package_map="$( echo "$packager $package_map" | tr "\t" " " | tr -s ' ' | tr ' ' '\n')"
+package_map=" $( echo "$packager $package_map" | tr '\n' ' ' | tr '\t' ' ' | tr -s ' ' ) "
 
-echo_status "Extracting the packages archives."
-for x in $( ls ../../pkgs/*.tar.bz2 | tr . / | cut -f8 -d/ )
-do
-	y=$( echo "$package_map" | sed -n -e "s,^\([-+]\)$x$,\1,p" )
-
-	if [ ! -z "$y" ]; then
-		echo_status "\`- Extracting $x.tar.bz2 ..."
-		tar -p $taropt ../../pkgs/$x.tar.bz2
+echo_status "Copying files."
+for pkg in `grep '^X ' $base/config/$config/packages | cut -d ' ' -f 5`; do
+	# include the package?
+	#echo maybe $pkg >&2
+	if [ "${package_map/ $pkg /}" != "$package_map" ]; then
+		cut -d ' ' -f 2 $build_root/var/adm/flists/$pkg
 	fi
-done
+done | (
+	# quick and dirty filter
+	grep  -v -e 'lib/[^/]*\.\(a\|la\|o\)$' -e 'var/\(adm\|games\|mail\|opt\)' \
+	         -e 'usr/\(local\|doc\|man\|info\|games\|share\|include\|src\)' \
+	         -e 'usr/.*-linux-gnu' -e '/gconv/' -e '/locale/' -e '/pkgconfig/' \
+	         -e '/init.d/' -e '/rc.d/'
+	# TODO: usr/lib/*/
+) > ../files-wanted
 
-#
-echo_status "Saving boot/ lib/modules/ - for the 2nd stage ..."
-rm -rf ../boot ; mkdir ../boot
-mv boot/* ../boot/
-rm -rf ../lib ; mkdir ../lib
-mv lib/modules ../lib/
+copy_with_list_from_file $build_root $PWD $PWD/../files-wanted
+copy_and_parse_from_source $base/target/install/rootfs $PWD
 
-echo_status "Remove the stuff we do not need ..."
-rm -rf home usr/{local,doc,man,info,games,share}
-rm -rf var/adm/* var/games var/adm var/mail var/opt
-rm -rf usr/{include,src} usr/*-linux-gnu {,usr/}lib/*.{a,la,o}
-for x in usr/lib/*/; do rm -rf ${x%/}; done
-#
-echo_status "Installing some terminfo databases ..."
-tar $taropt ../../pkgs/ncurses.tar.bz2 \
-	usr/share/terminfo/a/ansi usr/share/terminfo/l/linux \
-	usr/share/terminfo/n/nxterm usr/share/terminfo/x/{xterm,xterm-new} \
-	usr/share/terminfo/v/vt{100,200,220} \
-	usr/share/terminfo/s/screen
-#
-if [ -f ../../pkgs/kbd.tar.bz2 ] ; then
-	echo_status "Installing some Kymaps ..."
-	tar $taropt ../../pkgs/kbd.tar.bz2 \
-		usr/share/kbd/keymaps/i386/{include,qwerty,qwertz} \
-		usr/share/kbd/keymaps/include
-	find usr/share/kbd -name '*dvo*' -o -name '*az*' -o -name '*fgG*' | \
-		xargs rm -f
-fi
-#
-if [ -f ../../pkgs/pciutils.tar.bz2 ] ; then
-	echo_status "Installing pci.ids ..."
-	tar $taropt ../../pkgs/pciutils.tar.bz2 \
-		usr/share/pci.ids
-fi
-#
+mkdir -p mnt/source mnt/target
+du -csh
+
+#	usr/share/terminfo/a/ansi usr/share/terminfo/l/linux \
+#	usr/share/terminfo/n/nxterm usr/share/terminfo/x/{xterm,xterm-new} \
+#	usr/share/terminfo/v/vt{100,200,220} \
+#	usr/share/terminfo/s/screen
+
+#		usr/share/kbd/keymaps/i386/{include,qwerty,qwertz} \
+#		usr/share/kbd/keymaps/include
+#	find usr/share/kbd -name '*dvo*' -o -name '*az*' -o -name '*fgG*' | \
+#		xargs rm -f
+
+#		usr/share/pci.ids
+
+exit
+
 echo_status "Creating 2nd stage linuxrc."
 cp $base/target/$target/linuxrc2.sh linuxrc ; chmod +x linuxrc
 cp $base/target/$target/shutdown sbin/shutdown ; chmod +x sbin/shutdown
