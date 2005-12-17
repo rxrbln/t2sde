@@ -80,8 +80,7 @@ pivot_root,rm,sleep,losetup,chmod,cat} initramfs/bin/
 	echo "root:x:0:0:root:/:/bin/sh" > initramfs/etc/passwd
 
 	# TODO: do we need this target specific?
-	cp $base/target/install/{init,init2} initramfs/
-	chmod +x initramfs/{init,init2}
+	cp $base/target/install/init initramfs/
 
 	# create the cpio image
 	#
