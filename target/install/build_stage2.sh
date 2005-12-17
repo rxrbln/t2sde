@@ -80,6 +80,7 @@ copy_with_list_from_file $build_root $PWD $PWD/../files-wanted
 copy_and_parse_from_source $base/target/install/rootfs $PWD
 
 mkdir -p mnt/source mnt/target
+echo '$STONE install' > etc/stone.d/default.sh
 du -csh
 
 #	usr/share/terminfo/a/ansi usr/share/terminfo/l/linux \
@@ -94,19 +95,14 @@ du -csh
 
 #		usr/share/pci.ids
 
-exit
-
-echo_status "Creating 2nd stage linuxrc."
-cp $base/target/$target/linuxrc2.sh linuxrc ; chmod +x linuxrc
-cp $base/target/$target/shutdown sbin/shutdown ; chmod +x sbin/shutdown
-echo '$STONE install' > etc/stone.d/default.sh
-#
 echo_status "Creating 2nd_stage.tar.gz archive."
-tar -czf ../2nd_stage.tar.gz * ; cd ..
+tar -c * | gzip -9 > ../2nd_stage.tar.gz
 
+cd ..
 
 echo_header "Creating small 2nd stage filesystem:"
 mkdir -p 2nd_stage_small ; cd 2nd_stage_small
+rm -rf 2nd_stage_small/*
 mkdir -p dev proc tmp bin lib etc share
 mkdir -p mnt/source mnt/target
 ln -s bin sbin ; ln -s . usr
@@ -116,19 +112,18 @@ ln -s bin sbin ; ln -s . usr
 progs="agetty bash cat cp date dd df ifconfig ln ls $packager mkdir mke2fs \
        mkswap mount mv rm reboot route sleep swapoff swapon sync umount \
        eject chmod chroot grep halt rmdir sh shutdown uname killall5 \
-       stone mktemp sort fold sed mkreiserfs cut head tail disktype"
+       stone mktemp sort fold sed mkreiserfs cut head tail disktype bzip2 gzip"
 
-progs="$progs fdisk sfdisk"
+progs="$progs parted fdisk sfdisk"
 
 if [ $arch = ppc ] ; then
 	progs="$progs mac-fdisk pdisk"
 fi
 
 if [ $packager = bize ] ; then
-	progs="$progs bzip2 md5sum"
+	progs="$progs md5sum"
 fi
 
-echo_status "Copy the most important programs ..."
 for x in $progs ; do
 	fn=""
 	[ -f ../2nd_stage/bin/$x ] && fn="bin/$x"
@@ -163,8 +158,6 @@ do
 	done
 done
 #
-echo_status "Copy linuxrc."
-cp ../2nd_stage/linuxrc .
 echo_status "Copy /etc/fstab."
 cp ../2nd_stage/etc/fstab etc
 echo_status "Copy stone.d."
@@ -172,18 +165,12 @@ mkdir -p etc/stone.d
 for i in gui_text mod_install mod_packages mod_gas default ; do
 	cp ../2nd_stage/etc/stone.d/$i.sh etc/stone.d
 done
-#
+
 echo_status "Creating links for identical files."
-while read ck fn
-do
-	if [ "$oldck" = "$ck" ] ; then
-		echo_status "\`- Found $fn -> $oldfn."
-		rm $fn ; ln $oldfn $fn
-	else
-		oldck=$ck ; oldfn=$fn
-	fi
-done < <( find -type f | xargs md5sum | sort )
-#
+link_identical_files
+
 echo_status "Creating 2nd_stage_small.tar.gz archive."
-tar -cf- * | gzip -9 > ../2nd_stage_small.tar.gz ; cd ..
+tar -c * | gzip -9 > ../2nd_stage_small.tar.gz
+
+cd ..
 
