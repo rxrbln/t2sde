@@ -39,7 +39,7 @@ grep               sed                gzip               bzip2
 tar                gawk               lzo                lzop
 less               nvi                bc                 cpio
 ed                 zile
-curl               wget               dialog             minicom
+curl               dialog             minicom
 lrzsz              rsync              tcpdump            module-init-tools
 sysvinit           shadow             util-linux         wireless-tools
 net-tools          procps             psmisc
