@@ -69,18 +69,20 @@ mkinitrd()
 	#
 	cp $build_root/sbin/{hotplug++,udev,udevstart,modprobe,insmod} \
 	   initramfs/sbin/
-# TODO: add tar gzip ip fget 
+# TODO: add gzip ip
 	ln -sf /sbin/udev initramfs/etc/hotplug.d/default/10-udev.hotplug
 
 	cp $build_root/bin/pdksh initramfs/bin/sh
-	cp $build_root/usr/embutils/{mount,umount,rm,mv,mkdir,ls,ln,\
-pivot_root,rm,sleep,losetup,chmod,cat} initramfs/bin/
+	cp $build_root/usr/embutils/{mount,umount,rm,mv,mkdir,rmdir,ls,ln,\
+pivot_root,rm,sleep,losetup,chmod,cat,tar} initramfs/bin/
+	cp $build_root/usr/bin/fget initramfs/bin/
 	ln -s mv initramfs/bin/cp
 
 	echo "root:x:0:0:root:/:/bin/sh" > initramfs/etc/passwd
 
 	# TODO: do we need this target specific?
 	cp $base/target/install/init initramfs/
+	chmod +x initramfs/init
 
 	# create the cpio image
 	#
