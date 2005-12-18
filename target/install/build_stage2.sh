@@ -101,8 +101,10 @@ tar -c * | gzip -9 > ../2nd_stage.tar.gz
 cd ..
 
 echo_header "Creating small 2nd stage filesystem:"
-mkdir -p 2nd_stage_small ; cd 2nd_stage_small
-rm -rf 2nd_stage_small/*
+mkdir -p 2nd_stage_small
+rm -rfv 2nd_stage_small/*
+cd 2nd_stage_small
+
 mkdir -p dev proc tmp bin lib etc share
 mkdir -p mnt/source mnt/target
 ln -s bin sbin ; ln -s . usr
