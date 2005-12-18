@@ -17,9 +17,8 @@
 set -e
 
 echo_header "Creating 2nd stage filesystem:"
-mkdir -p $disksdir/2nd_stage
-rm -rf $diskdir/2nd_stage/*
-cd $disksdir/2nd_stage
+rm -rf $disksdir/2nd_stage*
+mkdir -p $disksdir/2nd_stage; cd $disksdir/2nd_stage
 
 #
 package_map='00-dirtree
@@ -95,21 +94,17 @@ du -csh
 
 #		usr/share/pci.ids
 
-echo_status "Creating 2nd_stage.tar.gz archive."
-tar -c * | gzip -9 > ../2nd_stage.tar.gz
+echo_status "Creating 2nd_stage archive."
+tar -c * > ../2nd_stage.tar # | gzip -9 # .gz
 
 cd ..
 
-echo_header "Creating small 2nd stage filesystem:"
-mkdir -p 2nd_stage_small
-rm -rfv 2nd_stage_small/*
-cd 2nd_stage_small
+echo_header "Creating 2nd_stage_small filesystem:"
+mkdir -p 2nd_stage_small; cd 2nd_stage_small
 
 mkdir -p dev proc tmp bin lib etc share
 mkdir -p mnt/source mnt/target
 ln -s bin sbin ; ln -s . usr
-
-#
 
 progs="agetty bash cat cp date dd df ifconfig ln ls $packager mkdir mke2fs \
        mkswap mount mv rm reboot route sleep swapoff swapon sync umount \
@@ -140,8 +135,6 @@ for x in $progs ; do
 	fi
 done
 
-#
-
 echo_status "Copy the required libraries ..."
 found=1 ; while [ $found = 1 ]
 do
@@ -171,8 +164,8 @@ done
 echo_status "Creating links for identical files."
 link_identical_files
 
-echo_status "Creating 2nd_stage_small.tar.gz archive."
-tar -c * | gzip -9 > ../2nd_stage_small.tar.gz
+echo_status "Creating 2nd_stage_small archive."
+tar -c * > ../2nd_stage_small.tar # | gzip -9 # .gz
 
 cd ..
 
