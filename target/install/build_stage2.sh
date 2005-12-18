@@ -91,7 +91,7 @@ echo '$STONE install' > etc/stone.d/default.sh
 du -csh
 
 echo_status "Creating 2nd_stage archive."
-tar -c * > ../2nd_stage.tar # | gzip -9 # .gz
+tar -c * > $isofsdir/2nd_stage.tar # | gzip -9 # .gz
 
 cd ..
 
@@ -161,7 +161,7 @@ echo_status "Creating links for identical files."
 link_identical_files
 
 echo_status "Creating 2nd_stage_small archive."
-tar -c * > ../2nd_stage_small.tar # | gzip -9 # .gz
+tar -c * > $isofsdir/2nd_stage_small.tar # | gzip -9 # .gz
 
 cd ..
 
