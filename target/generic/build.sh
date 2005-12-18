@@ -31,7 +31,7 @@ if [ "$SDECFG_IMAGE" -a -e target/$SDECFG_IMAGE/build.sh ]; then
 fi
 
 echo_status "Creating isofs.txt file .."
-cat << EOT > build/${SDECFG_ID}/TOOLCHAIN/isofs.txt
+cat << EOT > $build_toolchain/isofs.txt
 DISK1	$admdir/cache/					${SDECFG_SHORTID}/info/cache/
 DISK1	$admdir/cksums/					${SDECFG_SHORTID}/info/cksums/
 DISK1	$admdir/dependencies/				${SDECFG_SHORTID}/info/dependencies/
@@ -41,5 +41,6 @@ DISK1	$admdir/md5sums/				${SDECFG_SHORTID}/info/md5sums/
 DISK1	$admdir/packages/				${SDECFG_SHORTID}/info/packages/
 EVERY	build/${SDECFG_ID}/TOOLCHAIN/pkgs/packages.db	${SDECFG_SHORTID}/pkgs/packages.db
 SPLIT	build/${SDECFG_ID}/TOOLCHAIN/pkgs/		${SDECFG_SHORTID}/pkgs/
+$( cat $build_toolchain/isofs_*.txt 2>/dev/null )
 EOT
 
