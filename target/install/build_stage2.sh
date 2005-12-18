@@ -75,24 +75,20 @@ done | (
 	# TODO: usr/lib/*/
 ) > ../files-wanted
 
+# some more stuff
+cut -d ' ' -f 2 $build_root/var/adm/flists/{kbd,pciutils,ncurses} |
+grep -e 'usr/share/terminfo/.*/\(ansi\|linux\|.*xterm.*\|vt.*\|screen\)' \
+     -e 'usr/share/kbd/keymaps/i386/\(include\|qwertz\|qwerty\)' \
+     -e 'usr/share/kbd/keymaps/include' \
+     -e 'usr/share/pci.ids' \
+ >> ../files-wanted
+
 copy_with_list_from_file $build_root $PWD $PWD/../files-wanted
 copy_and_parse_from_source $base/target/install/rootfs $PWD
 
 mkdir -p mnt/source mnt/target
 echo '$STONE install' > etc/stone.d/default.sh
 du -csh
-
-#	usr/share/terminfo/a/ansi usr/share/terminfo/l/linux \
-#	usr/share/terminfo/n/nxterm usr/share/terminfo/x/{xterm,xterm-new} \
-#	usr/share/terminfo/v/vt{100,200,220} \
-#	usr/share/terminfo/s/screen
-
-#		usr/share/kbd/keymaps/i386/{include,qwerty,qwertz} \
-#		usr/share/kbd/keymaps/include
-#	find usr/share/kbd -name '*dvo*' -o -name '*az*' -o -name '*fgG*' | \
-#		xargs rm -f
-
-#		usr/share/pci.ids
 
 echo_status "Creating 2nd_stage archive."
 tar -c * > ../2nd_stage.tar # | gzip -9 # .gz
