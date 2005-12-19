@@ -88,7 +88,6 @@ copy_and_parse_from_source $base/target/install/rootfs $PWD
 
 mkdir -p mnt/source mnt/target
 echo '$STONE install' > etc/stone.d/default.sh
-du -csh
 
 echo_status "Creating 2nd_stage archive."
 tar -c * > $isofsdir/2nd_stage.tar # | gzip -9 # .gz
