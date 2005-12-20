@@ -37,7 +37,7 @@ log=`mktemp`
 	umount /mnt/usb
 
 	rc mysql start > /dev/null
-) # > $log 2>&1
+) > $log 2>&1
 
 Xdialog --no-cancel --log - 20 60 < $log
 rm $log
