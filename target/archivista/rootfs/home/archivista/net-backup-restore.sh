@@ -13,6 +13,7 @@ fi
 export DISPLAY=:0
 
 # include shared code
+. ${0%/*}/backup.in
 . ${0%/*}/net-backup.in
 
 log=`mktemp`
@@ -23,17 +24,12 @@ log=`mktemp`
 	rc mysql stop > /dev/null
 
 	mkdir -p /home/data
-	# rm -rf /home/data/* # we skip this due rsync -
-	                      # maybe someone wants this?
-	cd /home/data
 
 	# no -a since we can not store user/group on most CIFS shares
 	rsync -rvt --delete /mnt/net/data/ /home/data/
 
-	# permission fixup, since not backed up due cifs
-	chown -R ftp:users /home/data/archivista/ftp
-	chown -R archivista:users /home/data/archivista/images
-	chown -R mysql:mysql /home/data/archivista/mysql
+	# shared function included on top
+	permissions_fixup /home/data
 
 	# potentially fixup naming (case) - just to be sure
 	/home/archivista/mysql-case-fixup.sh /home/data/archivista/mysql
