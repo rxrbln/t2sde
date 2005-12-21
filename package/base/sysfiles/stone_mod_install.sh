@@ -193,13 +193,15 @@ This dialog allows you to modify your discs parition layout and to create filesy
 	if [ "$install_now" -ne 0 ] ; then
 		$STONE packages
 		cat > /mnt/target/tmp/stone_postinst.sh << EOT
+		mount -v /dev /mnt/target/dev --bind
 #!/bin/sh
-mount -v /dev
 mount -v /proc
+mount -v /sys
 . /etc/profile
 stone setup
 umount -v /dev
 umount -v /proc
+umount -v /sys
 EOT
 		chmod +x /mnt/target/tmp/stone_postinst.sh
 		grep ' /mnt/target[/ ]' /proc/mounts | \
