@@ -192,8 +192,8 @@ This dialog allows you to modify your discs parition layout and to create filesy
 
 	if [ "$install_now" -ne 0 ] ; then
 		$STONE packages
-		cat > /mnt/target/tmp/stone_postinst.sh << EOT
 		mount -v /dev /mnt/target/dev --bind
+		cat > /mnt/target/tmp/stone_postinst.sh << EOT
 #!/bin/sh
 mount -v /proc
 mount -v /sys
