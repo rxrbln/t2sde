@@ -88,6 +88,7 @@ ethtool eth0 >> $tmp
 
 	cron_status "/backup.sh" "Tape Backup"
 	cron_status "/net-backup.sh" "Network Backup"
+	cron_status "/usb-backup.sh" "USB hard-disk Backup"
 	echo
 
 	cat /etc/VERSION

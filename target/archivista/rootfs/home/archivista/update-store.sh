@@ -64,6 +64,10 @@ update_net_backup=`grep archivista/net-backup.sh etc/crontab |
                    cut -d ' ' -f 1-5`
 cp -fv etc/net-backup.conf $to/ 2>/dev/null
 
+# usb backup
+update_usb_backup=`grep archivista/usb-backup.sh etc/crontab |
+                   cut -d ' ' -f 1-5`
+
 # ftp
 grep -q '^ftp' etc/inetd.conf && update_ftp_enabled=1
 
