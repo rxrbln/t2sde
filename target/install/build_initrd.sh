@@ -13,7 +13,7 @@
 # GNU General Public License can be found in the file COPYING.
 # --- T2-COPYRIGHT-NOTE-END ---
 
-[ "$boot_title" ] || boot_title="T2 @Live"
+[ "$boot_title" ] || boot_title="T2 SDE"
 
 # Function to create a custom live-cd initrd
 mkinitrd()
