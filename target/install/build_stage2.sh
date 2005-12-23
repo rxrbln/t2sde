@@ -136,7 +136,7 @@ found=1
 while [ $found = 1 ]; do
 	found=0
 	for x in ../2nd_stage/{,usr/}lib{64,}; do
-		for y in $( cd $x ; ls *.so.* 2> /dev/null ); do
+		for y in $( cd $x 2>/dev/null && ls *.so.* 2>/dev/null ); do
 			dir=${x#../2nd_stage/}
 			if [ ! -f $dir/$y ] &&
 			   grep -q $y bin/* lib{64,}/* 2> /dev/null
