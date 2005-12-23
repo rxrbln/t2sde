@@ -85,6 +85,7 @@ grep -e 'usr/share/terminfo/.*/\(ansi\|linux\|.*xterm.*\|vt.*\|screen\)' \
 
 copy_with_list_from_file $build_root $PWD $PWD/../files-wanted
 copy_and_parse_from_source $base/target/install/rootfs $PWD
+chroot . /sbin/ldconfig || true
 
 mkdir -p mnt/source mnt/target
 echo '$STONE install' > etc/stone.d/default.sh
@@ -97,7 +98,7 @@ cd ..
 echo_header "Creating 2nd_stage_small filesystem:"
 mkdir -p 2nd_stage_small; cd 2nd_stage_small
 
-mkdir -p dev proc tmp bin lib etc share
+mkdir -p dev proc tmp bin etc share
 mkdir -p mnt/source mnt/target
 ln -s bin sbin ; ln -s . usr
 
@@ -131,18 +132,18 @@ for x in $progs ; do
 done
 
 echo_status "Copy the required libraries ..."
-found=1 ; while [ $found = 1 ]
-do
+found=1
+while [ $found = 1 ]; do
 	found=0
-	for x in ../2nd_stage/lib ../2nd_stage/usr/lib
-	do
-		for y in $( cd $x ; ls *.so.* 2> /dev/null )
-		do
-			if [ ! -f lib/$y ] &&
-			   grep -q $y bin/* lib/* 2> /dev/null
+	for x in ../2nd_stage/{,usr/}lib{64,}; do
+		for y in $( cd $x ; ls *.so.* 2> /dev/null ); do
+			dir=${x#../2nd_stage/}
+			if [ ! -f $dir/$y ] &&
+			   grep -q $y bin/* lib{64,}/* 2> /dev/null
 			then
-				echo_status "\`- Found $y."
-				cp $x/$y lib/$y ; found=1
+				echo_status "\`- Found $dir/$y."
+				mkdir -p $dir ; cp $x/$y $dir/$y
+				found=1
 			fi
 		done
 	done
