@@ -45,15 +45,16 @@ part_mkfs() {
 
 	maybe_add () {
 	  if grep -q $1 /proc/filesystems && type -p $3 > /dev/null ; then
-		cmd="$cmd '$1 ($2)' '$3 $4 /dev/$dev'"
+		cmd="$cmd '$1 ($2 filesystem)' '$3 $4 /dev/$dev'"
 	  fi
 	}
 
-	maybe_add ext3	'journaling filesystem'		'mke2fs' '-j'
-	maybe_add ext2	'non-journaling fs'		'mke2fs'
-	maybe_add reiserfs 'journaling filesystem'	'mkreiserfs'
-	maybe_add jfs	'IBM journaling filesystem'	'jfs_mkfs'
-	maybe_add xfs	'Sgi journaling filesystem'	'mkfs.xfs' '-f'
+	maybe_add ext3	'journaling'		'mkfs.ext2' '-j'
+	maybe_add ext2	'non-journaling'	'mkfs.ext2'
+	maybe_add reiserfs 'journaling'		'mkfs.reiserfs'
+	maybe_add reiser4 'high-performance journaling' 'mkfs.reiser4'
+	maybe_add jfs	'IBM journaling'	'mkfs.jfs'
+	maybe_add xfs	'Sgi journaling'	'mkfs.xfs' '-f'
 
 	eval "$cmd" && part_mount $dev
 }
