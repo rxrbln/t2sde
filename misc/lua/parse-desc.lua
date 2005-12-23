@@ -8,7 +8,7 @@
 -- time time grep "^[[]" package/base/*/*.desc > /dev/null
 --
 
-require "t2_desc"
+require "t2/desc"
 
 if #arg < 1 then
    print("Usage: lua misc/lua/parse-desc.lua [path-to-desc-file]")
