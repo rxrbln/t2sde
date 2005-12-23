@@ -34,7 +34,7 @@
 --    h:run()
 --      Execute the hooks in all levels, starting at hook level 1.
 
--- INTERFACE -------------------------------------------------------------------
+-- INTERFACE -----------------------------------------------------------------
 hook = { level = {} }
 meta = {}
 
@@ -63,7 +63,7 @@ end
 -- h = hook()
 setmetatable(hook, { __call = hook.new })
 
--- INTERNAL HOOKS __hook -------------------------------------------------------
+-- INTERNAL HOOKS __hook -----------------------------------------------------
 local __hook = {}
 local __meta = { __index = {} }
 
@@ -116,7 +116,7 @@ function __hook.clear(h)
    h.hooks = {}
 end
 
--- METATABLE -------------------------------------------------------------------
+-- METATABLE -----------------------------------------------------------------
 function __meta.__index:add(data) __hook.add(self, data) end
 function __meta.__index:set(data) __hook.set(self, data) end
 function __meta.__index:clear()   __hook.clear(self) end
@@ -138,41 +138,6 @@ end
 function meta.__newindex(self, pos, data)
    self[pos]:set(data)
 end
-
--- -----------------------------------------------------------------------------
--- TEST ------------------------------------------------------------------------
--- -----------------------------------------------------------------------------
-h = hook()
-
-h[1] = [[ print("Good morning!") ]]
-
-h[5]:add(function() print("Hello") end)
-
-h:add(function() print("World!") end)
-
-h:add{
-   function()
-      print"f1"
-   end,
-
-   [[print"f2"]],
-}
-
-function good_evening() print("Good evening!") end
-h[9]:set(good_evening)
-
-h:run()
-print("----")
-
-h[5] = function() print("Hello world") end
-
-h:run()
-print("----")
-
-h:clear()
-
-h:run()
-
 
 -- This program is free software; you can redistribute it and/or modify
 -- it under the terms of the GNU General Public License as published by
