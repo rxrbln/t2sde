@@ -1,8 +1,19 @@
+-- Copyright (C) 2005 Valentin Ziegler
+--                    Juergen "George" Sawinski
+-- Licensed under the GPL, see end of file
+
+-- TODO:
+--   - add "update-priority" (like "urgent,security,normal" etc)
+--     (also needs to go into create_package_db and other places)
+
+-- DESCRIPTION:
+--   p = pkgdb.parse(line-iterator)
+--     Parse the package.db (takes a line iterator as input)
+
+require "t2/desc"
+
 -- parse all packages.db information into tables
 -- filelist saving commented out (eats another 30M)
-
-require "lzlib"
-require "t2/desc"
 
 local function block_lines()
    local line = lines();
@@ -37,13 +48,7 @@ local function read_flist()
    return usage,files,cksums,sizes;
 end
 
-
-zf,error = lzlib.open("./packages.db", "r");
-if not zf then             -- failed to open file, print error
-   print(error);
-else
-   lines = zf:lines();     -- obtain line iterator
-
+local parse(lines)
    packages = {};
 
    repeat                  -- parse packages
@@ -56,9 +61,10 @@ else
 	    print ("terminating line missing\n");
 	 end
 
-	 pkg_data.desc=t2_desc.parse (block_lines);
+	 pkg_data.desc=desc.parse (block_lines);
 	 pkg_data.deps=read_deps ();
 	 pkg_data.usage = read_flist ();
+
 	 if lines() ~= "\004" then -- separator line
 	    print ("terminating line missing\n");
 	 end
@@ -67,16 +73,19 @@ else
       end
    until pkgname == nil;
 
-   _,normal_eof,error = zf:eof ();
-   if not normal_eof then  -- check if stream ended because of error
-      print ("-- abnormal end of stream: ", error);
-   end
-
-   ok,error = zf:close();
-   if not ok then
-      print ("could not close stream: ", error);
-   end
-   x = gcinfo ();
-   print(x, "kb dynamic memory used.");
+   return packages
 end
 
+-- This program is free software; you can redistribute it and/or modify
+-- it under the terms of the GNU General Public License as published by
+-- the Free Software Foundation; either version 2 of the License, or
+-- (at your option) any later version.
+
+-- This program is distributed in the hope that it will be useful,
+-- but WITHOUT ANY WARRANTY; without even the implied warranty of
+-- MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+-- GNU General Public License for more details.
+
+-- You should have received a copy of the GNU General Public License
+-- along with this program; if not, write to the Free Software
+-- Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA 02111-1307 USA
