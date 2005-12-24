@@ -74,7 +74,7 @@ mkinitrd()
 
 	cp $build_root/bin/pdksh initramfs/bin/sh
 	cp $build_root/usr/embutils/{mount,umount,rm,mv,mkdir,rmdir,ls,ln,\
-switch_root,rm,sleep,losetup,chmod,cat,tar,readlink} initramfs/bin/
+switch_root,rm,sleep,losetup,chmod,cat,sed,tar,readlink} initramfs/bin/
 	cp $build_root/usr/bin/fget initramfs/bin/
 	ln -s mv initramfs/bin/cp
 
