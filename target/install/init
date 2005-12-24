@@ -1,6 +1,7 @@
 #!/bin/sh
 
 # partly based on linuxrc.c, Copyright (C) 2003, 2004 Cliford Wolf and Rene Rebe
+# converted from C to shell code and heavily cleaned and improved for the T2 SDE
 
 echo "T2 early userspace ..."
 
@@ -93,14 +94,21 @@ select_2nd_stage()
 		;;
 	esac
 
-	i=1
-        echo "Select a stage 2 image file:"
+	echo "Select a stage 2 image file:"
+	mem=`sed -n '/MemTotal/{s/.* \([[:digit:]]*\) .*/\1/p}' /proc/meminfo`
+	i=1; default=$i
 	for x in $images; do
+		if [[ "$x" = *small* ]]; then
+			[ $mem -le 96000 ] && default=$i
+		else
+			[ $mem -gt 96000 ] && default=$i
+		fi
 		echo "     $(( i++ )). $x"
 	done
-        echo -n "Enter number or image file name (default=1): "
+	echo -n "Enter number or image file name (default=$default): "
 
-	read in; [ "$in" ] || in=1
+	in=; [ $autoload = 0 ] && read in || echo
+	[ "$in" ] || in=$default
 
 	i=1
 	for x in $images; do
@@ -156,6 +164,7 @@ getdevice()
 	fi
 
 	i=1
+	default=
 	for dev in $devicelist ; do
 		x=`readlink $dev`; [ "$x" ] && [[ "$x" != /dev/* ]] && x=/dev/$x
 		[ "$x" ] && dev=$x
@@ -166,14 +175,17 @@ getdevice()
 			model=`cat /proc/ide/${dev#/dev/}/model 2>/dev/null`
 			[ "$model" ] || model="SCSI or ATAPI CD-ROM"
 			echo "     $i. $dev	$model"
+			[ "$default" ] || default=$i
 			;;
 		esac
 		: $(( i++ ))
 	done
+	[ "$default" ] || default=1
 
-	echo -en "\nEnter number or device file name (default=1): "
+	echo -en "\nEnter number or device file name (default=$default): "
 
-	read in ; [ "$in" ] || in=1
+	in=; [ $autoload = 0 ] && read in || echo
+	[ "$in" ] || in=$default
 	while [ -z "$device" ]; do
 		[ -z "$in" ] && return
 		if [ -e $in ]; then
@@ -264,13 +276,8 @@ config_net()
 
 exec_sh()
 {
-	echo "Exit the shell to return to the stage 1 loader."
-
-#	if type -p kiss > /dev/null; then
-#		kiss -E
-#	else
-		sh
-#	fi
+	echo "Exit the shell to return to the 1st stage loader."
+	sh
 }
 
 load_modules_disk ()
@@ -284,10 +291,11 @@ load_modules_disk ()
 	rmdir  /mnt_floppy
 }
 
+# try to auto-load from a disc, first
+autoload=1
+
 echo "
-     =================================
-     ===   1st stage boot system   ===
-     =================================
+T2 SDE 1st stage installer loader ...
 
 The T2 install system boots up in two stages. You are now in the first stage
 and if everything goes right, you will not spend much time here. Just 
@@ -306,9 +314,10 @@ while [ $exit_init = 0 ]; do
 
 What do you want to do [0-8] (default=0)? "
 
-	read in
+	in=; [ $autoload = 0 ] && read in || echo
+	[ "$in" ] || in=0
 	case $in in
-	  0|"")	load_ramdisk_file ;;
+	  0)	load_ramdisk_file ;;
 	  1)	httpload ;;
 	  2)	config_net ;;
 	  3)	load_modules ;;
@@ -317,9 +326,9 @@ What do you want to do [0-8] (default=0)? "
 	  6)	exec_sh ;;
 	  *)    echo "No such option." ;;
 	esac
+	# only try autoload once
+	autoload=0
 done
-
-sleep 1 # ???
 
 exec /sbin/init /sbin/init
 
