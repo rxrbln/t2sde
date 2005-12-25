@@ -13,7 +13,9 @@
 # GNU General Public License can be found in the file COPYING.
 # --- T2-COPYRIGHT-NOTE-END ---
 
-[ "$boot_title" ] || boot_title="T2 SDE"
+. $base/misc/target/boot.in
+
+[ "$boot_title" ] || boot_title="T2 SDE Installation"
 
 # Function to create a custom live-cd initrd
 mkinitrd()
@@ -103,11 +105,9 @@ mkdir -p $isofsdir/boot/grub
 cp -f $build_root/boot/grub/stage2_eltorito $isofsdir/boot/grub/
 cp -f $build_root/boot/t2.xpm.gz $isofsdir/boot/
 
-# header
-sed -n '/CUT/q;p' $base/target/livecd/menu.lst > $isofsdir/boot/grub/menu.lst
-
 # For each available kernel:
 #
+arch_boot_cd_pre $isofsdir
 for x in `egrep 'X .* KERNEL .*' $base/config/$config/packages |
           cut -d ' ' -f 5` ; do
 
@@ -116,19 +116,13 @@ for x in `egrep 'X .* KERNEL .*' $base/config/$config/packages |
               cut -d ' ' -f 2 | cut -d / -f 1-3 | uniq | head -n 1`"
   kernelver=${moduledir/*\/}
   initrd="initramfs-$kernelver.gz"
-  mkinitrd $kernel $kernelver $moduledir $initrd
 
   cp $build_root/boot/vmlinuz_$kernelver $isofsdir/boot/
+  mkinitrd $kernel $kernelver $moduledir $initrd
 
-  cat >> $isofsdir/boot/grub/menu.lst <<-EOT
-
-title	$boot_title (Kernel: $kernelver)
-kernel	(cd)/boot/vmlinuz_$kernelver
-initrd	(cd)/boot/$initrd
-
-EOT
-
+  arch_boot_cd_add $isofsdir $kernelver "$boot_title" \
+                   /boot/vmlinuz_$kernelver /boot/$initrd
 done
 
-sed  '1,/CUT/d' $base/target/install/menu.lst >> $isofsdir/boot/grub/menu.lst
+arch_boot_cd_post $isofsdir
 
