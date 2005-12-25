@@ -24,8 +24,8 @@ rm -f $build_toolchain/isofs*.txt 2> /dev/null
 
 echo_status "Creating package database ..."
 admdir="build/${SDECFG_ID}/var/adm"
-create_package_db $admdir build/${SDECFG_ID}/TOOLCHAIN/pkgs \
-                  build/${SDECFG_ID}/TOOLCHAIN/pkgs/packages.db
+create_package_db $admdir $build_toolchain/pkgs \
+                  $build_toolchain/pkgs/packages.db
 
 if [ "$SDECFG_IMAGE" -a -e target/$SDECFG_IMAGE/build.sh ]; then
 	echo_status "Creating output image ..."
@@ -34,15 +34,15 @@ fi
 
 echo_status "Creating isofs.txt file .."
 cat << EOT > $build_toolchain/isofs.txt
-DISK1	$admdir/cache/					${SDECFG_SHORTID}/info/cache/
-DISK1	$admdir/cksums/					${SDECFG_SHORTID}/info/cksums/
-DISK1	$admdir/dependencies/				${SDECFG_SHORTID}/info/dependencies/
-DISK1	$admdir/descs/					${SDECFG_SHORTID}/info/descs/
-DISK1	$admdir/flists/					${SDECFG_SHORTID}/info/flists/
-DISK1	$admdir/md5sums/				${SDECFG_SHORTID}/info/md5sums/
-DISK1	$admdir/packages/				${SDECFG_SHORTID}/info/packages/
-EVERY	build/${SDECFG_ID}/TOOLCHAIN/pkgs/packages.db	${SDECFG_SHORTID}/pkgs/packages.db
-SPLIT	build/${SDECFG_ID}/TOOLCHAIN/pkgs/		${SDECFG_SHORTID}/pkgs/
+DISK1	$admdir/cache/				${SDECFG_SHORTID}/info/cache/
+DISK1	$admdir/cksums/				${SDECFG_SHORTID}/info/cksums/
+DISK1	$admdir/dependencies/			${SDECFG_SHORTID}/info/dependencies/
+DISK1	$admdir/descs/				${SDECFG_SHORTID}/info/descs/
+DISK1	$admdir/flists/				${SDECFG_SHORTID}/info/flists/
+DISK1	$admdir/md5sums/			${SDECFG_SHORTID}/info/md5sums/
+DISK1	$admdir/packages/			${SDECFG_SHORTID}/info/packages/
+EVERY	$build_toolchain/pkgs/packages.db	${SDECFG_SHORTID}/pkgs/packages.db
+SPLIT	$build_toolchain/pkgs/			${SDECFG_SHORTID}/pkgs/
 $( cat $build_toolchain/isofs_*.txt 2>/dev/null )
 EOT
 

@@ -18,11 +18,3 @@ disksdir="$build_toolchain/disks"      # for boot-disks, if any
 # create the 1st stage loader initrd's first
 . $base/target/install/build_initrd.sh
 . $base/target/install/build_stage2.sh
-
-#echo_header "Creating ISO filesystem description."
-#cd $disksdir; rm -rf isofs; mkdir -p isofs
-#
-#echo_status "Creating bootdisk/isofs directory.."
-#ln 2nd_stage.tar.gz 2nd_stage_small.tar.gz isofs/
-#ln *.img initrd.gz isofs/ 2>/dev/null || true # might not exist on some architectures
-
