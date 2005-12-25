@@ -20,6 +20,8 @@ pkgloop
 
 echo_header "Finishing build."
 
+rm -f $build_toolchain/isofs*.txt 2> /dev/null
+
 echo_status "Creating package database ..."
 admdir="build/${SDECFG_ID}/var/adm"
 create_package_db $admdir build/${SDECFG_ID}/TOOLCHAIN/pkgs \

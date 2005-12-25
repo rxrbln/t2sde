@@ -26,11 +26,3 @@ disksdir="$build_toolchain/disks"      # for boot-disks, if any
 #ln 2nd_stage.tar.gz 2nd_stage_small.tar.gz isofs/
 #ln *.img initrd.gz isofs/ 2>/dev/null || true # might not exist on some architectures
 
-echo_status "Creating isofs_install.txt file .."
-
-cat > $build_toolchain/isofs_install.txt <<- EOT
-BOOT    -b boot/grub/stage2_eltorito -no-emul-boot
-BOOTx   -boot-load-size 4 -boot-info-table
-DISK1   build/${SDECFG_ID}/TOOLCHAIN/isofs/ /
-EOT
-
