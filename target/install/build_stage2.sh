@@ -23,8 +23,7 @@ mkdir -p $disksdir/2nd_stage; cd $disksdir/2nd_stage
 #
 package_map='00-dirtree
 glibc
-lilo               yaboot             aboot              grub
-silo               parted             mac-fdisk          pdisk
+parted             mac-fdisk          pdisk
 xfsprogs           mkdosfs            jfsutils
 e2fsprogs          reiserfsprogs      reiser4progs       genromfs
 popt               raidtools          mdadm
