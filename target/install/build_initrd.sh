@@ -99,12 +99,6 @@ switch_root,rm,sleep,losetup,chmod,cat,sed,tar,readlink} initramfs/bin/
 	mv $initrd $isofsdir/boot/
 }
 
-# TODO: make this generic ... - no x86 ...
-
-mkdir -p $isofsdir/boot/grub
-cp -f $build_root/boot/grub/stage2_eltorito $isofsdir/boot/grub/
-cp -f $build_root/boot/t2.xpm.gz $isofsdir/boot/
-
 # For each available kernel:
 #
 arch_boot_cd_pre $isofsdir
