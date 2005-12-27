@@ -27,8 +27,6 @@ CONFIG_PMAC=y
 # CONFIG_ALL_PPC is not set
 # CONFIG_GEMINI is not set
 # CONFIG_APUS is not set
-# CONFIG_SMP is not set
-# CONFIG_ALTIVEC is not set
 CONFIG_MACH_SPECIFIC=y
 
 # additional 2.6 kernel configs

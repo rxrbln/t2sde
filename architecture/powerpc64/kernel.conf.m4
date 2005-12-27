@@ -16,6 +16,8 @@ define(`PPC', 'PowerPC')dnl
 dnl System type (default=Macintosh)
 dnl
 CONFIG_PPC=y
+CONFIG_PPC64=y
+CONFIG_64BIT=y
 CONFIG_6xx=y
 # CONFIG_4xx is not set
 # CONFIG_PPC64 is not set
@@ -27,12 +29,9 @@ CONFIG_PMAC=y
 # CONFIG_ALL_PPC is not set
 # CONFIG_GEMINI is not set
 # CONFIG_APUS is not set
-# CONFIG_SMP is not set
-# CONFIG_ALTIVEC is not set
 CONFIG_MACH_SPECIFIC=y
 
 # additional 2.6 kernel configs
-CONFIG_PPC32=y
 # CONFIG_40x is not set
 # CONFIG_POWER3 is not set
 
