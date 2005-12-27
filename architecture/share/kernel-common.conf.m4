@@ -68,6 +68,8 @@ dnl Misc stuff
 CONFIG_BINFMT_AOUT=m
 CONFIG_BINFMT_MISC=m
 
+CONFIG_SYSVIPC=y
+
 dnl Math emulation in the default kernel
 dnl (we could also run this on an old 386)
 dnl
