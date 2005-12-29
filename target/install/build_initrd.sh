@@ -110,12 +110,14 @@ for x in `egrep 'X .* KERNEL .*' $base/config/$config/packages |
               cut -d ' ' -f 2 | cut -d / -f 1-3 | uniq | head -n 1`"
   kernelver=${moduledir/*\/}
   initrd="initramfs-$kernelver.gz"
+  kernelimg=`ls $build_root/boot/vmlinu?_$kernelver`
+  kernelimg=${kernelimg##*/}
 
-  cp $build_root/boot/vmlinuz_$kernelver $isofsdir/boot/
+  cp $build_root/boot/vmlinu?_$kernelver $isofsdir/boot/
   mkinitrd $kernel $kernelver $moduledir $initrd
 
   arch_boot_cd_add $isofsdir $kernelver "$boot_title" \
-                   /boot/vmlinuz_$kernelver /boot/$initrd
+                   /boot/$kernelimg /boot/$initrd
 done
 
 arch_boot_cd_post $isofsdir
