@@ -15,11 +15,10 @@
 
 set -e
 
-. $base/misc/target/initrd.in
-. $base/misc/target/boot.in
-
 [ "$boot_title" ] || boot_title="T2 SDE Installation"
 
+. $base/misc/target/initrd.in
+. $base/misc/target/boot.in
 
 cd $build_toolchain
 
