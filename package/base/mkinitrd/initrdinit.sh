@@ -13,7 +13,6 @@
 # GNU General Public License can be found in the file COPYING.
 # --- T2-COPYRIGHT-NOTE-END ---
 
-
 echo "T2 early userspace ..."
 
 PATH=/sbin:/bin
