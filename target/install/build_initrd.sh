@@ -15,47 +15,24 @@
 
 set -e
 
+. $base/misc/target/initrd.in
 . $base/misc/target/boot.in
 
 [ "$boot_title" ] || boot_title="T2 SDE Installation"
 
-# Function to create a custom live-cd initrd
-extend_initrd()
-{
-	initrd=$1
 
-	echo "Initrd: $initrd"
+cd $build_toolchain
 
-	cd $build_toolchain
+# Additional initrd overlay
+#
+rm -rf initramfs
+mkdir -p initramfs/{bin,sbin}
+# TODO: add gzip ip
+cp $build_root/usr/embutils/{tar,readlink} initramfs/bin/
+cp $build_root/usr/bin/fget initramfs/bin/
 
-	# create basic structure
-	#
-	rm -rf initramfs
-	mkdir -p initramfs/{bin,sbin}
-
-	echo "Appending target specific content ..."
-
-	# TODO: add gzip ip
-	cp $build_root/usr/embutils/{tar,readlink} initramfs/bin/
-	cp $build_root/usr/bin/fget initramfs/bin/
-
-	cp $base/target/install/init initramfs/
-	chmod +x initramfs/init
-
-	# create the cpio image
-	#
-	echo "Appending to initrd archive ..."
-	gunzip < $initrd > $initrd.cpio
-	( cd initramfs
-	  find * | cpio -o -H newc --append --file $initrd.cpio
-	)
-	gzip -c -9 $initrd.cpio > $initrd
-	rm $initrd.cpio
-
-	# display the resulting image
-	#
-	du -sh $initrd
-}
+cp $base/target/install/init initramfs/
+chmod +x initramfs/init
 
 # For each available kernel:
 #
@@ -73,7 +50,7 @@ for x in `egrep 'X .* KERNEL .*' $base/config/$config/packages |
 
   cp $build_root/boot/vmlinu?_$kernelver $isofsdir/boot/
   cp $build_root/boot/$initrd $isofsdir/boot/
-  extend_initrd $isofsdir/boot/$initrd
+  extend_initrd $isofsdir/boot/$initrd $build_toolchain/initramfs
 
   arch_boot_cd_add $isofsdir $kernelver "$boot_title" \
                    /boot/$kernelimg /boot/$initrd
