@@ -13,90 +13,48 @@
 # GNU General Public License can be found in the file COPYING.
 # --- T2-COPYRIGHT-NOTE-END ---
 
+set -e
+
 . $base/misc/target/boot.in
 
 [ "$boot_title" ] || boot_title="T2 SDE Installation"
 
 # Function to create a custom live-cd initrd
-mkinitrd()
+extend_initrd()
 {
-	kernel=$1
-	kernelver=$2
-	moduledir=$3
-	initrd=$4
+	initrd=$1
 
-	echo "Kernel: $kernel Ver: $kernelver Modules: $moduledir"\
-	     "Initrd: $initrd"
+	echo "Initrd: $initrd"
 
 	cd $build_toolchain
 
 	# create basic structure
 	#
 	rm -rf initramfs
-	mkdir -p initramfs/{dev,bin,sbin,proc,sys,lib/modules,etc/hotplug.d/default}
-	mknod initramfs/dev/console c 5 1
+	mkdir -p initramfs/{bin,sbin}
 
-	# copy the basic / rootfs kernel modules
-	#
-	echo "Copying kernel modules ..."
-	find $build_root/$moduledir/kernel -type f | grep \
-	    -e reiserfs -e ext2 -e ext3 -e isofs -e /jfs -e /xfs \
-	    -e /unionfs -e ntfs -e /dos \
-	    -e /ide/ -e /scsi/ -e hci -e usb-storage -e sbp2 |
-	while read fn ; do
-	  for x in $fn `modinfo $fn | grep depends |
-	         cut -d : -f 2- | sed -e 's/ //g' -e 's/,/ /g' `
-	  do
-		# expand to full name if it was a depend
-		[ $x = ${x##*/}  ] &&
-		x=`find $build_root/$moduledir/kernel -name "$x.*o"`
+	echo "Appending target specific content ..."
 
-		relativ=${x#$build_root/}
-		mkdir -p `dirname initramfs/$relativ` 
-		cp $x initramfs/$relativ 2>&1 | grep -v omitting
-	  done
-	done
-
-	# generate map files
-	#
-	/sbin/depmod  --basedir initramfs $kernelver
-
-	echo "Injecting remaining content ..."
-
-	# copying config
-	#
-	cp -ar $build_root/etc/udev initramfs/etc/
-
-	# setup programs
-	#
-	cp $build_root/sbin/{hotplug++,udev,udevstart,modprobe,insmod} \
-	   initramfs/sbin/
-# TODO: add gzip ip
-	ln -sf /sbin/udev initramfs/etc/hotplug.d/default/10-udev.hotplug
-
-	cp $build_root/bin/pdksh initramfs/bin/sh
-	cp $build_root/usr/embutils/{mount,umount,rm,mv,mkdir,rmdir,ls,ln,\
-switch_root,rm,sleep,losetup,chmod,cat,sed,tar,readlink} initramfs/bin/
+	# TODO: add gzip ip
+	cp $build_root/usr/embutils/{tar,readlink} initramfs/bin/
 	cp $build_root/usr/bin/fget initramfs/bin/
-	ln -s mv initramfs/bin/cp
 
-	echo "root:x:0:0:root:/:/bin/sh" > initramfs/etc/passwd
-
-	# TODO: do we need this target specific?
 	cp $base/target/install/init initramfs/
 	chmod +x initramfs/init
 
 	# create the cpio image
 	#
-	echo "Archiving ..."
+	echo "Appending to initrd archive ..."
+	gunzip < $initrd > $initrd.cpio
 	( cd initramfs
-	  find * | cpio -o -H newc | gzip -9 > ../$initrd
+	  find * | cpio -o -H newc --append --file $initrd.cpio
 	)
+	gzip -c -9 $initrd.cpio > $initrd
+	rm $initrd.cpio
 
 	# display the resulting image
 	#
 	du -sh $initrd
-	mv $initrd $isofsdir/boot/
 }
 
 # For each available kernel:
@@ -109,12 +67,13 @@ for x in `egrep 'X .* KERNEL .*' $base/config/$config/packages |
   moduledir="`grep lib/modules  $build_root/var/adm/flists/$kernel |
               cut -d ' ' -f 2 | cut -d / -f 1-3 | uniq | head -n 1`"
   kernelver=${moduledir/*\/}
-  initrd="initramfs-$kernelver.gz"
+  initrd="initrd-$kernelver.img"
   kernelimg=`ls $build_root/boot/vmlinu?_$kernelver`
   kernelimg=${kernelimg##*/}
 
   cp $build_root/boot/vmlinu?_$kernelver $isofsdir/boot/
-  mkinitrd $kernel $kernelver $moduledir $initrd
+  cp $build_root/boot/$initrd $isofsdir/boot/
+  extend_initrd $isofsdir/boot/$initrd
 
   arch_boot_cd_add $isofsdir $kernelver "$boot_title" \
                    /boot/$kernelimg /boot/$initrd
