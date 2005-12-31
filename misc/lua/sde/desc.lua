@@ -2,7 +2,7 @@
 -- Licensed under the GPL, see end of file
 
 -- TODO:
---   -in desc.parse, check if required fields were set
+--  - implement the desc.validator
 
 -- DESCRIPTION:
 --   t = desc.parse(line-iterator)
@@ -16,11 +16,13 @@
 desc = desc or {}
 desc.__format__ = {}
 
+-- FIXME setmetatable(desc, { __call = function })
+
 -- parse .desc text ; expects line iterator function as argument
-function desc.parse(desc)
+function desc.parse(iter)
 	local retval = {}
 
-	for line in desc do
+	for line in iter do
 		local tag,cnt
 
 		_,_,tag,cnt = string.find(line, "([[][^]]*[]])[ ]+(.*)")
@@ -33,7 +35,14 @@ function desc.parse(desc)
 		end
 	end
 
-	-- FIXME check if required fields are set
+	return retval
+end
+
+-- similar to desc.parse, but validate the description
+function desc.validate(iter)
+	local retval = desc.parse(iter)
+
+	-- TODO implement validating
 
 	return retval
 end
