@@ -27,7 +27,7 @@ cd $build_toolchain
 rm -rf initramfs
 mkdir -p initramfs/{bin,sbin}
 # TODO: add gzip ip
-cp $build_root/usr/embutils/{tar,readlink} initramfs/bin/
+cp $build_root/usr/embutils/{tar,readlink,rmdir} initramfs/bin/
 cp $build_root/usr/bin/fget initramfs/bin/
 
 cp $base/target/install/init initramfs/
