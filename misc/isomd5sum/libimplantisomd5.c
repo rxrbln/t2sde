@@ -38,7 +38,7 @@
 
 /* finds primary volume descriptor and returns info from it */
 /* mediasum must be a preallocated buffer at least 33 bytes long */
-static int parsepvd(int isofd, char *mediasum, long long *isosize) {
+static int parsepvd(int isofd, unsigned char *mediasum, long long *isosize) {
     unsigned char buf[2048];
     long long offset;
     unsigned char *p __attribute__((unused));
@@ -186,8 +186,8 @@ int implantISOFile(char *fname, int supported, int forceit, int quiet, char **er
     loc = writeAppData(new_appdata, "ISO MD5SUM = ", loc);
     loc = writeAppData(new_appdata, md5str, loc);
     loc = writeAppData(new_appdata, ";", loc);
-    snprintf(buf, sizeof(buf), "SKIPSECTORS = %d", SKIPSECTORS);
-    loc = writeAppData(new_appdata, buf, loc);
+    snprintf((char *) buf, sizeof(buf), "SKIPSECTORS = %d", SKIPSECTORS);
+    loc = writeAppData(new_appdata, (char *) buf, loc);
     loc = writeAppData(new_appdata, ";", loc);
 
     if (supported) {
