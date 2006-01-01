@@ -72,7 +72,7 @@ static int parsepvd(int isofd, char *mediasum, int *skipsectors, long long *isos
     supportedfnd = 0;
     loc = 0;
     while (loc < 512) {
-	if (!strncmp(buf2 + loc, "ISO MD5SUM = ", 13)) {
+	if (!strncmp((char *) buf2 + loc, "ISO MD5SUM = ", 13)) {
 
 	    /* make sure we dont walk off end */
 	    if ((loc + 32) > 511)
@@ -83,7 +83,7 @@ static int parsepvd(int isofd, char *mediasum, int *skipsectors, long long *isos
 	    md5fnd = 1;
 	    loc += 45;
 	    for (p=buf2+loc; *p != ';' && loc < 512; p++, loc++);
-	} else if (!strncmp(buf2 + loc, "SKIPSECTORS = ", 14)) {
+	} else if (!strncmp((char *) buf2 + loc, "SKIPSECTORS = ", 14)) {
 	    char *errptr;
 
 	    /* make sure we dont walk off end */
@@ -96,7 +96,7 @@ static int parsepvd(int isofd, char *mediasum, int *skipsectors, long long *isos
 
 	    *p = '\0';
 
-	    *skipsectors = strtol(tmpbuf, &errptr, 10);
+	    *skipsectors = strtol((char *) tmpbuf, &errptr, 10);
 	    if (errptr && *errptr) {
  	        return -1;
 	    } else {
@@ -104,10 +104,10 @@ static int parsepvd(int isofd, char *mediasum, int *skipsectors, long long *isos
 	    }
 
 	    for (p=buf2+loc; *p != ';' && loc < 512; p++, loc++);
-	} else if (!strncmp(buf2 + loc, "RHLISOSTATUS=1", 14)) {
+	} else if (!strncmp((char *) buf2 + loc, "RHLISOSTATUS=1", 14)) {
 	    *supported = 1;
 	    supportedfnd = 1;
-	} else if (!strncmp(buf2 + loc, "RHLISOSTATUS=0", 14)) {
+	} else if (!strncmp((char *) buf2 + loc, "RHLISOSTATUS=0", 14)) {
 	    *supported = 0;
 	    supportedfnd = 1;
 	} else {
@@ -278,7 +278,7 @@ int mediaCheckFile(char *file, int quiet) {
 	return -1;
     }
 
-    rc = doMediaCheck(isofd, mediasum, computedsum, &isosize, &supported, quiet);
+    rc = doMediaCheck(isofd, (char *) mediasum, (char *) computedsum, &isosize, &supported, quiet);
 
     close(isofd);
 
