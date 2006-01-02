@@ -98,100 +98,6 @@ pkgloop() {
 		done
 	fi
 
-	if [ "$SDECFG_PARALLEL" = 1 ]
-	then
-		qdir="$base/build/$SDECFG_ID/TOOLCHAIN/queue"
-		mkdir -p $qdir
-
-		if [ -z "$SDECFG_PARALLEL_ADDJOB" ] ; then
-			echo "
-Job Queue for parallel (cluster) build created.
-
-You have not configuread a command for adding jobs. So you need to use the
-T2 SDE built-in job queue. To do so, you need to login to your build nodes
-and execute the command:
-
-	./scripts/Build-Job -cfg $config -daemon
-"
-			touch $qdir/use_build_job_daemon
-		else
-			echo "
-Job Queue for parallel (cluster) build created.
-
-You have configuread a command for adding jobs. So if everything is configured
-in the right way, the nodes will automatically start building the jobs.
-"
-			rm -f $qdir/use_build_job_daemon
-		fi
-
-		newqueue=1 ; printstatus=1 ; printstatus_counter=30
-		finished=0 ; trap 'rm -f $qdir/queue.txt ; exit 130' SIGINT
-
-		while
-			if [ -f $qdir/print_status ] ; then
-				rm -f $qdir/print_status
-				printstatus=1 ; printstatus_counter=0
-			fi
-
-			if [ "$printstatus" = 1 ] ; then
-			    if [ $printstatus_counter -le 0 ] ; then
-				./scripts/Create-ParaStatus -cfg "$config"
-				printstatus=0 ; printstatus_counter=300
-			    else
-				printstatus_counter=$(($printstatus_counter - 1))
-			    fi
-			fi
-
-			for x in $qdir/*.msg ; do
-				if [ -f "$x" ] ; then
-					expand -t20 < $x ; rm -f $x
-					printstatus=1 ; newqueue=1
-				fi
-			done
-
-			if [ "$newqueue" = 1 ] ; then
-				./scripts/Create-PkgQueue -cfg $config \
-					$nobrokendeps | sort -r -n -k2 | \
-					if [ $SDECFG_PARALLEL_MAX -gt 0 ]
-					then head -n $SDECFG_PARALLEL_MAX
-					else cat ; fi > $qdir/queue.new
-				mv $qdir/queue.new $qdir/queue.txt
-				newqueue=0
-
-				while read next ; do
-					set $next ; qid="$1-$6"
-					if [ ! -f $qdir/$qid.job ] ; then
-date "+%H:%M %Y-%m-%d:	creating new job '$qid'" | expand -t20
-echo "Job $qid	waiting in the job queue (priority $2)" > $qdir/$qid.todo
-printstatus=1
-
-# we need to remove some variables that should be uniqe per node
-dump_env | grep -v HOSTNAME= > $qdir/$qid.new
-mv $qdir/$qid.new $qdir/$qid.job
-if [ "$SDECFG_PARALLEL_ADDJOB" ] ; then
-	x="${SDECFG_PARALLEL_ADDJOB//\{\}/.\/scripts\/Build-Job -cfg $config $qid}" ; sh -c "$x"
-fi
-					fi
-				done < $qdir/queue.txt
-			fi
-
-			if [ -s $qdir/queue.txt ] || \
-				[ "`ls $qdir/*.job 2>/dev/null`" ]
-			then
-				finished=0
-			else
-				finished=$(( $finished + 1 ))
-				newqueue=1
-			fi
-
-			[ $finished -le 3 ]
-		do
-			sleep 1
-		done
-
-		echo "All packages build."
-		sleep 2 ; rm -rf $qdir ; trap - SIGINT
-	else
 		while
 		    next="`./scripts/Create-PkgQueue \
 				-cfg "$config" -single $nobrokendeps`"
@@ -199,7 +105,6 @@ fi
 		do
 		    pkgloop_package $next
 		done
-	fi
 
 	else
 		rm -f "${build_root}"/var/adm/logs/${build_only_this_job}.log"
