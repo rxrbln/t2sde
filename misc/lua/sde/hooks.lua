@@ -14,6 +14,7 @@
 -- --- T2-COPYRIGHT-NOTE-END ---
 
 -- TODO:
+--  - add "protected" hooks (hooks, that can't be overriden simply)
 
 -- DESCRIPTION:
 -- 1. Create a new hook
