@@ -14,6 +14,7 @@
 -- --- T2-COPYRIGHT-NOTE-END ---
 
 -- TODO:
+--  - parser should also accept string as input
 --  - implement the desc.validator
 
 -- DESCRIPTION:
