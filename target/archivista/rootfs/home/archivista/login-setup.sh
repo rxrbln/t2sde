@@ -31,11 +31,11 @@ if Xdialog $y --yesno "Allow default database only?" 0 0; then
 onlyDefaultDb=1; else onlyDefaultDb=0; fi
 
 defaultLoginHost=`Xdialog --stdout --inputbox "Default host:" 0 0 \
-                  $defaultLoginHost`
+                  $defaultLoginHost` || exit
 defaultLoginDb=`Xdialog --stdout --inputbox "Default database:" 0 0 \
-                $defaultLoginDb`
+                $defaultLoginDb` || exit
 defaultLoginUser=`Xdialog --stdout --inputbox "Default user:" 0 0 \
-                  $defaultLoginUser`
+                  $defaultLoginUser` || exit
 
 set_Global.pm_var onlyLocalhost $onlyLocalhost
 set_Global.pm_var onlyDefaultDb $onlyDefaultDb
