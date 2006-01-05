@@ -18,8 +18,8 @@
 for x in exec{l,v}{,p,e} ; do
 touch fltest_$x ; done
 
-sh fl_wrapper.c.sh > fl_wrapper.c
-gcc -Wall -O2 -ldl -shared -o fl_wrapper.so fl_wrapper.c
+bash misc/tools-source/fl_wrapper.c.sh > fl_wrapper.c
+gcc -O2 -shared -fPIC -Wall -ldl fl_wrapper.c -o fl_wrapper.so
 
 echo -n > rlog.txt
 echo -n > wlog.txt
@@ -27,8 +27,8 @@ echo -n > wlog.txt
 export FLWRAPPER_RLOG=rlog.txt
 export FLWRAPPER_WLOG=wlog.txt
 
-gcc fl_wrapper_test.c -o fltest_bin
+gcc misc/tools-source/fl_wrapper_test.c -o fltest_bin
 LD_PRELOAD=./fl_wrapper.so ./fltest_bin
 
-rm fltest_* fl_wrapper.so
+#rm fltest_* fl_wrapper.so
 
