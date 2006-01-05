@@ -1,0 +1,151 @@
+2005-06-04  Gwenole Beauchesne  <gbeauchesne@mandriva.com>
+
+	* softmmu_header.h: x86-64 assembly optimizations to softmmu.
+
+--- qemu-0.7.0/softmmu_header.h.x86_64-softmmu-asm	2005-04-27 22:52:05.000000000 +0200
++++ qemu-0.7.0/softmmu_header.h	2005-06-04 13:29:25.000000000 +0200
+@@ -229,6 +229,144 @@ static inline void glue(glue(st, SUFFIX)
+                   : "%eax", "%ecx", "%edx", "memory", "cc");
+ }
+ 
++/* TODO: handle 64-bit access sizes and addresses */
++#elif (DATA_SIZE <= 4) && (TARGET_LONG_BITS == 32) && defined(__x86_64__) && \
++      (ACCESS_TYPE <= 1) && defined(ASM_SOFTMMU)
++
++static inline RES_TYPE glue(glue(ld, USUFFIX), MEMSUFFIX)(target_ulong ptr)
++{
++    RES_TYPE res;
++
++    asm volatile ("mov %1, %%edx\n"
++                  "mov %1, %%eax\n"
++                  "shr %3, %%edx\n"
++                  "and %4, %%eax\n"
++                  "and %2, %%edx\n"
++                  "lea %5(%%rdx, %%rbp), %%rdx\n"
++                  "cmp (%%rdx), %%eax\n"
++                  "mov %1, %%edi\n"
++                  "je 1f\n"
++                  "mov %6, %%esi\n"
++                  "call " stringify(glue(glue(__ld, SUFFIX), MMUSUFFIX)) "\n"
++                  "mov %%eax,%0\n"
++                  "jmp 2f\n"
++                  "1:\n"
++                  "add 8(%%rdx), %%rdi\n"
++#if DATA_SIZE == 1
++                  "movzbl (%%rdi), %0\n"
++#elif DATA_SIZE == 2
++                  "movzwl (%%rdi), %0\n"
++#elif DATA_SIZE == 4
++                  "movl (%%rdi), %0\n"
++#else
++#error unsupported size
++#endif
++                  "2:\n"
++                  : "=r" (res)
++                  : "r" (ptr), 
++                  "i" ((CPU_TLB_SIZE - 1) << 4), 
++                  "i" (TARGET_PAGE_BITS - 4), 
++                  "i" (TARGET_PAGE_MASK | (DATA_SIZE - 1)),
++                  "m" (*(uint32_t *)offsetof(CPUState, tlb_read[CPU_MEM_INDEX][0].address)),
++                  "i" (CPU_MEM_INDEX)
++                  : "%rax", "%rcx", "%rdx", "%rdi", "%rsi", "memory", "cc");
++    return res;
++}
++
++#if DATA_SIZE <= 2
++static inline int glue(glue(lds, SUFFIX), MEMSUFFIX)(target_ulong ptr)
++{
++    RES_TYPE res;
++
++    asm volatile ("mov %1, %%edx\n"
++                  "mov %1, %%eax\n"
++                  "shr %3, %%edx\n"
++                  "and %4, %%eax\n"
++                  "and %2, %%edx\n"
++                  "lea %5(%%rdx, %%rbp), %%rdx\n"
++                  "cmp (%%rdx), %%eax\n"
++                  "mov %1, %%edi\n"
++                  "je 1f\n"
++                  "mov %6, %%esi\n"
++                  "call " stringify(glue(glue(__ld, SUFFIX), MMUSUFFIX)) "\n"
++#if DATA_SIZE == 1
++                  "movsbl %%al, %0\n"
++#elif DATA_SIZE == 2
++                  "movswl %%ax, %0\n"
++#else
++#error unsupported size
++#endif
++                  "jmp 2f\n"
++                  "1:\n"
++                  "add 8(%%rdx), %%rdi\n"
++#if DATA_SIZE == 1
++                  "movsbl (%%rdi), %0\n"
++#elif DATA_SIZE == 2
++                  "movswl (%%rdi), %0\n"
++#else
++#error unsupported size
++#endif
++                  "2:\n"
++                  : "=r" (res)
++                  : "r" (ptr), 
++                  "i" ((CPU_TLB_SIZE - 1) << 4), 
++                  "i" (TARGET_PAGE_BITS - 4), 
++                  "i" (TARGET_PAGE_MASK | (DATA_SIZE - 1)),
++                  "m" (*(uint32_t *)offsetof(CPUState, tlb_read[CPU_MEM_INDEX][0].address)),
++                  "i" (CPU_MEM_INDEX)
++                  : "%rax", "%rcx", "%rdx", "%rdi", "%rsi", "memory", "cc");
++    return res;
++}
++#endif
++
++static inline void glue(glue(st, SUFFIX), MEMSUFFIX)(target_ulong ptr, RES_TYPE v)
++{
++    asm volatile ("mov %0, %%edx\n"
++                  "mov %0, %%eax\n"
++                  "shr %3, %%edx\n"
++                  "and %4, %%eax\n"
++                  "and %2, %%edx\n"
++                  "lea %5(%%rdx, %%rbp), %%rdx\n"
++                  "cmp (%%rdx), %%eax\n"
++                  "mov %0, %%edi\n"
++                  "je 1f\n"
++#if DATA_SIZE == 1
++                  "movzbl %b1, %%esi\n"
++#elif DATA_SIZE == 2
++                  "movzwl %w1, %%esi\n"
++#elif DATA_SIZE == 4
++                  "movl %1, %%esi\n"
++#else
++#error unsupported size
++#endif
++                  "mov %6,%%edx\n"
++                  "call " stringify(glue(glue(__st, SUFFIX), MMUSUFFIX)) "\n"
++                  "jmp 2f\n"
++                  "1:\n"
++                  "add 8(%%rdx), %%rdi\n"
++#if DATA_SIZE == 1
++                  "movb %b1, (%%rdi)\n"
++#elif DATA_SIZE == 2
++                  "movw %w1, (%%rdi)\n"
++#elif DATA_SIZE == 4
++                  "movl %1, (%%rdi)\n"
++#else
++#error unsupported size
++#endif
++                  "2:\n"
++                  : 
++                  : "r" (ptr), 
++/* NOTE: 'q' would be needed as constraint, but we could not use it
++   with T1 ! */
++                  "r" (v), 
++                  "i" ((CPU_TLB_SIZE - 1) << 4), 
++                  "i" (TARGET_PAGE_BITS - 4), 
++                  "i" (TARGET_PAGE_MASK | (DATA_SIZE - 1)),
++                  "m" (*(uint32_t *)offsetof(CPUState, tlb_write[CPU_MEM_INDEX][0].address)),
++                  "i" (CPU_MEM_INDEX)
++                  : "%rax", "%rcx", "%rdx", "%rdi", "%rsi", "memory", "cc");
++}
++
+ #else
+ 
+ /* generic load/store macros */
