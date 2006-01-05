@@ -1,0 +1,131 @@
+2005-06-02  Gwenole Beauchesne  <gbeauchesne@mandriva.com>
+
+	* dyngen.c: handle .LCn symbols.
+
+--- qemu-0.7.0/dyngen.c.gcc4-dot-syms	2005-06-02 17:02:27.000000000 -0400
++++ qemu-0.7.0/dyngen.c	2005-06-02 17:07:59.000000000 -0400
+@@ -29,6 +29,7 @@
+ #include <inttypes.h>
+ #include <unistd.h>
+ #include <fcntl.h>
++#include <assert.h>
+ 
+ #include "config-host.h"
+ 
+@@ -323,11 +324,46 @@ void put32(uint32_t *p, uint32_t val)
+     *p = val;
+ }
+ 
++/* helper functions to pretty print code/data */
++static void print_data(FILE *outfile, const char *name, const uint8_t *data, int data_size)
++{
++    int i;
++    fprintf(outfile, "static const uint8_t %s[] = {", name);
++    for (i = 0; i < data_size; i++) {
++        if ((i % 12) == 0) {
++            if (i != 0)
++                fprintf(outfile, ",");
++            fprintf(outfile, "\n    ");
++        }
++        else
++            fprintf(outfile, ", ");
++        fprintf(outfile, "0x%02x", data[i]);
++    }
++    fprintf(outfile, "\n};\n");
++}
++
++static char *gen_dot_prefix(const char *sym_name)
++{
++  static char name[256];
++  assert(sym_name[0] == '.');
++  snprintf(name, sizeof(name), "dg_dot_%s", sym_name + 1);
++  return name;
++}
++
+ /* executable information */
+ EXE_SYM *symtab;
+ int nb_syms;
+ int text_shndx;
+ uint8_t *text;
++static struct elf_shdr *rodata_cst4_sec;
++static uint8_t *rodata_cst4 = NULL;
++static int rodata_cst4_shndx;
++static struct elf_shdr *rodata_cst8_sec;
++static uint8_t *rodata_cst8 = NULL;
++static int rodata_cst8_shndx;
++static struct elf_shdr *rodata_cst16_sec;
++static uint8_t *rodata_cst16 = NULL;
++static int rodata_cst16_shndx;
+ EXE_RELOC *relocs;
+ int nb_relocs;
+ 
+@@ -520,8 +556,25 @@ int load_object(const char *filename)
+             }
+         }
+     }
+-    /* text section */
+ 
++    /* rodata sections */
++    rodata_cst4_sec = find_elf_section(shdr, ehdr.e_shnum, shstr, ".rodata.cst4");
++    if (rodata_cst4_sec) {
++      rodata_cst4_shndx = rodata_cst4_sec - shdr;
++      rodata_cst4 = sdata[rodata_cst4_shndx];
++    }
++    rodata_cst8_sec = find_elf_section(shdr, ehdr.e_shnum, shstr, ".rodata.cst8");
++    if (rodata_cst8_sec) {
++      rodata_cst8_shndx = rodata_cst8_sec - shdr;
++      rodata_cst8 = sdata[rodata_cst8_shndx];
++    }
++    rodata_cst16_sec = find_elf_section(shdr, ehdr.e_shnum, shstr, ".rodata.cst16");
++    if (rodata_cst16_sec) {
++      rodata_cst16_shndx = rodata_cst16_sec - shdr;
++      rodata_cst16 = sdata[rodata_cst16_shndx];
++    }
++
++    /* text section */
+     text_sec = find_elf_section(shdr, ehdr.e_shnum, shstr, ".text");
+     if (!text_sec)
+         error("could not find .text section");
+@@ -1193,6 +1246,8 @@ void get_reloc_expr(char *name, int name
+ 
+     if (strstart(sym_name, "__op_param", &p)) {
+         snprintf(name, name_size, "param%s", p);
++    } else if (strstart(sym_name, ".LC", NULL)) {
++        snprintf(name, name_size, "(long)(%s)", gen_dot_prefix(sym_name));
+     } else if (strstart(sym_name, "__op_gen_label", &p)) {
+         snprintf(name, name_size, "gen_labels[param%s]", p);
+     } else {
+@@ -2220,7 +2275,8 @@ void gen_code(const char *name, host_ulo
+                 if (*sym_name && 
+                     !strstart(sym_name, "__op_param", NULL) &&
+                     !strstart(sym_name, "__op_jmp", NULL) &&
+-                    !strstart(sym_name, "__op_gen_label", NULL)) {
++                    !strstart(sym_name, "__op_gen_label", NULL) &&
++                    !strstart(sym_name, ".LC", NULL)) {
+ #if defined(HOST_SPARC)
+ 		    if (sym_name[0] == '.') {
+ 			fprintf(outfile,
+@@ -3035,6 +3091,23 @@ int gen_file(FILE *outfile, int out_type
+         }
+         
+     } else {
++#if defined(CONFIG_FORMAT_ELF)
++        /* emit local symbols */
++        for(i = 0, sym = symtab; i < nb_syms; i++, sym++) {
++            const char *name;
++            name = get_sym_name(sym);
++            if (strstart(name, ".LC", NULL)) {
++                if (sym->st_shndx == (rodata_cst16_sec - shdr))
++                    print_data(outfile, gen_dot_prefix(name), rodata_cst16 + sym->st_value, 16);
++                else if (sym->st_shndx == (rodata_cst8_sec - shdr))
++                    print_data(outfile, gen_dot_prefix(name), rodata_cst8 + sym->st_value, 8);
++                else if (sym->st_shndx == (rodata_cst4_sec - shdr))
++                    print_data(outfile, gen_dot_prefix(name), rodata_cst4 + sym->st_value, 4);
++                else
++                    error("invalid section for local data %s (%x)\n", name, sym->st_shndx);
++            }
++        }
++#endif
+         /* generate big code generation switch */
+ fprintf(outfile,
+ "int dyngen_code(uint8_t *gen_code_buf,\n"
