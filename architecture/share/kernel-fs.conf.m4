@@ -21,6 +21,7 @@ CONFIG_ZISOFS=y
 
 CONFIG_DEVPTS_FS=y
 CONFIG_PROC_FS=y
+CONFIG_PROC_KCORE=y
 
 dnl mark the usual suspects modular
 dnl

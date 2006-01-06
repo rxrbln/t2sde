@@ -70,6 +70,7 @@ CONFIG_BINFMT_AOUT=m
 CONFIG_BINFMT_MISC=m
 
 CONFIG_SYSVIPC=y
+CONFIG_SUNRPC=y
 
 dnl Math emulation in the default kernel
 dnl (we could also run this on an old 386)
@@ -142,7 +143,10 @@ CONFIG_FB_PM2=m
 dnl Console (Serial) Options
 dnl
 CONFIG_SERIAL=y
+CONFIG_SERIAL_CORE=y
 CONFIG_SERIAL_CONSOLE=y
+
+CONFIG_PARPORT=y
 
 dnl Video for Linux
 dnl
