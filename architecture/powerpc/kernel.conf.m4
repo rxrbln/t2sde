@@ -22,9 +22,9 @@ CONFIG_6xx=y
 # CONFIG_82xx is not set
 # CONFIG_8xx is not set
 CONFIG_PMAC=y
-# CONFIG_PREP is not set
-# CONFIG_CHRP is not set
-# CONFIG_ALL_PPC is not set
+CONFIG_PREP=u
+CONFIG_CHRA=y
+CONFIG_ALL_PPC=y
 # CONFIG_GEMINI is not set
 # CONFIG_APUS is not set
 CONFIG_MACH_SPECIFIC=y
@@ -92,3 +92,4 @@ dnl
 # CONFIG_GMAC is not set
 CONFIG_SUNGEM=y
 
+CONFIG_XMON=y
