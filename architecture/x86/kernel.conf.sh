@@ -80,9 +80,11 @@
 		dnl The default is to support those old ISA boxes.
 		dnl A target might get rid of it.
 		dnl
+		CONFIG_ISA=y
 		CONFIG_ISAPNP=y
 		CONFIG_PNPBIOS=y
 
+		CONFIG_PNP=y
 	EOT
 } | m4 -I $base/architecture/$arch -I $base/architecture/share
 
