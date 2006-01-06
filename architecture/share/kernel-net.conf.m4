@@ -12,8 +12,9 @@ dnl the Free Software Foundation; version 2 of the License. A copy of the
 dnl GNU General Public License can be found in the file COPYING.
 dnl --- T2-COPYRIGHT-NOTE-END ---
 
-dnl some more module which are not activated by default
+dnl the basic sections
 dnl
+CONFIG_NETDEVICES=y
 CONFIG_NET_ISA=y
 CONFIG_NET_POCKET=y
 
@@ -55,6 +56,7 @@ CONFIG_PACKET_MMAP=y
 CONFIG_PACKET=y
 CONFIG_NETLINK=y
 CONFIG_RTNETLINK=y
+CONFIG_IP_MULTICAST=y
 CONFIG_FILTER=y
 CONFIG_UNIX=y
 CONFIG_INET=y
