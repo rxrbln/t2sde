@@ -15,11 +15,13 @@ dnl --- T2-COPYRIGHT-NOTE-END ---
 dnl the basic sections
 dnl
 CONFIG_NETDEVICES=y
-CONFIG_NET_ISA=y
-CONFIG_NET_POCKET=y
 
 CONFIG_NET_ETHERNET=y
+
+CONFIG_NET_ISA=y
 CONFIG_NET_EISA=y
+CONFIG_NET_PCI=y
+CONFIG_NET_POCKET=y
 
 dnl Enable some vendor sections
 dnl
