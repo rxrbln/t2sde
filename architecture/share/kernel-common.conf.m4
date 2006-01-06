@@ -19,6 +19,7 @@ CONFIG_EXPERIMENTAL=y
 dnl On default we build SMP kernels and mods
 dnl
 CONFIG_SMP=y
+CONFIG_IRQ_ALL_CPUS=y
 
 dnl CPU frequency scaling is nice to have
 dnl
@@ -168,3 +169,11 @@ dnl
 CONFIG_PROFILING=y
 CONFIG_OPROFILE=m
 
+dnl Other stuff normally needed
+dnl
+CONFIG_POSIX_MQUEUE=y
+CONFIG_SYSCTL=y
+
+dnl On architectures with OpenFirmware we want the framebuffer
+dnl
+CONFIG_FB_OF=y
