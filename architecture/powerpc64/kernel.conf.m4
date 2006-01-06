@@ -81,14 +81,11 @@ CONFIG_CPU_FREQ=y
 CONFIG_CPU_FREQ_PMAC=y
 CONFIG_CPU_FREQ_26_API=y
 
+CONFIG_BLK_DEV_IDE_PMA=m
+CONFIG_BLK_DEV_IDE_PMAC=m
 CONFIG_MAC_FLOPPY=y
 CONFIG_PMU_HD_BLINK=y
 # CONFIG_MAC_ADBKEYCODES is not set
-
-dnl make sure old OSS modules are build (ALSA does not yet work correct)
-dnl
-CONFIG_DMASOUND_PMAC=m
-CONFIG_DMASOUND=m
 
 dnl some network teaks (the GMAC is obsoleted by SUNGEM)
 dnl
