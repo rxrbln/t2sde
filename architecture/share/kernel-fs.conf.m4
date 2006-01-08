@@ -14,6 +14,8 @@ dnl --- T2-COPYRIGHT-NOTE-END ---
 
 dnl Enable Quota Support
 dnl
+CONFIG_PARTITION_ADVANCED=y
+
 CONFIG_QUOTA=y
 
 CONFIG_JOLIET=y
