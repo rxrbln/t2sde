@@ -21,6 +21,12 @@ dnl
 CONFIG_SMP=y
 CONFIG_IRQ_ALL_CPUS=y
 
+dnl Power Management
+dnl
+CONFIG_PM=y
+CONFIG_PM_LEGACY=y
+CONFIG_SOFTWARE_SUSPEND=y
+
 dnl CPU frequency scaling is nice to have
 dnl
 CONFIG_CPU_FREQ=y
@@ -51,7 +57,7 @@ dnl Loopback device can always be useful
 dnl
 CONFIG_BLK_DEV_LOOP=y
 
-dnl We need initrd for install system and other stuff
+dnl We need initrd for install system and fully modular kernel early userspace
 dnl
 CONFIG_BLK_DEV_RAM=y
 CONFIG_BLK_DEV_INITRD=y
@@ -66,6 +72,8 @@ CONFIG_I82092=y
 CONFIG_I82365=y
 
 dnl Misc stuff
+CONFIG_NVRAM=y
+
 CONFIG_BINFMT_AOUT=m
 CONFIG_BINFMT_MISC=m
 
@@ -73,7 +81,7 @@ CONFIG_SYSVIPC=y
 CONFIG_SUNRPC=y
 
 dnl Math emulation in the default kernel
-dnl (we could also run this on an old 386)
+dnl (we could also run this on an old 386, sparcv7)
 dnl
 CONFIG_MATH_EMULATION=y
 
@@ -130,15 +138,8 @@ dnl
 CONFIG_VGA_CONSOLE=y
 CONFIG_VIDEO_SELECT=y
 CONFIG_FB=y
-CONFIG_FB_VESA=y
-dnl some modules we might never need built-in the details are controlled
-dnl by the architecture, e.g. radeon/riva built-in for PowerPC ...
-CONFIG_FB_VOODOO1=m
-CONFIG_FB_TRIDENT=m
-CONFIG_FB_SIS=m
-CONFIG_FB_CYBER2000=m
-CONFIG_FB_PM2=m
-
+CONFIG_FRAMEBUFFER_CONSOLE=y
+CONFIG_LOGO=y
 
 dnl Console (Serial) Options
 dnl

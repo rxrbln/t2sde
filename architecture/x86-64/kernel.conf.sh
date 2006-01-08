@@ -54,6 +54,8 @@
 		include(`kernel-net.conf.m4')
 		include(`kernel-fs.conf.m4')
 
+		CONFIG_FB_VESA=y
+
 		dnl NTFS for installation on esoteric notebooks where the user
 		dnl might have the ISOs on an NTFS partition due to unsupported
 		dnl floppy, CD, ... drives

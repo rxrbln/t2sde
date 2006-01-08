@@ -77,6 +77,8 @@
 		include(`kernel-net.conf.m4')
 		include(`kernel-fs.conf.m4')
 
+		CONFIG_FB_VESA=y
+
 		dnl The default is to support those old ISA boxes.
 		dnl A target might get rid of it.
 		dnl
