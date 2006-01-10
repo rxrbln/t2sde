@@ -66,6 +66,7 @@ cat << EOT
 #include <linux/limits.h>
 #endif
 #ifndef PATH_MAX
+#warning "PATH_MAX was not defined - BUG in your system headers?"
 #define PATH_MAX 4095
 #endif
 #include <libgen.h>
