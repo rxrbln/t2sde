@@ -61,6 +61,13 @@ cat << EOT
 #include <utime.h>
 #include <stdarg.h>
 #include <limits.h>
+/* somehow it can happen that PATH_MAX does not get defined...? -- jsaw */
+#ifndef PATH_MAX
+#include <linux/limits.h>
+#endif
+#ifndef PATH_MAX
+#define PATH_MAX 4095
+#endif
 #include <libgen.h>
 
 #undef _LARGEFILE64_SOURCE
