@@ -41,10 +41,11 @@ done
 rc mysql stop
 
 # copy the db and perform other needed tasks on the master
+rm -f HOME/.ssh/known_hosts # IPs might have been toggled
 echo "Please enter the master server system (root user) password in order to
 copy the initial database:"
 rsync -arve ssh --delete --exclude '*-bin.*' --exclude '*.info' \
-      --delete-excluded \
+      --delete-excluded --block-size=10000000 --inplace -P \
       $masterip:/home/data/archivista/mysql \
                 /home/data/archivista/
 error=$?
