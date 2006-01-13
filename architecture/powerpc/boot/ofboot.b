@@ -1,9 +1,9 @@
 <CHRP-BOOT>
 <COMPATIBLE>
-MacRISC MacRISC3
+MacRISC MacRISC3 MacRISC4
 </COMPATIBLE>
 <DESCRIPTION>
-GNU/Linux PPC bootloader
+T2 GNU/Linux PPC bootloader
 </DESCRIPTION>
 <BOOT-SCRIPT>
 " screen" output
