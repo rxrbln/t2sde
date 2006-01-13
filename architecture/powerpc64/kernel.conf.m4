@@ -31,11 +31,18 @@ CONFIG_PMAC=y
 # CONFIG_APUS is not set
 CONFIG_MACH_SPECIFIC=y
 
-# additional 2.6 kernel configs
+dnl additional 2.6 kernel configs
 # CONFIG_40x is not set
 # CONFIG_POWER3 is not set
 
 CONFIG_ALTIVEC=y
+
+dnl Platform specific support
+dnl
+CONFIG_ADB=y
+CONFIG_ADB_CUDA=y
+CONFIG_ADB_PMU=y
+CONFIG_PMAC_SMU=y
 
 include(`kernel-common.conf.m4')
 include(`kernel-block.conf.m4')
@@ -70,10 +77,12 @@ dnl the thermal control stuff needed for newer desktop macs and iBook G4
 dnl
 CONFIG_I2C=y
 CONFIG_I2C_KEYWEST=y
+
+CONFIG_WINDFARM=y
 CONFIG_THERM_WINDTUNNEL=y
 CONFIG_THERM_ADT746X=y
 
-# for 2.6 kernels
+dnl for 2.6 kernels
 dnl
 CONFIG_TAU=y
 
@@ -81,9 +90,10 @@ CONFIG_CPU_FREQ=y
 CONFIG_CPU_FREQ_PMAC=y
 CONFIG_CPU_FREQ_26_API=y
 
-CONFIG_BLK_DEV_IDE_PMA=m
-CONFIG_BLK_DEV_IDE_PMAC=m
-CONFIG_MAC_FLOPPY=y
+CONFIG_BLK_DEV_IDE_PMAC=y
+CONFIG_BLK_DEV_IDE_PMAC_ATA100FIRST=y
+CONFIG_BLK_DEV_IDEDMA_PMAC=y
+CONFIG_BLK_DEV_IDE_PMAC_BLINK=y
 CONFIG_PMU_HD_BLINK=y
 # CONFIG_MAC_ADBKEYCODES is not set
 

@@ -29,7 +29,7 @@ CONFIG_ALL_PPC=y
 # CONFIG_APUS is not set
 CONFIG_MACH_SPECIFIC=y
 
-# additional 2.6 kernel configs
+dnl additional 2.6 kernel configs
 CONFIG_PPC32=y
 # CONFIG_40x is not set
 # CONFIG_POWER3 is not set
@@ -85,16 +85,18 @@ dnl the thermal control stuff needed for newer desktop macs and iBook G4
 dnl
 CONFIG_I2C=y
 CONFIG_I2C_KEYWEST=y
+CONFIG_WINDFARM=y
 CONFIG_THERM_WINDTUNNEL=y
 CONFIG_THERM_ADT746X=y
-CONFIG_WINDFARM=y
 
 
 dnl for 2.6 kernels
 dnl
 CONFIG_TAU=y
 
+CONFIG_CPU_FREQ=y
 CONFIG_CPU_FREQ_PMAC=y
+CONFIG_CPU_FREQ_26_API=y
 
 CONFIG_BLK_DEV_IDE_PMAC=y
 CONFIG_BLK_DEV_IDE_PMAC_ATA100FIRST=y
