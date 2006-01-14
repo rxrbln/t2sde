@@ -10,7 +10,7 @@ fi
 
 # -forever does segfault for me after the first iteration
 # later we could loop here ...
-x11vnc -passwd $PASSWD &
+nohup x11vnc -passwd $PASSWD > /var/log/vnc.log 2>&1 &
 
 Xdialog --title "" --msgbox "Graphical remote access (VNC) enabled." 0 0
 
