@@ -53,6 +53,10 @@ dnl Firmware loader can always be useful
 dnl
 CONFIG_FW_LOADER=y
 
+dnl Plug and play
+dnl
+CONFIG_PNP=y
+
 dnl Loopback device can always be useful
 dnl
 CONFIG_BLK_DEV_LOOP=y

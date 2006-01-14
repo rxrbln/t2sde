@@ -37,6 +37,8 @@
 
 	echo
 	cat <<- 'EOT'
+		CONFIG_IA32_EMULATION=y
+
 		dnl Memory Type Range Register support
 		dnl (improvements in graphic speed ...)
 		dnl
@@ -55,11 +57,6 @@
 		include(`kernel-fs.conf.m4')
 
 		CONFIG_FB_VESA=y
-
-		dnl NTFS for installation on esoteric notebooks where the user
-		dnl might have the ISOs on an NTFS partition due to unsupported
-		dnl floppy, CD, ... drives
-		CONFIG_NTFS_FS=y
 	EOT
 } | m4 -I $base/architecture/$arch -I $base/architecture/share
 
