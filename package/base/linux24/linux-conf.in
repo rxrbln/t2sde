@@ -152,7 +152,8 @@ lx_injectextraversion () {
 
 	# update version.h - we only do this, because some other freaky
 	# projects like rsbac change EXTRAVERSION in other Makefiles ...
-	rerun=""; eval $MAKE include/linux/version.h | grep -q "is up to date" && rerun=1
+	local rerun=""
+	eval $MAKE include/linux/version.h | grep -q "is up to date" && rerun=1
 	if [ "$rerun" ] ; then
 		echo "WARNING: Your system's timer resolution is too low ..."
 		sleep 1 ; touch Makefile
@@ -160,10 +161,17 @@ lx_injectextraversion () {
 	fi
 
 	# get kernel_release
-	lx_kernelrelease="$( echo -e "#include <linux/version.h>\nUTS_RELEASE" \
-                    > conftest.c &&
-                    gcc -E -I./include conftest.c | tail -n 1 |
-                    cut -d '"' -f 2 && rm -f conftest.c )"
+	rerun=1
+	while true; do
+		lx_kernelrelease="$( echo -e "#include <linux/version.h>\nUTS_RELEASE" |
+		                     gcc -E -I./include - | tail -n 1 | cut -d '"' -f 2 )"
+		if [ -z "$lx_kernelrelease" -a "$rerun" ]; then
+			$MAKE .kernelrelease include/linux/version.h
+			rerun= ; continue
+		fi
+		break
+	done
+
 	[ $lx_kernelrelease ] || abort "Could not grab final kernel version!"
 }
 
@@ -187,8 +195,14 @@ lx_patch ()
 	apply_patchfiles lx_grabextraversion lx_filter_patch
 	hook_eval postpatch
 
-	echo "Redefining some VERSION flags ..."
+	# some arches (sh64 at the time of writing) have a "defect" Makefile
+	# and do not work without a .config ...
+	touch .config
+
+	echo "Redefining VERSION  ..."
+	lx_extraversion="${lx_extraversion}-dist"
 	lx_injectextraversion
+	echo "... linux source patching for ${lx_extraversion} finished."
 
 	echo "Correcting user and permissions ..."
 	chown -R root:root . * ; chmod -R u=rwX,go=rX .
@@ -206,12 +220,6 @@ lx_patch ()
 	echo "Clean up the *.orig and *~ files ... "
 	rm -f .config.old
 	find -name '*.orig' -o -name '*~' | xargs rm -f
-
-	# some arches (sh64 at the time of writing) have a "defect" Makefile
-	# and do not work without a .config ...
-	touch .config
-
-	echo "... linux source patching finished."
 }
 
 lx_config() {
@@ -226,8 +234,9 @@ lx_config() {
 		auto_config
 	fi
 
-	lx_extraversion="${lx_extraversion}-dist"
+	# regrab for stuff like rsbac ... :-(
 	lx_injectextraversion
+
 	echo "... configuration of $lx_kernelrelease finished!"
 }
 
