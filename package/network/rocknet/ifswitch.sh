@@ -2,7 +2,7 @@
 
 set -e
 
-active=$( cat /var/run/rocknet/active-interfaces )
+active=$( cat /var/run/rocknet/active-interfaces 2>/dev/null || true )
 
 if [ $# -eq 0 ]; then
 	echo "Usage $0 [ interface profile ] | [ profile ]"
