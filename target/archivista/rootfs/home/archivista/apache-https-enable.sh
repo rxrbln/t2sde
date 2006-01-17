@@ -56,7 +56,7 @@ $ip
 $mail
 EOT
 
-# save config for the net-backup.sh script
+# save config for the defaults of the next run
 cat > last <<-EOT
 country=$country
 state=$state
