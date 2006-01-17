@@ -138,6 +138,8 @@ echo "    @ depth: $depth"
 echo "      horiz: $horiz_sync" &&
 echo "       vert: $vert_refresh"
 
+[ -f /etc/X11/xorg.conf ] && cp /etc/X11/xorg.conf /etc/X11/xorg.conf.bak
+
 sed -e "s/\$xdrv/$xdrv/g" -e "s/\$modes/$modes/g" -e "s/\$depth/$depth/g" \
     -e "s/\$horiz_sync/$horiz_sync/g" \
     -e "s/\$vert_refresh/$vert_refresh/g" \
