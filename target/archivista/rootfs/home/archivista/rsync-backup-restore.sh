@@ -24,9 +24,11 @@ log=`mktemp`
 	rc mysql stop > /dev/null
 
 	mkdir -p /home/data
-
 	# no -a since we can not store user/group on most CIFS shares
-	rsync -rvt --delete -C $user:$server/$dir/data/ /home/data/
+	rsync -rt --stats --delete $user@$server:/$dir/data/ /home/data/
+	error=$?
+	[ $error -ne 0 ] && echo "Error $error during rsync run.
+Not all files might be transfered."
 
 	# shared function included on top
 	permissions_fixup /home/data
