@@ -156,7 +156,7 @@ fi
 
 # network backup
 if [ "$update_net_backup" ]; then
-	echo "net-backup date and time"
+	echo "net-backup config, date and time"
 	if [ $doit = 1 ]; then
 	  sed -i "/\/net-backup.sh/d" -i etc/crontab
 	  echo "$update_net_backup root /home/archivista/net-backup.sh" \
@@ -165,9 +165,20 @@ if [ "$update_net_backup" ]; then
 	fi
 fi
 
+# rsync backup
+if [ "$update_rsync_backup" ]; then
+	echo "rsync-backup config, date and time"
+	if [ $doit = 1 ]; then
+		sed -i "/\/rsync-backup.sh/d" -i etc/crontab
+		echo "$update_rsync_backup root /home/archivista/rsync-backup.sh" \
+		>> etc/crontab
+		cp -fv $from/rsync-backup.conf etc/
+	fi
+fi
+
 # usb backup
 if [ "$update_usb_backup" ]; then
-	echo "usb-backup date and time"
+	echo "usb-backup config, date and time"
 	if [ $doit = 1 ]; then
 	  sed -i "/\/usb-backup.sh/d" -i etc/crontab
 	  echo "$update_usb_backup root /home/archivista/usb-backup.sh" \
