@@ -26,7 +26,7 @@ log=`mktemp`
 	mkdir -p /home/data
 
 	# no -a since we can not store user/group on most CIFS shares
-	rsync -rvt --delete /mnt/net/data/ /home/data/
+	rsync -rt --stats --delete /mnt/net/data/ /home/data/
 
 	# shared function included on top
 	permissions_fixup /home/data
