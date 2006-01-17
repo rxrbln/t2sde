@@ -57,7 +57,7 @@ if [ $error -ne 0 ]; then
 	exit
 fi
 
-if [ !-f /home/data/archivista/mysql/log-pos ]; then
+if [ ! -f /home/data/archivista/mysql/log-pos ]; then
 	Xdialog --ok-label=Quit \
 --msgbox 'The master was not prepared to replicate
 to a client (no log position found).' 0 0
