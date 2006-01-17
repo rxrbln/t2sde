@@ -12,6 +12,8 @@ fi
 # Xdialog and friends
 export DISPLAY=:0
 
+. ${0%/*}/backup.in
+
 log=`mktemp`
 (
 	rc mysql stop > /dev/null
@@ -21,17 +23,5 @@ log=`mktemp`
 	rc mysql start > /dev/null
 ) > $log 2>&1
 
-# mail or display?
-[ -e /etc/mail.conf ] && . /etc/mail.conf
-if [ "$To" ]; then
-	sendmail $To <<-EOT
-		From: $From
-		To: $To
-		Subject: SCSI backup
-		$(cat $log)
-	EOT
-else
-	Xdialog --no-cancel --log - 20 60 < $log
-fi
-rm $log
+mail_or_display "SCSI backup" $log ; rm $log
 
