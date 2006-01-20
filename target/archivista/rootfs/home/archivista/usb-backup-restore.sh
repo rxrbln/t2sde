@@ -29,7 +29,7 @@ log=`mktemp`
 	rsync -rvt --delete /mnt/usb/data/ /home/data/
 
 	# shared function, included on top
-	permissions_fixup /mnt/data
+	permissions_fixup /home/data
 
 	# potentially fixup naming (case) - just to be sure
 	/home/archivista/mysql-case-fixup.sh /home/data/archivista/mysql
