@@ -24,6 +24,10 @@ mount -t usbfs none /proc/bus/usb
 mount -t sysfs none /sys
 ln -s /proc/self/fd /dev/fd
 
+mknod /dev/console c 5 1
+mknod /dev/null c 1 3
+mknod /dev/zero c 1 5
+
 # later on we might reverse these, that is run udevstart first,
 # and let udev add new ones as hotplug agents ...
 
