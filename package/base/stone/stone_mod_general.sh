@@ -133,6 +133,8 @@ set_tmarea() {
 }
 
 set_dtime() {
+  local set=0
+  while [ $set = 0 ]; do
 	dtime="`date '+%m-%d %H:%M %Y'`" ; newdtime="$dtime"
 	[ -f /etc/conf/clock ] && . /etc/conf/clock
 	[ "$clock_tz" != localtime ] && clock_tz=utc
@@ -140,9 +142,16 @@ set_dtime() {
 	          "$dtime" "newdtime"
 	if [ "$dtime" != "$newdtime" ] ; then
 		echo "Setting new date and time ($newdtime) ..."
-		date "$( echo $newdtime | sed 's,[^0-9],,g' )"
+		if ! date "$( echo $newdtime | sed 's,[^0-9],,g' )"; then
+			gui_message "Error setting time, invalid timespec?"
+		else
+			set=1
+		fi
 		hwclock --systohc --$clock_tz
+	else
+		set=1
 	fi
+  done
 }
 
 set_locale_sub() {
