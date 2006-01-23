@@ -131,7 +131,7 @@ cp /bin/pdksh $tmpdir/bin/sh
 
 # static, tiny embutils and friends
 #
-cp /usr/embutils/{mount,umount,rm,mv,mkdir,ln,ls,switch_root,sleep,losetup,chmod,cat,sed} \
+cp /usr/embutils/{mount,umount,rm,mv,mkdir,ln,ls,switch_root,sleep,losetup,chmod,cat,sed,mknod} \
    $tmpdir/bin/
 ln -s mv $tmpdir/bin/cp
 
