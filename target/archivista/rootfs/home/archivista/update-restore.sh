@@ -95,7 +95,7 @@ if [ "$update_apache_https" ]; then
 	  # tweak the window manager references to http - menu, keys, startup
 	  sed -i 's,http://localhost/,https://localhost/,g' home/archivista/.fluxbox/*
 
-	  cp -rfv $from/ssl.{crt,key} etc/opt/apache/
+	  cp -rfv $from/https/ssl.{crt,key} etc/opt/apache/
 	  chmod 600 etc/opt/apache/ssl.key/*.key
 	fi
 fi
@@ -173,6 +173,9 @@ if [ "$update_rsync_backup" ]; then
 		echo "$update_rsync_backup root /home/archivista/rsync-backup.sh" \
 		>> etc/crontab
 		cp -fv $from/rsync-backup.conf etc/
+		mkdir -p root/.ssh
+		cp -rv $from/rsync-backup/id_rsa* root/.ssh/
+		chmod 700 root/.ssh ; chmod 600 root/.ssh/id_rsa
 	fi
 fi
 
