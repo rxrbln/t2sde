@@ -37,7 +37,8 @@ cp etc/conf/network $to/
 
 # https
 grep -q '\-DSSL' sbin/init.d/apache && update_apache_https=1
-cp -rfv etc/opt/apache/ssl.{crt,key} $to/ 2>/dev/null
+mkdir -p $to/https/
+cp -rfv etc/opt/apache/ssl.{crt,key} $to/https/ 2>/dev/null
 
 # cups
 if grep -q '^<DefaultPrinter' etc/cups/printers.conf; then
@@ -68,6 +69,8 @@ cp -fv etc/net-backup.conf $to/ 2>/dev/null
 update_rsync_backup=`grep archivista/rsync-backup.sh etc/crontab |
                      cut -d ' ' -f 1-5`
 cp -fv etc/rsync-backup.conf $to/ 2>/dev/null
+mkdir -p $to/rsync-backup/
+cp -fv root/.ssh/id_rsa* $to/rsync-backup/
 
 # usb backup
 update_usb_backup=`grep archivista/usb-backup.sh etc/crontab |
