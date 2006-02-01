@@ -11,11 +11,11 @@ inject_archivista()
 
 	# configuration
 	cd cvs
-	patch -p1 < $base/target/$target/config.patch
-	patch -p1 < $base/target/$target/pdf.patch
+	#patch -p1 < $base/target/$target/config.patch
+	#patch -p1 < $base/target/$target/pdf.patch
 	cd ..
 	
-        # set the correct permissions after patching the files
+  # set the correct permissions after patching the files
 	chgrp -R 80   cvs
 	chmod -R o-rx cvs
 
@@ -29,9 +29,12 @@ inject_archivista()
 	# wine config and archivista "rich-client" installation
 	tar xvfz $base/target/$target/wine-archivista.tar.gz
 
-        # copy the manual to /home/archivista
-        cp $imagelocation/home/cvs/archivista/webclient/www/*.pdf . 
-        chown 500:100 *.pdf
+	# copy the manual to /home/archivista
+	cp $imagelocation/home/cvs/archivista/webclient/www/*.pdf .
+	chown 500:100 *.pdf
+	
+	# delete the pdf files in the source tree
+	rm -Rf $imagelocation/home/cvs/archivista/webclient/www/*.pdf
 
 	# make sure the scripts can not be modified by the user
 	chown 0:0 *.sh
