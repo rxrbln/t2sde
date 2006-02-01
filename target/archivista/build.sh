@@ -14,6 +14,8 @@
 
 pkgloop
 
+. $base/misc/target/functions.in
+
 isofsdir="$build_toolchain/isofs"		# for the ISO9660 content
 imagelocation="$build_toolchain/rootfs"	# where the roofs is prepared and sq.
 
@@ -27,6 +29,11 @@ build_date=`date +%Y%m%d`
 # the livecd code
 . $base/target/$target/build_initrd.sh
 . $base/target/$target/build_image.sh
+
+# copy additional content into the top-level ISO
+echo_status "Injecting additional top-level ISO content ..."
+copy_from_source $base/target/$target/isofs/ \
+                 $base/build/${SDECFG_ID}/TOOLCHAIN/isofs/
 
 cat > $build_toolchain/isofs.txt <<- EOT
 BOOT	-b boot/grub/stage2_eltorito -no-emul-boot
