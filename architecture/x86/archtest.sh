@@ -16,7 +16,7 @@ case "$SDECFG_X86_OPT" in
     i?86)
 	arch_machine="$SDECFG_X86_OPT" ;;
 
-    pentium|pentium-mmx|k6*)
+    pentium|pentium-mmx|k6*|c3*)
 	arch_machine="i586" ;;
 
     pentium*|athlon*)
