@@ -40,6 +40,11 @@ for x in /lib/modules/*/kernel/fs/{*/,}*.*o ; do
 done
 
 echo "Populating /dev (udev) ..."
+if [ ! -f /dev/console ]; then
+	mknod /dev/console c 5 1
+	mknod /dev/null c 1 3
+	mknod /dev/zero c 1 5
+fi
 /sbin/udevstart
 
 
@@ -55,9 +60,17 @@ doboot()
 	fi
 
 	if [ $exit_linuxrc = 1 ]; then
+		set -x
+
 		mount /dev /mnt_root/dev -t none -o move
 		mount /proc /mnt_root/proc -t none -o move
 		mount /sys /mnt_root/sys -t none -o move
+
+		if [ ! -f /mnt_root/dev/console ]; then
+			mknod /mnt_root/dev/console c 5 1
+			mknod /mnt_root/dev/null c 1 3
+			mknod /mnt_root/dev/zero c 1 5
+		fi
 
 		# copy stuff only in the 1st_stage image
 		mkdir -p /mnt_root/lib/modules
@@ -158,9 +171,27 @@ getdevice()
 {
 	device=
 	devicelist=`ls /dev/cdrom* /dev/floppy* 2>/dev/null`
+
+	# FIXME review and cleanup needed:
 	if [ -z "$devicelist" ]; then
-		echo "No device found."
-		return
+	        # with udev, these links are not created yet, so try to find
+		# device based on sysfs
+	        for sysname in /sys/*/*/removable; do
+			[ `cat $sysname` = 1 ] || continue
+
+	                devname="`echo $sysname | sed -e 's,/removable,,' -e 's,.*/,,'`"
+
+			# FIXME as udev is not running yet we are probably save
+			# to assume that /dev/$devname exists, a check should be
+			# performed however
+	
+	                devicelist="$devicelist /dev/$devname"
+	        done
+
+		if [ -z "$devicelist" ]; then
+			echo "No device found."
+			return
+		fi
 	fi
 
 	i=1
