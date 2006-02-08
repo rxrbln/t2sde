@@ -21,8 +21,75 @@ libtool_fixup()
 	[ $stagelevel -le 1 ] &&
 		pref=$base/build/$SDECFG_ID/TOOLCHAIN/tools.cross
 	[ -f configure.in -o -f configure.ac ] && libtoolize -c -f
-	cp -vf $pref/usr/{bin/libtool,share/libtool/ltmain.sh} .
+
+	find -name libtool -o -name ltmain.sh | while read fn; do
+		case $fn in
+			*libtool) cp -fv $pref/usr/bin/libtool $fn ;;
+			*) cp -fv $pref/usr/share/libtool/ltmain.sh $fn ;;
+		esac
+	done
 }
 
-[ "$desc_F" != "${desc_F/LIBTOOL-QUIRK}" -a $stagelevel -gt 0 ] &&
-	hook_add preconf 5 libtool_fixup
+# Many libtool and ltmain files contain an error which is hostile in
+# our build environment:
+# - on systems where the libdir is not */lib, libtool still searches
+#   /lib and /usr/lib first
+# - removal of temporary paths during library search does not work,
+#   this concerns mainly dependency_libs in .la files where build system
+#   paths and other things survive
+#
+# We try to correct any libtool and ltmain file now:
+libtool_correct_files() {
+	# do not do anything if we're outside builddir (like sysfiles is)
+	[[ ${PWD//src.$pkg.$config.$id/} = $PWD ]] && return 
+
+	# find all libtool etal files, and sed them
+        find -type f -name "libtool*" -o -name "ltmain*" -o -name "ltconfig*" -o -name "ltcf*" | while read f; do
+		cp $f $f.ltcorrect
+                sed -i \
+		       -e 's,sys_lib_dlsearch_path_spec=.*$lt_ld_extra.*,sys_lib_dlsearch_path_spec="$lt_ld_extra",' \
+                       -e "s,'s% \$path % %g',\"s% \$path % %g\",g" -e "s,'s% -L\$path % %g',\"s% -L\$path % %g\",g" \
+                       -e 's,echo "$\(lib_search_path\|deplibs\|dependency_libs\) ",echo " $\1 ",g' \
+                        $f
+
+		# previous sed does (per line):
+		# 1. Dynamic library search path
+		#   libtool.m4/ltmain.sh use the ld.so.conf list (lt_ld_extra) of path to search for dynamic libs,
+		#   that variable is, however prefixed with "-L/lib -L/usr/lib" statically, the latter paths are
+		#   removed by the sed expression
+		# 2. Wrong quotes around sed expression
+		#   A cleanup routine for temporary paths (grep for notinst_path) in libtool*/ltmain.* removes
+		#   paths that should not appear after installation of the library. For this to work the "$path"
+		#   variable must be evaluated (which is not possible with ' around it)
+		# 3. Sed expects a leading whitespace
+		#   To be sure that the cleaning process (mentioned in 2.) works also for the first argument,
+		#   a " " is prepended before it is run through the sed expression (see 2.).
+
+		diff $f.ltcorrect $f >/dev/null || echo_error "Corrected $f"
+
+		rm -f $f.ltcorrect
+        done
+}
+
+libtool_final_check()
+{
+	local ld=${libdir##*/}
+	# do not do anything if we're outside builddir (like sysfiles is)
+	[[ ${PWD//src.$pkg.$config.$id/} = $PWD ]] && return
+	if [ -f libtool ] &&
+	   ! grep "sys_lib_search_path_spec=.* /lib/$ld " libtool
+	then
+		echo_error "Overwrote libtool - configure broken beyond believe."
+		cp $root/usr/bin/libtool .
+		echo -e "#!/bin/true" > missing
+	fi
+}
+
+if [ "$desc_F" != "${desc_F/LIBTOOL-QUIRK}" -a $stagelevel -gt 0 ]; then
+        hook_add preconf 8 libtool_fixup
+elif [ "$desc_F" = "${desc_F/NO-LIBTOOL-FIX}" ]; then
+	hook_add preconf 8 libtool_correct_files
+fi
+
+hook_add premake 7 libtool_final_check
+
