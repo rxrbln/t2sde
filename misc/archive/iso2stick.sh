@@ -31,7 +31,6 @@ mount -o loop $1 /mnt/source
 mount ${2}1 /mnt/target
 
 rsync -arvH --inplace /mnt/source/ /mnt/target/
-cp /boot/grub/stage1 /mnt/target/boot/grub/
 
 sed -i 's/(cd)/(hd0,0)/g' /mnt/target/boot/grub/menu.lst
 
