@@ -24,8 +24,10 @@ set_keymap() {
 	#        bug in ROCK times) - the input layer does pass "unified" events ...
 	mapdir="`echo /usr/share/kbd/keymaps/i386`"
 
-	cmd="gui_menu 'general_keymap' 'Select one of the"
-	cmd="$cmd following keyboard mappings. (Current: $keymap)'"
+	cmd="gui_menu 'general_keymap' 'Select one of the following keyboard mappings.'"
+	if [ "$keymap" != none ]; then
+		cmd="$cmd 'Current: $keymap' 'loadkeys defkeymap'"
+	fi
 	cmd="$cmd 'none (kernel defaults)' 'rm -f /etc/default.keymap ; loadkeys defkeymap'"
 
 	cmd="$cmd $( find $mapdir -type f ! -path '*/include/*' -name '*.map.gz' -printf '%P\n' | sed 's,\(.*\)/\(.*\).map.gz$,"\2	(\1)" "ln -sf '$mapdir'/& /etc/default.keymap ; loadkeys \2",' | expand -t30 | sort | tr '\n' ' ')"
@@ -39,8 +41,10 @@ set_vcfont() {
 	else vcfont="`echo $vcfont | sed -e "s,\.\(fnt\|psf.*\)\.gz$,,"`" ; fi
 	fontdir="/usr/share/kbd/consolefonts"
 
-	cmd="gui_menu 'general_vcfont' 'Select one of the"
-	cmd="$cmd following console fonts. (Current: $vcfont)'"
+	cmd="gui_menu 'general_vcfont' 'Select one of the following console fonts.'"
+	if [ "$vcfont" != none ]; then
+		cmd="$cmd 'Current: $vcfont' 'setfont'"
+	fi
 	cmd="$cmd 'none (kernel defaults)' 'rm -f /etc/default.vcfont ; setfont'"
 
 	cmd="$cmd $( find $fontdir -type f \( -name '*.fnt.gz' -or -name '*.psf*.gz' \) -printf '%P\n' | sed 's,\(.*\).\(fnt\|psf.*\)\.gz$,"\1" "ln -sf '$fontdir'/& /etc/default.vcfont ; setfont \1",' | expand -t30 | sort | tr '\n' ' ')"
@@ -109,9 +113,9 @@ set_con_blank() {
 
 set_tmzone() {
 	tz="$( ls -l /etc/localtime | cut -f8 -d/ )"
-	cmd="gui_menu 'general_tmzone' 'Select one of the"
-	cmd="$cmd following time zones. (Current: $tz)'"
+	cmd="gui_menu 'general_tmzone' 'Select one of the following time zones.'"
 
+	cmd="$cmd 'Current: $tz' 'ln -sf ../usr/share/zoneinfo/$1/$tz /etc/localtime'"
 	cmd="$cmd $( grep "$1/" /usr/share/zoneinfo/zone.tab | cut -f3 | \
 		cut -f2 -d/ | sort -u | tr '\n' ' ' | sed 's,[^ ]\+,& '`
 		`'"ln -sf ../usr/share/zoneinfo/$1/& /etc/localtime",g' )"
@@ -121,9 +125,9 @@ set_tmzone() {
 
 set_tmarea() {
 	tz="$( ls -l /etc/localtime | cut -f7 -d/ )"
-	cmd="gui_menu 'general_tmarea' 'Select one of the"
-	cmd="$cmd following time areas. (Current: $tz)'"
+	cmd="gui_menu 'general_tmarea' 'Select one of the following time areas.'"
 
+	cmd="$cmd 'Current: $tz' 'if set_tmzone $tz ; then tzset=1 ; fi'"
 	cmd="$cmd $( grep '^[^#]' /usr/share/zoneinfo/zone.tab | cut -f3 | \
 		cut -f1 -d/ | sort -u | tr '\n' ' ' | sed 's,[^ ]\+,& '`
 		`'"if set_tmzone & ; then tzset=1 ; fi",g' )"
@@ -161,7 +165,14 @@ set_locale_sub() {
 
 set_locale() {
 	unset LANG ; [ -f /etc/profile.d/locale ] && . /etc/profile.d/locale
-	locale="${LANG:-none}" ; cmd="gui_menu 'general_locale' 'Select one of the following locales. (Current: $locale)'"
+	locale="${LANG:-none}" ; cmd="gui_menu 'general_locale' 'Select one of the following locales.'"
+
+	if [ "$locale" != none ]; then
+		title=$(grep ^title /usr/share/i18n/locales/$locale | sed \
+        	  -e 's,.*"\(.*\)".*,\1,g' -e "s,',´,g")
+		x="$( echo -e "Current: ${title:0:41}\t$locale" | expand -t52 )"
+		cmd="$cmd '$x' 'true'"
+	fi
 	x="$( echo -e "none\tnone" | expand -t52 )"
 	cmd="$cmd '$x' 'set_locale_sub none'"
 
