@@ -146,9 +146,8 @@ vg_add() {
 	local x= y=0
 	cmd="$cmd 'Logical volumes of $1:' 'vg_action $1'"
 	if [ -d /dev/$1 ] ; then
-		for x in $( cd /dev/$1; ls -1 )
-		do
-			part_add $1 $x ; y=1
+		for x in $( ls -1 /dev/$1/* ); do
+			part_add $x ; y=1
 		done
 		if [ $y = 0 ]; then
 			cmd="$cmd 'No logical volumes.' ''"
