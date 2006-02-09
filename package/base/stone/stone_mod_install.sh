@@ -91,7 +91,7 @@ part_add() {
 	       sed 's/.* size \(.*\) (.*/\1/'`"
 
 	[ "$type" ] || type="undetected"
-	cmd="$cmd '`printf "%-6s %-24s %-10s" $1 "$location" "$size"` $type' 'part_${action}_action $1 $2'"
+	cmd="$cmd '`printf "%-6s %-24s %-10s" ${1#*/} "$location" "$size"` $type' 'part_${action}_action $1 $2'"
 }
 
 disk_action() {
@@ -146,7 +146,7 @@ vg_add() {
 	local x= y=0
 	cmd="$cmd 'Logical volumes of $1:' 'vg_action $1'"
 	if [ -d /dev/$1 ] ; then
-		for x in $( ls -1 /dev/$1/* ); do
+		for x in $( cd /dev/ ; ls -1 $1/* ); do
 			part_add $x ; y=1
 		done
 		if [ $y = 0 ]; then
