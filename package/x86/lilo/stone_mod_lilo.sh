@@ -16,6 +16,7 @@
 # [MAIN] 70 lilo LILO Boot Loader Setup
 
 create_kernel_list() {
+	local label= first=1 initrd=
         first=1
         for x in `(cd /boot/ ; ls vmlinuz_* ) | sort -r` ; do
                 if [ $first = 1 ] ; then
@@ -23,13 +24,15 @@ create_kernel_list() {
                 else
                         label=linux-${x/vmlinuz_/}
                 fi
+		initrd=initrd-${x/vmlinuz_/}.img
 
                 cat << EOT
 
 image=/boot/$x
-        label=$label
-        append="root=$rootdev"
-        read-only
+	label=$label
+	append="root=$rootdev"
+	initrd=$initrd
+	read-only
 
 EOT
         done
@@ -38,14 +41,15 @@ EOT
 create_lilo_conf() {
 	i=0 ; rootdev="`grep ' / ' /proc/mounts | tail -n 1 | \
 					awk '/\/dev\// { print $1; }'`"
-	rootdev="$( cd `dirname $rootdev` ; pwd -P )/$( basename $rootdev )"
+	rootdev="$( cd ${rootdev%/*} ; pwd -P )/${rootdev##*/}"
+	# TODO: readlink? //mnemoc
 	while [ -L $rootdev ] ; do
 		directory="$( cd `dirname $rootdev` ; pwd -P )"
 		rootdev="$( ls -l $rootdev | sed 's,.* -> ,,' )"
 		[ "${rootdev##/*}" ] && rootdev="$directory/$rootdev"
 		i=$(( $i + 1 )) ; [ $i -gt 20 ] && rootdev="Not found!"
 	done
-	bootdev="$( dirname $rootdev )/disc"
+	bootdev="`echo $rootdev | sed -e 's,[0-9]*$,,'`"
 
 	cat << EOT > /etc/lilo.conf
 boot=$bootdev
