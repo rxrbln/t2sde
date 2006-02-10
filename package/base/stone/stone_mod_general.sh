@@ -115,7 +115,10 @@ set_tmzone() {
 	tz="$( ls -l /etc/localtime | cut -f8 -d/ )"
 	cmd="gui_menu 'general_tmzone' 'Select one of the following time zones.'"
 
-	cmd="$cmd 'Current: $tz' 'ln -sf ../usr/share/zoneinfo/$1/$tz /etc/localtime'"
+	if [ -n "$tz" -a -f ../usr/share/zoneinfo/$1/$tz ]; then
+		cmd="$cmd 'Current: $tz' 'ln -sf ../usr/share/zoneinfo/$1/$tz \
+			/etc/localtime'"
+	fi
 	cmd="$cmd $( grep "$1/" /usr/share/zoneinfo/zone.tab | cut -f3 | \
 		cut -f2 -d/ | sort -u | tr '\n' ' ' | sed 's,[^ ]\+,& '`
 		`'"ln -sf ../usr/share/zoneinfo/$1/& /etc/localtime",g' )"
