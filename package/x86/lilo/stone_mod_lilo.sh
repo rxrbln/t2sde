@@ -31,7 +31,7 @@ create_kernel_list() {
 image=/boot/$x
 	label=$label
 	append="root=$rootdev"
-	initrd=$initrd
+	initrd=/boot/$initrd
 	read-only
 
 EOT
