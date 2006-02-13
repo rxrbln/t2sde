@@ -37,8 +37,10 @@ updates[$((j++))]="no"
 for x in /dev/hd? /dev/sd? ; do
 	[ -e $x ] || continue
 	x=${x#/dev/}
-	# skip CD-ROMs - TODO extend this to SCSI
+	# skip IDE CD-ROMs thare are hd* as well ...
 	grep -q cdrom /proc/ide/$x/media 2>/dev/null && continue
+	# skip mounted media, e.g. USB flash stick to install from
+	grep -q "^/dev/$x" /proc/mounts && continue
 
 	# is it set up by our installer?
 	reason=
