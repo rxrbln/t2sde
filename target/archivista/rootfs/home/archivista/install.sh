@@ -1,22 +1,38 @@
 #!/bin/bash
 
-# Simple custom installer using Xdialog for interaction. After selecting the
-# target device it will clone the live-cd onto the hard-disk using
+# Custom installer using Xdialog for interaction. After selecting the
+# target device it will clone the live-cd/stick onto the hard-disk using
 # rsync and even display a progress bar thru Xdialog while doing so.
 #
-# Copyright (C) 2005 Archivista GmbH
-# Copyright (C) 2005 Rene Rebe
+# It supports taking over configurations for a update and automatic
+# installtion, if requested.
+#
+# Copyright (C) 2005, 2006 Archivista GmbH
+# Copyright (C) 2005, 2006 Rene Rebe
 
 # PATH and co.
 . /etc/profile
 
+if [ $UID -ne 0 ]; then
+	echo "$0 must be run as root"
+	exit
+fi
+
 shadow=`mktemp`-shadow
 parts=
+installall=0
+full= # passed to the update scripts to not take over e.g. the passwords
+auto=0
+
+while [ "$1" ]; do
+	case "$1" in
+		-auto) auto=1 ;;
+		*) echo "Unrecognized argument \"$1\"." ;;
+	esac
+	shift
+done
 
 mkdir -p /mnt/{target,update}
-
-installall=0
-full=""
 
 # This is a bit tricky to filter and does not look too smooth
 # due to the new linux pipe implementation ...
@@ -87,8 +103,12 @@ echo "Updates possible: '${updates[@]}'"
 
 # partitions?
 if [ ${#parts[@]} -gt 0 ]; then
-	part=`Xdialog --stdout --combobox "Please choose the disc partition
+	if [ $auto = 1 ]; then
+		part="${parts[0]}"
+	else
+		part=`Xdialog --stdout --combobox "Please choose the disc partition
 to install to:" 0 0 "${parts[@]}"` || exit
+	fi
 else
 	Xdialog --msgbox "No hard disk / partitions recognized." 0 0
 	exit
@@ -101,7 +121,7 @@ fi
 
 
 update="${updates[0]}"
-if [ ${#updates[@]} -gt 1 ]; then
+if [ $auto -ne 0 -a ${#updates[@]} -gt 1 ]; then
 	update=`Xdialog --stdout --combobox "Take over configuration from a
 previous Archivista installation?" 0 0 "${updates[@]}"` || exit
 fi
@@ -132,7 +152,7 @@ fi
 # empty or reformat?
 if [ $installall = 1 ]; then
 	disk=${part%% *}
-	if Xdialog --yesno "Formating the whole disk $disk.
+	if [ $auto = 1 ] || Xdialog --yesno "Formating the whole disk $disk.
 All data will be lost!" 0 0; then
 
 		sfdisk -uM $disk << EOT
@@ -241,7 +261,7 @@ EOT
 # other possible system partition
 otherpart=`echo $part | tr 12 21`
 
-if mount $otherpart /mnt/update; then
+if [ $installall = 0 ] && mount $otherpart /mnt/update; then
 	echo "injecting other system's boot options into the grub menu"
 
 	tmp=`mktemp`
@@ -270,8 +290,12 @@ if [ $installall -eq 1 ]; then
 fi
 
 if ! grep -q /mnt/target /proc/mounts; then
-	Xdialog --msgbox "Installation finished!
+	if [ $auto = 1 ]; then
+		shutdown -h 0
+	else
+		Xdialog --msgbox "Installation finished!
 You can safely reboot now." 0 0
+	fi
 else
 	Xdialog --msgbox "Target partition still mounted -
 this indicates an error during installation." 0 0
