@@ -19,7 +19,10 @@ if [ $UID -ne 0 ]; then
 fi
 
 shadow=`mktemp`-shadow
-parts=
+unset parts
+declare -a parts
+unset updates
+declare -a updates
 installall=0
 full= # passed to the update scripts to not take over e.g. the passwords
 auto=0
@@ -44,7 +47,7 @@ format_w_progress ()
 	  sed -n 's/\([0-9]\+\/[0-9]\+\)/100*\1/p' |
 	  bc | # binary calculator, evaluating the above generated math
 	  sed 's/^\([1-9]\)$/0\1/' # append a 0 for single digits for Xdialog :-(
-	) | Xdialog --progress "Formating $1 ..." 0 0
+	) | Xdialog --title "Formating ..." --progress "Formating $1 ..." 0 0
 }
 
 # collect partitions normally intended for archivista
@@ -77,7 +80,7 @@ for x in /dev/hd? /dev/sd? ; do
 
 	parts[$((i++))]="/dev/$x - Reformat whole disk"
 	
-	if [ "$reason" ]; then
+	if [ $auto = 0 -a "$reason" ]; then
 		Xdialog --msgbox "/dev/$x does not appear to be formated for Archivista:
 $reason" 0 0
 	else
@@ -98,8 +101,8 @@ $reason" 0 0
 	fi
 done
 
-echo "Partitions: '${parts[@]}'"
-echo "Updates possible: '${updates[@]}'"
+echo "Partitions: '${parts[@]}' (${#parts[@]})"
+echo "Updates possible: '${updates[@]}' (${#updates[@]})"
 
 # partitions?
 if [ ${#parts[@]} -gt 0 ]; then
@@ -121,7 +124,7 @@ fi
 
 
 update="${updates[0]}"
-if [ $auto -ne 0 -a ${#updates[@]} -gt 1 ]; then
+if [ $auto = 0 -a ${#updates[@]} -gt 1 ]; then
 	update=`Xdialog --stdout --combobox "Take over configuration from a
 previous Archivista installation?" 0 0 "${updates[@]}"` || exit
 fi
@@ -230,7 +233,8 @@ fi
 
 rsync  -arvP --delete /mnt/live/ /mnt/target/ |
   sed -n 's/.* \([0-9]\+.[0-9]\)% .*/\1/p' |
-  Xdialog --progress "Installing ..." 0 0
+  Xdialog --title "Installing ..." --progress "Installing system and database
+to the selected partitions." 0 0
 
 cat >> /mnt/target/etc/fstab <<-EOT
 ${part%[0-9]}3	swap		swap	defaults        0 0
