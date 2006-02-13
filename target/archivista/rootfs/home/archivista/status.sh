@@ -66,7 +66,7 @@ ethtool eth0 >> $tmp
 	echo
 
 	if [ -e /etc/rc.d/rc5.d/S*cups ]; then
-		echo "PDF priting enabled"
+		echo "PDF printing enabled"
 		# TODO: Maybe parse cups config for allowed IP ranges ...
 	else
 		echo "PDF printing disabled"
