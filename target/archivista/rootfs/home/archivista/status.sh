@@ -46,9 +46,9 @@ ethtool eth0 >> $tmp
 	fi
 
 	if grep -q '^# *local_interface' /etc/exim/configure; then
-		echo "Incomming mail server enabled"
+		echo "Incoming mail server enabled"
 	else
-		echo "Incomming mail server disabled"
+		echo "Incoming mail server disabled"
 	fi
 	echo
 
@@ -86,10 +86,10 @@ ethtool eth0 >> $tmp
 	fi
 	echo
 
-	cron_status "/backup.sh" "Tape Backup"
-	cron_status "/net-backup.sh" "Network Backup"
-	cron_status "/rsync-backup.sh" "Rsync network Backup"
-	cron_status "/usb-backup.sh" "USB hard-disk Backup"
+	cron_status "/backup.sh" "Tape backup"
+	cron_status "/net-backup.sh" "Network backup"
+	cron_status "/rsync-backup.sh" "Rsync network backup"
+	cron_status "/usb-backup.sh" "USB hard-disk backup"
 	echo
 
 	cat /etc/VERSION
