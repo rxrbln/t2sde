@@ -24,6 +24,8 @@ mount -t usbfs none /proc/bus/usb
 mount -t sysfs none /sys
 ln -s /proc/self/fd /dev/fd
 
+mknod /rootfs/dev/tty c 5 0
+
 # later on we might reverse these, that is run udevstart first,
 # and let udev add new ones as hotplug agents ...
 
@@ -83,6 +85,7 @@ if [ "$root" ]; then
 				mknod /rootfs/dev/console c 5 1
 				mknod /rootfs/dev/null c 1 3
 				mknod /rootfs/dev/zero c 1 5
+				mknod /rootfs/dev/tty c 5 0
 			fi
 
 			exec switch_root /rootfs $init
