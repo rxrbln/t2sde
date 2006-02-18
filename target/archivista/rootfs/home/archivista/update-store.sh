@@ -54,7 +54,7 @@ fi
 grep -q '^# *local_interface' etc/exim/configure && update_incoming_mail=1
 
 # admin mail
-. etc/mail.conf
+[ -f etc/mail.conf ] && . etc/mail.conf
 [ "$To" ] && update_mail_to="$To"
 
 # backup
@@ -91,6 +91,7 @@ update_defaultLoginHost=`get_Global.pm_string defaultLoginHost`
 update_defaultLoginDb=`get_Global.pm_string defaultLoginDb`
 update_defaultLoginUser=`get_Global.pm_string defaultLoginUser`
 
+cp -fv etc/av-button.conf $to/
 update_button_host=`get_perl_var '\$val{host1}' $from/home/cvs/archivista/jobs/sane-button.pl`
 update_button_db=`get_perl_var '\$val{db1}' $from/home/cvs/archivista/jobs/sane-button.pl`
 update_button_user=`get_perl_var '\$val{user1}' $from/home/cvs/archivista/jobs/sane-button.pl`
