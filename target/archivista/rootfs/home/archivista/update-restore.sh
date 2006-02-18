@@ -219,6 +219,13 @@ if [ "$update_onlyLocalhost" ]; then
 	fi
 fi
 
+if [ -f $from/av-button.conf ]; then
+	echo "scan button state"
+	if [ $doit = 1 ]; then
+		cp -fv $from/av-button.conf etc/
+	fi
+fi
+
 if [ "$update_button_host" ]; then
 	echo "scan button configuration"
 	if [ $doit = 1 ]; then
