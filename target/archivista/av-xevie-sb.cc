@@ -1,11 +1,3 @@
-
-/*
-   Copyright (C) 2006, Archivista GmbH, Rene Rebe
-   Licensed under the GPL v2
-
-   Based on Xevie documentation and example code.
- */
-
 /* xeviedemo.c */
 #include <stdio.h>
 #include <stdlib.h>
@@ -15,10 +7,26 @@
 #include <X11/X.h>
 #include <X11/extensions/Xevie.h>
 #include <X11/Xutil.h>
-#include <xorg/atKeynames.h>
+//#include <xorg/atKeynames.h>
 
 #include <string>
 #include <iostream>
+
+// as long as our target has X.org 6.8 without the above header:
+#define MIN_KEYCODE     8
+
+#define KEY_KP_7         /* 7           Home      0x47  */   71 
+#define KEY_KP_8         /* 8           Up        0x48  */   72 
+#define KEY_KP_9         /* 9           PgUp      0x49  */   73 
+#define KEY_KP_4         /* 4           Left      0x4b  */   75
+#define KEY_KP_5         /* 5                     0x4c  */   76
+#define KEY_KP_6         /* 6           Right     0x4d  */   77
+#define KEY_KP_1         /* 1           End       0x4f  */   79
+#define KEY_KP_2         /* 2           Down      0x50  */   80
+#define KEY_KP_3         /* 3           PgDown    0x51  */   81
+#define KEY_KP_0         /* 0           Insert    0x52  */   82
+#define KEY_KP_Decimal   /* . (Decimal) Delete    0x53  */   83 
+#define KEY_KP_Enter     /* Enter                 0x64  */  100
 
 static void
 print_key_event (XEvent *ev)
@@ -61,7 +69,7 @@ int main (int argc, char **argv)
     exit(1);
   }
   
-  XevieSelectInput(dpy, KeyPressMask | KeyReleaseMask);
+  XevieSelectInput (dpy, KeyPressMask | KeyReleaseMask);
   while (1) {
     int pass_thru = 1;
     
