@@ -24,6 +24,8 @@ if [ "$av_button" != 1 ]; then
 	cat > /etc/av-button.conf <<-EOT
 		av_button=$av_button
 EOT
+	# immediatly kill potentially running daemons
+	killall av-xevie-sb
 	exit
 fi
 
