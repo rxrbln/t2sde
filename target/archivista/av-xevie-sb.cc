@@ -94,15 +94,17 @@ int main (int argc, char **argv)
   XevieQueryVersion (dpy, &major, &minor);
   printf("major = %d, minor = %d\n", major, minor);
   if (XevieStart (dpy))
-    printf("XevieStart(dpy) finished \n");
+    printf("XevieStart(dpy) finished\n");
   else {
     printf("XevieStart(dpy) failed, only one client is allowed to do event interception\n");
     exit(1);
   }
   
   XevieSelectInput (dpy, KeyPressMask | KeyReleaseMask);
+  Time last_time = 0;
   while (1) {
     int pass_thru = 1;
+    int this_time;
     
     XNextEvent (dpy, &event);
     xcme = (XClientMessageEvent *)&event;
@@ -118,6 +120,16 @@ int main (int argc, char **argv)
 	{
 	  XKeyEvent *key_ev;
 	  key_ev = (XKeyEvent *)&event;
+	  this_time = key_ev->time;
+	  if (!last_time)
+	    last_time = this_time;
+	  
+	  if (this_time > last_time + 10 * 1000) {
+	    if (debug)
+	      std::cout << "Time difference too big, resetting buffer."
+			<< std::endl;
+	    str.clear();
+	  }
 	  
 	  char c = 0;
 	  switch (key_ev->keycode - MIN_KEYCODE)
@@ -160,11 +172,13 @@ int main (int argc, char **argv)
 	      }
 	      pass_thru = 0;
 	      break;
+
 	    case KEY_KP_Decimal:
 	      str.clear();
 	      pass_thru;
 	      break;
 	    }
+
 	  if (c != 0) {
 	    str.push_back(c);
 	    pass_thru = 0;
@@ -190,6 +204,8 @@ int main (int argc, char **argv)
     if (pass_thru) {
       XevieSendEvent (dpy, &event, XEVIE_UNMODIFIED);
     }
+    else // record time to reset the accumulated buffer
+      last_time = this_time;
   }
   XevieEnd (dpy);
   exit(0);
