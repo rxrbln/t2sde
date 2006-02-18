@@ -129,6 +129,7 @@ int main (int argc, char **argv)
 	      std::cout << "Time difference too big, resetting buffer."
 			<< std::endl;
 	    str.clear();
+		  last_time = this_time;
 	  }
 	  
 	  char c = 0;
