@@ -175,7 +175,7 @@ int main (int argc, char **argv)
 
 	    case KEY_KP_Decimal:
 	      str.clear();
-	      pass_thru;
+	      pass_thru = 0;
 	      break;
 	    }
 
