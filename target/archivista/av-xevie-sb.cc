@@ -30,6 +30,7 @@
 #define KEY_KP_0         /* 0           Insert    0x52  */   82
 #define KEY_KP_Decimal   /* . (Decimal) Delete    0x53  */   83 
 #define KEY_KP_Enter     /* Enter                 0x64  */  100
+#define KEY_Enter        /* Enter                 0x1c  */   28
 
 static void
 print_key_event (XEvent *ev)
@@ -131,6 +132,12 @@ int main (int argc, char **argv)
 	    case KEY_KP_7: c = '7' ; break;
 	    case KEY_KP_8: c = '8' ; break;
 	    case KEY_KP_9: c = '9' ; break;
+	    case KEY_Enter:
+	      // take enter if we already have content - some b0rked
+	      // USB keypads send a non _KP_
+	      if (str.empty())
+		break;
+	      
 	    case KEY_KP_Enter: 
 	      if (!str.empty()) {
 		if (script) {
