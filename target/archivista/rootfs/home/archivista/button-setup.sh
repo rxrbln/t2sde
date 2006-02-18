@@ -29,7 +29,6 @@ EOT
 	exit
 fi
 
-
 host=`get_perl_var '\$val{host1}' /home/cvs/archivista/jobs/sane-button.pl`
 db=`get_perl_var '\$val{db1}' /home/cvs/archivista/jobs/sane-button.pl`
 user=`get_perl_var '\$val{user1}' /home/cvs/archivista/jobs/sane-button.pl`
@@ -49,4 +48,9 @@ set_perl_var '\$val{pw1}' /home/cvs/archivista/jobs/sane-button.pl "$pw"
 cat > /etc/av-button.conf <<-EOT
 av_button=$av_button
 EOT
+
+# start immediatly, if not yet running
+set -x
+ps -C av-xevie-sb >/dev/null || /usr/bin/av-xevie-sb \
+--script /home/cvs/archivista/jobs/sane-button.pl &
 
