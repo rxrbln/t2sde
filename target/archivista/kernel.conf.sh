@@ -21,10 +21,6 @@ sed -i -e "s/CONFIG_SOUND_OSS=./# CONFIG_SOUND_OSS is not set/" \
 echo "disableing eth1394 ethernet to not interfere eth0 ..."
 sed -i -e "s/CONFIG_IEEE1394_ETH1394./# CONFIG_IEEE1394_ETH1394 is not set/" $1
 
-# preemtion is not stable on PowerPC - so only enable it for x86 for now
-if [ $SDECFG_ARCH = x86 ] ; then
-	sed -i "s/# CONFIG_PREEMPT is not set/CONFIG_PREEMPT=y/" $1
-else
-	sed -i "s/CONFIG_PREEMPT=y/# CONFIG_PREEMPT is not set/" $1
-fi
+# preemtion is not stable with SANE/Avision user-land libusb USB access
+sed -i "s/CONFIG_PREEMPT=y/# CONFIG_PREEMPT is not set/" $1
 
