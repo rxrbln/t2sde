@@ -2,6 +2,9 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
+#include <sys/types.h>
+#include <sys/wait.h>
+
 #include <X11/Xlib.h>
 #include <X11/Xproto.h>
 #include <X11/X.h>
@@ -48,6 +51,11 @@ print_key_event (XEvent *ev)
   printf ("        Char Count: %d KeySym: 0x%x char: |%c|\n", char_count, key, buffer[0]);
 }
 
+void child(int)
+{
+   wait(0); // do not let zombies accumulate
+}
+
 int main (int argc, char **argv)
 {
   Display* dpy;
@@ -58,7 +66,29 @@ int main (int argc, char **argv)
   int debug = 0;
   
   std::string str;
-  
+
+  signal (SIGCHLD, &child);
+
+  /* simple argument parsing ... */
+  char* script = 0;
+  for (argv++; *argv; argv++)
+  {
+    if (!strcmp(*argv, "--script")) {
+      argv++;
+      if (*argv) {
+        script = *argv;
+      }
+      else {
+        std::cout << "--script needs an argument!" << std::endl;
+        exit (1);
+      }
+    }
+    else {
+      std::cout << "unknown option: " << *argv << std::endl;
+      exit (1);
+    }
+  }
+
   dpy = XOpenDisplay (NULL);
   XevieQueryVersion (dpy, &major, &minor);
   printf("major = %d, minor = %d\n", major, minor);
@@ -103,7 +133,22 @@ int main (int argc, char **argv)
 	    case KEY_KP_9: c = '9' ; break;
 	    case KEY_KP_Enter: 
 	      if (!str.empty()) {
-		std::cout << "Would execute w/ str: " << str << std::endl;
+		if (script) {
+                  const char* c_args[10];
+                  const char** ca = c_args; *ca++ = script;
+                  *ca++ = "-2"; // comatible with AV220 button encoding
+                  *ca++ = str.c_str();
+                  *ca = NULL;
+                  pid_t pid = fork ();
+                  if (pid == 0) {
+                     execv(script, (char* const*)c_args);
+                     std::cout << "Error executing script." << std::endl;
+                     exit (1);
+                  }
+                }
+                else
+                  std::cout << str << std::endl;
+
 		str.erase();
 	      }
 	      pass_thru = 0;
