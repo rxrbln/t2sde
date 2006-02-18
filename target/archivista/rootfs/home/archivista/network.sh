@@ -57,7 +57,8 @@ configured. Configure now?" 8 34; then
 	exit
 fi
 
-if Xdialog --yesno "Use DHCP to obtain\nconfiguration?" 8 28; then
+def=; grep -q dhcp /etc/conf/network || def="--default-no"
+if Xdialog $def --yesno "Use DHCP to obtain\nconfiguration?" 8 28; then
 	cat > /etc/conf/network <<-EOT
 interface eth0
 	dhcp
