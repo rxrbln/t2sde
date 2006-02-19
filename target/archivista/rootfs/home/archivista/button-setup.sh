@@ -50,7 +50,6 @@ av_button=$av_button
 EOT
 
 # start immediatly, if not yet running
-set -x
-ps -C av-xevie-sb >/dev/null || /usr/bin/av-xevie-sb \
---script /home/cvs/archivista/jobs/sane-button.pl &
+ps -C av-xevie-sb >/dev/null || nohup /usr/bin/av-xevie-sb \
+--script /home/cvs/archivista/jobs/sane-button.pl >/tmp/av-xevie-sb.log &
 
