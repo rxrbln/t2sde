@@ -6,4 +6,4 @@ if [ "$UID" -ne 0 ]; then
 in order to view the Archivista log file." -c $0
 fi
 
-Xdialog --tailbox /home/data/archivista/av.log 20 100
+Xdialog --tailbox /home/archivista/.wine/drive_c/Programs/Av5e/AV5AUTO.LOG 20	100
