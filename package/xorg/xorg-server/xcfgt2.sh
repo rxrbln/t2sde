@@ -65,7 +65,7 @@ case `cat $tmp | tr A-Z a-z` in
 esac
 
 # use the nvidia binary only driver - if available ...
-if [ "$xdrv" = nv -a -f /usr/X11/lib/modules/drivers/nvidia_drv.o ]; then
+if [ "$xdrv" = nv -a -f /usr/X11/lib/xorg/modules/drivers/nvidia_drv.o ]; then
 	xdrv=nvidia
 
 	echo "Installing nvidia GL libraries and headers ..."
@@ -73,7 +73,7 @@ if [ "$xdrv" = nv -a -f /usr/X11/lib/modules/drivers/nvidia_drv.o ]; then
 	cp -arv /usr/src/nvidia/lib/* /usr/X11/lib/
 	cp -arv /usr/src/nvidia/X11R6/lib/* /usr/X11/lib/
 	cp -arv /usr/src/nvidia/include/* /usr/X11/lib/GL/
-	ln -sf /usr/X11/lib/modules/extensions/{libglx.so.1.0.*,libglx.so}
+	ln -sf /usr/X11/lib/xorg/modules/extensions/{libglx.so.1.0.*,libglx.so}
 
 	echo "Updating dynamic library database ..."
 	ldconfig /usr/X11/lib
