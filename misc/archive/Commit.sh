@@ -20,8 +20,15 @@ fi
 
 trap 'echo "Got SIGINT (Crtl-C)." ; rm $$.log ; exit 1' INT
 
+locations=
+for x; do
+	[ ! -e "$x" -a -e `echo package/*/$x` ] &&
+		x=`echo package/*/$x`
+	locations="$locations $x"
+done	
+		
 # the grep -v === is a hack - somehow the svn === lines confuse awk ... ?!?
-svn diff $* | grep -v === | awk "
+svn diff $locations | grep -v === | awk "
 	BEGIN { FS=\"[ /]\" }
 
 	/^\+\+\+ / { pkg = \$4 }
@@ -41,7 +48,7 @@ svn diff $* | grep -v === | awk "
 " > $$.log
 
 echo "Diff:"
-svn diff $*
+svn diff $locations
 
 quit=0
 until [ $quit -ne 0 ]; do
@@ -53,7 +60,7 @@ until [ $quit -ne 0 ]; do
 	read in
 
 	case "$in" in
-	  c*) svn commit $* --file $$.log ; quit=1 ;;
+	  c*) svn commit $locations --file $$.log ; quit=1 ;;
 	  e*) $EDITOR $$.log ;;
 	  q*) quit=1 ;;
 	  *) echo "Excuse me?"
