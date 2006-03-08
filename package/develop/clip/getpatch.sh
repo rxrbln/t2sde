@@ -12,16 +12,18 @@
 # the Free Software Foundation; version 2 of the License. A copy of the
 # GNU General Public License can be found in the file COPYING.
 # --- T2-COPYRIGHT-NOTE-END ---
+
 tempfile=clip-patch.tar.gz.$$
 #location=ftp://ftp.linux.ru.net/mirrors/clip
-location=ftp://ftp.itk.ru/pub/clip
+location=ftp://www.cis.by/pub/clip/pub/clip
+#location=ftp://ftp.itk.ru/pub/clip
 
 echo "get: $location/patch.tgz"
 if [ -f patch.tgz ]; then
 	mv patch.tgz $tempfile
 else
 #	wget $location/patch.tgz -O $tempfile
-	curl $location/patch.tgz > $tempfile
+	curl $location/patch.tgz -o $tempfile
 	if [ $? -ne 0 ]; then
 		rm -f $tempfile
 		exit
@@ -45,6 +47,7 @@ if [ -n "$release" -a -n "$seqno" ]; then
 		echo "INFO: $filename catched!"
 	fi
 	rm -f ./$tempfile
+	( cd ../../..; sh misc/archive/Update.sh clip $release-$seqno )
 else
 	echo "ERROR: take a look into ./$tempfile"
 fi
