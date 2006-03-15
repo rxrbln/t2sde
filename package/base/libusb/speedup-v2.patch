@@ -1,0 +1,185 @@
+
+2x speedup for the SANE/Avision driver.
+
+  - Rene Rebe <rene@exactcode.de>
+
+--- libusb-0.1.11/linux.c	2006-03-02 15:33:58.000000000 +0000
++++ libusb-0.1.11-improved/linux.c	2006-03-03 08:26:55.000000000 +0000
+@@ -162,11 +162,14 @@
+ static int usb_urb_transfer(usb_dev_handle *dev, int ep, int urbtype,
+ 	char *bytes, int size, int timeout)
+ {
+-  struct usb_urb urb;
++  int nurbs;
++  struct usb_urb* urbs;
+   unsigned int bytesdone = 0, requested;
+   struct timeval tv, tv_ref, tv_now;
+   struct usb_urb *context;
+-  int ret, waiting;
++  int rc = 0, ret = 0, waiting, i;
++
++  fd_set writefds;
+ 
+   /*
+    * HACK: The use of urb.usercontext is a hack to get threaded applications
+@@ -190,36 +193,47 @@
+     tv_ref.tv_sec++;
+   }
+ 
+-  do {
+-    fd_set writefds;
++  /* allocate and fill all URBs */
++  nurbs = (size + MAX_READ_WRITE - 1) / MAX_READ_WRITE;
++  //fprintf (stderr, "nurbs: %d\n", nurbs);
++  urbs = malloc (sizeof(struct usb_urb) * nurbs);
++  for (i = 0; i < nurbs; ++i) {
+ 
+-    requested = size - bytesdone;
++    requested = size - i * MAX_READ_WRITE;
+     if (requested > MAX_READ_WRITE)
+       requested = MAX_READ_WRITE;
+ 
+-    urb.type = urbtype;
+-    urb.endpoint = ep;
+-    urb.flags = 0;
+-    urb.buffer = bytes + bytesdone;
+-    urb.buffer_length = requested;
+-    urb.signr = 0;
+-    urb.actual_length = 0;
+-    urb.number_of_packets = 0;	/* don't do isochronous yet */
+-    urb.usercontext = NULL;
++    urbs[i].type = urbtype;
++    urbs[i].endpoint = ep;
++    urbs[i].flags = 0;
++    urbs[i].buffer = bytes + i * MAX_READ_WRITE;
++    urbs[i].buffer_length = requested;
++    urbs[i].signr = 0;
++    urbs[i].actual_length = 0;
++    urbs[i].number_of_packets = 0;	/* don't do isochronous yet */
++    urbs[i].usercontext = NULL;
+ 
+-    ret = ioctl(dev->fd, IOCTL_USB_SUBMITURB, &urb);
++    //fprintf (stderr, "submitting urb %d\n", i);
++    ret = ioctl(dev->fd, IOCTL_USB_SUBMITURB, &urbs[i]);
+     if (ret < 0) {
+       USB_ERROR_STR(-errno, "error submitting URB: %s", strerror(errno));
+-      return ret;
++			rc = ret;
++      goto end;
+     }
++  }
+ 
+-    FD_ZERO(&writefds);
+-    FD_SET(dev->fd, &writefds);
++  FD_ZERO(&writefds);
++  FD_SET(dev->fd, &writefds);
+ 
+-restart:
++  /* wait 'till all URBs completed */
++  for (i = 0; i < nurbs; ) {
+     waiting = 1;
+     context = NULL;
+-    while (!urb.usercontext && ((ret = ioctl(dev->fd, IOCTL_USB_REAPURBNDELAY, &context)) == -1) && waiting) {
++    //fprintf (stderr, "waiting for URB %d\n", i);
++
++    while (!urbs[i].usercontext &&
++           ((ret = ioctl(dev->fd, IOCTL_USB_REAPURBNDELAY, &context)) == -1) &&
++           waiting) {
+       tv.tv_sec = 0;
+       tv.tv_usec = 1000; // 1 msec
+       select(dev->fd + 1, NULL, &writefds, NULL, &tv); //sub second wait
+@@ -229,52 +243,66 @@
+         gettimeofday(&tv_now, NULL);
+ 
+         if ((tv_now.tv_sec > tv_ref.tv_sec) ||
+-            ((tv_now.tv_sec == tv_ref.tv_sec) && (tv_now.tv_usec >= tv_ref.tv_usec)))
++           ((tv_now.tv_sec == tv_ref.tv_sec) && (tv_now.tv_usec >= tv_ref.tv_usec)))
+           waiting = 0;
+       }
+     }
+ 
+-    if (context && context != &urb) {
++    /* mark done */
++    if (context) {
++      //fprintf (stderr, "marking URB %p done.\n", context);
+       context->usercontext = URB_USERCONTEXT_COOKIE;
+-      /* We need to restart since we got a successful URB, but not ours */
+-      goto restart;
++
++      /* is it ours? */
++      //if (context && context == &urbs[i])
++        //fprintf (stderr, "which was the one we have been waiting for.\n");
+     }
+ 
++    /* done= */
++    if (urbs[i].usercontext) {
++      bytesdone += context->actual_length;
++      ++i; /* next URB */
++      continue;
++    }
++
++    fprintf (stderr, "here, error?\n");
++
+     /*
+      * If there was an error, that wasn't EAGAIN (no completion), then
+      * something happened during the reaping and we should return that
+      * error now
+      */
+-    if (ret < 0 && !urb.usercontext && errno != EAGAIN)
++    if (ret < 0 && !urbs[i].usercontext && errno != EAGAIN)
+       USB_ERROR_STR(-errno, "error reaping URB: %s", strerror(errno));
+ 
+-    bytesdone += urb.actual_length;
+-  } while ((ret == 0 || urb.usercontext) && bytesdone < size && urb.actual_length == requested);
++    /* If the URB didn't complete in success or error, then let's unlink it */
++    if (ret < 0 && !urbs[i].usercontext) {
+ 
+-  /* If the URB didn't complete in success or error, then let's unlink it */
+-  if (ret < 0 && !urb.usercontext) {
+-    int rc;
++      if (!waiting)
++        rc = -ETIMEDOUT;
++      else
++        rc = urbs[i].status;
++
++      ret = ioctl(dev->fd, IOCTL_USB_DISCARDURB, &urbs[i]);
++      if (ret < 0 && errno != EINVAL && usb_debug >= 1)
++        fprintf(stderr, "error discarding URB: %s", strerror(errno));
++
++      /*
++       * When the URB is unlinked, it gets moved to the completed list and
++       * then we need to reap it or else the next time we call this function,
++       * we'll get the previous completion and exit early
++       */
++      ioctl(dev->fd, IOCTL_USB_REAPURB, &context);
+ 
+-    if (!waiting)
+-      rc = -ETIMEDOUT;
+-    else
+-      rc = urb.status;
+-
+-    ret = ioctl(dev->fd, IOCTL_USB_DISCARDURB, &urb);
+-    if (ret < 0 && errno != EINVAL && usb_debug >= 1)
+-      fprintf(stderr, "error discarding URB: %s", strerror(errno));
+-
+-    /*
+-     * When the URB is unlinked, it gets moved to the completed list and
+-     * then we need to reap it or else the next time we call this function,
+-     * we'll get the previous completion and exit early
+-     */
+-    ioctl(dev->fd, IOCTL_USB_REAPURB, &context);
+-
+-    return rc;
++      goto end;
++    }
+   }
+ 
+-  return bytesdone;
++	rc = bytesdone;
++
++ end:
++  free (urbs);
++  return rc;
+ }
+ 
+ int usb_bulk_write(usb_dev_handle *dev, int ep, char *bytes, int size,
