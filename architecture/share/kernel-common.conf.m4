@@ -57,6 +57,10 @@ dnl Plug and play
 dnl
 CONFIG_PNP=y
 
+dnl Common buses
+dnl
+CONFIG_PCI=y
+
 dnl Loopback device can always be useful
 dnl
 CONFIG_BLK_DEV_LOOP=y
