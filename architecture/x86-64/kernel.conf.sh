@@ -37,6 +37,7 @@
 
 	echo
 	cat <<- 'EOT'
+		CONFIG_ACPI=y
 		CONFIG_IA32_EMULATION=y
 
 		dnl Memory Type Range Register support
