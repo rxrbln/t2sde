@@ -22,8 +22,7 @@ local COPYRIGHT='SAM v.'..VERSION..' Copyright (C) 2006 The T2 SDE Project'
 local function get_modules( pattern )
 	local lfs = require('lfs')
 	-- get MODULESDIR from the SAM_MODULES envvar, or use /usr/lib/sam as default
-	local MODULESDIR=os.getenv('SAM_MODULES')
-	if not MODULESDIR then MODULESDIR='/usr/lib/sam' end
+	local MODULESDIR = os.getenv('SAM_MODULES') or '/usr/lib/sam'
 
 	local list = {}
 	for file in lfs.dir( MODULESDIR ) do
