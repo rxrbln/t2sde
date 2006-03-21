@@ -16,7 +16,4 @@ local function main()
 	print("hello world")
 end
 
-local this = {}
-this.main = main
-
-return this
+return { main = main }
