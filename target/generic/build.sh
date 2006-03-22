@@ -27,9 +27,9 @@ admdir="build/${SDECFG_ID}/var/adm"
 create_package_db $admdir $build_toolchain/pkgs \
                   $build_toolchain/pkgs/packages.db
 
-if [ "$SDECFG_IMAGE" -a -e target/$SDECFG_IMAGE/build.sh ]; then
+if [ "$SDECFG_IMAGE" -a -e misc/target/output/$SDECFG_IMAGE/build.sh ]; then
 	echo_status "Creating output image ..."
-	. target/$SDECFG_IMAGE/build.sh
+	. misc/target/output/$SDECFG_IMAGE/build.sh
 fi
 
 echo_status "Creating isofs.txt file .."

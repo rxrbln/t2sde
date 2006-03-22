@@ -11,10 +11,12 @@
 # the Free Software Foundation; version 2 of the License. A copy of the
 # GNU General Public License can be found in the file COPYING.
 # --- T2-COPYRIGHT-NOTE-END ---
+#
+#Description: Install CD / disks
 
 isofsdir="$build_toolchain/isofs"      # for the ISO9660 content
 disksdir="$build_toolchain/disks"      # for boot-disks, if any
 
 # create the 1st stage loader initrd's first
-. $base/target/install/build_initrd.sh
-. $base/target/install/build_stage2.sh
+. $base/misc/target/output/install/build_initrd.sh
+. $base/misc/target/output/install/build_stage2.sh

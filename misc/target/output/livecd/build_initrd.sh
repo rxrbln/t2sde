@@ -15,7 +15,7 @@
 
 set -e
 
-[ "$boot_title" ] || boot_title="T2 SDE Installation"
+[ "$boot_title" ] || boot_title="T2 @Live"
 
 . $base/misc/target/initrd.in
 . $base/misc/target/boot.in
@@ -26,12 +26,9 @@ cd $build_toolchain
 #
 rm -rf initramfs
 mkdir -p initramfs/{bin,sbin}
-# TODO: add gzip ip
-cp $build_root/usr/embutils/{tar,readlink,rmdir} initramfs/bin/
-cp $build_root/usr/bin/fget initramfs/bin/
 
-cp $base/target/install/init initramfs/
-chmod +x initramfs/init
+cp $base/misc/target/output/livecd/{init,init2} initramfs/
+chmod +x initramfs/{init,init2}
 
 # For each available kernel:
 #
