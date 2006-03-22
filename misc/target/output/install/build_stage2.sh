@@ -84,7 +84,7 @@ grep -e 'usr/share/terminfo/.*/\(ansi\|linux\|.*xterm.*\|vt.*\|screen\)' \
  >> ../files-wanted
 
 copy_with_list_from_file $build_root $PWD $PWD/../files-wanted
-copy_and_parse_from_source $base/target/install/rootfs $PWD
+copy_and_parse_from_source $base/misc/target/output/install/rootfs $PWD
 chroot . /sbin/ldconfig || true
 
 mkdir -p mnt/source mnt/target
