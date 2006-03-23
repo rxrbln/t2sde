@@ -17,6 +17,7 @@ dnl System type (default=Macintosh)
 dnl
 CONFIG_PPC=y
 CONFIG_6xx=y
+CONFIG_CLASSIC32=y
 # CONFIG_4xx is not set
 # CONFIG_PPC64 is not set
 # CONFIG_82xx is not set
