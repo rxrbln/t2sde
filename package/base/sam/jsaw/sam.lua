@@ -48,14 +48,55 @@ sam.opt = sam.opt or {
 
 Provided functions:
 
-  sam.log(required-verbosity-level, identification, printf-format...)
+* sam.log(required-verbosity-level, identification, printf-format...)
 
     Print information about SAM processing. The logging level (sam.opt.loglevel)
     has to be equal or higher than "required-verbosity-level". The
     "identification" is printed in square brackets in front of the message.
 
     Example:
-      sam.log(sam.log.ERROR, "Config", "Config file incosistency (%s)", filename)
+      sam.log(sam.log.ERROR, "Config", "Config file incosistency (%s)",
+	          filename)
+
+
+* sam.error(identification, format...)
+* sam.warn(identification, format...)
+* sam.notice(identification, format...)
+* sam.info(identification, format...)
+* sam.dbg(identification, format...)
+
+    Short form for the logging function.
+  
+
+* sam.command["command-name"](args...)
+* sam.command["command-name"].main(args...)
+
+    Execute a command (extended by modulues) with given arguments.
+	The only built-in command currently is "help".
+
+* cli = sam.cli(def)
+
+    Define a CLI command set. The table "def" consist of key->function
+	mappings, e.g. sam.cli { help = cli_cmd_help }. The return value is
+	a CLI object with the following methods:
+
+	cli:run()
+	cli()
+
+	  Start the event loop.
+
+	cli:finish()
+
+	  Leave the event loop.
+
+	cli:send(...)
+
+      Send a message (printf format). A trailing newline is appended
+	  automatically.
+
+	cli:get()
+
+	  Used in the event loop: read (and tokenize) input
 
 --]] ------------------------------------------------------------------------
 
@@ -236,7 +277,127 @@ create_command("help", "Show command reference", usage, help)
 
 -- CLI ----------------------------------------------------------------------
 
+-- sam.shellsplit(some-string)
+--   Extend string with a shell alike tokenizer.
+--   This is a rather ugly code imo, a better solution
+--   is welcome!
+function sam.shellsplit(str)
+	local idx = {} -- list of indexes to split str
 
+	-- parse thru all characters of the string
+	-- and check for quotes and escaping
+	local n = 0
+	local esc = 0
+	local quote = 0
+	local last = ' '
+	for c in string.gfind(str, ".") do
+		n = n + 1
+		
+		if esc == 0 then
+			if c == '\\' then
+				esc = 1
+			elseif c == '"' or c == "'" then
+				if quote == 0 then
+					quote = 1
+					if last == ' ' then
+						-- we found the start of a token
+						table.insert(idx, n)
+					end
+				else 
+					quote = 0
+				end
+			elseif quote == 0 then
+				if c == ' ' or c == '\t' then
+					if last ~= ' ' then
+						-- we found the end of a token
+						table.insert(idx, n-1)
+					end
+					c = ' '
+				elseif last == ' ' then
+					-- we found the start of a token
+					table.insert(idx, n)
+				end
+			end
+		else
+			esc = 0
+		end
+
+		last = c
+	end
+	if #idx > 0 then
+		-- closing token at end-of-line
+		table.insert(idx, n)
+	end
+
+	-- assemble the tokens into a table
+	local toks = {}
+	n = 1
+	while n < #idx do 
+		table.insert(toks, string.sub(str, idx[n], idx[n+1]))
+		n = n+2
+	end
+	
+	return toks
+end
+
+-- TODO document
+local __cli = {
+	ok = true,
+	command = {
+		-- default wildcard command
+		["*"] = function(self,cmd,...) 
+				self:send("[ERROR] unknown command: %s", cmd or "<none>")
+			end,
+		-- default "exit" command
+		exit = function(self,...) self:finish() end,
+	}
+}
+
+function __cli:finish()
+	self.ok = false
+end
+
+function __cli:get()
+	local line = io.stdin:read("*line")
+	return sam.shellsplit(line)
+end
+
+function __cli:send(...)
+	fprintf(io.stdout, unpack(arg))
+	fprintf(io.stdout, "\n")
+end
+
+function __cli:run()
+	-- event loop
+	while self.ok do
+		-- wait for input
+		local args = self:get()
+		local cmd = args[1] ; table.remove(args, 1)
+	
+		-- check command
+		if self.command[cmd] then
+			self.command[cmd](self, unpack(args or {}))
+		else
+			self.command['*'](self, cmd, unpack(args or {}))
+		end
+	end
+end
+
+function sam.cli(def)
+	sam.info(_NAME, "sam.cli(%s,%d)\n", tostring(def), #def)
+	local retval = __cli
+
+	-- install commands
+	for k,v in pairs(def) do
+		sam.dbg(_NAME, "   installing command '%s'\n", k)
+		retval.command[k] = v
+	end
+
+	-- make retval executable
+	setmetatable(retval, { __call = function(self) self:run() end })
+
+	return retval
+end
 
 -- --------------------------------------------------------------------------
 -- INITIALIZE SAM
@@ -254,6 +415,8 @@ detect_modules()
 -- TEST
 -- --------------------------------------------------------------------------
 
-sam.command["dummy"]("hello")
-sam.command["dummy"]("world!")
-sam.command["help"]()
+--sam.command["dummy"]("hello")
+--sam.command["dummy"]("world!")
+--sam.command["help"]()
+
+sam.command["dummy"]()
