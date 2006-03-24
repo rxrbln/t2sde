@@ -14,15 +14,10 @@
 
 local _NAME        = "monitor"
 local _DESCRIPTION = "Monitor the build process of a given config."
-
-local function usage()
-	print([[ Usage: 
-
-sam monitor <config-name>
+local _USAGE       = [[monitor <config-name>
 
 This will show the build log of the respective configuration.
-]])
-end
+]]
 
 require "sam/config"
 
@@ -36,26 +31,16 @@ local function main(...)
 	end
 
 	local cfg = sam.config(arg[1])
-	local f = assert(
-		io.open(t2dir .. "/build/" .. cfg.ID .. "/TOOLCHAIN/logs/build_target.log")
-	)
+	local log = t2dir .. "/build/" .. cfg.ID .. "/TOOLCHAIN/logs/build_target.log"
 
-	while true do
-		local line = f:read("*line")
-		
-		if not line then
-			-- sleep(...)
-		else
-			print(line)
-		end
-	end
+	os.execute("tail -f " .. log)
 end
 
 -- SAM MODULE INIT ---------------------------------------------------------
 return { 
 	_NAME = _NAME,
 	_DESCRIPTION = _DESCRIPTION,
+	_USAGE = _USAGE,
 	
-	usage = usage,
 	main = main, 
 }

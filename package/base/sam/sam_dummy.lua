@@ -14,15 +14,13 @@
 
 local _NAME        = "dummy"
 local _DESCRIPTION = "Template module (no functionality)"
-
-
-local function usage()
-	print([[ Usage: 
+local _USAGE       = [[dummy
 
 Used as template file for new SAM modules. This module has not function
 otherwise.
-]])
-end
+]]
+
+-- CLI -----------------------------------------------------------------------
 
 local function CLI_exit(self, ...)
 	self:send("[INFO] exiting")
@@ -32,6 +30,8 @@ end
 local CLI = sam.cli({ 
 	exit  = CLI_exit,
 })
+
+-- MAIN-----------------------------------------------------------------------
 
 local function main(...)
 	sam.info(_NAME, "main() in module %s\n", _NAME)
@@ -49,7 +49,8 @@ end
 return { 
 	_NAME = _NAME,
 	_DESCRIPTION = _DESCRIPTION,
+	_USAGE = _USAGE,
 	
-	usage = usage,
 	main = main, 
 }
+
