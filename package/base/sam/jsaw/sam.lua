@@ -98,7 +98,16 @@ Provided functions:
 
 	  Used in the event loop: read (and tokenize) input
 
+* sam.load(ext)
+  
+  Load a SAM specific extension.
+
+  Example:
+    sam.load("tokenize")
+
 --]] ------------------------------------------------------------------------
+
+require "sam/tokenize"
 
 -- printf helpers -----------------------------------------------------------
 
@@ -277,70 +286,8 @@ create_command("help", "Show command reference", usage, help)
 
 -- CLI ----------------------------------------------------------------------
 
--- sam.shellsplit(some-string)
---   Extend string with a shell alike tokenizer.
---   This is a rather ugly code imo, a better solution
---   is welcome!
-function sam.shellsplit(str)
-	local idx = {} -- list of indexes to split str
-
-	-- parse thru all characters of the string
-	-- and check for quotes and escaping
-	local n = 0
-	local esc = 0
-	local quote = 0
-	local last = ' '
-	for c in string.gfind(str, ".") do
-		n = n + 1
-		
-		if esc == 0 then
-			if c == '\\' then
-				esc = 1
-			elseif c == '"' or c == "'" then
-				if quote == 0 then
-					quote = 1
-					if last == ' ' then
-						-- we found the start of a token
-						table.insert(idx, n)
-					end
-				else 
-					quote = 0
-				end
-			elseif quote == 0 then
-				if c == ' ' or c == '\t' then
-					if last ~= ' ' then
-						-- we found the end of a token
-						table.insert(idx, n-1)
-					end
-					c = ' '
-				elseif last == ' ' then
-					-- we found the start of a token
-					table.insert(idx, n)
-				end
-			end
-		else
-			esc = 0
-		end
-
-		last = c
-	end
-	if #idx > 0 then
-		-- closing token at end-of-line
-		table.insert(idx, n)
-	end
-
-	-- assemble the tokens into a table
-	local toks = {}
-	n = 1
-	while n < #idx do 
-		table.insert(toks, string.sub(str, idx[n], idx[n+1]))
-		n = n+2
-	end
-	
-	return toks
-end
-
--- TODO document
+-- __cli 
+--   structure behind CLI definitions
 local __cli = {
 	ok = true,
 	command = {
@@ -359,7 +306,7 @@ end
 
 function __cli:get()
 	local line = io.stdin:read("*line")
-	return sam.shellsplit(line)
+	return sam.tokenize(line)
 end
 
 function __cli:send(...)
@@ -404,19 +351,22 @@ end
 -- --------------------------------------------------------------------------
 detect_modules()
 
-
-
-
-
-
-
-
 -- --------------------------------------------------------------------------
 -- TEST
 -- --------------------------------------------------------------------------
 
---sam.command["dummy"]("hello")
---sam.command["dummy"]("world!")
---sam.command["help"]()
+if arg[1] then
+	-- check for help as second argument, must be first
+	if arg[2] and arg[2] == "help" then
+		arg[2] = arg[1]
+		arg[1] = "help"
+	end
 
-sam.command["dummy"]()
+	-- split command and command arguments
+	local cmd = arg[1]
+	local args = arg ; table.remove(args, 1)
+
+	-- execute
+	sam.command[cmd](unpack(args or {}))
+end
+
