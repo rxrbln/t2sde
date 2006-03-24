@@ -44,7 +44,7 @@ Provided functions:
 
 --]] ------------------------------------------------------------------------
 
-require "sam/tokenize"
+require "sam.tokenize"
 
 local __cli = {
 	ok = true,

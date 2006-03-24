@@ -94,3 +94,15 @@ static int sam_tokenize (lua_State *L) {
 				
 	return 1;
 }
+
+/*--------------------------------------------------------------------------*/
+static const struct luaL_reg functions[] = {
+	{"tokenize", sam_tokenize},
+	{NULL, NULL}
+};
+
+LUALIB_API int luaopen_sam_tokenize (lua_State *L)
+{
+	luaL_openlib(L, "sam", functions, 0);
+	return 1;
+}

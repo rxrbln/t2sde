@@ -24,7 +24,7 @@ sam = sam or {
 	command = {}
 }
 
-require "sam/log"
+require "sam.log"
 
 -- default options
 sam.opt = sam.opt or {
