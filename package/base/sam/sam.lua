@@ -21,23 +21,10 @@ local _DESCRIPTION = "System Administration Manager for systems based on T2"
 
 -- SAM namespace
 sam = sam or {
-	-- logging (callable via metatable, see DESCRIPTION)
-	log = {
-		ERROR  = 0,
-		WARN   = 1,
-		NOTICE = 2,
-		INFO   = 3,
-		DEBUG  = 4,
-	},
-	error  = function(ident,...) sam.log(sam.log.ERROR, ident, unpack(arg)) end,
-	warn   = function(ident,...) sam.log(sam.log.WARN, ident, unpack(arg)) end,
-	notice = function(ident,...) sam.log(sam.log.NOTICE, ident, unpack(arg)) end,
-	info   = function(ident,...) sam.log(sam.log.INFO, ident, unpack(arg)) end,
-	dbg    = function(ident,...) sam.log(sam.log.DEBUG, ident, unpack(arg)) end,
+	command = {}
+}
 
-	-- command list (extended by modules)
-	command = {} 
-}	
+require "sam/log"
 
 -- default options
 sam.opt = sam.opt or {
@@ -48,92 +35,18 @@ sam.opt = sam.opt or {
 
 Provided functions:
 
-* sam.log(required-verbosity-level, identification, printf-format...)
-
-    Print information about SAM processing. The logging level (sam.opt.loglevel)
-    has to be equal or higher than "required-verbosity-level". The
-    "identification" is printed in square brackets in front of the message.
-
-    Example:
-      sam.log(sam.log.ERROR, "Config", "Config file incosistency (%s)",
-	          filename)
-
-
-* sam.error(identification, format...)
-* sam.warn(identification, format...)
-* sam.notice(identification, format...)
-* sam.info(identification, format...)
-* sam.dbg(identification, format...)
-
-    Short form for the logging function.
-  
-
 * sam.command["command-name"](args...)
 * sam.command["command-name"].main(args...)
 
     Execute a command (extended by modulues) with given arguments.
 	The only built-in command currently is "help".
 
-* cli = sam.cli(def)
-
-    Define a CLI command set. The table "def" consist of key->function
-	mappings, e.g. sam.cli { help = cli_cmd_help }. The return value is
-	a CLI object with the following methods:
-
-	cli:run()
-	cli()
-
-	  Start the event loop.
-
-	cli:finish()
-
-	  Leave the event loop.
-
-	cli:send(...)
-
-      Send a message (printf format). A trailing newline is appended
-	  automatically.
-
-	cli:get()
-
-	  Used in the event loop: read (and tokenize) input
-
-* sam.load(ext)
-  
-  Load a SAM specific extension.
-
-  Example:
-    sam.load("tokenize")
-
 --]] ------------------------------------------------------------------------
 
-require "sam/tokenize"
-
--- printf helpers -----------------------------------------------------------
-
+-- fprintf alike helper function
 local function fprintf(stream, ...)
-	stream:write(string.format(unpack(arg)))
+	stream:write( string.format(unpack(arg)) )
 end
-
--- LOGGING ------------------------------------------------------------------
-
--- log_stdout(required-log-level, identification, fmt...)
---   The default logging method is to log to stderr.
-local function log_stdout(reqlvl, ident, ...)
-	if sam.opt.loglevel >= reqlvl then
-		fprintf(io.stderr, "[%s] ", ident)
-		fprintf(io.stderr, unpack(arg))
-	end
-end
-
--- sam.log(required-log-level, identification, fmt...)
---   sam.log can be called as function via a metatable,
---   default: log_stdout
-setmetatable(sam.log, {
-	__call = function(self, reqlvl, ident,  ...) 
-			log_stdout(reqlvl, ident, unpack(arg))
-		 end
-})
 
 -- MODULES ------------------------------------------------------------------
 
@@ -252,68 +165,6 @@ local function usage(cmd)
 	end
 end
 
--- CLI ----------------------------------------------------------------------
-
--- __cli 
---   structure behind CLI definitions
-local __cli = {
-	ok = true,
-	command = {
-		-- default wildcard command
-		["*"] = function(self,cmd,...) 
-				self:send("[ERROR] unknown command: %s", cmd or "<none>")
-			end,
-		-- default "exit" command
-		exit = function(self,...) self:finish() end,
-	}
-}
-
-function __cli:finish()
-	self.ok = false
-end
-
-function __cli:get()
-	local line = io.stdin:read("*line")
-	return sam.tokenize(line)
-end
-
-function __cli:send(...)
-	fprintf(io.stdout, unpack(arg))
-	fprintf(io.stdout, "\n")
-end
-
-function __cli:run()
-	-- event loop
-	while self.ok do
-		-- wait for input
-		local args = self:get()
-		local cmd = args[1] ; table.remove(args, 1)
-	
-		-- check command
-		if self.command[cmd] then
-			self.command[cmd](self, unpack(args or {}))
-		else
-			self.command['*'](self, cmd, unpack(args or {}))
-		end
-	end
-end
-
-function sam.cli(def)
-	sam.info(_NAME, "sam.cli(%s,%d)\n", tostring(def), #def)
-	local retval = __cli
-
-	-- install commands
-	for k,v in pairs(def) do
-		sam.dbg(_NAME, "   installing command '%s'\n", k)
-		retval.command[k] = v
-	end
-
-	-- make retval executable
-	setmetatable(retval, { __call = function(self) self:run() end })
-
-	return retval
-end
-
 -- --------------------------------------------------------------------------
 -- INITIALIZE SAM
 -- --------------------------------------------------------------------------
@@ -324,20 +175,16 @@ detect_modules()
 -- --------------------------------------------------------------------------
 
 if arg[1] then
-	-- check for help as second argument, must be first
-	if arg[2] and arg[2] == "help" then
-		arg[2] = arg[1]
-		arg[1] = "help"
-	end
-
-	-- split command and command arguments
-	local cmd = arg[1]
-	local args = arg ; table.remove(args, 1)
-
-	-- execute
-	if cmd == "help" then
-		usage(args[1])
+	-- help
+	if arg[1] == "help" then
+		usage(arg[2])
+	elseif arg[2] == "help" then
+		usage(arg[1])
 	else
+		-- split command and command arguments
+		local cmd = arg[1]
+		local args = arg ; table.remove(args, 1)
+
 		sam.command[cmd](unpack(args or {}))
 	end
 end
