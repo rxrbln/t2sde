@@ -69,16 +69,21 @@ pkgsexp=$( echo "$packages" | sed -e 's,^ ,,' -e 's, $,,' -e 's,\+,[+],' -e 's, 
 # (sorted by package name)
 #
 mkfifo $0.$$
-( sed -n -e "s,^. \([^ ]*\) \(...\)\.\(...\) [^ ]* \($pkgsexp\) .*,\4 \2\3 \1,p" \
+( sed -n -e "s,^\(.\) \([^ ]*\) \(...\)\.\(...\) [^ ]* \($pkgsexp\) .*,\5 \3\4 \2 \1,p" \
 	config/$config/packages | sort > $0.$$ ) &
 
 sleep 1
 packages_orig="$packages"
-while read pkg prio stages; do
+while read pkg prio stages status; do
 	packages_new="${packages/ $pkg / }"
 	if [ "$packages" != "$packages_new" ]; then
 		packages="$packages_new"
-		echo "$prio $stages $pkg"
+		if [ "$status" != X ] ; then
+			status='*'
+		else
+			status=' '
+		fi
+		echo "$prio $stages $status $pkg"
 	else
 		echo_warning "what is '$pkg' doing here?"
 	fi
@@ -91,7 +96,7 @@ for pkg in $packages; do
 	confdir=`echo package/*/$pkg/`
 	if [ -f $confdir/$pkg.desc ]; then
 		echo_warning "dependency '$pkg' is not available for this build."
-		sed -n -e 's,^\[P\] . \([^ ]*\) \([^ \.]*\)\.\([^ \.]*\).*,\2\3 \1 '$pkg' *,p' $confdir/$pkg.desc
+		sed -n -e 's,^\[P\] . \([^ ]*\) \([^ \.]*\)\.\([^ \.]*\).*,\2\3 \1 - '$pkg',p' $confdir/$pkg.desc
 	else
 		echo_warning "dependency '$pkg' doesn't exist!"
 	fi
