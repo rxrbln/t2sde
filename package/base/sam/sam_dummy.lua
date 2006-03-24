@@ -21,6 +21,7 @@ otherwise.
 ]]
 
 -- CLI -----------------------------------------------------------------------
+require "sam/cli"
 
 local function CLI_exit(self, ...)
 	self:send("[INFO] exiting")
