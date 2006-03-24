@@ -40,6 +40,7 @@ ed                 zile
 curl               dialog             minicom
 lrzsz              rsync              tcpdump            module-init-tools
 sysvinit           shadow             util-linux         wireless-tools
+runit              runit-logacct      runit-shutdown
 net-tools          procps             psmisc
 modutils           pciutils           portmap
 sysklogd           setserial          iproute2
