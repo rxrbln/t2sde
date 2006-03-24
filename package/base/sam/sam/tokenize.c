@@ -11,7 +11,7 @@ static size_t decode(char *buf, size_t len)
 
 static int sam_tokenize (lua_State *L) {
 	size_t      slen;
-	const char *s = luaL_checklstring(L, 1, &slen); 
+	const char *s; /* = luaL_checklstring(L, 1, &slen); */
 	char *buf;          /* escape sequence decoding buffer */
 
 #define NONE ((size_t) -1)
@@ -28,6 +28,11 @@ static int sam_tokenize (lua_State *L) {
 	} flag = { FALSE, FALSE };
 
 	size_t t = 1;       /* raw table index */
+
+	/* check function arguments */
+	if (lua_isnil(L,1)) return 0;
+
+	s = luaL_checklstring(L, 1, &slen);
 	
 	/* buffer for decoding escape sequences */
 	buf = malloc(slen);
