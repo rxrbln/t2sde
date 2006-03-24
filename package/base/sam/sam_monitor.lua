@@ -19,7 +19,7 @@ local _USAGE       = [[monitor <config-name>
 This will show the build log of the respective configuration.
 ]]
 
-require "sam/config"
+require "sam.config"
 
 local function main(...)
 	sam.info(_NAME, "main() in module %s\n", _NAME)
