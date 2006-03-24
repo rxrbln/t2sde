@@ -77,6 +77,11 @@ function __cli:run()
 	while self.ok do
 		-- wait for input
 		local args = self:get()
+		if not args then
+			self.ok = false
+			return
+		end
+		
 		local cmd = args[1] ; table.remove(args, 1)
 	
 		-- check command
