@@ -68,6 +68,7 @@ dnl
 dnl
     block_split(`Mounting local file systems.')
 	check(`mount -n -o remount,rw /')
+	rm -f /etc/mtab~* # lingering lock files
 	cat /proc/mounts > /etc/mtab
 	check(`mount -a -t nocoda,nfs,devfs,proc,sysfs')
 dnl
@@ -159,30 +160,27 @@ dnl
 dnl
     block_split(`Turning off swap devices.')
 	check(`swapoff -a')
-	sync ; sleep 1
 dnl
     block_split(`Remounting sync/ro and umount filesystems.')
-	cut -d' ' -f-3 /etc/mtab /proc/mounts | sort -k2 -u -r | \
+	sync
+	cut -d' ' -f-3 /etc/mtab /proc/mounts | sort -k2 -u -r |
 	while read dev dir fs ; do
-		[ "$dir" = "/"        ] && continue
-		[ "$dir" = "/dev"     ] && continue
-		[ "$dir" = "/dev/shm" ] && continue
-		[ "$dir" = "/proc"    ] && continue
-		[ "$dir" = "/sys"     ] && continue
-		[ "$dir" = "/tmp"     ] && continue
-		echo "Umounting $dev on $dir ($fs)."
-		mount -o remount,sync $dir
-		mount -o remount,ro $dir
-		umount $dir
+		case "$dir" in
+		/|/dev|/proc|/sys|/tmp)	continue ;;
+		*)	echo "Umounting $dev on $dir ($fs)."
+			mount -o remount,sync $dir
+			mount -o remount,ro $dir
+			umount $dir ;;
+		esac
 	done
 dnl
     block_split(`Unmounting remaining file systems.')
-	grep -E -v '^none (/|[a-z]+:) ' /proc/mounts > /etc/mtab
-	sync ; sleep 1 ; sync
-	umount -vnra -t nodevfs,proc,sysfs,shm
+	grep -v -e '^none /[a-z]\+' -e ' / ' /proc/mounts > /etc/mtab
 	mount -vn -o remount,sync /
+	sync
+	umount -vran -t nodevfs,proc,sysfs
 	mount -vn -o remount,ro /
-	sleep 1 ; sync ; sleep 1
+	sync ; sleep 1
 dnl
     block_split()
 	if [ "$INIT_DOES_REBOOTHALT" != "1" ]; then
