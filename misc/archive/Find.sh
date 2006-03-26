@@ -25,12 +25,8 @@ if [ -n "$x" ] ; then
 fi
 
 echo "Searching in package descriptions (may take some time) ..."
-x="`cd package/ ; grep -iH $1 */*/*.desc | cut -d : -f 1 | uniq`"
-
-if [ -n "$x" ] ; then
-        echo -e "$x\n"
-	matched=1
-fi
+grep "[(\I\|T\)].* $1" package/*/*/*.desc | grep $1 --color
+[ $? -eq 0 ] && matched=1
 
 [ $matched = 0 ] && echo "No match found ..."
 
