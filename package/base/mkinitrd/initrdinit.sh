@@ -72,7 +72,7 @@ if [ "$root" ]; then
   while [ $i -le 9 ]; do
 	for fs in $filesystems ; do
 	  if mount -t $fs $root /rootfs -o ro 2> /dev/null; then
-		echo "Successfully mounted rootfs as $fs"
+		echo "Successfully mounted rootfs as $fs."
 
 		# TODO: later on search other places if we want 100% backward compat.
 		[ "$init" ] || init=/sbin/init
@@ -88,13 +88,13 @@ if [ "$root" ]; then
 				mknod /rootfs/dev/tty c 5 0
 			fi
 
-			exec switch_root /rootfs $init
+			exec switch_root /rootfs $init $*
 		else
-			echo "specified init ($init) does not exist"
+			echo "Specified init ($init) does not exist!"
 		fi
 	  fi
 	done
-  : $(( i++ ))
+  [ $(( i++ )) -eq 0 ] && echo "Waiting for root device to become ready ..."
   sleep 1
   done
 fi
