@@ -6,6 +6,20 @@
 
 set -e
 
+embedded=0
+
+while [ "$1" ]; do
+	case $1 in
+		-embedded)
+			embedded=1
+			;;
+		*)	echo "Unknown option $1"
+			exit
+			;;
+	esac
+	shift
+done
+
 mkdir -p regtest
 
 build()
@@ -23,6 +37,18 @@ build()
 		SDECFG_EXPERT=1
 		SDECFG_OPT="lazy" # slightly speed up the test builds
 EOT
+	if [ $embedded -eq 1 ]; then
+		cat >> config/regtest-$x/config <<-EOT
+			SDECFG_TARGET='embedded'
+			SDECFG_TARGET_EMBEDDED_STYLE='dietlibc'
+			SDECFG_PKGSEL='1'
+EOT
+
+		cat > config/regtest-$x/pkgsel <<-EOT
+			O linux2*
+EOT
+	fi
+
 	./scripts/Config -cfg regtest-$x -oldconfig
 	./scripts/Download -cfg regtest-$x -required >> regtest/$x.log 2>&1
 	echo "Running build ..."
@@ -41,6 +67,16 @@ EOT
 for x in architecture/*/ ; do
 	[[ $x = *share* ]] && continue
 	x=${x#*/}; x=${x%/*}
+
+	if [ $embedded -eq 1 ]; then
+	  case $x in
+		cris|hppa*|m68k|mips64|sh*) # no diet support
+			echo "Skipping $x (for now)"
+			continue
+			;;
+	  esac
+	fi
+
 	echo "Processing $x ..."
 	build $x
 done
