@@ -24,14 +24,16 @@ fi
 while [ "$1" ]; do
   case $1 in
 	[0-9]*) kernelver="$1" ;;
-	*) echo "Usage: mkinitrd [ kernelver ]"
+	-R) root="$2" ; shift ;;
+	*) echo "Usage: mkinitrd [ -R root ] [ kernelver ]"
 	   exit 1 ;;
   esac
   shift
 done
 
+[ "$root" ] || root="/"
 [ "$kernelver" ] || kernelver=`uname -r`
-[ "$moddir" ] || moddir="/lib/modules/$kernelver"
+[ "$moddir" ] || moddir="${root}/lib/modules/$kernelver"
 
 echo "Kernel: $kernelver, module dir: $moddir"
 
@@ -41,7 +43,7 @@ if [ ! -d $moddir ]; then
 fi
 
 sysmap=""
-[ -f "/boot/System.map_$kernelver" ] && sysmap="/boot/System.map_$kernelver"
+[ -f "${root}/boot/System.map_$kernelver" ] && sysmap="${root}/boot/System.map_$kernelver"
 
 if [ -z "$sysmap" ]; then
 	echo "System.map_$kernelver not found!"
@@ -89,9 +91,11 @@ echo "Copying kernel modules ..."
 
 		echo -n "${x##*/} "
 
-		# TODO: strip possible $root / $DESTDIR prefix later
-		mkdir -p `dirname $tmpdir/$x`
-		cp $x $tmpdir/$x 2>/dev/null
+		# strip $root prefix
+		xt=${x##$root}
+
+		mkdir -p `dirname $tmpdir/$xt`
+		cp $x $tmpdir/$xt 2>/dev/null
 	done
   done
 ) | fold -s ; echo
@@ -104,11 +108,11 @@ echo "Injecting programs and configuration ..."
 
 # copying config
 #
-cp -ar /etc/udev $tmpdir/etc/
+cp -ar ${root}/etc/udev $tmpdir/etc/
 
 # setup programs
 #
-for x in /sbin/{hotplug++,udev,udevstart,modprobe,insmod} /usr/sbin/disktype
+for x in ${root}/sbin/{hotplug++,udev,udevstart,modprobe,insmod} ${root}/usr/sbin/disktype
 do
 	# sanity check
 	file $x | grep -q "dynamically linked" &&
@@ -116,7 +120,7 @@ do
 	cp $x $tmpdir/sbin/
 done
 
-x=/sbin/insmod.old
+x=${root}/sbin/insmod.old
 if [ ! -e $x ]; then
 	echo "Warning: Skipped optional file $x!"
 else
@@ -127,26 +131,26 @@ else
 fi
 
 ln -s /sbin/udev $tmpdir/etc/hotplug.d/default/10-udev.hotplug
-cp /bin/pdksh $tmpdir/bin/sh
+cp ${root}/bin/pdksh $tmpdir/bin/sh
 
 # static, tiny embutils and friends
 #
-cp /usr/embutils/{mount,umount,rm,mv,mkdir,ln,ls,switch_root,sleep,losetup,chmod,cat,sed,mknod} \
+cp ${root}/usr/embutils/{mount,umount,rm,mv,mkdir,ln,ls,switch_root,sleep,losetup,chmod,cat,sed,mknod} \
    $tmpdir/bin/
 ln -s mv $tmpdir/bin/cp
 
-cp /sbin/initrdinit $tmpdir/init
+cp ${root}/sbin/initrdinit $tmpdir/init
 
 # create the cpio image
 #
 echo "Archiving ..."
 ( cd $tmpdir
-  find * | cpio -o -H newc | gzip -c9 > /boot/initrd-$kernelver.img
+  find * | cpio -o -H newc | gzip -c9 > ${root}/boot/initrd-$kernelver.img
 )
 
 # display the resulting image
 #
-du -sh /boot/initrd-$kernelver.img
+du -sh ${root}/boot/initrd-$kernelver.img
 rm -rf $tmpdir
 
 
