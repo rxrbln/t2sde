@@ -97,6 +97,7 @@ unregister () {
 
 for x in $rocknet_base/*.sh; do . "$x"; done
 
+errno=0
 while read cmd para
 do
 	(( lineno++ ))
@@ -129,8 +130,13 @@ done < <(
 	done | sort
 )
 
-[ "$pmatched" = 0 -a "$profile" != "default" ] && \
+if [ "$pmatched" = 0 -a "$profile" != "default" ]; then
 	error "Unknown profile: '$profile'"
-[ "$pmatched" = 1 -a "$imatched" = 0 ] && \
+	errno=1
+fi
+if [ "$imatched" = 0 ]; then
 	error "Unknown interface for profile: '$interface'"
+	errno=1
+fi
+exit $errno
 
