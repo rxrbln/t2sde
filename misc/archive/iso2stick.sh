@@ -30,7 +30,7 @@ mkdir -p /mnt/source /mnt/target
 mount -o loop $1 /mnt/source
 mount ${2}1 /mnt/target
 
-rsync -arvH --inplace /mnt/source/ /mnt/target/
+rsync -arvH --inplace --exclude TRANS.TBL /mnt/source/ /mnt/target/
 
 sed -i 's/(cd)/(hd0,0)/g' /mnt/target/boot/grub/menu.lst
 
