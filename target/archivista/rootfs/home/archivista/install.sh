@@ -236,6 +236,9 @@ rsync  -arvP --delete /mnt/live/ /mnt/target/ |
   Xdialog --title "Installing ..." --progress "Installing system and database
 to the selected partitions." 0 0
 
+# cd-boot code for publishing
+rsync -arvP --exclude trans.tbl /media/cdrom/boot/ /mnt/target/boot-cd
+
 cat >> /mnt/target/etc/fstab <<-EOT
 ${part%[0-9]}3	swap		swap	defaults        0 0
 ${part%[0-9]}4	/home/data	auto	defaults	0 0
