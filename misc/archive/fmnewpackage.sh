@@ -30,17 +30,15 @@
 #
 
 extract_xml_name() {
-    local tmp="`tr -d "\012" < $2 | grep $3 | sed "s,.*<$3>\([^<]*\)<.*,\1," | sed 's,,\n[T] ,g' | sed 's,^\[T\] $,,'`"
+    local tmp="`tr -d "\012" < $2 | grep $3 | sed "s|.*<$3>\([^<]*\)<.*|\1|" | sed 's||\n[T] |g' | sed 's|^\[T\] $||'`"
     eval "$1=\"\$tmp\""
 }
 
 get_download() {
     local location
-    download_file=""
-    download_url=""
     for arg; do
 	if curl -s -I -f "$arg" -o "header.log"; then
-	    location="`grep Location: header.log | sed 's,Location:[ ]\([.0-9A-Za-z-:/% ]*\).*,\1,'`"
+	    location="`grep Location: header.log | sed 's,Location:[ ]\([.0-9A-Za-z:/% -]*\).*,\1,'`"
 	    download_file="`basename $location`"
 	    download_url="`dirname $location`/"
 	    rm -f header.log
@@ -203,6 +201,8 @@ fi
 
 cd package/$dir
 rc="ROCK-COPYRIGHT"
+download_file=
+download_url=
 
 if ! read_fm_config $1; then
     echo "Error or wrong freshmeat package name"
@@ -210,7 +210,10 @@ if ! read_fm_config $1; then
 fi
 
 echo -n "Creating $package.desc ... "
-echo "[I] ${title:-TODO: Title}" >$package.desc
+cat >>$package.desc <<EOF
+[I] ${title:-TODO: Title}
+
+EOF
 
 # [T] ${desc:-TODO: Description}
 while read l; do
@@ -231,8 +234,9 @@ cat >>$package.desc <<EOF
 [V] ${version:-TODO: Version}
 [P] X -----5---9 800.000
 EOF
+
 if [ "$download_file" ]; then
-	cat >>$package.conf <<-EOF
+	cat >>$package.desc <<-EOF
 
 	[D] 0 $download_file $download_url
 	EOF
