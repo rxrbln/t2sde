@@ -39,6 +39,9 @@ CONFIG_ALTIVEC=y
 
 dnl Platform specific support
 dnl
+
+CONFIG_PROC_DEVICETREE=y
+
 CONFIG_ADB=y
 CONFIG_ADB_CUDA=y
 CONFIG_ADB_PMU=y
