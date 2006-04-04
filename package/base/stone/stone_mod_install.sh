@@ -61,14 +61,14 @@ part_mkfs() {
 
 part_unmounted_action() {
 	gui_menu part "$1" \
-		"Create a filesystem on the partition" \
-				"part_mkfs $1" \
 		"Mount an existing filesystem from the partition" \
 				"part_mount $1" \
-		"Create a swap space on the partition" \
-				"mkswap /dev/$1; swapon /dev/$1" \
+		"Create a filesystem on the partition" \
+				"part_mkfs $1" \
 		"Activate an existing swap space on the partition" \
-				"swapon /dev/$1"
+				"swapon /dev/$1" \
+		"Create a swap space on the partition" \
+				"mkswap /dev/$1; swapon /dev/$1"
 }
 
 part_add() {
