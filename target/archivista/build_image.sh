@@ -48,5 +48,5 @@ inject_archivista()
 
 inject_hook=inject_archivista
 
-. $base/target/livecd/build_image.sh
+. $base/misc/target/output/livecd/build_image.sh
 
