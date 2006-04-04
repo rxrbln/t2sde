@@ -12,6 +12,7 @@ if [ "$UID" -ne 0 ]; then
 in order to exit." -c $0
 fi
 
+error=0
 if [ -e /home/archivista/.wine/drive_c/Programs/Av5e/AV5AUTO.WRK ]; then
   Xdialog --title "" --yesno "There are batch jobes running. \
   Do you want to stop them?" 0 0 || exit
@@ -23,6 +24,6 @@ fi
 if [ $error -eq 0 ]; then
   killall fluxbox
 else
-  Xdialog --msgbox "Jobs can't be stopped. Please try it later again." 0 0
+  Xdialog --msgbox "Jobs can't be stopped. Please try again later." 0 0
 fi
 
