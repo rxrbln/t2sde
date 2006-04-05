@@ -1,5 +1,16 @@
 #!/bin/bash
 
+ps --no-headers -C publish.sh 
+pscount=`ps --no-headers -C publish.sh | wc -l`
+
+# 2 due to foking a sub-process above :-(
+if [ $pscount -gt 2 ] ; then
+	Xdialog --no-cancel --title 'Archive publishing' --msgbox \
+	        "There is already a publishing process running! Only one instance
+can compess the system, try again later." 0 0
+	exit
+fi
+
 if [ "$UID" -ne 0 ]; then
         exec gnomesu -t "Archive publishing" \
         -m "Please enter the system password (root user)^\
@@ -14,10 +25,15 @@ export DISPLAY=:0
 
 set -e
 
+cleanup ()
+{
+	rm -rf live.squash boot root
+}
+
 livedir=/home/data/livecd
 
 mkdir -p $livedir/root ; cd $livedir
-rm -rf av.iso live.squash boot root
+cleanup
 
 # list of top-level dirs
 dirs=
@@ -53,6 +69,12 @@ unint_xdialog_w_file ()
 	done
 }
 
+# undo stuff done after installation
+cp /home/archivista/.fluxbox/menu{.orig,}
+
+rc apache stop
+rc mysql stop
+
 unint_xdialog_w_file "The database archive and the currently running system
 are beeing compressed. This process will take quite some time." live.squash &
 mksquashfs $dirs ./root/ live.squash -noappend -info -e /home/data/t2-trunk $livedir
@@ -65,14 +87,22 @@ This process will take a few minutes." av.iso &
 # copy initrd, grub, ...
 cp -ar /boot-cd boot
 
+isoname=`date "+%Y%m%d-%H%M"`
+
 # mkisofs, heavily copied out of the T2 sources, since there we add all the
 # magic glue automagically ,-)))
-mkisofs -q -r -T -J -l -o av.iso -A "Archivista Box" \
+mkisofs -q -r -T -J -l -o $isoname -A "Archivista Box" \
         -publisher 'Archivista Box based on the T2 SDE' \
         -b boot/grub/stage2_eltorito -no-emul-boot -boot-load-size 4 -boot-info-table \
         --graft-points live.squash boot=boot
 
 kill %- # the Xdialog
 
-Xdialog --msgbox "Disc image generation completed." 0 0
+rc mysql start
+rc apache start
+
+cleanup
+
+Xdialog --msgbox "Disc image generation completed.
+The ISO image filename is $PWD/$isoname." 0 0
 
