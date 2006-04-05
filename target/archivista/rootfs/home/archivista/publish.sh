@@ -24,8 +24,9 @@ export DISPLAY=:0
 
 set -e
 
-livedir=/home/data/livecd
+livedir=/home/data/publishing
 dbdir=/home/data/archivista/mysql
+ocrkey=/home/archivista/.wine/drive_c/Programs/Av5e/av5.con
 
 cleanup ()
 {
@@ -91,7 +92,17 @@ for dir in /* ; do
 	dirs="$dirs $dir"
 done
 
+# final tweaks and possible injecting the default archivista db
 chmod 1777 root/tmp
+if [ $archivistadb = 0 ]; then
+	mkdir -p root$dbdir/archivista
+	# copy the vanilla files and add the remaining tables
+	cp /home/mysql.orig/* root$dbdir/archivista
+	for x in $dbdir/archivista/* ; do
+		[ -f root$dbdir/archivista/${x##*/} ] ||
+		  cp -v $x root$dbdir/archivista/
+	done
+fi
 
 # approximate output size
 # disc usage
@@ -104,7 +115,7 @@ c_size=$(( (d_size - f_size) / 3 )) # a lot of text, thus more than 2
 
 Xdialog --cancel-label=Cancel --ok-label=Continue --title "Archive publishing" \
 --yesno "Based on the current hard disc usage ($d_size - $f_size MB),
-the estimated media utilization will be $c_size MB." 0 0 || exit
+the estimated media utilization is $c_size MB." 0 0 || exit
 
 unint_xdialog_w_file ()
 {
@@ -124,7 +135,8 @@ rc mysql stop
 unint_xdialog_w_file "The database archive and the currently running system
 are beeing compressed. This process will take quite some time." live.squash &
 set -x
-mksquashfs $dirs ./root/ live.squash -noappend -info -e /home/data/t2-trunk $livedir $dbexclude
+mksquashfs $dirs ./root/ live.squash -noappend -info -e /home/data/t2-trunk \
+           $livedir $dbexclude $ocrkey
 set +x
 kill %- 2>/dev/null || true # the Xdialog
 
