@@ -236,8 +236,17 @@ rsync  -arvP --delete /mnt/live/ /mnt/target/ |
   Xdialog --title "Installing ..." --progress "Installing system and database
 to the selected partitions." 0 0
 
-# cd-boot code for publishing
+# backup copies for publishing
 rsync -arvP --exclude trans.tbl /media/cdrom/boot/ /mnt/target/boot-cd
+(
+	set -e
+	# not .../data/... since maybe not mounted
+	mkdir -p /mnt/target/home/mysql.orig
+	cd /mnt/target/home/mysql.orig
+	for db in archiv archivbilder archivseiten ; do
+		cp -fv /mnt/live/home/data/archivista/mysql/archivista/$db.* .
+	done
+)
 
 cat >> /mnt/target/etc/fstab <<-EOT
 ${part%[0-9]}3	swap		swap	defaults        0 0
