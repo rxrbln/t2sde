@@ -148,7 +148,7 @@ This process will take a few minutes." av.iso &
 # copy initrd, grub, ...
 cp -ar /boot-cd boot
 
-isoname=`date "+%Y%m%d-%H%M"`
+isoname=`date "+av-%Y%m%d-%H%M.iso"`
 
 # mkisofs, heavily copied out of the T2 sources, since there we add all the
 # magic glue automagically ,-)))
@@ -156,6 +156,7 @@ mkisofs -q -r -T -J -l -o $isoname -A "Archivista Box" \
         -publisher 'Archivista Box based on the T2 SDE' \
         -b boot/grub/stage2_eltorito -no-emul-boot -boot-load-size 4 -boot-info-table \
         --graft-points live.squash boot=boot
+chown archivista:users $isoname
 
 kill %- 2> /dev/null || true # the Xdialog
 
