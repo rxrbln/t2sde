@@ -92,8 +92,10 @@ for dir in /* ; do
 	dirs="$dirs $dir"
 done
 
-# final tweaks and possible injecting the default archivista db
+# final tweaks, include vanilla files, and
+# possibly injecting the default archivista db
 chmod 1777 root/tmp
+
 if [ $archivistadb = 0 ]; then
 	mkdir -p root$dbdir/archivista
 	# copy the vanilla files and add the remaining tables
@@ -126,9 +128,6 @@ unint_xdialog_w_file ()
 	done
 }
 
-# undo stuff done after installation
-cp /home/archivista/.fluxbox/menu{.orig,}
-
 rc apache stop
 rc mysql stop
 
@@ -136,7 +135,8 @@ unint_xdialog_w_file "The database archive and the currently running system
 are beeing compressed. This process will take quite some time." live.squash &
 set -x
 mksquashfs $dirs ./root/ live.squash -noappend -info -e /home/data/t2-trunk \
-           $livedir $dbexclude $ocrkey
+           $livedir $dbexclude $ocrkey \
+           /etc/conf/network /home/archivista/.xkb-layout
 set +x
 kill %- 2>/dev/null || true # the Xdialog
 
