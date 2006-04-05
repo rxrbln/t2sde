@@ -60,7 +60,6 @@ dbexclude=
 archivistadb=1
 while [ $i -lt $n ]; do
 	# selected?
-	set -x
 	if [ "${d/ $i /}" != "$d" ]; then
 		echo $i selected
 	else
@@ -68,7 +67,6 @@ while [ $i -lt $n ]; do
 		[ "${dbs[$((i+1))]}" = archivista ] && archivistadb=0
 		dbexclude="$dbexclude $dbdir/${dbs[$((i+1))]}"
 	fi
-	set +x
 
   : $(( i += 3 ))
 done
@@ -96,12 +94,16 @@ done
 chmod 1777 root/tmp
 
 # approximate output size
+# disc usage
 d_size=`df -B 1000000 -P /home/data / | tr -s ' ' | cut -d ' ' -f 3 |
         sed '1d ; $!s/$/+\\\/' | bc`
-c_size=$(( d_size / 3 )) # a lot of text and binary files, thus more than 2
+# substract excluded dbs and livecd
+f_size=`du -B 1000000 -sc $dbexclude $livedir | tail -n 1 | cut -f 1`
+
+c_size=$(( (d_size - f_size) / 3 )) # a lot of text, thus more than 2
 
 Xdialog --cancel-label=Cancel --ok-label=Continue --title "Archive publishing" \
---yesno "Based on the current hard disc usage ($d_size MB),
+--yesno "Based on the current hard disc usage ($d_size - $f_size MB),
 the estimated media utilization will be $c_size MB." 0 0 || exit
 
 unint_xdialog_w_file ()
