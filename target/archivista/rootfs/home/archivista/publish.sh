@@ -1,6 +1,5 @@
 #!/bin/bash
 
-ps --no-headers -C publish.sh 
 pscount=`ps --no-headers -C publish.sh | wc -l`
 
 # 2 due to foking a sub-process above :-(
