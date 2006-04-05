@@ -237,7 +237,7 @@ rsync  -arvP --delete /mnt/live/ /mnt/target/ |
 to the selected partitions." 0 0
 
 # backup copies for publishing
-rsync -arvP --exclude trans.tbl /media/cdrom/boot/ /mnt/target/boot-cd
+rsync -arvP --exclude TRANS.TBL /media/cdrom/boot/ /mnt/target/boot-cd
 (
 	set -e
 	# not .../data/... since maybe not mounted
