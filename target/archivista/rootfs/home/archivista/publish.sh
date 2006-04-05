@@ -24,12 +24,57 @@ export DISPLAY=:0
 
 set -e
 
+livedir=/home/data/livecd
+dbdir=/home/data/archivista/mysql
+
 cleanup ()
 {
 	rm -rf live.squash boot root
 }
 
-livedir=/home/data/livecd
+# database selection from the user
+cd $dbdir
+i=0
+for x in * ; do
+	[ -d "$x" ] || continue
+	case "$x" in
+		mysql|test) continue ;;
+	esac
+	dbs[$((i++))]="$i"
+	dbs[$((i++))]="$x"
+	dbs[$((i++))]="on"
+done
+
+while [ -z "$d" ]; do
+	d=`Xdialog --stdout --password --no-tags --separate-output \
+	   --title 'Archive publishing' --checklist \
+	   "Choose the databases to be published." 0 0 3 "${dbs[@]}"` || exit
+	[ "$d" ] || Xdialog --no-cancel --title 'Archive publishing' --msgbox \
+	                    "You need to select at least one database!" 0 0
+done
+
+# generate exclude list and find out if the archivista db is selected
+n=$i; i=0
+d=" $d " # terminating space
+dbexclude=
+archivistadb=1
+while [ $i -lt $n ]; do
+	# selected?
+	set -x
+	if [ "${d/ $i /}" != "$d" ]; then
+		echo $i selected
+	else
+		echo $i not seleted
+		[ "${dbs[$((i+1))]}" = archivista ] && archivistadb=0
+		dbexclude="$dbexclude $dbdir/${dbs[$((i+1))]}"
+	fi
+	set +x
+
+  : $(( i += 3 ))
+done
+
+echo database exclude: $dbexclude
+echo archivista db: $archivistadb
 
 mkdir -p $livedir/root ; cd $livedir
 cleanup
@@ -76,8 +121,10 @@ rc mysql stop
 
 unint_xdialog_w_file "The database archive and the currently running system
 are beeing compressed. This process will take quite some time." live.squash &
-mksquashfs $dirs ./root/ live.squash -noappend -info -e /home/data/t2-trunk $livedir
-kill %- # the Xdialog
+set -x
+mksquashfs $dirs ./root/ live.squash -noappend -info -e /home/data/t2-trunk $livedir $dbexclude
+set +x
+kill %- 2>/dev/null || true # the Xdialog
 
 
 unint_xdialog_w_file "The final disc image is beeing created.
@@ -95,7 +142,7 @@ mkisofs -q -r -T -J -l -o $isoname -A "Archivista Box" \
         -b boot/grub/stage2_eltorito -no-emul-boot -boot-load-size 4 -boot-info-table \
         --graft-points live.squash boot=boot
 
-kill %- # the Xdialog
+kill %- 2> /dev/null || true # the Xdialog
 
 rc mysql start
 rc apache start
