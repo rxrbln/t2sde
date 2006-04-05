@@ -134,7 +134,8 @@ rc mysql stop
 unint_xdialog_w_file "The database archive and the currently running system
 are beeing compressed. This process will take quite some time." live.squash &
 set -x
-mksquashfs $dirs ./root/ live.squash -noappend -info -e /home/data/t2-trunk \
+mksquashfs $dirs ./root/ live.squash -noappend -info -e \
+           /boot-cd /home/data/t2-trunk \
            $livedir $dbexclude $ocrkey \
            /etc/conf/network /home/archivista/.xkb-layout
 set +x
