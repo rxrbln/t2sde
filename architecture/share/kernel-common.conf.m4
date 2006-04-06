@@ -200,3 +200,10 @@ CONFIG_SYSCTL=y
 dnl On architectures with OpenFirmware we want the framebuffer
 dnl
 CONFIG_FB_OF=y
+
+dnl Language stuff, code pages, ... (needed for vfat mounts)
+dnl
+CONFIG_NLS=y
+CONFIG_NLS_CODEPAGE_437=y
+CONFIG_NLS_ISO8859_1=y
+
