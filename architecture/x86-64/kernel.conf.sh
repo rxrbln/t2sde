@@ -41,9 +41,12 @@
 		CONFIG_IA32_EMULATION=y
 
 		dnl Memory Type Range Register support
-		dnl (improvements in graphic speed ...)
+		dnl and other x86 goodies ...
 		dnl
 		CONFIG_MTRR=y
+		CONFIG_X86_MCE=y
+		CONFIG_X86_MCE_NONFATAL=y
+		CONFIG_X86_MCE_P4THERMAL=y
 
 		dnl PC Speaker for 2.5/6 kernel
 		CONFIG_INPUT_PCSPKR=y
