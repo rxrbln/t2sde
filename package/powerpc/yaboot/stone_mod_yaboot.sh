@@ -102,10 +102,9 @@ yaboot_install_doit() {
 
 device4()
 {
-	dev="`grep \" $1 \" /proc/mounts | tail -n 1 | \
-	      cut -d ' ' -f 1`"
-	try="`dirname $1`"
-	if [ ! "$dev" ] ; then
+	local dev="`sed -n 's,\([^ ]*\) / .*,\1,p' /proc/mounts | tail -n 1`"
+	if [ ! "$dev" ] ; then # try the higher dentry
+		local try="`dirname $1`"
 		dev="`grep \" $try \" /proc/mounts | tail -n 1 | \
 		      cut -d ' ' -f 1`"
 	fi
@@ -126,23 +125,26 @@ realpath() {
 
 main() {
     while
-        bootstrappart="`pdisk -l /dev/discs/disc0/disc | \
-                       grep Apple_Bootstrap | sed -e "s/:.*//" -e "s/ //g"`"
-	bootstrapdev="`realpath /dev/discs/disc0/part$bootstrappart`"
 	rootdev="`device4 /`"
+	rootdev=/dev/sda5
+	dev="${rootdev%%[0-9]*}"
 	bootdev="`device4 /boot`"
 	yabootdev="`device4 /usr`"
 
-	macosxpart="`pdisk -l /dev/discs/disc0/disc  | grep Apple_HFS | head -n 1 | \
-	           sed -e "s/:.*//" -e "s/ //g"`"
-	[ "$macosxpart" ] && macosxdev="`realpath /dev/discs/disc0/part$macosxpart`"
+        bootstrappart="`pdisk -l $dev |
+                        grep Apple_Bootstrap | sed -e "s/:.*//" -e "s/ //g"`"
+	bootstrapdev="$dev$bootstrappart"
+
+	macosxpart="`pdisk -l $dev | grep Apple_HFS | head -n 1 |
+	             sed -e "s/:.*//" -e "s/ //g"`"
+	[ "$macosxpart" ] && macosxdev="$dev$macosxpart"
 
 	if [ "$rootdev" = "$bootdev" ]
 	then bootpath=/boot ; else bootpath="" ; fi
 
 	if [ "$rootdev" = "$yabootdev" ]
 	then yabootpath=/usr ; else yabootpath="" ; fi
-	yabootpart="`echo $yabootdev | sed s/.*part//`"
+	yabootpart="`echo $yabootdev | sed 's/[^0-9]*//'`"
 
         gui_menu yaboot 'Yaboot Boot Loader Setup' \
 		"Bootstrap Device ...... $bootstrapdev" "" \
