@@ -92,6 +92,21 @@ for dir in /* ; do
 	esac
 	dirs="$dirs $dir"
 done
+echo "dirs: $dirs"
+
+# list of data exclude dirs
+dataexclude=
+for dir in /home/data/* ; do
+	[ -d $dir ] || continue
+	case $dir in
+		# do include
+		archivista)
+			continue
+			;;
+		dataexclude="$dataexclude $dir"
+	esac
+done
+echo "dataexclude: $dataexclude"
 
 # final tweaks, include vanilla files, and
 # possibly injecting the default archivista db
@@ -109,16 +124,21 @@ fi
 
 # approximate output size
 # disc usage
-d_size=`df -B 1000000 -P /home/data / | tr -s ' ' | cut -d ' ' -f 3 |
-        sed '1d ; $!s/$/+\\\/' | bc`
-# substract excluded dbs and livecd
-f_size=`du -B 1000000 -sc $dbexclude $livedir | tail -n 1 | cut -f 1`
+sys_size=`df -B 1000000 -P / |tr -s ' '| cut -d ' ' -f 3`
+data_size=`du -B 1000000 -sc $dbdir | tail -n 1 | cut -f 1`
 
-c_size=$(( (d_size - f_size) / 3 )) # a lot of text, thus more than 2
+# substract excluded dbs
+sub_size=0
+if [ "$dbexclude" ]; then
+	sub_size=`du -B 1000000 -sc $dbexclude | tail -n 1 | cut -f 1`
+fi
+
+# system has a lof of text, thus more than 2
+out_size=$(( sys_size / 3 + (data_size - sub_size) / 2 ))
 
 Xdialog --cancel-label=Cancel --ok-label=Continue --title "Archive publishing" \
---yesno "Based on the current hard disc usage ($d_size - $f_size MB),
-the estimated media utilization is $c_size MB." 0 0 || exit
+--yesno "Based on the current hard disc usage ($sys_size + $data_size - $sub_size MB),
+the estimated media utilization is $out_size MB." 0 0 || exit
 
 unint_xdialog_w_file ()
 {
@@ -136,8 +156,7 @@ unint_xdialog_w_file "The database archive and the currently running system
 are beeing compressed. This process will take quite some time." live.squash &
 set -x
 mksquashfs $dirs ./root/ live.squash -noappend -info -e \
-           /boot-cd /home/data/t2-trunk \
-           $livedir $dbexclude $ocrkey \
+           /boot-cd $dataexclude $dbexclude $ocrkey \
            /etc/conf/network /home/archivista/.xkb-layout
 set +x
 kill %- 2>/dev/null || true # the Xdialog
