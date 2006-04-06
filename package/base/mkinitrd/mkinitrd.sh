@@ -78,7 +78,7 @@ echo "Copying kernel modules ..."
 (
   find $moddir/kernel -type f | grep \
 	-e reiserfs -e reiser4 -e ext2 -e ext3 -e isofs -e /jfs -e /xfs \
-	-e /unionfs -e ntfs -e /dos -e dm-mod \
+	-e /unionfs -e ntfs -e fat -e dm-mod \
 	-e /ide/ -e /scsi/ -e hci -e usb-storage -e sbp2 |
   while read fn ; do
 
