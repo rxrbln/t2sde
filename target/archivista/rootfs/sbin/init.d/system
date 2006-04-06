@@ -123,8 +123,8 @@ case "$1" in
 
 	title "Setting up loopback networking."
 	ip link set lo up || error=$?
-	ip addr add 127.0.0.1/8 dev lo || error=$?
-	ip route add 127/8 dev lo || error=$?
+	[[ "$(ip addr show lo)" = *127.0.0.1/8* ]] ||
+		ip addr add 127.0.0.1/8 dev lo || error=$?
     	status
 
 	title "Setting overflow UID and GID kernel parameters."
@@ -174,32 +174,29 @@ case "$1" in
 
 	title "Turning off swap devices."
 	swapoff -a || error=$?
-	sync ; sleep 1
     	status
 
 	title "Remounting sync/ro and umount filesystems."
-	cut -d' ' -f-3 /etc/mtab /proc/mounts | sort -k2 -u -r | \
+	sync
+	cut -d' ' -f-3 /etc/mtab /proc/mounts | sort -k2 -u -r |
 	while read dev dir fs ; do
-		[ "$dir" = "/"        ] && continue
-		[ "$dir" = "/dev"     ] && continue
-		[ "$dir" = "/dev/shm" ] && continue
-		[ "$dir" = "/proc"    ] && continue
-		[ "$dir" = "/sys"     ] && continue
-		[ "$dir" = "/tmp"     ] && continue
-		echo "Umounting $dev on $dir ($fs)."
-		mount -o remount,sync $dir
-		mount -o remount,ro $dir
-		umount $dir
+		case "$dir" in
+		/|/dev|/proc|/sys|/tmp)	continue ;;
+		*)	echo "Umounting $dev on $dir ($fs)."
+			mount -o remount,sync $dir
+			mount -o remount,ro $dir
+			umount $dir ;;
+		esac
 	done
     	status
 
 	title "Unmounting remaining file systems."
-	grep -E -v '^none (/|[a-z]+:) ' /proc/mounts > /etc/mtab
-	sync ; sleep 1 ; sync
-	umount -vnra -t nodevfs,proc,sysfs,shm
+	grep -v -e '^none /[a-z]\+' -e ' / ' /proc/mounts > /etc/mtab
 	mount -vn -o remount,sync /
+	sync
+	umount -vran -t nodevfs,proc,sysfs
 	mount -vn -o remount,ro /
-	sleep 1 ; sync ; sleep 1
+	sync ; sleep 1
     	status
 
 	if [ "$INIT_DOES_REBOOTHALT" != "1" ]; then
