@@ -126,7 +126,6 @@ realpath() {
 main() {
     while
 	rootdev="`device4 /`"
-	rootdev=/dev/sda5
 	dev="${rootdev%%[0-9]*}"
 	bootdev="`device4 /boot`"
 	yabootdev="`device4 /usr`"
