@@ -190,5 +190,6 @@ rc apache start
 cleanup
 
 Xdialog --msgbox "Disc image generation completed.
-The ISO image filename is $PWD/$isoname." 0 0
+The compressed ISO image is `ls -sh $isoname | sed 's/ .*// ; s/M/ MB /'`
+and named $PWD/$isoname." 0 0
 
