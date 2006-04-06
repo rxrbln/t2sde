@@ -100,11 +100,11 @@ for dir in /home/data/* ; do
 	[ -d $dir ] || continue
 	case $dir in
 		# do include
-		archivista)
+		/home/data/archivista)
 			continue
 			;;
-		dataexclude="$dataexclude $dir"
 	esac
+	dataexclude="$dataexclude $dir"
 done
 echo "dataexclude: $dataexclude"
 
@@ -124,7 +124,8 @@ fi
 
 # approximate output size
 # disc usage
-sys_size=`df -B 1000000 -P / |tr -s ' '| cut -d ' ' -f 3`
+set -x
+sys_size=`df -B 1000000 -P / | tail -n 1 | tr -s ' ' | cut -d ' ' -f 3`
 data_size=`du -B 1000000 -sc $dbdir | tail -n 1 | cut -f 1`
 
 # substract excluded dbs
@@ -134,10 +135,12 @@ if [ "$dbexclude" ]; then
 fi
 
 # system has a lof of text, thus more than 2
-out_size=$(( sys_size / 3 + (data_size - sub_size) / 2 ))
+echo "$sys_size / 4 + ( $data_size - $sub_size ) / 2"
+out_size=$(( sys_size / 4 + ( data_size - sub_size ) / 2 ))
+out_size=$(( sys_size / 4 ))
 
 Xdialog --cancel-label=Cancel --ok-label=Continue --title "Archive publishing" \
---yesno "Based on the current hard disc usage ($sys_size + $data_size - $sub_size MB),
+--yesno "Based on the system and data to be archived ($((sys_size + data_size - sub_size)) MB),
 the estimated media utilization is $out_size MB." 0 0 || exit
 
 unint_xdialog_w_file ()
@@ -145,7 +148,8 @@ unint_xdialog_w_file ()
 	touch $2
 	while true; do
 		Xdialog --no-close --no-buttons --title 'Archive publishing' \
-		 --infobox "$1\n("`ls -sh $2 | cut -d ' ' -f1`"B done)" 0 0 5000
+		 --infobox "$1\n(`ls -sh $2 |
+  sed 's/ .*// ; s/M/ MB compressed/ ; s/^0$/creating file list/'`)" 0 0 5000
 	done
 }
 
