@@ -1,9 +1,10 @@
 #!/bin/bash
 
-pscount=`ps --no-headers -C publish.sh | wc -l`
+tmp=`mktemp`
+ps --no-headers -C publish.sh > $tmp
 
 # 2 due to foking a sub-process above :-(
-if [ $pscount -gt 2 ] ; then
+if [ `cat $tmp | wc -l` -gt 1 ] ; then
 	Xdialog --no-cancel --title 'Archive publishing' --msgbox \
 	        "There is already a publishing process running! Only one instance
 can compess the system, try again later." 0 0
