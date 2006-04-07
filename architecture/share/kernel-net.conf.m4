@@ -74,8 +74,11 @@ dnl Disable dangerous packet generator
 dnl
 # CONFIG_NET_PKTGEN is not set
 
-dnl A important BT setting
+dnl Important BT settings, RFCOM_TTY that is
 dnl
+CONFIG_BT=y
+CONFIG_BT_L2CAP=m
+CONFIG_BT_RFCOMM=m
 CONFIG_BT_RFCOMM_TTY=y
 
 dnl Enable ISDN drivers as modules
