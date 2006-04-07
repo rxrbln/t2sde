@@ -189,8 +189,78 @@ rc apache start
 
 cleanup
 
-Xdialog --title 'Archive publishing' --msgbox "Disc image generation completed.
+### ISO generation END ###
+
+Xdialog --title 'Archive publishing' \
+           --yesno "Disc image generation completed.
 The compressed ISO image is `ls -sh $isoname | sed 's/ .*// ; s/M/ MB /'` \
 and named
-$PWD/$isoname." 0 0
+$PWD/$isoname.
+Do you want to copy the archive to an USB device?" 0 0 || exit
 
+### USB device install BEGIN ###
+
+# prevent hotplug backup
+usblog=`mktemp`
+touch /tmp/hot.lock
+
+# wait for a stick injection
+usbdev=
+
+get_device_list () {
+# from livecd init, best kept in sync ,-) -ReneR
+	for x in /sys/block/*/device; do
+		case "`ls -l $x`" in
+	     */usb*|*/ieee1394) : ;;
+	     *) continue ;;
+		esac
+		x=${x%/device}; x=/dev/${x#/sys/block/}
+		echo -n " $x "
+		done
+}
+
+Xdialog --ok-label Cancel --title "Archive publishing" \
+        --msgbox "Waiting for USB device. Please insert
+the device you want to use." 0 0 &
+
+initial_list="`get_device_list`"
+dev=
+while [ -z "$dev" ] && jobs %- ; do # while no device and not cancel
+	sleep 1
+	# get a new list
+	new_list="`get_device_list`"
+
+	# is there new one?
+	for d in $new_list ; do
+		[ "${initial_list/ $d /}" = "$initial_list" ] && dev=$d
+	done
+	# update the list, so pulling a device and inserting one works (both sda)
+  initial_list="$new_list"
+done
+usbdev=$dev
+
+
+kill %- 2> /dev/null || true # the Xdialog
+[ "$usbdev" ] || exit
+sleep 1 # work around to let the above job disappear ...
+
+# convert it, multi threaded displaying
+Xdialog --no-close --no-buttons --title "Copying archive to USB device" \
+        --logbox $usblog 25 80 &
+
+echo -e "Copying archive to USB device ($usbdev):\n" > $usblog
+${0%/*}/iso2stick.sh ./$isoname $usbdev >> $usblog 2>&1 &
+
+if ! wait %2 ; then  # wait for the iso2stick
+	Xdialog --title "Archive publishing" --msgbox \
+	        "There was an error copying the archive." 0 0
+	kill %- 2> /dev/null # the Xdialog
+	exit
+fi
+kill %- 2> /dev/null # the Xdialog
+
+
+Xdialog --no-cancel --title "Archive publishing" \
+        --msgbox "Archive copied to the USB device." 0 0
+
+rm /tmp/hot.lock $usblog
