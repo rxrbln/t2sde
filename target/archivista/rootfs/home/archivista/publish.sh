@@ -259,8 +259,15 @@ if ! wait %2 ; then  # wait for the iso2stick
 fi
 kill %- 2> /dev/null # the Xdialog
 
+rm /tmp/hot.lock $usblog
+
+### USB device install END ###
 
 Xdialog --no-cancel --title "Archive publishing" \
         --msgbox "Archive copied to the USB device." 0 0
 
-rm /tmp/hot.lock $usblog
+if Xdialog --default-no --title "Archive publishing" \
+           --yesno "Delete published archive now?" 0 0; then
+	rm -v ./$isoname
+fi
+
