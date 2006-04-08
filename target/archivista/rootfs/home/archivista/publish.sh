@@ -227,12 +227,18 @@ while [ -z "$dev" ] && jobs %- ; do # while no device and not cancel
 	# get a new list
 	new_list="`get_device_list`"
 
-	# is there new one?
-	for d in $new_list ; do
-		[ "${initial_list/ $d /}" = "$initial_list" ] && dev=$d
+	# is there a new one?
+	new_one=0
+	for d in $new_list; do
+		if [ "${initial_list/ $d /}" = "$initial_list" ]; then
+			new_one=1
+			[ -e "$d" ] && dev=$d	# u/dev device node exits?
+		fi
 	done
-	# update the list, so pulling a device and inserting one works (both sda)
-  initial_list="$new_list"
+	if [ $new_one -eq 0 ]; then
+		# update the list, so pulling a device and inserting one works (both sda)
+  	initial_list="$new_list"
+	fi
 done
 usbdev=$dev
 
