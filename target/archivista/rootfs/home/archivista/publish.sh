@@ -163,14 +163,13 @@ mksquashfs $dirs ./root/ live.squash -noappend -info -e \
 set +x
 kill %- 2>/dev/null || true # the Xdialog
 
+isoname=`date "+av-%Y%m%d-%H%M.iso"`
 
 unint_xdialog_w_file "The final disc image is beeing created.
-This process will take a few minutes." av.iso &
+This process will take a few minutes." $isoname &
 
 # copy initrd, grub, ...
 cp -ar /boot-cd boot
-
-isoname=`date "+av-%Y%m%d-%H%M.iso"`
 
 # mkisofs, heavily copied out of the T2 sources, since there we add all the
 # magic glue automagically ,-)))
