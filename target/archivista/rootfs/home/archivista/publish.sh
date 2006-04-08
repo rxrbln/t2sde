@@ -135,9 +135,7 @@ if [ "$dbexclude" ]; then
 fi
 
 # system has a lof of text, thus more than 2
-echo "$sys_size / 4 + ( $data_size - $sub_size ) / 2"
-out_size=$(( sys_size / 4 + ( data_size - sub_size ) / 2 ))
-out_size=$(( sys_size / 4 ))
+out_size=$(( sys_size / 3 + ( data_size - sub_size ) / 2 ))
 
 Xdialog --cancel-label=Cancel --ok-label=Continue --title "Archive publishing" \
 --yesno "Based on the system and data to be archived ($((sys_size + data_size - sub_size)) MB),
@@ -149,7 +147,7 @@ unint_xdialog_w_file ()
 	while true; do
 		Xdialog --no-close --no-buttons --title 'Archive publishing' \
 		 --infobox "$1\n(`ls -sh $2 |
-  sed 's/ .*// ; s/M/ MB compressed/ ; s/^0$/creating file list/'`)" 0 0 5000
+  sed 's/ .*// ; s/M/ MB compressed/ ; s/^0$/creating file list/'`)" 0 0 20000
 	done
 }
 
