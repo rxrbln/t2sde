@@ -1,5 +1,12 @@
 #!/bin/bash
 
+# In-system livecd regenerator/repacker that will clone the installed
+# system back to an ISO or USB device suiteable for booting and
+# installation and even display a progress bar thru Xdialog while doing so.
+#
+# Copyright (C) 2006 Archivista GmbH
+# Copyright (C) 2006 Rene Rebe
+
 tmp=`mktemp`
 ps --no-headers -C publish.sh > $tmp
 
@@ -44,7 +51,11 @@ for x in * ; do
 	esac
 	dbs[$((i++))]="$i"
 	dbs[$((i++))]="$x"
-	dbs[$((i++))]="on"
+	if [ "$x" = archivista ]; then
+		dbs[$((i++))]="on"
+	else
+		dbs[$((i++))]="off"
+	fi
 done
 
 while [ -z "$d" ]; do
