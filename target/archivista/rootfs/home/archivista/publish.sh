@@ -147,7 +147,7 @@ unint_xdialog_w_file ()
 	while true; do
 		Xdialog --no-close --no-buttons --title 'Archive publishing' \
 		 --infobox "$1\n(`ls -sh $2 |
-  sed 's/ .*// ; s/M/ MB compressed/ ; s/^0$/creating file list/'`)" 0 0 20000
+  sed 's/ .*// ; s/M/ MB written/ ; s/^0$/creating file list/'`)" 0 0 20000
 	done
 }
 
