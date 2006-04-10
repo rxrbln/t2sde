@@ -100,6 +100,10 @@ for dir in /* ; do
 			mkdir -p root$dir
 			continue
 			;;
+		# just skip
+		/boot-cd)
+			continue
+			;;
 		# we need to slightly tweak /etc
 		/etc)
 			rsync -art $dir/ root$dir/
@@ -175,8 +179,8 @@ rc mysql stop
 unint_xdialog_w_file "The database archive and the currently running system
 are beeing compressed. This process will take quite some time." live.squash &
 set -x
-mksquashfs $dirs ./root/ live.squash -noappend -info -e \
-           /boot-cd $dataexclude $dbexclude $ocrkey \
+mksquashfs $dirs ./root/* live.squash -noappend -info -e \
+           $dataexclude $dbexclude $ocrkey \
            /home/archivista/.xkb-layout
 set +x
 kill %- 2>/dev/null || true # the Xdialog
