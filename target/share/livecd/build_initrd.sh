@@ -27,7 +27,7 @@ cd $build_toolchain
 rm -rf initramfs
 mkdir -p initramfs/{bin,sbin}
 
-cp $base/misc/target/output/livecd/{init,init2} initramfs/
+cp $base/target/share/livecd/{init,init2} initramfs/
 chmod +x initramfs/{init,init2}
 
 # For each available kernel:
