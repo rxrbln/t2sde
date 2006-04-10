@@ -18,5 +18,5 @@ isofsdir="$build_toolchain/isofs"      # for the ISO9660 content
 disksdir="$build_toolchain/disks"      # for boot-disks, if any
 
 # create the 1st stage loader initrd's first
-. $base/misc/target/output/install/build_initrd.sh
-. $base/misc/target/output/install/build_stage2.sh
+. $base/target/share/install/build_initrd.sh
+. $base/target/share/install/build_stage2.sh

@@ -30,7 +30,7 @@ mkdir -p initramfs/{bin,sbin}
 cp $build_root/usr/embutils/{tar,readlink,rmdir} initramfs/bin/
 cp $build_root/usr/bin/fget initramfs/bin/
 
-cp $base/misc/target/output/install/init initramfs/
+cp $base/target/share/install/init initramfs/
 chmod +x initramfs/init
 
 # For each available kernel:
