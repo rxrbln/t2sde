@@ -100,6 +100,13 @@ for dir in /* ; do
 			mkdir -p root$dir
 			continue
 			;;
+		# we need to slightly tweak /etc
+		/etc)
+			rsync -art $dir/ root$dir/
+			sed -i '/^[^ ]*dev[^ ]* /d' root/etc/fstab
+			rm root/etc/mtab* root/etc/conf/network
+			continue
+			;;
 	esac
 	dirs="$dirs $dir"
 done
@@ -170,7 +177,7 @@ are beeing compressed. This process will take quite some time." live.squash &
 set -x
 mksquashfs $dirs ./root/ live.squash -noappend -info -e \
            /boot-cd $dataexclude $dbexclude $ocrkey \
-           /etc/conf/network /home/archivista/.xkb-layout
+           /home/archivista/.xkb-layout
 set +x
 kill %- 2>/dev/null || true # the Xdialog
 
