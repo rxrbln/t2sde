@@ -77,8 +77,12 @@ while [ $i -lt $n ]; do
 		echo $i selected
 	else
 		echo $i not seleted
-		[ "${dbs[$((i+1))]}" = archivista ] && archivistadb=0
-		dbexclude="$dbexclude $dbdir/${dbs[$((i+1))]}"
+		if [ "${dbs[$((i+1))]}" = archivista ]; then
+			archivistadb=0
+			dbexclude="$dbexclude $dbdir/__archivista"
+		else
+			dbexclude="$dbexclude $dbdir/${dbs[$((i+1))]}"
+		fi
 	fi
 
   : $(( i += 3 ))
@@ -117,7 +121,7 @@ done
 echo "dirs: $dirs"
 
 # list of data exclude dirs
-dataexclude=
+dataexclude=/home/mysql.orig
 for dir in /home/data/* ; do
 	[ -d $dir ] || continue
 	case $dir in
@@ -134,26 +138,16 @@ echo "dataexclude: $dataexclude"
 # possibly injecting the default archivista db
 chmod 1777 root/tmp
 
-if [ $archivistadb = 0 ]; then
-	mkdir -p root$dbdir/archivista
-	# copy the vanilla files and add the remaining tables
-	cp /home/mysql.orig/* root$dbdir/archivista
-	for x in $dbdir/archivista/* ; do
-		[ -f root$dbdir/archivista/${x##*/} ] ||
-		  cp -v $x root$dbdir/archivista/
-	done
-fi
-
 # approximate output size
 # disc usage
-set -x
 sys_size=`df -B 1000000 -P / | tail -n 1 | tr -s ' ' | cut -d ' ' -f 3`
 data_size=`du -B 1000000 -sc $dbdir | tail -n 1 | cut -f 1`
 
 # substract excluded dbs
 sub_size=0
 if [ "$dbexclude" ]; then
-	sub_size=`du -B 1000000 -sc $dbexclude | tail -n 1 | cut -f 1`
+	sub_size=`du -B 1000000 -sc ${dbexclude//__archivista/archivista} |
+	          tail -n 1 | cut -f 1`
 fi
 
 # system has a lof of text, thus more than 2
@@ -175,6 +169,19 @@ unint_xdialog_w_file ()
 
 rc apache stop
 rc mysql stop
+
+if [ $archivistadb = 0 ]; then
+	# backup
+	mv $dbdir/{archivista,__archivista}
+	# new minimal
+	mkdir -p $dbdir/archivista
+	cp /home/mysql.orig/* $dbdir/archivista/
+	# copy missing
+	for x in $dbdir/__archivista/* ; do
+		[ -f $dbdir/archivista/${x##*/} ] ||
+			cp -v $x $dbdir/archivista/
+	done
+fi
 
 unint_xdialog_w_file "The database archive and the currently running system
 are beeing compressed. This process will take quite some time." live.squash &
@@ -202,6 +209,12 @@ mkisofs -q -r -T -J -l -o $isoname -A "Archivista Box" \
 chown archivista:users $isoname
 
 kill %- 2> /dev/null || true # the Xdialog
+
+if [ $archivistadb = 0 ]; then
+	# restore
+	rm -rf $dbdir/archivista
+	mv $dbdir/{__archivista,archivista}
+fi
 
 rc mysql start
 rc apache start
