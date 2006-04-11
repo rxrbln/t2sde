@@ -113,7 +113,11 @@ for dir in /* ; do
 		/etc)
 			rsync -art $dir/ root$dir/
 			sed -i '/^[^ ]*dev[^ ]* /d' root/etc/fstab
-			rm root/etc/mtab* root/etc/conf/network
+			rm root/etc/mtab* root/etc/conf/network || true
+			rm root/etc/net-backup.conf root/etc/rsync-backup.conf || true
+			rm root/etc/mail.conf || true
+			rm root/etc/ssh/*key* || true
+			sed -i '/home\/archivista\//d' root/etc/crontab
 			continue
 			;;
 	esac
@@ -189,7 +193,10 @@ are beeing compressed. This process will take quite some time." live.squash &
 set -x
 mksquashfs $dirs ./root/* live.squash -noappend -info -e \
            $dataexclude $dbexclude $ocrkey \
-           /home/archivista/.xkb-layout
+           /home/archivista/.xkb-layout \
+           /root/.ssh /home/archivista/.ssh /home/archivista/.gnupg \
+           /home/data/archivista/mysql/*-bin.* \
+           /home/data/archivista/mysql/{ib_*,ibdata1}
 set +x
 kill %- 2>/dev/null || true # the Xdialog
 
