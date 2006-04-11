@@ -83,6 +83,7 @@ while [ $i -lt $n ]; do
 		else
 			dbexclude="$dbexclude $dbdir/${dbs[$((i+1))]}"
 		fi
+		dbexclude="$dbexclude /home/data/archivista/images/${dbs[$((i+1))]}"
 	fi
 
   : $(( i += 3 ))
