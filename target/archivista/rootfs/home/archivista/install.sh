@@ -244,7 +244,7 @@ rsync -arvP --exclude TRANS.TBL /media/cdrom/boot/ /mnt/target/boot-cd
 	mkdir -p /mnt/target/home/mysql.orig
 	cd /mnt/target/home/mysql.orig
 	for db in archiv archivbilder archivseiten ; do
-		cp -fv /mnt/live/home/data/archivista/mysql/archivista/$db.* .
+		cp -afv /mnt/live/home/data/archivista/mysql/archivista/$db.* .
 	done
 )
 

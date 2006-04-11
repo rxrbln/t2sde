@@ -180,12 +180,14 @@ if [ $archivistadb = 0 ]; then
 	mv $dbdir/{archivista,__archivista}
 	# new minimal
 	mkdir -p $dbdir/archivista
-	cp /home/mysql.orig/* $dbdir/archivista/
+	cp -afv /home/mysql.orig/* $dbdir/archivista/
 	# copy missing
 	for x in $dbdir/__archivista/* ; do
 		[ -f $dbdir/archivista/${x##*/} ] ||
-			cp -v $x $dbdir/archivista/
+			cp -afv $x $dbdir/archivista/
 	done
+	# TODO, remove after check
+	chown -R mysql:mysql $dbdir/archivista/
 fi
 
 unint_xdialog_w_file "The database archive and the currently running system
