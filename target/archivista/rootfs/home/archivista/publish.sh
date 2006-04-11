@@ -236,6 +236,7 @@ Do you want to copy the archive to an USB device?" 0 0 || exit
 # prevent hotplug backup
 usblog=`mktemp`
 touch /tmp/hot.lock
+rc hal stop
 
 # wait for a stick injection
 usbdev=
@@ -251,6 +252,9 @@ get_device_list () {
 		echo -n " $x "
 		done
 }
+
+archived=0
+while [ $archived -eq 0 ]; do
 
 Xdialog --ok-label Cancel --title "Archive publishing" \
         --msgbox "Waiting for USB device. Please insert
@@ -280,8 +284,19 @@ usbdev=$dev
 
 
 kill %- 2> /dev/null || true # the Xdialog
-[ "$usbdev" ] || exit
+if [ -z "$usbdev" ]; then
+	rm /tmp/hot.lock
+	rc hal start
+	exit
+fi
+
 sleep 1 # work around to let the above job disappear ...
+
+if ! Xdialog --title "Archive publishing" --yesno \
+"Really copy the archive to the USB device ($usbdev)?
+All data will be lost!" 0 0; then
+	continue
+fi
 
 # convert it, multi threaded displaying
 Xdialog --no-close --no-buttons --title "Copying archive to USB device" \
@@ -294,11 +309,15 @@ if ! wait %2 ; then  # wait for the iso2stick
 	Xdialog --title "Archive publishing" --msgbox \
 	        "There was an error copying the archive." 0 0
 	kill %- 2> /dev/null # the Xdialog
-	exit
+	continue
 fi
 kill %- 2> /dev/null # the Xdialog
+archived=1
+
+done
 
 rm /tmp/hot.lock $usblog
+rc hal start
 
 ### USB device install END ###
 
