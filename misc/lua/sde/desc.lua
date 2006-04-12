@@ -35,7 +35,9 @@ desc.__format__ = {}
 function desc.parse(iter)
 	local retval = {}
 
-	for line in iter do
+ 	-- FIXME: Perhaps we'll gain some performance by not reading
+	--        line by line 
+	for line in io.open(iter):lines() do
 		local tag,cnt
 
 		_,_,tag,cnt = string.find(line, "([[][^]]*[]])[ ]+(.*)")
