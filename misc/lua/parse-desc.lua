@@ -18,10 +18,10 @@
 -- this file looks quite complicated already, but a comparsion to grep might help:
 --
 -- time lua misc/lua/parse-desc.lua package/base/*/*.desc > /dev/null
--- time time grep "^[[]" package/base/*/*.desc > /dev/null
+-- time grep "^[[]" package/base/*/*.desc > /dev/null
 --
 
-require "t2/desc"
+require "misc/lua/sde/desc"
 
 if #arg < 1 then
    print("Usage: lua misc/lua/parse-desc.lua [path-to-desc-file]")
@@ -40,7 +40,7 @@ for i,file in ipairs(arg) do
       _,_,repo,pkg = string.find(file, "package/([^/]*)/([^/]*)/*");
 
       -- put all parsed files into a table
-      pkgs[pkg] = t2_desc.parse_file(file)
+      pkgs[pkg] = desc.parse(file)
    end
 end
 
