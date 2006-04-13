@@ -26,6 +26,15 @@ update_ftp_hash=`grep '^ftp:' etc/shadow | cut -d : -f 2`
 update_root_perl_passwd=`grep 'MYSQL_PWD' \
                          home/cvs/archivista/apcl/Archivista/Config.pm | cut -d \" -f 2`
 
+# database slave mode
+set -x
+if grep -q '^server-id.*= 2' etc/my.cnf; then
+	update_db_master_host=`sed -n 's/^master-host[^=]*= *//p' etc/my.cnf`
+	update_db_master_user=`sed -n 's/^master-user[^=]*= *//p' etc/my.cnf`
+  update_db_master_password=`sed -n 's/^master-password[^=]*= *//p' etc/my.cnf`
+fi
+set +x
+
 # gnupg key
 cp -rfv home/archivista/.gnupg $to/ 2>/dev/null
 
