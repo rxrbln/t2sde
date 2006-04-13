@@ -187,7 +187,7 @@ if [ "$update_rsync_backup" ]; then
 		cp -fv $from/rsync-backup.conf etc/
 		mkdir -p root/.ssh
 		cp -rv $from/rsync-backup/id_rsa* root/.ssh/
-		chmod 700 root/.ssh ; chmod 600 root/.ssh/id_rsa
+		chmod 700 root/.ssh ; chmod 600 root/.ssh/id_rsa*
 	fi
 fi
 
