@@ -60,6 +60,18 @@ if [ "$update_root_perl_passwd" -a $full = 0 ]; then
 	fi
 fi
 
+# database slave mode
+if [ "$update_db_master_host" ]; then
+	echo "database slave setup"
+	if [ $doit = 1 ]; then
+		sed -i -e "s/.*server-id.*/server-id = 2/" \
+		       -e "s/.*master-host.*$/master-host = $update_db_master_host/" \
+		       -e "s/.*master-user.*$/master-user = $update_db_master_user/" \
+		       -e "s/.*master-password.*$/master-password = $update_db_master_password/" \
+		       etc/my.cnf
+	fi
+fi
+
 # gnupg key
 if [ -e $from/.gnupg ]; then
 	echo "encryption keys"
