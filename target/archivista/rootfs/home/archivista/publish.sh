@@ -128,7 +128,6 @@ echo "dirs: $dirs"
 # list of data exclude dirs
 dataexclude=/home/mysql.orig
 for dir in /home/data/* ; do
-	[ -d $dir ] || continue
 	case $dir in
 		# do include
 		/home/data/archivista)
