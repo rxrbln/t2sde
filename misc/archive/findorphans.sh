@@ -15,6 +15,7 @@
 
 config=default
 root=
+folders=
 
 usage() {
 	echo "usage: $0 [-cfg <config>|-root <root>|-system]"
@@ -26,6 +27,7 @@ while [ $# -gt 0 ]; do
 		root= ; shift ;;
 	-root)	root="$2"; shift ;;
 	-system) root=/ ;;
+	-just)	shift; folders="$@"; break ;;
 	-help)	usage; exit 0 ;;
 	*)	echo "ERROR: unknown argument '$1'"
 		usage; exit 1 ;;
@@ -51,8 +53,14 @@ fi
 flists=$( cd "$root"; echo var/adm/flists/* )
 realroot=$( cd "$root"; pwd )
 
+findroot=
+for f in $folders; do
+	findroot="$findroot $realroot/${f#/}"
+done
+[ "$findroot" ] || findroot="$realroot"
+
 pushd "$realroot" > /dev/null
-find "$realroot" -mindepth 1 \
+find $findroot -mindepth 1 \
 	\( -path "$realroot/TOOLCHAIN" -o \
 	   -path "$realroot/proc" -o \
 	   -path "$realroot/tmp" -o \
@@ -63,4 +71,4 @@ find "$realroot" -mindepth 1 \
 			echo "$file"
 		fi
 done
-popd
+popd > /dev/null
