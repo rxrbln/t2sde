@@ -55,6 +55,7 @@ cat << EOT
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/file.h>
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <unistd.h>
@@ -458,8 +459,13 @@ static void handle_file_access_after(const char * func, const char * file,
 #endif
 	if (fd == -1) return;
 
-	sprintf(buf,"%s.%s:\t%s\n", cmdname, func, absfile);
-	write(fd,buf,strlen(buf));
+        flock(fd, LOCK_EX);
+        lseek(fd, 0, SEEK_END);
+
+        sprintf(buf,"%s.%s:\t%s\n", cmdname, func, absfile);
+        write(fd,buf,strlen(buf));
+
+        flock(fd, LOCK_UN);
 
 	close(fd);
 #if DEBUG == 1
