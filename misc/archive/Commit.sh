@@ -51,22 +51,35 @@ grep -v === $$.diff | awk "
 " > $$.log
 
 if [ -s $$.diff ]; then
-quit=0
-until [ $quit -ne 0 ]; do
+	quit=0
+	until [ $quit -ne 0 ]; do
 
-	echo -e "\nLog:"
-	cat $$.log
+		echo -e "\nLog:"
+		if [ -s $$.log ]; then
+			cat $$.log
+		
+			echo -en "\nLog ok (q=quit,e=edit,c=commit)? "
+			read in
 
-	echo -en "\nLog ok (q=quit,e=edit,c=commit)? "
-	read in
+			case "$in" in
+			  c*) svn commit $locations --file $$.log ; quit=1 ;;
+			  e*) $EDITOR $$.log ;;
+			  q*) quit=1 ;;
+			  *) echo "Excuse me?"
+			esac
+		else			
+			echo -e "\tEmpty Log File!"
+			
+			echo -en "\nLog ok (q=quit,e=edit)? "
+			read in
 
-	case "$in" in
-	  c*) svn commit $locations --file $$.log ; quit=1 ;;
-	  e*) $EDITOR $$.log ;;
-	  q*) quit=1 ;;
-	  *) echo "Excuse me?"
-	esac
-done
+			case "$in" in
+			  q*) quit=1 ;;
+			  e*) $EDITOR $$.log ;;
+			  *) echo "Excuse me?"
+			esac
+		fi
+	done
 else
 	echo -e "\nNo changes detected at:$locations"
 	svn st $locations
