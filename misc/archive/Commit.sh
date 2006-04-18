@@ -27,8 +27,11 @@ for x; do
 	locations="$locations $x"
 done	
 		
+echo "Diff:"
+svn diff $locations | tee $$.diff
+
 # the grep -v === is a hack - somehow the svn === lines confuse awk ... ?!?
-svn diff $locations | grep -v === | awk "
+grep -v === $$.diff | awk "
 	BEGIN { FS=\"[ /]\" }
 
 	/^\+\+\+ / { pkg = \$4 }
@@ -47,9 +50,7 @@ svn diff $locations | grep -v === | awk "
 
 " > $$.log
 
-echo "Diff:"
-svn diff $locations
-
+if [ -s $$.diff ]; then
 quit=0
 until [ $quit -ne 0 ]; do
 
@@ -66,6 +67,10 @@ until [ $quit -ne 0 ]; do
 	  *) echo "Excuse me?"
 	esac
 done
+else
+	echo -e "\nNo changes detected at:$locations"
+	svn st $locations
+fi
 
-rm $$.log
+rm $$.log $$.diff
 
