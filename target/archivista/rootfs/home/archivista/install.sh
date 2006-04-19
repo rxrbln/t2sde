@@ -248,8 +248,10 @@ rsync -arvP --exclude TRANS.TBL /media/cdrom/boot/ /mnt/target/boot-cd
 	done
 )
 
+rm -f /mnt/target/etc/mtab*
 cat >> /mnt/target/etc/fstab <<-EOT
-${part%[0-9]}3	swap		swap	defaults        0 0
+${part}	/		auto	defaults	0 0
+${part%[0-9]}3	swap		swap	defaults	0 0
 ${part%[0-9]}4	/home/data	auto	defaults	0 0
 EOT
 
