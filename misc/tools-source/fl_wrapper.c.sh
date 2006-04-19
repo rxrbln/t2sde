@@ -459,13 +459,11 @@ static void handle_file_access_after(const char * func, const char * file,
 #endif
 	if (fd == -1) return;
 
-        flock(fd, LOCK_EX);
-        lseek(fd, 0, SEEK_END);
+    flock(fd, LOCK_EX);
+    lseek(fd, 0, SEEK_END);
 
-        sprintf(buf,"%s.%s:\t%s\n", cmdname, func, absfile);
-        write(fd,buf,strlen(buf));
-
-        flock(fd, LOCK_UN);
+    sprintf(buf,"%s.%s:\t%s\n", cmdname, func, absfile);
+    write(fd,buf,strlen(buf));
 
 	close(fd);
 #if DEBUG == 1
