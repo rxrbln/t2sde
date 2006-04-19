@@ -85,8 +85,7 @@ while [ $i -lt $n ]; do
 		fi
 		dbexclude="$dbexclude /home/data/archivista/images/${dbs[$((i+1))]}"
 	fi
-
-  : $(( i += 3 ))
+	: $(( i += 3 ))
 done
 
 echo database exclude: $dbexclude
@@ -216,6 +215,15 @@ mkisofs -q -r -T -J -l -o $isoname -A "Archivista Box" \
         -b boot/grub/stage2_eltorito -no-emul-boot -boot-load-size 4 -boot-info-table \
         --graft-points live.squash boot=boot
 chown archivista:users $isoname
+
+if [ `du -B 1 --apparent-size live.squash | cut --f 1` -gt \
+     `du -B 1 --apparent-size $isoname    | cut --f 1` ]; then
+	Xdialog --title 'Archive publishing' --msgbox \
+"The resulting ISO image has a size less than the compressed
+file-system. Most probably it hit a limitation of the ISO9660
+standard due to file size limitations." 0 0
+	exit
+fi
 
 kill %- 2> /dev/null || true # the Xdialog
 
