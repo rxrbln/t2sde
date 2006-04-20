@@ -38,7 +38,7 @@ ocrkey=/home/archivista/.wine/drive_c/Programs/Av5e/av5.con
 
 cleanup ()
 {
-	rm -rf live.squash boot root
+	rm -rf boot root
 }
 
 # database selection from the user
@@ -92,7 +92,7 @@ echo database exclude: $dbexclude
 echo archivista db: $archivistadb
 
 mkdir -p $livedir/root ; cd $livedir
-cleanup
+cleanup ; rm -f live.squash
 
 # list of top-level dirs
 dirs=
@@ -156,9 +156,20 @@ fi
 # system has a lof of text, thus more than 2
 out_size=$(( sys_size / 3 + ( data_size - sub_size ) / 2 ))
 
-Xdialog --cancel-label=Cancel --ok-label=Continue --title "Archive publishing" \
---yesno "Based on the system and data to be archived ($((sys_size + data_size - sub_size)) MB),
-the estimated media utilization is $out_size MB." 0 0 || exit
+uncompr=`Xdialog --stdout --no-tags --title "Archive publishing" --radiolist \
+         "Based on the system and data to be archived ($((sys_size + data_size - sub_size)) MB),
+the estimated compressed media utilization is $out_size MB.
+
+Please choose whether the archive should be compressed.
+An uncompressed publications can be created faster but
+is about 1GB + 20% of the database size larger and can
+not be placed on an optical disc." 0 0 3 \
+         compressed compressed on uncompressed uncompressed off` || exit
+if [ "$uncompr" = compressed ]; then
+	uncompr=
+else
+  uncompr="-noD" # -noI -noF
+fi
 
 unint_xdialog_w_file ()
 {
@@ -189,9 +200,9 @@ if [ $archivistadb = 0 ]; then
 fi
 
 unint_xdialog_w_file "The database archive and the currently running system
-are beeing compressed. This process will take quite some time." live.squash &
+are beeing archived. This process will take quite some time." live.squash &
 set -x
-mksquashfs $dirs ./root/* live.squash -noappend -info -e \
+mksquashfs $dirs ./root/* live.squash -noappend -info $uncompr -e \
            $dataexclude $dbexclude $ocrkey \
            /home/archivista/.xkb-layout \
            /root/.ssh /home/archivista/.ssh /home/archivista/.gnupg \
@@ -202,26 +213,38 @@ kill %- 2>/dev/null || true # the Xdialog
 
 isoname=`date "+av-%Y%m%d-%H%M.iso"`
 
-unint_xdialog_w_file "The final disc image is beeing created.
+# only include the live.squash and show the progress if the ISO should
+# be compressed, uncompressed we only place the boot code in the ISO so
+# it is available for iso2stick to make the stick bootable as usual
+if [ "$uncompr" ]; then
+	lq=
+else
+	lq=live.squash
+	unint_xdialog_w_file "The final disc image is beeing created.
 This process will take a few minutes." $isoname &
+fi
 
 # copy initrd, grub, ...
 cp -ar /boot-cd boot
 
 # mkisofs, heavily copied out of the T2 sources, since there we add all the
 # magic glue automagically ,-)))
+set -x
 mkisofs -q -r -T -J -l -o $isoname -A "Archivista Box" \
         -publisher 'Archivista Box based on the T2 SDE' \
-        -b boot/grub/stage2_eltorito -no-emul-boot -boot-load-size 4 -boot-info-table \
-        --graft-points live.squash boot=boot
+        -b boot/grub/stage2_eltorito -no-emul-boot \
+        -boot-load-size 4 -boot-info-table \
+        --graft-points $lq boot=boot
+set +x
 chown archivista:users $isoname
 
-if [ `du -B 1 --apparent-size live.squash | cut --f 1` -gt \
+if [ -z "$uncompr" -a \
+     `du -B 1 --apparent-size live.squash | cut --f 1` -gt \
      `du -B 1 --apparent-size $isoname    | cut --f 1` ]; then
 	Xdialog --title 'Archive publishing' --msgbox \
 "The resulting ISO image has a size less than the compressed
-file-system. Most probably it hit a limitation of the ISO9660
-standard due to file size limitations." 0 0
+file-system. Most probably it hit the 4GB file size limit of
+the ISO9660 standard." 0 0
 	exit
 fi
 
@@ -240,12 +263,15 @@ cleanup
 
 ### ISO generation END ###
 
-Xdialog --title 'Archive publishing' \
-           --yesno "Disc image generation completed.
+if [ -z "$uncompr" ]; then
+	rm live.squash
+	Xdialog --title 'Archive publishing' \
+	        --yesno "Disc image generation completed.
 The compressed ISO image is `ls -sh $isoname | sed 's/ .*// ; s/M/ MB /'` \
 and named
 $PWD/$isoname.
 Do you want to copy the archive to an USB device?" 0 0 || exit
+fi
 
 ### USB device install BEGIN ###
 
@@ -318,8 +344,17 @@ fi
 Xdialog --no-close --no-buttons --title "Copying archive to USB device" \
         --logbox $usblog 25 80 &
 
+# additionally inject the non-ISO live.squash in the uncompressed case
+if [ "$uncompr" ]; then
+	lq=live.squash
+else
+	lq=
+fi
+
 echo -e "Copying archive to USB device ($usbdev):\n" > $usblog
-${0%/*}/iso2stick.sh ./$isoname $usbdev >> $usblog 2>&1 &
+set -x
+${0%/*}/iso2stick.sh ./$isoname $usbdev $lq >> $usblog 2>&1 &
+set +x
 
 if ! wait %2 ; then  # wait for the iso2stick
 	Xdialog --title "Archive publishing" --msgbox \
