@@ -57,32 +57,25 @@ if [ -s $$.diff ]; then
 		echo -e "\nLog:"
 		if [ -s $$.log ]; then
 			cat $$.log
-		
-			echo -en "\nLog ok (q=quit,e=edit,d=diff,s=status,c=commit)? "
-			read in
-
-			case "$in" in
-			  c*) svn commit $locations --file $$.log ; quit=1 ;;
-			  d*) less $$.diff ;;
-			  s*) svn st $locations ;;
-			  e*) $EDITOR $$.log ;;
-			  q*) quit=1 ;;
-			  *) echo "Excuse me?"
-			esac
-		else			
+			commit=",c=commit"
+		else
 			echo -e "\tEmpty Log File!"
-			
-			echo -en "\nLog ok (q=quit,e=edit,d=diff,s=status)? "
-			read in
-
-			case "$in" in
-			  d*) less $$.diff ;;
-			  s*) svn st $locations ;;
-			  q*) quit=1 ;;
-			  e*) $EDITOR $$.log ;;
-			  *) echo "Excuse me?"
-			esac
+			commit=
 		fi
+		
+		echo -en "\nLog ok (q=quit,e=edit,d=diff,s=status$commit)? "
+		read in
+
+		case "$in" in
+		  c*)	if [ -n "$commit" ]; then
+		  		svn commit $locations --file $$.log ; quit=1
+			fi ;;
+		  d*)	less $$.diff ;;
+		  s*)	svn st $locations ;;
+		  e*)	$EDITOR $$.log ;;
+		  q*)	quit=1 ;;
+		  *)	echo "Excuse me?"
+		esac
 	done
 else
 	echo -e "\nNo changes detected at:$locations"
