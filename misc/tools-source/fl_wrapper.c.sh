@@ -403,11 +403,43 @@ static void handle_file_access_before(const char * func, const char * file,
 #endif
 }
 
+/* sort of, private realpath, mostly not readlink() */
+static void sort_of_realpath (const char *file, char *absfile)
+{
+	/* make sure the filename is absolute */
+	if (file[0] != '/') {
+		char cwd[PATH_MAX];
+		getcwd(cwd, PATH_MAX);
+		snprintf(absfile, PATH_MAX, "%s/%s", cwd, file);
+		file = absfile;
+	}
+
+	const char* src = file; char* dst = absfile;
+	/* till the end, remove ./ and ../ parts */
+	while (dst < absfile + PATH_MAX && *src) {
+		if (*src == '.') {
+			if (src[1] == '.' && src[2] == '/') {
+				if (dst > file) --dst; /* jump to last '/' */
+				while (dst > file && dst[-1] != '/')
+					--dst;
+				src += 3;
+				continue;
+			}
+			else if (src[1] == '/') {
+				src += 2;
+				continue;
+			}
+		}
+		*dst++ = *src++;
+	}
+	*dst = 0;
+}
+
 static void handle_file_access_after(const char * func, const char * file,
                               struct status_t * status)
 {
-	char buf[PATH_MAX], buf2 [PATH_MAX], *logfile, filterdir2 [PATH_MAX], *tfilterdir;
-	const char *absfile;
+	char buf[PATH_MAX], *logfile, filterdir2 [PATH_MAX], *tfilterdir;
+	char absfile [PATH_MAX];
 	int fd; struct stat st;
 
 #if DEBUG == 1
@@ -424,15 +456,8 @@ static void handle_file_access_after(const char * func, const char * file,
 	else { logfile = rlog; }
         if ( logfile == 0 ) return;
 
-	/* make sure the filename is absolute */
-	if (file[0] == '/') {
-		absfile = file;
-        } else {
-		char cwd[PATH_MAX];
-		getcwd(cwd, PATH_MAX);
-                snprintf(buf2, PATH_MAX, "%s/%s", cwd, file);
-		absfile = buf2;
-	}
+	/* make sure the filename is "canonical" */
+	sort_of_realpath (file, absfile);
 
 	/* We ignore access inside the collon seperated directory list
 	   $FLWRAPPER_BASE, to keep the log smaller and reduce post
