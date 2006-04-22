@@ -168,7 +168,7 @@ not be placed on an optical disc." 0 0 3 \
 if [ "$uncompr" = compressed ]; then
 	uncompr=
 else
-  uncompr="-noD" # -noI -noF
+  uncompr="-noD -noI -noF -no-duplicates"
 fi
 
 unint_xdialog_w_file ()
