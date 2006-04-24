@@ -267,7 +267,7 @@ if [ -z "$uncompr" ]; then
 	rm live.squash
 	Xdialog --title 'Archive publishing' \
 	        --yesno "Disc image generation completed.
-The compressed ISO image is `ls -sh $isoname | sed 's/ .*// ; s/M/ MB /'` \
+The compressed ISO image is `ls -sh $isoname | sed 's/ .*// ; s/\([MGT]\)/ \1B /'` \
 and named
 $PWD/$isoname.
 Do you want to copy the archive to an USB device?" 0 0 || exit
