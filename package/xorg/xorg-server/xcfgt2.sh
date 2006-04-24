@@ -145,3 +145,4 @@ sed -e "s/\$xdrv/$xdrv/g" -e "s/\$modes/$modes/g" -e "s/\$depth/$depth/g" \
     -e "s/\$vert_refresh/$vert_refresh/g" \
     /etc/X11/xorg.conf.template > /etc/X11/xorg.conf
 
+rm $tmp
