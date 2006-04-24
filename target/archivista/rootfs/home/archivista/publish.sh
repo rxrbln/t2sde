@@ -347,13 +347,15 @@ Xdialog --no-close --no-buttons --title "Copying archive to USB device" \
 # additionally inject the non-ISO live.squash in the uncompressed case
 if [ "$uncompr" ]; then
 	lq=live.squash
+	fs="-fs ext2"
 else
 	lq=
+	fs=
 fi
 
 echo -e "Copying archive to USB device ($usbdev):\n" > $usblog
 set -x
-${0%/*}/iso2stick.sh ./$isoname $usbdev $lq >> $usblog 2>&1 &
+${0%/*}/iso2stick.sh $fs ./$isoname $usbdev $lq >> $usblog 2>&1 &
 set +x
 
 if ! wait %2 ; then  # wait for the iso2stick
