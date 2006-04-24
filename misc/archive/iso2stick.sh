@@ -1,11 +1,31 @@
 #!/bin/bash
 
+set -x
 set -e
 
-if [ -z "$1" -o -z "$2" ]; then
-	echo "Usage iso2stick iso-image stick-device"
+usage()
+{
+	echo "Usage iso2stick [ -fs file-system ] iso-image stick-device [ files ]"
 	exit
+}
+
+fs="vfat -F 32"
+
+while [ "$1" ]; do
+	case "$1" in 
+		-fs) fs="$2" ; shift ;;
+		-*) usage ;;
+		*) break ;;
+	esac
+	shift
+done
+
+if [ -z "$1" -o -z "$2" ]; then
+	usage
 fi
+
+file="$1" ; shift
+dev="$1" ; shift
 
 # # ceate fresh image
 # size=`du --block-size=1000000 $1 | cut -f 1`
@@ -16,21 +36,24 @@ fi
 # loop=`losetup -f`
 # losetup $loop hd.img
 
-sfdisk ${2} << EOT
-,,b
+case "$fs" in
+	vfat*) ptype=b ;;
+	*) ptype=83 ;;
+esac
+
+sfdisk $dev << EOT
+,,$ptype
 EOT
 
 # losetup -d $loop
 
-mkfs.vfat -F 32 ${2}1
+mkfs.$fs ${dev}1
 
 # losetup /dev/loop0 -o 512 hd.img
 
 mkdir -p /mnt/source /mnt/target
-mount -o loop $1 /mnt/source
-mount ${2}1 /mnt/target
-
-shift ; shift
+mount -o loop $file /mnt/source
+mount ${dev}1 /mnt/target
 
 rsync -arvH --inplace --exclude TRANS.TBL /mnt/source/ /mnt/target/
 # copy additional content specified in arguments
