@@ -377,7 +377,8 @@ rc hal start
 Xdialog --no-cancel --title "Archive publishing" \
         --msgbox "Archive copied to the USB device." 0 0
 
-if Xdialog --default-no --title "Archive publishing" \
+# do not ask when uncompressed, the ISO is boot code only in this case
+if [ "$uncompr" ] || Xdialog --default-no --title "Archive publishing" \
            --yesno "Delete published archive now?" 0 0; then
 	rm -v ./$isoname
 fi
