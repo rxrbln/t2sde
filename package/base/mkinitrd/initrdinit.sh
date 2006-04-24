@@ -62,7 +62,8 @@ init="init= `cat /proc/cmdline`" ; init=${init##*init=} ; init=${init%% *}
 # try best match / detected rootfs first, all the others thereafter
 filesystems=`disktype $root 2>/dev/null |
              sed -e '/file system/!d' -e 's/file system.*//' -e 's/ //g' \
-                 -e 'y/ABCDEFGHIJKLMNOPQRSTUVWXYZ/abcdefghijklmnopqrstuvwxyz/'
+                 -e 'y/ABCDEFGHIJKLMNOPQRSTUVWXYZ/abcdefghijklmnopqrstuvwxyz/' \
+                 -e 's/fat32/vfat/'
              sed '1!G ; $p ; h ; d' /proc/filesystems | sed /^nodev/d`
 
 mkdir /rootfs
