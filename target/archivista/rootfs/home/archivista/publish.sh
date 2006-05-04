@@ -59,7 +59,7 @@ for x in * ; do
 done
 
 while [ -z "$d" ]; do
-	d=`Xdialog --stdout --password --no-tags --separate-output \
+	d=`Xdialog --stdout --password --no-tags --separator ' ' \
 	   --title 'Archive publishing' --checklist \
 	   "Choose the databases to be published." 0 0 3 "${dbs[@]}"` || exit
 	[ "$d" ] || Xdialog --no-cancel --title 'Archive publishing' --msgbox \
