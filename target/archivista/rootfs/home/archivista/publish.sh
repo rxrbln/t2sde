@@ -70,11 +70,13 @@ done
 n=$i; i=0
 d=" $d " # terminating space
 dbexclude=
+dbselected=
 archivistadb=1
 while [ $i -lt $n ]; do
 	# selected?
 	if [ "${d/ $i /}" != "$d" ]; then
 		echo $i selected
+		dbselected="$dbselected ${dbs[$((i+1))]}"
 	else
 		echo $i not seleted
 		if [ "${dbs[$((i+1))]}" = archivista ]; then
@@ -88,8 +90,15 @@ while [ $i -lt $n ]; do
 	: $(( i += 3 ))
 done
 
+echo database selected: $dbselected
 echo database exclude: $dbexclude
 echo archivista db: $archivistadb
+
+# sanity check
+Xdialog --title 'Archive publishing' --cancel-label Cancel \
+        --yesno "The following databases will be
+included in the archive:
+${dbselected// /\n}" 0 0 || exit
 
 mkdir -p $livedir/root ; cd $livedir
 cleanup ; rm -f live.squash
