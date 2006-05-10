@@ -388,24 +388,38 @@ int main(int argc, char ** argv) {
 			execlp("sh", "sh", "-c", delim, NULL);
 			return 1;
 		}
-		wait(NULL);  /* We don't expect any signals and have no */
-		             /* other child processes. */
+		wait(NULL);  /* We don't expect any signals and have no
+		                other child processes. */
 	
 		/* Re-read parameter list. Don't free old stuff, we do an
 		   exec() anyway ... */
 		lseek(outfd, 0, SEEK_SET);
-		/* Maximum on 1023 parameters, 1023 chars each. */
-		newargv = malloc( sizeof(char*) * 1024 );
-		for (c1=0; c1<1023; c1++) {
-			newargv[c1] = malloc(1024);
-			for (c2=0; c2<1023; c2++) {
+		
+		{
+		  int newargv_size = 32;  /* initial size argv size */
+		  newargv = malloc( sizeof(char*) * newargv_size );
+		  for (c1=0; 1; ++c1) {
+			int newargv_size2 = 64; /* initial single argument size */
+
+			/* realloc if newargc is is filled */
+			if (c1 == newargv_size) {
+				newargv_size *= 2;
+				newargv = realloc (newargv, sizeof(char*) * newargv_size );
+			}
+
+			newargv[c1] = malloc(newargv_size2);
+			for (c2=0; 1; ++c2) {
+				/* realloc if curent arg is filled */
+				if (c2 == newargv_size2) {
+					newargv_size2 *= 2;
+					newargv[c1] = realloc(newargv[c1], newargv_size2);
+				}
 				if (read(outfd, newargv[c1]+c2, 1) != 1)
 						goto reread_file_finished;
 				if (newargv[c1][c2] == '\n')
 						{ newargv[c1][c2] = 0; break; }
 			}
-			newargv[c1] = realloc(newargv[c1],
-			                      strlen(newargv[c1])+1);
+		  }
 		}
 reread_file_finished:
 	
