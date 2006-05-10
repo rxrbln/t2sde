@@ -393,36 +393,31 @@ int main(int argc, char ** argv) {
 	
 		/* Re-read parameter list. Don't free old stuff, we do an
 		   exec() anyway ... */
-		lseek(outfd, 0, SEEK_SET);
-		
 		{
-		  int newargv_size = 32;  /* initial newargv size */
-		  newargv = malloc( sizeof(char*) * newargv_size );
-		  for (c1=0; ; ++c1) {
-			int newargv_size2 = 64; /* initial single argument size */
+		  size_t argvsize = lseek(outfd, 0, SEEK_END);
+		  char* argvmem = malloc (argvsize + 1); /* might not have trailing \n */
+		  lseek(outfd, 0, SEEK_SET);
+		  read(outfd, argvmem, argvsize);
 
-			/* realloc if newargc is filled */
-			if (c1 == newargv_size) {
-				newargv_size *= 2;
-				newargv = realloc (newargv, sizeof(char*) * newargv_size);
+		  int newargc = 64;  /* initial newargv size */
+		  newargv = malloc( sizeof(char*) * newargc );
+
+		  for (c1 = c2 = 0; c2 < argvsize; ++c2) {
+			/* realloc if newargv is filled */
+			if (c1 == newargc) {
+				newargc *= 2;
+				newargv = realloc (newargv, sizeof(char*) * newargc);
 			}
 
-			newargv[c1] = malloc(newargv_size2);
-			for (c2=0; ; ++c2) {
-				/* realloc if curent arg is filled */
-				if (c2 == newargv_size2) {
-					newargv_size2 *= 2;
-					newargv[c1] = realloc(newargv[c1], newargv_size2);
-				}
-				if (read(outfd, newargv[c1]+c2, 1) != 1)
-					goto reread_file_finished;
-				if (newargv[c1][c2] == '\n') {
-					newargv[c1][c2] = 0; break;
-				}
-			}
+			/* lock argv to current mem pos */
+			newargv[c1++] = argvmem + c2;
+
+			/* scan for newlines, terminate, next */
+			while (c2 < argvsize && argvmem[c2] != '\n')
+				++c2;
+			argvmem[c2] = 0;
 		  }
 		}
-reread_file_finished:
 	
 		/* Close and remove temp files */
 		close(outfd); unlink(outfn);
