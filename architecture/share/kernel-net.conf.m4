@@ -133,3 +133,5 @@ CONFIG_ISDN_PPP_VJ=y
 CONFIG_ISDN_TTY_FAX=y
 CONFIG_ISDN_X25=y
 
+dnl Enable fibre channel support
+CONFIG_NET_FC=y
