@@ -110,7 +110,7 @@ public_conduit() {
 
 	addcode up 1 4 "iptables -t nat -A PREROUTING -i $if ${ip:+-d $ip} -p $proto \
 		 --dport $port -j DNAT --to $targetip:$targetport"
-	addcode up 1 4 "iptables -A forward_$if  ${ip:+-d $ip} -p $proto -d $targetip \
+	addcode up 1 4 "iptables -A forward_$if  -p $proto -d $targetip \
 		 --dport $targetport -j ACCEPT"
 
 	iptables_init_if
