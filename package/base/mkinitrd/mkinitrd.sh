@@ -68,7 +68,7 @@ rm -rf $tmpdir >/dev/null
 
 echo "Create dirtree ..."
 
-mkdir -p $tmpdir/{dev,bin,sbin,proc,sys,lib/modules,etc/hotplug.d/default}
+mkdir -p $tmpdir/{dev,bin,sbin,proc,sys,lib/modules,lib/udev,etc/hotplug.d/default}
 mknod $tmpdir/dev/console c 5 1
 
 # copy the basic / rootfs kernel modules
@@ -109,6 +109,8 @@ echo "Injecting programs and configuration ..."
 # copying config
 #
 cp -ar ${root}/etc/udev $tmpdir/etc/
+# in theory all, but fat and currently only cdrom_id is needed ...
+cp -ar ${root}/lib/udev/cdrom_id $tmpdir/lib/udev/
 
 # setup programs
 #
