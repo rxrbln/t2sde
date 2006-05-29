@@ -16,8 +16,8 @@
 matched=0
 
 echo "Searching for matching package names ..."
-
-x="`cd package/ ; ls -d */*$1* 2>/dev/null`"
+pkg="`echo "$1" | tr A-Z a-z`"
+x="`cd package/ ; ls -d */*$pkg* 2>/dev/null`"
 
 if [ -n "$x" ] ; then
 	echo -e "$x\n"
@@ -25,7 +25,9 @@ if [ -n "$x" ] ; then
 fi
 
 echo "Searching in package descriptions (may take some time) ..."
-grep "[(\I\|T\)].* $1" package/*/*/*.desc | grep $1 --color
+# grep --color does not work with -i (at least not in GNU sed 2.5.1),
+# so colorize via sed
+grep -i "[(\I\|T\)].* $1" package/*/*/*.desc | sed "/$1/I s//\o033[31;1m&\o033[0m/g"
 [ $? -eq 0 ] && matched=1
 
 [ $matched = 0 ] && echo "No match found ..."
