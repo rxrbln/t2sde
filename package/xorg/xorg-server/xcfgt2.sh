@@ -33,7 +33,7 @@ case `cat $tmp | tr A-Z a-z` in
 
 # this intel matches might not be accurate enough
 	*intel*7*)		xdrv=i740 ;;
-	*intel*8*|*intel*9*)	xdrv=i810 ;;
+	*intel*8*|*intel*9*|*intel*mobile*)	xdrv=i810 ;;
 
 	*trident*)	xdrv=trident ;;
 	*rendition*)	xdrv=rendition ;;
