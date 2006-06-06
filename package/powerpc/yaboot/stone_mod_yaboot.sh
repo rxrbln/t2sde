@@ -131,10 +131,10 @@ main() {
 	bootdev="`device4 /boot`"
 	yabootdev="`device4 /usr`"
 
-	bootstrappart="`parted $dev print | grep bootstrap | sed  's/ .*//'`"
+	bootstrappart="`parted $dev print | grep 'hfs .*boot' | sed  's/ .*//'`"
 	bootstrapdev="$dev$bootstrappart"
 
-	macosxpart="`parted $dev print | grep "hfs+.*OS X" | head -n 1 | sed 's/ .*//'`"
+	macosxpart="`parted $dev print | grep -i "hfs+ .*\(apple\|os.*x\)" | head -n 1 | sed 's/ .*//'`"
 	[ "$macosxpart" ] && macosxdev="$dev$macosxpart"
 
 	if [ "$rootdev" = "$bootdev" ]
