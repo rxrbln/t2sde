@@ -134,7 +134,7 @@ main() {
 	bootstrappart="`parted $dev print | grep bootstrap | sed  's/ .*//'`"
 	bootstrapdev="$dev$bootstrappart"
 
-	macosxpart="`parted $dev print | grep Apple_HFS | head -n 1 | sed 's/ .*//'`"
+	macosxpart="`parted $dev print | grep "hfs+.*OS X" | head -n 1 | sed 's/ .*//'`"
 	[ "$macosxpart" ] && macosxdev="$dev$macosxpart"
 
 	if [ "$rootdev" = "$bootdev" ]
