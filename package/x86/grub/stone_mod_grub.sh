@@ -89,7 +89,7 @@ EOT
 	[ -f /boot/t2.xpm.gz ] && cat << EOT >> /boot/grub/menu.lst
 
 foreground  = FFFFFF
-background  = 666666
+background  = 09345F
 splashimage $bootdrive$bootpath/t2.xpm.gz
 EOT
 
