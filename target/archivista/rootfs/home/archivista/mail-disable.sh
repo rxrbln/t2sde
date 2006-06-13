@@ -10,7 +10,9 @@ fi
 . /etc/profile
 
 # close for the public
-sed -i 's/#[ ]*\(.*local_interfaces \)/\1/' /etc/exim/configure
+sed -i -e 's/#[ ]*\(.*local_interfaces \)/\1/' \
+       -e 's/^\(hostlist .*relay_from_hosts = 127.0.0.1\) :.*/\1/' \
+       /etc/exim/configure
 
 # restart EXIM now
 rc exim restart
