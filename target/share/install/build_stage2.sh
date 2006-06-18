@@ -52,6 +52,12 @@ libol              hotplug++          memtester
 serpnp             udev
 openssl            openssh            iproute2'
 
+# TODO: a global multilib package multiplexer that allows distrinct control
+#       and avoids such hacks ...
+if [ "$SDECFG_SPARC64_32BIT" = "1" ]; then
+	package_map="$package_map glibc32"
+fi
+
 if pkginstalled mine ; then
 	packager=mine
 else
