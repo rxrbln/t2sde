@@ -18,7 +18,7 @@
 
 tmp=`mktemp`
 
-card="`lspci | grep -i ' vga' | cut -d ' ' -f 2- | cut -d : -f 2-`"
+card="`lspci | sed -n 's/.*VGA .*: //p'`"
 [ "$card" ] || card="`cat /sys/class/graphics/fb0/name`"
 
 echo "Video card: $card"
