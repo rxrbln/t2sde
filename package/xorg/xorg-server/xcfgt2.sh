@@ -129,7 +129,7 @@ if [[ `uname -m` = i*86 ]]; then
 fi
 
 if [ -z "$modes" ]; then
-	modes="`sed -n 's/.:\(.*x.*\)-0/\1/p ; q' /sys/class/graphics/fb0/modes`"
+	modes="`sed -n 's/.:\(.*x.*\)-[[:digit:]]\+/\1/p ; q' /sys/class/graphics/fb0/modes`"
 fi
 
 if [ -z "$modes" ]; then
