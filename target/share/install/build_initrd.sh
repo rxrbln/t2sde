@@ -29,6 +29,7 @@ mkdir -p initramfs/{bin,sbin}
 # TODO: add gzip ip
 cp $build_root/usr/embutils/{tar,readlink,rmdir} initramfs/bin/
 cp $build_root/usr/bin/fget initramfs/bin/
+cp $build_root/usr/sbin/ipconfig initramfs/bin/
 
 cp $base/target/share/install/init initramfs/
 chmod +x initramfs/init
