@@ -23,20 +23,19 @@ if [ -n "$ROCK_INSTALL_SOURCE_DEV" ] ; then
 	SDECFG_SHORTID="Automatically choose first"
 elif [ -n "$ROCK_INSTALL_SOURCE_URL" ] ; then
 	dev="NETWORK INSTALL"
-	dir="$ROCK_INSTALL_SOURCE_URL"
-	root="/mnt/target"
+	dir="$ROCK_INSTALL_SOURCE_URL" ; root="/mnt/target"
 	gasguiopt="-F"
 
 	SDECFG_SHORTID="$( grep '^export SDECFG_SHORTID=' \
-		/etc/ROCK-CONFIG/config 2> /dev/null | cut -f2- -d= )"
+		/etc/SDE-CONFIG/config 2> /dev/null | cut -f2- -d= )"
 	SDECFG_SHORTID="${SDECFG_SHORTID//\'/}"
 else
-	dev="/dev/cdroms/cdrom0"
+	dev="/dev/cdrom"
 	dir="/mnt/cdrom" ; root="/"
 	gasguiopt=""
 
 	SDECFG_SHORTID="$( grep '^export SDECFG_SHORTID=' \
-		/etc/ROCK-CONFIG/config 2> /dev/null | cut -f2- -d= )"
+		/etc/SDE-CONFIG/config 2> /dev/null | cut -f2- -d= )"
 	SDECFG_SHORTID="${SDECFG_SHORTID//\'/}"
 fi
 
