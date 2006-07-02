@@ -13,14 +13,15 @@
 # GNU General Public License can be found in the file COPYING.
 # --- T2-COPYRIGHT-NOTE-END ---
 
+prefix=$( cd ${0%/*}/..; pwd -P )
 for x in sendmail mailq newaliases; do
 	echo "$0: Re-creating /usr/bin/$x -> ${x}_@mailer@ ..."
-	echo -e "#!/bin/sh\nexec -a $x ${x}_@mailer@ \"\$@\"" > /usr/bin/$x
-	chmod +x /usr/bin/$x
+	echo -e "#!/bin/sh\nexec -a $x ${x}_@mailer@ \"\$@\"" > $prefix/bin/$x
+	chmod +x $prefix/bin/$x
 done
 
 # add compatibility symlink
-ln -sf /usr/bin/sendmail /usr/sbin/sendmail
+ln -sf ../bin/sendmail $prefix/sbin/sendmail
 
 exit 0
 
