@@ -12,6 +12,8 @@
 # GNU General Public License can be found in the file COPYING.
 # --- T2-COPYRIGHT-NOTE-END ---
 
+if atstage native; then
+
 # Quick & Dirty hack for the perllocal problem
 # .. to be included by packages which do 'share' the perllocal.pod file
 #
@@ -21,3 +23,4 @@ hook_add postmake 9 "( cd $archlib; mv -v perllocal.pod $pkg.pod || true;
                        mv -v perllocal.pod.sik perllocal.pod || true; )"
 var_append flist''del '|' "${archlib#/}/perllocal.pod"
 
+fi
