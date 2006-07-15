@@ -35,6 +35,7 @@ if [ -z "$pkg" -o -z "$ver" -o $pkg == $ver ]; then
 	echo ""
 	echo "  pkg	Packagename to be updated"
 	echo "  ver	New version number for the package"
+	echo "          ver=refresh makes it just add checksums"
 	echo "" 
 	echo "For detailed information on how to update packages"
 	echo "to new versions, please have a look at the online"
@@ -52,12 +53,14 @@ pkg=`echo $pkg | tr A-Z a-z`
 
 # Of course we can only update packages we know about.
 if [ -d package/*/$pkg ]; then
-	# The package exists so now update the package descriptor
-	# for the given package to the new version. Luckily we have
-	# a script for that too :-)
-	./scripts/Create-PkgUpdPatch $pkg $ver | tee $$.diff
-	patch -p1 < $$.diff
-	rm -f $$.diff
+	if [ "$ver" != "refresh" ]; then
+		# The package exists so now update the package descriptor
+		# for the given package to the new version. Luckily we have
+		# a script for that too :-)
+		./scripts/Create-PkgUpdPatch $pkg $ver | tee $$.diff
+		patch -p1 < $$.diff
+		rm -f $$.diff
+	fi
 
 	# Step 2: Use the modified package descriptor to download
 	# the package. Again, nothing more that calling an existing
