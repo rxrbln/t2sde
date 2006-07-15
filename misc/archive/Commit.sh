@@ -26,7 +26,13 @@ for x; do
 		x=`echo package/*/$x`
 	locations="$locations $x"
 done	
-		
+
+svn st $locations | grep '^\(A\|M\)' | cut -c8- | while read f; do
+	if [ -f $f ]; then
+		./scripts/Create-CopyPatch $f | patch -p0
+	fi
+done
+
 echo "Diff:"
 svn diff $locations | tee $$.diff
 
