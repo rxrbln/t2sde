@@ -140,6 +140,9 @@ read_fm_config() {
 	*BSD*)
 	    license=BSD
 	    ;;
+	*Artistic*)
+	    license=Artistic
+	    ;;
 	esac
 	rm -f $fmname.xml
     else
