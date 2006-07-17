@@ -18,7 +18,7 @@ if [ -z "$1" ] ; then
 	exit
 fi
 
-trap 'echo "Got SIGINT (Crtl-C)." ; rm $$.log ; exit 1' INT
+trap 'echo "Got SIGINT (Crtl-C)." ; rm $$.log $$.diff ; exit 1' INT
 
 locations=
 for x; do
