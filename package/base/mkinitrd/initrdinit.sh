@@ -24,8 +24,6 @@ mount -t usbfs none /proc/bus/usb
 mount -t sysfs none /sys
 ln -s /proc/self/fd /dev/fd
 
-mknod /rootfs/dev/tty c 5 0
-
 # later on we might reverse these, that is run udevstart first,
 # and let udev add new ones as hotplug agents ...
 
@@ -38,6 +36,7 @@ echo "Loading additional subsystem and filesystem driver ..."
 modprobe sbp2
 
 # well some hardcoded help for now ...
+modprobe ide-generic
 modprobe ide-disk
 modprobe ide-cd
 modprobe sd_mod
