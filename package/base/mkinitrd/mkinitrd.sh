@@ -54,7 +54,7 @@ echo "System.map: $sysmap"
 
 # check needed tools
 for x in cpio gzip ; do
-	if ! which -p $x >/dev/null ; then
+	if ! which $x >/dev/null ; then
 		echo "$x not found!"
 		exit 2
 	fi
