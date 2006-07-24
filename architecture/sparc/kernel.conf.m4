@@ -11,6 +11,7 @@ dnl it under the terms of the GNU General Public License as published by
 dnl the Free Software Foundation; version 2 of the License. A copy of the
 dnl GNU General Public License can be found in the file COPYING.
 dnl --- T2-COPYRIGHT-NOTE-END ---
+
 define(`SPARC', 'SPARC')dnl
 
 dnl does at least not work for sun4 - and should not be really needed
@@ -18,6 +19,8 @@ dnl on 32bit SPARCs (it is also not a default for our x86 default config)
 # CONFIG_HIGHMEM is not set
 
 # CONFIG_SUN4 is not set
+
+CONFIG_SUN_MOSTEK_RTC=y
 
 CONFIG_FB=y
 CONFIG_FB_SBUS=y
