@@ -11,6 +11,7 @@ dnl it under the terms of the GNU General Public License as published by
 dnl the Free Software Foundation; version 2 of the License. A copy of the
 dnl GNU General Public License can be found in the file COPYING.
 dnl --- T2-COPYRIGHT-NOTE-END ---
+
 define(`SPARC', 'SPARC')dnl
 
 CONFIG_SPARC32_COMPAT=y
@@ -19,6 +20,8 @@ CONFIG_BINFMT_ELF32=y
 CONFIG_MEMORY_HOTPLUG=y
 CONFIG_HUGETLBFS=y
 CONFIG_HUGETLB_PAGE=y
+
+CONFIG_SUN_MOSTEK_RTC=y
 
 CONFIG_KEYBOARD_SUNKBD=y
 CONFIG_INPUT_MOUSE=y
