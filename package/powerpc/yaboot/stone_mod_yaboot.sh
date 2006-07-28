@@ -151,7 +151,7 @@ main() {
 		"Boot Device ........... $bootdev" "" \
 		"MacOS X partition ..... $macosxdev" "" \
 		'' '' \
-		'(Re-)Create default /etc/yaboot.conf' 'create_yaboot_conf' \
+		'(Re-)Create yaboot.conf with installed kernels' 'create_yaboot_conf' \
 		'(Re-)Install the yaboot boot chrp script and binary' 'yaboot_install' \
 		'' '' \
 		"Edit /etc/yaboot.conf (Config file)" \

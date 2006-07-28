@@ -75,7 +75,7 @@ $( cat /etc/lilo.conf )"
 main() {
     while
         gui_menu lilo 'LILO Boot Loader Setup' \
-                '(Re-)Create default /etc/lilo.conf' 'create_lilo_conf' \
+                '(Re-)Create lilo.conf with installed kernels' 'create_lilo_conf' \
                 '(Re-)Install LILO in MBR of /dev/discs/disc0/disc' \
 			'gui_cmd "Installing LILO in MBR" "lilo -v"' \
                 "Edit /etc/lilo.conf (recommended before installing LILO)" \

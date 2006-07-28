@@ -152,7 +152,7 @@ main() {
 		"Root Device ... $rootdev" "" \
 		"Boot Drive .... $bootdrive$boot_path" "" \
 		'' '' \
-		'(Re-)Create default boot menu' 'create_boot_menu' \
+		'(Re-)Create boot menu with installed kernels' 'create_boot_menu' \
 		'(Re-)Install GRUB in MBR of (hd0)' 'grub_install' \
 		'' '' \
 		"Edit /boot/grub/device.map (Device Map)" \
