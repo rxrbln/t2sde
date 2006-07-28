@@ -94,7 +94,7 @@ main() {
 		"Boot Device ........... $bootdev" "" \
 		"Boot Path ............. $bootpath" "" \
 		'' '' \
-		'(Re-)Create default /etc/silo.conf' 'create_silo_conf' \
+		'(Re-)Create silo.conf with installed kernels' 'create_silo_conf' \
 		'(Re-)Install SILO' 'silo_install' \
 		'' '' \
 		"Edit /etc/silo.conf (Config file)" \
