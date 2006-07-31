@@ -14,6 +14,10 @@
 # --- T2-COPYRIGHT-NOTE-END ---
 #
 # [MAIN] 10 general,main Various general system configurations
+# [SETUP] 10 general set_tmarea
+# [SETUP] 15 general set_dtime
+# [SETUP] 20 general set_locale
+# # [SETUP] 30 general set_vcfont
 
 set_keymap() {
 	keymap=$(ls -l /etc/default.keymap 2> /dev/null | sed 's,.*/,,')

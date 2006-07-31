@@ -107,10 +107,12 @@ main() {
 	make_fstab
 	$STONE general set_keymap
 	while ! set_rootpw; do :; done
-	$STONE general set_tmarea
-	$STONE general set_dtime
-	$STONE general set_locale
-	$STONE general set_vcfont
+
+	# run the stone modules that registered itself for the first SETUP pass
+	while read -u 200 a b c cmd ; do
+		$STONE $cmd
+	done 200< <( grep -h '^# \[SETUP\] [0-9][0-9] ' \
+	          $SETUPD/mod_*.sh | sort )
 
 	cron.run
 
