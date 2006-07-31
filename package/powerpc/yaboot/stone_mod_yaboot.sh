@@ -48,7 +48,7 @@ device=hd:
 # The partition with the yaboot binaries
 partition=$yabootpart
 
-# Initial mutli-boot menu delay
+# Initial multi-boot menu delay
 delay=5
 
 # Second yaboot image chooser delay
@@ -87,7 +87,7 @@ $bootstrapdev is not yet HFS formated. \
 Format now?" ; then
 			hformat $bootstrapdev
 		else
-			return
+			return 1
 		fi
 	fi
 
@@ -125,16 +125,15 @@ realpath() {
 }
 
 main() {
-    while
 	rootdev="`device4 /`"
 	dev="${rootdev%%[0-9]*}"
 	bootdev="`device4 /boot`"
 	yabootdev="`device4 /usr`"
 
-	bootstrappart="`parted $dev print | grep 'hfs .*boot' | sed  's/ .*//'`"
+	bootstrappart="`parted $dev print | grep bootstrap | sed  's/ .*//'`"
 	bootstrapdev="$dev$bootstrappart"
 
-	macosxpart="`parted $dev print | grep -i "hfs+ .*\(apple\|os.*x\)" | head -n 1 | sed 's/ .*//'`"
+	macosxpart="`parted $dev print | grep "hfs+.*OS X" | head -n 1 | sed 's/ .*//'`"
 	[ "$macosxpart" ] && macosxdev="$dev$macosxpart"
 
 	if [ "$rootdev" = "$bootdev" ]
@@ -144,14 +143,27 @@ main() {
 	then yabootpath=/usr ; else yabootpath="" ; fi
 	yabootpart="`echo $yabootdev | sed 's/[^0-9]*//'`"
 
+	if [ ! -f /etc/yaboot.conf ] ; then
+	  if gui_yesno "Yaboot does not appear to be configured.
+Automatically install yaboot now?"; then
+	    create_yaboot_conf
+	    if ! yaboot_install; then
+	      gui_message "There was an error while installing yaboot."
+	    fi
+	  fi
+	fi
+
+	while
+
         gui_menu yaboot 'Yaboot Boot Loader Setup' \
+		"Following settings only for expert use: (default)" ""\
 		"Bootstrap Device ...... $bootstrapdev" "" \
 		"Yaboot partition:path . $yabootpart:$yabootpath" "" \
 		"Root Device ........... $rootdev" "" \
 		"Boot Device ........... $bootdev" "" \
 		"MacOS X partition ..... $macosxdev" "" \
 		'' '' \
-		'(Re-)Create yaboot.conf with installed kernels' 'create_yaboot_conf' \
+		'(Re-)Create default /etc/yaboot.conf' 'create_yaboot_conf' \
 		'(Re-)Install the yaboot boot chrp script and binary' 'yaboot_install' \
 		'' '' \
 		"Edit /etc/yaboot.conf (Config file)" \

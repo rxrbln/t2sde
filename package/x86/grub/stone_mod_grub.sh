@@ -111,7 +111,7 @@ grub_install() {
 }
 
 main() {
-    while
+  
 	rootdev="`grep ' / ' /proc/mounts | tail -n 1 | \
 				awk '/\/dev\// { print $1; }'`"
 	bootdev="`grep ' /boot ' /proc/mounts | tail -n 1 | \
@@ -146,6 +146,18 @@ main() {
 
 	if [ "$rootdrive" = "$bootdrive" ]
 	then bootpath="/boot" ; else bootpath="" ; fi
+
+	if [ ! -f /boot/grub/menu.lst ] ; then
+	  if gui_yesno "GRUB does not appear to be configured.
+Automatically install GRUB now?"; then
+	    create_boot_menu
+	    if ! grub_install; then
+	      gui_message "There was an error while installing GRUB."
+	    fi
+	  fi
+	fi
+
+	while
 
         gui_menu grub 'GRUB Boot Loader Setup' \
 		'(Re-)Create GRUB Device Map' 'create_device_map' \

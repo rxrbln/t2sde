@@ -82,12 +82,23 @@ realpath() {
 }
 
 main() {
-    while
 	rootdev="`device4 /`"
 	bootdev="`device4 /boot`"
 
 	if [ "$rootdev" = "$bootdev" ]
 	then bootpath=/boot ; else bootpath="" ; fi
+
+	if [ ! -f /etc/silo.conf ] ; then
+	  if gui_yesno "SILO does not appear to be configured.
+Automatically install SILO now?"; then
+	    create_silo_conf
+	    if ! silo_install; then
+              gui_message "There was an error while installing SILO."
+	    fi
+	  fi
+	fi
+
+	while
 
         gui_menu yaboot 'SILO Boot Loader Setup' \
 		"Root Device ........... $rootdev" "" \

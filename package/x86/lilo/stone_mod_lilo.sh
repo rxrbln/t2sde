@@ -23,6 +23,7 @@ create_kernel_list() {
                         label=linux ; first=0
                 else
                         label=linux-${x/vmlinuz_/}
+                        label=${label/-dist/}
                 fi
 		initrd=initrd-${x/vmlinuz_/}.img
 
@@ -73,7 +74,19 @@ $( cat /etc/lilo.conf )"
 }
 
 main() {
-    while
+
+	if [ ! -f /etc/lilo.conf ] ; then
+	  if gui_yesno "LILO does not appear to be configured.
+Automatically install LILO now?"; then
+	    create_lilo_conf
+	    if ! gui_cmd "Installing LILO in MBR" "lilo -v" ; then
+	      gui_message "There was an error while installing LILO."
+	    fi
+	  fi
+	fi
+
+	while
+
         gui_menu lilo 'LILO Boot Loader Setup' \
                 '(Re-)Create lilo.conf with installed kernels' 'create_lilo_conf' \
                 '(Re-)Install LILO in MBR of /dev/discs/disc0/disc' \
