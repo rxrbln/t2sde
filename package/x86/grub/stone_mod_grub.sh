@@ -14,6 +14,7 @@
 # --- T2-COPYRIGHT-NOTE-END ---
 #
 # [MAIN] 70 grub GRUB Boot Loader Setup
+# [SETUP] 90 grub
 
 create_kernel_list() {
 	first=1
