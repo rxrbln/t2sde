@@ -14,6 +14,7 @@
 # --- T2-COPYRIGHT-NOTE-END ---
 #
 # [MAIN] 70 yaboot Yaboot Boot Loader Setup
+# [SETUP] 90 yaboot
 
 create_kernel_list() {
 	first=1
