@@ -14,6 +14,7 @@
 # --- T2-COPYRIGHT-NOTE-END ---
 #
 # [MAIN] 70 lilo LILO Boot Loader Setup
+# [SETUP] 90 lilo
 
 create_kernel_list() {
 	local label= first=1 initrd=

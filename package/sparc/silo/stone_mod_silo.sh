@@ -13,6 +13,7 @@
 # --- T2-COPYRIGHT-NOTE-END ---
 #
 # [MAIN] 70 silo SILO Boot Loader Setup
+# [SETUP] 90 silo
 
 create_kernel_list() {
 	first=1
