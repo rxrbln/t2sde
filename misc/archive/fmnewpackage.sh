@@ -27,7 +27,8 @@
 #
 
 extract_xml_name() {
-    local tmp="`tr -d "\012" < $2 | grep $3 | sed "s|.*<$3>\([^<]*\)<.*|\1|" | sed 's||\n[T] |g' | sed 's|^\[T\] $||'`"
+    local tmp="`tr -d "\012" < $2 | grep $3 |
+                sed -e "s|.*<$3>\([^<]*\)<.*|\1|" -e 's||\n|g'`"
     eval "$1=\"\$tmp\""
 }
 
@@ -220,7 +221,7 @@ EOF
 desc="`echo "$desc" | sed '1s/^\(.\)/\U\1/ ; s/\. *\(.\)/. \U\1/g'`"
 while read l; do
     echo "[T] $l" >>$package.desc
-done < <(echo ${desc:-TODO: Description} | fmt --width 70)
+done < <(echo ${desc:-TODO: Description} | fmt --width 75)
 
 cat >>$package.desc <<EOF
 
