@@ -63,10 +63,10 @@ runit_svc() {
 				[ "$actions" ] && actions="$actions '' ''"
 
 				actions="$actions 'service: $dir' '' \
-					'  stats: $( $COMMANDDIR/runsvstat $dir/ 2> /dev/null | cut -d' ' -f2- )' ''"
-				actions="$actions 'runsvctrl u $name (up)'   '$COMMANDDIR/runsvctrl u $dir; sleep 1'"
-				actions="$actions 'runsvctrl d $name (down)' '$COMMANDDIR/runsvctrl d $dir; sleep 1'"
-				actions="$actions 'runsvctrl h $name (HUP)'  '$COMMANDDIR/runsvctrl h $dir; sleep 1'"
+					'  stats: $( $COMMANDDIR/sv status $dir/ 2> /dev/null | sed -e 's,;.*,,' -e 's,:.*:,,' -e 's,(.*) ,,' )' ''"
+				actions="$actions 'sv up $name (up)'   '$COMMANDDIR/sv up $dir; sleep 1'"
+				actions="$actions 'sv down $name(down)' '$COMMANDDIR/sv down $dir; sleep 1'"
+				actions="$actions 'sv hup $name (HUP)'  '$COMMANDDIR/sv hup $dir; sleep 1'"
 			fi
 		done
 		eval "gui_menu runit_sc_menu '$service -> $location' $actions"
@@ -100,10 +100,9 @@ main() {
 			action="runit_svc $SERVICEDIR/${runit_installed[$entry*3+0]} ${runit_installed[$entry*3+1]}"
 			stats[0]=; stats[1]=; i=0
 			while read stats[i++]; do :; done < <( \
-				$COMMANDDIR/runsvstat \
-				"${runit_installed[$entry*3+1]}" \
-				"${runit_installed[$entry*3+1]}"/log 2> /dev/null | \
-				sed -n -e 's,^.*: \([^(]*\)\( (.*) \)\?\([^)]*\)$,\1 \3,p' )
+				$COMMANDDIR/sv status \
+				"${runit_installed[$entry*3+1]}" 2> /dev/null | \
+				sed -e 's,; ,\n,' | sed -e 's,:.*:,,' -e 's,(.*) ,,' )
 			[ "${stats[0]}" ] && text="$text [${stats[0]}]" || text="$text [ERROR]"
 			[ "${stats[1]}" ] && text="$text log: [${stats[1]}]"
 			[ "${runit_installed[$entry*3+2]}" ] || text="$text [FOREIGN]"
