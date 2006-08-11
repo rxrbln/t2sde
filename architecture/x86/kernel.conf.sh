@@ -31,7 +31,7 @@
 		 "pentium2	PENTIUMII"	\
 		 "pentium3	PENTIUMIII"	\
 		 "pentium4	PENTIUM4"	\
-		 "pentium-m	MPENTIUMM"	\
+		 "pentium-m	PENTIUMM"	\
 		 "k6		K6"		\
 		 "k6-2		K6"		\
 		 "k6-3		K6"		\
@@ -49,7 +49,7 @@
 	#	/usr/src/linux/arch/i386/config.in | expand | \
 	#	cut -c 57- | cut -f1 -d' ' | tr -d '"'`
 	#
-	for x in 386 486 586 586TSC 586MMX 686 PENTIUMIII PENTIUM4 \
+	for x in 386 486 586 586TSC 586MMX 686 PENTIUMIII PENTIUM4 PENTIUMM \
 	         K6 K7 K8 ELAN CRUSOE WINCHIPC6 WINCHIP2 WINCHIP3D \
 	         CYRIXIII VIAC3_2
 	do
