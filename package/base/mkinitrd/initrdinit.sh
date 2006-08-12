@@ -58,6 +58,16 @@ echo "Mounting rootfs ..."
 root="root= `cat /proc/cmdline`" ; root=${root##*root=} ; root=${root%% *}
 init="init= `cat /proc/cmdline`" ; init=${init##*init=} ; init=${init%% *}
 
+# maybe resume from disk?
+resume="`cat /proc/cmdline`"
+if [[ "$resume" = *resume* ]] && [[ "$resume" != *noresume* ]]; then
+	resume=${resume##*resume=} ; resume=${resume%% *}
+	resume=`ls -l $resume |
+sed 's/[^ ]* *[^ t]* *[^ ]* *[^ ]* *\([0-9]*\), *\([0-9]*\) .*/\1:\2/'`
+	echo "Attempting to resume from disk $resume."
+	echo "$resume" > /sys/power/resume
+fi
+
 # try best match / detected rootfs first, all the others thereafter
 filesystems=`disktype $root 2>/dev/null |
              sed -e '/file system/!d' -e 's/file system.*//' -e 's/ //g' \
