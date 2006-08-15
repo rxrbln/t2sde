@@ -108,6 +108,8 @@ main() {
 	$STONE general set_keymap
 	while ! set_rootpw; do :; done
 
+	unset gui_nocancel
+
 	# run the stone modules that registered itself for the first SETUP pass
 	while read -u 200 a b c cmd ; do
 		$STONE $cmd
@@ -123,7 +125,6 @@ main() {
 		$x
 	done
 
-	unset gui_nocancel
 	exec $STONE
 }
 
