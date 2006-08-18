@@ -151,6 +151,9 @@ main() {
 	if [ ! -f /boot/grub/menu.lst ] ; then
 	  if gui_yesno "GRUB does not appear to be configured.
 Automatically install GRUB now?"; then
+	    create_device_map
+	    rootdrive=`convert_device $rootdev`
+	    bootdrive=`convert_device $bootdev`
 	    create_boot_menu
 	    if ! grub_install; then
 	      gui_message "There was an error while installing GRUB."
