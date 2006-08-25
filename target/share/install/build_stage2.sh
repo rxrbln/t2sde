@@ -92,6 +92,11 @@ grep -e 'usr/share/terminfo/.*/\(ansi\|linux\|.*xterm.*\|vt.*\|screen\)' \
 
 copy_with_list_from_file $build_root $PWD $PWD/../files-wanted
 copy_and_parse_from_source $base/target/share/install/rootfs $PWD
+
+echo_status "Creating usability sym-links."
+[ ! -e usr/bin/vi -a -e usr/bin/nvi ] && ln -s nvi usr/bin/vi
+[ ! -e usr/bin/emacs -a -e usr/bin/zile ] && ln -s zile usr/bin/emacs
+
 chroot . /sbin/ldconfig || true
 
 mkdir -p mnt/source mnt/target
