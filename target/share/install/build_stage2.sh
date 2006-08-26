@@ -85,7 +85,7 @@ done | (
 # some more stuff
 cut -d ' ' -f 2 $build_root/var/adm/flists/{kbd,pciutils,ncurses} |
 grep -e 'usr/share/terminfo/.*/\(ansi\|linux\|.*xterm.*\|vt.*\|screen\)' \
-     -e 'usr/share/kbd/keymaps/i386/\(include\|qwertz\|qwerty\)' \
+     -e 'usr/share/kbd/keymaps/i386/\(include\|azerty\|qwertz\|qwerty\)' \
      -e 'usr/share/kbd/keymaps/include' \
      -e 'usr/share/pci.ids' \
  >> ../files-wanted
