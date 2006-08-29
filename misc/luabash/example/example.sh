@@ -28,3 +28,16 @@ done
 
 echo "total sum is: " $total
 
+
+# bash function to be called from within lua context
+some_bashy_function ()
+{
+    if [ -n "$2" ] ; then
+	shift
+	some_bashy_function $@
+	echo "$1"
+    fi
+}
+
+# call the lua function that calls bash function above
+callbash
