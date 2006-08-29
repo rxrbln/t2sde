@@ -23,7 +23,9 @@ function plus(a,b)
 end
 
 function callbash()
-   bash.call("some_bashy_function", "trash", "test", "a", "is", "this")
+   goodresult=bash.call("some_bashy_function", "trash", "test", "a", "is", "this")
+   badresult=bash.call("this-command-is-intentionally-wrong")
+   print ("returncodes were: "..goodresult .. " " .. badresult);
 end
 
 bash.register("plus")
