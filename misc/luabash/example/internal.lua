@@ -13,13 +13,18 @@
 -- --- T2-COPYRIGHT-NOTE-END ---
 
 function plus(a,b)
-   total=bash.getVariable("total");
+   total=bash.getVariable("total")
    if total == nil then total=0 end
    prod=a*b
    total=total+prod
    print(a.." * "..b.." = "..prod)
-   bash.setVariable("total", total);
+   bash.setVariable("total", total)
    return result
 end
 
-bash.register("plus");
+function callbash()
+   bash.call("some_bashy_function", "trash", "test", "a", "is", "this")
+end
+
+bash.register("plus")
+bash.register("callbash")

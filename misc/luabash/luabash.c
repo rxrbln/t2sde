@@ -122,6 +122,7 @@ typedef struct function_def {
 extern WORD_DESC *make_word __P((const char *));
 extern COMMAND *make_command __P((enum command_type, SIMPLE_COM *));
 extern COMMAND *make_function_def __P((WORD_DESC *, COMMAND *, int, int));
+extern int execute_command __P((COMMAND *));
 
 extern SHELL_VAR* find_variable(const char *);
 extern SHELL_VAR* bind_variable(const char *, const char *);
@@ -273,11 +274,48 @@ static int set_variable (lua_State *L)
   return 0;
 }
 
+static int call_bashfunction (lua_State *L)
+{
+  int no_args=lua_gettop(L);
+  int retval=0;
+  int i;
+
+  WORD_LIST* list=0;
+  WORD_LIST* start=0;
+
+  for (i=0; i<no_args; i++) {
+    const char* string=luaL_checkstring(L, i+1);
+    if (list) {
+      list->next=(WORD_LIST*) malloc(sizeof(WORD_LIST));
+      list=list -> next;
+    } else {
+      list=(WORD_LIST*) malloc(sizeof(WORD_LIST));
+      start=list;
+    }
+    list->word=make_word(string);
+    list->next=0;
+  }
+
+  if (!list)
+    retval=127;
+  else {
+    SIMPLE_COM* cmd=(SIMPLE_COM*) malloc(sizeof(SIMPLE_COM));
+    cmd->flags=0;
+    cmd->line=0;
+    cmd->redirects=NULL;
+    cmd->words=start;
+    retval=execute_command(make_command(cm_simple, cmd));
+  }
+  lua_pushinteger(L,retval);
+  return 1;
+}
+
 
 static const luaL_Reg bashlib[] = {
   {"register", register_function},
   {"getVariable",get_variable},
   {"setVariable",set_variable},
+  {"call",call_bashfunction},
   {NULL, NULL}
 };
 
