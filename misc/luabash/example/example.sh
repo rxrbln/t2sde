@@ -16,16 +16,17 @@
 #
 # This is a simple lua bash example.
 
+# init lua bash and load code chunk from file internal.lua.
 enable -f ../luabash.so luabash
 luabash load ./internal.lua
 
+# perform some arithmetic using a lua function called "plus".
 total=0
 for ((i=1;i<3;i++)) ; do
    for ((j=1;j<3;j++)) ; do
 	plus $i $j
    done
 done
-
 echo "total sum is: " $total
 
 
@@ -41,3 +42,10 @@ some_bashy_function ()
 
 # call the lua function that calls bash function above
 callbash
+
+# test if io redirection works
+cat <<EOF | redirections | sed 's,xx,yy,g'
+line one
+line two
+line three
+EOF
