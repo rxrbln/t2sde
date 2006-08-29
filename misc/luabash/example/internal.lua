@@ -25,8 +25,16 @@ end
 function callbash()
    goodresult=bash.call("some_bashy_function", "trash", "test", "a", "is", "this")
    badresult=bash.call("this-command-is-intentionally-wrong")
-   print ("returncodes were: "..goodresult .. " " .. badresult);
+   print ("returncodes were: "..goodresult .. " " .. badresult)
+end
+
+function redirections()
+   repeat
+      a=io.read()
+      if a~=nil then print("xx"..a.."xx") end
+   until a==nil
 end
 
 bash.register("plus")
 bash.register("callbash")
+bash.register("redirections")
