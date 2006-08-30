@@ -35,6 +35,15 @@ function redirections()
    until a==nil
 end
 
+function printenv()
+   env=bash.getEnvironment()
+   for key,val in pairs(env) do
+      print(key.."="..val)
+   end
+end
+
+-- register shortcuts to functions above
 bash.register("plus")
 bash.register("callbash")
 bash.register("redirections")
+bash.register("printenv")
