@@ -1,0 +1,116 @@
+# -*- makefile -*-
+
+# sort out sources, objects and dependencies
+SRCS :=
+OBJS :=
+
+# see http://www.gnu.org/software/make/manual/html_chapter/make_8.html#SEC91
+# eval-function
+
+$(foreach ARCHIVE, $(ARCHIVES), \
+	$(eval SRCS += $($(subst .,_,$(subst -,_,$(ARCHIVE)))_SRCS)) \
+	$(eval $(subst .,_,$(subst -,_,$(ARCHIVE)))_OBJS := \
+		$(addsuffix .o, $(basename $($(subst .,_,$(subst -,_,$(ARCHIVE)))_SRCS)))) \
+	$(eval OBJS += $($(subst .,_,$(subst -,_,$(ARCHIVE)))_OBJS)) \
+)
+
+$(foreach LARCHIVE, $(LARCHIVES), \
+	$(eval SRCS += $($(subst .,_,$(subst -,_,$(LARCHIVE)))_SRCS)) \
+	$(eval $(subst .,_,$(subst -,_,$(LARCHIVE)))_OBJS := \
+		$(addsuffix .lo, $(basename $($(subst .,_,$(subst -,_,$(LARCHIVE)))_SRCS)))) \
+	$(eval OBJS += $($(subst .,_,$(subst -,_,$(LARCHIVE)))_OBJS)) \
+)
+
+$(foreach PROGRAM, $(PROGRAMS), \
+	$(eval SRCS += $($(subst .,_,$(subst -,_,$(PROGRAM))_SRCS))) \
+	$(eval $(subst .,_,$(subst -,_,$(PROGRAM)))_OBJS := \
+		$(addsuffix .o, $(basename $($(subst .,_,$(subst -,_,$(PROGRAM)))_SRCS)))) \
+	$(eval OBJS += $($(subst .,_,$(subst -,_,$(PROGRAM)))_OBJS)) \
+)
+
+$(foreach LIBRARY, $(LIBRARIES), \
+	$(eval SRCS += $($(subst .,_,$(subst -,_,$(LIBRARY)))_SRCS)) \
+	$(eval $(subst .,_,$(subst -,_,$(LIBRARY)))_OBJS := \
+		$(addsuffix .lo, $(basename $($(subst .,_,$(subst -,_,$(LIBRARY)))_SRCS)))) \
+	$(eval OBJS += $($(subst .,_,$(subst -,_,$(LIBRARY)))_OBJS)) \
+)
+
+DEPS = $(addsuffix .d, $(basename $(SRCS)))
+
+# beautify output
+ifeq ($(BEAUTIFY),1)
+Q = @
+endif
+
+# sub-directory traversal
+.PHONY: subdirs $(subdirs)
+
+subdirs: $(subdirs)
+$(subdirs):
+	$(Q)$(MAKE) -C $@ $(MAKECMDGOALS)
+
+# compilation
+.SUFFIXES: .o .lo .a .al .so .d
+.PRECIOUS: %.o %.lo
+
+all: subdirs $(OBJS) $(ARCHIVES) $(LARCHIVES) $(LIBRARIES) $(PROGRAMS)
+
+doc: subdirs
+
+# objects
+define mkdep
+	@echo '  DEP  $@'
+	$(Q)$(CC) -MM $(1) $< > $@.$$$$; \
+		sed -e 's,\($*\)\.o[ :]*,\1.o $@ : ,g' \
+            -e 's,$(shell basename $@),$@,g' < $@.$$$$ > $(subst .c,.d,$<); \
+		rm -f $@.$$$$
+endef
+
+define compile
+	@echo '  CC   $@'
+	$(Q)$(CC) $(1) -c -o $@ $<
+endef
+
+%.o: %.c
+	$(call mkdep,$(CPPFLAGS) $(INCLUDES) $(DEFS))
+	$(call compile,$(CFLAGS) $(DEFS) $(INCLUDES))
+
+%.lo: %.c
+	$(call mkdep,$(CPPFLAGS) $(INCLUDES) $(DEFS))
+	$(call compile,$(CFLAGS) $(DEFS) $(INCLUDES) $(PICFLAGS))
+
+#############################################################################
+# linking
+
+# archives
+define link-archive
+	@echo '  AR   $@'
+	$(Q)$(AR) -cru $@ $^
+endef
+
+# libraries
+# the -Xlinker -rpath mangling is needed to find those libraries during
+# linking for other objects
+define link-library
+	@echo '  LINK $@'
+	$(Q)$(CC) -shared $(LDFLAGS) $(patsubst -L%, -Xlinker -rpath %, $(filter -L%, $(LIBS))) \
+		 -o $@ $^ $(LIBS)
+endef
+
+# programs
+define link-program
+	@echo '  LINK $@'
+	$(Q)$(CC) $(LDFLAGS) -o $@ $^ $(LIBS) $(1)
+endef
+
+# cleanup
+.PHONY: clean
+clean: subdirs
+	$(Q)$(RM) -v $(OBJS) $(DEPS) $(PROGRAMS) $(CLEANFILES)
+	$(Q)list="$(LIBRARIES) $(LARCHIVES) $(ARCHIVES)"; for each in $$list; do \
+		$(RM) -v $$each*; \
+	done
+
+.PHONY: distclean
+distclean: clean subdirs
+	$(Q)$(RM) -v $(wildcard *~) core $(DISTCLEAN_FILES)
