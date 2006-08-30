@@ -49,3 +49,6 @@ line one
 line two
 line three
 EOF
+
+# print ten shell variables
+printenv | head -n 10
