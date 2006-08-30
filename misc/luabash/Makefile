@@ -6,6 +6,7 @@ all:
 include $(topdir)/cf/Rules.pre
 
 LIBRARIES = luabash.so
+INCLUDES = -Ilua/
 LIBS = lua/liblua.al -lm -ldl
 
 luabash_so_SRCS = luabash.c
@@ -16,16 +17,13 @@ $(luabash_so_OBJS): Config lua/luaconf.h
 luabash.so: $(luabash_so_OBJS)
 	$(call link-library)
 
-strip:
-	strip --strip-unneeded --strip-debug luabash.so
-
 include $(topdir)/cf/Rules.post
 
 help:
 	@echo "Usage: make [Options] [Targets]"; \
 	echo  ; \
 	echo "Options:" ; \
-	echo "   BEATIFY=1         Make all commands invisible (default: $(BEAUTIFY))." ; \
+	echo "   VERBOSE=1         Make all compile steps visible (default: $(VERBOSE))." ; \
 	echo "   DEBUG=1           Compile with debugging support (default: $(DEBUG))" ; \
 	echo "   PROFILE=1         Compile with profiling support (default: $(PROFILE))" ; \
 	echo ; \
