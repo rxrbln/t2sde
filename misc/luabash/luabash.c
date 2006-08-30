@@ -126,7 +126,8 @@ extern int execute_command __P((COMMAND *));
 
 extern SHELL_VAR* find_variable(const char *);
 extern SHELL_VAR* bind_variable(const char *, const char *);
-extern SHELL_VAR *bind_function __P((const char *, COMMAND *));
+extern SHELL_VAR* bind_function __P((const char *, COMMAND *));
+extern SHELL_VAR** all_shell_variables __P((void));
 #define value_cell(var) ((var)->value)
 
 extern int num_shell_builtins;	/* Number of shell builtins. */
@@ -310,11 +311,28 @@ static int call_bashfunction (lua_State *L)
   return 1;
 }
 
+static int get_environment (lua_State *L)
+{
+  SHELL_VAR** list=all_shell_variables();
+  int i=0;
+
+  lua_newtable(L);
+  while(list && list[i]) {
+    const char* key=list[i]->name;
+    const char* val=list[i]->value;
+    lua_pushstring(L,val);
+    lua_setfield(L,-2,key);
+    i++;
+  }
+
+  return 1;
+}
 
 static const luaL_Reg bashlib[] = {
   {"register", register_function},
   {"getVariable",get_variable},
   {"setVariable",set_variable},
+  {"getEnvironment",get_environment},
   {"call",call_bashfunction},
   {NULL, NULL}
 };
