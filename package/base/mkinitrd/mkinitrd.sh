@@ -145,15 +145,9 @@ ln -s mv $tmpdir/bin/cp
 cp ${root}/sbin/initrdinit $tmpdir/init
 
 # Custom ACPI DSDT table
-if test -x ${root}/sbin/initrd-add-dsdt; then
-    dsdt=""
-    test -f "${root}/DSDT.aml" && dsdt=/DSDT.aml
-    test -f "${root}/boot/DSDT.aml" && dsdt=/boot/DSDT.aml
-
-    if test -n "$dsdt"; then
-		echo "Adding local DSDT file: $dsdt"
-		cp ${root}/$dsdt $tmpdir/DSDT.aml
-    fi
+if test -f "${root}/boot/DSDT.aml"; then
+	echo "Adding local DSDT file: $dsdt"
+	cp ${root}/boot/DSDT.aml $tmpdir/DSDT.aml
 fi
 
 # create the cpio image
