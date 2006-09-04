@@ -111,7 +111,7 @@ echo "Injecting programs and configuration ..."
 #
 cp -ar ${root}/etc/udev $tmpdir/etc/
 # in theory all, but fat and currently only cdrom_id is needed ...
-cp -ar ${root}/sbin/cdrom_id $tmpdir/sbin/
+cp -ar ${root}/lib/udev/cdrom_id $tmpdir/lib/udev/
 
 # setup programs
 #
