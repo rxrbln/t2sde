@@ -15,7 +15,7 @@
 
 using namespace Utility;
 
-const bool debug = 0;
+const bool debug = false;
 
 std::vector <std::string> suffixes;
 
@@ -451,6 +451,7 @@ int main (int argc, char* argv[])
   suffixes.push_back(".tgz");
   suffixes.push_back(".bz2");
   suffixes.push_back(".gz");
+  suffixes.push_back(".zip");
 
 #ifdef TESTING
   std::vector<Version> versions;
