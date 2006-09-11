@@ -37,7 +37,7 @@ for x in `egrep 'X .* KERNEL .*' $base/config/$config/packages |
           cut -d ' ' -f 5` ; do
 
   kernel=${x/_*/}
-  moduledir="`grep lib/modules  $build_root/var/adm/flists/$kernel |
+  moduledir="`grep lib/modules $build_root/var/adm/flists/$kernel |
               cut -d ' ' -f 2 | cut -d / -f 1-3 | uniq | head -n 1`"
   kernelver=${moduledir/*\/}
   initrd="initrd-$kernelver.img"
@@ -53,4 +53,3 @@ for x in `egrep 'X .* KERNEL .*' $base/config/$config/packages |
 done
 
 arch_boot_cd_post $isofsdir
-
