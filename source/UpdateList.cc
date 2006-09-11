@@ -448,6 +448,7 @@ int main (int argc, char* argv[])
   suffixes.push_back(".tar.bz2");
   suffixes.push_back(".tar.gz");
   suffixes.push_back(".tbz2");
+  suffixes.push_back(".tbz");
   suffixes.push_back(".tgz");
   suffixes.push_back(".bz2");
   suffixes.push_back(".gz");
