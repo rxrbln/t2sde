@@ -85,22 +85,24 @@ set_kbd_delay() {
 	store_kbd
 }
 
-store_con(){
+store_con() {
 	if [ -f /etc/conf/console ] ; then
 		sed -e "s/con_term=.*/con_term=$con_term/" \
 		    -e "s/con_blank=.*/con_blank=$con_blank/" \
-		  < /etc/conf/console > /etc/conf/console.tmp
-		grep -q con_term= /etc/conf/console.tmp || \
-		  echo con_term=$con_term >> /etc/conf/console.tmp
-		grep -q con_blank= /etc/conf/console.tmp || \
-		  echo con_blank=$con_blank >> /etc/conf/console.tmp
-		mv /etc/conf/console.tmp /etc/conf/console
-	else
-		echo -e "con_term=$con_term\ncon_blank=$con_blank\n" \
-		  > /etc/conf/console
+		    -e "s/con_blength=.*/con_blength=$con_blength/" \
+		    -i /etc/conf/console
 	fi
-	[ "$con_term" -a "$con_blank" ] && \
-	  setterm -term $con_term -blank $con_blank > /dev/console
+	touch /etc/conf/console # make sure the file exists
+	grep -q con_term= /etc/conf/console ||
+	  echo con_term=$con_term >> /etc/conf/console
+	grep -q con_blank= /etc/conf/console ||
+	  echo con_blank=$con_blank >> /etc/conf/console
+	grep -q con_blength= /etc/conf/console ||
+	  echo con_blength=$con_blength >> /etc/conf/console
+
+	[ "$con_term" -a "$con_blank" -a "$con_blength" ] &&
+	  setterm -term $con_term -blank $con_blank -blength $con_blength \
+	          > /dev/console
 }
 
 set_con_term() {
@@ -113,6 +115,12 @@ set_con_blank() {
 	gui_input "Set new console screen blank interval" \
                   "$con_blank" "con_blank"
 	store_con
+}
+
+set_con_blength() {
+        gui_input "Set new console screen beep interval" \
+                  "$con_blength" "con_blength"
+        store_con
 }
 
 set_tmzone() {
@@ -211,6 +219,7 @@ main() {
 	[ -f /etc/conf/console ] && . /etc/conf/console
 	[ "$con_term" ] || con_term=linux
 	[ "$con_blank" ] || con_blank=0
+	[ "$con_blength" ] || con_blength=0
 
 	gui_menu general 'Various general system configurations' \
 		"Set console keyboard mapping ....... $keymap" "set_keymap" \
@@ -222,6 +231,7 @@ main() {
 		"Set console keyboard repeat delay .. $kbd_delay" "set_kbd_delay" \
 		"Set console screen terminal type ... $con_term" "set_con_term" \
 		"Set console screen blank interval .. $con_blank" "set_con_blank" \
+		"Set console screen beep interval ... $con_blength" "set_con_blength" \
 		"Run the (daily) 'cron.run' script now" "cron.run"
     do : ; done
 }
