@@ -13,7 +13,6 @@
 # GNU General Public License can be found in the file COPYING.
 # --- T2-COPYRIGHT-NOTE-END ---
 
-
 set -e
 
 if [ $UID != 0 ]; then
@@ -115,7 +114,7 @@ cp -ar ${root}/lib/udev/cdrom_id $tmpdir/lib/udev/
 
 # setup programs
 #
-for x in ${root}/sbin/{hotplug++,udev,udevstart,modprobe,insmod} ${root}/usr/sbin/disktype
+for x in ${root}/sbin/{hotplug++,udev,udevtrigger,modprobe,insmod} ${root}/usr/sbin/disktype
 do
 	# sanity check
 	file $x | grep -q "dynamically linked" &&
