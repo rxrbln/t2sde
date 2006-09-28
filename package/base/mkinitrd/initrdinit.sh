@@ -13,7 +13,7 @@
 # GNU General Public License can be found in the file COPYING.
 # --- T2-COPYRIGHT-NOTE-END ---
 
-echo "T2 early userspace ..."
+echo "T2 early userspace (C) Rene Rebe - ExactCODE"
 
 PATH=/sbin:/bin
 
@@ -24,12 +24,9 @@ mount -t usbfs none /proc/bus/usb
 mount -t sysfs none /sys
 ln -s /proc/self/fd /dev/fd
 
-# later on we might reverse these, that is run udevstart first,
-# and let udev add new ones as hotplug agents ...
-
-echo "Running hotplug++ hardware detection ..."
-/sbin/hotplug++ -synth
-echo "/sbin/hotplug++" > /proc/sys/kernel/hotplug
+echo "Populating u/dev ..."
+udevd -d
+udevtrigger
 
 echo "Loading additional subsystem and filesystem driver ..."
 # hack to be removed
@@ -48,9 +45,6 @@ for x in /lib/modules/*/kernel/fs/{*/,}*.*o ; do
 	x=${x##*/} ; x=${x%.*o}
 	modprobe $x
 done
-
-echo "Populating /dev (udev) ..."
-/sbin/udevstart
 
 echo "Mounting rootfs ..."
 
