@@ -114,7 +114,7 @@ cp -ar ${root}/lib/udev/cdrom_id $tmpdir/lib/udev/
 
 # setup programs
 #
-for x in ${root}/sbin/{hotplug++,udev,udevtrigger,modprobe,insmod} ${root}/usr/sbin/disktype
+for x in ${root}/sbin/{hotplug++,udevd,udevtrigger,modprobe,insmod} ${root}/usr/sbin/disktype
 do
 	# sanity check
 	file $x | grep -q "dynamically linked" &&
@@ -160,5 +160,3 @@ echo "Archiving ..."
 #
 du -sh ${root}/boot/initrd-$kernelver.img
 rm -rf $tmpdir
-
-
