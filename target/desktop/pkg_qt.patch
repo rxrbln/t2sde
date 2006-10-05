@@ -1,0 +1,397 @@
+--- ./src/iconview/qiconview.cpp	2004-08-05 11:42:00.000000000 -0300
++++ ./src/iconview/qiconview.cpp	2004-11-28 12:45:01.000000000 -0200
+@@ -261,6 +261,7 @@ public:
+ 
+     QIconViewToolTip *toolTip;
+     QPixmapCache maskCache;
++    QPixmap *backrubber;    
+     QPtrDict<QIconViewItem> selectedItems;
+ 
+     struct ItemContainer {
+@@ -1974,14 +1975,27 @@ void QIconViewItem::paintItem( QPainter 
+     if ( picture() ) {
+ 	QPicture *pic = picture();
+ 	if ( isSelected() ) {
+-	    p->fillRect( pixmapRect( FALSE ), QBrush( cg.highlight(), QBrush::Dense4Pattern) );
++            p->setBrush( QBrush( cg.highlight(), QBrush::Dense4Pattern ) );
++            p->setPen( QPen( cg.highlight(), QBrush::Dense4Pattern ) );
++            p->drawRoundRect( pixmapRect( FALSE ), 
++			    1000 / pixmapRect( FALSE ).width(),
++			    1000 / pixmapRect( FALSE ).height() );		
+ 	}
+ 	p->drawPicture( x()-pic->boundingRect().x(), y()-pic->boundingRect().y(), *pic );
+ 	if ( isSelected() ) {
+-	    p->fillRect( textRect( FALSE ), cg.highlight() );
++            p->setBrush( QBrush( cg.highlight() ) );
++            p->setPen( QPen( cg.highlight() ) );
++            p->drawRoundRect( textRect( FALSE ), 
++			    1000 / textRect( FALSE ).width(),
++			    1000 / textRect( FALSE ).height() );		
+ 	    p->setPen( QPen( cg.highlightedText() ) );
+-	} else if ( view->d->itemTextBrush != NoBrush )
+-	    p->fillRect( textRect( FALSE ), view->d->itemTextBrush );
++	} else if ( view->d->itemTextBrush != NoBrush ) {
++            p->setBrush( view->d->itemTextBrush );
++            p->setPen( QPen( view->d->itemTextBrush.color() ) );
++            p->drawRoundRect( textRect( FALSE ), 
++			    1000 / textRect( FALSE ).width(),
++			    1000 / textRect( FALSE ).height() );		
++	}
+ 
+ 	int align = view->itemTextPos() == QIconView::Bottom ? AlignHCenter : AlignAuto;
+ 	if ( view->d->wordWrapIconText )
+@@ -2039,10 +2053,19 @@ void QIconViewItem::paintItem( QPainter 
+ 
+     p->save();
+     if ( isSelected() ) {
+-	p->fillRect( textRect( FALSE ), cg.highlight() );
++        p->setBrush( QBrush( cg.highlight() ) );
++        p->setPen( QPen( cg.highlight() ) );
++        p->drawRoundRect( textRect( FALSE ), 
++                          1000 / textRect( FALSE ).width(),
++			  1000 / textRect( FALSE ).height() );		
+ 	p->setPen( QPen( cg.highlightedText() ) );
+-    } else if ( view->d->itemTextBrush != NoBrush )
+-	p->fillRect( textRect( FALSE ), view->d->itemTextBrush );
++    } else if ( view->d->itemTextBrush != NoBrush ) {
++        p->setBrush( view->d->itemTextBrush );
++        p->setPen( QPen( view->d->itemTextBrush.color() ) );
++        p->drawRoundRect( textRect( FALSE ), 
++			  1000 / textRect( FALSE ).width(),
++			  1000 / textRect( FALSE ).height() );		
++    }
+ 
+     int align = AlignHCenter;
+     if ( view->d->wordWrapIconText )
+@@ -2058,31 +2081,13 @@ void QIconViewItem::paintItem( QPainter 
+ /*!
+     Paints the focus rectangle of the item using the painter \a p and
+     the color group \a cg.
++    
++    The default implementation does nothing; subclasses may
++    reimplement this function.
+ */
+ 
+-void QIconViewItem::paintFocus( QPainter *p, const QColorGroup &cg )
++void QIconViewItem::paintFocus( QPainter *, const QColorGroup & )
+ {
+-    if ( !view )
+-	return;
+-
+-    view->style().drawPrimitive(QStyle::PE_FocusRect, p,
+-				QRect( textRect( FALSE ).x(), textRect( FALSE ).y(),
+-				       textRect( FALSE ).width(),
+-				       textRect( FALSE ).height() ), cg,
+-				(isSelected() ?
+-				 QStyle::Style_FocusAtBorder :
+-				 QStyle::Style_Default),
+-				QStyleOption(isSelected() ? cg.highlight() : cg.base()));
+-
+-    if ( this != view->d->currentItem ) {
+-	view->style().drawPrimitive(QStyle::PE_FocusRect, p,
+-				    QRect( pixmapRect( FALSE ).x(),
+-					   pixmapRect( FALSE ).y(),
+-					   pixmapRect( FALSE ).width(),
+-					   pixmapRect( FALSE ).height() ),
+-				    cg, QStyle::Style_Default,
+-				    QStyleOption(cg.base()));
+-    }
+ }
+ 
+ /*!
+@@ -2778,6 +2783,7 @@ QIconView::QIconView( QWidget *parent, c
+     d->renamingItem = 0;
+     d->drawActiveSelection = TRUE;
+     d->drawDragShapes = FALSE;
++    d->backrubber = 0;    
+ 
+     connect( d->adjustTimer, SIGNAL( timeout() ),
+ 	     this, SLOT( adjustItems() ) );
+@@ -3262,7 +3268,7 @@ uint QIconView::count() const
+ 
+ void QIconView::doAutoScroll()
+ {
+-    QRect oldRubber = QRect( *d->rubber );
++    QRect oldRubber = *d->rubber;
+ 
+     QPoint vp = viewport()->mapFromGlobal( QCursor::pos() );
+     QPoint pos = viewportToContents( vp );
+@@ -3279,7 +3285,6 @@ void QIconView::doAutoScroll()
+     bool block = signalsBlocked();
+ 
+     QRect rr;
+-    QRegion region( 0, 0, visibleWidth(), visibleHeight() );
+ 
+     blockSignals( TRUE );
+     viewport()->setUpdatesEnabled( FALSE );
+@@ -3305,9 +3310,6 @@ void QIconView::doAutoScroll()
+ 			item->setSelected( TRUE, TRUE );
+ 			changed = TRUE;
+ 			rr = rr.unite( item->rect() );
+-		    } else {
+-			region = region.subtract( QRect( contentsToViewport( item->pos() ),
+-							 item->size() ) );
+ 		    }
+ 
+ 		    minx = QMIN( minx, item->x() - 1 );
+@@ -3324,42 +3326,76 @@ void QIconView::doAutoScroll()
+     viewport()->setUpdatesEnabled( TRUE );
+     blockSignals( block );
+ 
+-    QRect r = *d->rubber;
+-    *d->rubber = oldRubber;
+-
+-    QPainter p;
+-    p.begin( viewport() );
+-    p.setRasterOp( NotROP );
+-    p.setPen( QPen( color0, 1 ) );
+-    p.setBrush( NoBrush );
+-    drawRubber( &p );
+-    d->dragging = FALSE;
+-    p.end();
+-
+-    *d->rubber = r;
+-
+-    if ( changed ) {
+-	d->drawAllBack = FALSE;
+-	d->clipRegion = region;
+-	repaintContents( rr, FALSE );
+-	d->drawAllBack = TRUE;
++    // static bool drawAll;
++    if ( d->backrubber == 0 ) {
++        d->backrubber = new QPixmap( viewport()->rect().size() );
++        d->backrubber->fill( viewport(), viewport()->rect().topLeft() );
++        // drawAll = true;
+     }
+ 
++    // int oldX = 0, oldY = 0;
++    // if ( !drawAll && d->scrollTimer ) {
++    //     oldX = contentsX();
++    //     oldY = contentsY();
++    // }
+     ensureVisible( pos.x(), pos.y() );
++    // if ( !drawAll && d->scrollTimer && ( oldX != contentsX() || oldY != contentsY() ) )
++    //     drawAll = true;
+ 
+-    p.begin( viewport() );
+-    p.setRasterOp( NotROP );
+-    p.setPen( QPen( color0, 1 ) );
+-    p.setBrush( NoBrush );
+-    drawRubber( &p );
+-    d->dragging = TRUE;
++    QRect allRect = oldRubber.normalize();
++    if ( changed ) 
++        allRect |= rr.normalize();
++    allRect |= d->rubber->normalize();
++    QPoint point = contentsToViewport( allRect.topLeft() );
++    allRect = QRect( point.x(), point.y(), allRect.width(), allRect.height() );
++    allRect &= viewport()->rect();
++
++    d->dragging = FALSE;
++
++    QPainter p( d->backrubber );
++    p.translate( -contentsX(), -contentsY() );
++#if 0
++    if ( !drawAll ) {
++        oldRubber = oldRubber.normalize();
++        point = contentsToViewport( oldRubber.topLeft() );
++        oldRubber = QRect( point.x(), point.y(), oldRubber.width(), oldRubber.height() );
++        oldRubber &= viewport()->rect();
++
++        point = contentsToViewport( nr.topLeft() );
++        nr = QRect( point.x(), point.y(), nr.width(), nr.height() );
++        nr &= viewport()->rect();
++
++	QRegion region;
++	if ( allRect != nr )
++            region = QRegion(allRect).subtract( QRegion( nr ) );
++	if ( allRect != oldRubber )
++            region += QRegion(allRect).subtract( QRegion( oldRubber ) );
++
++	QMemArray< QRect > ar = region.rects();
++	for ( uint i = 0; i < ar.size(); ++i ) {
++             ar[i].addCoords( -2, -2, 4, 4 );
++             ar[i] = ar[i].normalize();
++	
++             p.setClipRect( ar[i] );
++             drawContents( &p, contentsX() + ar[i].left(), contentsY() + ar[i].top(), ar[i].width(), ar[i].height() );
++	}
++    }
++    else
++#endif
++    {	    
++        drawContents( &p, 
++                      contentsX() + allRect.left(), contentsY() + allRect.top(), 
++                      allRect.width(), allRect.height() ); 
++    }
+ 
+     p.end();
++    // drawAll = false;
++    d->dragging = TRUE;
++    bitBlt( viewport(), allRect.topLeft(), d->backrubber, allRect );
+ 
+     if ( changed ) {
+-	emit selectionChanged();
+-	if ( d->selectionMode == Single )
+-	    emit selectionChanged( d->currentItem );
++        if ( d->selectionMode == Single )
++            emit selectionChanged( d->currentItem );
+     }
+ 
+     if ( !QRect( 50, 50, viewport()->width()-100, viewport()->height()-100 ).contains( vp ) &&
+@@ -3386,9 +3422,7 @@ void QIconView::doAutoScroll()
+ 
+ void QIconView::drawContents( QPainter *p, int cx, int cy, int cw, int ch )
+ {
+-    if ( d->dragging && d->rubber )
+-	drawRubber( p );
+-
++    p->save();
+     QRect r = QRect( cx, cy, cw, ch );
+ 
+     QIconViewPrivate::ItemContainer *c = d->firstContainer;
+@@ -3462,8 +3496,16 @@ void QIconView::drawContents( QPainter *
+ 	d->currentItem->paintFocus( p, colorGroup() );
+     }
+ 
+-    if ( d->dragging && d->rubber )
+-	drawRubber( p );
++   p->restore();
++   if ( d->rubber ) {
++       p->save();              
++       p->translate( contentsX(), contentsY() );
++       p->setRasterOp( NotROP );
++       p->setPen( QPen( color0, 1 ) );
++       p->setBrush( NoBrush );        
++       drawRubber( p );
++       p->restore();
++    }
+ }
+ 
+ /*!
+@@ -4362,17 +4404,15 @@ void QIconView::contentsMousePressEvent(
+ void QIconView::contentsMousePressEventEx( QMouseEvent *e )
+ {
+     if ( d->rubber ) {
+-	QPainter p;
+-	p.begin( viewport() );
+-	p.setRasterOp( NotROP );
+-	p.setPen( QPen( color0, 1 ) );
+-	p.setBrush( NoBrush );
++        QRect r( d->rubber->normalize() );
++        delete d->rubber;
++        d->rubber = 0;  
++   
++        repaintContents( r, FALSE );
++        d->dragging = FALSE;
+ 
+-	drawRubber( &p );
+-	d->dragging = FALSE;
+-	p.end();
+-	delete d->rubber;
+-	d->rubber = 0;
++	delete d->backrubber;
++	d->backrubber = 0;
+ 
+ 	if ( d->scrollTimer ) {
+ 	    disconnect( d->scrollTimer, SIGNAL( timeout() ), this, SLOT( doAutoScroll() ) );
+@@ -4557,21 +4597,17 @@ void QIconView::contentsMouseReleaseEven
+     d->startDragItem = 0;
+ 
+     if ( d->rubber ) {
+-	QPainter p;
+-	p.begin( viewport() );
+-	p.setRasterOp( NotROP );
+-	p.setPen( QPen( color0, 1 ) );
+-	p.setBrush( NoBrush );
+-
+-	drawRubber( &p );
+-	d->dragging = FALSE;
+-	p.end();
+-
++        QRect r(d->rubber->normalize());
++        
+ 	if ( ( d->rubber->topLeft() - d->rubber->bottomRight() ).manhattanLength() >
+ 	     QApplication::startDragDistance() )
+ 	    emitClicked = FALSE;
+ 	delete d->rubber;
+-	d->rubber = 0;
++    	d->rubber = 0;
++	repaintContents(r, FALSE);
++	d->dragging = FALSE;
++	delete d->backrubber;
++	d->backrubber = 0;      
+ 	d->currentItem = d->tmpCurrentItem;
+ 	d->tmpCurrentItem = 0;
+ 	if ( d->currentItem )
+@@ -5330,9 +5366,9 @@ void QIconView::drawRubber( QPainter *p 
+     QPoint pnt( d->rubber->x(), d->rubber->y() );
+     pnt = contentsToViewport( pnt );
+ 
+-    style().drawPrimitive(QStyle::PE_RubberBand, p,
+-			  QRect(pnt.x(), pnt.y(), d->rubber->width(), d->rubber->height()),
+-			  colorGroup(), QStyle::Style_Default, QStyleOption(colorGroup().base()));
++    style().drawPrimitive( QStyle::PE_RubberBand, p,
++			   QRect( pnt.x(), pnt.y(), d->rubber->width(), d->rubber->height() ).normalize(),
++			   colorGroup(), QStyle::Style_Default, QStyleOption(colorGroup().base()) );
+ }
+ 
+ /*!
+--- ./src/widgets/qlistbox.cpp	2004-10-15 20:25:57.000000000 -0300
++++ ./src/widgets/qlistbox.cpp	2004-10-17 04:14:49.000000000 -0300
+@@ -2160,7 +2160,7 @@ void QListBox::mouseReleaseEvent( QMouse
+     }
+ 
+     if ( d->rubber ) {
+-	drawRubber();
++	repaintContents( d->rubber->normalize(), FALSE );
+ 	delete d->rubber;
+ 	d->rubber = 0;
+ 	d->current = d->tmpCurrent;
+@@ -2238,11 +2238,9 @@ void QListBox::mouseMoveEvent( QMouseEve
+     }
+ 
+     if ( d->rubber ) {
+-	QRect r = d->rubber->normalize();
+-	drawRubber();
++    	QRect r = d->rubber->normalize();
+ 	d->rubber->setCoords( d->rubber->x(), d->rubber->y(), e->x(), e->y() );
+ 	doRubberSelection( r, d->rubber->normalize() );
+-	drawRubber();
+ 	return;
+     }
+ 
+@@ -4379,6 +4377,7 @@ void QListBox::drawRubber()
+ 	return;
+     if ( !d->rubber->width() && !d->rubber->height() )
+ 	return;
++ 
+     QPainter p( viewport() );
+     p.setRasterOp( NotROP );
+     style().drawPrimitive( QStyle::PE_RubberBand, &p, d->rubber->normalize(),
+@@ -4411,13 +4410,24 @@ void QListBox::doRubberSelection( const 
+ 	    }
+ 	}
+     }
++
++    QRect allRect = old;
++    if ( changed ) {
++        allRect |= pr;
++    }    
++    allRect |= rubber;
++    allRect &= viewport()->rect();
++    allRect.addCoords( -2, -2, 2, 2 );
++
++    repaintContents( QRect( contentsX() + allRect.left(), contentsY() + allRect.top(), allRect.width(), allRect.height() ), FALSE ); 
++    drawRubber();
++    
+     if ( changed ) {
+ 	emit selectionChanged();
+ #if defined(QT_ACCESSIBILITY_SUPPORT)
+ 	QAccessible::updateAccessibility( viewport(), 0, QAccessible::Selection );
+ #endif
+     }
+-    viewport()->repaint( pr, TRUE );
+ }
+ 
+ 
