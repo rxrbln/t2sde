@@ -32,12 +32,17 @@ desc.__format__ = {}
 -- FIXME setmetatable(desc, { __call = function })
 
 -- parse .desc text ; expects line iterator function as argument
+
+-- no, actually it expects a FILENAME. who changed that back again ?
+-- Please do not touch that often, because this code is used in production environment
+-- Valentin
 function desc.parse(iter)
 	local retval = {}
 
  	-- FIXME: Perhaps we'll gain some performance by not reading
-	--        line by line 
-	for line in io.open(iter):lines() do
+	--        line by line
+	file=io.open(iter)
+	for line in file:lines() do
 		local tag,cnt
 
 		_,_,tag,cnt = string.find(line, "([[][^]]*[]])[ ]+(.*)")
@@ -49,7 +54,7 @@ function desc.parse(iter)
 			end
 		end
 	end
-
+	file:close()
 	return retval
 end
 
