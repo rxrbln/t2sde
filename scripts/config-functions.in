@@ -87,8 +87,9 @@ create_dot_in_lists() {
 #	pkgenable	package-list
 #	pkgdisable	package-list
 #	pkgremove	package-list
-#	pkgcheck	pattern X|O|.
+#	pkgcheck	package|oacjage X|O|.
 #	pkgfilter	cmd arg1 ...
+#       pkgsel_parse    parse pkgsel file
 #
 	pkgin() { pkglistread config/$config/packages; }
 	pkgout() { pkglistwrite config/$config/packages; }
@@ -109,85 +110,6 @@ pkgchecklicense() {
 			echo $pkg >> config/$config/license-issue.ask
 		fi
 	done < <(grep "^X" config/$config/packages)
-}
-
-# Convert a pkg selection rule into awk format
-#
-# Usage:
-#   1. call pkgsel_init
-#   2. call pkgsel_parse as often as necessary
-#   3. call pkgsel_finish
-# Result:
-#   awk script for package selection, see config.in for its usage
-#
-# Example:
-#   pkgsel X python
-#     Result: ( / [^/]*\/python / ) { $1="X"; }
-#   pkgsel "O perl/*" 
-#     Result: ( / perl\/[^/]* / ) { $1="O"; }
-#   pkgsel_parse < config/${config}/pkgsel
-#     Result: creates pkgsel.awk output
-#   pkgsel include file
-#     Result: continues processing file specified
-pkgsel_parse() {
-	local action patterlist pattern
-	local address first others
-	while read action patternlist ; do
- 		case "$action" in
-		    [xX])
-			action='$1="X"' ;;
-		    [oO])
-			action='$1="O"' ;;
-		    -)
-			action='next'   ;;
-		    =)
-			action='$1=def' ;;
-		    include)
-			pkgsel_parse < $patternlist
-			continue ;;
-		    *)
-			echo '{ exit; }'
-			continue ;;
-		esac
-		address=""
-		while read xpattern ; do
-			pattern="${xpattern#\!}"
-			[ "$pattern" = "$xpattern" ]; neg=$?
-			[ "${pattern}" = "${pattern//\//}" ] && pattern="*/$pattern"
-			pattern="$( echo "$pattern" | sed \
-			            -e 's,[^a-zA-Z0-9_/\*+\-\[\]],,g' \
-			            -e 's,[/\.\+],\\\\&,g' \
-			            -e 's,\*,[^/]*,g' )"
-			if [ $neg -eq 0 ]; then
-				address="$address${address:+ && }( \$5 ~ \"^${pattern}\$\" )"
-			else
-				address="$address${address:+ && }( \$5 !~ \"^${pattern}\$\" )"
-			fi
-		done < <( echo "$patternlist" | tr '\t ' '\n\n' )
-		echo "{ if ( $address ) { $action; } }"
-	done < <( if [ "$*" ]; then echo "$*"; else cat | egrep -v "^((^#.*$)|())$"; fi)
-}
-
-pkgsel_init() {
-    cat <<EOF
-{ 
-  def=\$1 ;
-  repo=\$4 ;
-  pkg=\$5 ;
-  \$5 = \$4 "/" \$5 ;
-  \$4 = "placeholder" ;
-}
-EOF
-}
-
-pkgsel_finish() {
-    cat <<EOF
-{ 
-  \$4=repo ;
-  \$5=pkg ;
-  print ;
-}
-EOF
 }
 
 comment() {
