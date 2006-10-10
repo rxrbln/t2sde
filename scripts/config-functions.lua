@@ -17,7 +17,6 @@
 packages = {} -- our internal package array of tables
 
 function pkglistread (filename)
---   print ("pkglistread: "..filename)
    local f = io.open (filename, "r")
    
    packages = {}
@@ -40,6 +39,9 @@ function pkglistread (filename)
       -- shortcomming of above regex
       pkg.categories = string.match (pkg.categories, "(.*%S) *");
       
+      pkg.alias = pkg.name
+      pkg.default_status = pkg.status
+      
       --[[
       print (line);
       
@@ -51,8 +53,8 @@ function pkglistread (filename)
       io.write ("'",pkg.categories,"'",pkg.flags,"'\n")
       ]]--
       
-      if pkg.name == nil then
-	 print ("!> ", line)
+      if pkg.alias == nil then
+	 print ("error parsing: ", line)
       else
 	 packages[#packages+1] = pkg
       end
@@ -62,38 +64,89 @@ function pkglistread (filename)
 end
 
 function pkglistwrite (filename)
---   print ("pkglistwrite: "..filename)
    local f = io.open (filename, "w")
    
    for i,pkg in ipairs(packages) do
-      if pkg.status == "-" then
-	 print ("package ".. pkg.name .. " disabled")
+      -- only write not fully disabled packages
+      if pkg.status ~= "-" then
+	 
+	 f:write (pkg.status, " ", pkg.stages, " ", pkg.priority, " ",
+		  pkg.repository, " ", pkg.alias, " ", pkg.ver)
+	 
+	 if string.len(pkg.extraver) > 0 then
+	    f:write (" ", pkg.extraver)
+	 end
+	 
+	 f:write (" / ", pkg.categories)
+	 
+	 if string.len(pkg.flags) > 0 then
+	    f:write (" ", pkg.flags)
+	 end
+	 
+	 f:write (" 0\n")
       end
-      
-      f:write (pkg.status, " ", pkg.stages, " ", pkg.priority, " ",
-	       pkg.repository, " ", pkg.name, " ", pkg.ver)
-      
-      if string.len(pkg.extraver) > 0 then
-	 f:write (" ", pkg.extraver)
-      end
-      
-      f:write (" / ", pkg.categories)
-      
-      if string.len(pkg.flags) > 0 then
-	 f:write (" ", pkg.flags)
-      end
-      
-      f:write (" 0\n")
    end
    f:close()
 end
 
+-- tracks the state and also expands patterns
+-- either called with just packages or repository/package
+-- allowing wildcards such as perl/*
 local function pkgswitch (mode, ...)
-   for i,pkg in ipairs(packages) do
-      for j,arg in ipairs {...} do
-	 if (pkg.name == arg) then
-	    if not pkg.status == "-" then
-	       pkg.status = mode
+
+   local tr = { ["+"] = "%+",
+                ["-"] = "%-",
+                ["*"] = ".*" }
+
+   for i,arg in ipairs {...} do
+      -- split repo from the package and expand wildcard to regex
+      local rep, pkg = string.match (arg, "(.*)/(.*)");
+      if rep == nil then
+	 rep = "*"
+	 pkg = arg
+      end
+      
+      rep = string.gsub (rep, "([+*-])", tr)
+      pkg = string.gsub (pkg, "([+*-])", tr)
+      
+      --optimization, to skip the package traversal early
+      local pkg_match = false;
+      if string.find (pkg, "*") == nil then
+	 pkg_match = true
+      end
+      
+      --print ("regex> rep: " .. rep .. ", pkg: '" .. pkg .. "'")
+      
+      for j,p in ipairs(packages) do
+	 -- match
+	 --[[
+	 if (pkg == "linux-header") then
+	    print ("pkg> p.rep: " .. p.repository ..
+		   ", p.alias: '" .. p.alias .. "'")
+	    local s1 = string.match(p.alias, pkg)
+	    local s2 = string.match(p.repository, rep)
+	    if s1 == nil then s1 = "nil" end
+	    if s2 == nil then s2 = "nil" end
+	    print ("match pkg: " .. s1)
+	    print ("match rep: " .. s2)
+	 end
+         ]]--
+	 if (p.alias == string.match(p.alias, pkg) and
+	     p.repository == string.match(p.repository, rep)) then
+	    -- if not already disabled completely
+	    --print ("matched rep: " .. rep .. ", pkg: " .. pkg)
+	    --print ("with    rep: " .. p.repository ..", pkg: " .. p.alias)
+	    if p.status ~= "-" then
+	       --print ("set to: " .. mode)
+	       if mode == "=" then
+		  p.status = p.default_status
+	       else
+		  p.status = mode
+	       end
+	    end
+	    -- just optimization
+	    if pkg_match then
+	       break
 	    end
 	 end
       end
@@ -122,7 +175,7 @@ function pkgcheck (pattern, mode)
    
    for i,pkg in ipairs(packages) do
       for j,x in ipairs (p) do
-	 if pkg.name == x then
+	 if pkg.alias == x then
 	    if mode == "X" then
 	       if pkg.status == "X" then return 0 end
 	    elseif mode == "O" then
@@ -138,8 +191,50 @@ function pkgcheck (pattern, mode)
    return 1
 end
 
---pkglistread ("config/default/packages")
---pkglistwrite ("config/default/packages2")
+--
+
+-- Parse pkg selection rules
+--
+-- Example:
+--   X python     - selects just the python package
+--   O perl/*     - deselects all perl repository packages
+--   = glibc      - sets package glibc to it's default state
+--   include file - recursively parse file specified
+--
+
+function pkgsel_parse (filename)
+   local f = io.open (filename, "r")
+   
+   for count = 1, math.huge do
+      local line = f:read()
+      
+      if line == nil then break end
+      line = string.gsub (line, "#.*","")
+      
+      local action
+      local pattern
+      action, pattern = string.match (line, "(%S+) +(%S+)")
+      
+      if action == "x" or action == "X" then
+	 pkgswitch ("X", pattern)
+      elseif action == "o" or action == "O" then
+	 pkgswitch ("O", pattern)
+      elseif action == "-" then
+	 pkgswitch ("-", pattern)
+      elseif action == "=" then
+	 pkgswitch ("=", pattern)
+      elseif action == "include" then
+	 pkgsel_parse (pattern)
+      else
+	 if not line == "" then
+	    print ("unparsed: "..line)
+	 end
+      end
+   end
+   f:close()
+end
+
+--
 
 print "LUA accelerator (C) 2006 by Valentin Ziegler & Rene Rebe, ExactCODE"
 
@@ -150,3 +245,4 @@ bash.register("pkgcheck")
 bash.register("pkgremove")
 bash.register("pkgenable")
 bash.register("pkgdisable")
+bash.register("pkgsel_parse")
