@@ -21,10 +21,7 @@ function pkglistread (filename)
    
    packages = {}
    
-   for count = 1, math.huge do
-      local line = f:read()
-      if line == nil then break end
-      
+   for line in f:lines() do
       -- use captures to yank out the various parts:
       -- X -----5---9 149.800 develop lua 5.1.1 / extra/development DIETLIBC 0
       -- X -----5---- 112.400 xorg bigreqsproto 1.0.2 / base/x11 0
@@ -205,10 +202,7 @@ end
 function pkgsel_parse (filename)
    local f = io.open (filename, "r")
    
-   for count = 1, math.huge do
-      local line = f:read()
-      
-      if line == nil then break end
+   for line in f:lines() do
       line = string.gsub (line, "#.*","")
       
       local action
