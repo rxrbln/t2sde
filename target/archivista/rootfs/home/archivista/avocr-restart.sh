@@ -9,10 +9,11 @@ fi
 # PATH and co
 . /etc/profile
 
-killall wine-preloader
+/bin/su - archivista -c wineboot
 cd  /home/archivista/.wine/drive_c/Programs/Av5e
 cat AV5AUTO.LOG >>/home/data/archivista/images/AV5AUTO.LOG
 rm -rf AV5AUTO.{WRK,STP,END,LOG}
+/usr/bin/perl /home/cvs/archivista/jobs/initpdf.pl
 
 Xdialog --title "" --msgbox "OCR server restarted." 0 0
 
