@@ -418,12 +418,15 @@ void Check4Updates (const Package& package)
   unsigned int no_downloads = package.download.download_infos.size();
   for (unsigned int dln = 0; dln < no_downloads; ++dln) {
     DownloadInfo info = package.download.download_infos[dln];
-    if (info.protocol != "http" && info.protocol != "ftp")
+    if (info.protocol != "http" && info.protocol != "https" &&
+	info.protocol != "ftp")
       continue;
 
     // Apply translations ...
     pstream sed ("sed", (char*[]){"sed", "-f", "misc/share/CVTranslations", 0} );
-
+    
+    if (!package.cv_url.value.empty())
+      info.url = package.cv_url.value;
     sed << info.url << std::endl;
     sed.close_sink();
 
