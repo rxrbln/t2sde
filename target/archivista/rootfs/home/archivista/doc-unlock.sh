@@ -32,3 +32,10 @@ done
 
 unlock="localhost $db root $PASSWD unlock $range"
 /home/cvs/archivista/jobs/avdbutility.pl $unlock 
+error=$?
+
+if [ $error -eq 0 ]; then
+  Xdialog --msgbox "Documents $trange in database $db unlocked" 8 40
+else
+  Xdialog --msgbox "Error: Documents $trange in database $db could not be unlocked!" 8 40
+fi
