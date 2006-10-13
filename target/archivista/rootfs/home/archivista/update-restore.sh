@@ -17,7 +17,7 @@ fi
 # include shared code
 . ${0%/*}/Global.pm.in
 . ${0%/*}/perl-var.in
-
+. ${0%/*}/multi-cpu.in
 
 # include specified configuration values
 if [ ! -e $from/config ]; then
@@ -250,5 +250,12 @@ if [ "$update_button_host" ]; then
 		             "$update_button_user"
 		set_perl_var '\$val{pw1}' $to/home/cvs/archivista/jobs/sane-button.pl \
 		             "$update_button_pw"
+	fi
+fi
+
+if [ "$update_multi_cpu" -a "$update_multi_cpu" != 0 ]; then
+	echo "multi CPU enabled"
+	if [ $doit = 1 ]; then
+		set_max_cpu $to/boot/grub/menu.lst $update_multi_cpu
 	fi
 fi
