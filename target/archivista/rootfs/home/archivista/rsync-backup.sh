@@ -32,3 +32,4 @@ Not all files might be transfered."
 
 mail_or_display "Rsync backup" $log ; rm $log
 
+fixocr
