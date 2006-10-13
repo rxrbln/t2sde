@@ -11,7 +11,7 @@ fi
 # include shared code
 . ${0%/*}/Global.pm.in
 . ${0%/*}/perl-var.in
-
+. ${0%/*}/multi-cpu.in
 
 cd $from
 
@@ -108,8 +108,9 @@ update_button_db=`get_perl_var '\$val{db1}' $from/home/cvs/archivista/jobs/sane-
 update_button_user=`get_perl_var '\$val{user1}' $from/home/cvs/archivista/jobs/sane-button.pl`
 update_button_pw=`get_perl_var '\$val{pw1}' $from/home/cvs/archivista/jobs/sane-button.pl`
 
+update_multi_cpu=`get_max_cpu $from/boot/grub/menu.lst`
+
 # store all update variables
 for var in ${!update_*}; do
 	declare -p $var
 done > $to/config
-
