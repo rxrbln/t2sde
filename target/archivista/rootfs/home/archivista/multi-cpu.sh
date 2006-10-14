@@ -25,3 +25,6 @@ else
 fi
 
 set_max_cpu /boot/grub/menu.lst $maxcpu
+
+Xdialog --title "Multi CPU" --msgbox "The setting was saved and will
+have effect on the next reboot." 0 0
