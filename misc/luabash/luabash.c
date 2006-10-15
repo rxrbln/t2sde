@@ -99,24 +99,94 @@ typedef struct command {
 } COMMAND;
 
 
+/*************** 3.x definitions ********************/
+
 /* The "simple" command.  Just a collection of words and redirects. */
-typedef struct simple_com {
+typedef struct simple_com3 {
   int flags;                    /* See description of CMD flags. */
   int line;                     /* line number the command starts on */
   WORD_LIST *words;             /* The program name, the arguments,
                                    variable assignments, etc. */
   REDIRECT *redirects;          /* Redirections to perform. */
-} SIMPLE_COM;
+} SIMPLE_COM3;
 
 
 /* The "function definition" command. */
-typedef struct function_def {
+typedef struct function_def3 {
   int flags;                    /* See description of CMD flags. */
   int line;                     /* Line number the function def starts on. */
   WORD_DESC *name;              /* The name of the function. */
   COMMAND *command;             /* The parsed execution tree. */
   char *source_file;            /* file in which function was defined, if any */
+} FUNCTION_DEF3;
+
+
+/*************** 2.x definitions ********************/
+
+
+/* The "simple" command.  Just a collection of words and redirects. */
+typedef struct simple_com2 {
+  int flags;                    /* See description of CMD flags. */
+  WORD_LIST *words;             /* The program name, the arguments,
+                                   variable assignments, etc. */
+  REDIRECT *redirects;          /* Redirections to perform. */
+  int line;                     /* line number the command starts on */
+} SIMPLE_COM2;
+
+
+/* The "function definition" command. */
+typedef struct function_def2 {
+  int flags;                    /* See description of CMD flags. */
+  WORD_DESC *name;              /* The name of the function. */
+  COMMAND *command;             /* The parsed execution tree. */
+  int line;                     /* Line number the function def starts on. */
+} FUNCTION_DEF2;
+
+/****************************************************/
+
+typedef struct simple_com {
+  union {
+    SIMPLE_COM2 v2;
+    SIMPLE_COM3 v3;
+  }version;
+} SIMPLE_COM;
+
+
+typedef struct function_def {
+  union {
+    FUNCTION_DEF2 v2;
+    FUNCTION_DEF3 v3;
+  }version;
 } FUNCTION_DEF;
+
+
+typedef enum { bash_version_v2, bash_version_v3, bash_version_unknown } bash_flavor;
+static bash_flavor current_flavor=bash_version_unknown;
+
+SIMPLE_COM* newSimpleCom(WORD_LIST *words)
+{
+  SIMPLE_COM* ret=(SIMPLE_COM*) malloc(sizeof(SIMPLE_COM));
+  switch (current_flavor) {
+  case bash_version_v2:
+    ret->version.v2.flags=0;
+    ret->version.v2.line=0;
+    ret->version.v2.redirects=NULL;
+    ret->version.v2.words=words;
+    break;
+  case bash_version_v3:
+    ret->version.v3.flags=0;
+    ret->version.v3.line=0;
+    ret->version.v3.redirects=NULL;
+    ret->version.v3.words=words;
+    break;
+  default: // somethings wrong here...
+    return 0;
+  }
+  return ret;
+}
+
+
+/****************************************************/
 
 
 extern WORD_DESC *make_word __P((const char *));
@@ -198,7 +268,6 @@ static const char *getvar(const char *name)
 
 
 
-
 /* lua bash wrapper */
 
 #define LUABASH_VERSION "lua bash wrapper version 0.0.1; (C) 2006 Valentin Ziegler."
@@ -248,11 +317,7 @@ static int register_function (lua_State *L)
   wfnname->word=make_word(fnname);
   warguments->word=make_word("$@");
 
-  SIMPLE_COM* call_luabash=(SIMPLE_COM*) malloc(sizeof(SIMPLE_COM));
-  call_luabash->flags=0;
-  call_luabash->line=0;
-  call_luabash->redirects=NULL;
-  call_luabash->words=wluabash;
+  SIMPLE_COM* call_luabash=newSimpleCom(wluabash);
 
   COMMAND* function_body=make_command(cm_simple, call_luabash);
   bind_function(fnname,function_body);
@@ -300,11 +365,7 @@ static int call_bashfunction (lua_State *L)
   if (!list)
     retval=127;
   else {
-    SIMPLE_COM* cmd=(SIMPLE_COM*) malloc(sizeof(SIMPLE_COM));
-    cmd->flags=0;
-    cmd->line=0;
-    cmd->redirects=NULL;
-    cmd->words=start;
+    SIMPLE_COM* cmd=newSimpleCom(start);
     retval=execute_command(make_command(cm_simple, cmd));
   }
   lua_pushinteger(L,retval);
@@ -340,6 +401,20 @@ static const luaL_Reg bashlib[] = {
 static int init_luabash()
 {
   if (!initialized) {
+    const char* bash_version=getvar("BASH_VERSION");
+    if (!bash_version)
+      return EXECUTION_FAILURE;
+
+    if (bash_version[0]=='2')
+      current_flavor=bash_version_v2;
+    else if (bash_version[0]=='3')
+      current_flavor=bash_version_v3;
+
+    if (current_flavor==bash_version_unknown) {
+      fprintf(stderr, "lua bash error: unknown/unsupported bash version\n");
+      return EXECUTION_FAILURE;     
+    }
+
     L=luaL_newstate ();
     if (!L) {
       fprintf(stderr, "lua bash error: failed to initialize lua state\n");
