@@ -12,8 +12,6 @@ fi
 # include shared code
 . ${0%/*}/multi-cpu.in
 
-set -x
-
 maxcpu=`get_max_cpu /boot/grub/menu.lst`
 
 if [ $maxcpu = 0 ]; then
