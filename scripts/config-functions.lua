@@ -103,11 +103,11 @@ local function pkgswitch (mode, ...)
 	 pkg = arg
       end
       
-      rep = string.gsub (rep, "([+*-])", tr)
-      pkg = string.gsub (pkg, "([+*-])", tr)
+      rep = "^" .. string.gsub (rep, "([+*-])", tr) .. "$"
+      pkg = "^" .. string.gsub (pkg, "([+*-])", tr) .. "$"
       
       --optimization, to skip the package traversal early
-      local pkg_match = false;
+      local pkg_match = false
       if string.find (pkg, "*") == nil then
 	 pkg_match = true
       end
@@ -128,8 +128,8 @@ local function pkgswitch (mode, ...)
 	    print ("match rep: " .. s2)
 	 end
          ]]--
-	 if (p.alias == string.match(p.alias, pkg) and
-	     p.repository == string.match(p.repository, rep)) then
+	 if (string.match(p.alias, pkg) and
+	     string.match(p.repository, rep)) then
 	    -- if not already disabled completely
 	    --print ("matched rep: " .. rep .. ", pkg: " .. pkg)
 	    --print ("with    rep: " .. p.repository ..", pkg: " .. p.alias)
