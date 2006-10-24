@@ -1,0 +1,177 @@
+--- a/drivers/acpi/blacklist.c	2006-06-26 08:32:21.000000000 +0200
++++ a/drivers/acpi/blacklist.c	2006-06-26 08:32:59.000000000 +0200
+@@ -78,6 +78,10 @@
+ static int __init blacklist_by_year(void)
+ {
+ 	int year = dmi_get_year(DMI_BIOS_DATE);
++
++	if (efi_enabled)
++		return 0;
++
+ 	/* Doesn't exist? Likely an old system */
+ 	if (year == -1) 
+ 		return 1;
+diff -uNr linux-2.6.16.1/drivers/Makefile linux-2.6.16.1-imac/drivers/Makefile
+--- linux-2.6.16.1/drivers/Makefile	2006-03-20 05:53:29.000000000 +0000
++++ linux-2.6.16.1-imac/drivers/Makefile	2006-04-01 23:51:38.000000000 +0000
+@@ -30,7 +30,7 @@
+ obj-y				+= base/ block/ misc/ mfd/ net/ media/
+ obj-$(CONFIG_NUBUS)		+= nubus/
+ obj-$(CONFIG_ATM)		+= atm/
+-obj-$(CONFIG_PPC_PMAC)		+= macintosh/
++obj-y				+= macintosh/
+ obj-$(CONFIG_IDE)		+= ide/
+ obj-$(CONFIG_FC4)		+= fc4/
+ obj-$(CONFIG_SCSI)		+= scsi/
+diff -uNr linux-2.6.16.1/drivers/macintosh/Kconfig linux-2.6.16.1-imac/drivers/macintosh/Kconfig
+--- linux-2.6.16.1/drivers/macintosh/Kconfig	2006-03-20 05:53:29.000000000 +0000
++++ linux-2.6.16.1-imac/drivers/macintosh/Kconfig	2006-04-01 23:51:38.000000000 +0000
+@@ -1,6 +1,6 @@
+ 
+ menu "Macintosh device drivers"
+-	depends on PPC || MAC
++	depends on PPC || MAC || X86
+ 
+ config ADB
+ 	bool "Apple Desktop Bus (ADB) support"
+@@ -162,7 +162,7 @@
+ 
+ config MAC_EMUMOUSEBTN
+ 	bool "Support for mouse button 2+3 emulation"
+-	depends on INPUT_ADBHID
++#	depends on INPUT_ADBHID
+ 	help
+ 	  This provides generic support for emulating the 2nd and 3rd mouse
+ 	  button with keypresses.  If you say Y here, the emulation is still
+--- linux-2.6.16.1/drivers/ide/ide-io.c	2006-03-28 07:49:02.000000000 +0100
++++ linux-2.6.16.1-imac-sky2-rtc/drivers/ide/ide-io.c	2006-05-15 03:24:57.000000000 +0100
+@@ -1594,6 +1594,8 @@
+ 			 * Whack the status register, just in case
+ 			 * we have a leftover pending IRQ.
+ 			 */
++			/* Ack the interrupt for ich7 - XXX possible race */
++			hwif->OUTB( (hwif->INB(hwif->dma_status) |4) & ~2, hwif->dma_status);
+ 			(void) hwif->INB(hwif->io_ports[IDE_STATUS_OFFSET]);
+ #endif /* CONFIG_BLK_DEV_IDEPCI */
+ 		}
+@@ -1636,6 +1636,9 @@
+ 	startstop = handler(drive);
+ 	spin_lock_irq(&ide_lock);
+ 
++	/* Ack the interrupt for ich7 - XXX possible race */
++	hwif->OUTB( (hwif->INB(hwif->dma_status) |4) & ~2, hwif->dma_status);
++
+ 	/*
+ 	 * Note that handler() may have set things up for another
+ 	 * interrupt to occur soon, but it cannot happen until
+--- a/drivers/acpi/sleep/poweroff.c	2006-06-11 05:22:53.000000000 -0700
++++ b/drivers/acpi/sleep/poweroff.c	2006-06-11 05:06:36.000000000 -0700
+@@ -63,8 +63,15 @@ static int acpi_shutdown(struct sys_devi
+ 	}
+ }
+ 
++static int acpi_resume(struct sys_device *x)
++{
++	acpi_set_register(ACPI_BITREG_SCI_ENABLE, 1, ACPI_MTX_DO_NOT_LOCK);
++	return 0;
++}
++
+ static struct sysdev_class acpi_sysclass = {
+ 	set_kset_name("acpi"),
++	.resume = acpi_resume,
+ 	.shutdown = acpi_shutdown
+ };
+ 
+
+
+From: Ryan Lortie <desrt@desrt.ca>
+Date: Sat, 10 Jun 2006 20:22:56 +0000 (-0400)
+Subject: [UBUNTU:ich7-sci-en-quirk] poke the SCI_EN bit on Macbook resume
+X-Git-Url: http://www.kernel.org/git/?p=linux/kernel/git/bcollins/ubuntu-dapper.git;a=commitdiff;h=d1d9b907570c5c9178e3d66ff208bd483d1dfd61
+
+[UBUNTU:ich7-sci-en-quirk] poke the SCI_EN bit on Macbook resume
+
+The following patch deals with the problem that the SCI_EN bit is
+disabled when the Macbook comes back from sleeping.
+
+It does this by registering a quirk in the exact way that another one is
+registered in the same file (for a Toshiba laptop with a similar
+problem).
+
+The quirk matches based on DMI product name of "MacBook1,1" so it should
+really only affect the Macbook.
+
+The actual bit-poking is done immediately on return from
+do_suspend_lowlevel().  If I do it in the 'finish' function it is too
+late (as at this point IRQs have been enabled again for some time).
+
+Cheers.
+
+Signed-off-by: Ben Collins <bcollins@ubuntu.com>
+---
+
+--- a/drivers/acpi/sleep/main.c
++++ b/drivers/acpi/sleep/main.c
+@@ -17,6 +17,7 @@
+ #include <linux/suspend.h>
+ #include <acpi/acpi_bus.h>
+ #include <acpi/acpi_drivers.h>
++#include <asm/io.h>
+ #include "sleep.h"
+ 
+ u8 sleep_states[ACPI_S_STATE_COUNT];
+@@ -34,6 +35,7 @@ static u32 acpi_suspend_states[] = {
+ };
+ 
+ static int init_8259A_after_S1;
++static int ich7_sci_en_quirk_enabled;
+ 
+ /**
+  *	acpi_pm_prepare - Do preliminary suspend work.
+@@ -92,6 +94,14 @@ static int acpi_pm_enter(suspend_state_t
+ 
+ 	case PM_SUSPEND_MEM:
+ 		do_suspend_lowlevel();
++
++		if (ich7_sci_en_quirk_enabled)
++		{
++			int pm1c = inw(0x404);
++			pm1c |= 0x01; /* SCI_EN */
++			outw (pm1c, 0x404);
++		}
++
+ 		break;
+ 
+ 	case PM_SUSPEND_DISK:
+@@ -191,12 +201,31 @@ static int __init init_ints_after_s1(str
+ 	return 0;
+ }
+ 
++/*
++ * Apple Macbook comes back from sleep with the SCI_EN bit disabled
++ * causing a flood of unacknowledged IRQ9s.  We need to set SCI_EN
++ * as soon as we come back
++ */
++static int __init init_ich7_sci_en_quirk(struct dmi_system_id *d)
++{
++	printk(KERN_WARNING "%s detected (ICH7 SCI_EN quirk enabled)\n",
++               d->ident);
++	ich7_sci_en_quirk_enabled = 1;
++	return 0;
++}
++
++
+ static struct dmi_system_id __initdata acpisleep_dmi_table[] = {
+ 	{
+ 	 .callback = init_ints_after_s1,
+ 	 .ident = "Toshiba Satellite 4030cdt",
+ 	 .matches = {DMI_MATCH(DMI_PRODUCT_NAME, "S4030CDT/4.3"),},
+ 	 },
++	{
++	 .callback = init_ich7_sci_en_quirk,
++	 .ident = "Apple MacBook",
++	 .matches = {DMI_MATCH(DMI_PRODUCT_NAME, "MacBook1,1"),},
++	 },
+ 	{},
+ };
+ 
