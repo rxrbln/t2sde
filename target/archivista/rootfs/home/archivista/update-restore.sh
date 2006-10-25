@@ -256,6 +256,6 @@ fi
 if [ "$update_multi_cpu" -a "$update_multi_cpu" != 0 ]; then
 	echo "multi CPU enabled"
 	if [ $doit = 1 ]; then
-		set_max_cpu $to/boot/grub/menu.lst $update_multi_cpu
+		set_max_cpus $to/boot/grub/menu.lst $update_multi_cpu
 	fi
 fi
