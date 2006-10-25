@@ -9,17 +9,29 @@
 # Copyright (C) 2006 Archivista GmbH
 # Copyright (C) 2006 Rene Rebe
 
-if [ -z "$1" ]; then
-	echo "$0 dir | range"
+iso=
+db=
+range=
+if [ "$1" -a "$2" ]; then
+	db="$1"
+	range="$2"
+	shift 2
+elif [ -f "$1" ]; then
+	iso="$1"
+	shift
+else
+	echo "$0 [ isofile ] | [ db range ]"
+	echo "Where range is numeric such as 123-456"
 	exit
 fi
+
 
 # include shared code to send the mail notification
 . ${0%/*}/backup.in
 
 set -e -x
 
-archive_dir="/home/data/t2-trunk/target/archivista/rootfs/home/archivista/archive"
+archive_dir="/home/data/archivista" # $db/ARCHxxxx
 mkisofsopt="-rJ --graft-points"
 
 # Returns the CD/DVD capacity of the disc present in the device in bytes.
@@ -39,18 +51,24 @@ get_iso_size()
 	echo $((isosize * 2048)) # as the size is returned in CD sectors
 }
 
+# Returns the arhive folder name for the actual index i
+archive_name()
+{
+	printf "ARCH%04d" $1
+}
+
 media_size=`get_media_size /dev/sr0` # TODO
 
 # requested ranges
-req_range_begin=${1/-*/}
-req_range_end=${1/*-/}
+req_range_begin=${range/-*/}
+req_range_end=${range/*-/}
 
 # range that actually fits
 range_begin=$req_range_begin
 
 dir_list=
 for i in `seq $req_range_begin $req_range_end`; do
-	dir_list="$dir_list $i=$archive_dir/$i"
+	dir_list="$dir_list `archive_name $i`=$archive_dir/`archive_name $i`"
 	iso_size=`get_iso_size $dir_list`
 	if [ $iso_size -lt $media_size ]; then
 		range_end=$i
@@ -80,7 +98,7 @@ md5s=`mktemp`
 # graft points
 dir_list=
 for i in `seq $range_begin $range_end`; do
-	dir_list="$dir_list $i=$archive_dir/$i"
+	dir_list="$dir_list `archive_name $i`=$archive_dir/`archive_name $i`"
 	#date +%N > $archive_dir/$i/rand
 	find $archive_dir/$i -type f -printf "$i/%P\n" >> $files
 done
