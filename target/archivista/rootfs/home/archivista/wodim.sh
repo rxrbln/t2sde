@@ -139,8 +139,8 @@ done
 
 # check number of currently available destinations
 if [ $devicecount -lt $copies ]; then
-	echo "Available devices with matching media ($devicecount) does
-not match with th e configured number of copies ($copies)." >> $log
+	echo "Available devices with matching media ($devicecount) conflicts
+with the configured number of copies ($copies)." >> $log
 	log_file $log
 	exit 2
 fi
@@ -166,7 +166,8 @@ range_begin=$req_range_begin
 
 dir_list=
 for i in `seq $req_range_begin $req_range_end`; do
-	dir_list="$dir_list `archive_name $i`=$archive_dir/`archive_name $i`"
+	arc=`archive_name $i`
+	dir_list="$dir_list $arc=$archive_dir/$db/$arc"
 	iso_size=`get_iso_size $dir_list`
 	if [ $iso_size -lt $media_size ]; then
 		range_end=$i
@@ -180,11 +181,11 @@ if [ ! "$range_end" ]; then
 	log_file $log ; rm $log
 	exit 3
 elif [ $range_end != $req_range_end ]; then
-	echo "Not all archives fit on the disc, just writing: $range_begin - \
-$range_end." >> $log
+	echo "Not all archives fit on the disc, just writing: \
+`archive_name $range_begin` - `archive_name $range_end`." >> $log
 else
-	echo "All archives fit on the disc, writing: $range_begin - \
-$range_end" >> $log
+	echo "All archives fit on the disc, writing: \
+`archive_name $range_begin` - `archive_name $range_end`" >> $log
 fi
 
 # Ok - now we know which archive folders fit on the disc.
@@ -222,6 +223,8 @@ done
 iso_size=`get_iso_size $dir_list`
 iso_size=$((iso_size / 2048)) # CD sectors
 
+echo >> $log # seperator
+
 # for a devices
 good_writes=0
 for dev in $devices; do
@@ -238,16 +241,16 @@ for dev in $devices; do
 	mkdir -p /mnt/wodim
 	mount $dev /mnt/wodim
 
-	# it is a bit of a hickup to catch the error code of md5sum  here
+	# it is a bit of a hickup to catch the error code of md5sum in this case
 	pushd /mnt/wodim
 	md5sumerr=0
 	md5sum --check $md5s > >( grep -v ': OK$' >> $log ) || md5sumerr=$?
 	popd
 
 	if [ $md5sumerr != 0 ]; then
-		echo -e "\nError verifying the data integrity on $dev." >> $log
+		echo -e "Error verifying the data integrity on $dev\n." >> $log
 	else
-		echo -e "\nSuccessfully verified the data integrity on $dev." >> $log
+		echo -e "Successfully verified the data integrity on $dev.\n" >> $log
 	fi
 
 	# just to join with the background process, so /mnt/wodim is not busy
