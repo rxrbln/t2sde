@@ -10,7 +10,6 @@ fi
 . /etc/profile
 
 # read config if existing
-set -x
 [ -e /etc/wodim.conf ] && . /etc/wodim.conf
 [ "$copies" ] || copies=1
 [ "$format" ] || format='CD'
