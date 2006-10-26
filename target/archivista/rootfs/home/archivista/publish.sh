@@ -275,6 +275,7 @@ cleanup
 # when uncompressed we must write it the USB device, otherwise we ask
 # whether to write it and how
 kind=USB
+write_err=0
 if [ -z "$uncompr" ]; then
 	# only remove when not uncompressed, as compressed it is inside the ISO
 	rm live.squash
@@ -290,7 +291,8 @@ fi
 
 if [ "$kind" = ISO ]; then
 	# use the external Write Optical DIsc Media script
-	${0%/*}/wodim.sh $isoname
+	${0%/*}/wodim.sh $isoname || write_err=1
+	
 else # USB
 
 ### USB device install BEGIN ###
@@ -400,7 +402,10 @@ Xdialog --no-cancel --title "Archive publishing" \
 fi
 
 # do not ask when uncompressed, the ISO is boot code only in this case
-if [ "$uncompr" ] || Xdialog --default-no --title "Archive publishing" \
+# or on write error
+if [ "$uncompr" -a $write_err = 0 ]; then
+	if Xdialog --default-no --title "Archive publishing" \
            --yesno "Delete published archive now?" 0 0; then
-	rm -v ./$isoname
+		rm -v ./$isoname
+	fi
 fi
