@@ -293,15 +293,15 @@ rc hal stop
 usbdev=
 
 get_device_list () {
-# from livecd init, best kept in sync ,-) -ReneR
+	# from livecd init, best kept in sync ,-) -ReneR
 	for x in /sys/block/*/device; do
 		case "`ls -l $x`" in
-	     */usb*|*/ieee1394) : ;;
-	     *) continue ;;
+			*/usb*|*/ieee1394) : ;;
+			*) continue ;;
 		esac
 		x=${x%/device}; x=/dev/${x#/sys/block/}
 		echo -n " $x "
-		done
+	done
 }
 
 archived=0
@@ -328,7 +328,7 @@ while [ -z "$dev" ] && jobs %- ; do # while no device and not cancel
 	done
 	if [ $new_one -eq 0 ]; then
 		# update the list, so pulling a device and inserting one works (both sda)
-  	initial_list="$new_list"
+		initial_list="$new_list"
 	fi
 done
 usbdev=$dev
