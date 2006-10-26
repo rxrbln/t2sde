@@ -89,11 +89,54 @@ log_text ()
 	log_file $tmp ; rm -f $tmp
 }
 
+log=`mktemp` # file we accumulate log messages in
+
 # If we are called with just a iso file we just write that
 #
 if [ "$iso" ]; then
-	# TODO
-	exit 0
+	devices=
+	for dev in /dev/cdrom*; do
+		if [ ! -e $dev ]; then
+			echo "No CD/DVD device found." >> $log
+			continue
+		fi
+
+		media_size=`get_media_size $dev`
+		if [ $media_size = 0 ]; then
+			echo "No media found in $dev." >> $log
+			continue
+		fi
+		devices="$devices $dev"
+		devicecount=$(( $devicecount + 1 ))
+		break # for now, later search for more
+	done
+	devices=${devices## }
+
+	if [ -z "$devices" ]; then
+		echo "No devices with media available." >> $log
+		log_file $log; rm $log
+		exit 2
+	fi
+
+	dev="$devices"
+
+	Xdialog --no-close --no-buttons --title 'Write Optical disc media' \
+	        --infobox "Writing to optical disc in device $dev." 0 0 9999999 &
+	wodim dev=$dev "$iso"
+	wodimerr=$?
+
+	kill %- 2>/dev/null || true # the Xdialog
+
+	if [ $wodimerr != 0 ]; then
+		echo -e "Error writing the archive to $dev.\n" >> $log
+		wodimerr=4
+	else
+		echo -e "Successfully written archive to $dev.\n" >> $log
+	fi
+
+	log_file $log; rm $log
+
+	exit $wodimerr
 fi
 
 # Here we handle the complex archive case
@@ -106,8 +149,6 @@ if [ -z "$copies" -o -z "$format" ]; then
 please configure optical disc writing."
 	exit 1
 fi
-
-log=`mktemp` # file we accumulate log messages in
 
 # no. of writers
 devices=
@@ -159,7 +200,7 @@ for dev in $devices; do
 	[ $ms -lt $media_size ] && media_size=$ms
 done
 
-# finally we know how much space we have for the archvie
+# finally we know how much space we have for the archive
 # check the range accordingly
 
 # requested ranges
