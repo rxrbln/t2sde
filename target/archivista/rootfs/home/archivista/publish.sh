@@ -272,15 +272,26 @@ cleanup
 
 ### ISO generation END ###
 
+# when uncompressed we must write it the USB device, otherwise we ask
+# whether to write it and how
+kind=USB
 if [ -z "$uncompr" ]; then
+	# only remove when not uncompressed, as compressed it is inside the ISO
 	rm live.squash
-	Xdialog --title 'Archive publishing' \
-	        --yesno "Disc image generation completed.
+
+	kind=`Xdialog --title 'Archive publishing' --stdout --no-tags --seperator ' ' \
+	        --radiolist "Disc image generation completed.
 The compressed ISO image is `ls -sh $isoname | sed 's/ .*// ; s/\([MGT]\)/ \1B /'` \
 and named
 $PWD/$isoname.
-Do you want to copy the archive to an USB device?" 0 0 || exit
+Do you want to copy write it onto a connected device?" 0 0 3 \
+USB USB on ISO CD/DVD off` || exit
 fi
+
+if [ "$kind" = ISO ]; then
+	# use the external Write Optical DIsc Media script
+	${0%/*}/wodim.sh $isoname
+else # USB
 
 ### USB device install BEGIN ###
 
@@ -386,9 +397,10 @@ rc hal start
 Xdialog --no-cancel --title "Archive publishing" \
         --msgbox "Archive copied to the USB device." 0 0
 
+fi
+
 # do not ask when uncompressed, the ISO is boot code only in this case
 if [ "$uncompr" ] || Xdialog --default-no --title "Archive publishing" \
            --yesno "Delete published archive now?" 0 0; then
 	rm -v ./$isoname
 fi
-
