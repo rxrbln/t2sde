@@ -29,9 +29,12 @@ fi
 # include shared code to send the mail notification
 . ${0%/*}/backup.in
 
+# include the configuration
+[ -e /etc/wodim.conf ] && . /etc/wodim.conf
+
 set -e -x
 
-archive_dir="/home/data/archivista" # $db/ARCHxxxx
+archive_dir="/home/data/archivista" # ... /$db/ARCHxxxx
 mkisofsopt="-rJ --graft-points"
 
 # Returns the CD/DVD capacity of the disc present in the device in bytes.
@@ -39,7 +42,7 @@ mkisofsopt="-rJ --graft-points"
 get_media_size()
 {
 	local capacity=`dvd+rw-mediainfo $1 | sed -n 's/READ CAPACITY.*=//p'`
-	echo ${capacity-0} # zero if none at all
+	echo ${capacity:-0} # zero if none at all
 }
 
 # Returns the ISO size of the directories specified in bytes.
@@ -47,17 +50,91 @@ get_media_size()
 get_iso_size()
 {
 	local isosize=`mkisofs $mkisofsopt -q --print-size "$@"`
-	isosize=${isosize-0} 
+	isosize=${isosize:-0} 
 	echo $((isosize * 2048)) # as the size is returned in CD sectors
 }
 
 # Returns the arhive folder name for the actual index i
+#
 archive_name()
 {
 	printf "ARCH%04d" $1
 }
 
-media_size=`get_media_size /dev/sr0` # TODO
+# Log to the user
+#
+log_file ()
+{
+	mail_or_display "Write Optical disc media" "$1"
+}
+
+log_text ()
+{
+	local tmp=`mktemp`
+	echo "$*" > $tmp
+	log_file $tmp ; rm -f $tmp
+}
+
+# If we are called with just a iso file we just write that
+#
+if [ "$iso" ]; then
+	# TODO
+	exit 0
+fi
+
+# Here we handle the complex archive case
+#
+
+# check configuration constraints
+#
+if [ -z "$copies" -o -z "$format" ]; then
+	log_text "No configuration found.
+please configure optical disc writing."
+	exit 1
+fi
+
+log=`mktemp` # file we accumulate log messages in
+
+# no. of writers
+devices=
+devicecount=0
+for dev in /dev/cdrom*; do
+	if [ ! -e $dev ]; then
+		echo "No CD/DVD device found." >> $log
+		continue
+	fi
+
+	media_size=`get_media_size $dev`
+	if [ $media_size = 0 ]; then
+		echo "No media found in $dev." >> $log
+		continue
+	fi
+
+	case "$format" in
+	CD)
+		if [ $media_size -gt 1000000000 ]; then
+			echo "CD requested but apparently DVD media found in $dev." >> $log
+			continue
+		fi
+		;;
+	DVD)
+		if [ $media_size -lt 1000000000 ]; then	
+			echo "DVD requested but apparently CD media found in $dev." >> $log
+			continue
+		fi
+		;;
+	esac
+	devices="$devices $dev"
+	devicecount=$(( $devicecount + 1 ))
+done
+
+# check number of currently available destinations
+if [ $devicecount -lt $copies ]; then
+	echo "Available devices with matching media ($devicecount) does
+not match with th e configured number of copies ($copies)." >> $log
+	log_file $log ; rm -f $log
+	exit 2
+fi
 
 # requested ranges
 req_range_begin=${range/-*/}
