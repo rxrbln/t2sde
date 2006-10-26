@@ -6,6 +6,15 @@
 # Data integrity is check by reading the whole set of files back
 # and compare the MD5 sum.
 #
+# Return codes: 0: success
+#               1: no config
+#               2: not enough devices with matching media
+#               3: no archive does fit on the available disc
+#
+# Return text:
+#               on success the last line: archived range like: 123-200
+#
+#
 # Copyright (C) 2006 Archivista GmbH
 # Copyright (C) 2006 Rene Rebe
 
@@ -167,22 +176,26 @@ for i in `seq $req_range_begin $req_range_end`; do
 done
 
 if [ ! "$range_end" ]; then
-	echo "Not even the first archive does fit on disc!"
+	echo "Not even the first archive fits on the disc!" >> $log
+	log_file $log ; rm $log
+	exit 3
 elif [ $range_end != $req_range_end ]; then
-	echo "Not all archives fit on the disc, just writing: $range_begin - $range_end."
+	echo "Not all archives fit on the disc, just writing: $range_begin - \
+$range_end." >> $log
 else
-	echo "All archives fit on the disc, writing: $range_begin - $range_end"
+	echo "All archives fit on the disc, writing: $range_begin - \
+$range_end" >> $log
 fi
 
 # Ok - now we know which archive folders fit on the disc.
-# The hard part of actually writing it, catching errors on the way and
+# Now comes the hard part of actually writing it, catching errors on the way and
 # verifying the data integrity.
 
 files=`mktemp`
 md5s=`mktemp`
 
 # Build the final mkisofs "graft point list" as well as the file
-# and MD5 list.
+# and MD5 sums.
 
 # graft points
 dir_list=
@@ -197,36 +210,59 @@ done
 (cd $archive_dir/$db ; cat $files | sed -e 's,$,\0,' | xargs -r md5sum > $md5s)
 rm -f $files
 
-# TODO: remove this test check
+# just a test loop injecting a changed file to test the MD5 check
 for i in `seq $range_begin $range_end`; do
 	arc=`archive_name $i`
 	#date +%N > $archive_dir/$db/$arc/rand
 done
 
+# final ISO size, we need to pass it to wodim/cdrecord as we create the actual
+# FS on-the-fly
+#
 iso_size=`get_iso_size $dir_list`
 iso_size=$((iso_size / 2048)) # CD sectors
 
-mkisofs $mkisofsopt -q $dir_list | wodim dev=/dev/sr0 tsize=${iso_size}s -
-wodimerr=$?
+# for a devices
+good_writes=0
+for dev in $devices; do
+	# create the FS and write it on-the-fly
+	mkisofs $mkisofsopt -q $dir_list |
+		wodim dev=$dev tsize=${iso_size}s -
+	wodimerr=$?
+	if [ $wodimerr != 0 ]; then
+		echo -e "Error writing the archive to $dev.\n" >> $log
+	else
+		echo -e "Successfully written archive to $dev.\n" >> $log
+	fi
 
-mkdir -p /mnt/wodim
+	mkdir -p /mnt/wodim
+	mount $dev /mnt/wodim
 
-mount /dev/sr0 /mnt/wodim
+	# it is a bit of a hickup to catch the error code of md5sum  here
+	pushd /mnt/wodim
+	md5sumerr=0
+	md5sum --check $md5s > >( grep -v ': OK$' >> $log ) || md5sumerr=$?
+	popd
 
-# it is a bit of a hickup to catch the error code of md5sum  here
-pushd /mnt/wodim
-md5sumerr=0
-md5sum --check $md5s > >( grep -v ': OK$' ) || md5sumerr=$?
-popd
-sleep 0
+	if [ $md5sumerr != 0 ]; then
+		echo -e "\nError verifying the data integrity on $dev." >> $log
+	else
+		echo -e "\nSuccessfully verified the data integrity on $dev." >> $log
+	fi
 
-echo CODE: $md5sumerr
-umount /mnt/wodim
+	# just to join with the background process, so /mnt/wodim is not busy
+	sleep 0
+	umount /mnt/wodim
 
-rm -f $md5s
+	# only on success eject the media
+	#
+	if [ $md5sumerr = 0 ]; then
+		eject $dev
+		good_writes=$(( $good_writes + 1))
+	fi
+done
 
-# only on success eject the media
-#
-if [ $md5sumerr = 0 ]; then
-	 eject /dev/sr0
-fi
+log_file $log
+
+# clean up
+rm -f $md5s $log
