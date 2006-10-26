@@ -280,8 +280,8 @@ if [ -z "$uncompr" ]; then
 	rm live.squash
 
 	kind=`Xdialog --title 'Archive publishing' --stdout --no-tags --seperator ' ' \
-	        --radiolist "Disc image generation completed.
-The compressed ISO image is `ls -sh $isoname | sed 's/ .*// ; s/\([MGT]\)/ \1B /'` \
+	              --radiolist "Disc image generation completed.
+The compressed ISO image is $(ls -sh $isoname | sed 's/ .*// ; s/\([MGT]\)/ \1B/') \
 and named
 $PWD/$isoname.
 Do you want to copy write it onto a connected device?" 0 0 3 \
