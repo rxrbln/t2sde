@@ -54,7 +54,7 @@ get_iso_size()
 	echo $((isosize * 2048)) # as the size is returned in CD sectors
 }
 
-# Returns the arhive folder name for the actual index i
+# Returns the archive folder name for the actual index i
 #
 archive_name()
 {
@@ -132,9 +132,21 @@ done
 if [ $devicecount -lt $copies ]; then
 	echo "Available devices with matching media ($devicecount) does
 not match with th e configured number of copies ($copies)." >> $log
-	log_file $log ; rm -f $log
+	log_file $log
 	exit 2
 fi
+
+# now we have a list of devices matching the configuration
+# determin the minimal media size available
+media_size=
+for dev in $devices; do
+	ms=`get_media_size $dev`
+	[ -z "$media_size" ] && media_size=$ms && continue
+	[ $ms -lt $media_size ] && media_size=$ms
+done
+
+# finally we know how much space we have for the archvie
+# check the range accordingly
 
 # requested ranges
 req_range_begin=${range/-*/}
@@ -175,19 +187,20 @@ md5s=`mktemp`
 # graft points
 dir_list=
 for i in `seq $range_begin $range_end`; do
-	dir_list="$dir_list `archive_name $i`=$archive_dir/`archive_name $i`"
-	#date +%N > $archive_dir/$i/rand
-	find $archive_dir/$i -type f -printf "$i/%P\n" >> $files
+	arc=`archive_name $i`
+	dir_list="$dir_list $arc=$archive_dir/$db/$arc"
+	#date +%N > $archive_dir/$db/$arc/rand
+	find $archive_dir/$db/$arc -type f -printf "$arc/%P\n" >> $files
 done
 
 # MD5 sums
-(cd $archive_dir ; cat $files | sed -e 's,$,\0,' | xargs -r md5sum > $md5s)
+(cd $archive_dir/$db ; cat $files | sed -e 's,$,\0,' | xargs -r md5sum > $md5s)
 rm -f $files
 
 # TODO: remove this test check
 for i in `seq $range_begin $range_end`; do
-	#date +%N > $archive_dir/$i/rand
-	:
+	arc=`archive_name $i`
+	#date +%N > $archive_dir/$db/$arc/rand
 done
 
 iso_size=`get_iso_size $dir_list`
