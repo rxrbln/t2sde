@@ -6,10 +6,15 @@
 # Data integrity is check by reading the whole set of files back
 # and compare the MD5 sum.
 #
+# Call with:
+#               [ isofile ] | [ db range ]
+#               e.g.: wodim.sh test-db 123-456
+#
 # Return codes: 0: success
 #               1: no config
 #               2: not enough devices with matching media
 #               3: no archive does fit on the available disc
+#               4: not enough copies written to different devices
 #
 # Return text:
 #               on success the last line: archived range like: 123-200
@@ -30,7 +35,7 @@ elif [ -f "$1" ]; then
 	shift
 else
 	echo "$0 [ isofile ] | [ db range ]"
-	echo "Where range is numeric such as 123-456"
+	echo "Where range is numerical such as 123-456"
 	exit
 fi
 
@@ -261,11 +266,26 @@ for dev in $devices; do
 	#
 	if [ $md5sumerr = 0 ]; then
 		eject $dev
-		good_writes=$(( $good_writes + 1))
+		good_writes=$(( $good_writes + 1 ))
+		# stop writing if we reached the configured number of copies
+		[ $good_writes = $copies ] && break
 	fi
 done
 
+if [ $good_writes -lt $copies ]; then
+	echo "$copies copy(s) requested but only $good_writes verified copy(s) \
+performed!" >> $log
+	log_file $log
+	rm $md5sums $log
+	exit 4
+fi
+
+echo "Successfully wrote $good_writes copy(s) to the optical media:
+DB: $db Archives: `archive_name $range_begin` - `archive_name $range_end`" >> $log
 log_file $log
+
+# for the callee
+echo "$range_begin-$range_end"
 
 # clean up
 rm -f $md5s $log
