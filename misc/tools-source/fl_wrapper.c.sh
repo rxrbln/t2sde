@@ -11,6 +11,7 @@ cat << EOT
  * T2 SDE: misc/tools-source/fl_wrapper.c.sh
  * Copyright (C) 2004 - 2005 The T2 SDE Project
  * Copyright (C) 1998 - 2003 ROCK Linux Project
+ * Copyright (C) 2006 Rene Rebe <rene@exactcode.de>
  * 
  * More information can be found in the files COPYING and README.
  * 
@@ -420,16 +421,16 @@ static void sort_of_realpath (const char *file, char *absfile)
 		if (*src == '/' && src[1] == '/')
 			while (src[1] == '/') src++;
 		else if (*src == '.') {
-			if (src[1] == '.' && src[2] == '/') {
-				if (dst > file) --dst; /* jump to last '/' */
-				while (dst > file && dst[-1] != '/')
+			if (src[1] == '.' && (src[2] == '/' || src[2] == 0)) {
+				if (dst > absfile+1) --dst; /* jump to last '/' */
+				while (dst > absfile+1 && dst[-1] != '/')
 					--dst;
-				src += 3;
+				src += 2; if (*src) src++;
 				while (*src == '/') src++;
 				continue;
 			}
-			else if (src[1] == '/') {
-				src += 2;
+			else if (src[1] == '/' || src[1] == 0) {
+				src += 1; if (*src) src++;
 				while (*src == '/') src++;
 				continue;
 			}
@@ -437,6 +438,9 @@ static void sort_of_realpath (const char *file, char *absfile)
 		*dst++ = *src++;
 	}
 	*dst = 0;
+	/* remove trailing slashes */
+	while (--dst, dst > absfile+1 && *dst == '/')
+		*dst = 0;
 }
 
 static void handle_file_access_after(const char * func, const char * file,
