@@ -417,16 +417,20 @@ static void sort_of_realpath (const char *file, char *absfile)
 	const char* src = file; char* dst = absfile;
 	/* till the end, remove ./ and ../ parts */
 	while (dst < absfile + PATH_MAX && *src) {
-		if (*src == '.') {
+		if (*src == '/' && src[1] == '/')
+			while (src[1] == '/') src++;
+		else if (*src == '.') {
 			if (src[1] == '.' && src[2] == '/') {
 				if (dst > file) --dst; /* jump to last '/' */
 				while (dst > file && dst[-1] != '/')
 					--dst;
 				src += 3;
+				while (*src == '/') src++;
 				continue;
 			}
 			else if (src[1] == '/') {
 				src += 2;
+				while (*src == '/') src++;
 				continue;
 			}
 		}
