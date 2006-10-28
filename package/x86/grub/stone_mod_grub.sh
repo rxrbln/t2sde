@@ -44,7 +44,7 @@ EOT
 }
 
 convert_device () {
-    device="$1"
+    local device="$1"
 
     # extract device type (block) and major number for root drive
     user_drive_maj=`ls -Ll $device |
@@ -58,7 +58,7 @@ convert_device () {
     if [ "$user_drive_maj" = "$bios_drive_maj" ]; then
 	# yupi ya yeh! we found your drive!
 	root_drive=`grep $bios_drive /boot/grub/device.map | awk '{print $1}'`
-	    tmp_part=`ls -Ll $device | awk '{print $6}'`
+	local tmp_part=`ls -Ll $device | awk '{print $6}'`
 	break
     fi
     done
@@ -71,12 +71,8 @@ convert_device () {
     else
     root_part=$[$tmp_part-1]
     fi 
-    unset tmp_part
 
     drive=`echo $root_drive | sed "s:)$:,$root_part):"`
-    # Do we need some user confirmation to this result???
-    # ...
-    unset device
     echo $drive
 }
 
