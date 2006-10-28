@@ -43,34 +43,28 @@ EOT
 	)"
 }
 
-convert_device () {
+convert_device() {
     local device="$1"
+    local root_part=
 
     # extract device type (block) and major number for root drive
-    user_drive_maj=`ls -Ll $device |
+    local major_minor=`ls -Ll $device |
     awk '{if ($6 < 64) printf("%c%d0", $1, $5); else printf("%c%d1", $1, $5)}'`
 
-    # does your bios know about the above drive?
-    for bios_drive in `grep -v '^#' /boot/grub/device.map|awk '{print $2}'`; do
-    bios_drive_maj=`ls -l $bios_drive |
-    awk '{if ($6 < 64) printf("%c%d0", $1, $5); else printf("%c%d1", $1, $5)}'`
+    # find the matching BIOS device
+    for bios_drive in `grep -v '^#' /boot/grub/device.map | awk '{print $2}'`
+    do
+        bios_major_minor=`ls -Ll $bios_drive 2>/dev/null |
+        awk '{if ($6 < 64) printf("%c%d0", $1, $5); else printf("%c%d1", $1, $5)}'`
 
-    if [ "$user_drive_maj" = "$bios_drive_maj" ]; then
-	# yupi ya yeh! we found your drive!
-	root_drive=`grep $bios_drive /boot/grub/device.map | awk '{print $1}'`
-	local tmp_part=`ls -Ll $device | awk '{print $6}'`
-	break
-    fi
+        if [ "$major_minor" = "$bios_major_minor" ]; then
+	    # we found it
+	    root_drive=`grep $bios_drive /boot/grub/device.map | awk '{print $1}'`
+	    root_part=`ls -Ll $device | awk '{print $6}'`
+            root_part=$(( $root_part % 16 - 1 ))
+	    break
+        fi
     done
-
-    # convert the partition number to GRUB style
-    if [ $tmp_part -gt 64 ]; then
-	# hd[bdfh]
-	# this doesn't handle the disk itself correctly - just the partitions
-	root_part=$[$tmp_part-65]
-    else
-    root_part=$[$tmp_part-1]
-    fi 
 
     drive=`echo $root_drive | sed "s:)$:,$root_part):"`
     echo $drive
