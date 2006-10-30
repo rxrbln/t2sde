@@ -201,6 +201,10 @@ end
 
 function pkgsel_parse (filename)
    local f = io.open (filename, "r")
+   if f == nil then
+      print ("Error opening file: '" .. filename .."'")
+      return
+   end
    
    for line in f:lines() do
       line = string.gsub (line, "#.*","")
