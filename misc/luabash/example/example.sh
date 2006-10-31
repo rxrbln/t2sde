@@ -52,3 +52,15 @@ EOF
 
 # print ten shell variables
 printenv | head -n 10
+
+one
+echo $?
+
+zero
+echo $?
+
+str
+echo $?
+
+boolean
+echo $?
