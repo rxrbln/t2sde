@@ -4,6 +4,7 @@
  * 
  * T2 SDE: luabash.c
  * Copyright (C) 2006 The T2 SDE Project
+ * Copyright (C) 2006 Valentin Ziegler & Rene Rebe
  * 
  * More information can be found in the files COPYING and README.
  * 
@@ -13,7 +14,6 @@
  * GNU General Public License can be found in the file COPYING.
  * --- T2-COPYRIGHT-NOTE-END ---
  */
-
 
 // compile with:
 // gcc -shared -fPIC -Wall -o luabash.so luabash.c -llua -lm -Wall -ldl
@@ -210,8 +210,6 @@ extern struct builtin* builtin_address_internal __P((char *, int));
 extern void add_alias __P((const char *, const char *));
 
 
-
-
 #ifdef DO_DYNAMIC_REGISTRATION
 
 /* dynamic registration, not needed anymore.
@@ -267,10 +265,9 @@ static const char *getvar(const char *name)
 #define setvar(a,b) bind_variable(a,b)
 
 
-
 /* lua bash wrapper */
 
-#define LUABASH_VERSION "lua bash wrapper version 0.0.1; (C) 2006 Valentin Ziegler."
+#define LUABASH_VERSION "lua bash wrapper version 0.0.2 (C) 2006 Valentin Ziegler & Rene Rebe"
 
 #define LUA_ERRMSG fprintf(stderr, "lua bash error: %s\n", lua_tostring(L, -1))
 #define LUA_ERRMSG_FAIL {LUA_ERRMSG; return EXECUTION_FAILURE;}
@@ -442,25 +439,37 @@ static int load_chunk(const char* filename)
   return EXECUTION_SUCCESS;
 }
 
-static int call_function(const char* func, WORD_LIST *args)
+static int call_function(const char* func, WORD_LIST *argv)
 {
+  int i;
+
   if (!initialized) {
     fprintf(stderr, "lua bash error: not initialized yet!\n");
     return EXECUTION_FAILURE;
   }
 
-  lua_getfield(L, LUA_GLOBALSINDEX, func);
-  int no_args=0;
-  while (args) {
-    if (args->word->word) {
-      lua_pushstring(L, args->word->word);
-      no_args++;
+  lua_getglobal(L, func);
+
+  int argc = 0;
+  while (argv) {
+    if (argv->word->word) {
+      lua_pushstring(L, argv->word->word);
+      ++argc;
     }
-    args=args -> next;
+    argv = argv->next;
   }
 
-  if (lua_pcall(L, no_args, 0, 0))
+  if (lua_pcall(L, argc, 1, 0))
     LUA_ERRMSG_FAIL;
+
+  switch (lua_type(L, -1)) {
+    case LUA_TNUMBER:	return lua_tonumber(L,-1);
+    case LUA_TBOOLEAN:	return lua_toboolean(L,-1) ? EXECUTION_SUCCESS : EXECUTION_FAILURE;
+    case LUA_TNIL:	return EXECUTION_SUCCESS;
+  }
+   
+  i = lua_type(L,-1);
+  printf ("lua bash: unexpected type '%s' returned\n", lua_typename(L,i));
 
   return EXECUTION_SUCCESS;
 }
@@ -488,7 +497,6 @@ int luabash_builtin(WORD_LIST *list)
 }
 
 
-
 struct builtin luabash_struct = {
 	"luabash",
 	&luabash_builtin,
@@ -497,4 +505,3 @@ struct builtin luabash_struct = {
 	LUABASH_VERSION,
 	0
 };
-
