@@ -174,9 +174,9 @@ function pkgcheck (pattern, mode)
       for j,x in ipairs (p) do
 	 if pkg.alias == x then
 	    if mode == "X" then
-	       if pkg.status == "X" then return 0 end
+	       if pkg.status == "X" then return true end
 	    elseif mode == "O" then
-	       if pkg.status == "O" then return 0 end
+	       if pkg.status == "O" then return true end
 	    elseif mode == "." then
 	       return 0
 	    else
@@ -185,7 +185,7 @@ function pkgcheck (pattern, mode)
 	 end
       end
    end
-   return 1
+   return false
 end
 
 --
