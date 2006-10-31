@@ -42,8 +42,33 @@ function printenv()
    end
 end
 
+function zero()
+   return 0
+end
+
+function one()
+   return 1
+end
+
+function str()
+   return "abc"
+end
+
+function two()
+   return 1, "two" -- :-)
+end
+
+function boolean()
+   return true
+end
+
 -- register shortcuts to functions above
 bash.register("plus")
 bash.register("callbash")
 bash.register("redirections")
 bash.register("printenv")
+bash.register("zero")
+bash.register("one")
+bash.register("str")
+bash.register("two")
+bash.register("boolean")
