@@ -5,10 +5,15 @@
 # Copyright (C) 2006 Archivista GmbH
 # Copyright (C) 2006 Rene Rebe
 
+argv="$0"
+for x do
+  argv="$argv \"$x\""
+done
+
 if [ "$UID" -ne 0 ]; then
         exec gnomesu -t "Copy CD to USB storage" \
         -m "Please enter the system password (root user)^\
-in order to copy a CD to USB storage device." -c $0
+in order to copy a CD to USB storage device." -c "$argv"
 fi
 
 # PATH and co
