@@ -267,6 +267,7 @@ mount --bind /dev /mnt/target/dev
 mount --bind /proc /mnt/target/proc
 
 # let the T2 stone module setup grub ,-)
+touch /mnt/target/boot/grub/menu.lst
 chroot /mnt/target stone -text grub <<-EOT
 1
 
