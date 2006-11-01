@@ -27,22 +27,27 @@ update_root_perl_passwd=`grep 'MYSQL_PWD' \
                          home/cvs/archivista/apcl/Archivista/Config.pm | cut -d \" -f 2`
 
 # database slave mode
-set -x
 if grep -q '^server-id.*= 2' etc/my.cnf; then
 	update_db_master_host=`sed -n 's/^master-host[^=]*= *//p' etc/my.cnf`
 	update_db_master_user=`sed -n 's/^master-user[^=]*= *//p' etc/my.cnf`
   update_db_master_password=`sed -n 's/^master-password[^=]*= *//p' etc/my.cnf`
 fi
-set +x
+
+# crontab
+cp -fv etc/crontab $to/
 
 # gnupg key
 cp -rfv home/archivista/.gnupg $to/ 2>/dev/null
 
 # ssh key
 cp -fv etc/ssh/ssh_*key* $to/ 2>/dev/null
+[ -e /etc/rc.d/rc5.d/S*sshd ] && update_ssh_enabled=1
+
+# vnc config
+cp -fv etc/vnc.conf $to/ 2>/dev/null
 
 # network
-cp etc/conf/network $to/
+cp etc/conf/network $to/ 2>/dev/null
 
 # https
 grep -q '\-DSSL' sbin/init.d/apache && update_apache_https=1
@@ -57,6 +62,8 @@ if grep -q '^<DefaultPrinter' etc/cups/printers.conf; then
 	                   etc/cups/cupsd.conf`
 	cp -fv etc/cups/printers.conf $to/cups/
 	cp -rv etc/cups/ppd/*.ppd $to/cups/
+
+	[ -e /etc/rc.d/rc5.d/S*cups ] && update_cups_enabled=1
 fi
 
 # exim
@@ -81,7 +88,7 @@ update_rsync_backup=`grep archivista/rsync-backup.sh etc/crontab |
                      cut -d ' ' -f 1-5`
 cp -fv etc/rsync-backup.conf $to/ 2>/dev/null
 mkdir -p $to/rsync-backup/
-cp -fv root/.ssh/id_rsa* $to/rsync-backup/
+cp -fv root/.ssh/id_rsa* $to/rsync-backup/ 2>/dev/null
 
 # usb backup
 update_usb_backup=`grep archivista/usb-backup.sh etc/crontab |
