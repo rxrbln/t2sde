@@ -295,110 +295,16 @@ if [ "$kind" = ISO ]; then
 	
 else # USB
 
-### USB device install BEGIN ###
-
-# prevent hotplug backup
-usblog=`mktemp`
-touch /tmp/hot.lock
-rc hal stop
-
-# wait for a stick injection
-usbdev=
-
-get_device_list () {
-	# from livecd init, best kept in sync ,-) -ReneR
-	for x in /sys/block/*/device; do
-		case "`ls -l $x`" in
-			*/usb*|*/ieee1394) : ;;
-			*) continue ;;
-		esac
-		x=${x%/device}; x=/dev/${x#/sys/block/}
-		echo -n " $x "
-	done
-}
-
-archived=0
-while [ $archived -eq 0 ]; do
-
-Xdialog --ok-label Cancel --title "Archive publishing" \
-        --msgbox "Waiting for USB device. Please insert
-the device you want to use." 0 0 &
-
-initial_list="`get_device_list`"
-dev=
-while [ -z "$dev" ] && jobs %- ; do # while no device and not cancel
-	sleep 1
-	# get a new list
-	new_list="`get_device_list`"
-
-	# is there a new one?
-	new_one=0
-	for d in $new_list; do
-		if [ "${initial_list/ $d /}" = "$initial_list" ]; then
-			new_one=1
-			[ -e "$d" ] && dev=$d	# u/dev device node exits?
-		fi
-	done
-	if [ $new_one -eq 0 ]; then
-		# update the list, so pulling a device and inserting one works (both sda)
-		initial_list="$new_list"
-	fi
-done
-usbdev=$dev
-
-
-kill %- 2> /dev/null || true # the Xdialog
-if [ -z "$usbdev" ]; then
-	rm /tmp/hot.lock
-	rc hal start
-	exit
-fi
-
-sleep 1 # work around to let the above job disappear ...
-
-if ! Xdialog --title "Archive publishing" --yesno \
-"Really copy the archive to the USB device ($usbdev)?
-All data will be lost!" 0 0; then
-	continue
-fi
-
-# convert it, multi threaded displaying
-Xdialog --no-close --no-buttons --title "Copying archive to USB device" \
-        --logbox $usblog 25 80 &
-
-# additionally inject the non-ISO live.squash in the uncompressed case
-if [ "$uncompr" ]; then
-	lq=live.squash
-	fs="-fs ext2"
-else
+	# additionally inject the non-ISO live.squash in the uncompressed case
 	lq=
 	fs=
-fi
+	if [ "$uncompr" ]; then
+		lq=live.squash
+		fs="-fs ext2"
+	fi
 
-echo -e "Copying archive to USB device ($usbdev):\n" > $usblog
-set -x
-${0%/*}/iso2stick.sh $fs ./$isoname $usbdev $lq >> $usblog 2>&1 &
-set +x
-
-if ! wait %2 ; then  # wait for the iso2stick
-	Xdialog --title "Archive publishing" --msgbox \
-	        "There was an error copying the archive." 0 0
-	kill %- 2> /dev/null # the Xdialog
-	continue
-fi
-kill %- 2> /dev/null # the Xdialog
-archived=1
-
-done
-
-rm /tmp/hot.lock $usblog
-rc hal start
-
-### USB device install END ###
-
-Xdialog --no-cancel --title "Archive publishing" \
-        --msgbox "Archive copied to the USB device." 0 0
-
+	# like the iso2stick.sh just with graphical frontend
+	${0%/*}/cd2stick.sh -title "Archive publishing" $fs $isoname $lq
 fi
 
 # do not ask when uncompressed, the ISO is boot code only in this case
@@ -406,6 +312,6 @@ fi
 if [ "$uncompr" -a $write_err = 0 ]; then
 	if Xdialog --default-no --title "Archive publishing" \
            --yesno "Delete published archive now?" 0 0; then
-		rm -v ./$isoname
+		rm -v $isoname
 	fi
 fi

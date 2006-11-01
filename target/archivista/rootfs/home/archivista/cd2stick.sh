@@ -24,25 +24,28 @@ export DISPLAY=:0
 
 title=
 isoname=
+fs=
 
-if [ "$1" = "-title" ]; then
+while [ "$1" ]; do
+	case "$1" in
+	-title) shift; title="$1" ;;
+	-fs) shift; fs="-fs $1" ;;
+	*) break
+	esac
 	shift
-	title="$1"
-	shift
-fi
-set +x
+done
 
 if [ "$1" ]; then
 	isoname="$1"
 	shift
 else
-	mkdir -p /mnt/target
+	mkdir -p /mnt/source
 	echo "Searching for Live CD"
 
 	for dev in /dev/cdrom*; do
-	  if mount $dev /mnt/target; then
-		[ -e /mnt/target/live.squash ] && isoname=$dev
-		umount /mnt/target
+	  if mount $dev /mnt/source; then
+		[ -e /mnt/source/live.squash ] && isoname=$dev
+		umount /mnt/source
 		[ "$isoname" ] && break
 	  fi
 	done
@@ -127,7 +130,7 @@ Xdialog --no-close --no-buttons --title "$title" \
 
 echo -e "Copying archive to USB device ($usbdev):\n" > $usblog
 set -x
-${0%/*}/iso2stick.sh $fs $isoname $usbdev $lq >> $usblog 2>&1 &
+eval ${0%/*}/iso2stick.sh $fs "$isoname" $usbdev "$@" >> $usblog 2>&1 &
 set +x
 
 if ! wait %2 ; then  # wait for the iso2stick
