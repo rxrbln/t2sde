@@ -79,6 +79,10 @@ ethtool eth0 >> $tmp
 		echo "Remote access (SSH) not active"
 	fi
 
+	if [ -e /etc/rc.d/rc5.d/S*sshd ]; then
+		echo "Remove access (SSH) permanently enabled"
+	fi
+
 	if ps -C x11vnc >/dev/null; then
 		echo "Graphical remote access (VNC) active"
 	else
@@ -96,6 +100,6 @@ ethtool eth0 >> $tmp
 ) | sed -e 's/^[[:space:]]\+//' -e 's/inet /Inet /' -e 's/HWaddr /HWaddr:/' \
         -e 's/Bcast:/Bcast: /' -e 's/Mask:/Mask: /' -e 's/addr:/addr: /' |
 
-Xdialog --no-cancel --title "System status" --logbox - 35 45
+Xdialog --no-cancel --title "System status" --logbox - 40 45
 
 rm -f $tmp

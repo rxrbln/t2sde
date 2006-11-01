@@ -10,6 +10,6 @@ fi
 . /etc/profile
 
 rc sshd stop
+rm -rf  /etc/rc.d/rc5.d/S25sshd /etc/rc.d/rc5.d/K75sshd
 
-Xdialog --title "" --msgbox "Remote access (SSH) disabled." 0 0
-
+Xdialog --title "SSH setup" --msgbox "Remote access (SSH) disabled." 0 0
