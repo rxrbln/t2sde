@@ -80,13 +80,16 @@ ethtool eth0 >> $tmp
 	fi
 
 	if [ -e /etc/rc.d/rc5.d/S*sshd ]; then
-		echo "Remove access (SSH) permanently enabled"
+		echo "Remove access (SSH) enabled permanently"
 	fi
 
 	if ps -C x11vnc >/dev/null; then
 		echo "Graphical remote access (VNC) active"
 	else
 		echo "Graphical remote access (VNC) not active"
+	fi
+	if grep "autostart=1" /etc/vnc.conf 2>/dev/null; then
+		echo "Graphical remove access (VNC) enabled permanently"
 	fi
 	echo
 
@@ -98,8 +101,7 @@ ethtool eth0 >> $tmp
 
 	cat /etc/VERSION
 ) | sed -e 's/^[[:space:]]\+//' -e 's/inet /Inet /' -e 's/HWaddr /HWaddr:/' \
-        -e 's/Bcast:/Bcast: /' -e 's/Mask:/Mask: /' -e 's/addr:/addr: /' |
-
-Xdialog --no-cancel --title "System status" --logbox - 40 45
+        -e 's/Bcast:/Bcast: /' -e 's/Mask:/Mask: /' -e 's/addr:/addr: /' \
+  | Xdialog --no-cancel --title "System status" --logbox - 40 48
 
 rm -f $tmp
