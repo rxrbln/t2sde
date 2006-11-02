@@ -55,7 +55,8 @@ mkisofsopt="-rJ --graft-points"
 get_media_size()
 {
 	local capacity=`dvd+rw-mediainfo $1 | sed -n 's/ *Track Size: *\([^*]*\).*/\1/p'`
-	echo ${capacity:-0} # zero if none at all
+	capacity=${capacity:-0} # zero if none at all
+	echo $((capacity * 2048)) # as the size is returned in CD sectors
 }
 
 # Returns the ISO size of the directories specified in bytes.
