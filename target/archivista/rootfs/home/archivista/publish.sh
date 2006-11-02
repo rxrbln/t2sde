@@ -235,6 +235,9 @@ fi
 
 # copy initrd, grub, ...
 cp -ar /boot-cd boot
+# an installation from USB stick has no cd devices anymore, ...
+# translate them back to cd
+sed -i 's/(hd.*,.*)/(cd)/' boot/grub/menu.lst 
 
 # mkisofs, heavily copied out of the T2 sources, since there we add all the
 # magic glue automagically ,-)))
