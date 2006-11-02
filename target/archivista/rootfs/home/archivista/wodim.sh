@@ -122,7 +122,7 @@ if [ "$iso" ]; then
 
 	Xdialog --no-close --no-buttons --title 'Write Optical disc media' \
 	        --infobox "Writing to optical disc in device $dev." 0 0 9999999 &
-	wodim dev=$dev "$iso"
+	wodim dev=$dev $speed "$iso"
 	wodimerr=$?
 
 	kill %- 2>/dev/null || true # the Xdialog
@@ -144,10 +144,16 @@ fi
 
 # check configuration constraints
 #
+[ "$speed" ] || speed=0
 if [ -z "$copies" -o -z "$format" ]; then
 	log_text "No configuration found.
 please configure optical disc writing."
 	exit 1
+fi
+if [ "$speed" = "0" ]; then
+	speed=
+else
+	speed="speed=$speed"
 fi
 
 # no. of writers
@@ -276,7 +282,7 @@ good_writes=0
 for dev in $devices; do
 	# create the FS and write it on-the-fly
 	mkisofs $mkisofsopt -q $dir_list |
-		wodim dev=$dev tsize=${iso_size}s -
+		wodim dev=$dev $speed tsize=${iso_size}s -
 	wodimerr=$?
 	if [ $wodimerr != 0 ]; then
 		echo -e "Error writing the archive to $dev.\n" >> $log
