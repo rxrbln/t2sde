@@ -99,6 +99,9 @@ ethtool eth0 >> $tmp
 	cron_status "/usb-backup.sh" "USB hard-disk backup"
 	echo
 
+	df -h / /home/data
+	echo
+
 	cat /etc/VERSION
 ) | sed -e 's/^[[:space:]]\+//' -e 's/inet /Inet /' -e 's/HWaddr /HWaddr:/' \
         -e 's/Bcast:/Bcast: /' -e 's/Mask:/Mask: /' -e 's/addr:/addr: /' \
