@@ -9,10 +9,14 @@ fi
 # PATH and co
 . /etc/profile
 
+. ${0%/*}/wodim-setup.in
+
+
 # read config if existing
 [ -e /etc/wodim.conf ] && . /etc/wodim.conf
 [ "$copies" ] || copies=1
 [ "$format" ] || format='CD'
+[ "$speed" ] || speed=1
 
 # get requested format
 cdonoff='off'
@@ -31,5 +35,9 @@ copies=`Xdialog --stdout --title "Optical disc archiving" \
         --spinbox "Number of optical disc copies to
 be burned on different writers." 0 0 1 9 $copies "# of writer"` || exit
 
+# get speed
+speed=`wodim_speed $speed`
+
 echo "format=\"$format\"
-copies=\"$copies\"" > /etc/wodim.conf
+copies=\"$copies\"
+speed=\"$speed\"" > /etc/wodim.conf
