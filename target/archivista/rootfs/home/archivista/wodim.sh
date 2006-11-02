@@ -42,13 +42,24 @@ fi
 # include shared code to send the mail notification
 . ${0%/*}/backup.in
 
-# include the configuration
-[ -e /etc/wodim.conf ] && . /etc/wodim.conf
+# include shared code for speed setup
+. ${0%/*}/wodim-setup.in
 
 set -e -x
 
 archive_dir="/home/data/archivista" # ... /$db/ARCHxxxx
 mkisofsopt="-rJ --graft-points"
+
+# Convert numeric speed variable to the format wodim recognizes.
+#
+speed2speedopt()
+{
+	if [ "$speed" = "0" ]; then
+		speed=
+	else
+		speed="speed=$speed"
+	fi
+}
 
 # Returns the CD/DVD capacity of the disc present in the device in bytes.
 #
@@ -94,6 +105,10 @@ log=`mktemp` # file we accumulate log messages in
 # If we are called with just a iso file we just write that
 #
 if [ "$iso" ]; then
+  # get speed
+	speed=`wodim_speed $speed`
+	speed2speedopt
+
 	devices=
 	for dev in /dev/cdrom*; do
 		if [ ! -e $dev ]; then
@@ -142,19 +157,17 @@ fi
 # Here we handle the complex archive case
 #
 
+# include the configuration
 # check configuration constraints
 #
+[ -e /etc/wodim.conf ] && . /etc/wodim.conf
 [ "$speed" ] || speed=0
 if [ -z "$copies" -o -z "$format" ]; then
 	log_text "No configuration found.
 please configure optical disc writing."
 	exit 1
 fi
-if [ "$speed" = "0" ]; then
-	speed=
-else
-	speed="speed=$speed"
-fi
+speed2speedopt
 
 # no. of writers
 devices=
