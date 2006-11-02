@@ -1,12 +1,25 @@
 #!/bin/bash
 
+# if recalled with the permanent flag as root
+if [ "$1" = "-permanent" ]; then
+	shift
+	PASSWD="$1"; shift
+
+	cat > /etc/vnc.conf <<-EOT
+		autostart=1
+		passwd="$PASSWD"
+EOT
+
+	Xdialog --title "VNC setup" --msgbox \
+	        "Graphical remote access (VNC) enabled permanently." 0 0
+	exit
+fi
+
 PASSWD=`Xdialog --password --stdout --title "VNC setup" \
                 --inputbox "Password for
 graphical remote access (VNC)" 0 0 $PASSWD` || exit
 
-if [ -z "$PASSWD" ]; then 
-  exit
-fi
+[ "$PASSWD" ] || exit
 
 . /etc/profile
 
@@ -16,15 +29,12 @@ x11vnc -forever -passwd "$PASSWD" -skip_lockkeys &
 if Xdialog --title "VNC setup" --default-no --yesno \
            "Enable graphical remote access (VNC) permanently?" \
            0 0; then
-	cat > /etc/vnc.conf <<-EOT
-		autostart=1
-		passwd="$PASSWD"
-EOT
+	exec gnomesu -t "VNC setup" \
+	             -m "Please enter the system password (root user)^\
+in order to enable graphical remote access (VNC) permanently." -c \
+	             "$0 -permanent '$PASSWD'"
 
-	Xdialog --title "VNC setup" --msgbox \
-	        "Graphical remote access (VNC) enabled permanently." 0 0
 else
-	rm -f /etc/vnc.conf
 	Xdialog --title "VNC setup" --msgbox \
 	        "Graphical remote access (VNC) is enabled" 0 0
 fi
