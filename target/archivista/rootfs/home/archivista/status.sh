@@ -88,8 +88,8 @@ ethtool eth0 >> $tmp
 	else
 		echo "Graphical remote access (VNC) not active"
 	fi
-	if grep "autostart=1" /etc/vnc.conf 2>/dev/null; then
-		echo "Graphical remove access (VNC) enabled permanently"
+	if grep -q "autostart=1" /etc/vnc.conf 2>/dev/null; then
+		echo "Graphical remote access (VNC) enabled permanently"
 	fi
 	echo
 
