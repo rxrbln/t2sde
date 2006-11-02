@@ -41,7 +41,7 @@ cp -rfv home/archivista/.gnupg $to/ 2>/dev/null
 
 # ssh key
 cp -fv etc/ssh/ssh_*key* $to/ 2>/dev/null
-[ -e /etc/rc.d/rc5.d/S*sshd ] && update_ssh_enabled=1
+[ -e etc/rc.d/rc5.d/S*sshd ] && update_ssh_enabled=1
 
 # vnc config
 cp -fv etc/vnc.conf $to/ 2>/dev/null
