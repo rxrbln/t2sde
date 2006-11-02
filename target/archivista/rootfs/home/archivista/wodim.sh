@@ -19,7 +19,6 @@
 # Return text:
 #               on success the last line: archived range like: 123-200
 #
-#
 # Copyright (C) 2006 Archivista GmbH
 # Copyright (C) 2006 Rene Rebe
 
@@ -55,7 +54,7 @@ mkisofsopt="-rJ --graft-points"
 #
 get_media_size()
 {
-	local capacity=`dvd+rw-mediainfo $1 | sed -n 's/READ CAPACITY.*=//p'`
+	local capacity=`dvd+rw-mediainfo $1 | sed -n 's/ *Track Size: *\([^*]*\).*/\1/p'`
 	echo ${capacity:-0} # zero if none at all
 }
 
