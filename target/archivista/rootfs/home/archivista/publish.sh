@@ -190,6 +190,7 @@ unint_xdialog_w_file ()
 	done
 }
 
+
 rc apache stop
 rc mysql stop
 
@@ -273,6 +274,7 @@ rc apache start
 
 cleanup
 
+
 ### ISO generation END ###
 
 # when uncompressed we must write it the USB device, otherwise we ask
@@ -293,11 +295,20 @@ USB USB on ISO CD/DVD off` || exit
 fi
 
 if [ "$kind" = ISO ]; then
-	# use the external Write Optical DIsc Media script
-	${0%/*}/wodim.sh $isoname || write_err=1
-	
+	archived=0
+	while [ $archived -eq 0 ]; do
+		# use the external Write Optical DIsc Media script
+		archived=1
+		set -x
+		${0%/*}/wodim.sh $isoname || archived=0
+		set +x
+		if [ $archived = 0 ]; then
+			Xdialog --title "Archive publishing" --yesno "There was an error writing the media.
+Do you want to try again to write the archive image?" 0 0 || break
+		fi
+	done
+	[ $archived = 0 ] && write_err=1
 else # USB
-
 	# additionally inject the non-ISO live.squash in the uncompressed case
 	lq=
 	fs=
@@ -307,7 +318,7 @@ else # USB
 	fi
 
 	# like the iso2stick.sh just with graphical frontend
-	${0%/*}/cd2stick.sh -title "Archive publishing" $fs $isoname $lq
+	${0%/*}/cd2stick.sh -title "Archive publishing" $fs $isoname $lq || write_err=1
 fi
 
 # do not ask when uncompressed, the ISO is boot code only in this case
