@@ -101,8 +101,8 @@ fi
 if [ "$update_ssh_enabled" ]; then
 	echo "SSH enabled"
 	if [ $doit = 1 ]; then
-		ln -sf ../init.d/sshd /etc/rc.d/rc5.d/S25sshd
-		ln -sf ../init.d/sshd /etc/rc.d/rc5.d/K75sshd
+		ln -sf ../init.d/sshd etc/rc.d/rc5.d/S25sshd
+		ln -sf ../init.d/sshd etc/rc.d/rc5.d/K75sshd
 	fi
 fi
 
