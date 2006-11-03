@@ -290,21 +290,24 @@ cleanup
 
 ### ISO generation END ###
 
+# remove when compressed, as it is now inside the ISO in that case
+[ "$uncompr" ] || rm -fv live.squash
+
+# until the user has written the copies he demands ...
+while true; do
+
 # when uncompressed we must write it the USB device, otherwise we ask
 # whether to write it and how
 kind=USB
 write_err=0
 if [ -z "$uncompr" ]; then
-	# only remove when not uncompressed, as compressed it is inside the ISO
-	rm live.squash
-
 	kind=`Xdialog --title 'Archive publishing' --stdout --no-tags --seperator ' ' \
-	              --radiolist "Disc image generation completed.
-The compressed ISO image is $(ls -sh $isoname | sed 's/ .*// ; s/\([MGT]\)/ \1B/') \
+	              --radiolist \
+"The compressed archive image is $(ls -sh $isoname | sed 's/ .*// ; s/\([MGT]\)/ \1B/') \
 and named
 $PWD/$isoname.
-Do you want to copy write it onto a connected device?" 0 0 3 \
-USB USB on ISO CD/DVD off` || exit
+Please choose a device type to write it to:" 0 0 3 \
+USB USB on ISO CD/DVD off` || break
 fi
 
 if [ "$kind" = ISO ]; then
@@ -334,11 +337,15 @@ else # USB
 	${0%/*}/cd2stick.sh -title "Archive publishing" $fs $isoname $lq || write_err=1
 fi
 
+Xdialog --title 'Archive publishing' --yesno \
+        "Write more copies to attached devices?" 0 0 || break
+done
+
 # do not ask when uncompressed, the ISO is boot code only in this case
-# or on write error
-if [ "$uncompr" -a $write_err = 0 ]; then
-	if Xdialog --default-no --title "Archive publishing" \
-           --yesno "Delete published archive now?" 0 0; then
+if [ "$uncompr" ]; then
+	rm -fv $isoname live.squash
+else
+	Xdialog --default-no --title "Archive publishing" \
+	        --yesno "Delete published archive now?" 0 0 &&
 		rm -v $isoname
-	fi
 fi
