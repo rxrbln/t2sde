@@ -3,6 +3,7 @@
 . /etc/profile
 
 tmp=`mktemp`
+tmp2=`mktemp`
 
 cron_status ()
 {
@@ -99,12 +100,15 @@ ethtool eth0 >> $tmp
 	cron_status "/usb-backup.sh" "USB hard-disk backup"
 	echo
 
-	df -h / /home/data
+	echo "Hard-disk usage"
+	df -h / /home/data | tr -s ' ' |
+		sed '1d; s,\([^ ]*\) \([^ ]*\) \([^ ]*\) \([^ ]*\) \([^ ]*\) \([^ ]*\),\5 of \2 used on \6,'
 	echo
 
 	cat /etc/VERSION
 ) | sed -e 's/^[[:space:]]\+//' -e 's/inet /Inet /' -e 's/HWaddr /HWaddr:/' \
-        -e 's/Bcast:/Bcast: /' -e 's/Mask:/Mask: /' -e 's/addr:/addr: /' \
-  | Xdialog --no-cancel --title "System status" --logbox - 40 48
+        -e 's/Bcast:/Bcast: /' -e 's/Mask:/Mask: /' -e 's/addr:/addr: /' > $tmp2
 
-rm -f $tmp
+Xdialog --no-cancel --title "System status" --msgbox "`cat $tmp2`" 0 0
+
+rm -f $tmp $tmp2
