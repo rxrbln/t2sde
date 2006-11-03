@@ -81,7 +81,7 @@ ethtool eth0 >> $tmp
 	fi
 
 	if [ -e /etc/rc.d/rc5.d/S*sshd ]; then
-		echo "Remove access (SSH) enabled permanently"
+		echo "Remote access (SSH) enabled permanently"
 	fi
 
 	if ps -C x11vnc >/dev/null; then
