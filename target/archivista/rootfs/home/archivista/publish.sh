@@ -135,8 +135,9 @@ for dir in /* ; do
 			sed -i '/^[^ ]*dev[^ ]* /d' root/etc/fstab
 			rm root/etc/mtab* root/etc/conf/network || true
 			rm root/etc/net-backup.conf root/etc/rsync-backup.conf || true
-			rm root/etc/mail.conf || true
+			rm root/etc/{mail,vnc,wodim}.conf || true
 			rm root/etc/ssh/*key* || true
+			rm root/etc/rc.d/rc5.d/*{cups,sshd} || true
 			sed -i '/home\/archivista\//d' root/etc/crontab
 			continue
 			;;
