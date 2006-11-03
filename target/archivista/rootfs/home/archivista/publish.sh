@@ -41,6 +41,18 @@ cleanup ()
 	rm -rf boot root
 }
 
+# if there are files present from previous runs ask whether to finally delete
+if ls $livedir/*.iso > /dev/null 2> /dev/null; then
+	if Xdialog --title 'Archive publishing' --yesno \
+	           "There are archive files present from previous runs:
+
+`ls $livedir/*.iso`
+
+Delete these archives now?" 0 0; then
+		rm -fv $livedir/*.iso
+	fi
+fi
+
 # database selection from the user
 cd $dbdir
 i=0
