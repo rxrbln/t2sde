@@ -33,7 +33,7 @@ char env_RUNLEVEL[100]="RUNLEVEL=N";
 char env_TERM[100]="TERM=linux";
 
 char * clean_env[] = {
-	"PATH=/bin:/usr/bin",
+	"PATH=/sbin:/bin:/usr/sbin:/usr/bin",
 	env_PREVLEVEL,
 	env_RUNLEVEL,
 	env_TERM,
