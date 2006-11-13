@@ -19,21 +19,10 @@ pkgloop
 isofsdir="$build_toolchain/isofs"		# for the ISO9660 content
 imagelocation="$build_toolchain/rootfs"	# where the roofs is prepared and sq.
 
-# inject the archivista grub logo
-cp -f $base/target/$target/archivista.xpm.gz $build_root/boot/t2.xpm.gz
-
-
-build_date=`date +%Y%m%d`
-
 # create the live initrd's first and the actual root file-system, re-using
 # the livecd code
 . $base/target/$target/build_initrd.sh
 . $base/target/$target/build_image.sh
-
-# copy additional content into the top-level ISO
-echo_status "Injecting additional top-level ISO content ..."
-copy_from_source $base/target/$target/isofs/ \
-                 $base/build/${SDECFG_ID}/TOOLCHAIN/isofs/
 
 cat > $build_toolchain/isofs.txt <<- EOT
 BOOT	-b boot/grub/stage2_eltorito -no-emul-boot
@@ -42,4 +31,3 @@ DISK1	build/${SDECFG_ID}/TOOLCHAIN/isofs /
 EOT
 
 echo_status "Done!"
-
