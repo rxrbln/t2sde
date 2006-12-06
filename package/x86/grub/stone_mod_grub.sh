@@ -71,6 +71,12 @@ convert_device() {
 }
 
 create_boot_menu() {
+	# determine /boot path, relative to the boot device
+	# (non local as used by create_kernel_list() ...)
+	#
+	if [ "$rootdrive" = "$bootdrive" ]
+        then bootpath="/boot"; else bootpath=""; fi
+
 	cat << EOT > /boot/grub/menu.lst
 timeout 8
 default 0
@@ -95,6 +101,7 @@ EOT
 	gui_message "This is the new /boot/grub/menu.lst file:
 
 $( cat /boot/grub/menu.lst )"
+	unset bootpath
 }
 
 grub_install() {
@@ -131,9 +138,6 @@ main() {
 		rootdrive='No Device Map found!'
 		bootdrive='No Device Map found!'
 	fi
-
-	if [ "$rootdrive" = "$bootdrive" ]
-	then bootpath="/boot" ; else bootpath="" ; fi
 
 	if [ ! -f /boot/grub/menu.lst ] ; then
 	  if gui_yesno "GRUB does not appear to be configured.
