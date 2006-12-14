@@ -87,7 +87,7 @@ private:
   void GenParamString () {
     std::string empty("");
     params.rdbuf()->str(empty);
-    params << "curl -o " << filename;
+    params << "curl -A T2-updater --disable-epsv --location -f -o " << filename;
     if (connect_timeout > 0)
       params << " --connect-timeout " << connect_timeout;
     if (max_time > 0)
