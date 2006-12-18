@@ -88,27 +88,13 @@ read_fm_config() {
 	curl -s "$html" -o "$fmname.html"
 	dev_name="`grep 'contact developer' "$fmname.html" | sed 's,^[[:blank:]]*\(.*\)[[:blank:]]<a.*$,\1,' | sed 's, *$,,g'`"
 	dev_mail="`grep 'contact developer' "$fmname.html" | sed 's,^.*<a href=\"mailto:\(.*\)\">.*$,\1,'`"
-	echo "__at__ @" >subst
-	echo "__dot__ ." >>subst
-	echo "|at| @" >>subst
-	echo "|dot| ." >>subst
-	echo "\\[at\\] @" >>subst
-	echo "\\[dot\\] ." >>subst
-	echo "(at) @" >>subst
-	echo "(dot) ." >>subst
 
-	echo -n "$dev_mail" >dev_mail
-# for some strange reason, this doesn't work:
-# cat subst | while read from to ; do 
-#         export dev_mail="${dev_mail// $from /$to}"
-# done
-# dev_mail will have the same value as before
-	cat subst | while read from to ; do 
-		dev_mail="`cat dev_mail`"
-		dev_mail="${dev_mail// $from /$to}"
-		echo -n "$dev_mail" >dev_mail
-	done
-	dev_mail="`cat dev_mail`"
+	dev_mail=`echo $dev_mail |
+	          sed -e 's/ *__at__ */@/g' -e 's/ *__dot__ */./g' \
+	              -e 's/ *|at| */@/g' -e 's/ *|dot| */./g' \
+	              -e 's/ *\[at\] */@/g' -e 's/ *\[dot\] */./g' \
+	              -e 's/ *(at) */@/g' -e 's/ *(dot) */./g'`
+
 	rm -f subst $fmname.html dev_mail
 
 	if [ -z "$dev_name" ]; then
