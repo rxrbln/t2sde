@@ -150,7 +150,7 @@ if [ "$update" != "no" ]; then
 		${0%/*}/update-restore.sh -dry $full /tmp/update |
 		Xdialog --title "Recognized configuration" --logbox - 0 0 || exit
 	else
-		Xdialog --msgbox "Partition $update, selected to take
+		Xdialog --title "$title" --msgbox "Partition $update, selected to take
 over the configuration, could not be mounted." 0 0
         	exit
 	fi
@@ -198,7 +198,7 @@ if [ $installall = 0 ]; then
 
 	# might not be yet formated ...
 	if ! mount $part /mnt/target; then
-		if ! Xdialog --yesno "Partition $part is not yet formated.
+		if ! Xdialog --title "$title" --yesno "Partition $part is not yet formated.
 Format now?" 0 0; then
 			echo cancelled
 			exit
@@ -207,7 +207,7 @@ Format now?" 0 0; then
 		format_w_progress $part
 		mount $part /mnt/target
 	else
-		if ! Xdialog --yesno "Installing to partition $part.
+		if ! Xdialog --title "$title" --yesno "Installing to partition $part.
 All data will be lost!" 0 0; then
 			echo cancelled
 			umount /mnt/target
@@ -218,7 +218,7 @@ fi
 
 # sanity check to not install into the running system's RAM-disk
 if ! grep -q /mnt/target /proc/mounts; then
-	Xdialog --msgbox "Partiton could not be mounted. Aborting." 0 0
+	Xdialog --title "$title" --msgbox "Partiton could not be mounted. Aborting." 0 0
 	exit
 fi
 
@@ -227,7 +227,7 @@ if [ $installall -eq 1 ]; then
 	mount ${part%[0-9]}4	/mnt/target/home/data
 
 	if ! grep -q /mnt/target/home/data /proc/mounts; then
-		Xdialog --msgbox "Partiton could not be mounted. Aborting." 0 0
+		Xdialog --title "$title" --msgbox "Partiton could not be mounted. Aborting." 0 0
 		umount /mnt/target
 		exit
 	fi
@@ -238,7 +238,7 @@ fi
 
 rsync  -arvP --delete /mnt/live/ /mnt/target/ |
   sed -n 's/.* \([0-9]\+.[0-9]\)% .*/\1/p' |
-  Xdialog --title "Installing ..." --progress "Installing system and database
+  Xdialog --title "$title" --progress "Installing system and database
 to the selected partitions." 0 0
 
 # backup copies for publishing
@@ -263,7 +263,7 @@ EOT
 if [ "$update" != "no" ]; then
 	echo "restore config"
 	${0%/*}/update-restore.sh $full /tmp/update /mnt/target
-	Xdialog --msgbox "Configuration restored." 0 0
+	Xdialog --title "$title" --msgbox "Configuration restored." 0 0
 fi
 
 echo "installing boot loader ..."
@@ -291,14 +291,14 @@ if [ $installall = 0 ] && mount $otherpart /mnt/update; then
 	tmp=`mktemp`
 	# save the other system's entries
 	grep -A 1 -B 1 "root=$otherpart" /mnt/update/boot/grub/menu.lst |
-		sed 's/^--//'/mnt/update/boot/grub/menu.lst > $tmp
+		sed -e 's/^--//' -e 's/vista Box/vista Box 2nd Installation/' > $tmp
 	# insert the other system's entry right before the MemTest entry
 	sed -i "/MemTest/ { H; r $tmp
 	       N }" /mnt/target/boot/grub/menu.lst
 
 	umount /mnt/update
 
-	Xdialog --msgbox "The alternative system partition
+	Xdialog --title "$title" --msgbox "The alternative system partition
 was added to the boot menu." 0 0
 fi
 
@@ -318,11 +318,10 @@ if ! grep -q /mnt/target /proc/mounts; then
 	if [ $auto = 1 ]; then
 		shutdown -h 0
 	else
-		Xdialog --msgbox "Installation finished!
+		Xdialog --title "$title" --msgbox "Installation finished!
 You can safely reboot now." 0 0
 	fi
 else
-	Xdialog --msgbox "Target partition still mounted -
+	Xdialog --title "$title" --msgbox "Target partition still mounted -
 this indicates an error during installation." 0 0
 fi
-
