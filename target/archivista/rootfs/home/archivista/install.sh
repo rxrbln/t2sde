@@ -27,6 +27,8 @@ installall=0
 full= # passed to the update scripts to not take over e.g. the passwords
 auto=0
 
+title="Installation"
+
 while [ "$1" ]; do
 	case "$1" in
 		-auto) auto=1 ;;
@@ -81,7 +83,8 @@ for x in /dev/hd? /dev/sd? ; do
 	parts[$((i++))]="/dev/$x - Reformat whole disk"
 	
 	if [ $auto = 0 -a "$reason" ]; then
-		Xdialog --msgbox "/dev/$x does not appear to be formated for Archivista:
+		Xdialog --title "$title" --msgbox \
+		        "/dev/$x does not appear to be formated for Archivista:
 $reason" 0 0
 	else
 	    for y in /dev/$x[12]; do
@@ -109,11 +112,12 @@ if [ ${#parts[@]} -gt 0 ]; then
 	if [ $auto = 1 ]; then
 		part="${parts[0]}"
 	else
-		part=`Xdialog --stdout --combobox "Please choose the disc partition
+		part=`Xdialog --title "$title" --stdout \
+		      --combobox "Please choose the disc partition
 to install to:" 0 0 "${parts[@]}"` || exit
 	fi
 else
-	Xdialog --msgbox "No hard disk / partitions recognized." 0 0
+	Xdialog --title "$title" --msgbox "No hard disk / partitions recognized." 0 0
 	exit
 fi
 
@@ -125,7 +129,7 @@ fi
 
 update="${updates[0]}"
 if [ $auto = 0 -a ${#updates[@]} -gt 1 ]; then
-	update=`Xdialog --stdout --combobox "Take over configuration from a
+	update=`Xdialog --title "$title" --stdout --combobox "Take over configuration from a
 previous Archivista installation?" 0 0 "${updates[@]}"` || exit
 fi
 
@@ -155,7 +159,8 @@ fi
 # empty or reformat?
 if [ $installall = 1 ]; then
 	disk=${part%% *}
-	if [ $auto = 1 ] || Xdialog --yesno "Formating the whole disk $disk.
+	if [ $auto = 1 ] || Xdialog --title "$title" \
+	                            --yesno "Formating the whole disk $disk.
 All data will be lost!" 0 0; then
 
 		sfdisk -uM $disk << EOT
@@ -284,9 +289,10 @@ if [ $installall = 0 ] && mount $otherpart /mnt/update; then
 	echo "injecting other system's boot options into the grub menu"
 
 	tmp=`mktemp`
-	# save the other system' 1st grub entry
-	sed -n "/title/ {N; N; p; q}" /mnt/update/boot/grub/menu.lst > $tmp
-	# insert the other system's entry
+	# save the other system's entries
+	grep -A 1 -B 1 "root=$otherpart" /mnt/update/boot/grub/menu.lst |
+		sed 's/^--//'/mnt/update/boot/grub/menu.lst > $tmp
+	# insert the other system's entry right before the MemTest entry
 	sed -i "/MemTest/ { H; r $tmp
 	       N }" /mnt/target/boot/grub/menu.lst
 
