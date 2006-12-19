@@ -156,6 +156,28 @@ over the configuration, could not be mounted." 0 0
 	fi
 fi
 
+
+# default kernel
+kernels=`ls /boot/vmlinuz_* | sort -r | sed 's/.*vmlinuz_//'`
+eval `grep default_kernel= ${0%/*}/sort-kernel.awk | head -n 1`
+echo kernels: $kernels
+echo default: $default_kernel
+
+kernel_list=
+for kernel in $kernels; do
+	if [ $kernel = $default_kernel ]; then
+		kernel_list="$kernel_list $kernel $kernel on"
+	else
+		kernel_list="$kernel_list $kernel $kernel off"
+	fi
+done
+
+Xdialog --title "$title" --stdout --no-tags --separator ' ' --radiolist \
+"As alternatives to the default OS kernel ($default_kernel) the
+following kernel versions are available: Please note that
+using the default OS kernel is strongly recommended." 0 0 5 $kernel_list
+
+
 # empty or reformat?
 if [ $installall = 1 ]; then
 	disk=${part%% *}
@@ -286,17 +308,23 @@ EOT
 otherpart=`echo $part | tr 12 21`
 
 if [ $installall = 0 ] && mount $otherpart /mnt/update; then
-	echo "injecting other system's boot options into the grub menu"
-
 	tmp=`mktemp`
+
+	# sorting the entries regarding user selection
+	cat /mnt/target/boot/grub/menu.lst > $tmp
+	awk -f ${0%/*}/sort-kernel.awk $default_kernel < $tmp \
+	    > /mnt/target/boot/grub/menu.lst
+
 	# save the other system's entries
 	grep -A 1 -B 1 "root=$otherpart" /mnt/update/boot/grub/menu.lst |
 		sed -e 's/^--//' -e 's/vista Box/vista Box 2nd Installation/' > $tmp
+
 	# insert the other system's entry right before the MemTest entry
 	sed -i "/MemTest/ { H; r $tmp
 	       N }" /mnt/target/boot/grub/menu.lst
 
 	umount /mnt/update
+	rm -fv $tmp
 
 	Xdialog --title "$title" --msgbox "The alternative system partition
 was added to the boot menu." 0 0
