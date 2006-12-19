@@ -42,7 +42,7 @@ for x in `egrep 'X .* KERNEL .*' $base/config/$config/packages |
 
   kernel=${x/_*/}
   moduledir="`grep lib/modules  $build_root/var/adm/flists/$kernel |
-              cut -d ' ' -f 2 | cut -d / -f 1-3 | uniq | head -n 1`"
+              cut -d ' ' -f 2 | cut -d / -f 1-3 | uniq`"
   kernelver=${moduledir/*\/}
   initrd="initrd-$kernelver.img"
   kernelimg=`ls $build_root/boot/vmlinu?_$kernelver`
