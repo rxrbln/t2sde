@@ -172,10 +172,10 @@ for kernel in $kernels; do
 	fi
 done
 
-Xdialog --title "$title" --stdout --no-tags --separator ' ' --radiolist \
-"As alternatives to the default OS kernel ($default_kernel) the
+default_kernel=`Xdialog --title "$title" --stdout --no-tags --separator ' ' \
+--radiolist "As alternatives to the default OS kernel ($default_kernel) the
 following kernel versions are available: Please note that
-using the default OS kernel is strongly recommended." 0 0 5 $kernel_list
+using the default OS kernel is strongly recommended." 0 0 5 $kernel_list`
 
 
 # empty or reformat?
