@@ -3,9 +3,17 @@
 #
 # Copyright (C) 2006 Archivista GmbH
 # Copyright (C) 2006 Rene Rebe
+#
+# Usage: sort-kernel [ default-kernel-overwrite ] < menu.lst > new-menu.lst
 
 BEGIN {
 	default_kernel="2.6.17.14-dist"
+	if (ARGV[1] != "") {
+		default_kernel = ARGV[1]
+		delete ARGV[1]
+	}
+
+	print default_kernel
 
 	global=1
 	n=0
