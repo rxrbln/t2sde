@@ -1,22 +1,37 @@
-gcc-4.1 on sparc64 appears to miscompile the expression, maybe load the last
-value even though the former is already NULL - I'll check in-depth some time
-later when I have more time.
+GCC-4.1 on sparc64 appears to miscompile the expression. Out of 3 single byte
+loads it forms a single DWORD ldx that does not potentially load too much data
+(when the string is shorter) but also loads with an offset of -1, loading
+one byte before the string. Either way it aborts with a SIGBUS (probably
+also due analigned accesss) ...
+
+The revisited code also should help GCC optimize some pointer dereferences
+away ...
 
   - Rene Rebe <rene@exactcode.de>
 
---- embutils-0.17/ls.c	2006-06-18 11:25:22.170000000 +0000
-+++ ./ls.c	2006-06-18 12:00:50.270000000 +0000
-@@ -733,8 +733,12 @@
+--- embutils-0.17/ls.c	2004-05-21 19:11:42.000000000 +0000
++++ embutils-0.17-fixed/ls.c	2006-12-20 18:03:42.000000000 +0000
+@@ -731,17 +731,18 @@
+   while ((e=readdir(d))) {
+     int len;
      char *expanded;
-     if (e->d_name[0]=='.') {
+-    if (e->d_name[0]=='.') {
++    const char* d_name=e->d_name;
++    if (d_name[0]=='.') {
        /* is it "." or ".."? */
 -      if (e->d_name[1]==0 || (e->d_name[1]=='.' && e->d_name[2]==0))
-+      if (e->d_name[1] == 0) {
++      if (d_name[1]==0 || (d_name[1]=='.' && d_name[2]==0))
  	if (_A || !_a) continue;
-+      } if (e->d_name[1] == '.') {
-+          if(e->d_name[2] == 0)
-+            if (_A || !_a) continue;
-+      }
        if (!_A && !_a) continue;
      }
-     expanded=alloca(strlen(name)+strlen(e->d_name)+3);
+-    expanded=alloca(strlen(name)+strlen(e->d_name)+3);
++    expanded=alloca(strlen(name)+strlen(d_name)+3);
+     len=str_copy(expanded,name);
+     expanded[len]='/'; ++len;
+-    expanded[len+str_copy(expanded+len,e->d_name)]=0;
+-    dols(e->d_name,expanded,1);
++    expanded[len+str_copy(expanded+len,d_name)]=0;
++    dols(d_name,expanded,1);
+   }
+   closedir(d);
+   if (fchdir(savedir))
