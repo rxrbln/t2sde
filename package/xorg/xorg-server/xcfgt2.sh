@@ -18,8 +18,10 @@
 
 tmp=`mktemp`
 
+echo "XcfgT2 (C) Rene Rebe - ExactCODE"
+
 card="`lspci | sed -n 's/.*VGA .*: //p'`"
-[ "$card" ] || card="`cat /sys/class/graphics/fb0/name`"
+[ "$card" ] || card="`cat /sys/class/graphics/fb0/name 2>/dev/null`"
 
 echo "Video card: $card"
 
@@ -129,7 +131,8 @@ if [[ `uname -m` = i*86 ]]; then
 fi
 
 if [ -z "$modes" ]; then
-	modes="`sed -n 's/.:\(.*x.*\)-[[:digit:]]\+/"\1"/p ; q' /sys/class/graphics/fb0/modes`"
+	modes="`sed -n 's/.:\(.*x.*\)-[[:digit:]]\+/"\1"/p ; q' \
+	            /sys/class/graphics/fb0/modes 2>/dev/null`"
 fi
 
 if [ -z "$modes" ]; then
