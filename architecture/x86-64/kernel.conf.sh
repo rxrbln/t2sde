@@ -50,6 +50,7 @@
 
 		dnl PC Speaker for 2.5/6 kernel
 		CONFIG_INPUT_PCSPKR=y
+		CONFIG_USB_HIDINPUT_POWERBOOK=y
 
 		dnl Other useful stuff
 		dnl
