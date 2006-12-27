@@ -130,6 +130,9 @@ read_fm_config() {
 	*Artistic*)
 	    license=Artistic
 	    ;;
+	"Public Domain")
+	    license=PublicDomain
+	    ;;
 	esac
 	rm -f $fmname.xml
     else
