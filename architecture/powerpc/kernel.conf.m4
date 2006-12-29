@@ -37,6 +37,9 @@ CONFIG_PPC32=y
 
 CONFIG_ALTIVEC=y
 
+dnl more than 768 MB of RAM
+CONFIG_HIGHMEM=y
+
 dnl Platform specific support
 dnl
 
