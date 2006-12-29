@@ -60,6 +60,10 @@
 
 	echo
 	cat <<- 'EOT'
+		dnl Allow more than about a GB of RAM by default
+		dnl
+		CONFIG_HIGHMEM=y
+
 		dnl Memory Type Range Register support
 		dnl and other x86 goodies ...
 		dnl
