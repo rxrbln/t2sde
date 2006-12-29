@@ -18,8 +18,8 @@
 make_fstab() {
 	tmp1=`mktemp` ; tmp2=`mktemp`
 
+	# some defaults and fallbacks (devfs)
 	cat <<- EOT > $tmp2
-/dev/root / auto defaults 0 0
 none /proc proc defaults 0 0
 none /dev devfs defaults 0 0
 none /dev/pts devpts defaults 0 0
@@ -28,29 +28,31 @@ none /sys sysfs defaults 0 0
 none /tmp tmpfs defaults 0 0
 EOT
 
-	for x in /dev/cdroms/cdrom[0-9] ; do
-	    if [ -e $x ] ; then
-		trg=/mnt/${x/*\//} ; trg=${trg/cdrom0/cdrom}
-		mkdir -p $trg
-		echo "$x $trg iso9660 ro,noauto 0 0" >> $tmp2
-	    fi
-	done
-
-	for x in /dev/floppy/[0-9] ; do
-	    if [ -e $x ] ; then
-		trg=/mnt/floppy${x/*\//} ; trg=${trg/floppy0/floppy}
-		mkdir -p $trg
-		echo "$x $trg auto sync,noauto 0 0" >> $tmp2
-	    fi
-	done
-
-	sed -e "s/ nfs [^ ]\+/ nfs rw/" < /etc/mtab | \
+	# currently mounted filesystems
+	sed -e "s/ nfs [^ ]\+/ nfs rw/" < /etc/mtab |
 		sed "s/ rw,/ /; s/ rw / defaults /" >> $tmp2
-	grep '^/dev/' /proc/swaps | cut -f1 -d' ' | \
-		sed 's,$, swap swap defaults 0 0,' >> $tmp2
+	# currently active swaps
+	sed -e 1d -e 's/ .*//' -e 's,.*$,& & swap defaults 0 0,' \
+	    /proc/swaps >> $tmp2
 
-	cut -f2 -d' ' < $tmp2 | sort -u | while read dn ; do
-		grep " $dn " $tmp2 | tail -n 1; done > $tmp1
+	# sort resulting entries and grab the last (e.g. non-default) one
+	cut -f2 -d' ' < $tmp2 | sort -u | while read dn; do
+		grep " $dn " $tmp2 | tail -n 1 |
+		while read dev point type residual; do
+			case $type in
+			  tmpfs|swap)
+				echo $dev $point $type $residual && continue ;;
+			esac
+			case $point in
+			  /dev*|/proc*|/sys)
+				echo $dev $point $type $residual ;;
+			  /)
+				echo $dev $point $type ${residual%0 0} 0 1 ;;
+			  *)
+				echo $dev $point $type ${residual%0 0} 0 2 ;;
+			esac
+		done
+	done > $tmp1
 
 	cat << EOT > $tmp2
 ARGIND == 1 {
@@ -61,8 +63,7 @@ ARGIND == 2 {
     printf "%s\n",\$NF;
 }
 EOT
-	gawk -f $tmp2 $tmp1 $tmp1 | \
-		sed 's,\( ext[23] .*\) 0  0$,\1 0  1,' > /etc/fstab
+	gawk -f $tmp2 $tmp1 $tmp1 > /etc/fstab
 
 	while read a b c d e f ; do
 		printf "%-60s %s\n" "$(
