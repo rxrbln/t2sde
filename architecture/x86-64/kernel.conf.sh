@@ -22,7 +22,7 @@
 
 	linux_arch=MK8
 	for x in "generic	GENERIC_CPU"	\
-		 "em64t		MPSC"
+		 "nocona	MPSC"
 	do
 		set $x
 		[ "$1" = "$SDECFG_X8664_OPT" ] && linux_arch=$2
