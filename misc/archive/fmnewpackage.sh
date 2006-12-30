@@ -93,6 +93,7 @@ read_fm_config() {
 	          sed -e 's/ *__at__ */@/g' -e 's/ *__dot__ */./g' \
 	              -e 's/ *|at| */@/g' -e 's/ *|dot| */./g' \
 	              -e 's/ *\[at\] */@/g' -e 's/ *\[dot\] */./g' \
+	              -e 's/ *\/at\/ */@/g' -e 's/ *\/dot\/ */./g' \
 	              -e 's/ *(at) */@/g' -e 's/ *(dot) */./g'`
 
 	rm -f subst $fmname.html dev_mail
