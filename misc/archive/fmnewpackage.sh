@@ -94,7 +94,8 @@ read_fm_config() {
 	              -e 's/ *|at| */@/g' -e 's/ *|dot| */./g' \
 	              -e 's/ *\[at\] */@/g' -e 's/ *\[dot\] */./g' \
 	              -e 's/ *\/at\/ */@/g' -e 's/ *\/dot\/ */./g' \
-	              -e 's/ *(at) */@/g' -e 's/ *(dot) */./g'`
+	              -e 's/ *(at) */@/g' -e 's/ *(dot) */./g' \
+                      -e 's/ at */@/g' -e 's/ dot */./g'`
 
 	rm -f subst $fmname.html dev_mail
 
@@ -110,7 +111,7 @@ read_fm_config() {
 
 	#cleanup license
 	case "$license" in
-	*GPL*Library*)
+	*GPL*Library*|*Lesser*GPL*)
 	    license=LGPL
 	    ;;
 	*GPL*Documentation*)
