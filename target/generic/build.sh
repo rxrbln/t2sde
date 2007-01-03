@@ -22,10 +22,12 @@ echo_header "Finishing build."
 
 rm -f $build_toolchain/isofs*.txt 2> /dev/null
 
-echo_status "Creating package database ..."
-admdir="build/${SDECFG_ID}/var/adm"
-create_package_db $admdir $build_toolchain/pkgs \
-                  $build_toolchain/pkgs/packages.db
+if [ "$SDECFG_PKGFILE_TYPE" != "none" ]; then
+	echo_status "Creating package database ..."
+	admdir="build/${SDECFG_ID}/var/adm"
+	create_package_db $admdir $build_toolchain/pkgs \
+	                  $build_toolchain/pkgs/packages.db
+fi
 
 if [ "$SDECFG_IMAGE" -a -e target/share/$SDECFG_IMAGE/build.sh ]; then
 	echo_status "Creating output image ..."
@@ -45,4 +47,3 @@ EVERY	$build_toolchain/pkgs/packages.db	${SDECFG_SHORTID}/pkgs/packages.db
 SPLIT	$build_toolchain/pkgs/			${SDECFG_SHORTID}/pkgs/
 $( cat $build_toolchain/isofs_*.txt 2>/dev/null )
 EOT
-
