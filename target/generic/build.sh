@@ -35,15 +35,19 @@ if [ "$SDECFG_IMAGE" -a -e target/share/$SDECFG_IMAGE/build.sh ]; then
 fi
 
 echo_status "Creating isofs.txt file .."
-cat << EOT > $build_toolchain/isofs.txt
-DISK1	$admdir/cache/				${SDECFG_SHORTID}/info/cache/
-DISK1	$admdir/cksums/				${SDECFG_SHORTID}/info/cksums/
-DISK1	$admdir/dependencies/			${SDECFG_SHORTID}/info/dependencies/
-DISK1	$admdir/descs/				${SDECFG_SHORTID}/info/descs/
-DISK1	$admdir/flists/				${SDECFG_SHORTID}/info/flists/
-DISK1	$admdir/md5sums/			${SDECFG_SHORTID}/info/md5sums/
-DISK1	$admdir/packages/			${SDECFG_SHORTID}/info/packages/
-EVERY	$build_toolchain/pkgs/packages.db	${SDECFG_SHORTID}/pkgs/packages.db
-SPLIT	$build_toolchain/pkgs/			${SDECFG_SHORTID}/pkgs/
-$( cat $build_toolchain/isofs_*.txt 2>/dev/null )
+(
+  if [ "$SDECFG_PKGFILE_TYPE" != "none" ]; then
+    cat <<-EOT
+	DISK1	$admdir/cache/		${SDECFG_SHORTID}/info/cache/
+	DISK1	$admdir/cksums/		${SDECFG_SHORTID}/info/cksums/
+	DISK1	$admdir/dependencies/	${SDECFG_SHORTID}/info/dependencies/
+	DISK1	$admdir/descs/		${SDECFG_SHORTID}/info/descs/
+	DISK1	$admdir/flists/		${SDECFG_SHORTID}/info/flists/
+	DISK1	$admdir/md5sums/	${SDECFG_SHORTID}/info/md5sums/
+	DISK1	$admdir/packages/	${SDECFG_SHORTID}/info/packages/
+	EVERY	$build_toolchain/pkgs/packages.db	${SDECFG_SHORTID}/pkgs/packages.db
+	SPLIT	$build_toolchain/pkgs/	${SDECFG_SHORTID}/pkgs/
 EOT
+  fi
+  cat $build_toolchain/isofs_*.txt 2>/dev/null
+) > $build_toolchain/isofs.txt
