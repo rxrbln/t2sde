@@ -43,7 +43,8 @@ time find $build_root -mount -wholename $build_root/TOOLCHAIN -prune -o -printf 
 diff -u ../files-all ../files-wanted |
 sed -n -e '/var\/adm\/olist/d' -e '/var\/adm\/logs/d' \
        -e '/var\/adm\/dep-debug/d' -e '/var\/adm\/cache/d' -e 's/^-//p' > ../files-exclude
-echo "proc/*
+echo "TOOLCHAIN
+proc/*
 dev/*
 */share/doc/*
 var/adm/olist
@@ -54,7 +55,7 @@ var/adm/cache" >> ../files-exclude
 echo "Syncing root file-system (this may take some time) ..."
 [ -e $imagelocation/bin ] && v="-v" || v=""
 time rsync -artH $v --delete --exclude-from ../files-exclude \
-      --exclude TOOLCHAIN --delete-excluded $build_root/ $imagelocation/
+      --delete-excluded $build_root/ $imagelocation/
 rm ../files-{wanted,all,exclude}
 
 echo "Overlaying root file-system with target defined files ..."
