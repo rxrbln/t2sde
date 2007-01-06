@@ -54,8 +54,8 @@ var/adm/cache" >> ../files-exclude
 
 echo "Syncing root file-system (this may take some time) ..."
 [ -e $imagelocation/bin ] && v="-v" || v=""
-time rsync -artH $v --delete --exclude-from ../files-exclude \
-      --delete-excluded $build_root/ $imagelocation/
+time rsync -artH $v --devices --specials --delete --delete-excluded \
+     --exclude-from ../files-exclude $build_root/ $imagelocation/
 rm ../files-{wanted,all,exclude}
 
 echo "Overlaying root file-system with target defined files ..."
@@ -77,6 +77,5 @@ umount proc
 umount dev
 
 echo "Squashing root file-system (this may take some time) ..."
-time mksquashfs * $isofsdir/live.squash -noappend
+time mksquashfs * $isofsdir/live.squash -noappend -no-progress -no-exports
 du -sh $isofsdir/live.squash
-
