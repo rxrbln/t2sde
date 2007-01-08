@@ -24,8 +24,9 @@ Do not abort if a option is not available so this are just warnings.
 
   - Rene Rebe <rene@exactcode.de>
 
---- sane-frontends-1.0.13/doc/scanadf.man	2004-07-09 19:02:37.000000000 +0200
-+++ sane-frontends-1.0.13-adfmod/doc/scanadf.man	2005-07-11 15:33:34.000000000 +0200
+diff -ur sane-frontends-1.0.13/doc/scanadf.man sane-frontends-1.0.13-patched/doc/scanadf.man
+--- sane-frontends-1.0.13/doc/scanadf.man	2004-07-09 17:02:37.000000000 +0000
++++ sane-frontends-1.0.13-patched/doc/scanadf.man	2007-01-08 15:55:28.000000000 +0000
 @@ -19,6 +19,7 @@
  .IR num ]
  .RB [ -e | --end-count
@@ -72,9 +73,9 @@ Do not abort if a option is not available so this are just warnings.
  .B sane-bh
  - Bell+Howell Copiscan II series scanners.
  .br
-diff -ur sane-frontends-1.0.13/src/scanadf.c sane-frontends-1.0.13-adfmod/src/scanadf.c
---- sane-frontends-1.0.13/src/scanadf.c	2004-07-09 19:03:16.000000000 +0200
-+++ sane-frontends-1.0.13-adfmod/src/scanadf.c	2005-07-11 15:17:47.000000000 +0200
+diff -ur sane-frontends-1.0.13/src/scanadf.c sane-frontends-1.0.13-patched/src/scanadf.c
+--- sane-frontends-1.0.13/src/scanadf.c	2004-07-09 17:03:16.000000000 +0000
++++ sane-frontends-1.0.13-patched/src/scanadf.c	2007-01-08 15:55:28.000000000 +0000
 @@ -4,6 +4,7 @@
     scanimage by Andreas Beck and David Mosberger
  
@@ -104,7 +105,90 @@ diff -ur sane-frontends-1.0.13/src/scanadf.c sane-frontends-1.0.13-adfmod/src/sc
  #define STRIP_HEIGHT	256	/* # lines we increment image height */
  
  static struct option * all_options;
-@@ -872,8 +875,89 @@
+@@ -122,6 +125,8 @@
+ static SANE_Word window_val[2];
+ static int window_val_user[2];	/* is width/height user-specified? */
+ 
++static int startNum = 1, endNum = -1; /* start/end numbers of pages to scan */
++
+ static const char usage[] = "Usage: %s [OPTION]...\n\
+ \n\
+ Start image acquisition on a scanner device and write image data to\n\
+@@ -649,7 +654,7 @@
+     }
+ }
+ 
+-static void
++static int
+ set_option (SANE_Handle device, int optnum, void * valuep)
+ {
+   const SANE_Option_Descriptor * opt;
+@@ -668,7 +673,7 @@
+     {
+       fprintf (stderr, "%s: setting of option --%s failed (%s)\n",
+ 	       prog_name, opt->name, sane_strstatus (status));
+-      exit (1);
++      return 0;
+     }
+ 
+   if ((info & SANE_INFO_INEXACT) && opt->size == sizeof (SANE_Word))
+@@ -684,6 +689,7 @@
+ 
+   if (info & SANE_INFO_RELOAD_OPTIONS)
+     fetch_options (device);
++  return 1;
+ }
+ 
+ static void
+@@ -703,7 +709,7 @@
+     {
+       fprintf (stderr, "%s: attempted to set inactive option %s\n",
+ 	       prog_name, opt->name);
+-      exit (1);
++      goto error;
+     }
+ 
+   if ((opt->cap & SANE_CAP_AUTOMATIC) && strncasecmp (optarg, "auto", 4) == 0)
+@@ -716,7 +722,7 @@
+ 		   prog_name, opt->name, sane_strstatus (status));
+ 	  exit (1);
+ 	}
+-      return;
++      goto error;
+     }
+ 
+   valuep = &value;
+@@ -734,7 +740,7 @@
+ 	    {
+ 	      fprintf (stderr, "%s: option --%s: bad option value `%s'\n",
+ 		       prog_name, opt->name, optarg);
+-	      exit (1);
++	      goto error;
+ 	    }
+ 	}
+       break;
+@@ -768,9 +774,18 @@
+     default:
+       fprintf (stderr, "%s: duh, got unknown option type %d\n",
+ 	       prog_name, opt->type);
+-      return;
++      goto error;
++    }
++  if (set_option (device, optnum, valuep))
++    return;
++  
++  error:
++    if (strcmp(opt->name, "source") == 0) {
++      if (endNum == -1) {
++        fprintf (stderr, "Setting endNum to 1 due to source error\n");
++        endNum = 1;
++      }
+     }
+-  set_option (device, optnum, valuep);
+ }
+ 
+ static void
+@@ -872,8 +887,89 @@
    return res;
  }
  
@@ -195,7 +279,7 @@ diff -ur sane-frontends-1.0.13/src/scanadf.c sane-frontends-1.0.13-adfmod/src/sc
  {
    int i, len, first_frame = 1, offset = 0, must_buffer = 0;
    SANE_Byte buffer[32*1024], min = 0xff, max = 0;
-@@ -881,6 +965,7 @@
+@@ -881,6 +977,7 @@
    SANE_Status status;
    Image image = {0, };
    FILE *fp = NULL;
@@ -203,7 +287,7 @@ diff -ur sane-frontends-1.0.13/src/scanadf.c sane-frontends-1.0.13-adfmod/src/sc
  
    do
      {
-@@ -903,7 +988,15 @@
+@@ -903,7 +1000,15 @@
  	  goto cleanup;
  	}
  
@@ -220,7 +304,7 @@ diff -ur sane-frontends-1.0.13/src/scanadf.c sane-frontends-1.0.13-adfmod/src/sc
        if (!fp) {
  	fprintf(stderr, "Error opening output `%s': %s (%d)\n",
  		fname, strerror(errno), errno);
-@@ -1144,65 +1237,16 @@
+@@ -1144,65 +1249,16 @@
        fp = NULL;
      }
  
@@ -295,7 +379,7 @@ diff -ur sane-frontends-1.0.13/src/scanadf.c sane-frontends-1.0.13-adfmod/src/sc
  
  cleanup:
    if (image.data)
-@@ -1213,7 +1257,8 @@
+@@ -1213,7 +1269,8 @@
  }
  
  static SANE_Int 
@@ -305,7 +389,7 @@ diff -ur sane-frontends-1.0.13/src/scanadf.c sane-frontends-1.0.13-adfmod/src/sc
  {
    SANE_Status status = SANE_STATUS_GOOD;
    SANE_Int scannedPages = 0;
-@@ -1223,8 +1268,7 @@
+@@ -1223,8 +1280,7 @@
  
    while (end < 0 || start <= end) 
      {
@@ -315,7 +399,7 @@ diff -ur sane-frontends-1.0.13/src/scanadf.c sane-frontends-1.0.13-adfmod/src/sc
  
        /* does the filename already exist? */
        if (no_overwrite) 
-@@ -1239,7 +1283,7 @@
+@@ -1239,7 +1295,7 @@
        
        /* Scan the document */
        if (status == SANE_STATUS_GOOD) 
@@ -324,15 +408,18 @@ diff -ur sane-frontends-1.0.13/src/scanadf.c sane-frontends-1.0.13-adfmod/src/sc
  
        /* Any scan errors? */
        if (status == SANE_STATUS_NO_DOCS) 
-@@ -1280,6 +1324,7 @@
+@@ -1280,9 +1336,9 @@
    SANE_Status status;
    char *full_optstring;
    SANE_Bool raw = SANE_FALSE;
 +  SANE_Bool use_pipe = SANE_FALSE;
    const char *scanScript = NULL;		/* script to run at end of scan */
    const char *outputFile = "image-%04d";	/* file name(format) to write output to */
-   int startNum = 1, endNum = -1;		/* start/end numbers of pages to scan */
-@@ -1338,6 +1383,7 @@
+-  int startNum = 1, endNum = -1;		/* start/end numbers of pages to scan */
+   int no_overwrite = 0;
+ 
+   atexit (sane_exit);
+@@ -1338,6 +1394,7 @@
  	case 's': startNum = atoi(optarg); break;
  	case 'e': endNum = atoi(optarg); break;
  	case 'r': raw = SANE_TRUE; break;
@@ -340,8 +427,12 @@ diff -ur sane-frontends-1.0.13/src/scanadf.c sane-frontends-1.0.13-adfmod/src/sc
  
  	case 'V':
  	  printf ("scanadf (%s) %s\n", PACKAGE, VERSION);
-@@ -1455,7 +1501,7 @@
- 	      exit (1);	/* error message is printed by getopt_long() */
+@@ -1452,10 +1509,10 @@
+ 	    {
+ 	    case ':':
+ 	    case '?':
+-	      exit (1);	/* error message is printed by getopt_long() */
++	      break;	/* error message is printed by getopt_long() */
  
  	    case 'd': case 'h': case 'v': case 'V': case 'T':
 -	    case 'o': case 'S': case 's': case 'e': case 'r':
@@ -349,7 +440,7 @@ diff -ur sane-frontends-1.0.13/src/scanadf.c sane-frontends-1.0.13-adfmod/src/sc
  
  	      /* previously handled options */
  	      break;
-@@ -1569,7 +1615,8 @@
+@@ -1569,7 +1626,8 @@
    signal (SIGPIPE, sighandler);
    signal (SIGTERM, sighandler);
  
@@ -359,44 +450,3 @@ diff -ur sane-frontends-1.0.13/src/scanadf.c sane-frontends-1.0.13-adfmod/src/sc
  
    sane_cancel (device);
    sane_close (device);
-diff -ur sane-frontends-1.0.13/src/scanadf.c sane-frontends-1.0.13-adfmod/src/scanadf.c
---- sane-frontends-1.0.13/src/scanadf.c.orig	2007-01-08 14:24:15.000000000 +0000
-+++ sane-frontends-1.0.13/src/scanadf.c	2007-01-08 14:28:55.000000000 +0000
-@@ -1452,7 +1452,7 @@
- 	    {
- 	    case ':':
- 	    case '?':
--	      exit (1);	/* error message is printed by getopt_long() */
-+	      break;	/* error message is printed by getopt_long() */
- 
- 	    case 'd': case 'h': case 'v': case 'V': case 'T':
- 	    case 'o': case 'S': case 's': case 'e': case 'r':
---- sane-frontends-1.0.13/src/scanadf.c.orig	2007-01-08 15:13:02.000000000 +0000
-+++ sane-frontends-1.0.13/src/scanadf.c	2007-01-08 15:19:37.000000000 +0000
-@@ -671,7 +671,7 @@
-     {
-       fprintf (stderr, "%s: setting of option --%s failed (%s)\n",
- 	       prog_name, opt->name, sane_strstatus (status));
--      exit (1);
-+      /* exit (1); */
-     }
- 
-   if ((info & SANE_INFO_INEXACT) && opt->size == sizeof (SANE_Word))
-@@ -706,7 +706,7 @@
-     {
-       fprintf (stderr, "%s: attempted to set inactive option %s\n",
- 	       prog_name, opt->name);
--      exit (1);
-+      return;
-     }
- 
-   if ((opt->cap & SANE_CAP_AUTOMATIC) && strncasecmp (optarg, "auto", 4) == 0)
-@@ -737,7 +737,7 @@
- 	    {
- 	      fprintf (stderr, "%s: option --%s: bad option value `%s'\n",
- 		       prog_name, opt->name, optarg);
--	      exit (1);
-+	      return;
- 	    }
- 	}
-       break;
