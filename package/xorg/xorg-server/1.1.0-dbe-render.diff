@@ -1,0 +1,189 @@
+Index: xorg/dbe/dbe.c
+===================================================================
+RCS file: /cvs/xorg/xserver/xorg/dbe/dbe.c,v
+retrieving revision 1.7
+diff -u -u -r1.7 dbe.c
+--- ./xorg/dbe/dbe.c	28 Mar 2006 01:20:59 -0000	1.7
++++ ./xorg/dbe/dbe.c	9 Jan 2007 12:53:54 -0000
+@@ -42,6 +42,11 @@
+ #endif
+ 
+ #include <string.h>
++#if HAVE_STDINT_H
++#include <stdint.h>
++#elif !defined(UINT32_MAX)
++#define UINT32_MAX 0xffffffffU
++#endif
+ 
+ #include <X11/X.h>
+ #include <X11/Xproto.h>
+@@ -716,11 +721,14 @@
+         return(Success);
+     }
+ 
++    if (nStuff > UINT32_MAX / sizeof(DbeSwapInfoRec))
++	    return BadAlloc;
++
+     /* Get to the swap info appended to the end of the request. */
+     dbeSwapInfo = (xDbeSwapInfo *)&stuff[1];
+ 
+     /* Allocate array to record swap information. */ 
+-    swapInfo = (DbeSwapInfoPtr)ALLOCATE_LOCAL(nStuff * sizeof(DbeSwapInfoRec));
++    swapInfo = (DbeSwapInfoPtr)Xalloc(nStuff * sizeof(DbeSwapInfoRec));
+     if (swapInfo == NULL)
+     {
+         return(BadAlloc);
+@@ -735,14 +743,14 @@
+         if (!(pWin = SecurityLookupWindow(dbeSwapInfo[i].window, client,
+ 					  SecurityWriteAccess)))
+         {
+-            DEALLOCATE_LOCAL(swapInfo);
++            Xfree(swapInfo);
+ 	    return(BadWindow);
+         }
+ 
+         /* Each window must be double-buffered - BadMatch. */
+         if (DBE_WINDOW_PRIV(pWin) == NULL)
+         {
+-            DEALLOCATE_LOCAL(swapInfo);
++            Xfree(swapInfo);
+             return(BadMatch);
+         }
+ 
+@@ -751,7 +759,7 @@
+         {
+             if (dbeSwapInfo[i].window == dbeSwapInfo[j].window)
+             {
+-                DEALLOCATE_LOCAL(swapInfo);
++                Xfree(swapInfo);
+                 return(BadMatch);
+ 	    }
+         }
+@@ -762,7 +770,7 @@
+             (dbeSwapInfo[i].swapAction != XdbeUntouched ) &&
+             (dbeSwapInfo[i].swapAction != XdbeCopied    ))
+         {
+-            DEALLOCATE_LOCAL(swapInfo);
++            Xfree(swapInfo);
+             return(BadValue);
+         }
+ 
+@@ -792,12 +800,12 @@
+         error = (*pDbeScreenPriv->SwapBuffers)(client, &nStuff, swapInfo);
+         if (error != Success)
+         {
+-            DEALLOCATE_LOCAL(swapInfo);
++            Xfree(swapInfo);
+             return(error);
+         }
+     }
+     
+-    DEALLOCATE_LOCAL(swapInfo);
++    Xfree(swapInfo);
+     return(Success);
+ 
+ } /* ProcDbeSwapBuffers() */
+@@ -879,10 +887,12 @@
+ 
+     REQUEST_AT_LEAST_SIZE(xDbeGetVisualInfoReq);
+ 
++    if (stuff->n > UINT32_MAX / sizeof(DrawablePtr))
++	    return BadAlloc;
+     /* Make sure any specified drawables are valid. */
+     if (stuff->n != 0)
+     {
+-        if (!(pDrawables = (DrawablePtr *)ALLOCATE_LOCAL(stuff->n *
++        if (!(pDrawables = (DrawablePtr *)Xalloc(stuff->n *
+                                                  sizeof(DrawablePtr))))
+         {
+             return(BadAlloc);
+@@ -895,7 +905,7 @@
+             if (!(pDrawables[i] = (DrawablePtr)SecurityLookupDrawable(
+ 				drawables[i], client, SecurityReadAccess)))
+             {
+-                DEALLOCATE_LOCAL(pDrawables);
++                Xfree(pDrawables);
+                 return(BadDrawable);
+             }
+         }
+@@ -907,7 +917,7 @@
+     {
+         if (pDrawables)
+         {
+-            DEALLOCATE_LOCAL(pDrawables);
++            Xfree(pDrawables);
+         }
+ 
+         return(BadAlloc);
+@@ -934,7 +944,7 @@
+             /* Free pDrawables if we needed to allocate it above. */
+             if (pDrawables)
+             {
+-                DEALLOCATE_LOCAL(pDrawables);
++                Xfree(pDrawables);
+             }
+ 
+             return(BadAlloc);
+@@ -1015,7 +1025,7 @@
+ 
+     if (pDrawables)
+     {
+-        DEALLOCATE_LOCAL(pDrawables);
++        Xfree(pDrawables);
+     }
+ 
+     return(client->noClientException);
+Index: xorg/render/render.c
+===================================================================
+RCS file: /cvs/xorg/xserver/xorg/render/render.c,v
+retrieving revision 1.13.4.1
+diff -u -u -r1.13.4.1 render.c
+--- ./xorg/render/render.c	9 May 2006 22:35:52 -0000	1.13.4.1
++++ ./xorg/render/render.c	9 Jan 2007 12:53:57 -0000
+@@ -49,6 +49,12 @@
+ #include <X11/Xfuncproto.h>
+ #include "cursorstr.h"
+ 
++#if HAVE_STDINT_H
++#include <stdint.h>
++#elif !defined(UINT32_MAX)
++#define UINT32_MAX 0xffffffffU
++#endif
++
+ static int ProcRenderQueryVersion (ClientPtr pClient);
+ static int ProcRenderQueryPictFormats (ClientPtr pClient);
+ static int ProcRenderQueryPictIndexValues (ClientPtr pClient);
+@@ -1105,11 +1111,14 @@
+     }
+ 
+     nglyphs = stuff->nglyphs;
++    if (nglyphs > UINT32_MAX / sizeof(GlyphNewRec))
++	    return BadAlloc;
++
+     if (nglyphs <= NLOCALGLYPH)
+ 	glyphsBase = glyphsLocal;
+     else
+     {
+-	glyphsBase = (GlyphNewPtr) ALLOCATE_LOCAL (nglyphs * sizeof (GlyphNewRec));
++	glyphsBase = (GlyphNewPtr) Xalloc (nglyphs * sizeof (GlyphNewRec));
+ 	if (!glyphsBase)
+ 	    return BadAlloc;
+     }
+@@ -1166,7 +1175,7 @@
+     }
+ 
+     if (glyphsBase != glyphsLocal)
+-	DEALLOCATE_LOCAL (glyphsBase);
++	Xfree (glyphsBase);
+     return client->noClientException;
+ bail:
+     while (glyphs != glyphsBase)
+@@ -1175,7 +1184,7 @@
+ 	xfree (glyphs->glyph);
+     }
+     if (glyphsBase != glyphsLocal)
+-	DEALLOCATE_LOCAL (glyphsBase);
++	Xfree (glyphsBase);
+     return err;
+ }
+ 
