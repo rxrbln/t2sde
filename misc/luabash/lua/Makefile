@@ -1,19 +1,9 @@
-topdir  = ..
-subdirs = 
+include build/top.make
 
-all:
+NOT_SRCS = lua.c luac.c
 
-include $(topdir)/cf/Rules.pre
+BINARY = lua
+BINARY_EXT = $(X_LIBEXT)
+DEPS =
 
-LARCHIVES = liblua.al
-liblua_al_SRCS = $(wildcard *.c)
-
-CLEAN_FILES += luaconf.h
-
-include $(topdir)/cf/Rules
-
-$(liblua_al_OBJS): luaconf.h
-liblua.al: $(liblua_al_OBJS)
-	$(call link-archive)
-
-include $(topdir)/cf/Rules.post
+include build/bottom.make
