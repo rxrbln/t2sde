@@ -65,7 +65,7 @@ sed -i 's/(cd)/(hd0,0)/g' /mnt/target/boot/grub/menu.lst
 umount /mnt/source
 umount /mnt/target
 
-echo -e "(hd0)	/dev/sda" > device.map
+echo -e "(hd0)	$dev" > device.map
 echo -e "root (hd0,0)\ninstall /boot/grub/stage1 (hd0) (hd0,0)/boot/grub/stage2 (hd0,0)/boot/grub/menu.lst\nquit" | grub --batch --device-map=./device.map
 
 rm ./device.map
