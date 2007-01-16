@@ -13,3 +13,8 @@
 # --- T2-COPYRIGHT-NOTE-END ---
 
 . target/generic/build.sh
+
+# now this is a hack - and x86 specific anyway :-(
+if [[ $arch = x86* ]]; then
+	sed -i 's/kernel.*/& vga=0x317/' $isofsdir/boot/grub/menu.lst
+fi
