@@ -154,7 +154,7 @@ fi
 #
 echo "Archiving ..."
 ( cd $tmpdir
-  find * | cpio -o -H newc | gzip -c9 > ${root}/boot/initrd-$kernelver.img
+  find . | cpio -o -H newc | gzip -c9 > ${root}/boot/initrd-$kernelver.img
 )
 
 # display the resulting image
