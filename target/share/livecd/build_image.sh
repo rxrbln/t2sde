@@ -58,6 +58,17 @@ time rsync -artH $v --devices --specials --delete --delete-excluded \
      --exclude-from ../files-exclude $build_root/ $imagelocation/
 rm ../files-{wanted,all,exclude}
 
+# avoid duplicate files on the medium and initrd anyway
+find $isofsdir/boot -type f | while read f; do
+	rm -f ./${f#$isofsdir} > /dev/null
+done
+for initrd in $isofsdir/boot/initrd*; do
+	zcat $initrd | cpio -i --list | grep '.ko$' |
+	while read f; do
+		rm -f ./$f > /dev/null
+	done
+done
+
 echo "Overlaying root file-system with target defined files ..."
 copy_and_parse_from_source $base/target/share/livecd/rootfs $imagelocation
 copy_and_parse_from_source $base/target/$target/rootfs $imagelocation
