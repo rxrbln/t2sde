@@ -39,7 +39,6 @@ echo_status "Creating isofs.txt file .."
   if [ "$SDECFG_PKGFILE_TYPE" != "none" ]; then
     cat <<-EOT
 	DISK1	$admdir/cache/		${SDECFG_SHORTID}/info/cache/
-	DISK1	$admdir/cksums/		${SDECFG_SHORTID}/info/cksums/
 	DISK1	$admdir/dependencies/	${SDECFG_SHORTID}/info/dependencies/
 	DISK1	$admdir/descs/		${SDECFG_SHORTID}/info/descs/
 	DISK1	$admdir/flists/		${SDECFG_SHORTID}/info/flists/
