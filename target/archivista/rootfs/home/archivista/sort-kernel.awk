@@ -13,8 +13,6 @@ BEGIN {
 		delete ARGV[1]
 	}
 
-	print default_kernel
-
 	global=1
 	n=0
 }
@@ -31,15 +29,23 @@ BEGIN {
 }
 
 # save the image config
-/title/		{titles[n]=$0}
-/kernel/	{kernels[n]=$0}
-/initrd/	{initrds[n]=$0}
+/^title /	{titles[n]=$0}
+/^root /	{roots[n]=$0}
+/^kernel /	{kernels[n]=$0}
+/^initrd /	{initrds[n]=$0}
+/^chainloader /	{chainloaders[n]=$0}
+
 
 function print_kernel (i) {
 	print titles[i]
-	print kernels[i]
+	if (roots[i] != "")
+		print roots[i]
+	if (kernels[i] != "")
+		print kernels[i]
 	if (initrds[i] != "")
 		print initrds[i]
+	if (chainloaders[i] != "")
+		print chainloaders[i]
 	print ""
 }
 
