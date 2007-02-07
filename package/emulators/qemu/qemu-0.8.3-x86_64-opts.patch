@@ -1,0 +1,74 @@
+2007-02-03  Gwenole Beauchesne  <gbeauchesne@mandriva.com>
+
+	* dyngen-exec.h (AREG4, AREG5): Enable when building with GCC4.
+
+2005-06-04  Gwenole Beauchesne  <gbeauchesne@mandriva.com>
+
+	* Add direct jump support to x86-64.
+
+--- qemu-0.8.3/exec-all.h.x86_64-opts	2007-02-03 09:09:38.000000000 +0100
++++ qemu-0.8.3/exec-all.h	2007-02-03 09:09:38.000000000 +0100
+@@ -159,6 +159,9 @@ static inline int tlb_set_page(CPUState 
+ #if defined(__i386__) && !defined(_WIN32)
+ #define USE_DIRECT_JUMP
+ #endif
++#if defined(__x86_64__)
++#define USE_DIRECT_JUMP
++#endif
+ 
+ typedef struct TranslationBlock {
+     target_ulong pc;   /* simulated PC corresponding to this block (EIP + CS base) */
+@@ -245,7 +248,7 @@ static inline void tb_set_jmp_target1(un
+     asm volatile ("sync" : : : "memory");
+     asm volatile ("isync" : : : "memory");
+ }
+-#elif defined(__i386__)
++#elif defined(__i386__) || defined(__x86_64__)
+ static inline void tb_set_jmp_target1(unsigned long jmp_addr, unsigned long addr)
+ {
+     /* patch the branch destination */
+@@ -324,7 +327,7 @@ do {\
+ 		  "1:\n");\
+ } while (0)
+ 
+-#elif defined(__i386__) && defined(USE_DIRECT_JUMP)
++#elif (defined(__i386__) || defined(__x86_64__)) && defined(USE_DIRECT_JUMP)
+ 
+ /* we patch the jump instruction directly.  Use sti in place of the actual
+    jmp instruction so that dyngen can patch in the correct result.  */
+--- qemu-0.8.3/dyngen.c.x86_64-opts	2007-02-03 09:09:38.000000000 +0100
++++ qemu-0.8.3/dyngen.c	2007-02-03 09:09:38.000000000 +0100
+@@ -2766,6 +2766,17 @@ void gen_code(const char *name, host_ulo
+                 if (rel->r_offset >= start_offset &&
+ 		    rel->r_offset < start_offset + copy_size) {
+                     sym_name = strtab + symtab[ELFW(R_SYM)(rel->r_info)].st_name;
++                    if (strstart(sym_name, "__op_jmp", &p)) {
++                        int n;
++                        n = strtol(p, NULL, 10);
++                        /* __op_jmp relocations are done at
++                           runtime to do translated block
++                           chaining: the offset of the instruction
++                           needs to be stored */
++                        fprintf(outfile, "    jmp_offsets[%d] = %d + (gen_code_ptr - gen_code_buf);\n",
++                                n, rel->r_offset - start_offset);
++                        continue;
++                    }
+                     get_reloc_expr(name, sizeof(name), sym_name);
+                     type = ELF32_R_TYPE(rel->r_info);
+                     addend = rel->r_addend;
+--- qemu-0.8.3/dyngen-exec.h.x86_64-opts	2007-02-03 09:09:38.000000000 +0100
++++ qemu-0.8.3/dyngen-exec.h	2007-02-03 09:10:20.000000000 +0100
+@@ -92,8 +92,11 @@ extern int printf(const char *, ...);
+ #define AREG1 "rbx"
+ #define AREG2 "r12"
+ #define AREG3 "r13"
+-//#define AREG4 "r14"
+-//#define AREG5 "r15"
++#if __GNUC__ >= 4
++/* XXX: earlier GCC crashes */
++#define AREG4 "r14"
++#define AREG5 "r15"
++#endif
+ #endif
+ #ifdef __powerpc__
+ #define AREG0 "r27"
