@@ -207,6 +207,7 @@ EOT
 		mkswap ${disk}3
 
 		format_w_progress ${disk}1
+		format_w_progress ${disk}2
 		format_w_progress ${disk}4
 
 		mount $part /mnt/target
