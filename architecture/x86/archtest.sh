@@ -19,7 +19,7 @@ case "$SDECFG_X86_OPT" in
     pentium|pentium-mmx|k6*|c3*)
 	arch_machine="i586" ;;
 
-    pentium*|athlon*)
+    *)	# all the rest, incuding athlon*, prescot, nocona, etc.
 	arch_machine="i686" ;;
 esac
 
