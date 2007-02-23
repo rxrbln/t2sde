@@ -1,0 +1,886 @@
+diff -Npruw -x CVS -x autom4te.cache -x manual -x po -x '.#*' glibc-head/libc/sysdeps/unix/sysv/linux/x86_64/dl-procinfo.c glibc-amd/libc/sysdeps/unix/sysv/linux/x86_64/dl-procinfo.c
+--- glibc-head/sysdeps/unix/sysv/linux/x86_64/dl-procinfo.c	2005-12-14 02:09:28.000000000 -0600
++++ glibc-amd/sysdeps/unix/sysv/linux/x86_64/dl-procinfo.c	2007-02-06 16:19:22.185087000 -0600
+@@ -1,5 +1,5 @@
+ #ifdef IS_IN_ldconfig
+ # include <sysdeps/i386/dl-procinfo.c>
+ #else
+-# include <sysdeps/generic/dl-procinfo.c>
++# include <sysdeps/x86_64/dl-procinfo.c>
+ #endif
+diff -Npruw -x CVS -x autom4te.cache -x manual -x po -x '.#*' glibc-head/libc/sysdeps/x86_64/dl-machine.h glibc-amd/libc/sysdeps/x86_64/dl-machine.h
+--- glibc-head/sysdeps/x86_64/dl-machine.h	2006-10-27 18:11:47.000000000 -0500
++++ glibc-amd/sysdeps/x86_64/dl-machine.h	2007-02-16 17:12:40.301396000 -0600
+@@ -1,8 +1,10 @@
+ /* Machine-dependent ELF dynamic relocation inline functions.  x86-64 version.
+-   Copyright (C) 2001, 2002, 2003, 2004, 2005 Free Software Foundation, Inc.
+-   This file is part of the GNU C Library.
++
++   Copyright (C) 2001-2005, 2006, 2007 Free Software Foundation, Inc.
+    Contributed by Andreas Jaeger <aj@suse.de>.
+ 
++   This file is part of the GNU C Library.
++
+    The GNU C Library is free software; you can redistribute it and/or
+    modify it under the terms of the GNU Lesser General Public
+    License as published by the Free Software Foundation; either
+@@ -209,6 +211,35 @@ _dl_start_user:\n\
+ /* The x86-64 never uses Elf64_Rel relocations.  */
+ #define ELF_MACHINE_NO_REL 1
+ 
++#define CPUID_LARGEST     (0x00000000) /* Vendor ID and largest supported basic function. */
++#define CPUID_ID          (0x00000001) /* Basic features. */
++#define CPUID_LARGEST_EX  (0x80000000) /* Largest supported extended function. */
++#define CPUID_EX_FEATURES (0x80000001) /* Extended features. */
++#define CPUID_L1          (0x80000005) /* L1 cache features. */
++#define CPUID_L2          (0x80000006) /* L2 cache features. */
++
++#define CPUID_AMD0        (0x68747541) /* Auth */
++#define CPUID_AMD1        (0x69746E65) /* enti */
++#define CPUID_AMD2        (0x444D4163) /* cAMD */
++
++#define CPUID_INTC0       (0x756e6547) /* Genu */
++#define CPUID_INTC1       (0x49656e69) /* ineI */
++#define CPUID_INTC2       (0x6c65746e) /* ntel */
++
++#define CPUID_PFW         (1 << 8)     /* PREFETCHW */
++#define CPUID_3DNOW       (1 << 31)    /* 3DNow! */
++
++#define CPUID_L1_POS      (24)         /* L1 bit-field starting bit. */
++#define CPUID_L2_POS      (16)         /* L2 bit-field starting bit. */
++
++#define CPUID(x, a, b, c, d) \
++	__asm__ volatile \
++	( \
++	   "cpuid			\n" \
++	   : "=a" (a), "=b" (b), "=c" (c), "=d" (d) \
++	   : "0" (x) \
++	)
++
+ /* We define an initialization functions.  This is called very early in
+    _dl_sysdep_start.  */
+ #define DL_PLATFORM_INIT dl_platform_init ()
+@@ -216,9 +247,58 @@ _dl_start_user:\n\
+ static inline void __attribute__ ((unused))
+ dl_platform_init (void)
+ {
++  long cache1size, cache2size;
++  int  prefetchw;
++
++  int isAMD, isIntel;
++
++  int eax, ebx, ecx, edx;
++
+   if (GLRO(dl_platform) != NULL && *GLRO(dl_platform) == '\0')
+     /* Avoid an empty string which would disturb us.  */
+     GLRO(dl_platform) = NULL;
++
++  /* Check for ID support. */
++  CPUID (CPUID_LARGEST, eax, ebx, ecx, edx);
++  if (eax != CPUID_LARGEST)
++    {
++      /* Check for manufacturer strings. */
++      isAMD   = (ebx == CPUID_AMD0  && edx == CPUID_AMD1  && ecx == CPUID_AMD2);
++      isIntel = (ebx == CPUID_INTC0 && edx == CPUID_INTC1 && ecx == CPUID_INTC2);
++
++      /* Check for proper extended functions support. */
++      CPUID (CPUID_LARGEST_EX, eax, ebx, ecx, edx);
++      if (eax >= CPUID_L2)
++	{
++	  /* Check for features specific to AMD. */
++	  if (isAMD)
++	    {
++	      /* Check for support of PREFETCHW. */
++	      CPUID (CPUID_EX_FEATURES, eax, ebx, ecx, edx);
++	      prefetchw = ((ecx & CPUID_PFW | edx & CPUID_3DNOW)? -1: 0);
++
++	      GLRO (dl_prefetchw) = prefetchw;
++
++	      /* Query about DC. */
++	      CPUID (CPUID_L1, eax, ebx, ecx, edx);
++	      cache1size = (ecx >> CPUID_L1_POS) << 10; /* From KiB to B. */
++
++	      GLRO (dl_cache1size)     = cache1size;
++	      GLRO (dl_cache1sizehalf) = cache1size / 2;
++	    }
++
++          /* Check for features common to both AMD and Intel. */
++	  if (isAMD || isIntel)
++	    {
++	      /* Query about L2. */
++	      CPUID (CPUID_L2, eax, ebx, ecx, edx);
++	      cache2size = (ecx >> CPUID_L2_POS) << 10; /* From KiB to B. */
++
++	      GLRO (dl_cache2size)     = cache2size;
++	      GLRO (dl_cache2sizehalf) = cache2size / 2;
++	    }
++	}
++    }
+ }
+ 
+ static inline Elf64_Addr
+diff -Npruw -x CVS -x autom4te.cache -x manual -x po -x '.#*' glibc-head/libc/sysdeps/x86_64/dl-procinfo.c glibc-amd/libc/sysdeps/x86_64/dl-procinfo.c
+--- glibc-head/sysdeps/x86_64/dl-procinfo.c	1969-12-31 18:00:00.000000000 -0600
++++ glibc-amd/sysdeps/x86_64/dl-procinfo.c	2007-02-16 17:12:40.171395000 -0600
+@@ -0,0 +1,123 @@
++/*
++   Copyright (C) 2004, 2007 Free Software Foundation, Inc.
++   Contributed by Andreas Jaeger <aj@suse.de>, 2004.
++
++   This file is part of the GNU C Library.
++
++   The GNU C Library is free software; you can redistribute it and/or
++   modify it under the terms of the GNU Lesser General Public
++   License as published by the Free Software Foundation; either
++   version 2.1 of the License, or (at your option) any later version.
++
++   The GNU C Library is distributed in the hope that it will be useful,
++   but WITHOUT ANY WARRANTY; without even the implied warranty of
++   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
++   Lesser General Public License for more details.
++
++   You should have received a copy of the GNU Lesser General Public
++   License along with the GNU C Library; if not, write to the Free
++   Software Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA
++   02111-1307 USA.
++*/
++
++/*
++  Data for x86-64 version of processor capability information.
++
++  This information must be kept in sync with the _DL_HWCAP_COUNT and
++   _DL_PLATFORM_COUNT definitions in procinfo.h.
++
++   There are three different modes:
++
++   - PROCINFO_DECL is defined.  This means we are only interested in
++     declarations.
++
++   - PROCINFO_DECL is not defined:
++
++     + if SHARED is defined the file is included in an array
++       initializer.  The .element = { ... } syntax is needed.
++
++     + if SHARED is not defined a normal array initialization is
++       needed.
++*/
++
++#ifndef PROCINFO_CLASS
++#define PROCINFO_CLASS
++#endif
++
++/* _dl_cache1size: size of L1 cache  */
++#if !defined PROCINFO_DECL && defined SHARED
++  ._dl_cache1size
++#else
++PROCINFO_CLASS long int _dl_cache1size
++#endif
++#ifndef PROCINFO_DECL
++= 1024 * 32 /* defaults to 32 */
++#endif
++#if !defined SHARED || defined PROCINFO_DECL
++;
++#else
++,
++#endif
++
++/* _dl_cache1sizehalf: 1/2 size of L1 cache  */
++#if !defined PROCINFO_DECL && defined SHARED
++  ._dl_cache1sizehalf
++#else
++PROCINFO_CLASS long int _dl_cache1sizehalf
++#endif
++#ifndef PROCINFO_DECL
++= 1024 * 32 / 2 /* defaults to 16k */
++#endif
++#if !defined SHARED || defined PROCINFO_DECL
++;
++#else
++,
++#endif
++
++/* _dl_cache2size: size of L2 cache  */
++#if !defined PROCINFO_DECL && defined SHARED
++  ._dl_cache2size
++#else
++PROCINFO_CLASS long int _dl_cache2size
++#endif
++#ifndef PROCINFO_DECL
++= 1024 * 1024 /* defaults to 1M */
++#endif
++#if !defined SHARED || defined PROCINFO_DECL
++;
++#else
++,
++#endif
++
++/* _dl_cache2sizehalf: 1/2 size of L2 cache  */
++#if !defined PROCINFO_DECL && defined SHARED
++  ._dl_cache2sizehalf
++#else
++PROCINFO_CLASS long int _dl_cache2sizehalf
++#endif
++#ifndef PROCINFO_DECL
++= 1024 * 1024 / 2 /* defaults to 512k */
++#endif
++#if !defined SHARED || defined PROCINFO_DECL
++;
++#else
++,
++#endif
++
++/* _dl_prefetchw: PREFETCHW supported */
++#if !defined PROCINFO_DECL && defined SHARED
++  ._dl_prefetchw
++#else
++PROCINFO_CLASS int _dl_prefetchw
++#endif
++#ifndef PROCINFO_DECL
++= 0 /* defaults to no */
++#endif
++#if !defined SHARED || defined PROCINFO_DECL
++;
++#else
++,
++#endif
++
++#undef PROCINFO_DECL
++#undef PROCINFO_CLASS
+diff -Npruw -x CVS -x autom4te.cache -x manual -x po -x '.#*' glibc-head/libc/sysdeps/x86_64/elf/rtld-global-offsets.sym glibc-amd/libc/sysdeps/x86_64/elf/rtld-global-offsets.sym
+--- glibc-head/sysdeps/x86_64/elf/rtld-global-offsets.sym	1969-12-31 18:00:00.000000000 -0600
++++ glibc-amd/sysdeps/x86_64/elf/rtld-global-offsets.sym	2007-02-16 17:24:16.754725000 -0600
+@@ -0,0 +1,11 @@
++#define SHARED 1
++
++#include <ldsodefs.h>
++
++#define rtdl_global_ro_offsetof(mem) offsetof (struct rtld_global_ro, mem)
++
++RTLD_GLOBAL_DL_CACHE1SIZE     rtdl_global_ro_offsetof (_dl_cache1size)
++RTLD_GLOBAL_DL_CACHE1SIZEHALF rtdl_global_ro_offsetof (_dl_cache1sizehalf)
++RTLD_GLOBAL_DL_CACHE2SIZE     rtdl_global_ro_offsetof (_dl_cache2size)
++RTLD_GLOBAL_DL_CACHE2SIZEHALF rtdl_global_ro_offsetof (_dl_cache2sizehalf)
++RTLD_GLOBAL_DL_PREFETCHW      rtdl_global_ro_offsetof (_dl_prefetchw)
+diff -Npruw -x CVS -x autom4te.cache -x manual -x po -x '.#*' glibc-head/libc/sysdeps/x86_64/Makefile glibc-amd/libc/sysdeps/x86_64/Makefile
+--- glibc-head/sysdeps/x86_64/Makefile	2004-08-16 01:46:14.000000000 -0500
++++ glibc-amd/sysdeps/x86_64/Makefile	2007-02-07 11:37:19.135985000 -0600
+@@ -4,8 +4,12 @@ long-double-fcts = yes
+ ifeq ($(subdir),csu)
+ sysdep_routines += hp-timing
+ elide-routines.os += hp-timing
++
++# get offset to rtld_global._dl_*
++gen-as-const-headers += rtld-global-offsets.sym
+ endif
+ 
+ ifeq ($(subdir),gmon)
+ sysdep_routines += _mcount
+ endif
++ 
+diff -Npruw -x CVS -x autom4te.cache -x manual -x po -x '.#*' glibc-head/libc/sysdeps/x86_64/memcpy.S glibc-amd/libc/sysdeps/x86_64/memcpy.S
+--- glibc-head/sysdeps/x86_64/memcpy.S	2004-10-17 23:17:08.000000000 -0500
++++ glibc-amd/sysdeps/x86_64/memcpy.S	2007-02-16 16:29:40.471284000 -0600
+@@ -1,7 +1,8 @@
+-/* Highly optimized version for x86-64.
+-   Copyright (C) 1997, 2000, 2002, 2003, 2004 Free Software Foundation, Inc.
++/*
++   Copyright (C) 2007 Free Software Foundation, Inc.
++   Contributed by Evandro Menezes <evandro.menezes@amd.com>, 2007.
++
+    This file is part of the GNU C Library.
+-   Based on i586 version contributed by Ulrich Drepper <drepper@cygnus.com>, 1997.
+ 
+    The GNU C Library is free software; you can redistribute it and/or
+    modify it under the terms of the GNU Lesser General Public
+@@ -16,86 +17,535 @@
+    You should have received a copy of the GNU Lesser General Public
+    License along with the GNU C Library; if not, write to the Free
+    Software Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA
+-   02111-1307 USA.  */
++   02111-1307 USA.
++*/
++
++# Optimized memcpy for x86-64.
+ 
+ #include <sysdep.h>
+ #include "asm-syntax.h"
+ #include "bp-sym.h"
+ #include "bp-asm.h"
++#if defined PIC && defined SHARED
++# include <rtld-global-offsets.h>
++#endif
+ 
+-/* BEWARE: `#ifdef memcpy' means that memcpy is redefined as `mempcpy',
+-   and the return value is the byte after the last one copied in
+-   the destination. */
+-#define MEMPCPY_P (defined memcpy)
++#if defined PIC && defined SHARED && !defined IS_IN_rtld
++	.global	_rtld_local_ro
++        .hidden _rtld_local_ro
++        .set    _rtld_local_ro, _rtld_global_ro
++#endif
+ 
+         .text
++
+ #if defined PIC && !defined NOT_IN_libc
+ ENTRY (__memcpy_chk)
++
+ 	cmpq	%rdx, %rcx
+ 	jb	HIDDEN_JUMPTARGET (__chk_fail)
++
+ END (__memcpy_chk)
+ #endif
+-ENTRY (BP_SYM (memcpy))
+-	/* Cutoff for the big loop is a size of 32 bytes since otherwise
+-	   the loop will never be entered.  */
+-	cmpq	$32, %rdx
+-	movq	%rdx, %rcx
+-#if !MEMPCPY_P
+-	movq	%rdi, %r10	/* Save value. */
++
++ENTRY(memcpy)				# (void *, const void*, size_t)
++
++# Handle tiny blocks.
++
++L(1try):				# up to 32B
++        cmp     $32, %rdx
++#if defined (USE_AS_MEMPCPY)
++        lea     (%rdi, %rdx), %rax
++#else
++        mov     %rdi, %rax
+ #endif
++        jae     L(1after)
++
++L(1):					# 1-byte once
++        test    $1, %dl
++        jz      L(1a)
++
++        movzbl	(%rsi), %ecx
++        mov     %cl, (%rdi)
++
++        inc	%rsi
++        inc	%rdi
++
++L(1a):					# 2-byte once
++        test    $2, %dl
++        jz      L(1b)
+ 
+-	/* We need this in any case.  */
+-	cld
++        movzwl	(%rsi), %ecx
++        mov     %cx, (%rdi)
+ 
+-	jbe	1f
++        add	$2, %rsi
++        add	$2, %rdi
+ 
+-	/* Align destination.  */
+-	movq	%rdi, %rax
+-	negq	%rax
+-	andq	$7, %rax
+-	subq	%rax, %rcx
+-	xchgq	%rax, %rcx
++L(1b):					# 4-byte once
++        test    $4, %dl
++        jz      L(1c)
+ 
+-	rep; movsb
++        mov     (%rsi), %ecx
++        mov     %ecx, (%rdi)
+ 
+-	movq	%rax, %rcx
+-	subq	$32, %rcx
+-	js	2f
++        add	$4, %rsi
++        add	$4, %rdi
++
++L(1c):					# 8-byte once
++        test    $8, %dl
++        jz      L(1d)
++
++        mov     (%rsi), %rcx
++        mov     %rcx, (%rdi)
++
++        add	$8, %rsi
++        add	$8, %rdi
++
++L(1d):					# 16-byte loop
++        and	$0xf0, %edx
++        jz      L(exit)
++
++        .p2align 4
++
++L(1loop):
++        mov       (%rsi), %rcx
++        mov     8 (%rsi), %r8
++        mov     %rcx,   (%rdi)
++        mov      %r8, 8 (%rdi)
++
++        sub	$16, %edx
++
++        lea	16 (%rsi), %rsi
++        lea	16 (%rdi), %rdi
++
++        jnz	L(1loop)
++
++        .p2align 4,, 4
++
++L(exit):				# exit
++        rep
++        ret
+ 
+ 	.p2align 4
+-3:
+ 
+-	/* Now correct the loop counter.  Please note that in the following
+-	   code the flags are not changed anymore.  */
+-	subq	$32, %rcx
++L(1after):
++        push    %rax
+ 
+-	movq	(%rsi), %rax
+-	movq	8(%rsi), %rdx
+-	movq	16(%rsi), %r8
+-	movq	24(%rsi), %r9
+-	movq	%rax, (%rdi)
+-	movq	%rdx, 8(%rdi)
+-	movq	%r8, 16(%rdi)
+-	movq	%r9, 24(%rdi)
++# Align to the natural word size.
+ 
+-	leaq	32(%rsi), %rsi
+-	leaq	32(%rdi), %rdi
++L(aligntry):
++        mov     %edi, %ecx      	# align by destination
+ 
+-	jns	3b
++        and	$7, %ecx
++        jz      L(alignafter)  		# already aligned
+ 
+-	/* Correct extra loop counter modification.  */
+-2:	addq	$32, %rcx
+-1:	rep; movsb
++L(align):                      		# align
++        lea     -8 (%rcx, %rdx), %rdx	# calculate remaining bytes
++        sub     $8, %ecx
+ 
+-#if MEMPCPY_P
+-	movq	%rdi, %rax		/* Set return value.  */
++        .p2align 4
++
++L(alignloop):				# 1-byte alignment loop
++        movzbl	(%rsi), %eax
++        mov     %al, (%rdi)
++
++        inc     %ecx
++
++        lea     1 (%rsi), %rsi
++        lea     1 (%rdi), %rdi
++
++        jnz     L(alignloop)
++
++        .p2align 4
++
++L(alignafter):
++
++# Loop to handle mid-sized blocks.
++
++L(32try):				# up to 1KB
++        cmp     $1024, %rdx
++        ja	L(32after)
++
++L(32):					# 32-byte loop
++        mov     %edx, %ecx
++        shr     $5, %ecx
++        jz      L(32skip)
++
++        .p2align 4
++
++L(32loop):
++        dec     %ecx
++
++        mov        (%rsi), %rax
++        mov      8 (%rsi), %r8
++        mov     16 (%rsi), %r9
++        mov     24 (%rsi), %r10
++
++        mov     %rax,    (%rdi)
++        mov      %r8,  8 (%rdi)
++        mov      %r9, 16 (%rdi)
++        mov     %r10, 24 (%rdi)
++
++        lea     32 (%rsi), %rsi
++        lea     32 (%rdi), %rdi
++
++        jz      L(32skip)		# help out smaller blocks
++
++        dec     %ecx
++
++        mov        (%rsi), %rax
++        mov      8 (%rsi), %r8
++        mov     16 (%rsi), %r9
++        mov     24 (%rsi), %r10
++
++        mov     %rax,    (%rdi)
++        mov      %r8,  8 (%rdi)
++        mov      %r9, 16 (%rdi)
++        mov     %r10, 24 (%rdi)
++
++        lea     32 (%rsi), %rsi
++        lea     32 (%rdi), %rdi
++
++        jnz     L(32loop)
++
++        .p2align 4
++
++L(32skip):
++        and     $31, %edx		# check for left overs
++        pop     %rax
++        jnz     L(1)
++
++	rep				# exit
++        ret
++
++        .p2align 4
++
++L(32after):
++
++/*
++In order to minimize code-size in RTLD, algorithms specific for
++larger blocks are excluded when building for RTLD.
++*/
++
++# Handle large blocks smaller than 1/2 L1.
++
++L(fasttry):				# first 1/2 L1
++#if !defined IS_IN_rtld			/* only up to this algorithm for RTLD */
++# ifdef PIC
++#  ifdef SHARED
++	mov     _rtld_local_ro@GOTPCREL (%rip), %r11
++	mov     RTLD_GLOBAL_DL_CACHE1SIZEHALF (%r11), %r11
++#  else
++	mov     _dl_cache1sizehalf@GOTPCREL (%rip), %r11
++	mov     (%r11), %r11
++#  endif
++# else
++	mov     _dl_cache1sizehalf, %r11
++# endif
++        cmp     %rdx, %r11		# calculate the smaller of
++        cmova   %rdx, %r11		# remaining bytes and 1/2 L1
++#endif
++
++L(fast):				# good ol' MOVS
++#if !defined IS_IN_rtld
++	mov	%r11, %rcx
++	and	$-8, %r11
++#else
++	mov	%rdx, %rcx
++#endif
++	shr	$3, %rcx
++	jz	L(fastskip)
++
++	rep
++	movsq
++
++L(fastskip):
++#if !defined IS_IN_rtld
++	sub	%r11, %rdx		# check for more
++	test	$-8, %rdx
++	jnz	L(fastafter)
++#endif
++
++	and	$7, %edx		# check for left overs
++	pop	%rax
++	jnz	L(1)
++
++	rep				# exit
++	ret
++
++#if !defined IS_IN_rtld			/* none of the algorithms below for RTLD */
++
++        .p2align 4
++
++L(fastafter):
++
++# Handle large blocks smaller than 1/2 L2.
++
++L(pretry):				# first 1/2 L2
++# ifdef PIC
++#  ifdef SHARED
++	mov     _rtld_local_ro@GOTPCREL (%rip), %r8
++	mov     RTLD_GLOBAL_DL_CACHE2SIZEHALF (%r8), %r8
++#  else
++	mov     _dl_cache2sizehalf@GOTPCREL (%rip), %r8
++	mov     (%r8), %r8
++#  endif
+ #else
+-	movq	%r10, %rax		/* Set return value.  */
++	mov     _dl_cache2sizehalf, %r8
++# endif
++        cmp     %rdx, %r8		# calculate the lesser of
++        cmova   %rdx, %r8		# remaining bytes and 1/2 L2
+ 	
++L(pre):                              	# 64-byte with prefetching
++        mov     %r8, %rcx
++        and     $-64, %r8
++        shr     $6, %rcx
++        jz      L(preskip)
++
++        push    %r14
++        push    %r13
++        push    %r12
++        push    %rbx
++
++# ifdef PIC
++#  ifdef SHARED
++	mov     _rtld_local_ro@GOTPCREL (%rip), %rax
++	cmpl	$0, RTLD_GLOBAL_DL_PREFETCHW (%rax)
++#  else
++	mov     _dl_prefetchw@GOTPCREL (%rip), %rax
++	cmpl	$0, (%rax)
++#  endif
++# else
++	cmpl	$0, _dl_prefetchw
+ #endif
++	jz	L(preloop)		# check if PREFETCHW OK
++
++        .p2align 4
++
++# ... when PREFETCHW is available (less cache-probe traffic in MP systems).
++
++L(prewloop):				# cache-line in state M
++        dec     %rcx
++
++        mov        (%rsi), %rax
++        mov      8 (%rsi), %rbx
++        mov     16 (%rsi), %r9
++        mov     24 (%rsi), %r10
++        mov     32 (%rsi), %r11
++        mov     40 (%rsi), %r12
++        mov     48 (%rsi), %r13
++        mov     56 (%rsi), %r14
++
++        prefetcht0  0 + 896 (%rsi)
++        prefetcht0 64 + 896 (%rsi)
++
++        mov     %rax,    (%rdi)
++        mov     %rbx,  8 (%rdi)
++        mov      %r9, 16 (%rdi)
++        mov     %r10, 24 (%rdi)
++        mov     %r11, 32 (%rdi)
++        mov     %r12, 40 (%rdi)
++        mov     %r13, 48 (%rdi)
++        mov     %r14, 56 (%rdi)
++
++        lea     64 (%rsi), %rsi
++        lea     64 (%rdi), %rdi
++
++        jz      L(prebail)
++
++        dec     %rcx
++
++        mov        (%rsi), %rax
++        mov      8 (%rsi), %rbx
++        mov     16 (%rsi), %r9
++        mov     24 (%rsi), %r10
++        mov     32 (%rsi), %r11
++        mov     40 (%rsi), %r12
++        mov     48 (%rsi), %r13
++        mov     56 (%rsi), %r14
++
++        mov     %rax,    (%rdi)
++        mov     %rbx,  8 (%rdi)
++        mov      %r9, 16 (%rdi)
++        mov     %r10, 24 (%rdi)
++        mov     %r11, 32 (%rdi)
++        mov     %r12, 40 (%rdi)
++        mov     %r13, 48 (%rdi)
++        mov     %r14, 56 (%rdi)
++
++        prefetchw 896 - 64 (%rdi)
++        prefetchw 896 -  0 (%rdi)
++
++        lea     64 (%rsi), %rsi
++        lea     64 (%rdi), %rdi
++
++        jnz     L(prewloop)
++        jmp	L(prebail)
++
++        .p2align 4
++
++# ... when PREFETCHW is not available.
++
++L(preloop):				# cache-line in state E
++        dec     %rcx
++
++        mov        (%rsi), %rax
++        mov      8 (%rsi), %rbx
++        mov     16 (%rsi), %r9
++        mov     24 (%rsi), %r10
++        mov     32 (%rsi), %r11
++        mov     40 (%rsi), %r12
++        mov     48 (%rsi), %r13
++        mov     56 (%rsi), %r14
++
++        prefetcht0 896 +  0 (%rsi)
++        prefetcht0 896 + 64 (%rsi)
++
++        mov     %rax,    (%rdi)
++        mov     %rbx,  8 (%rdi)
++        mov      %r9, 16 (%rdi)
++        mov     %r10, 24 (%rdi)
++        mov     %r11, 32 (%rdi)
++        mov     %r12, 40 (%rdi)
++        mov     %r13, 48 (%rdi)
++        mov     %r14, 56 (%rdi)
++
++        lea     64 (%rsi), %rsi
++        lea     64 (%rdi), %rdi
++
++        jz      L(prebail)
++
++        dec     %rcx
++
++        mov        (%rsi), %rax
++        mov      8 (%rsi), %rbx
++        mov     16 (%rsi), %r9
++        mov     24 (%rsi), %r10
++        mov     32 (%rsi), %r11
++        mov     40 (%rsi), %r12
++        mov     48 (%rsi), %r13
++        mov     56 (%rsi), %r14
++
++        prefetcht0 896 - 64 (%rdi)
++        prefetcht0 896 -  0 (%rdi)
++
++        mov     %rax,    (%rdi)
++        mov     %rbx,  8 (%rdi)
++        mov      %r9, 16 (%rdi)
++        mov     %r10, 24 (%rdi)
++        mov     %r11, 32 (%rdi)
++        mov     %r12, 40 (%rdi)
++        mov     %r13, 48 (%rdi)
++        mov     %r14, 56 (%rdi)
++
++        lea     64 (%rsi), %rsi
++        lea     64 (%rdi), %rdi
++
++        jnz     L(preloop)
++
++L(prebail):
++        pop     %rbx
++        pop     %r12
++        pop     %r13
++        pop     %r14
++
++#       .p2align 4
++
++L(preskip):
++        sub     %r8, %rdx		# check for more
++        test    $-64, %rdx
++        jnz     L(preafter)
++
++        and     $63, %edx		# check for left overs
++        pop     %rax
++        jnz     L(1)
++
++	rep				# exit
+ 	ret
+ 
+-END (BP_SYM (memcpy))
+-#if !MEMPCPY_P
++        .p2align 4
++
++# Loop to handle huge blocks.
++
++L(preafter):
++
++L(NTtry):
++
++L(NT):                               	# non-temporal 128-byte
++        mov     %rdx, %rcx
++        shr     $7, %rcx
++        jz      L(NTskip)
++
++        push    %r14
++        push    %r13
++        push    %r12
++
++       .p2align 4
++
++L(NTloop):
++        prefetchnta 768 (%rsi)
++        prefetchnta 832 (%rsi)
++
++        dec     %rcx
++
++        mov        (%rsi), %rax
++        mov      8 (%rsi), %r8
++        mov     16 (%rsi), %r9
++        mov     24 (%rsi), %r10
++        mov     32 (%rsi), %r11
++        mov     40 (%rsi), %r12
++        mov     48 (%rsi), %r13
++        mov     56 (%rsi), %r14
++
++        movnti  %rax,    (%rdi)
++        movnti   %r8,  8 (%rdi)
++        movnti   %r9, 16 (%rdi)
++        movnti  %r10, 24 (%rdi)
++        movnti  %r11, 32 (%rdi)
++        movnti  %r12, 40 (%rdi)
++        movnti  %r13, 48 (%rdi)
++        movnti  %r14, 56 (%rdi)
++
++        mov      64 (%rsi), %rax
++        mov      72 (%rsi), %r8
++        mov      80 (%rsi), %r9
++        mov      88 (%rsi), %r10
++        mov      96 (%rsi), %r11
++        mov     104 (%rsi), %r12
++        mov     112 (%rsi), %r13
++        mov     120 (%rsi), %r14
++
++        movnti  %rax,  64 (%rdi)
++        movnti   %r8,  72 (%rdi)
++        movnti   %r9,  80 (%rdi)
++        movnti  %r10,  88 (%rdi)
++        movnti  %r11,  96 (%rdi)
++        movnti  %r12, 104 (%rdi)
++        movnti  %r13, 112 (%rdi)
++        movnti  %r14, 120 (%rdi)
++
++        lea     128 (%rsi), %rsi
++        lea     128 (%rdi), %rdi
++
++        jnz     L(NTloop)
++
++        sfence				# serialize memory stores
++
++        pop     %r12
++        pop     %r13
++        pop     %r14
++
++L(NTskip):
++        and     $127, %edx		# check for left overs
++        pop     %rax
++        jnz     L(1)
++
++	rep				# exit
++        ret
++
++#endif /* IS_IN_rtld */
++
++END(memcpy)
++
++#ifndef USE_AS_MEMPCPY
+ libc_hidden_builtin_def (memcpy)
+ #endif
+diff -Npruw -x CVS -x autom4te.cache -x manual -x po -x '.#*' glibc-head/libc/sysdeps/x86_64/mempcpy.S glibc-amd/libc/sysdeps/x86_64/mempcpy.S
+--- glibc-head/sysdeps/x86_64/mempcpy.S	2004-10-17 23:17:08.000000000 -0500
++++ glibc-amd/sysdeps/x86_64/mempcpy.S	2007-02-07 16:28:24.851732000 -0600
+@@ -1,3 +1,4 @@
++#define USE_AS_MEMPCPY
+ #define memcpy __mempcpy
+ #define __memcpy_chk __mempcpy_chk
+ #include <sysdeps/x86_64/memcpy.S>
