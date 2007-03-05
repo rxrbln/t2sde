@@ -47,7 +47,7 @@ fi
 
 set -e -x
 
-archive_dir="/home/data/archivista" # ... /$db/ARCHxxxx
+archive_dir="/home/data/archivista/images" # ... /$db/ARCHxxxx
 mkisofsopt="-rJ --graft-points"
 
 # Convert numeric speed variable to the format wodim recognizes.
@@ -232,7 +232,7 @@ range_begin=$req_range_begin
 dir_list=
 for i in `seq $req_range_begin $req_range_end`; do
 	arc=`archive_name $i`
-	dir_list="$dir_list $arc=$archive_dir/$db/$arc"
+	dir_list="$dir_list $arc=$archive_dir/$db/output/$arc"
 	iso_size=`get_iso_size $dir_list`
 	if [ $iso_size -lt $media_size ]; then
 		range_end=$i
@@ -267,19 +267,19 @@ md5s=`mktemp`
 dir_list=
 for i in `seq $range_begin $range_end`; do
 	arc=`archive_name $i`
-	dir_list="$dir_list $arc=$archive_dir/$db/$arc"
-	#date +%N > $archive_dir/$db/$arc/rand
-	find $archive_dir/$db/$arc -type f -printf "$arc/%P\n" >> $files
+	dir_list="$dir_list $arc=$archive_dir/$db/output/$arc"
+	#date +%N > $archive_dir/$db/output/$arc/rand
+	find $archive_dir/$db/output/$arc -type f -printf "$arc/%P\n" >> $files
 done
 
 # MD5 sums
-(cd $archive_dir/$db ; cat $files | sed -e 's,$,\0,' | xargs -r md5sum > $md5s)
+(cd $archive_dir/$db/output ; cat $files | sed -e 's,$,\0,' | xargs -r md5sum > $md5s)
 rm -f $files
 
 # just a test loop injecting a changed file to test the MD5 check
 for i in `seq $range_begin $range_end`; do
 	arc=`archive_name $i`
-	#date +%N > $archive_dir/$db/$arc/rand
+	#date +%N > $archive_dir/$db/output/$arc/rand
 done
 
 # final ISO size, we need to pass it to wodim/cdrecord as we create the actual
@@ -304,6 +304,7 @@ for dev in $devices; do
 	fi
 
 	mkdir -p /mnt/wodim
+	eject $dev
 	mount $dev /mnt/wodim
 
 	# it is a bit of a hickup to catch the error code of md5sum in this case
