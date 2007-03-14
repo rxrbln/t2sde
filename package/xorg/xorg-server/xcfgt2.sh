@@ -36,7 +36,7 @@ modules=
 
 case `echo "$card" | tr A-Z a-z` in
 	*radeon*)       xdrv=radeon ;;
-	*geforce*)	xdrv=nv ;;
+	*geforce*)	xdrv=nv ; depth=24 ;;
 	*cirrus*)	xdrv=cirrus ;;
 	*savage*)	xdrv=savage ;;
 	*unichrome*|*castlerock*)	xdrv=via ;;
@@ -74,7 +74,7 @@ case `echo "$card" | tr A-Z a-z` in
 	creator\ 3d|elite\ 3d)	xdrv=sunffb ; depth=24 ;;
 
 	# must be last so *nv* does not match one of the above
-	*nv*)		xdrv=nv ;;
+	*nv*)		xdrv=nv ; depth=24 ;;
 esac
 
 # use the nvidia binary only driver - if available ...
