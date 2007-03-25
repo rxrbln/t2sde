@@ -131,9 +131,13 @@ if [[ `uname -m` = i*86 ]]; then
 fi
 
 if [ -z "$modes" ]; then
-	# TODO: multiple modes
-	modes="`sed '/^U:/d' /sys/class/graphics/fb0/modes 2>/dev/null |
-	        sed -n 's/.:\([[:digit:]]\+x[[:digit:]]\+\)[[:alpha:]]*-[[:digit:]]\+/"\1"/p ; q'`"
+	modes=
+	for mode in `sed '/^U:/d' /sys/class/graphics/fb0/modes 2>/dev/null |
+	             sed -n 's/.:\([[:digit:]]\+x[[:digit:]]\+\)[[:alpha:]]*-[[:digit:]]\+/\1/p' |
+	             sort -r -n -u`; do
+		modes="$modes \"$mode\""
+	done
+	modes="${modes# *}"
 fi
 
 if [ -z "$modes" ]; then
