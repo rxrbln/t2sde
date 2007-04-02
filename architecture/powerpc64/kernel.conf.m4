@@ -24,6 +24,7 @@ CONFIG_6xx=y
 # CONFIG_82xx is not set
 # CONFIG_8xx is not set
 CONFIG_PMAC=y
+CONFIG_PMAC64=y
 # CONFIG_PREP is not set
 # CONFIG_CHRP is not set
 # CONFIG_ALL_PPC is not set
