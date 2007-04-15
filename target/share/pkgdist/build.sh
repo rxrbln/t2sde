@@ -12,7 +12,7 @@
 # GNU General Public License can be found in the file COPYING.
 # --- T2-COPYRIGHT-NOTE-END ---
 #
-#Description: Distribute packages only
+#Description: Distribute binary packages to (remote) location
 
 if [ "$SDECFG_TARGET_PKGDIST_LOCATION" ]; then
 	echo_header "Package distribution"
