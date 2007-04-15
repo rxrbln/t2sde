@@ -12,4 +12,4 @@
 # GNU General Public License can be found in the file COPYING.
 # --- T2-COPYRIGHT-NOTE-END ---
 
-#Description: Just package and create isofs.txt
+#Description: Just create binary packages and isofs.txt
