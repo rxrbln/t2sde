@@ -13,7 +13,7 @@
 # GNU General Public License can be found in the file COPYING.
 # --- T2-COPYRIGHT-NOTE-END ---
 
-basedirs="Documentation|architecture|misc|package|scripts|target";
+basedirs="doc|architecture|misc|package|scripts|target";
 error=0
 
 for patch in "$@"
