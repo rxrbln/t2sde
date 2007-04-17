@@ -40,8 +40,9 @@ dnl Network FS settings
 dnl Version 3 has several advantages ...
 dnl
 CONFIG_NFS_FS=m
-CONFIG_NFS_V3=m
-CONFIG_NFSD_V3=m
+CONFIG_NFS_V3=y
+CONFIG_NFS_V4=y
+CONFIG_NFSD_V3=y
 
 dnl ROMFS, RAMFS, CRAMFS and TMPFS (for initrd, install and /tmp)
 dnl
