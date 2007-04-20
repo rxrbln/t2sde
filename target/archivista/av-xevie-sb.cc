@@ -108,7 +108,7 @@ int main (int argc, char **argv)
     
     XNextEvent (dpy, &event);
     xcme = (XClientMessageEvent *)&event;
-    /* for readOnly users, send events back to Xserver immediately */
+    /* for read-only users, send events back to Xserver immediately */
     switch (event.type)
       {
       case KeyPress:
@@ -156,7 +156,7 @@ int main (int argc, char **argv)
 		if (script) {
                   const char* c_args[10];
                   const char** ca = c_args; *ca++ = script;
-                  *ca++ = "-2"; // comatible with AV220 button encoding
+                  *ca++ = "-2"; // compatible with AV220 button encoding
                   *ca++ = str.c_str();
                   *ca = NULL;
                   pid_t pid = fork ();
