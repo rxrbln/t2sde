@@ -122,7 +122,7 @@ dnl USB drivers
 dnl
 CONFIG_USB=m
 CONFIG_USB_DEVICEFS=y
-CONFIG_USB_DYNAMIC_MINORS=y
+CONFIG_USB_SUSPEND=y
 CONFIG_USB_EHCI_HCD=m
 CONFIG_USB_EHCI_ROOT_HUB_TT=y
 CONFIG_USB_UHCI=m
@@ -131,8 +131,8 @@ CONFIG_USB_OHCI=m
 CONFIG_USB_HID=m
 CONFIG_USB_HIDINPUT=m
 CONFIG_USB_HIDDEV=m
-dnl allows manual vendor/product ID override
 CONFIG_USB_SERIAL=m
+dnl allows manual vendor/product ID override
 CONFIG_USB_SERIAL_GENERIC=y
 
 dnl USB - some others should be modular ...
@@ -215,3 +215,8 @@ dnl
 CONFIG_NLS=y
 CONFIG_NLS_CODEPAGE_437=y
 CONFIG_NLS_ISO8859_1=y
+
+dnl Some commonly useful  debugging
+dnl
+CONFIG_DEBUG_KERNEL=y
+CONFIG_TIMER_STATS=y
