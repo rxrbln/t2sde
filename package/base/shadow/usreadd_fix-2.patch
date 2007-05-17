@@ -1,0 +1,204 @@
+Submitted By: Matt Burgess (matthew at linuxfromscratch dot org)
+Date: 2007-03-18
+Initial Package Version: 4.0.18.1
+Origin: useradd and usermod '-g' handling from
+        http://bugs.debian.org/cgi-bin/bugreport.cgi?bug=381394.  Removal of
+        GROUP handling Matt Burgess
+Upstream Status: useradd and usermod '-g' handling submitted
+                 Removal of GROUP handling awaiting test feedback
+Description: Fixes an issue whereby the '-g' switch to useradd and usermod don't
+             accept group names.  Also removes all handling of the GROUP default
+             read from /etc/default/useradd as it's no longer used.
+
+diff -Naur shadow-4.0.18.1.orig/etc/useradd shadow-4.0.18.1/etc/useradd
+--- shadow-4.0.18.1.orig/etc/useradd	2003-05-07 14:04:53.000000000 +0000
++++ shadow-4.0.18.1/etc/useradd	2007-03-15 20:41:43.000000000 +0000
+@@ -1,5 +1,4 @@
+ # useradd defaults file
+-GROUP=1000
+ HOME=/home/users
+ INACTIVE=-1
+ EXPIRE=
+diff -Naur shadow-4.0.18.1.orig/man/useradd.8 shadow-4.0.18.1/man/useradd.8
+--- shadow-4.0.18.1.orig/man/useradd.8	2006-07-30 20:54:26.000000000 +0000
++++ shadow-4.0.18.1/man/useradd.8	2007-03-15 20:43:40.000000000 +0000
+@@ -146,9 +146,6 @@
+ \fB\-f\fR, \fB\-\-inactive\fR \fIINACTIVE\fR
+ The number of days after a password has expired before the account will be disabled.
+ .TP 3n
+-\fB\-g\fR, \fB\-\-gid\fR \fIGROUP\fR
+-The group name or ID for a new user's initial group. The named group must exist, and a numerical group ID must have an existing entry.
+-.TP 3n
+ \fB\-s\fR, \fB\-\-shell\fR \fISHELL\fR
+ The name of the new user's login shell. The named program will be used for all future new user accounts.
+ .PP
+diff -Naur shadow-4.0.18.1.orig/man/useradd.8.xml shadow-4.0.18.1/man/useradd.8.xml
+--- shadow-4.0.18.1.orig/man/useradd.8.xml	2006-07-24 05:48:36.000000000 +0000
++++ shadow-4.0.18.1/man/useradd.8.xml	2007-03-15 20:41:43.000000000 +0000
+@@ -300,19 +300,6 @@
+ 	</varlistentry>
+ 	<varlistentry>
+ 	  <term>
+-	    <option>-g</option>, <option>--gid</option>
+-	    <replaceable>GROUP</replaceable>
+-	  </term>
+-	  <listitem>
+-	    <para>
+-	      The group name or ID for a new user's initial group. The named
+-	      group must exist, and a numerical group ID must have an
+-	      existing entry.
+-	    </para>
+-	  </listitem>
+-	</varlistentry>
+-	<varlistentry>
+-	  <term>
+ 	    <option>-s</option>, <option>--shell</option>
+ 	    <replaceable>SHELL</replaceable>
+ 	  </term>
+diff -Naur shadow-4.0.18.1.orig/src/useradd.c shadow-4.0.18.1/src/useradd.c
+--- shadow-4.0.18.1.orig/src/useradd.c	2006-07-28 17:42:48.000000000 +0000
++++ shadow-4.0.18.1/src/useradd.c	2007-03-15 20:41:43.000000000 +0000
+@@ -148,7 +148,6 @@
+ #define E_HOMEDIR	12	/* can't create home directory */
+ #define	E_MAIL_SPOOL	13	/* can't create mail spool */
+ 
+-#define DGROUP			"GROUP="
+ #define HOME			"HOME="
+ #define SHELL			"SHELL="
+ #define INACT			"INACTIVE="
+@@ -203,13 +202,17 @@
+ 	long gid;
+ 	char *errptr;
+ 
++	struct group* grp = getgrnam (grname);
++	if (grp)
++		return grp;
++
+ 	gid = strtol (grname, &errptr, 10);
+ 	if (*errptr || errno == ERANGE || gid < 0) {
+ 		fprintf (stderr,
+ 			 _("%s: invalid numeric argument '%s'\n"), Prog, grname);
+ 		exit (E_BAD_ARG);
+ 	}
+-	return getgrnam (grname);
++	return getgrgid (gid);
+ }
+ 
+ static long get_number (const char *numstr)
+@@ -278,33 +281,9 @@
+ 		cp++;
+ 
+ 		/*
+-		 * Primary GROUP identifier
+-		 */
+-		if (MATCH (buf, DGROUP)) {
+-			unsigned int val = (unsigned int) strtoul (cp, &ep, 10);
+-
+-			if (*cp != '\0' && *ep == '\0') {	/* valid number */
+-				def_group = val;
+-				if ((grp = getgrgid (def_group))) {
+-					def_gname = xstrdup (grp->gr_name);
+-				} else {
+-					fprintf (stderr,
+-						 _("%s: unknown GID %s\n"),
+-						 Prog, cp);
+-				}
+-			} else if ((grp = getgrnam (cp))) {
+-				def_group = grp->gr_gid;
+-				def_gname = xstrdup (cp);
+-			} else {
+-				fprintf (stderr,
+-					 _("%s: unknown group %s\n"), Prog, cp);
+-			}
+-		}
+-
+-		/*
+ 		 * Default HOME filesystem
+ 		 */
+-		else if (MATCH (buf, HOME)) {
++		if (MATCH (buf, HOME)) {
+ 			def_home = xstrdup (cp);
+ 		}
+ 
+@@ -425,10 +404,7 @@
+ 		if ((cp = strrchr (buf, '\n')))
+ 			*cp = '\0';
+ 
+-		if (!out_group && MATCH (buf, DGROUP)) {
+-			fprintf (ofp, DGROUP "%u\n", (unsigned int) def_group);
+-			out_group++;
+-		} else if (!out_home && MATCH (buf, HOME)) {
++		if (!out_home && MATCH (buf, HOME)) {
+ 			fprintf (ofp, HOME "%s\n", def_home);
+ 			out_home++;
+ 		} else if (!out_inactive && MATCH (buf, INACT)) {
+@@ -459,8 +435,6 @@
+ 	 * causes new values to be added to a file which did not previously
+ 	 * have an entry for that value.
+ 	 */
+-	if (!out_group)
+-		fprintf (ofp, DGROUP "%u\n", (unsigned int) def_group);
+ 	if (!out_home)
+ 		fprintf (ofp, HOME "%s\n", def_home);
+ 	if (!out_inactive)
+@@ -1118,12 +1092,7 @@
+ 						 Prog, optarg);
+ 					exit (E_NOTFOUND);
+ 				}
+-				if (Dflg) {
+-					def_group = grp->gr_gid;
+-					def_gname = optarg;
+-				} else {
+-					user_gid = grp->gr_gid;
+-				}
++				user_gid = grp->gr_gid;
+ 				gflg++;
+ 				break;
+ 			case 'G':
+@@ -1210,13 +1179,13 @@
+ 
+ 	/*
+ 	 * Either -D or username is required. Defaults can be set with -D
+-	 * for the -b, -e, -f, -g, -s options only.
++	 * for the -b, -e, -f, -s options only.
+ 	 */
+ 	if (Dflg) {
+ 		if (optind != argc)
+ 			usage ();
+ 
+-		if (uflg || oflg || Gflg || dflg || cflg || mflg)
++		if (uflg || oflg || gflg || Gflg || dflg || cflg || mflg)
+ 			usage ();
+ 	} else {
+ 		if (optind != argc - 1)
+@@ -1711,7 +1680,7 @@
+ 	 * a new user.
+ 	 */
+ 	if (Dflg) {
+-		if (gflg || bflg || fflg || eflg || sflg)
++		if (bflg || fflg || eflg || sflg)
+ 			exit (set_defaults ()? 1 : 0);
+ 
+ 		show_defaults ();
+diff -Naur shadow-4.0.18.1.orig/src/usermod.c shadow-4.0.18.1/src/usermod.c
+--- shadow-4.0.18.1.orig/src/usermod.c	2006-07-28 17:42:48.000000000 +0000
++++ shadow-4.0.18.1/src/usermod.c	2007-03-15 20:41:43.000000000 +0000
+@@ -165,13 +165,17 @@
+ 	long val;
+ 	char *errptr;
+ 
++	struct group* grp = getgrnam (grname);
++	if (grp)
++		return grp;
++
+ 	val = strtol (grname, &errptr, 10);
+ 	if (*errptr || errno == ERANGE || val < 0) {
+ 		fprintf (stderr, _("%s: invalid numeric argument '%s'\n"), Prog,
+ 			 grname);
+ 		exit (E_BAD_ARG);
+ 	}
+-	return getgrnam (grname);
++	return getgrgid (val);
+ }
+ 
+ /*
