@@ -1,2111 +1,1424 @@
-diff -Npruw -x CVS -x vssver.scc -x powerpc -x sync_file_range.c libc/sysdeps/x86_64/bzero.S libc/sysdeps/x86_64/bzero.S
---- libc/sysdeps/x86_64/bzero.S	2002-08-31 12:30:07.000000000 -0500
-+++ libc/sysdeps/x86_64/bzero.S	2006-05-05 15:23:27.884691000 -0500
-@@ -1,3 +1,5 @@
-+#define USE_AS_BZERO
- #define memset __bzero
- #include <sysdeps/x86_64/memset.S>
-+
- weak_alias (__bzero, bzero)
-diff -Npruw -x CVS -x vssver.scc -x powerpc -x sync_file_range.c libc/sysdeps/x86_64/memcmp.S libc/sysdeps/x86_64/memcmp.S
---- libc/sysdeps/x86_64/memcmp.S	1969-12-31 18:00:00.000000000 -0600
-+++ libc/sysdeps/x86_64/memcmp.S	2006-05-18 14:43:07.611277000 -0500
-@@ -0,0 +1,328 @@
-+# (c) 2002 Advanced Micro Devices, Inc.
-+# YOUR USE OF THIS CODE IS SUBJECT TO THE TERMS
-+# AND CONDITIONS OF THE GNU LESSER GENERAL PUBLIC
-+# LICENSE FOUND IN THE "README" FILE THAT IS
-+# INCLUDED WITH THIS FILE
-+
-+#include "sysdep.h"
-+#if defined PIC && defined SHARED
-+# include <rtld-global-offsets.h>
-+#endif
-+
-+#if defined PIC && defined SHARED
-+	.globl _rtld_local_ro
-+        .hidden _rtld_local_ro
-+        .set    _rtld_local_ro,_rtld_global_ro
-+#endif
-+
-+        .text
-+
-+ENTRY   (memcmp)                        # (const void *, const void*, size_t)
-+
-+L(try1):				# up to 8B
-+        cmp     $8, %rdx
-+        jae     L(1after)
-+
-+L(1):                                	# 1-byte
-+        test    %rdx, %rdx
-+        mov     $0, %eax
-+        jz      L(exit)
-+
-+L(1loop):
-+        movzbl  (%rdi), %eax
-+        movzbl  (%rsi), %ecx
-+        sub     %ecx, %eax
-+        jnz     L(exit)
-+
-+        dec     %rdx
-+
-+        lea     1 (%rdi), %rdi
-+        lea     1 (%rsi), %rsi
-+
-+        jnz     L(1loop)
-+
-+L(exit):
-+        rep
-+        ret
-+
-+        .p2align 4
-+
-+L(1after):
-+
-+L(8try):			# up to 32B
-+        cmp     $32, %rdx
-+        jae     L(8after)
-+
-+L(8):                        	# 8-byte
-+        mov     %edx, %ecx
-+        shr     $3, %ecx
-+        jz      L(1)
-+
-+        .p2align 4
-+
-+L(8loop):
-+        mov     (%rsi), %rax
-+        cmp     (%rdi), %rax
-+        jne     L(1)
-+
-+        sub     $8, %rdx
-+        dec     %ecx
-+
-+        lea     8 (%rsi), %rsi
-+        lea     8 (%rdi), %rdi
-+
-+        jnz     L(8loop)
-+
-+L(8skip):
-+        and     $7, %edx
-+        jnz     L(1)
-+
-+        xor     %eax, %eax
-+        ret
-+
-+        .p2align 4
-+
-+L(8after):
-+
-+L(32try):			# up to 2KB
-+        cmp     $2048, %rdx
-+        ja      L(32after)
-+
-+L(32):                          # 32-byte
-+        mov     %edx, %ecx
-+        shr     $5, %ecx
-+        jz      L(8)
-+
-+        .p2align 4
-+
-+L(32loop):
-+        mov        (%rsi), %rax
-+        mov      8 (%rsi),  %r8
-+        mov     16 (%rsi),  %r9
-+        mov     24 (%rsi), %r10
-+        sub        (%rdi), %rax
-+        sub      8 (%rdi),  %r8
-+        sub     16 (%rdi),  %r9
-+        sub     24 (%rdi), %r10
-+
-+        or      %rax,  %r8
-+        or       %r9, %r10
-+        or       %r8, %r10
-+        jnz     L(8)
-+
-+        sub     $32, %rdx
-+        dec     %ecx
-+
-+        lea     32 (%rsi), %rsi
-+        lea     32 (%rdi), %rdi
-+
-+        jnz     L(32loop)
-+
-+L(32skip):
-+        and     $31, %edx
-+        jnz     L(8)
-+
-+        xor     %eax, %eax
-+        ret
-+
-+        .p2align 4
-+
-+L(32after):
-+
-+L(srctry):
-+        mov     %esi, %r8d      # align by source
-+
-+        and     $7, %r8d
-+        jz      L(srcafter)     # not unaligned
-+
-+L(src):                         # align
-+        lea     -8 (%r8, %rdx), %rdx
-+        sub     $8, %r8d
-+
-+#       .p2align 4
-+
-+L(srcloop):
-+        movzbl  (%rdi), %eax
-+        movzbl  (%rsi), %ecx
-+        sub     %ecx, %eax
-+        jnz     L(exit)
-+
-+        inc     %r8d
-+
-+        lea     1 (%rdi), %rdi
-+        lea     1 (%rsi), %rsi
-+
-+        jnz     L(srcloop)
-+
-+        .p2align 4
-+
-+L(srcafter):
-+
-+L(64try):			# up to 1/2 L1
-+#ifdef PIC
-+# ifdef SHARED
-+        mov     _rtld_local_ro@GOTPCREL (%rip), %rcx
-+	mov	RTLD_GLOBAL_DL_CACHE1SIZEHALF (%rcx), %rcx
-+# else
-+	mov     _dl_cache1sizehalf@GOTPCREL (%rip), %rcx
-+	mov     (%rcx), %rcx
-+# endif
-+#else
-+        mov     _dl_cache1sizehalf, %rcx
-+#endif
-+        cmp	%rdx, %rcx
-+        cmova   %rdx, %rcx
-+
-+L(64):                          # 64-byte
-+        shr     $6, %rcx
-+        jz      L(32)
-+
-+        .p2align 4
-+
-+L(64loop):
-+        mov        (%rsi), %rax
-+        mov      8 (%rsi),  %r8
-+        sub        (%rdi), %rax
-+        sub      8 (%rdi),  %r8
-+        or      %r8,  %rax
-+
-+        mov     16 (%rsi),  %r9
-+        mov     24 (%rsi), %r10
-+        sub     16 (%rdi),  %r9
-+        sub     24 (%rdi), %r10
-+        or      %r10, %r9
-+
-+        or      %r9,  %rax
-+        jnz     L(32)
-+
-+        mov     32 (%rsi), %rax
-+        mov     40 (%rsi),  %r8
-+        sub     32 (%rdi), %rax
-+        sub     40 (%rdi),  %r8
-+        or      %r8,  %rax
-+
-+        mov     48 (%rsi),  %r9
-+        mov     56 (%rsi), %r10
-+        sub     48 (%rdi),  %r9
-+        sub     56 (%rdi), %r10
-+        or      %r10, %r9
-+
-+        or      %r9,  %rax
-+        jnz    	L(32)
-+
-+        lea     64 (%rsi), %rsi
-+        lea     64 (%rdi), %rdi
-+
-+        sub     $64, %rdx
-+        dec     %rcx
-+        jnz     L(64loop)
-+
-+#       .p2align 4
-+
-+L(64skip):
-+        cmp     $2048, %rdx
-+        ja     	L(64after)
-+
-+        test    %edx, %edx
-+        jnz     L(32)
-+
-+        xor     %eax, %eax
-+        ret
-+
-+        .p2align 4
-+
-+L(64after):
-+
-+L(128try):
-+
-+L(128):                              # 128-byte
-+        mov     %rdx, %rcx
-+        shr     $7, %rcx
-+        jz      L(128skip)
-+
-+        .p2align 4
-+
-+L(128loop):
-+        prefetcht0 512 (%rsi)
-+        prefetcht0 512 (%rdi)
-+
-+        mov        (%rsi), %rax
-+        mov      8 (%rsi), %r8
-+        sub        (%rdi), %rax
-+        sub      8 (%rdi), %r8
-+        mov     16 (%rsi), %r9
-+        mov     24 (%rsi), %r10
-+        sub     16 (%rdi), %r9
-+        sub     24 (%rdi), %r10
-+
-+        or       %r8, %rax
-+        or       %r9, %r10
-+        or      %r10, %rax
-+
-+        mov     32 (%rsi), %r8
-+        mov     40 (%rsi), %r9
-+        sub     32 (%rdi), %r8
-+        sub     40 (%rdi), %r9
-+        mov     48 (%rsi), %r10
-+        mov     56 (%rsi), %r11
-+        sub     48 (%rdi), %r10
-+        sub     56 (%rdi), %r11
-+
-+        or       %r9, %r8
-+        or      %r11, %r10
-+        or      %r10, %r8
-+
-+        or      %r8, %rax
-+        jnz     L(32)
-+
-+        prefetcht0 576 (%rsi)
-+        prefetcht0 576 (%rdi)
-+
-+        mov      64 (%rsi), %rax
-+        mov      72 (%rsi), %r8
-+        sub      64 (%rdi), %rax
-+        sub      72 (%rdi), %r8
-+        mov      80 (%rsi), %r9
-+        mov      88 (%rsi), %r10
-+        sub      80 (%rdi), %r9
-+        sub      88 (%rdi), %r10
-+
-+        or       %r8, %rax
-+        or       %r9, %r10
-+        or      %r10, %rax
-+
-+        mov      96 (%rsi), %r8
-+        mov     104 (%rsi), %r9
-+        sub      96 (%rdi), %r8
-+        sub     104 (%rdi), %r9
-+        mov     112 (%rsi), %r10
-+        mov     120 (%rsi), %r11
-+        sub     112 (%rdi), %r10
-+        sub     120 (%rdi), %r11
-+
-+        or       %r9, %r8
-+        or      %r11, %r10
-+        or      %r10, %r8
-+
-+        or      %r8, %rax
-+        jnz     L(32)
-+
-+        sub     $128, %rdx
-+        dec     %rcx
-+
-+        lea     128 (%rsi), %rsi
-+        lea     128 (%rdi), %rdi
-+
-+        jnz     L(128loop)
-+
-+L(128skip):
-+        and     $127, %edx
-+        jnz     L(32)
-+
-+        xor     %eax, %eax
-+        ret
-+
-+END     (memcmp)
-+
-+#undef bcmp
-+weak_alias (memcmp, bcmp)
-diff -Npruw -x CVS -x vssver.scc -x powerpc -x sync_file_range.c libc/sysdeps/x86_64/memset.S libc/sysdeps/x86_64/memset.S
---- libc/sysdeps/x86_64/memset.S	2005-03-31 04:00:13.000000000 -0600
-+++ libc/sysdeps/x86_64/memset.S	2006-05-15 11:38:13.737756000 -0500
-@@ -1,145 +1,322 @@
--/* memset/bzero -- set memory area to CH/0
--   Optimized version for x86-64.
--   Copyright (C) 2002, 2003, 2004, 2005 Free Software Foundation, Inc.
--   This file is part of the GNU C Library.
--   Contributed by Andreas Jaeger <aj@suse.de>.
+# --- T2-COPYRIGHT-NOTE-BEGIN ---
+# This copyright note is auto-generated by ./scripts/Create-CopyPatch.
+# 
+# T2 SDE: package/.../glibc/x86_64-string.patch
+# Copyright (C) 2007 The T2 SDE Project
+# 
+# More information can be found in the files COPYING and README.
+# 
+# This patch file is dual-licensed. It is available under the license the
+# patched project is licensed under, as long as it is an OpenSource license
+# as defined at http://www.opensource.org/ (e.g. BSD, X11) or under the terms
+# of the GNU General Public License as published by the Free Software
+# Foundation; either version 2 of the License, or (at your option) any later
+# version.
+# --- T2-COPYRIGHT-NOTE-END ---
+
+--- ./sysdeps/x86_64/cacheinfo.c	1969-12-31 18:00:00.000000000 -0600
++++ ./sysdeps/x86_64/cacheinfo.c	2007-05-02 15:52:26.391358000 -0500
+@@ -0,0 +1,407 @@
++/*
++   x86_64 cache info.
++
++   Copyright (C) 2003, 2004, 2006, 2007 Free Software Foundation, Inc.
++   This file is part of the GNU C Library.
++
++   The GNU C Library is free software; you can redistribute it and/or
++   modify it under the terms of the GNU Lesser General Public
++   License as published by the Free Software Foundation; either
++   version 2.1 of the License, or (at your option) any later version.
++
++   The GNU C Library is distributed in the hope that it will be useful,
++   but WITHOUT ANY WARRANTY; without even the implied warranty of
++   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
++   Lesser General Public License for more details.
++
++   You should have received a copy of the GNU Lesser General Public
++   License along with the GNU C Library; if not, write to the Free
++   Software Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA
++   02111-1307 USA.
++*/
++
++#include <assert.h>
++#include <stdbool.h>
++#include <stdlib.h>
++#include <unistd.h>
++
++static const struct intel_02_cache_info
++{
++  unsigned int idx;
++  int name;
++  long int size;
++  long int assoc;
++  long int linesize;
++} intel_02_known [] =
++  {
++    { 0x06, _SC_LEVEL1_ICACHE_SIZE, 8192, 4, 32 },
++    { 0x08, _SC_LEVEL1_ICACHE_SIZE, 16384, 4, 32 },
++    { 0x0a, _SC_LEVEL1_DCACHE_SIZE, 8192, 2, 32 },
++    { 0x0c, _SC_LEVEL1_DCACHE_SIZE, 16384, 4, 32 },
++    { 0x22, _SC_LEVEL3_CACHE_SIZE, 524288, 4, 64 },
++    { 0x23, _SC_LEVEL3_CACHE_SIZE, 1048576, 8, 64 },
++    { 0x25, _SC_LEVEL3_CACHE_SIZE, 2097152, 8, 64 },
++    { 0x29, _SC_LEVEL3_CACHE_SIZE, 4194304, 8, 64 },
++    { 0x2c, _SC_LEVEL1_DCACHE_SIZE, 32768, 8, 64 },
++    { 0x30, _SC_LEVEL1_ICACHE_SIZE, 32768, 8, 64 },
++    { 0x39, _SC_LEVEL2_CACHE_SIZE, 131072, 4, 64 },
++    { 0x3a, _SC_LEVEL2_CACHE_SIZE, 196608, 6, 64 },
++    { 0x3b, _SC_LEVEL2_CACHE_SIZE, 131072, 2, 64 },
++    { 0x3c, _SC_LEVEL2_CACHE_SIZE, 262144, 4, 64 },
++    { 0x3d, _SC_LEVEL2_CACHE_SIZE, 393216, 6, 64 },
++    { 0x3e, _SC_LEVEL2_CACHE_SIZE, 524288, 4, 64 },
++    { 0x41, _SC_LEVEL2_CACHE_SIZE, 131072, 4, 32 },
++    { 0x42, _SC_LEVEL2_CACHE_SIZE, 262144, 4, 32 },
++    { 0x43, _SC_LEVEL2_CACHE_SIZE, 524288, 4, 32 },
++    { 0x44, _SC_LEVEL2_CACHE_SIZE, 1048576, 4, 32 },
++    { 0x45, _SC_LEVEL2_CACHE_SIZE, 2097152, 4, 32 },
++    { 0x46, _SC_LEVEL3_CACHE_SIZE, 4194304, 4, 64 },
++    { 0x47, _SC_LEVEL3_CACHE_SIZE, 8388608, 8, 64 },
++    { 0x49, _SC_LEVEL2_CACHE_SIZE, 4194304, 16, 64 },
++    { 0x4a, _SC_LEVEL3_CACHE_SIZE, 6291456, 12, 64 },
++    { 0x4b, _SC_LEVEL3_CACHE_SIZE, 8388608, 16, 64 },
++    { 0x4c, _SC_LEVEL3_CACHE_SIZE, 12582912, 12, 64 },
++    { 0x4d, _SC_LEVEL3_CACHE_SIZE, 16777216, 16, 64 },
++    { 0x60, _SC_LEVEL1_DCACHE_SIZE, 16384, 8, 64 },
++    { 0x66, _SC_LEVEL1_DCACHE_SIZE, 8192, 4, 64 },
++    { 0x67, _SC_LEVEL1_DCACHE_SIZE, 16384, 4, 64 },
++    { 0x68, _SC_LEVEL1_DCACHE_SIZE, 32768, 4, 64 },
++    { 0x78, _SC_LEVEL2_CACHE_SIZE, 1048576, 8, 64 },
++    { 0x79, _SC_LEVEL2_CACHE_SIZE, 131072, 8, 64 },
++    { 0x7a, _SC_LEVEL2_CACHE_SIZE, 262144, 8, 64 },
++    { 0x7b, _SC_LEVEL2_CACHE_SIZE, 524288, 8, 64 },
++    { 0x7c, _SC_LEVEL2_CACHE_SIZE, 1048576, 8, 64 },
++    { 0x7d, _SC_LEVEL2_CACHE_SIZE, 2097152, 8, 64 },
++    { 0x7f, _SC_LEVEL2_CACHE_SIZE, 524288, 2, 64 },
++    { 0x82, _SC_LEVEL2_CACHE_SIZE, 262144, 8, 32 },
++    { 0x83, _SC_LEVEL2_CACHE_SIZE, 524288, 8, 32 },
++    { 0x84, _SC_LEVEL2_CACHE_SIZE, 1048576, 8, 32 },
++    { 0x85, _SC_LEVEL2_CACHE_SIZE, 2097152, 8, 32 },
++    { 0x86, _SC_LEVEL2_CACHE_SIZE, 524288, 4, 64 },
++    { 0x87, _SC_LEVEL2_CACHE_SIZE, 1048576, 8, 64 },
++  };
++
++#define nintel_02_known (sizeof (intel_02_known) / sizeof (intel_02_known [0]))
++
++static int
++intel_02_known_compare (const void *p1, const void *p2)
++{
++  const struct intel_02_cache_info *i1;
++  const struct intel_02_cache_info *i2;
++
++  i1 = (const struct intel_02_cache_info *) p1;
++  i2 = (const struct intel_02_cache_info *) p2;
++
++  if (i1->idx == i2->idx)
++    return 0;
++
++  return i1->idx < i2->idx ? -1 : 1;
++}
++
++
++static long int
++__attribute__ ((noinline))
++intel_check_word (int name, unsigned int value, bool *has_level_2,
++		  bool *no_level_2_or_3)
++{
++  if ((value & 0x80000000) != 0)
++    /* The register value is reserved.  */
++    return 0;
++
++  /* Fold the name.  The _SC_ constants are always in the order SIZE,
++     ASSOC, LINESIZE.  */
++  int folded_name = (_SC_LEVEL1_ICACHE_SIZE
++		     + ((name - _SC_LEVEL1_ICACHE_SIZE) / 3) * 3);
++
++  while (value != 0)
++    {
++      unsigned int byte = value & 0xff;
++
++      if (byte == 0x40)
++	{
++	  *no_level_2_or_3 = true;
++
++	  if (folded_name == _SC_LEVEL3_CACHE_SIZE)
++	    /* No need to look further.  */
++	    break;
++	}
++      else
++	{
++	  if (byte == 0x49 && folded_name == _SC_LEVEL3_CACHE_SIZE)
++	    {
++	      /* Intel reused this value.  For family 15, model 6 it
++		 specifies the 3rd level cache.  Otherwise the 2nd
++		 level cache.  */
++	      unsigned int eax;
++	      unsigned int ebx;
++	      unsigned int ecx;
++	      unsigned int edx;
++	      asm volatile ("cpuid"
++			    : "=a" (eax), "=b" (ebx), "=c" (ecx), "=d" (edx)
++			    : "0" (1));
++
++	      unsigned int family = ((eax >> 20) & 0xff) + ((eax >> 8) & 0xf);
++	      unsigned int model = ((((eax >>16) & 0xf) << 4)
++				    + ((eax >> 4) & 0xf));
++	      if (family == 15 && model == 6)
++		{
++		  /* The level 3 cache is encoded for this model like
++		     the level 2 cache is for other models.  Pretend
++		     the caller asked for the level 2 cache.  */
++		  name = (_SC_LEVEL2_CACHE_SIZE
++			  + (name - _SC_LEVEL3_CACHE_SIZE));
++		  folded_name = _SC_LEVEL3_CACHE_SIZE;
++		}
++	    }
++
++	  struct intel_02_cache_info *found;
++	  struct intel_02_cache_info search;
++
++	  search.idx = byte;
++	  found = bsearch (&search, intel_02_known, nintel_02_known,
++			   sizeof (intel_02_known[0]), intel_02_known_compare);
++	  if (found != NULL)
++	    {
++	      if (found->name == folded_name)
++		{
++		  unsigned int offset = name - folded_name;
++
++		  if (offset == 0)
++		    /* Cache size.  */
++		    return found->size;
++		  if (offset == 1)
++		    return found->assoc;
++
++		  assert (offset == 2);
++		  return found->linesize;
++		}
++
++	      if (found->name == _SC_LEVEL2_CACHE_SIZE)
++		*has_level_2 = true;
++	    }
++	}
++
++      /* Next byte for the next round.  */
++      value >>= 8;
++    }
++
++  /* Nothing found.  */
++  return 0;
++}
++
++static long int __attribute__ ((noinline))
++handle_intel (int name, unsigned int maxidx)
++{
++  assert (maxidx >= 2);
++
++  /* OK, we can use the CPUID instruction to get all info about the
++     caches.  */
++  unsigned int cnt = 0;
++  unsigned int max = 1;
++  long int result = 0;
++  bool no_level_2_or_3 = false;
++  bool has_level_2 = false;
++  while (cnt++ < max)
++    {
++      unsigned int eax;
++      unsigned int ebx;
++      unsigned int ecx;
++      unsigned int edx;
++      asm volatile ("cpuid"
++		    : "=a" (eax), "=b" (ebx), "=c" (ecx), "=d" (edx)
++		    : "0" (2));
++
++      /* The low byte of EAX in the first round contain the number of
++	 rounds we have to make.  At least one, the one we are already
++	 doing.  */
++      if (cnt == 1)
++	{
++	  max = eax & 0xff;
++	  eax &= 0xffffff00;
++	}
++
++      /* Process the individual registers' value.  */
++      result = intel_check_word (name, eax, &has_level_2, &no_level_2_or_3);
++      if (result != 0)
++	return result;
++
++      result = intel_check_word (name, ebx, &has_level_2, &no_level_2_or_3);
++      if (result != 0)
++	return result;
++
++      result = intel_check_word (name, ecx, &has_level_2, &no_level_2_or_3);
++      if (result != 0)
++	return result;
++
++      result = intel_check_word (name, edx, &has_level_2, &no_level_2_or_3);
++      if (result != 0)
++	return result;
++    }
++
++  if (name >= _SC_LEVEL2_CACHE_SIZE && name <= _SC_LEVEL3_CACHE_LINESIZE
++      && no_level_2_or_3)
++    return -1;
++
++  return 0;
++}
++
++static long int __attribute__ ((noinline))
++handle_amd (int name)
++{
++  unsigned int eax;
++  unsigned int ebx;
++  unsigned int ecx;
++  unsigned int edx;
++  asm volatile ("cpuid"
++		: "=a" (eax), "=b" (ebx), "=c" (ecx), "=d" (edx)
++		: "0" (0x80000000));
++
++  if (name >= _SC_LEVEL3_CACHE_SIZE)
++    return 0;
++
++  unsigned int fn = 0x80000005 + (name >= _SC_LEVEL2_CACHE_SIZE);
++  if (eax < fn)
++    return 0;
++
++  asm volatile ("cpuid"
++		: "=a" (eax), "=b" (ebx), "=c" (ecx), "=d" (edx)
++		: "0" (fn));
++
++  if (name < _SC_LEVEL1_DCACHE_SIZE)
++    {
++      name += _SC_LEVEL1_DCACHE_SIZE - _SC_LEVEL1_ICACHE_SIZE;
++      ecx = edx;
++    }
++
++  switch (name)
++    {
++    case _SC_LEVEL1_DCACHE_SIZE:
++      return (ecx >> 14) & 0x3fc00;
++    case _SC_LEVEL1_DCACHE_ASSOC:
++      ecx >>= 16;
++      if ((ecx & 0xff) == 0xff)
++	/* Fully associative.  */
++	return (ecx << 2) & 0x3fc00;
++      return ecx & 0xff;
++    case _SC_LEVEL1_DCACHE_LINESIZE:
++      return ecx & 0xff;
++    case _SC_LEVEL2_CACHE_SIZE:
++      return (ecx & 0xf000) == 0 ? 0 : (ecx >> 6) & 0x3fffc00;
++    case _SC_LEVEL2_CACHE_ASSOC:
++      ecx >>= 12;
++      switch (ecx & 0xf)
++        {
++        case 0:
++        case 1:
++        case 2:
++        case 4:
++	  return ecx & 0xf;
++	case 6:
++	  return 8;
++	case 8:
++	  return 16;
++	case 0xf:
++	  return (ecx << 6) & 0x3fffc00;
++	default:
++	  return 0;
++        }
++    case _SC_LEVEL2_CACHE_LINESIZE:
++      return (ecx & 0xf000) == 0 ? 0 : ecx & 0xff;
++    default:
++      assert (! "cannot happen");
++    }
++  return -1;
++}
++
++/* Get the value of the system variable NAME.  */
++long int
++attribute_hidden
++__cache_sysconf (int name)
++{
++  /* Find out what brand of processor.  */
++  unsigned int eax;
++  unsigned int ebx;
++  unsigned int ecx;
++  unsigned int edx;
++  asm volatile ("cpuid"
++		: "=a" (eax), "=b" (ebx), "=c" (ecx), "=d" (edx)
++		: "0" (0));
++
++  /* This spells out "GenuineIntel".  */
++  if (ebx == 0x756e6547 && ecx == 0x6c65746e && edx == 0x49656e69)
++    return handle_intel (name, eax);
++
++  /* This spells out "AuthenticAMD".  */
++  if (ebx == 0x68747541 && ecx == 0x444d4163 && edx == 0x69746e65)
++    return handle_amd (name);
++
++  // XXX Fill in more vendors.
++
++  /* CPU not known, we have no information.  */
++  return 0;
++}
++
++/* L1 cache size for use in memory and string routines. */
++long _x86_64_l1_cache_size = 32 * 1024;
++long _x86_64_l1_cache_size_half = 32 * 1024 / 2;
++/* L2 cache size for use in memory and string routines. */
++long _x86_64_l2_cache_size = 1024 * 1024;
++long _x86_64_l2_cache_size_half = 1024 * 1024 / 2;
++/* PREFETCHW support flag for use in memory and string routines. */
++int _x86_64_prefetchw = 0;
++
++static void __attribute__((constructor))
++init_cacheinfo (void)
++{
++  /* Find out what brand of processor.  */
++  unsigned int eax;
++  unsigned int ebx;
++  unsigned int ecx;
++  unsigned int edx;
++  asm volatile ("cpuid"
++		: "=a" (eax), "=b" (ebx), "=c" (ecx), "=d" (edx)
++		: "0" (0));
++
++  long int l1 = -1;
++  long int l2 = -1;
++
++  /* This spells out "GenuineIntel".  */
++  if (ebx == 0x756e6547 && ecx == 0x6c65746e && edx == 0x49656e69)
++    {
++      l1 = handle_intel (_SC_LEVEL1_DCACHE_SIZE, eax);
++      l2 = handle_intel (_SC_LEVEL2_CACHE_SIZE, eax);
++    }
++
++  /* This spells out "AuthenticAMD".  */
++  else if (ebx == 0x68747541 && ecx == 0x444d4163 && edx == 0x69746e65)
++    {
++      asm volatile ("cpuid"
++		    : "=a" (eax), "=b" (ebx), "=c" (ecx), "=d" (edx)
++		    : "0" (0x80000000));
++
++      if (eax >= 0x80000001)
++	{
++	  asm volatile ("cpuid"
++			: "=a" (eax), "=b" (ebx), "=c" (ecx), "=d" (edx)
++			: "0" (0x80000001));
++	  /*  PREFETCHW     || 3DNow! */
++	  if ((ecx & 0x100) || (edx & 0x80000000))
++	    _x86_64_prefetchw = -1;
++	}
++
++      l1 = handle_amd (_SC_LEVEL1_DCACHE_SIZE);
++      l2 = handle_amd (_SC_LEVEL2_CACHE_SIZE);
++    }
++
++  if (l1 > 0)
++    {
++      _x86_64_l1_cache_size = l1;
++      _x86_64_l1_cache_size_half = l1 / 2;
++    }
++
++  if (l2 > 0)
++    {
++      _x86_64_l2_cache_size = l2;
++      _x86_64_l2_cache_size_half = l2 / 2;
++    }
++}
+Index: sysdeps/unix/sysv/linux/x86_64/sysconf.c
+===================================================================
+RCS file: /cvs/glibc/libc/sysdeps/unix/sysv/linux/x86_64/sysconf.c,v
+retrieving revision 1.7
+diff -p -u -w -p -u -w -r1.7 sysconf.c
+--- ./sysdeps/unix/sysv/linux/x86_64/sysconf.c	10 Nov 2006 07:31:55 -0000	1.7
++++ ./sysdeps/unix/sysv/linux/x86_64/sysconf.c	4 May 2007 23:22:35 -0000
+@@ -1,5 +1,5 @@
+ /* Get file-specific information about a file.  Linux version.
+-   Copyright (C) 2003, 2004, 2006 Free Software Foundation, Inc.
++   Copyright (C) 2003, 2004, 2006, 2007 Free Software Foundation, Inc.
+    This file is part of the GNU C Library.
+ 
+    The GNU C Library is free software; you can redistribute it and/or
+@@ -24,328 +24,17 @@
+ 
+ 
+ static long int linux_sysconf (int name);
 -
--   The GNU C Library is free software; you can redistribute it and/or
--   modify it under the terms of the GNU Lesser General Public
--   License as published by the Free Software Foundation; either
--   version 2.1 of the License, or (at your option) any later version.
 -
--   The GNU C Library is distributed in the hope that it will be useful,
--   but WITHOUT ANY WARRANTY; without even the implied warranty of
--   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
--   Lesser General Public License for more details.
+-static const struct intel_02_cache_info
+-{
+-  unsigned int idx;
+-  int name;
+-  long int size;
+-  long int assoc;
+-  long int linesize;
+-} intel_02_known[] =
+-  {
+-    { 0x06, _SC_LEVEL1_ICACHE_SIZE, 8192, 4, 32 },
+-    { 0x08, _SC_LEVEL1_ICACHE_SIZE, 16384, 4, 32 },
+-    { 0x0a, _SC_LEVEL1_DCACHE_SIZE, 8192, 2, 32 },
+-    { 0x0c, _SC_LEVEL1_DCACHE_SIZE, 16384, 4, 32 },
+-    { 0x22, _SC_LEVEL3_CACHE_SIZE, 524288, 4, 64 },
+-    { 0x23, _SC_LEVEL3_CACHE_SIZE, 1048576, 8, 64 },
+-    { 0x25, _SC_LEVEL3_CACHE_SIZE, 2097152, 8, 64 },
+-    { 0x29, _SC_LEVEL3_CACHE_SIZE, 4194304, 8, 64 },
+-    { 0x2c, _SC_LEVEL1_DCACHE_SIZE, 32768, 8, 64 },
+-    { 0x30, _SC_LEVEL1_ICACHE_SIZE, 32768, 8, 64 },
+-    { 0x39, _SC_LEVEL2_CACHE_SIZE, 131072, 4, 64 },
+-    { 0x3a, _SC_LEVEL2_CACHE_SIZE, 196608, 6, 64 },
+-    { 0x3b, _SC_LEVEL2_CACHE_SIZE, 131072, 2, 64 },
+-    { 0x3c, _SC_LEVEL2_CACHE_SIZE, 262144, 4, 64 },
+-    { 0x3d, _SC_LEVEL2_CACHE_SIZE, 393216, 6, 64 },
+-    { 0x3e, _SC_LEVEL2_CACHE_SIZE, 524288, 4, 64 },
+-    { 0x41, _SC_LEVEL2_CACHE_SIZE, 131072, 4, 32 },
+-    { 0x42, _SC_LEVEL2_CACHE_SIZE, 262144, 4, 32 },
+-    { 0x43, _SC_LEVEL2_CACHE_SIZE, 524288, 4, 32 },
+-    { 0x44, _SC_LEVEL2_CACHE_SIZE, 1048576, 4, 32 },
+-    { 0x45, _SC_LEVEL2_CACHE_SIZE, 2097152, 4, 32 },
+-    { 0x46, _SC_LEVEL3_CACHE_SIZE, 4194304, 4, 64 },
+-    { 0x47, _SC_LEVEL3_CACHE_SIZE, 8388608, 8, 64 },
+-    { 0x49, _SC_LEVEL2_CACHE_SIZE, 4194304, 16, 64 },
+-    { 0x4a, _SC_LEVEL3_CACHE_SIZE, 6291456, 12, 64 },
+-    { 0x4b, _SC_LEVEL3_CACHE_SIZE, 8388608, 16, 64 },
+-    { 0x4c, _SC_LEVEL3_CACHE_SIZE, 12582912, 12, 64 },
+-    { 0x4d, _SC_LEVEL3_CACHE_SIZE, 16777216, 16, 64 },
+-    { 0x60, _SC_LEVEL1_DCACHE_SIZE, 16384, 8, 64 },
+-    { 0x66, _SC_LEVEL1_DCACHE_SIZE, 8192, 4, 64 },
+-    { 0x67, _SC_LEVEL1_DCACHE_SIZE, 16384, 4, 64 },
+-    { 0x68, _SC_LEVEL1_DCACHE_SIZE, 32768, 4, 64 },
+-    { 0x78, _SC_LEVEL2_CACHE_SIZE, 1048576, 8, 64 },
+-    { 0x79, _SC_LEVEL2_CACHE_SIZE, 131072, 8, 64 },
+-    { 0x7a, _SC_LEVEL2_CACHE_SIZE, 262144, 8, 64 },
+-    { 0x7b, _SC_LEVEL2_CACHE_SIZE, 524288, 8, 64 },
+-    { 0x7c, _SC_LEVEL2_CACHE_SIZE, 1048576, 8, 64 },
+-    { 0x7d, _SC_LEVEL2_CACHE_SIZE, 2097152, 8, 64 },
+-    { 0x7f, _SC_LEVEL2_CACHE_SIZE, 524288, 2, 64 },
+-    { 0x82, _SC_LEVEL2_CACHE_SIZE, 262144, 8, 32 },
+-    { 0x83, _SC_LEVEL2_CACHE_SIZE, 524288, 8, 32 },
+-    { 0x84, _SC_LEVEL2_CACHE_SIZE, 1048576, 8, 32 },
+-    { 0x85, _SC_LEVEL2_CACHE_SIZE, 2097152, 8, 32 },
+-    { 0x86, _SC_LEVEL2_CACHE_SIZE, 524288, 4, 64 },
+-    { 0x87, _SC_LEVEL2_CACHE_SIZE, 1048576, 8, 64 },
+-  };
+-#define nintel_02_known (sizeof (intel_02_known) / sizeof (intel_02_known[0]))
 -
--   You should have received a copy of the GNU Lesser General Public
--   License along with the GNU C Library; if not, write to the Free
--   Software Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA
+-
+-static int
+-intel_02_known_compare (const void *p1, const void *p2)
+-{
+-  const struct intel_02_cache_info *i1;
+-  const struct intel_02_cache_info *i2;
+-
+-  i1 = (const struct intel_02_cache_info *) p1;
+-  i2 = (const struct intel_02_cache_info *) p2;
+-
+-  if (i1->idx == i2->idx)
+-    return 0;
+-
+-  return i1->idx < i2->idx ? -1 : 1;
+-}
+-
+-
+-static long int
+-__attribute__ ((noinline))
+-intel_check_word (int name, unsigned int value, bool *has_level_2,
+-		  bool *no_level_2_or_3)
+-{
+-  if ((value & 0x80000000) != 0)
+-    /* The register value is reserved.  */
+-    return 0;
+-
+-  /* Fold the name.  The _SC_ constants are always in the order SIZE,
+-     ASSOC, LINESIZE.  */
+-  int folded_name = (_SC_LEVEL1_ICACHE_SIZE
+-		     + ((name - _SC_LEVEL1_ICACHE_SIZE) / 3) * 3);
+-
+-  while (value != 0)
+-    {
+-      unsigned int byte = value & 0xff;
+-
+-      if (byte == 0x40)
+-	{
+-	  *no_level_2_or_3 = true;
+-
+-	  if (folded_name == _SC_LEVEL3_CACHE_SIZE)
+-	    /* No need to look further.  */
+-	    break;
+-	}
+-      else
+-	{
+-	  if (byte == 0x49 && folded_name == _SC_LEVEL3_CACHE_SIZE)
+-	    {
+-	      /* Intel reused this value.  For family 15, model 6 it
+-		 specifies the 3rd level cache.  Otherwise the 2nd
+-		 level cache.  */
+-	      unsigned int eax;
+-	      unsigned int ebx;
+-	      unsigned int ecx;
+-	      unsigned int edx;
+-	      asm volatile ("xchgl %%ebx, %1; cpuid; xchgl %%ebx, %1"
+-			    : "=a" (eax), "=r" (ebx), "=c" (ecx), "=d" (edx)
+-			    : "0" (1));
+-
+-	      unsigned int family = ((eax >> 20) & 0xff) + ((eax >> 8) & 0xf);
+-	      unsigned int model = ((((eax >>16) & 0xf) << 4)
+-				    + ((eax >> 4) & 0xf));
+-	      if (family == 15 && model == 6)
+-		{
+-		  /* The level 3 cache is encoded for this model like
+-		     the level 2 cache is for other models.  Pretend
+-		     the caller asked for the level 2 cache.  */
+-		  name = (_SC_LEVEL2_CACHE_SIZE
+-			  + (name - _SC_LEVEL3_CACHE_SIZE));
+-		  folded_name = _SC_LEVEL3_CACHE_SIZE;
+-		}
+-	    }
+-
+-	  struct intel_02_cache_info *found;
+-	  struct intel_02_cache_info search;
+-
+-	  search.idx = byte;
+-	  found = bsearch (&search, intel_02_known, nintel_02_known,
+-			   sizeof (intel_02_known[0]), intel_02_known_compare);
+-	  if (found != NULL)
+-	    {
+-	      if (found->name == folded_name)
+-		{
+-		  unsigned int offset = name - folded_name;
+-
+-		  if (offset == 0)
+-		    /* Cache size.  */
+-		    return found->size;
+-		  if (offset == 1)
+-		    return found->assoc;
+-
+-		  assert (offset == 2);
+-		  return found->linesize;
+-		}
+-
+-	      if (found->name == _SC_LEVEL2_CACHE_SIZE)
+-		*has_level_2 = true;
+-	    }
+-	}
+-
+-      /* Next byte for the next round.  */
+-      value >>= 8;
+-    }
+-
+-  /* Nothing found.  */
+-  return 0;
+-}
+-
+-
+-static long int __attribute__ ((noinline))
+-handle_intel (int name, unsigned int maxidx)
+-{
+-  assert (maxidx >= 2);
+-
+-  /* OK, we can use the CPUID instruction to get all info about the
+-     caches.  */
+-  unsigned int cnt = 0;
+-  unsigned int max = 1;
+-  long int result = 0;
+-  bool no_level_2_or_3 = false;
+-  bool has_level_2 = false;
+-  while (cnt++ < max)
+-    {
+-      unsigned int eax;
+-      unsigned int ebx;
+-      unsigned int ecx;
+-      unsigned int edx;
+-      asm volatile ("xchgl %%ebx, %1; cpuid; xchgl %%ebx, %1"
+-		    : "=a" (eax), "=r" (ebx), "=c" (ecx), "=d" (edx)
+-		    : "0" (2));
+-
+-      /* The low byte of EAX in the first round contain the number of
+-	 rounds we have to make.  At least one, the one we are already
+-	 doing.  */
+-      if (cnt == 1)
+-	{
+-	  max = eax & 0xff;
+-	  eax &= 0xffffff00;
+-	}
+-
+-      /* Process the individual registers' value.  */
+-      result = intel_check_word (name, eax, &has_level_2, &no_level_2_or_3);
+-      if (result != 0)
+-	return result;
+-
+-      result = intel_check_word (name, ebx, &has_level_2, &no_level_2_or_3);
+-      if (result != 0)
+-	return result;
+-
+-      result = intel_check_word (name, ecx, &has_level_2, &no_level_2_or_3);
+-      if (result != 0)
+-	return result;
+-
+-      result = intel_check_word (name, edx, &has_level_2, &no_level_2_or_3);
+-      if (result != 0)
+-	return result;
+-    }
+-
+-  if (name >= _SC_LEVEL2_CACHE_SIZE && name <= _SC_LEVEL3_CACHE_LINESIZE
+-      && no_level_2_or_3)
+-    return -1;
+-
+-  return 0;
+-}
+-
+-
+-static long int __attribute__ ((noinline))
+-handle_amd (int name)
+-{
+-  unsigned int eax;
+-  unsigned int ebx;
+-  unsigned int ecx;
+-  unsigned int edx;
+-  asm volatile ("xchgl %%ebx, %1; cpuid; xchgl %%ebx, %1"
+-		: "=a" (eax), "=r" (ebx), "=c" (ecx), "=d" (edx)
+-		: "0" (0x80000000));
+-
+-  if (name >= _SC_LEVEL3_CACHE_SIZE)
+-    return 0;
+-
+-  unsigned int fn = 0x80000005 + (name >= _SC_LEVEL2_CACHE_SIZE);
+-  if (eax < fn)
+-    return 0;
+-
+-  asm volatile ("xchgl %%ebx, %1; cpuid; xchgl %%ebx, %1"
+-		: "=a" (eax), "=r" (ebx), "=c" (ecx), "=d" (edx)
+-		: "0" (fn));
+-
+-  if (name < _SC_LEVEL1_DCACHE_SIZE)
+-    {
+-      name += _SC_LEVEL1_DCACHE_SIZE - _SC_LEVEL1_ICACHE_SIZE;
+-      ecx = edx;
+-    }
+-
+-  switch (name)
+-    {
+-    case _SC_LEVEL1_DCACHE_SIZE:
+-      return (ecx >> 14) & 0x3fc00;
+-    case _SC_LEVEL1_DCACHE_ASSOC:
+-      ecx >>= 16;
+-      if ((ecx & 0xff) == 0xff)
+-	/* Fully associative.  */
+-	return (ecx << 2) & 0x3fc00;
+-      return ecx & 0xff;
+-    case _SC_LEVEL1_DCACHE_LINESIZE:
+-      return ecx & 0xff;
+-    case _SC_LEVEL2_CACHE_SIZE:
+-      return (ecx & 0xf000) == 0 ? 0 : (ecx >> 6) & 0x3fffc00;
+-    case _SC_LEVEL2_CACHE_ASSOC:
+-      ecx >>= 12;
+-      switch (ecx & 0xf)
+-        {
+-        case 0:
+-        case 1:
+-        case 2:
+-        case 4:
+-	  return ecx & 0xf;
+-	case 6:
+-	  return 8;
+-	case 8:
+-	  return 16;
+-	case 0xf:
+-	  return (ecx << 6) & 0x3fffc00;
+-	default:
+-	  return 0;
+-        }
+-    case _SC_LEVEL2_CACHE_LINESIZE:
+-      return (ecx & 0xf000) == 0 ? 0 : ecx & 0xff;
+-    default:
+-      assert (! "cannot happen");
+-    }
+-  return -1;
+-}
++extern long int __cache_sysconf (int) attribute_hidden;
+ 
+ 
+ /* Get the value of the system variable NAME.  */
+ long int
+ __sysconf (int name)
+ {
+-  /* We only handle the cache information here (for now).  */
+-  if (name < _SC_LEVEL1_ICACHE_SIZE || name > _SC_LEVEL4_CACHE_LINESIZE)
+-    return linux_sysconf (name);
+-
+-  /* Find out what brand of processor.  */
+-  unsigned int eax;
+-  unsigned int ebx;
+-  unsigned int ecx;
+-  unsigned int edx;
+-  asm volatile ("xchgl %%ebx, %1; cpuid; xchgl %%ebx, %1"
+-		: "=a" (eax), "=r" (ebx), "=c" (ecx), "=d" (edx)
+-		: "0" (0));
++  if (name >= _SC_LEVEL1_ICACHE_SIZE && name <= _SC_LEVEL4_CACHE_LINESIZE)
++    return __cache_sysconf (name);
+ 
+-  /* This spells out "GenuineIntel".  */
+-  if (ebx == 0x756e6547 && ecx == 0x6c65746e && edx == 0x49656e69)
+-    return handle_intel (name, eax);
+-
+-  /* This spells out "AuthenticAMD".  */
+-  if (ebx == 0x68747541 && ecx == 0x444d4163 && edx == 0x69746e65)
+-    return handle_amd (name);
+-
+-  // XXX Fill in more vendors.
+-
+-  /* CPU not known, we have no information.  */
+-  return 0;
++  return linux_sysconf (name);
+ }
+ 
+ /* Now the generic Linux version.  */
+Index: sysdeps/x86_64/Makefile
+===================================================================
+RCS file: /cvs/glibc/libc/sysdeps/x86_64/Makefile,v
+retrieving revision 1.4
+diff -p -u -w -p -u -w -r1.4 Makefile
+--- ./sysdeps/x86_64/Makefile	16 Aug 2004 06:46:14 -0000	1.4
++++ ./sysdeps/x86_64/Makefile	4 May 2007 23:22:35 -0000
+@@ -9,3 +9,7 @@ endif
+ ifeq ($(subdir),gmon)
+ sysdep_routines += _mcount
+ endif
++
++ifeq ($(subdir),string)
++sysdep_routines += cacheinfo
++endif
+Index: sysdeps/x86_64/memcpy.S
+===================================================================
+RCS file: /cvs/glibc/libc/sysdeps/x86_64/memcpy.S,v
+retrieving revision 1.5
+diff -p -u -w -p -u -w -r1.5 memcpy.S
+--- ./sysdeps/x86_64/memcpy.S	18 Oct 2004 04:17:08 -0000	1.5
++++ ./sysdeps/x86_64/memcpy.S	4 May 2007 23:22:35 -0000
+@@ -1,7 +1,10 @@
+-/* Highly optimized version for x86-64.
+-   Copyright (C) 1997, 2000, 2002, 2003, 2004 Free Software Foundation, Inc.
++/*
++   Optimized memcpy for x86-64.
++
++   Copyright (C) 2007 Free Software Foundation, Inc.
++   Contributed by Evandro Menezes <evandro.menezes@amd.com>, 2007.
++
+    This file is part of the GNU C Library.
+-   Based on i586 version contributed by Ulrich Drepper <drepper@cygnus.com>, 1997.
+ 
+    The GNU C Library is free software; you can redistribute it and/or
+    modify it under the terms of the GNU Lesser General Public
+@@ -16,86 +19,556 @@
+    You should have received a copy of the GNU Lesser General Public
+    License along with the GNU C Library; if not, write to the Free
+    Software Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA
 -   02111-1307 USA.  */
-+# (c) 2002 Advanced Micro Devices, Inc.
-+# YOUR USE OF THIS CODE IS SUBJECT TO THE TERMS
-+# AND CONDITIONS OF THE GNU LESSER GENERAL PUBLIC
-+# LICENSE FOUND IN THE "README" FILE THAT IS
-+# INCLUDED WITH THIS FILE
++   02111-1307 USA.
++*/
  
  #include <sysdep.h>
  #include "asm-syntax.h"
- #include "bp-sym.h"
- #include "bp-asm.h"
-+#if defined PIC && defined SHARED
-+# include <rtld-global-offsets.h>
-+#endif
+-#include "bp-sym.h"
+-#include "bp-asm.h"
  
--/* BEWARE: `#ifdef memset' means that memset is redefined as `bzero' */
--#define BZERO_P (defined memset)
--
--/* This is somehow experimental and could made dependend on the cache
--   size.  */
--#define LARGE $120000
-+#if defined PIC && defined SHARED
-+	.globl _rtld_local_ro
-+        .hidden _rtld_local_ro
-+        .set    _rtld_local_ro,_rtld_global_ro
+-/* BEWARE: `#ifdef memcpy' means that memcpy is redefined as `mempcpy',
+-   and the return value is the byte after the last one copied in
+-   the destination. */
+-#define MEMPCPY_P (defined memcpy)
++/* Stack slots in the red-zone. */
++
++#ifdef USE_AS_MEMPCPY
++#  define RETVAL	(0)
++#else
++#  define RETVAL	(-8)
 +#endif
++#define SAVE0	(RETVAL - 8)
++#define SAVE1	(SAVE0	- 8)
++#define SAVE2	(SAVE1	- 8)
++#define SAVE3	(SAVE2	- 8)
  
          .text
--#if !BZERO_P && defined PIC && !defined NOT_IN_libc
-+#if !defined USE_AS_BZERO && defined PIC && !defined NOT_IN_libc
- ENTRY (__memset_chk)
++
+ #if defined PIC && !defined NOT_IN_libc
+ ENTRY (__memcpy_chk)
++
  	cmpq	%rdx, %rcx
  	jb	HIDDEN_JUMPTARGET (__chk_fail)
- END (__memset_chk)
- #endif
--ENTRY (memset)
--#if BZERO_P
--	mov	%rsi,%rdx	/* Adjust parameter.  */
--	xorl	%esi,%esi	/* Fill with 0s.  */
--#endif
--	cmp	$0x7,%rdx	/* Check for small length.  */
--	mov	%rdi,%rcx	/* Save ptr as return value.  */
--	jbe	7f
- 
--#if BZERO_P
--	mov	%rsi,%r8	/* Just copy 0.  */
-+ENTRY (memset)                		# (void *, const void*, size_t)
 +
-+#ifdef USE_AS_BZERO
-+        mov     %rsi, %rdx		# memset doubles as bzero
-+        xorl    %esi, %esi
+ END (__memcpy_chk)
+ #endif
+-ENTRY (BP_SYM (memcpy))
+-	/* Cutoff for the big loop is a size of 32 bytes since otherwise
+-	   the loop will never be entered.  */
++
++ENTRY(memcpy)				/* (void *, const void*, size_t) */
++
++/* Handle tiny blocks. */
++
++L(1try):				/* up to 32B */
+ 	cmpq	$32, %rdx
+-	movq	%rdx, %rcx
+-#if !MEMPCPY_P
+-	movq	%rdi, %r10	/* Save value. */
++#ifndef USE_AS_MEMPCPY
++	movq	%rdi, %rax		/* save return value */
+ #endif
++	jae	L(1after)
+ 
+-	/* We need this in any case.  */
+-	cld
++L(1):					/* 1-byte once */
++	testb	$1, %dl
++	jz	L(1a)
+ 
+-	jbe	1f
++	movzbl	(%rsi),	%ecx
++	movb	%cl, (%rdi)
+ 
+-	/* Align destination.  */
+-	movq	%rdi, %rax
+-	negq	%rax
+-	andq	$7, %rax
+-	subq	%rax, %rcx
+-	xchgq	%rax, %rcx
++	incq	%rsi
++	incq	%rdi
++
++	.p2align 4,, 4
++
++L(1a):					/* 2-byte once */
++	testb	$2, %dl
++	jz	L(1b)
++
++	movzwl	(%rsi),	%ecx
++	movw	%cx, (%rdi)
++
++	addq	$2, %rsi
++	addq	$2, %rdi
++
++	.p2align 4,, 4
++
++L(1b):					/* 4-byte once */
++	testb	$4, %dl
++	jz	L(1c)
++
++	movl	(%rsi),	%ecx
++	movl	%ecx, (%rdi)
++
++	addq	$4, %rsi
++	addq	$4, %rdi
++
++	.p2align 4,, 4
++
++L(1c):					/* 8-byte once */
++	testb	$8, %dl
++	jz	L(1d)
++
++	movq	(%rsi), %rcx
++	movq	%rcx, (%rdi)
++
++	addq	$8, %rsi
++	addq	$8, %rdi
++
++	.p2align 4,, 4
++
++L(1d):					/* 16-byte loop */
++	andl	$0xf0, %edx
++	jz	L(exit)
++
++	.p2align 4
++
++L(1loop):
++	movq	  (%rsi), %rcx
++	movq	8 (%rsi), %r8
++	movq	%rcx,   (%rdi)
++	movq	 %r8, 8 (%rdi)
++
++	subl	$16, %edx
++
++	leaq	16 (%rsi), %rsi
++	leaq	16 (%rdi), %rdi
++
++	jnz	L(1loop)
++
++	.p2align 4,, 4
++
++L(exit):				/* exit */
++#ifdef USE_AS_MEMPCPY
++	movq	%rdi, %rax		/* return value */
 +#else
-+	mov	$0x0101010101010101, %rcx # memset is itself
-+        movzx   %sil, %rsi
-+        imul    %rcx, %rsi		# replicate 8 times
++	rep
++#endif
++	retq
++
++	.p2align 4
+ 
+-	rep; movsb
++L(1after):
++#ifndef USE_AS_MEMPCPY
++	movq	%rax, RETVAL (%rsp)	/* save return value */
 +#endif
 +
-+L(try1):				# up to 64B
-+        cmp     $64, %rdx
-+        mov     %rdi, %rax		# return memory block address (even for bzero ())
-+        jae	L(1after)
++/* Align to the natural word size. */
 +
-+L(1):                                	# 1-byte loop
-+        test    $1, %dl
-+        jz      L(1a)
++L(aligntry):
++	movl	%esi, %ecx      	/* align by destination */
 +
-+        mov     %sil, (%rdi)
-+        inc	%rdi
++	andl	$7, %ecx
++	jz	L(alignafter)  		/* already aligned */
 +
-+L(1a):
-+        test    $2, %dl
-+        jz      L(1b)
++L(align):		      		/* align */
++	leaq	-8 (%rcx, %rdx), %rdx	/* calculate remaining bytes */
++	subl	$8, %ecx
 +
-+        mov     %si, (%rdi)
-+        add	$2, %rdi
++	.p2align 4
 +
-+L(1b):
-+        test    $4, %dl
-+        jz      L(1c)
++L(alignloop):				/* 1-byte alignment loop */
++	movzbl	(%rsi), %eax
++	movb	%al, (%rdi)
 +
-+        mov     %esi, (%rdi)
-+	add	$4, %rdi
++	incl	%ecx
 +
-+L(1c):
-+        test    $8, %dl
-+        jz      L(1d)
++	leaq	1 (%rsi), %rsi
++	leaq	1 (%rdi), %rdi
+ 
+-	movq	%rax, %rcx
+-	subq	$32, %rcx
+-	js	2f
++	jnz	L(alignloop)
+ 
+ 	.p2align 4
+-3:
+ 
+-	/* Now correct the loop counter.  Please note that in the following
+-	   code the flags are not changed anymore.  */
+-	subq	$32, %rcx
++L(alignafter):
 +
-+        mov     %rsi, (%rdi)
-+	add	$8, %rdi
++/* Loop to handle mid-sized blocks. */
 +
-+L(1d):
-+        test    $16, %dl
-+        jz      L(1e)
++L(32try):				/* up to 1KB */
++	cmpq	$1024, %rdx
++	ja	L(32after)
 +
-+        mov     %rsi,   (%rdi)
-+        mov     %rsi, 8 (%rdi)
-+	add	$16, %rdi
++L(32):					/* 32-byte loop */
++	movl	%edx, %ecx
++	shrl	$5, %ecx
++	jz	L(32skip)
 +
-+L(1e):
-+        test    $32, %dl
-+        jz      L(1f)
-+
-+        mov     %rsi,    (%rdi)
-+        mov     %rsi,  8 (%rdi)
-+        mov     %rsi, 16 (%rdi)
-+        mov     %rsi, 24 (%rdi)
-+#	add	$32, %rdi
-+
-+L(1f):
-+
-+L(exit):
-+        rep
-+        ret
-+
-+        .p2align 4
-+
-+L(1after):
-+
-+L(32try):				# up to 512B
-+	cmp	$512, %rdx
-+        ja	L(32after)
-+
-+L(32):                               	# 32-byte loop
-+        mov     %edx, %ecx
-+        shr     $5, %ecx
-+        jz      L(32skip)
-+
-+        .p2align 4
++	.p2align 4
 +
 +L(32loop):
-+        dec     %ecx
++	decl	%ecx
+ 
+ 	movq	(%rsi), %rax
+-	movq	8(%rsi), %rdx
+-	movq	16(%rsi), %r8
+-	movq	24(%rsi), %r9
++	movq	 8 (%rsi), %r8
++	movq	16 (%rsi), %r9
++	movq	24 (%rsi), %r10
 +
-+        mov     %rsi,    (%rdi)
-+        mov     %rsi,  8 (%rdi)
-+        mov     %rsi, 16 (%rdi)
-+        mov     %rsi, 24 (%rdi)
+ 	movq	%rax, (%rdi)
+-	movq	%rdx, 8(%rdi)
+-	movq	%r8, 16(%rdi)
+-	movq	%r9, 24(%rdi)
++	movq	 %r8,  8 (%rdi)
++	movq	 %r9, 16 (%rdi)
++	movq	%r10, 24 (%rdi)
+ 
+ 	leaq	32(%rsi), %rsi
+ 	leaq	32(%rdi), %rdi
+ 
+-	jns	3b
++	jz	L(32skip)		/* help out smaller blocks */
 +
-+        lea     32 (%rdi), %rdi
++	decl	%ecx
+ 
+-	/* Correct extra loop counter modification.  */
+-2:	addq	$32, %rcx
+-1:	rep; movsb
++	movq	   (%rsi), %rax
++	movq	 8 (%rsi), %r8
++	movq	16 (%rsi), %r9
++	movq	24 (%rsi), %r10
 +
-+        jz      L(32skip)
++	movq	%rax,    (%rdi)
++	movq	 %r8,  8 (%rdi)
++	movq	 %r9, 16 (%rdi)
++	movq	%r10, 24 (%rdi)
+ 
+-#if MEMPCPY_P
+-	movq	%rdi, %rax		/* Set return value.  */
++	leaq	32 (%rsi), %rsi
++	leaq	32 (%rdi), %rdi
 +
-+        dec     %ecx
++	jnz	L(32loop)
 +
-+        mov     %rsi,    (%rdi)
-+        mov     %rsi,  8 (%rdi)
-+        mov     %rsi, 16 (%rdi)
-+        mov     %rsi, 24 (%rdi)
-+
-+        lea     32 (%rdi), %rdi
-+
-+        jnz     L(32loop)
-+
-+        .p2align 4
++	.p2align 4
 +
 +L(32skip):
-+        and     $31, %edx		# check for left overs
-+        jnz     L(1)
++	andl	$31, %edx		/* check for left overs */
++#ifdef USE_AS_MEMPCPY
++	jnz	L(1)
 +
-+        rep
-+        ret
++	movq	%rdi, %rax
+ #else
+-	movq	%r10, %rax		/* Set return value.  */
++	movq	RETVAL (%rsp), %rax
++	jnz	L(1)
+ 	
++	rep
+ #endif
+-	ret
++	retq				/* exit */
 +
-+        .p2align 4
++	.p2align 4
 +
 +L(32after):
 +
-+L(aligntry):
-+        mov     %edi, %ecx              # align by destination
++/*
++	In order to minimize code-size in RTLD, algorithms specific for
++	larger blocks are excluded when building for RTLD.
++*/
 +
-+        and     $7, %ecx                # skip if already aligned
-+        jz      L(alignafter)
++/* Handle large blocks smaller than 1/2 L1. */
 +
-+L(align):                            	# align loop
-+        lea     -8 (%rcx, %rdx), %rdx
-+        sub     $8, %ecx
++L(fasttry):				/* first 1/2 L1 */
++#ifndef NOT_IN_libc			/* only up to this algorithm outside of libc.so */
++	movq	_x86_64_l1_cache_size_half (%rip), %r11
++	cmpq	%rdx, %r11		/* calculate the smaller of */
++	cmovaq	%rdx, %r11		/* remaining bytes and 1/2 L1 */
++#endif
 +
-+        .p2align 4
-+
-+L(alignloop):
-+        inc     %ecx
-+
-+        mov     %sil, (%rdi)
-+        lea     1 (%rdi), %rdi
-+
-+        jnz     L(alignloop)
-+
-+        .p2align 4
-+
-+L(alignafter):
-+
-+# For MP System half cache size is better,
-+# for UP full cache size is better.
-+# Use half cache size only.
-+L(fasttry):				# between 2KB and 1/2 L2
-+#ifdef PIC
-+# ifdef SHARED
-+        mov     _rtld_local_ro@GOTPCREL (%rip), %r8
-+	mov	RTLD_GLOBAL_DL_CACHE2SIZEHALF (%r8), %r8
- #else
--	/* Populate 8 bit data to full 64-bit.  */
--	movabs	$0x0101010101010101,%r8
--	movzbl	%sil,%eax
--	imul	%rax,%r8
--#endif
--	test	$0x7,%edi	/* Check for alignment.  */
--	je	2f
--
--	.p2align 4
--1:	/* Align ptr to 8 byte.  */
--	mov	%sil,(%rcx)
--	dec	%rdx
--	inc	%rcx
--	test	$0x7,%ecx
--	jne	1b
--
--2:	/* Check for really large regions.  */
--	mov	%rdx,%rax
--	shr	$0x6,%rax
--	je	4f
--	cmp	LARGE, %rdx
--	jae	11f
--
--	.p2align 4
--3:	/* Copy 64 bytes.  */
--	mov	%r8,(%rcx)
--	mov	%r8,0x8(%rcx)
--	mov	%r8,0x10(%rcx)
--	mov	%r8,0x18(%rcx)
--	mov	%r8,0x20(%rcx)
--	mov	%r8,0x28(%rcx)
--	mov	%r8,0x30(%rcx)
--	mov	%r8,0x38(%rcx)
--	add	$0x40,%rcx
--	dec	%rax
--	jne	3b
--
--4:	/* Copy final bytes.  */
--	and	$0x3f,%edx
--	mov	%rdx,%rax
--	shr	$0x3,%rax
--	je	6f
--
--5:	/* First in chunks of 8 bytes.  */
--	mov	%r8,(%rcx)
--	add	$0x8,%rcx
--	dec	%rax
--	jne	5b
--6:
--	and	$0x7,%edx
--7:
--	test	%rdx,%rdx
--	je	9f
--8:	/* And finally as bytes (up to 7).  */
--	mov	%sil,(%rcx)
--	inc	%rcx
--	dec	%rdx
--	jne	8b
--9:
--#if BZERO_P
--	nop
-+        mov     _dl_cache2sizehalf@GOTPCREL (%rip), %r8
-+	mov	(%r8), %r8
-+# endif
- #else
--	/* Load result (only if used as memset).  */
--	mov	%rdi,%rax	/* start address of destination is result */
-+        mov     _dl_cache2sizehalf, %r8
- #endif
--	retq
-+        cmp     %rdx, %r8
-+        cmova   %rdx, %r8
-+
-+	cmp	$2048, %rdx		# this is slow for some block sizes
-+	jb	L(64)
-+
-+L(fast):				# microcode loop
-+	mov	%r8, %rcx
-+	and	$-8, %r8
-+	shr	$3, %rcx
-+
-+	xchg	%rax, %rsi
++L(fast):				/* good ol' MOVS */
++#ifndef NOT_IN_libc
++	movq	%r11, %rcx
++	andq	$-8, %r11
++#else
++	movq	%rdx, %rcx
++#endif
++	shrq	$3, %rcx
++	jz	L(fastskip)
 +
 +	rep
-+	stosq
++	movsq
 +
-+	xchg	%rax, %rsi
++	.p2align 4,, 4
 +
 +L(fastskip):
-+	sub	%r8, %rdx		# check for more
-+	ja	L(64after)
++#ifndef NOT_IN_libc
++	subq	%r11, %rdx		/* check for more */
++	testq	$-8, %rdx
++	jnz	L(fastafter)
++#endif
 +
-+	and	$7, %edx		# check for left overs
++	andl	$7, %edx		/* check for left overs */
++#ifdef USE_AS_MEMPCPY
++	jnz	L(1)
++
++	movq	%rdi, %rax
++#else
++	movq	RETVAL (%rsp), %rax
 +	jnz	L(1)
 +
 +	rep
-+	ret
- 
- 	.p2align 4
--11:	/* Copy 64 bytes without polluting the cache.  */
--	/* We could use	movntdq    %xmm0,(%rcx) here to further
--	   speed up for large cases but let's not use XMM registers.  */
--	movnti	%r8,(%rcx)
--	movnti  %r8,0x8(%rcx)
--	movnti  %r8,0x10(%rcx)
--	movnti  %r8,0x18(%rcx)
--	movnti  %r8,0x20(%rcx)
--	movnti  %r8,0x28(%rcx)
--	movnti  %r8,0x30(%rcx)
--	movnti  %r8,0x38(%rcx)
--	add	$0x40,%rcx
--	dec	%rax
--	jne	11b
--	jmp	4b
++#endif
++	retq				/* exit */
++
++#ifndef NOT_IN_libc			/* none of the algorithms below outside of libc.so */
++
++	.p2align 4
 +
 +L(fastafter):
 +
-+L(64try):				# up to 2KB
++/* Handle large blocks smaller than 1/2 L2. */
 +
-+L(64):                               	# 64-byte loop
-+        mov     %r8, %rcx
-+        and     $-64, %r8
-+        shr     $6, %rcx
++L(pretry):				/* first 1/2 L2 */
++	movq	_x86_64_l2_cache_size_half (%rip), %r8
++	cmpq	%rdx, %r8		/* calculate the lesser of */
++	cmovaq	%rdx, %r8		/* remaining bytes and 1/2 L2 */
 +
-+        dec     %rcx                    # this iteration starts the prefetcher sooner
++L(pre):					/* 64-byte with prefetching */
++	movq	%r8, %rcx
++	andq	$-64, %r8
++	shrq	$6, %rcx
++	jz	L(preskip)
 +
-+        mov     %rsi,    (%rdi)
-+        mov     %rsi,  8 (%rdi)
-+        mov     %rsi, 16 (%rdi)
-+        mov     %rsi, 24 (%rdi)
-+        mov     %rsi, 32 (%rdi)
-+        mov     %rsi, 40 (%rdi)
-+        mov     %rsi, 48 (%rdi)
-+        mov     %rsi, 56 (%rdi)
++	movq	%r14, SAVE0 (%rsp)
++	cfi_rel_offset (%r14, SAVE0)
++	movq	%r13, SAVE1 (%rsp)
++	cfi_rel_offset (%r13, SAVE1)
++	movq	%r12, SAVE2 (%rsp)
++	cfi_rel_offset (%r12, SAVE2)
++	movq	%rbx, SAVE3 (%rsp)
++	cfi_rel_offset (%rbx, SAVE3)
 +
-+        lea     64 (%rdi), %rdi
++	cmpl	$0, _x86_64_prefetchw (%rip)
++	jz	L(preloop)		/* check if PREFETCHW OK */
 +
-+        .p2align 4
++	.p2align 4
 +
-+L(64loop):
-+        dec     %rcx
++/* ... when PREFETCHW is available (less cache-probe traffic in MP systems). */
 +
-+        mov     %rsi,    (%rdi)
-+        mov     %rsi,  8 (%rdi)
-+        mov     %rsi, 16 (%rdi)
-+        mov     %rsi, 24 (%rdi)
-+        mov     %rsi, 32 (%rdi)
-+        mov     %rsi, 40 (%rdi)
-+        mov     %rsi, 48 (%rdi)
-+        mov     %rsi, 56 (%rdi)
++L(prewloop):				/* cache-line in state M */
++	decq	%rcx
 +
-+        lea     64 (%rdi), %rdi
++	movq	   (%rsi), %rax
++	movq	 8 (%rsi), %rbx
++	movq	16 (%rsi), %r9
++	movq	24 (%rsi), %r10
++	movq	32 (%rsi), %r11
++	movq	40 (%rsi), %r12
++	movq	48 (%rsi), %r13
++	movq	56 (%rsi), %r14
 +
-+        jnz     L(64loop)
++	prefetcht0	 0 + 896 (%rsi)
++	prefetcht0	64 + 896 (%rsi)
 +
-+L(64skip):
-+        sub     %r8, %rdx		# check for more
-+        ja      L(64after)
++	movq	%rax,    (%rdi)
++	movq	%rbx,  8 (%rdi)
++	movq	 %r9, 16 (%rdi)
++	movq	%r10, 24 (%rdi)
++	movq	%r11, 32 (%rdi)
++	movq	%r12, 40 (%rdi)
++	movq	%r13, 48 (%rdi)
++	movq	%r14, 56 (%rdi)
 +
-+	and     $63, %edx		# check for left overs
-+	jnz     L(32)
++	leaq	64 (%rsi), %rsi
++	leaq	64 (%rdi), %rdi
 +
-+        rep
-+        ret
++	jz	L(prebail)
 +
-+        .p2align 4
++	decq	%rcx
 +
-+L(64after):
++	movq	   (%rsi), %rax
++	movq	 8 (%rsi), %rbx
++	movq	16 (%rsi), %r9
++	movq	24 (%rsi), %r10
++	movq	32 (%rsi), %r11
++	movq	40 (%rsi), %r12
++	movq	48 (%rsi), %r13
++	movq	56 (%rsi), %r14
 +
-+L(NTtry):
++	movq	%rax,    (%rdi)
++	movq	%rbx,  8 (%rdi)
++	movq	 %r9, 16 (%rdi)
++	movq	%r10, 24 (%rdi)
++	movq	%r11, 32 (%rdi)
++	movq	%r12, 40 (%rdi)
++	movq	%r13, 48 (%rdi)
++	movq	%r14, 56 (%rdi)
 +
-+L(NT):                               	# 128-byte NT loop
-+        mov     %rdx, %rcx
-+        shr     $7, %rcx
-+        jz      L(NTskip)
++	prefetchw	896 - 64 (%rdi)
++	prefetchw	896 -  0 (%rdi)
 +
-+        .p2align 4
++	leaq	64 (%rsi), %rsi
++	leaq	64 (%rdi), %rdi
 +
-+L(NTloop):                  		# on an MP system it would be better to prefetchnta 320 (%rdi) and 384 (%rdi) here, but not so on an 1P system
-+        dec     %rcx
++	jnz	L(prewloop)
++	jmp	L(prebail)
 +
-+        movnti  %rsi,     (%rdi)
-+        movnti  %rsi,   8 (%rdi)
-+        movnti  %rsi,  16 (%rdi)
-+        movnti  %rsi,  24 (%rdi)
-+        movnti  %rsi,  32 (%rdi)
-+        movnti  %rsi,  40 (%rdi)
-+        movnti  %rsi,  48 (%rdi)
-+        movnti  %rsi,  56 (%rdi)
-+        movnti  %rsi,  64 (%rdi)
-+        movnti  %rsi,  72 (%rdi)
-+        movnti  %rsi,  80 (%rdi)
-+        movnti  %rsi,  88 (%rdi)
-+        movnti  %rsi,  96 (%rdi)
-+        movnti  %rsi, 104 (%rdi)
-+        movnti  %rsi, 112 (%rdi)
-+        movnti  %rsi, 120 (%rdi)
++	.p2align 4
 +
-+        lea     128 (%rdi), %rdi
++/* ... when PREFETCHW is not available. */
 +
-+        jnz     L(NTloop)
++L(preloop):				/* cache-line in state E */
++	decq	%rcx
 +
-+        mfence				# serialize memory operations
++	movq	   (%rsi), %rax
++	movq	 8 (%rsi), %rbx
++	movq	16 (%rsi), %r9
++	movq	24 (%rsi), %r10
++	movq	32 (%rsi), %r11
++	movq	40 (%rsi), %r12
++	movq	48 (%rsi), %r13
++	movq	56 (%rsi), %r14
 +
-+L(NTskip):
-+        and     $127, %edx		# check for left overs
-+        jnz     L(32)
++	prefetcht0	896 +  0 (%rsi)
++	prefetcht0	896 + 64 (%rsi)
 +
-+        rep
-+        ret
- 
- END (memset)
--#if !BZERO_P
++	movq	%rax,    (%rdi)
++	movq	%rbx,  8 (%rdi)
++	movq	 %r9, 16 (%rdi)
++	movq	%r10, 24 (%rdi)
++	movq	%r11, 32 (%rdi)
++	movq	%r12, 40 (%rdi)
++	movq	%r13, 48 (%rdi)
++	movq	%r14, 56 (%rdi)
 +
-+#ifndef USE_AS_BZERO
- libc_hidden_builtin_def (memset)
- #endif
- 
--#if !BZERO_P && defined PIC && !defined NOT_IN_libc
-+#if !defined USE_AS_BZERO && defined PIC && !defined NOT_IN_libc
- strong_alias (__memset_chk, __memset_zero_constant_len_parameter)
- 	.section .gnu.warning.__memset_zero_constant_len_parameter
- 	.string "memset used with constant zero length parameter; this could be due to transposed parameters"
-diff -Npruw -x CVS -x vssver.scc -x powerpc -x sync_file_range.c libc/sysdeps/x86_64/stpcpy.S libc/sysdeps/x86_64/stpcpy.S
---- libc/sysdeps/x86_64/stpcpy.S	2004-05-28 01:39:37.000000000 -0500
-+++ libc/sysdeps/x86_64/stpcpy.S	2006-05-05 15:24:41.775991000 -0500
-@@ -1,5 +1,5 @@
- #define USE_AS_STPCPY
--#define STRCPY __stpcpy
-+#define strcpy __stpcpy
- 
- #include <sysdeps/x86_64/strcpy.S>
- 
-diff -Npruw -x CVS -x vssver.scc -x powerpc -x sync_file_range.c libc/sysdeps/x86_64/stpncpy.S libc/sysdeps/x86_64/stpncpy.S
---- libc/sysdeps/x86_64/stpncpy.S	1969-12-31 18:00:00.000000000 -0600
-+++ libc/sysdeps/x86_64/stpncpy.S	2006-05-05 15:24:50.748541000 -0500
-@@ -0,0 +1,9 @@
-+#define USE_AS_STRNCPY
-+#define USE_AS_STPCPY
-+#define strcpy __stpncpy
++	leaq	64 (%rsi), %rsi
++	leaq	64 (%rdi), %rdi
 +
-+#include <sysdeps/x86_64/strcpy.S>
++	jz	L(prebail)
 +
-+weak_alias (__stpncpy, stpncpy)
-+libc_hidden_def (__stpncpy)
-+libc_hidden_builtin_def (stpncpy)
-diff -Npruw -x CVS -x vssver.scc -x powerpc -x sync_file_range.c libc/sysdeps/x86_64/strcpy.S libc/sysdeps/x86_64/strcpy.S
---- libc/sysdeps/x86_64/strcpy.S	2003-04-29 17:47:18.000000000 -0500
-+++ libc/sysdeps/x86_64/strcpy.S	2006-05-19 13:41:31.281326000 -0500
-@@ -1,159 +1,1141 @@
--/* strcpy/stpcpy implementation for x86-64.
--   Copyright (C) 2002 Free Software Foundation, Inc.
--   This file is part of the GNU C Library.
--   Contributed by Andreas Jaeger <aj@suse.de>, 2002.
--
--   The GNU C Library is free software; you can redistribute it and/or
--   modify it under the terms of the GNU Lesser General Public
--   License as published by the Free Software Foundation; either
--   version 2.1 of the License, or (at your option) any later version.
--
--   The GNU C Library is distributed in the hope that it will be useful,
--   but WITHOUT ANY WARRANTY; without even the implied warranty of
--   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
--   Lesser General Public License for more details.
--
--   You should have received a copy of the GNU Lesser General Public
--   License along with the GNU C Library; if not, write to the Free
--   Software Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA
--   02111-1307 USA.  */
--
--#include <sysdep.h>
--#include "asm-syntax.h"
--#include "bp-sym.h"
--#include "bp-asm.h"
-+# (c) 2002 Advanced Micro Devices, Inc.
-+# YOUR USE OF THIS CODE IS SUBJECT TO THE TERMS
-+# AND CONDITIONS OF THE GNU LESSER GENERAL PUBLIC
-+# LICENSE FOUND IN THE "README" FILE THAT IS
-+# INCLUDED WITH THIS FILE
++	decq	%rcx
 +
-+#include "sysdep.h"
-+#if defined PIC && defined SHARED
-+# include <rtld-global-offsets.h>
-+#endif
- 
--#ifndef USE_AS_STPCPY
--# define STRCPY strcpy
-+#if defined PIC && defined SHARED
-+	.globl _rtld_local_ro
-+        .hidden _rtld_local_ro
-+        .set    _rtld_local_ro,_rtld_global_ro
- #endif
- 
- 	.text
--ENTRY (BP_SYM (STRCPY))
--	movq %rsi, %rcx		/* Source register. */
--	andl $7, %ecx		/* mask alignment bits */
--	movq %rdi, %rdx		/* Duplicate destination pointer.  */
--
--	jz 5f			/* aligned => start loop */
--
--	neg %ecx		/* We need to align to 8 bytes.  */
--	addl $8,%ecx
--	/* Search the first bytes directly.  */
--0:
--	movb	(%rsi), %al	/* Fetch a byte */
--	testb	%al, %al	/* Is it NUL? */
--	movb	%al, (%rdx)	/* Store it */
--	jz	4f		/* If it was NUL, done! */
--	incq	%rsi
--	incq	%rdx
--	decl	%ecx
--	jnz	0b
--
--5:
--	movq $0xfefefefefefefeff,%r8
--
--	/* Now the sources is aligned.  Unfortunatly we cannot force
--	   to have both source and destination aligned, so ignore the
--	   alignment of the destination.  */
++	movq	   (%rsi), %rax
++	movq	 8 (%rsi), %rbx
++	movq	16 (%rsi), %r9
++	movq	24 (%rsi), %r10
++	movq	32 (%rsi), %r11
++	movq	40 (%rsi), %r12
++	movq	48 (%rsi), %r13
++	movq	56 (%rsi), %r14
 +
-+ENTRY   (strcpy)                        # (char *, const char *)
++	prefetcht0	896 - 64 (%rdi)
++	prefetcht0	896 -  0 (%rdi)
 +
-+#ifdef USE_AS_STRNCPY			// (char *, const char *, size_t)
-+	test	%rdx, %rdx
-+	mov	%rdx, %r11
-+	jz	L(exit)			# early exit
-+#endif
++	movq	%rax,    (%rdi)
++	movq	%rbx,  8 (%rdi)
++	movq	 %r9, 16 (%rdi)
++	movq	%r10, 24 (%rdi)
++	movq	%r11, 32 (%rdi)
++	movq	%r12, 40 (%rdi)
++	movq	%r13, 48 (%rdi)
++	movq	%r14, 56 (%rdi)
 +
-+        xor     %edx, %edx
++	leaq	64 (%rsi), %rsi
++	leaq	64 (%rdi), %rdi
 +
-+L(aligntry):				# between 0 and 7 bytes
-+        mov     %rsi, %r8		# align by source
-+        and     $7, %r8
-+	jz	L(alignafter)
++	jnz	L(preloop)
 +
-+L(align):				# 8-byte align
-+        sub     $8, %r8
++L(prebail):
++	movq	SAVE3 (%rsp), %rbx
++	cfi_restore (%rbx)
++	movq	SAVE2 (%rsp), %r12
++	cfi_restore (%r12)
++	movq	SAVE1 (%rsp), %r13
++	cfi_restore (%r13)
++	movq	SAVE0 (%rsp), %r14
++	cfi_restore (%r14)
 +
- 	.p2align 4
--1:
--	/* 1st unroll.  */
--	movq	(%rsi), %rax	/* Read double word (8 bytes).  */
--	addq	$8, %rsi	/* Adjust pointer for next word.  */
--	movq	%rax, %r9	/* Save a copy for NUL finding.  */
--	addq	%r8, %r9	/* add the magic value to the word.  We get
--				   carry bits reported for each byte which
--				   is *not* 0 */
--	jnc	3f		/* highest byte is NUL => return pointer */
--	xorq	%rax, %r9	/* (word+magic)^word */
--	orq	%r8, %r9	/* set all non-carry bits */
--	incq	%r9		/* add 1: if one carry bit was *not* set
--				   the addition will not result in 0.  */
--
--	jnz	3f		/* found NUL => return pointer */
--
--	movq	%rax, (%rdx)	/* Write value to destination.  */
--	addq	$8, %rdx	/* Adjust pointer.  */
--
--	/* 2nd unroll.  */
--	movq	(%rsi), %rax	/* Read double word (8 bytes).  */
--	addq	$8, %rsi	/* Adjust pointer for next word.  */
--	movq	%rax, %r9	/* Save a copy for NUL finding.  */
--	addq	%r8, %r9	/* add the magic value to the word.  We get
--				   carry bits reported for each byte which
--				   is *not* 0 */
--	jnc	3f		/* highest byte is NUL => return pointer */
--	xorq	%rax, %r9	/* (word+magic)^word */
--	orq	%r8, %r9	/* set all non-carry bits */
--	incq	%r9		/* add 1: if one carry bit was *not* set
--				   the addition will not result in 0.  */
--
--	jnz	3f		/* found NUL => return pointer */
--
--	movq	%rax, (%rdx)	/* Write value to destination.  */
--	addq	$8, %rdx	/* Adjust pointer.  */
--
--	/* 3rd unroll.  */
--	movq	(%rsi), %rax	/* Read double word (8 bytes).  */
--	addq	$8, %rsi	/* Adjust pointer for next word.  */
--	movq	%rax, %r9	/* Save a copy for NUL finding.  */
--	addq	%r8, %r9	/* add the magic value to the word.  We get
--				   carry bits reported for each byte which
--				   is *not* 0 */
--	jnc	3f		/* highest byte is NUL => return pointer */
--	xorq	%rax, %r9	/* (word+magic)^word */
--	orq	%r8, %r9	/* set all non-carry bits */
--	incq	%r9		/* add 1: if one carry bit was *not* set
--				   the addition will not result in 0.  */
--
--	jnz	3f		/* found NUL => return pointer */
--
--	movq	%rax, (%rdx)	/* Write value to destination.  */
--	addq	$8, %rdx	/* Adjust pointer.  */
--
--	/* 4th unroll.  */
--	movq	(%rsi), %rax	/* Read double word (8 bytes).  */
--	addq	$8, %rsi	/* Adjust pointer for next word.  */
--	movq	%rax, %r9	/* Save a copy for NUL finding.  */
--	addq	%r8, %r9	/* add the magic value to the word.  We get
--				   carry bits reported for each byte which
--				   is *not* 0 */
--	jnc	3f		/* highest byte is NUL => return pointer */
--	xorq	%rax, %r9	/* (word+magic)^word */
--	orq	%r8, %r9	/* set all non-carry bits */
--	incq	%r9		/* add 1: if one carry bit was *not* set
--				   the addition will not result in 0.  */
--
--	jnz	3f		/* found NUL => return pointer */
--
--	movq	%rax, (%rdx)	/* Write value to destination.  */
--	addq	$8, %rdx	/* Adjust pointer.  */
--	jmp	1b		/* Next iteration.  */
- 
--	/* Do the last few bytes. %rax contains the value to write.
--	   The loop is unrolled twice.  */
-+L(alignloop):
-+        movzbl	(%rsi, %rdx), %eax
-+        test    %al, %al                # check if character a NUL
-+        mov     %al, (%rdi, %rdx)
-+        jz      L(exit)
++/*       .p2align 4 */
 +
-+        inc     %edx
++L(preskip):
++	subq	%r8, %rdx		/* check for more */
++	testq	$-64, %rdx
++	jnz	L(preafter)
 +
-+#ifdef USE_AS_STRNCPY
-+	dec	%r11
-+	jz	L(exit)
-+#endif
++	andl	$63, %edx		/* check for left overs */
++#ifdef USE_AS_MEMPCPY
++	jnz	L(1)
 +
-+        inc     %r8
-+        jnz     L(alignloop)
-+
-+	.p2align 4,, 7
-+
-+L(alignafter):
-+
-+L(8try):				# up to 64 bytes
-+        mov     $0xfefefefefefefeff, %rcx
-+
-+L(8):                               	# 8-byte loop
-+
-+L(8loop):
-+#ifdef USE_AS_STRNCPY
-+	sub	$8, %r11
-+	jbe	L(tail)
-+#endif
-+
-+        mov     (%rsi, %rdx), %rax
-+
-+        mov     %rcx, %r8
-+        add     %rax, %r8
-+        jnc	L(tail)			# sbb     %r10, %r10
-+
-+        xor     %rax, %r8
-+        or      %rcx, %r8
-+        inc	%r8			# sub     %r10, %r8
-+        jnz     L(tail)
-+
-+        mov     %rax, (%rdi, %rdx)
-+
-+#ifdef USE_AS_STRNCPY
-+        add     $8, %edx
-+
-+	sub	$8, %r11
-+	jbe	L(tail)
-+
-+        mov     (%rsi, %rdx), %rax
++	movq	%rdi, %rax
 +#else
-+        mov     8 (%rsi, %rdx), %rax
-+        add     $8, %edx
-+#endif
-+
-+        mov     %rcx, %r8
-+        add     %rax, %r8
-+        jnc	L(tail)			# sbb     %r10, %r10
-+
-+        xor     %rax, %r8
-+        or      %rcx, %r8
-+        inc	%r8			# sub     %r10, %r8
-+        jnz     L(tail)
-+
-+        mov     %rax, (%rdi, %rdx)
-+
-+#ifdef USE_AS_STRNCPY
-+        add     $8, %edx
-+
-+	sub	$8, %r11
-+	jbe	L(tail)
-+
-+        mov     (%rsi, %rdx), %rax
-+#else
-+        mov     8 (%rsi, %rdx), %rax
-+        add     $8, %edx
-+#endif
-+
-+        mov     %rcx, %r8
-+        add     %rax, %r8
-+        jnc	L(tail)			# sbb     %r10, %r10
-+
-+        xor     %rax, %r8
-+        or      %rcx, %r8
-+        inc	%r8			# sub     %r10, %r8
-+        jnz     L(tail)
-+
-+        mov     %rax, (%rdi, %rdx)
-+
-+#ifdef USE_AS_STRNCPY
-+        add     $8, %edx
-+
-+	sub	$8, %r11
-+	jbe	L(tail)
-+
-+        mov     (%rsi, %rdx), %rax
-+#else
-+        mov     8 (%rsi, %rdx), %rax
-+        add     $8, %edx
-+#endif
-+
-+        mov     %rcx, %r8
-+        add     %rax, %r8
-+        jnc	L(tail)			# sbb     %r10, %r10
-+
-+        xor     %rax, %r8
-+        or      %rcx, %r8
-+        inc	%r8			# sub     %r10, %r8
-+        jnz     L(tail)
-+
-+        mov     %rax, (%rdi, %rdx)
-+
-+#ifdef USE_AS_STRNCPY
-+        add     $8, %edx
-+
-+	sub	$8, %r11
-+	jbe	L(tail)
-+
-+        mov     (%rsi, %rdx), %rax
-+#else
-+        mov     8 (%rsi, %rdx), %rax
-+        add     $8, %edx
-+#endif
-+
-+        mov     %rcx, %r8
-+        add     %rax, %r8
-+        jnc	L(tail)			# sbb     %r10, %r10
-+
-+        xor     %rax, %r8
-+        or      %rcx, %r8
-+        inc	%r8			# sub     %r10, %r8
-+        jnz     L(tail)
-+
-+        mov     %rax, (%rdi, %rdx)
-+
-+#ifdef USE_AS_STRNCPY
-+        add     $8, %edx
-+
-+	sub	$8, %r11
-+	jbe	L(tail)
-+
-+        mov     (%rsi, %rdx), %rax
-+#else
-+        mov     8 (%rsi, %rdx), %rax
-+        add     $8, %edx
-+#endif
-+
-+        mov     %rcx, %r8
-+        add     %rax, %r8
-+        jnc	L(tail)			# sbb     %r10, %r10
-+
-+        xor     %rax, %r8
-+        or      %rcx, %r8
-+        inc	%r8			# sub     %r10, %r8
-+        jnz     L(tail)
-+
-+        mov     %rax, (%rdi, %rdx)
-+
-+#ifdef USE_AS_STRNCPY
-+        add     $8, %edx
-+
-+	sub	$8, %r11
-+	jbe	L(tail)
-+
-+        mov     (%rsi, %rdx), %rax
-+#else
-+        mov     8 (%rsi, %rdx), %rax
-+        add     $8, %edx
-+#endif
-+
-+        mov     %rcx, %r8
-+        add     %rax, %r8
-+        jnc	L(tail)			# sbb     %r10, %r10
-+
-+        xor     %rax, %r8
-+        or      %rcx, %r8
-+        inc	%r8			# sub     %r10, %r8
-+        jnz     L(tail)
-+
-+        mov     %rax, (%rdi, %rdx)
-+
-+#ifdef USE_AS_STRNCPY
-+        add     $8, %edx
-+
-+	sub	$8, %r11
-+	jbe	L(tail)
-+
-+        mov     (%rsi, %rdx), %rax
-+#else
-+        mov     8 (%rsi, %rdx), %rax
-+        add     $8, %edx
-+#endif
-+
-+        mov     %rcx, %r8
-+        add     %rax, %r8
-+        jnc	L(tail)			# sbb     %r10, %r10
-+
-+        xor     %rax, %r8
-+        or      %rcx, %r8
-+        inc	%r8			# sub     %r10, %r8
-+        jnz     L(tail)
-+
-+        mov     %rax, (%rdi, %rdx)
-+
-+        add     $8, %edx
-+
-+L(8after):				# up to 64 bytes
-+
-+L(64try):				# up to 1/2 L1
-+#ifdef PIC
-+# ifdef SHARED
-+        mov     _rtld_local_ro@GOTPCREL (%rip), %r9
-+	mov	RTLD_GLOBAL_DL_CACHE1SIZEHALF (%r9), %r9
-+# else
-+        mov     _dl_cache1sizehalf@GOTPCREL (%rip), %r9
-+	mov	(%r9), %r9
-+# endif
-+#else
-+        mov     _dl_cache1sizehalf, %r9
-+#endif
-+
-+L(64):					# 64-byte loop
-+
- 	.p2align 4
--3:
--	/* Note that stpcpy needs to return with the value of the NUL
--	   byte.  */
--	movb	%al, (%rdx)	/* 1st byte.  */
--	testb	%al, %al	/* Is it NUL.  */
--	jz	4f		/* yes, finish.  */
--	incq	%rdx		/* Increment destination.  */
--	movb	%ah, (%rdx)	/* 2nd byte.  */
--	testb	%ah, %ah	/* Is it NUL?.  */
--	jz	4f		/* yes, finish.  */
--	incq	%rdx		/* Increment destination.  */
--	shrq	$16, %rax	/* Shift...  */
--	jmp	3b		/* and look at next two bytes in %rax.  */
- 
--4:
-+L(64loop):
-+#ifdef USE_AS_STRNCPY
-+	sub	$8, %r11
-+	jbe	L(tail)
-+#endif
-+
-+        mov     (%rsi, %rdx), %rax
-+
-+        mov     %rcx, %r8
-+        add     %rax, %r8
-+        sbb     %r10, %r10
-+
-+        xor     %rax, %r8
-+        or      %rcx, %r8
-+        sub     %r10, %r8
-+        jnz     L(tail)
-+
-+        mov     %rax, (%rdi, %rdx)
-+
-+#ifdef USE_AS_STRNCPY
-+        add     $8, %edx
-+
-+	sub	$8, %r11
-+	jbe	L(tail)
-+
-+        mov     (%rsi, %rdx), %rax
-+#else
-+        mov     8 (%rsi, %rdx), %rax
-+        add     $8, %edx
-+#endif
-+
-+        mov     %rcx, %r8
-+        add     %rax, %r8
-+        sbb     %r10, %r10
-+
-+        xor     %rax, %r8
-+        or      %rcx, %r8
-+        sub     %r10, %r8
-+        jnz     L(tail)
-+
-+        mov     %rax, (%rdi, %rdx)
-+
-+#ifdef USE_AS_STRNCPY
-+        add     $8, %edx
-+
-+	sub	$8, %r11
-+	jbe	L(tail)
-+
-+        mov     (%rsi, %rdx), %rax
-+#else
-+        mov     8 (%rsi, %rdx), %rax
-+        add     $8, %edx
-+#endif
-+
-+        mov     %rcx, %r8
-+        add     %rax, %r8
-+        sbb     %r10, %r10
-+
-+        xor     %rax, %r8
-+        or      %rcx, %r8
-+        sub     %r10, %r8
-+        jnz     L(tail)
-+
-+        mov     %rax, (%rdi, %rdx)
-+
-+#ifdef USE_AS_STRNCPY
-+        add     $8, %edx
-+
-+	sub	$8, %r11
-+	jbe	L(tail)
-+
-+        mov     (%rsi, %rdx), %rax
-+#else
-+        mov     8 (%rsi, %rdx), %rax
-+        add     $8, %edx
-+#endif
-+
-+        mov     %rcx, %r8
-+        add     %rax, %r8
-+        sbb     %r10, %r10
-+
-+        xor     %rax, %r8
-+        or      %rcx, %r8
-+        sub     %r10, %r8
-+        jnz     L(tail)
-+
-+        mov     %rax, (%rdi, %rdx)
-+
-+#ifdef USE_AS_STRNCPY
-+        add     $8, %edx
-+
-+	sub	$8, %r11
-+	jbe	L(tail)
-+
-+        mov     (%rsi, %rdx), %rax
-+#else
-+        mov     8 (%rsi, %rdx), %rax
-+        add     $8, %edx
-+#endif
-+
-+        mov     %rcx, %r8
-+        add     %rax, %r8
-+        sbb     %r10, %r10
-+
-+        xor     %rax, %r8
-+        or      %rcx, %r8
-+        sub     %r10, %r8
-+        jnz     L(tail)
-+
-+        mov     %rax, (%rdi, %rdx)
-+
-+#ifdef USE_AS_STRNCPY
-+        add     $8, %edx
-+
-+	sub	$8, %r11
-+	jbe	L(tail)
-+
-+        mov     (%rsi, %rdx), %rax
-+#else
-+        mov     8 (%rsi, %rdx), %rax
-+        add     $8, %edx
-+#endif
-+
-+        mov     %rcx, %r8
-+        add     %rax, %r8
-+        sbb     %r10, %r10
-+
-+        xor     %rax, %r8
-+        or      %rcx, %r8
-+        sub     %r10, %r8
-+        jnz     L(tail)
-+
-+        mov     %rax, (%rdi, %rdx)
-+
-+#ifdef USE_AS_STRNCPY
-+        add     $8, %edx
-+
-+	sub	$8, %r11
-+	jbe	L(tail)
-+
-+        mov     (%rsi, %rdx), %rax
-+#else
-+        mov     8 (%rsi, %rdx), %rax
-+        add     $8, %edx
-+#endif
-+
-+        mov     %rcx, %r8
-+        add     %rax, %r8
-+        sbb     %r10, %r10
-+
-+        xor     %rax, %r8
-+        or      %rcx, %r8
-+        sub     %r10, %r8
-+        jnz     L(tail)
-+
-+        mov     %rax, (%rdi, %rdx)
-+
-+#ifdef USE_AS_STRNCPY
-+        add     $8, %edx
-+
-+	sub	$8, %r11
-+	jbe	L(tail)
-+
-+        mov     (%rsi, %rdx), %rax
-+#else
-+        mov     8 (%rsi, %rdx), %rax
-+        add     $8, %edx
-+#endif
-+
-+        mov     %rcx, %r8
-+        add     %rax, %r8
-+        sbb     %r10, %r10
-+
-+        xor     %rax, %r8
-+        or      %rcx, %r8
-+        sub     %r10, %r8
-+        jnz     L(tail)
-+
-+        mov     %rax, (%rdi, %rdx)
-+
-+        add     $8, %edx
-+
-+        cmp     %r9, %rdx
-+        jbe     L(64loop)
-+
-+L(64after):				# up to 1/2 L1
-+
-+L(pretry):				# up to 1/2 L2
-+#ifdef PIC
-+# ifdef SHARED
-+	mov     _rtld_local_ro@GOTPCREL (%rip), %r9
-+	cmpl	$0, RTLD_GLOBAL_DL_PREFETCHW (%r9)
-+	mov	RTLD_GLOBAL_DL_CACHE2SIZEHALF (%r9), %r9
-+# else
-+	mov     _dl_prefetchw@GOTPCREL (%rip), %r9
-+	cmpl	$0, (%r9)
-+	mov     _dl_cache2sizehalf@GOTPCREL (%rip), %r9
-+	mov	(%r9), %r9
-+# endif
-+#else
-+	cmpl	$0, _dl_prefetchw
-+        mov     _dl_cache2sizehalf, %r9
-+#endif
-+	jz	L(preloop)		# check for availability of PREFETCHW
-+
-+        .p2align 4
-+
-+L(prewloop):				# 64-byte with prefetching to state M
-+#ifdef USE_AS_STRNCPY
-+	sub	$8, %r11
-+	jbe	L(tail)
-+#endif
-+
-+        mov     (%rsi, %rdx), %rax
-+
-+        mov     %rcx, %r8
-+        add     %rax, %r8
-+        sbb     %r10, %r10
-+
-+        xor     %rax, %r8
-+        or      %rcx, %r8
-+        sub     %r10, %r8
-+        jnz     L(tail)
-+
-+        mov     %rax, (%rdi, %rdx)
-+
-+#ifdef USE_AS_STRNCPY
-+        add     $8, %edx
-+
-+	sub	$8, %r11
-+	jbe	L(tail)
-+
-+        mov     (%rsi, %rdx), %rax
-+#else
-+        mov     8 (%rsi, %rdx), %rax
-+        add     $8, %edx
-+#endif
-+
-+        mov     %rcx, %r8
-+        add     %rax, %r8
-+        sbb     %r10, %r10
-+
-+        xor     %rax, %r8
-+        or      %rcx, %r8
-+        sub     %r10, %r8
-+        jnz     L(tail)
-+
-+        mov     %rax, (%rdi, %rdx)
-+
-+#ifdef USE_AS_STRNCPY
-+        add     $8, %edx
-+
-+	sub	$8, %r11
-+	jbe	L(tail)
-+
-+        mov     (%rsi, %rdx), %rax
-+#else
-+        mov     8 (%rsi, %rdx), %rax
-+        add     $8, %edx
-+#endif
-+
-+        mov     %rcx, %r8
-+        add     %rax, %r8
-+        sbb     %r10, %r10
-+
-+        xor     %rax, %r8
-+        or      %rcx, %r8
-+        sub     %r10, %r8
-+        jnz     L(tail)
-+
-+        mov     %rax, (%rdi, %rdx)
-+
-+#ifdef USE_AS_STRNCPY
-+        add     $8, %edx
-+
-+	sub	$8, %r11
-+	jbe	L(tail)
-+
-+        mov     (%rsi, %rdx), %rax
-+#else
-+        mov     8 (%rsi, %rdx), %rax
-+        add     $8, %edx
-+#endif
-+
-+        mov     %rcx, %r8
-+        add     %rax, %r8
-+        sbb     %r10, %r10
-+
-+        xor     %rax, %r8
-+        or      %rcx, %r8
-+        sub     %r10, %r8
-+        jnz     L(tail)
-+
-+        mov     %rax, (%rdi, %rdx)
-+
-+#ifdef USE_AS_STRNCPY
-+        add     $8, %edx
-+
-+	sub	$8, %r11
-+	jbe	L(tail)
-+
-+        mov     (%rsi, %rdx), %rax
-+#else
-+        mov     8 (%rsi, %rdx), %rax
-+        add     $8, %edx
-+#endif
-+
-+        mov     %rcx, %r8
-+        add     %rax, %r8
-+        sbb     %r10, %r10
-+
-+        xor     %rax, %r8
-+        or      %rcx, %r8
-+        sub     %r10, %r8
-+        jnz     L(tail)
-+
-+        mov     %rax, (%rdi, %rdx)
-+
-+#ifdef USE_AS_STRNCPY
-+        add     $8, %edx
-+
-+	sub	$8, %r11
-+	jbe	L(tail)
-+
-+        mov     (%rsi, %rdx), %rax
-+#else
-+        mov     8 (%rsi, %rdx), %rax
-+        add     $8, %edx
-+#endif
-+
-+        mov     %rcx, %r8
-+        add     %rax, %r8
-+        sbb     %r10, %r10
-+
-+        xor     %rax, %r8
-+        or      %rcx, %r8
-+        sub     %r10, %r8
-+        jnz     L(tail)
-+
-+        mov     %rax, (%rdi, %rdx)
-+
-+#ifdef USE_AS_STRNCPY
-+        add     $8, %edx
-+
-+	sub	$8, %r11
-+	jbe	L(tail)
-+
-+        mov     (%rsi, %rdx), %rax
-+#else
-+        mov     8 (%rsi, %rdx), %rax
-+        add     $8, %edx
-+#endif
-+
-+        mov     %rcx, %r8
-+        add     %rax, %r8
-+        sbb     %r10, %r10
-+
-+        xor     %rax, %r8
-+        or      %rcx, %r8
-+        sub     %r10, %r8
-+        jnz     L(tail)
-+
-+        mov     %rax, (%rdi, %rdx)
-+
-+#ifdef USE_AS_STRNCPY
-+        add     $8, %edx
-+
-+	sub	$8, %r11
-+	jbe	L(tail)
-+
-+        mov     (%rsi, %rdx), %rax
-+#else
-+        mov     8 (%rsi, %rdx), %rax
-+        add     $8, %edx
-+#endif
-+
-+        mov     %rcx, %r8
-+        add     %rax, %r8
-+        sbb     %r10, %r10
-+
-+        xor     %rax, %r8
-+        or      %rcx, %r8
-+        sub     %r10, %r8
-+        jnz     L(tail)
-+
-+        mov     %rax, (%rdi, %rdx)
-+
-+        prefetchw 512 + 8 (%rdi, %rdx)
-+        prefetcht0 512 + 8 (%rsi, %rdx)
-+
-+        add     $8, %edx
-+
-+        cmp     %r9, %rdx
-+        jb	L(prewloop)
-+	jmp	L(preafter)
-+
-+L(prewafter):				# up to 1/2 L2
-+
-+        .p2align 4
-+
-+L(preloop):				# 64-byte with prefetching to state E
-+#ifdef USE_AS_STRNCPY
-+	sub	$8, %r11
-+	jbe	L(tail)
-+#endif
-+
-+        mov     (%rsi, %rdx), %rax
-+
-+        mov     %rcx, %r8
-+        add     %rax, %r8
-+        sbb     %r10, %r10
-+
-+        xor     %rax, %r8
-+        or      %rcx, %r8
-+        sub     %r10, %r8
-+        jnz     L(tail)
-+
-+        mov     %rax, (%rdi, %rdx)
-+
-+#ifdef USE_AS_STRNCPY
-+        add     $8, %edx
-+
-+	sub	$8, %r11
-+	jbe	L(tail)
-+
-+        mov     (%rsi, %rdx), %rax
-+#else
-+        mov     8 (%rsi, %rdx), %rax
-+        add     $8, %edx
-+#endif
-+
-+        mov     %rcx, %r8
-+        add     %rax, %r8
-+        sbb     %r10, %r10
-+
-+        xor     %rax, %r8
-+        or      %rcx, %r8
-+        sub     %r10, %r8
-+        jnz     L(tail)
-+
-+        mov     %rax, (%rdi, %rdx)
-+
-+#ifdef USE_AS_STRNCPY
-+        add     $8, %edx
-+
-+	sub	$8, %r11
-+	jbe	L(tail)
-+
-+        mov     (%rsi, %rdx), %rax
-+#else
-+        mov     8 (%rsi, %rdx), %rax
-+        add     $8, %edx
-+#endif
-+
-+        mov     %rcx, %r8
-+        add     %rax, %r8
-+        sbb     %r10, %r10
-+
-+        xor     %rax, %r8
-+        or      %rcx, %r8
-+        sub     %r10, %r8
-+        jnz     L(tail)
-+
-+        mov     %rax, (%rdi, %rdx)
-+
-+#ifdef USE_AS_STRNCPY
-+        add     $8, %edx
-+
-+	sub	$8, %r11
-+	jbe	L(tail)
-+
-+        mov     (%rsi, %rdx), %rax
-+#else
-+        mov     8 (%rsi, %rdx), %rax
-+        add     $8, %edx
-+#endif
-+
-+        mov     %rcx, %r8
-+        add     %rax, %r8
-+        sbb     %r10, %r10
-+
-+        xor     %rax, %r8
-+        or      %rcx, %r8
-+        sub     %r10, %r8
-+        jnz     L(tail)
-+
-+        mov     %rax, (%rdi, %rdx)
-+
-+#ifdef USE_AS_STRNCPY
-+        add     $8, %edx
-+
-+	sub	$8, %r11
-+	jbe	L(tail)
-+
-+        mov     (%rsi, %rdx), %rax
-+#else
-+        mov     8 (%rsi, %rdx), %rax
-+        add     $8, %edx
-+#endif
-+
-+        mov     %rcx, %r8
-+        add     %rax, %r8
-+        sbb     %r10, %r10
-+
-+        xor     %rax, %r8
-+        or      %rcx, %r8
-+        sub     %r10, %r8
-+        jnz     L(tail)
-+
-+        mov     %rax, (%rdi, %rdx)
-+
-+#ifdef USE_AS_STRNCPY
-+        add     $8, %edx
-+
-+	sub	$8, %r11
-+	jbe	L(tail)
-+
-+        mov     (%rsi, %rdx), %rax
-+#else
-+        mov     8 (%rsi, %rdx), %rax
-+        add     $8, %edx
-+#endif
-+
-+        mov     %rcx, %r8
-+        add     %rax, %r8
-+        sbb     %r10, %r10
-+
-+        xor     %rax, %r8
-+        or      %rcx, %r8
-+        sub     %r10, %r8
-+        jnz     L(tail)
-+
-+        mov     %rax, (%rdi, %rdx)
-+
-+#ifdef USE_AS_STRNCPY
-+        add     $8, %edx
-+
-+	sub	$8, %r11
-+	jbe	L(tail)
-+
-+        mov     (%rsi, %rdx), %rax
-+#else
-+        mov     8 (%rsi, %rdx), %rax
-+        add     $8, %edx
-+#endif
-+
-+        mov     %rcx, %r8
-+        add     %rax, %r8
-+        sbb     %r10, %r10
-+
-+        xor     %rax, %r8
-+        or      %rcx, %r8
-+        sub     %r10, %r8
-+        jnz     L(tail)
-+
-+        mov     %rax, (%rdi, %rdx)
-+
-+#ifdef USE_AS_STRNCPY
-+        add     $8, %edx
-+
-+	sub	$8, %r11
-+	jbe	L(tail)
-+
-+        mov     (%rsi, %rdx), %rax
-+#else
-+        mov     8 (%rsi, %rdx), %rax
-+        add     $8, %edx
-+#endif
-+
-+        mov     %rcx, %r8
-+        add     %rax, %r8
-+        sbb     %r10, %r10
-+
-+        xor     %rax, %r8
-+        or      %rcx, %r8
-+        sub     %r10, %r8
-+        jnz     L(tail)
-+
-+        mov     %rax, (%rdi, %rdx)
-+
-+        prefetcht0 512 + 8 (%rdi, %rdx)
-+        prefetcht0 512 + 8 (%rsi, %rdx)
-+
-+        add     $8, %edx
-+
-+        cmp     %r9, %rdx
-+        jb	L(preloop)
-+
-+        .p2align 4
-+
-+L(preafter):				# up to 1/2 of L2
-+
-+L(NTtry):
-+	mfence
-+
-+L(NT):					# 64-byte NT
-+
-+        .p2align 4
-+
-+L(NTloop):
-+#ifdef USE_AS_STRNCPY
-+	sub	$8, %r11
-+	jbe	L(tail)
-+#endif
-+
-+        mov     (%rsi, %rdx), %rax
-+
-+        mov     %rcx, %r8
-+        add     %rax, %r8
-+        sbb     %r10, %r10
-+
-+        xor     %rax, %r8
-+        or      %rcx, %r8
-+        sub     %r10, %r8
-+        jnz     L(NTtail)
-+
-+        movnti  %rax, (%rdi, %rdx)
-+
-+#ifdef USE_AS_STRNCPY
-+        add     $8, %rdx
-+
-+	sub	$8, %r11
-+	jbe	L(tail)
-+
-+        mov     (%rsi, %rdx), %rax
-+#else
-+        mov     8 (%rsi, %rdx), %rax
-+        add     $8, %rdx
-+#endif
-+
-+        mov     %rcx, %r8
-+        add     %rax, %r8
-+        sbb     %r10, %r10
-+
-+        xor     %rax, %r8
-+        or      %rcx, %r8
-+        sub     %r10, %r8
-+        jnz     L(NTtail)
-+
-+        movnti  %rax, (%rdi, %rdx)
-+
-+#ifdef USE_AS_STRNCPY
-+        add     $8, %rdx
-+
-+	sub	$8, %r11
-+	jbe	L(tail)
-+
-+        mov     (%rsi, %rdx), %rax
-+#else
-+        mov     8 (%rsi, %rdx), %rax
-+        add     $8, %rdx
-+#endif
-+
-+        mov     %rcx, %r8
-+        add     %rax, %r8
-+        sbb     %r10, %r10
-+
-+        xor     %rax, %r8
-+        or      %rcx, %r8
-+        sub     %r10, %r8
-+        jnz     L(NTtail)
-+
-+        movnti  %rax, (%rdi, %rdx)
-+
-+#ifdef USE_AS_STRNCPY
-+        add     $8, %rdx
-+
-+	sub	$8, %r11
-+	jbe	L(tail)
-+
-+        mov     (%rsi, %rdx), %rax
-+#else
-+        mov     8 (%rsi, %rdx), %rax
-+        add     $8, %rdx
-+#endif
-+
-+        mov     %rcx, %r8
-+        add     %rax, %r8
-+        sbb     %r10, %r10
-+
-+        xor     %rax, %r8
-+        or      %rcx, %r8
-+        sub     %r10, %r8
-+        jnz     L(NTtail)
-+
-+        movnti  %rax, (%rdi, %rdx)
-+
-+#ifdef USE_AS_STRNCPY
-+        add     $8, %rdx
-+
-+	sub	$8, %r11
-+	jbe	L(tail)
-+
-+        mov     (%rsi, %rdx), %rax
-+#else
-+        mov     8 (%rsi, %rdx), %rax
-+        add     $8, %rdx
-+#endif
-+
-+        mov     %rcx, %r8
-+        add     %rax, %r8
-+        sbb     %r10, %r10
-+
-+        xor     %rax, %r8
-+        or      %rcx, %r8
-+        sub     %r10, %r8
-+        jnz     L(NTtail)
-+
-+        movnti  %rax, (%rdi, %rdx)
-+
-+#ifdef USE_AS_STRNCPY
-+        add     $8, %rdx
-+
-+	sub	$8, %r11
-+	jbe	L(tail)
-+
-+        mov     (%rsi, %rdx), %rax
-+#else
-+        mov     8 (%rsi, %rdx), %rax
-+        add     $8, %rdx
-+#endif
-+
-+        mov     %rcx, %r8
-+        add     %rax, %r8
-+        sbb     %r10, %r10
-+
-+        xor     %rax, %r8
-+        or      %rcx, %r8
-+        sub     %r10, %r8
-+        jnz     L(NTtail)
-+
-+        movnti  %rax, (%rdi, %rdx)
-+
-+#ifdef USE_AS_STRNCPY
-+        add     $8, %rdx
-+
-+	sub	$8, %r11
-+	jbe	L(tail)
-+
-+        mov     (%rsi, %rdx), %rax
-+#else
-+        mov     8 (%rsi, %rdx), %rax
-+        add     $8, %rdx
-+#endif
-+
-+        mov     %rcx, %r8
-+        add     %rax, %r8
-+        sbb     %r10, %r10
-+
-+        xor     %rax, %r8
-+        or      %rcx, %r8
-+        sub     %r10, %r8
-+        jnz     L(NTtail)
-+
-+        movnti  %rax, (%rdi, %rdx)
-+
-+#ifdef USE_AS_STRNCPY
-+        add     $8, %rdx
-+
-+	sub	$8, %r11
-+	jbe	L(tail)
-+
-+        mov     (%rsi, %rdx), %rax
-+#else
-+        mov     8 (%rsi, %rdx), %rax
-+        add     $8, %rdx
-+#endif
-+
-+        mov     %rcx, %r8
-+        add     %rax, %r8
-+        sbb     %r10, %r10
-+
-+        xor     %rax, %r8
-+        or      %rcx, %r8
-+        sub     %r10, %r8
-+        jnz     L(NTtail)
-+
-+        movnti  %rax, (%rdi, %rdx)
-+
-+	prefetchnta 768 + 8 (%rsi, %rdx)
-+
-+        add     $8, %rdx
-+        jmp     L(NTloop)
-+
-+        .p2align 4
-+
-+L(NTtail):
-+	mfence				# serialize memory operations
-+
-+        .p2align 4
-+
-+L(NTafter):
-+
-+L(tailtry):
-+
-+L(tail):				# 1-byte tail
-+#ifdef USE_AS_STRNCPY
-+	add	$8, %r11
-+	jz	L(exit)
-+#endif
-+
-+        .p2align 4
-+
-+L(tailloop):
-+        movzbl	(%rsi, %rdx), %eax
-+        test    %al, %al
-+        mov     %al, (%rdi, %rdx)
-+        jz      L(exit)
-+
-+	inc     %rdx
-+
-+#ifdef USE_AS_STRNCPY
-+	dec	%r11
-+	jz	L(exit)
-+#endif
-+        jmp     L(tailloop)
-+
-+        .p2align 4
-+
-+L(tailafter):
-+
-+L(exit):
-+#ifdef USE_AS_STPCPY
-+        lea     (%rdi, %rdx), %rax
-+#else
-+        mov     %rdi, %rax
-+#endif
-+
-+#ifdef USE_AS_STRNCPY
-+	test	%r11, %r11
-+	mov	%r11, %rcx
-+	jnz	2f
++	movq	RETVAL (%rsp), %rax
++	jnz	L(1)
 +
 +	rep
-+        ret
++#endif
++	retq				/* exit */
 +
-+        .p2align 4
++	.p2align 4
 +
-+2:
- #ifdef USE_AS_STPCPY
--	movq	%rdx, %rax	/* Destination is return value.  */
-+	mov	%rax, %r8
- #else
--	movq	%rdi, %rax	/* Source is return value.  */
-+        mov     %rdi, %r8
-+# endif
++L(preafter):
 +
-+	xor	%eax, %eax		# bzero () would do too, but usually there are only a handfull of bytes left
-+	shr	$3, %rcx
-+        lea     (%rdi, %rdx), %rdi
-+	jz	3f
++/* Loop to handle huge blocks. */
 +
-+	rep	stosq
++L(NTtry):
 +
-+	and	$7, %r11d
-+	jz	1f
++L(NT):					/* non-temporal 128-byte */
++	movq	%rdx, %rcx
++	shrq	$7, %rcx
++	jz	L(NTskip)
 +
-+        .p2align 4,, 4
++	movq	%r14, SAVE0 (%rsp)
++	cfi_rel_offset (%r14, SAVE0)
++	movq	%r13, SAVE1 (%rsp)
++	cfi_rel_offset (%r13, SAVE1)
++	movq	%r12, SAVE2 (%rsp)
++	cfi_rel_offset (%r12, SAVE2)
 +
-+3:
-+	mov	%al, (%rdi)
-+	inc	%rdi
++       .p2align 4
 +
-+	dec	%r11d
-+	jnz	3b
++L(NTloop):
++	prefetchnta	768 (%rsi)
++	prefetchnta	832 (%rsi)
 +
-+        .p2align 4,, 4
++	decq	%rcx
 +
-+1:
-+        mov     %r8, %rax
++	movq	   (%rsi), %rax
++	movq	 8 (%rsi), %r8
++	movq	16 (%rsi), %r9
++	movq	24 (%rsi), %r10
++	movq	32 (%rsi), %r11
++	movq	40 (%rsi), %r12
++	movq	48 (%rsi), %r13
++	movq	56 (%rsi), %r14
++
++	movntiq	%rax,    (%rdi)
++	movntiq	 %r8,  8 (%rdi)
++	movntiq	 %r9, 16 (%rdi)
++	movntiq	%r10, 24 (%rdi)
++	movntiq	%r11, 32 (%rdi)
++	movntiq	%r12, 40 (%rdi)
++	movntiq	%r13, 48 (%rdi)
++	movntiq	%r14, 56 (%rdi)
++
++	movq	 64 (%rsi), %rax
++	movq	 72 (%rsi), %r8
++	movq	 80 (%rsi), %r9
++	movq	 88 (%rsi), %r10
++	movq	 96 (%rsi), %r11
++	movq	104 (%rsi), %r12
++	movq	112 (%rsi), %r13
++	movq	120 (%rsi), %r14
++
++	movntiq	%rax,  64 (%rdi)
++	movntiq	 %r8,  72 (%rdi)
++	movntiq	 %r9,  80 (%rdi)
++	movntiq	%r10,  88 (%rdi)
++	movntiq	%r11,  96 (%rdi)
++	movntiq	%r12, 104 (%rdi)
++	movntiq	%r13, 112 (%rdi)
++	movntiq	%r14, 120 (%rdi)
++
++	leaq	128 (%rsi), %rsi
++	leaq	128 (%rdi), %rdi
++
++	jnz	L(NTloop)
++
++	sfence				/* serialize memory stores */
++
++	movq	SAVE2 (%rsp), %r12
++	cfi_restore (%r12)
++	movq	SAVE1 (%rsp), %r13
++	cfi_restore (%r13)
++	movq	SAVE0 (%rsp), %r14
++	cfi_restore (%r14)
++
++L(NTskip):
++	andl	$127, %edx		/* check for left overs */
++#ifdef USE_AS_MEMPCPY
++	jnz	L(1)
++
++	movq	%rdi, %rax
++#else
++	movq	RETVAL (%rsp), %rax
++	jnz	L(1)
++
++	rep
++#endif
++	retq				/* exit */
++
++#endif /* !NOT_IN_libc */
++
++END(memcpy)
+ 
+-END (BP_SYM (memcpy))
+-#if !MEMPCPY_P
++#ifndef USE_AS_MEMPCPY
+ libc_hidden_builtin_def (memcpy)
  #endif
--	retq
--END (BP_SYM (STRCPY))
--#ifndef USE_AS_STPCPY
-+        ret
-+
-+END (strcpy)
-+
-+#if !defined USE_AS_STPCPY && !defined USE_AS_STRNCPY
- libc_hidden_builtin_def (strcpy)
- #endif
-diff -Npruw -x CVS -x vssver.scc -x powerpc -x sync_file_range.c libc/sysdeps/x86_64/strncpy.S libc/sysdeps/x86_64/strncpy.S
---- libc/sysdeps/x86_64/strncpy.S	1969-12-31 18:00:00.000000000 -0600
-+++ libc/sysdeps/x86_64/strncpy.S	2006-05-05 15:25:34.559341000 -0500
-@@ -0,0 +1,8 @@
-+#define USE_AS_STRNCPY
-+#define strcpy __strncpy
-+
-+#include <sysdeps/x86_64/strcpy.S>
-+
-+weak_alias (__strncpy, strncpy)
-+libc_hidden_def (__strncpy)
-+libc_hidden_builtin_def (strncpy)
+Index: sysdeps/x86_64/mempcpy.S
+===================================================================
+RCS file: /cvs/glibc/libc/sysdeps/x86_64/mempcpy.S,v
+retrieving revision 1.3
+diff -p -u -w -p -u -w -r1.3 mempcpy.S
+--- ./sysdeps/x86_64/mempcpy.S	18 Oct 2004 04:17:08 -0000	1.3
++++ ./sysdeps/x86_64/mempcpy.S	4 May 2007 23:22:35 -0000
+@@ -1,3 +1,4 @@
++#define USE_AS_MEMPCPY
+ #define memcpy __mempcpy
+ #define __memcpy_chk __mempcpy_chk
+ #include <sysdeps/x86_64/memcpy.S>
