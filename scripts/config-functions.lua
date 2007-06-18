@@ -34,7 +34,11 @@ function pkglistread (filename)
 	 string.match (line, "([XO]) *([0123456789-]+) *([0123456789.]+) *(%S+) *(%S+) *(%S+) *(%S*) */ ([abcdefghijklmnopqrstuvwxyz0123456789/ ]+) *([ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 _-]*) 0")
       
       -- shortcomming of above regex
-      pkg.categories = string.match (pkg.categories, "(.*%S) *");
+      if pkg.categories then
+        pkg.categories = string.match (pkg.categories, "(.*%S) *");
+      else
+        print ("error no Cateory tag - parsing: ", line)
+      end
       
       pkg.alias = pkg.name
       pkg.default_status = pkg.status
