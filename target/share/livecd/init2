@@ -1,13 +1,10 @@
 #!/bin/sh
 
-echo "T2 live setup (C) Rene Rebe - ExactCODE"
+echo "T2 live setup (C) 2005 - 2007 Rene Rebe, ExactCODE"
 
 mkdir -p /tmp ; chmod 1777 /tmp
 
 livedev=`sed -n '/[^ ]* \/media\/live/{s/ .*//p; q}' /proc/mounts`
-if mount -n $livedev /media/live -o remount,rw; then
-	echo "Re-mounted /media/live writeable."
-fi
 
 echo "Unionfs overlay setup ..."
 
@@ -15,6 +12,11 @@ dirs='/mnt/live=ro'
 rw=0
 for f in /media/live/live-*.*; do
 	[ -e $f ] || continue
+
+	if mount -n $livedev /media/live -o remount,rw; then
+		echo "Re-mounted /media/live writeable."
+	fi
+
 	n=${f##*/}; n=${n%.*}
 	mkdir -p /mnt/$n
 	if mount -nt auto -o loop,noatime $f /mnt/$n; then
@@ -31,26 +33,31 @@ for f in /media/live/live-*.*; do
 	fi
 done
 
-if [ $rw = 0 ]; then
-	mkdir -p /mnt/overlay
-	mount -nt tmpfs none /mnt/overlay
-	dirs="/mnt/overlay:$dirs"
+# determine union fs to use, TODO: allow user-overwrite
+unionfs=
+modprobe aufs 2> /dev/null
+if grep -q 'aufs$' /proc/filesystems; then unionfs=aufs
+elif grep -q 'unionfs$' /proc/filesystems; then unionfs=unionfs
 fi
 
-# determine union fs to use, TODO: allow user-overwrite
-unionfs=unionfs
-modprobe aufs 2> /dev/null
-grep -q 'aufs$' /proc/filesystems && unionfs=aufs
+if [ "$unionfs" ]; then
+	if [ $rw = 0 ]; then
+		mkdir -p /mnt/overlay
+		mount -nt tmpfs none /mnt/overlay
+		dirs="/mnt/overlay:$dirs"
+	fi
 
-mount -nt $unionfs -o noatime,dirs=$dirs none /mnt/live
+	mount -nt $unionfs -o noatime,dirs=$dirs none /mnt/live
 
-echo "Finalizing setup ..."
-cat /proc/mounts > /etc/mtab
+	echo "Finalizing setup ..."
+	cat /proc/mounts > /etc/mtab
 
-find /tmp/lib -type f -name '*.ko' | while read f; do
-	f=${f#/tmp}
-	[ -e $f ] || mv -f /tmp/$f $f
-done
+	find /tmp/lib -type f -name '*.ko' | while read f; do
+		f=${f#/tmp}
+		[ -e $f ] || mv -f /tmp/$f $f
+	done
+fi
+
 rm -rf /tmp/lib /init{,2}
 
 init="init= `cat /proc/cmdline`" ; init=${init##*init=} ; init=${init%% *}
