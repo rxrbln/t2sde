@@ -103,7 +103,7 @@ echo "Copying kernel modules ..."
 
 # generate map files
 #
-/sbin/depmod -ae -b $tmpdir -F $sysmap $kernelver
+depmod -ae -b $tmpdir -F $sysmap $kernelver
 
 echo "Injecting programs and configuration ..."
 
@@ -113,53 +113,47 @@ cp -ar ${root}/etc/udev $tmpdir/etc/
 # in theory all, but fat and currently only cdrom_id is needed ...
 cp -ar ${root}/lib/udev/cdrom_id $tmpdir/lib/udev/
 
-# setup programs
+# copy dynamic libraries, if any.
 #
-
-libs_of () {
+copy_dyn_libs () {
 	# we can not use ldd(1) as it loads the object, which does not work on cross builds
 	for lib in `readelf -a $1 | sed -n 's/.*Shared library.*\[\([^]\]*\)\]/\1/p'`; do
+		[[ $1 = *bin/* ]] && echo "Warning: $1 is dynamically linked!"
 		for libdir in $root/lib*/ $root/usr/lib*/; do
 			if [ -e $libdir$lib ]; then
-				echo "$1 NEEDS $libdir$lib"
+				xlibdir=${libdir#$root}
+				echo "$1 NEEDS $xlibdir$lib"
 
-				# TODO: remove $root lib-prefix before copying, ...
-				mkdir -p $tmpdir$libdir
+				mkdir -p $tmpdir$xlibdir
 
 				while local x=`readlink $libdir$lib`; [ "$x" ]; do
 					echo " $libdir$lib SYMLINKS to $x"
-					ln -sfv $x $tmpdir$libdir$lib
+					ln -sfv $x $tmpdir$xlibdir$lib
 					lib=$x
 				done
-				cp -fv $libdir$lib $tmpdir$libdir$lib
+				cp -fv $libdir$lib $tmpdir$xlibdir$lib
 
-				libs_of $libdir$lib
+				copy_dyn_libs $libdir$lib
 			fi
 		done
 	done
 }
 
+# setup programs
+#
 for x in ${root}/sbin/{hotplug++,udevd,udevtrigger,modprobe,insmod} ${root}/usr/sbin/disktype
 do
-	# dynamic
-	#if [[ `file $x` = *dynamically\ linked* ]]; then
-	#	libs_of $x
-	#fi
-
-	file $x | grep -q "dynamically linked" &&
-		echo "Warning: $x is dynamically linked!"
-
 	cp $x $tmpdir/sbin/
+	copy_dyn_libs $x
 done
 
 x=${root}/sbin/insmod.old
 if [ ! -e $x ]; then
 	echo "Warning: Skipped optional file $x!"
 else
-        file $x | grep -q "dynamically linked" &&
-                echo "Warning: $x is dynamically linked!"
-        cp $x $tmpdir/sbin/
+	cp $x $tmpdir/sbin/
 	ln -s insmod.old $tmpdir/sbin/modprobe.old
+	copy_dyn_libs $x
 fi
 
 ln -s /sbin/udev $tmpdir/etc/hotplug.d/default/10-udev.hotplug
