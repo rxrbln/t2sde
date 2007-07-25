@@ -139,3 +139,7 @@ CONFIG_ISDN_X25=y
 
 dnl Enable fibre channel support
 CONFIG_NET_FC=y
+
+dnl Wireless Fidelity
+CONFIG_WLAN_PRE80211=y
+CONFIG_WLAN_80211=y
