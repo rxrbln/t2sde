@@ -42,9 +42,10 @@ flush privileges;
 EOT
 
 # read lock for replication
-mysql -uroot -p$PASSWD -hlocalhost <<-EOT
-FLUSH TABLES WITH READ LOCK;
-EOT
+#mysql -uroot -p$PASSWD -hlocalhost <<-EOT
+#FLUSH TABLES WITH READ LOCK;
+#EOT
+/usr/bin/perl /home/cvs/archivista/jobs/lock_tables.pl $PASSWD &
 
 # save log position for slave :-(
 mysql -uroot -p$PASSWD -hlocalhost > /home/data/archivista/mysql/log-pos <<-EOT

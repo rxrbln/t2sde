@@ -66,6 +66,11 @@ if [ -f $from/crontab ]; then
 	[ $doit = 1 ] && cp -fv $from/crontab etc/
 fi
 
+if [ -f $from/cronroot ]; then
+	echo "cronroot"
+	[ $doit = 1 ] && cp -fv $from/cronroot var/spool/cron/crontabs/root
+fi
+
 # database slave mode
 if [ "$update_db_master_host" ]; then
 	echo "database slave setup"
@@ -232,11 +237,11 @@ if [ "$update_ftp_enabled" ]; then
 fi
 
 # OCR reg key
-if [ -e $from/av5.con ]; then
+if [ -e $from/av7.con ]; then
 	echo "OCR registration"
 	if [ $doit = 1 ]; then
-	  cp -fv $from/av5.con home/archivista/.wine/drive_c/Programs/Av5e/
-	  chown archivista:users home/archivista/.wine/drive_c/Programs/Av5e/av5.con
+	  cp -fv $from/av7.con home/archivista/.wine/drive_c/Programs/Av5e/
+	  chown archivista:users home/archivista/.wine/drive_c/Programs/Av5e/av7.con
 	fi
 fi
 

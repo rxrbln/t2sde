@@ -25,7 +25,13 @@
 iso=
 db=
 range=
-if [ "$1" -a "$2" ]; then
+manual=0
+if [ "$1" -a "$2" -a $3 ]; then
+	db="$1"
+	range="$2"
+	manual=$3
+	shift 3
+elif [ "$1" -a "$2" ]; then
 	db="$1"
 	range="$2"
 	shift 2
@@ -37,7 +43,6 @@ else
 	echo "Where range is numerical such as 123-456"
 	exit
 fi
-
 
 # include shared code to send the mail notification
 . ${0%/*}/backup.in
@@ -304,7 +309,11 @@ for dev in $devices; do
 	fi
 
 	mkdir -p /mnt/wodim
+
 	eject $dev
+	if [ $manual != 0 ]; then
+  	Xdialog --stdout --msgbox "Please insert the disk again to check it." 0 0
+	fi
 	mount $dev /mnt/wodim
 
 	# it is a bit of a hickup to catch the error code of md5sum in this case

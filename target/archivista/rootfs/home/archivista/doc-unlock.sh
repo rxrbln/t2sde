@@ -9,28 +9,15 @@ fi
 # PATH and co
 . /etc/profile
 
-until [ "$db" ]; do
-        db=`Xdialog --stdout --inputbox "Database to unlock documents:" \
-	        10 40 "$db"` || exit
-	db="${db// /}"
-done
+# include shared code
+. ${0%/*}/connect.in
 
-
-until [ "$trange" ]; do
-        trange=`Xdialog --stdout --inputbox "Document range to unlock:
-(e.g. 1-3 or 4)" \
-	        10 40 "$trange"` || exit
-	# remove spaces ...
-	trange="${trange// /}"
-	# remove invalid content
-	if echo "$trange" | grep -q "^\([0-9]\+-[0-9]\+\|[0-9]\+\)$" ; then
-                range="$trange"
-        else
-                Xdialog --infobox "Range not valid!" 8 28
-        fi
-done
-
-unlock="localhost $db root $PASSWD unlock $range"
+host=`get_host`
+db=`get_db`
+user=`get_user`
+pw=`get_pw`
+range=`get_range "Range of documents to unlock (e.g. 2-4 or just 5):"`
+unlock="$host $db $user $pw unlock $range"
 /home/cvs/archivista/jobs/avdbutility.pl $unlock 
 error=$?
 
