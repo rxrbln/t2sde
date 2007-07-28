@@ -35,6 +35,7 @@ fi
 
 # crontab
 cp -fv etc/crontab $to/
+cp -fv var/spool/cron/crontabs/root $to/cronroot
 
 # gnupg key
 cp -rfv home/archivista/.gnupg $to/ 2>/dev/null
@@ -98,7 +99,7 @@ update_usb_backup=`grep archivista/usb-backup.sh etc/crontab |
 grep -q '^ftp' etc/inetd.conf && update_ftp_enabled=1
 
 # OCR reg key
-cp -fv "home/archivista/.wine/drive_c/Programs/Av5e/av5.con" $to/ 2>/dev/null
+cp -fv "home/archivista/.wine/drive_c/Programs/Av5e/av7.con" $to/ 2>/dev/null
 
 
 # other, fine grained cnfiguration values
