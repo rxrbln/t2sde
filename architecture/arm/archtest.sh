@@ -12,4 +12,14 @@
 # GNU General Public License can be found in the file COPYING.
 # --- T2-COPYRIGHT-NOTE-END ---
 
+case "$SDECFG_ARM_ENDIANESS" in
+	eb)
+		arch_bigendian=yes
+		arch_machine=armeb ;;
+		
+	*)
+		arch_bigendian=no
+		arch_machine=arm ;;
+esac
+
 arch_target="${arch_machine}-t2-linux-${SDECFG_ARM_ABI}"
