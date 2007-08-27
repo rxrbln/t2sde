@@ -75,7 +75,7 @@ copy_with_list_from_file $build_root . $PWD/tar.input
 rm tar.input
 
 echo "Preparing root filesystem image from target defined files ..."
-rm -f sbin/init ; ln -s minit sbin/init
+# rm -f sbin/init ; ln -s minit sbin/init
 copy_from_source $base/target/$target/rootfs .
 
 echo "Creating links for identical files ..."
