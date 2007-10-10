@@ -31,6 +31,8 @@ dnl just the default, a arch or target might still set other defaults
 # CONFIG_PREEMPT_RT is not set
 CONFIG_PREEMPT_NONE=y
 
+CONFIG_KEXEC=y
+
 dnl Power Management
 dnl
 CONFIG_PM=y
@@ -42,10 +44,6 @@ dnl CPU frequency scaling is nice to have
 dnl
 CONFIG_CPU_FREQ=y
 CONFIG_CPU_FREQ_26_API=y
-
-dnl integrated .config is quite big - and we ship them in /boot/kconfig_ anyway
-dnl
-# CONFIG_IKCONFIG is not set
 
 dnl PCI name database is also quite big (another >80kB) - so let's use user-
 dnl space tools like lspci to use a non-kernel database
