@@ -15,17 +15,15 @@ mount -t sysfs none /sys
 ln -s /proc/self/fd /dev/fd
 
 echo "Populating u/dev ..."
-udevd -d
+mknod /dev/null c 1 3
+mknod /dev/zero c 1 5
+udevd &
 udevtrigger
-if [ ! -f /dev/console ]; then
-	mknod /dev/console c 5 1
-	mknod /dev/null c 1 3
-	mknod /dev/zero c 1 5
-fi
+udevsettle
+[ -e /dev/console ] || mknod /dev/console c 5 1
+[ -e /dev/tty ] || mknod /dev/tty c 5 0
 
 echo "Loading additional subsystem and filesystem driver ..."
-# hack to be removed
-modprobe sbp2
 
 # well some hardcoded help for now ...
 for x in sbp2 ide-generic ide-disk ide-cd sd_mod sr_mod sg; do
@@ -35,7 +33,7 @@ done
 # the modular filesystems ...
 for x in /lib/modules/*/kernel/fs/{*/,}*.*o ; do
 	x=${x##*/} ; x=${x%.*o}
-	modprobe $x
+	modprobe $x 2> /dev/null
 done
 
 # Only print important stuff to console
@@ -49,22 +47,17 @@ doboot()
 	fi
 
 	if [ $exit_linuxrc = 1 ]; then
+		kill %1
+
 		mount /dev /mnt_root/dev -t none -o move
 		mount /proc /mnt_root/proc -t none -o move
 		mount /sys /mnt_root/sys -t none -o move
-
-		if [ ! -f /mnt_root/dev/console ]; then
-			mknod /mnt_root/dev/console c 5 1
-			mknod /mnt_root/dev/null c 1 3
-			mknod /mnt_root/dev/zero c 1 5
-		fi
 
 		# copy stuff only in the 1st_stage image
 		mkdir -p /mnt_root/lib/modules
 		cp -ar /lib/modules/* /mnt_root/lib/modules/
 
 		# TODO: inject more first stage stuff if it was a small image
-
 		exec switch_root /mnt_root /sbin/init
 	else
 		umount /mnt_root
@@ -366,4 +359,3 @@ done
 exec /sbin/init /sbin/init
 
 echo -e "\nPanic: Can't start /sbin/init!\n\n"
-

@@ -2,7 +2,7 @@
 
 echo "T2 SDE early userspace (C) 2005 - 2007 Rene Rebe, ExactCODE"
 
-PATH=/sbin:/bin
+PATH=/sbin:/bin:/usr/bin:/usr/sbin
 
 echo "Mounting /dev, /proc and /sys ..."
 mount -t tmpfs none /dev
@@ -12,8 +12,13 @@ mount -t sysfs none /sys
 ln -s /proc/self/fd /dev/fd
 
 echo "Populating u/dev ..."
-udevd -d
+mknod /dev/null c 1 3
+mknod /dev/zero c 1 5
+udevd &
 udevtrigger
+udevsettle
+[ -e /dev/console ] || mknod /dev/console c 5 1
+[ -e /dev/tty ] || mknod /dev/tty c 5 0
 
 echo "Loading additional subsystem and filesystem driver ..."
 # well some hardcoded help for now ...
@@ -24,10 +29,8 @@ done
 # the modular filesystems ...
 for x in /lib/modules/*/kernel/fs/{*/,}*.*o ; do
 	x=${x##*/} ; x=${x%.*o}
-	modprobe $x
+	modprobe $x 2> /dev/null
 done
-
-echo "Mounting rootfs ..."
 
 # get the root device and init
 root="root= `cat /proc/cmdline`" ; root=${root##*root=} ; root=${root%% *}
@@ -53,6 +56,8 @@ filesystems=`disktype $root 2>/dev/null |
 mkdir /rootfs
 
 if [ "$root" ]; then
+  echo "Mounting rootfs ..."
+
   i=0
   while [ $i -le 9 ]; do
 	for fs in $filesystems ; do
@@ -62,16 +67,10 @@ if [ "$root" ]; then
 		# TODO: later on search other places if we want 100% backward compat.
 		[ "$init" ] || init=/sbin/init
 		if [ -f /rootfs/$init ]; then
+			kill %1
 			mount -t none /dev -o move /rootfs/dev
 			mount -t none /proc -o move /rootfs/proc
 			mount -t none /sys -o move /rootfs/sys
-
-			if [ ! -f /rootfs/dev/console ]; then
-				mknod /rootfs/dev/console c 5 1
-				mknod /rootfs/dev/null c 1 3
-				mknod /rootfs/dev/zero c 1 5
-				mknod /rootfs/dev/tty c 5 0
-			fi
 
 			exec switch_root /rootfs $init $*
 		else
@@ -86,4 +85,3 @@ fi
 
 echo "Ouhm - some boot problem, but I do not scream. Debug shell:"
 exec /bin/sh
-
