@@ -13,9 +13,13 @@
 # --- T2-COPYRIGHT-NOTE-END ---
 
 pkgloop
+cp $base/target/$target/rootfs/etc/* $root/etc
+cp -R $base/target/$target/rootfs/etc/init.d/* $root/etc/init.d
+# imagelocation="$build_toolchain/rootfs"
+# . $base/target/$target/build_image.sh
+}
+.# $base/target/$target/makedev.sh
 
-imagelocation="$build_toolchain/rootfs"
-. $base/target/$target/build_image.sh
 
 echo_status "Done!"
 
