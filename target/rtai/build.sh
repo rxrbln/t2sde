@@ -15,8 +15,12 @@
 pkgloop
 
 imagelocation="$build_toolchain/rootfs"
-cp $base/target/$target/rootfs/etc/* $root/etc
-cp -R $base/target/$target/rootfs/etc/init.d/* $root/etc/init.d
+echo "COPY PATH"
+echo "$base/target/$target/rootfs/etc/* $root/etc"
+echo "$base/target/$target/rootfs/etc/init.d/* $root/etc/init.d"
+
+#cp $base/target/$target/rootfs/etc/* $root/etc
+#cp -R $base/target/$target/rootfs/etc/init.d/* $root/etc/init.d
 
 . $base/target/$target/build_image.sh
 
