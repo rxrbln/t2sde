@@ -227,7 +227,7 @@ add_wrapper 'int,   creat64, const char* f, mode_t m'
 add_wrapper 'int,   mkdir,   const char* f, mode_t m'
 add_wrapper 'int,   mkfifo,  const char* f, mode_t m'
 add_wrapper 'int,   mknod,   const char* f, mode_t m, dev_t d'
-add_wrapper 'int,   __xmknod, int ver, const char* f, mode_t m, dev_t d'
+add_wrapper 'int,   __xmknod, int ver, const char* f, mode_t m, dev_t* d'
 
 add_wrapper 'int,   link,    const char* s, const char* f'
 add_wrapper 'int,   symlink, const char* s, const char* f'
