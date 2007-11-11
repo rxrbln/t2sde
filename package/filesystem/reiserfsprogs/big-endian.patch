@@ -14,9 +14,10 @@
 # version.
 # --- T2-COPYRIGHT-NOTE-END ---
 
-Tested to work basically with mkfs.reiserfs and tunefs.reiserfs.
-fsck.reiserfs shows some spurious noise, probably related to problems
-with the ugly magic key encoding. Needs in-depth review later on.
+Tested to work, including resizing and --rebuild-tree on powerpc (G4 Cube)
+and powerpc64 (dual G5).
+
+Please give credit, as this took some hours to hunt down, ...
 
   - Rene Rebe <rene@exactcode.de>
 
@@ -82,23 +83,42 @@ with the ugly magic key encoding. Needs in-depth review later on.
 
 --- reiserfsprogs-3.6.20/include/misc/types.h.vanilla	2007-11-06 09:36:58.000000000 +0100
 +++ reiserfsprogs-3.6.20/include/misc/types.h	2007-11-06 09:37:09.000000000 +0100
-@@ -7,11 +7,14 @@
+@@ -7,11 +7,7 @@
  #define MISC_TYPES_H
  
  #include <string.h>
 +#include <linux/types.h>
  
-+#if 0
- typedef unsigned char           __u8;
- typedef unsigned short int      __u16;
- typedef unsigned int            __u32;
- typedef unsigned long long int  __u64;
-+#endif
- 
+-typedef unsigned char           __u8;
+-typedef unsigned short int      __u16;
+-typedef unsigned int            __u32;
+-typedef unsigned long long int  __u64;
+-
  #define INVAL_PTR	(void *)-1
  #define MAX_INT		2147483647
---- reiserfsprogs-3.6.20/libreiserfs/key.c.vanilla	2007-11-05 17:11:02.000000000 +0100
-+++ reiserfsprogs-3.6.20/libreiserfs/key.c	2007-11-05 22:26:23.000000000 +0100
+diff -ur reiserfsprogs-3.6.20/include/reiserfs/types.h reiserfsprogs-3.6.20-big-endian/include/reiserfs/types.h
+--- reiserfsprogs-3.6.20/include/reiserfs/types.h	2006-03-28 14:40:23.000000000 +0200
++++ reiserfsprogs-3.6.20-big-endian/include/reiserfs/types.h	2007-11-10 15:11:07.000000000 +0100
+@@ -227,15 +227,7 @@
+ } __attribute__ ((__packed__));
+ 
+ struct reiserfs_koff_v2 {
+-#if __BYTE_ORDER == __LITTLE_ENDIAN
+-    __u64 k_offset:60;
+-    __u64 k_type: 4;
+-#elif __BYTE_ORDER == __BIG_ENDIAN
+-    __u64 k_type: 4;
+-    __u64 k_offset:60;
+-#else
+-# error "nuxi/pdp-endian archs are not supported"
+-#endif
++    __u64 v; /* 4 bit type, 60 bit offset */
+ } __attribute__ ((__packed__));
+ 
+ /* Key of the object determines object's location in the tree, 
+diff -ur reiserfsprogs-3.6.20/libreiserfs/key.c reiserfsprogs-3.6.20-big-endian/libreiserfs/key.c
+--- reiserfsprogs-3.6.20/libreiserfs/key.c	2006-03-28 14:40:23.000000000 +0200
++++ reiserfsprogs-3.6.20-big-endian/libreiserfs/key.c	2007-11-10 22:02:53.000000000 +0100
 @@ -8,6 +8,7 @@
  #endif
  
@@ -107,13 +127,99 @@ with the ugly magic key encoding. Needs in-depth review later on.
  #include "misc/unaligned.h"
  
  const reiserfs_key_t root_dir_key = 
-@@ -45,7 +46,8 @@
- # define set_key_type_v2(key,val)   (void)(key->u.k2_offset_v2.k_type = (val))
- #elif __BYTE_ORDER == __BIG_ENDIAN
- typedef union {
--    struct offset_v2 offset_v2;
-+    //struct offset_v2 offset_v2;
-+    struct reiserfs_koff_v2 offset_v2;
-     __u64 linear;
- } __attribute__ ((__packed__)) offset_v2_esafe_overlay;
+@@ -38,56 +39,35 @@
+     memcpy (to, from, REISERFS_KEY_SHSIZE);
+ }
  
+-#if __BYTE_ORDER == __LITTLE_ENDIAN
+-# define get_key_offset_v2(key)     (__u64)((key->u.k2_offset_v2.k_offset))
+-# define set_key_offset_v2(key,val) (void)(key->u.k2_offset_v2.k_offset = (val))
+-# define get_key_type_v2(key)       (__u16)((key->u.k2_offset_v2.k_type))
+-# define set_key_type_v2(key,val)   (void)(key->u.k2_offset_v2.k_type = (val))
+-#elif __BYTE_ORDER == __BIG_ENDIAN
+-typedef union {
+-    struct offset_v2 offset_v2;
+-    __u64 linear;
+-} __attribute__ ((__packed__)) offset_v2_esafe_overlay;
+-
+-static inline __u64 get_key_offset_v2 (const reiserfs_key_t *key)
++static inline __u16 offset_v2_k_type(const struct reiserfs_koff_v2 *v2)
+ {
+-    offset_v2_esafe_overlay tmp =
+-                        *(offset_v2_esafe_overlay *) (&(key->u.k2_offset_v2));
+-    tmp.linear = le64_to_cpu( tmp.linear );
+-    return tmp.offset_v2.k_offset;
++    return le64_to_cpu(v2->v) >> 60;
+ }
+ 
+-static inline __u32 get_key_type_v2 (const reiserfs_key_t *key)
++static inline void set_offset_v2_k_type(struct reiserfs_koff_v2 *v2, int type)
+ {
+-    offset_v2_esafe_overlay tmp =
+-                        *(offset_v2_esafe_overlay *) (&(key->u.k2_offset_v2));
+-    tmp.linear = le64_to_cpu( tmp.linear );
+-    return tmp.offset_v2.k_type;
++        v2->v =
++            (v2->v & cpu_to_le64(~0ULL >> 4)) | cpu_to_le64((__u64) type << 60);
+ }
+ 
+-static inline void set_key_offset_v2 (reiserfs_key_t *key, __u64 offset)
++static inline loff_t offset_v2_k_offset(const struct reiserfs_koff_v2 *v2)
+ {
+-    offset_v2_esafe_overlay *tmp =
+-                        (offset_v2_esafe_overlay *)(&(key->u.k2_offset_v2));
+-    tmp->linear = le64_to_cpu(tmp->linear);
+-    tmp->offset_v2.k_offset = offset;
+-    tmp->linear = cpu_to_le64(tmp->linear);
++    return le64_to_cpu(v2->v) & (~0ULL >> 4);
+ }
+ 
+-static inline void set_key_type_v2 (reiserfs_key_t *key, __u32 type)
++static inline void set_offset_v2_k_offset(struct reiserfs_koff_v2 *v2, loff_t offset)
+ {
+-    offset_v2_esafe_overlay *tmp =
+-                        (offset_v2_esafe_overlay *)(&(key->u.k2_offset_v2));
+-    if (type > 15)
+-        reiserfs_panic ("set_key_type_v2: type is too big %d", type);
+-
+-    tmp->linear = le64_to_cpu(tmp->linear);
+-    tmp->offset_v2.k_type = type;
+-    tmp->linear = cpu_to_le64(tmp->linear);
++        offset &= (~0ULL >> 4);
++        v2->v = (v2->v & cpu_to_le64(15ULL << 60)) | cpu_to_le64(offset);
+ }
+-#else
+-# error "nuxi/pdp-endian archs are not supported"
+-#endif
++
++
++# define get_key_offset_v2(key)     (__u64) offset_v2_k_offset (&key->u.k2_offset_v2)
++# define set_key_offset_v2(key,val) set_offset_v2_k_offset (&key->u.k2_offset_v2, val)
++
++# define get_key_type_v2(key)       (__u16) offset_v2_k_type (&key->u.k2_offset_v2)
++# define set_key_type_v2(key,val)   set_offset_v2_k_type (&key->u.k2_offset_v2, val)
++
+ 
+ static inline int is_key_format_1 (int type) {
+     return ( (type == 0 || type == 15) ? 1 : 0);
+ 
+diff -ur reiserfsprogs-3.6.20/libreiserfs/objmap.c reiserfsprogs-3.6.20-big-endian/libreiserfs/objmap.c
+--- reiserfsprogs-3.6.20/libreiserfs/objmap.c	2006-03-28 14:40:23.000000000 +0200
++++ reiserfsprogs-3.6.20-big-endian/libreiserfs/objmap.c	2007-11-10 23:04:43.000000000 +0100
+@@ -25,6 +27,7 @@
+ int reiserfs_objmap_test (reiserfs_filsys_t * fs, __u32 objectid)
+ {
+     __u32 * objectid_map;
++    __u32 ondisk_objectid = cpu_to_le32 (objectid);
+     __u32 count = reiserfs_sb_get_mapcur(fs->fs_ondisk_sb);
+     int ret;
+     int pos;
+@@ -32,7 +35,7 @@
+     objectid_map = (__u32 *)((char *)fs->fs_ondisk_sb + 
+ 			     reiserfs_super_size (fs->fs_ondisk_sb));
+     
+-    ret = misc_bin_search(&objectid, objectid_map, count, 
++    ret = misc_bin_search(&ondisk_objectid, objectid_map, count, 
+ 			  sizeof(__u32), &pos, comp_ids);
+ 
+     /* if the position returned is odd, the oid is in use */
