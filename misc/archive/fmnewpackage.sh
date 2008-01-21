@@ -126,6 +126,9 @@ read_fm_config() {
 	*BSD*)
 	    license=BSD
 	    ;;
+	*Apache*)
+	    license=APL
+	    ;;
 	*Artistic*)
 	    license=Artistic
 	    ;;
