@@ -44,6 +44,7 @@ dnl CPU frequency scaling is nice to have
 dnl
 CONFIG_CPU_FREQ=y
 CONFIG_CPU_FREQ_26_API=y
+CONFIG_CPU_IDLE=y
 
 dnl PCI name database is also quite big (another >80kB) - so let's use user-
 dnl space tools like lspci to use a non-kernel database
