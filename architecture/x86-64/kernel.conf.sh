@@ -15,6 +15,8 @@
 {
 	cat <<- 'EOT'
 		define(`INTEL', `Intel X86 PCs')dnl
+
+		CONFIG_64BIT=y
 		
 		dnl CPU configuration
 		dnl
