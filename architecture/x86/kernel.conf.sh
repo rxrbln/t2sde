@@ -18,6 +18,8 @@
 		
 		dnl CPU configuration
 		dnl
+
+		# CONFIG_64BIT is not set
 	EOT
 
 	linux_arch=386
