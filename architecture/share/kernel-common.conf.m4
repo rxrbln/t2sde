@@ -24,6 +24,7 @@ CONFIG_IRQ_ALL_CPUS=y
 dnl No HZ and HPET, if the arch has it ...
 dnl
 CONFIG_HPET=y
+CONFIG_HPET_TIMER=y
 CONFIG_HIGH_RES_TIMERS=y
 CONFIG_NO_HZ=y
 
