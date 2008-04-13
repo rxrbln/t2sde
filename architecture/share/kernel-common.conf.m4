@@ -47,11 +47,6 @@ CONFIG_CPU_FREQ=y
 CONFIG_CPU_FREQ_26_API=y
 CONFIG_CPU_IDLE=y
 
-dnl PCI name database is also quite big (another >80kB) - so let's use user-
-dnl space tools like lspci to use a non-kernel database
-dnl
-# CONFIG_PCI_NAMES ist not set
-
 dnl Enable modules
 dnl
 CONFIG_MODULES=y
@@ -71,6 +66,13 @@ CONFIG_PNP=y
 dnl Common buses
 dnl
 CONFIG_PCI=y
+CONFIG_PCI_MSI=y
+
+dnl PCI name database is also quite big (another >80kB) - so let's use user-
+dnl space tools like lspci to use a non-kernel database
+dnl
+# CONFIG_PCI_NAMES ist not set
+
 
 dnl Loopback device can always be useful
 dnl
