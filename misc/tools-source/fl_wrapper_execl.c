@@ -2,7 +2,7 @@
  *  Copyright (C) 1991, 92, 94, 97, 98, 99 Free Software Foundation, Inc.
  *  This file is part of the GNU C Library.
  *
- *  --- NO-ROCK-COPYRIGHT-NOTE ---
+ *  --- NO-T2-COPYRIGHT-NOTE ---
  *
  *  glibc-2.2.5/posix/execl.c
  */
