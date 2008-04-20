@@ -1,6 +1,6 @@
 #!/bin/bash
 #
-# --- NO-ROCK-COPYRIGHT-NOTE ---
+# --- NO-T2-COPYRIGHT-NOTE ---
 #
 # Found in the debian boot-floppies source package from:
 # 	http://www.kernel.org/debian/dists/potato/main/source/admin/
