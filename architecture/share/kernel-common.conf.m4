@@ -39,6 +39,8 @@ dnl
 CONFIG_PM=y
 CONFIG_PM_LEGACY=y
 CONFIG_HOTPLUG_CPU=y
+CONFIG_HIBERNATION=y
+dnl the old "HIBERNATION" option
 CONFIG_SOFTWARE_SUSPEND=y
 
 dnl CPU frequency scaling is nice to have
