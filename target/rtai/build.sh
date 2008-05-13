@@ -22,10 +22,8 @@ echo "$base/target/$target/rootfs/etc/init.d/* $root/etc/init.d"
 #cp $base/target/$target/rootfs/etc/* $root/etc
 #cp -R $base/target/$target/rootfs/etc/init.d/* $root/etc/init.d
 
-. $base/target/$target/build_image.sh
+#. $base/target/$target/build_image.sh
 
 #. $base/target/$target/makedev.sh
 
-
 echo_status "Done!"
-
