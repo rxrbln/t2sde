@@ -59,7 +59,6 @@ include(`kernel-net.conf.m4')
 include(`kernel-fs.conf.m4')
 
 dnl LSI Logic / Symbios Logic (formerly NCR) 53c810 (rev 01)
-dnl does not work reliable with MMIO on my Ultra SPARC 5
-dnl Rene Rebe <rene@rocklinux.org>
+dnl does not work reliable with MMIO on my Ultra SPARC 5 -ReneR
 # CONFIG_SCSI_SYM53C8XX_IOMAPPED is not set
 
