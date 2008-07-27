@@ -45,7 +45,7 @@ case `echo "$card" | tr A-Z a-z` in
 	*s3*)		xdrv=s3 ;;
 
 	*intel*7*)		xdrv=i740 ;;
-	*intel*8*|*intel*9*|*intel*mobile*)	xdrv=i810 ;;
+	*intel*8*|*intel*9*|*intel*mobile*)	xdrv=intel ;;
 
 	*trident*)	xdrv=trident ;;
 	*rendition*)	xdrv=rendition ;;
