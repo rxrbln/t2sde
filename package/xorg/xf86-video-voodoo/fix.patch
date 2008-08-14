@@ -1,0 +1,113 @@
+This fixes the problems with the crashes and other funnies. It was almost
+entirely down to a missing call to xf86SetCrtcForModes(). With that added
+the clock data appears valid and the card is working.
+
+I've also added support for the pass through switching as that is useful
+for debug when your text consoles are on the pass through display
+
+Alan
+
+diff -u --recursive xf86-video-voodoo-1.2.0/src/voodoo_driver.c xf86-video-voodoo-1.2.0-ac/src/voodoo_driver.c
+--- xf86-video-voodoo-1.2.0/src/voodoo_driver.c	2008-03-19 21:07:12.000000000 +0000
++++ xf86-video-voodoo-1.2.0-ac/src/voodoo_driver.c	2008-08-13 20:16:25.000000000 +0100
+@@ -110,12 +110,14 @@
+ 
+ typedef enum {
+   OPTION_NOACCEL,
+-  OPTION_SHADOW_FB
++  OPTION_SHADOW_FB,
++  OPTION_PASS_THROUGH,
+ } VoodooOpts;
+ 
+ static const OptionInfoRec VoodooOptions[] = {
+   { OPTION_NOACCEL,	"NoAccel",	OPTV_BOOLEAN,	{0}, FALSE },
+   { OPTION_SHADOW_FB,	"ShadowFB",	OPTV_BOOLEAN,	{0}, FALSE },
++  { OPTION_PASS_THROUGH,"PassThrough",	OPTV_BOOLEAN,	{0}, FALSE },
+   { -1,	                NULL,           OPTV_NONE,      {0}, FALSE }
+ };
+ 
+@@ -436,6 +438,9 @@
+   	pVoo->Accel = 0;
+   }
+   
++  if (xf86ReturnOptValBool(pVoo->Options, OPTION_PASS_THROUGH,  FALSE))
++  	pVoo->PassThrough = 1;
++  
+   if (xf86ReturnOptValBool(pVoo->Options, OPTION_NOACCEL, FALSE)) {
+   	pVoo->ShadowFB = 1;
+   	pVoo->Accel = 0;
+@@ -544,7 +549,8 @@
+   }
+ 
+   /* Set the current mode to the first in the list */
++  xf86SetCrtcForModes(pScrn, 0);
+   pScrn->currentMode = pScrn->modes;
+ 
+   /* Do some checking, we will not support a virtual framebuffer larger than
+      the visible screen. */
+@@ -914,8 +921,11 @@
+ 
+   pVoo = VoodooPTR(pScrn);
+   pVoo->Blanked = TRUE;
+-  if (!Closing || !(pVoo->OnAtExit))
++  if (!Closing)
+     VoodooBlank(pVoo);
++  if (Closing && pVoo->PassThrough)
++    VoodooRestorePassThrough(pVoo);
++
+ }
+ 
+ static void
+diff -u --recursive xf86-video-voodoo-1.2.0/src/voodoo.h xf86-video-voodoo-1.2.0-ac/src/voodoo.h
+--- xf86-video-voodoo-1.2.0/src/voodoo.h	2008-03-19 14:31:33.000000000 +0000
++++ xf86-video-voodoo-1.2.0-ac/src/voodoo.h	2008-08-13 19:56:13.000000000 +0100
+@@ -13,7 +13,7 @@
+   CloseScreenProcPtr  CloseScreen;	/* Wrapped Close */
+   XAAInfoRecPtr	      AccelInfoRec;	/* Cached Accel rec for close */
+   Bool                Blanked;
+-  Bool                OnAtExit;
++  Bool                PassThrough;	/* Set to restore pass through on exit */
+   EntityInfoPtr       pEnt;
+   OptionInfoPtr       Options;
+   
+Only in xf86-video-voodoo-1.2.0-ac/src: voodoo.h~
+diff -u --recursive xf86-video-voodoo-1.2.0/src/voodoo_hardware.c xf86-video-voodoo-1.2.0-ac/src/voodoo_hardware.c
+--- xf86-video-voodoo-1.2.0/src/voodoo_hardware.c	2008-03-19 14:31:33.000000000 +0000
++++ xf86-video-voodoo-1.2.0-ac/src/voodoo_hardware.c	2008-08-13 20:16:40.000000000 +0100
+@@ -669,6 +669,17 @@
+ }	
+ 
+ /*
++ *	Voodoo exit logic
++ */
++
++void VoodooRestorePassThrough(VoodooPtr pVoo)
++{
++	pci_enable(pVoo, 1, 0, 0);
++	mmio32_w(pVoo, 0x210, 0);
++	pci_enable(pVoo, 0, 0, 1);
++}
++
++/*
+  *	Copiers for Voodoo1
+  *
+  *	Voodoo1 has no CPU to screen blit, and also lacks SGRAM fill
+@@ -951,6 +962,9 @@
+ 			int rop, unsigned int planemask)
+ {
+ 	VoodooPtr pVoo = VoodooPTR(pScrn);
++	if (debug)
++		ErrorF("Setup for solid fill colour %04X, rop %d, Mask %04X.\n",
++			color, rop, planemask);
+ 	Voodoo2Setup2D(pVoo);
+ 	mmio32_w_chuck(pVoo, 0x2EC, ropxlate[rop]); 	/* rop */
+ 	mmio32_w_chuck(pVoo, 0x2F0, color);		/* fg color */
+@@ -961,6 +975,8 @@
+ 			int w, int h)
+ {
+ 	VoodooPtr pVoo = VoodooPTR(pScrn);
++	if (debug)
++		ErrorF("Fill (%d, %d) for (%d, %d)\n", x, y, w, h);
+ 	wait_idle(pVoo);
+ 	mmio32_w_chuck(pVoo, 0x2E4, (y<<16) | x);	/* Dst x,y */
+ 	/* Set size and fire */
