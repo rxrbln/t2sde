@@ -12,9 +12,35 @@
 # GNU General Public License can be found in the file COPYING.
 # --- T2-COPYRIGHT-NOTE-END ---
 
+# filter to avoid some non-runtime stuff (static libs, man-pages, ...)
+bessy_rootfs_filter ()
+{
+	sed -i '/\.a$/d
+	        /\.la$/d
+	        /\/include\//d
+	        /\/locale\//d
+	        /\/pkgconfig\//d
+	        /\/info\//d
+	        /\/man\//d
+	        /\/doc\//d
+	        /\/i18n\//d
+	        /usr\/src\//d' "$1"
+}
+filter_hook=bessy_rootfs_filter
+
+# do not include some devel packages
+var_append pkg_filter ' ' 'ccache distcc texinfo'
+
 . target/generic/build.sh
 
 # now this is a hack - and x86 specific anyway :-(
 if [[ $arch = x86* ]]; then
-	sed -i 's/kernel.*/& vga=0x317/' $isofsdir/boot/grub/menu.lst
+	case "$SDECFG_X86_CD_LOADER" in
+	grub)
+		sed -i 's/kernel.*/& vga=0x317/' $isofsdir/boot/grub/menu.lst ;;
+	isolinux)
+		sed -i 's/APPEND.*/& vga=0x317/' $isofsdir/boot/isolinux/isolinux.cfg ;;
+	*)
+		echo "Adapt target/rescue/build.sh for unknown boot loader: $SDECFG_X86_CD_LOADER" ;;
+	esac
 fi
