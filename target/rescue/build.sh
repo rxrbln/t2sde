@@ -32,7 +32,9 @@ rescue_rootfs_filter ()
 filter_hook=rescue_rootfs_filter
 
 # do not include some devel packages
-var_append pkg_filter ' ' 'dietlibc flex bison make cmake scons python perl autoconf automake libtool m4 ccache distcc texinfo binutils gcc'
+var_append pkg_filter ' ' 'binutils gcc dietlibc autoconf automake libtool'
+var_append pkg_filter ' ' 'flex bison texinfo ccache distcc m4 make cmake'
+var_append pkg_filter ' ' 'scons python perl perl-xml-parser'
 
 . target/generic/build.sh
 
