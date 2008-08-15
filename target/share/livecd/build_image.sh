@@ -28,9 +28,10 @@ for pkg in `grep '^X ' $base/config/$config/packages | cut -d ' ' -f 5`; do
 	if [ "${f/ $pkg /}" == "$f" ] ; then
 		cut -d ' ' -f 2 $build_root/var/adm/flists/$pkg || true
 	fi
-done | sort -u > ../files-wanted
-[ "$filter_hook" ] && "$filter_hook" ../files-wanted
+done > ../files-wanted
 unset f
+[ "$filter_hook" ] && "$filter_hook" ../files-wanted
+sort -u ../files-wanted > x ; mv -f x ../files-wanted
 
 # for rsync with --delete we can not use file lists, since rsync does not
 # delete in that mode - instead we need to generate a negative list
