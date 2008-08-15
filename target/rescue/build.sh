@@ -13,7 +13,7 @@
 # --- T2-COPYRIGHT-NOTE-END ---
 
 # filter to avoid some non-runtime stuff (static libs, man-pages, ...)
-bessy_rootfs_filter ()
+rescue_rootfs_filter ()
 {
 	sed -i '/\.a$/d
 	        /\.la$/d
@@ -24,12 +24,15 @@ bessy_rootfs_filter ()
 	        /\/man\//d
 	        /\/doc\//d
 	        /\/i18n\//d
+		/\var\/adm/d
 	        /usr\/src\//d' "$1"
+	cut -d ' ' -f 2- $build_root/var/adm/flists/gcc |
+	grep '/lib\(gcc\|std\).*.so' >> "$1"
 }
-filter_hook=bessy_rootfs_filter
+filter_hook=rescue_rootfs_filter
 
 # do not include some devel packages
-var_append pkg_filter ' ' 'ccache distcc texinfo'
+var_append pkg_filter ' ' 'dietlibc flex make scons ccache distcc texinfo binutils gcc'
 
 . target/generic/build.sh
 
