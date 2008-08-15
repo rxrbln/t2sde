@@ -24,7 +24,7 @@ rescue_rootfs_filter ()
 	        /\/man\//d
 	        /\/doc\//d
 	        /\/i18n\//d
-		/\var\/adm/d
+		/var\/adm/d
 	        /usr\/src\//d' "$1"
 	cut -d ' ' -f 2- $build_root/var/adm/flists/gcc |
 	grep '/lib\(gcc\|std\).*.so' >> "$1"
@@ -32,7 +32,7 @@ rescue_rootfs_filter ()
 filter_hook=rescue_rootfs_filter
 
 # do not include some devel packages
-var_append pkg_filter ' ' 'dietlibc flex make scons ccache distcc texinfo binutils gcc'
+var_append pkg_filter ' ' 'dietlibc flex make cmake scons python perl autoconf automake libtool m4 ccache distcc texinfo binutils gcc'
 
 . target/generic/build.sh
 
