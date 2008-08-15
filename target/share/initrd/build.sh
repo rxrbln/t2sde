@@ -24,14 +24,15 @@ mkdir -p $imagelocation ; cd $imagelocation
 (umount proc ; umount dev) 2>/dev/null
 
 echo "Creating root file-system file lists ..."
-
+f=" $pkg_filter "
 for pkg in `grep '^X ' $base/config/$config/packages | cut -d ' ' -f 5`; do
 	# include the package?
-	if [ " ${pkg_filter/ $pkg /} " == " $pkg_filter " ] ; then
+	if [ "${f/ $pkg /}" == "$f" ] ; then
 		cut -d ' ' -f 2 $build_root/var/adm/flists/$pkg 2>/dev/null || true
 	fi
 done | sort -u > ../files-wanted
 [ "$filter_hook" ] && "$filter_hook" ../files-wanted
+unset f
 
 # for rsync with --delete we can not use file lists, since rsync does not
 # delete in that mode - instead we need to generate a negative list
