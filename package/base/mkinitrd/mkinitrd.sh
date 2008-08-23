@@ -110,7 +110,7 @@ echo "Injecting programs and configuration ..."
 # copying config
 #
 cp -ar ${root}/etc/udev $tmpdir/etc/
-cp -ar ${root}/etc/mdadm.conf $tmpdir/etc/
+[ -e ${root}/etc/mdadm.conf ] && cp -ar ${root}/etc/mdadm.conf $tmpdir/etc/
 cp -ar ${root}/etc/modprobe.conf $tmpdir/etc/
 # in theory all, but fat and currently only cdrom_id is needed ...
 cp -ar ${root}/lib/udev/cdrom_id $tmpdir/lib/udev/
@@ -143,21 +143,25 @@ copy_dyn_libs () {
 
 # setup programs
 #
-for x in ${root}/sbin/{hotplug++,udevd,udevtrigger,udevsettle,modprobe,insmod,mdadm} \
+for x in ${root}/sbin/{hotplug++,udevd,udevtrigger,udevsettle,modprobe,insmod} \
          ${root}/usr/sbin/disktype
 do
 	cp $x $tmpdir/sbin/
 	copy_dyn_libs $x
 done
 
-x=${root}/sbin/insmod.old
-if [ ! -e $x ]; then
+# setup optional programs
+#
+for x in ${root}/sbin/{insmod.old,mdadm}
+do
+  if [ ! -e $x ]; then
 	echo "Warning: Skipped optional file $x!"
-else
+  else
 	cp $x $tmpdir/sbin/
 	ln -s insmod.old $tmpdir/sbin/modprobe.old
 	copy_dyn_libs $x
-fi
+  fi
+done
 
 ln -s /sbin/udev $tmpdir/etc/hotplug.d/default/10-udev.hotplug
 cp ${root}/bin/pdksh $tmpdir/bin/sh

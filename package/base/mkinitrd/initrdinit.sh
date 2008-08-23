@@ -33,7 +33,7 @@ for x in /lib/modules/*/kernel/fs/{*/,}*.*o ; do
 done
 
 echo "Assembling MD arrays"
-mdadm --assemble --scan
+[ -e /etc/mdadm.conf ] && mdadm --assemble --scan
 
 # get the root device and init
 root="root= `cat /proc/cmdline`" ; root=${root##*root=} ; root=${root%% *}
