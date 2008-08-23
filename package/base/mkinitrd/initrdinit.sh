@@ -22,7 +22,7 @@ udevsettle
 
 echo "Loading additional subsystem and filesystem driver ..."
 # well some hardcoded help for now ...
-for x in sbp2 ide-generic ide-disk ide-cd sd_mod sr_mod sg; do
+for x in sbp2 ide-generic ide-disk ide-cd sd_mod sr_mod sg raid1; do
 	modprobe $x 2> /dev/null
 done
 
@@ -31,6 +31,9 @@ for x in /lib/modules/*/kernel/fs/{*/,}*.*o ; do
 	x=${x##*/} ; x=${x%.*o}
 	modprobe $x 2> /dev/null
 done
+
+echo "Assembling MD arrays"
+mdadm --assemble --scan
 
 # get the root device and init
 root="root= `cat /proc/cmdline`" ; root=${root##*root=} ; root=${root%% *}
