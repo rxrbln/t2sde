@@ -80,7 +80,7 @@ echo "Copying kernel modules ..."
 	-e isofs -e udf -e /unionfs -e ntfs -e fat -e dm-mod \
 	-e /ide/ -e /ata/ -e /scsi/ -e /message/ \
 	-e hci -e usb-storage -e sbp2 \
-	-e drivers/net/ -e '/ipv6\.' -e usbhid |
+	-e drivers/net/ -e drivers/md/ -e '/ipv6\.' -e usbhid |
   while read fn ; do
 
 	for x in $fn `modinfo $fn | grep depends |
@@ -110,6 +110,7 @@ echo "Injecting programs and configuration ..."
 # copying config
 #
 cp -ar ${root}/etc/udev $tmpdir/etc/
+cp -ar ${root}/etc/mdadm.conf $tmpdir/etc/
 cp -ar ${root}/etc/modprobe.conf $tmpdir/etc/
 # in theory all, but fat and currently only cdrom_id is needed ...
 cp -ar ${root}/lib/udev/cdrom_id $tmpdir/lib/udev/
@@ -142,7 +143,7 @@ copy_dyn_libs () {
 
 # setup programs
 #
-for x in ${root}/sbin/{hotplug++,udevd,udevtrigger,udevsettle,modprobe,insmod} \
+for x in ${root}/sbin/{hotplug++,udevd,udevtrigger,udevsettle,modprobe,insmod,mdadm} \
          ${root}/usr/sbin/disktype
 do
 	cp $x $tmpdir/sbin/
