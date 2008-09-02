@@ -87,5 +87,22 @@ fi
 
 echo "Compression root file-system (this may take some time) ..."
 time find . | cpio -o -H newc | gzip -c9 > $imagelocation/../initrd.img
-
 du -sh $imagelocation/../initrd.img
+
+# For each available kernel:
+#
+mkdir -p $imagelocation/../boot/
+for x in `egrep 'X .* KERNEL .*' $base/config/$config/packages |
+          cut -d ' ' -f 5`; do
+ kernel=${x/_*/}
+ for moduledir in `grep lib/modules $build_root/var/adm/flists/$kernel |
+                   cut -d ' ' -f 2 | cut -d / -f 1-3 | uniq`; do
+  kernelver=${moduledir/*\/}
+  initrd="initrd-$kernelver.img"
+  kernelimg=`ls $build_root/boot/vmlinu?_$kernelver`
+  kernelimg=${kernelimg##*/}
+
+  cp $build_root/boot/vmlinu?_$kernelver $imagelocation/../boot/
+  cp $imagelocation/../initrd.img $imagelocation/../boot/$initrd
+ done
+done
