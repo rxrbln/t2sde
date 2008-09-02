@@ -79,7 +79,7 @@ case `echo "$card" | tr A-Z a-z` in
 esac
 
 # use the nvidia binary only driver - if available ...
-if [ "$xdrv" = nv -a -f /usr/X11/lib/xorg/modules/drivers/nvidia_drv.o ]; then
+if [ "$xdrv" = nv -a -f /usr/X11/lib/xorg/modules/drivers/nvidia_drv.so ]; then
 	xdrv=nvidia
 
 	echo "Installing nvidia GL libraries and headers ..."
