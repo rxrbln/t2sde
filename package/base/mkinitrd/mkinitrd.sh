@@ -143,7 +143,7 @@ copy_dyn_libs () {
 
 # setup programs
 #
-for x in ${root}/sbin/{hotplug++,udevd,udevtrigger,udevsettle,modprobe,insmod} \
+for x in ${root}/sbin/{hotplug++,udevd,udevadm,udevtrigger,udevsettle,modprobe,insmod} \
          ${root}/usr/sbin/disktype
 do
 	cp $x $tmpdir/sbin/
