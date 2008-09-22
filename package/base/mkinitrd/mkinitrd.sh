@@ -158,7 +158,7 @@ do
 	echo "Warning: Skipped optional file $x!"
   else
 	cp $x $tmpdir/sbin/
-	ln -s insmod.old $tmpdir/sbin/modprobe.old
+	ln -sf insmod.old $tmpdir/sbin/modprobe.old
 	copy_dyn_libs $x
   fi
 done
