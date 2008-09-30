@@ -30,6 +30,7 @@
 		 "pentium	586"		\
 		 "pentium-mmx	586MMX"		\
 		 "pentiumpro	686"		\
+		 "i686		686"		\
 		 "pentium2	PENTIUMII"	\
 		 "pentium3	PENTIUMIII"	\
 		 "pentium4	PENTIUM4"	\
