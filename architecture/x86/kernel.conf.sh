@@ -62,6 +62,11 @@
 		else echo "CONFIG_M$x=y" ; fi
 	done
 
+	case "$linux_arch" in
+		386|486)  echo "CONFIG_MATH_EMULATION=y" ;;
+		*) echo "# CONFIG_MATH_EMULATION is not set" ;;
+	esac
+
 	echo
 	cat <<- 'EOT'
 		dnl Allow more than about a GB of RAM by default
