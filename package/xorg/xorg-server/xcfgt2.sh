@@ -31,6 +31,7 @@ case  `uname -m` in
 	i*86*|x86*64)	xdrv=vesa ;;
 	*)		xdrv=fbdev ;;
 esac
+ddc=1
 depth=16
 modules=
 
@@ -97,13 +98,30 @@ horiz_sync=""
 vert_refresh=""
 modes=""
 
-if [[ `uname -m` = i*86 ]]; then
+
+# known automatic "DB" quirks
+
+
+# manual, boot command line overrides
+xdriver="xdriver= `cat cmdline`"; xdriver=${xdriver##*xdriver=}; xdriver=${xdriver%% *}
+xmodes="xmodes= `cat cmdline`"; xmodes=${xmodes##*xmodes=}; xmodes=${xmodes%% *}
+xdepth="xdepth= `cat cmdline`"; xdepth=${xdepth##*xdepth=}; xdepth=${xdepth%% *}
+xddc="xddc= `cat cmdline`"; xddc=${xddc##*xddc=}; xddc=${xddc%% *}
+
+[ "$xdriver" ] && xdrv="$xdriver"
+[ "$xmodes" ] && modes="$(echo $xmodes | sed 's/,/ /g; s/[^ ]\+/"&"/g')"
+[ "$xdepth" ] && depth="$xdepth"
+[ "$xddc" ] && ddc="$xddc"
+
+
+# if ddcprobe available, ddc not disabled and no manual modes
+if type -p ddcprobe > /dev/null && [ "$ddc" = 1 ] && [ -z "$modes" ]; then
+	echo "Probing for DDC information ..."
 	ddcprobe > $tmp
 
 	if grep -q failed $tmp ; then
 	  echo "DDC read failed"
 	else
-	  grep "Standard timing" $tmp
 	  defx=`grep "Horizontal blank time" $tmp | cut -d : -f 2 |
 	        sort -nu | tail -n 1`
 	  defy=`grep "Vertical blank time" $tmp | cut -d : -f 2 |
@@ -129,8 +147,9 @@ if [[ `uname -m` = i*86 ]]; then
 	fi
 fi
 
+# if still no mode try to determine from FB (mostly for
+# non PC workstations / embedded devices with system FB)
 if [ -z "$modes" ]; then
-	modes=
 	for mode in `sed -n 's/.:\([[:digit:]]\+x[[:digit:]]\+\)[[:alpha:]]*-[[:digit:]]\+/\1/p' \
 	             /sys/class/graphics/fb0/modes 2>/dev/null | sort -r -n -u`
 	do
@@ -139,22 +158,13 @@ if [ -z "$modes" ]; then
 	modes="${modes# *}"
 fi
 
+# still no modes, use backward / safe compatible defaults
 if [ -z "$modes" ]; then
 	echo "No modes from DDC or FB detection, using defaults!"
 	modes='"1024x768" "800x600" "640x480"'
 	horiz_sync="HorizSync   24.0 - 65.0"
 	vert_refresh="VertRefresh 50 - 75"
 fi
-
-# known automatic "DB" quirks
-
-# manual, boot command line overrides
-xdriver="xdriver= `cat /proc/cmdline`"; xdriver=${xdriver##*xdriver=}; xdriver=${xdriver%% *}
-xmodes="xmodes= `cat /proc/cmdline`"; xmodes=${xmodes##*xmodes=}; xmodes=${xmodes%% *}
-xdepth="xdepth= `cat /proc/cmdline`"; xdepth=${xdepth##*xdepth=}; xdepth=${xdepth%% *}
-[ "$xdriver" ] && xdrv="$xdriver"
-[ "$xmodes" ] && modes="$(echo $xmodes | sed 's/,/ /g; s/[^ ]\+/"&"/g')"
-[ "$xdepth" ] && depth="$xdepth"
 
 
 echo "X Driver:    $xdrv"
@@ -170,5 +180,10 @@ sed -e "s/\$xdrv/$xdrv/g" -e "s/\$modes/$modes/g" -e "s/\$depth/$depth/g" \
     -e "s/\$horiz_sync/$horiz_sync/g" \
     -e "s/\$vert_refresh/$vert_refresh/g" \
     /etc/X11/xorg.conf.template > /etc/X11/xorg.conf
+
+if [ $ddc = 0 ]; then
+	echo "Adding NoDDC option"
+	sed -i 's/.*Ident.*Card.*/&\n    Option\t"NoDDC"\n/' /etc/X11/xorg.conf 
+fi
 
 rm $tmp
