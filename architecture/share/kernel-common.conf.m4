@@ -104,11 +104,6 @@ CONFIG_BINFMT_MISC=m
 CONFIG_SYSVIPC=y
 CONFIG_SUNRPC=y
 
-dnl Math emulation in the default kernel
-dnl (we could also run this on an old 386, sparcv7)
-dnl
-CONFIG_MATH_EMULATION=y
-
 dnl Sound system
 dnl (module support is enought - default is y ...)
 dnl
