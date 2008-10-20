@@ -15,44 +15,16 @@
 # version.
 # --- T2-COPYRIGHT-NOTE-END ---
 
-Set all unset options to module. Needed by the T" SDE Linux kernel
+Set all unset options to module. Needed by the T2 SDE Linux kernel
 auto configuration.
 
 Initally written by Clifford Wolf <clifford@clifford.at> and adapted
 for various new 2.5/2.6 kernels by Rene Rebe <rene@exactcode.de>.
  
---- ./scripts/kconfig/Makefile.orig	2006-03-19 19:38:46.080184500 +0100
-+++ ./scripts/kconfig/Makefile	2006-03-19 20:01:55.859040250 +0100
-@@ -2,7 +2,7 @@
- # Kernel configuration targets
- # These targets are used from top-level makefile
- 
--PHONY += oldconfig xconfig gconfig menuconfig config silentoldconfig update-po-config
-+PHONY += oldconfig xconfig gconfig menuconfig config silentoldconfig no2modconfig update-po-config
- 
- xconfig: $(obj)/qconf
- 	$< arch/$(ARCH)/Kconfig
-@@ -56,6 +56,9 @@
- allmodconfig: $(obj)/conf
- 	$< -m arch/$(ARCH)/Kconfig
- 
-+no2modconfig: scripts/kconfig/conf
-+	$< -M arch/$(ARCH)/Kconfig
-+
- defconfig: $(obj)/conf
- ifeq ($(KBUILD_DEFCONFIG),)
- 	$< -d arch/$(ARCH)/Kconfig
-@@ -77,6 +80,7 @@
- 	@echo  '  randconfig	  - New config with random answer to all options'
- 	@echo  '  defconfig	  - New config with default answer to all options'
- 	@echo  '  allmodconfig	  - New config selecting modules when possible'
-+	@echo  '  no2modconfig    - New config selecting modules for disabled options'
- 	@echo  '  allyesconfig	  - New config where all options are accepted with yes'
- 	@echo  '  allnoconfig	  - New config where all options are answered with no'
- 
---- linux-2.6.17/scripts/kconfig/conf.c	2006-06-18 03:49:35.000000000 +0200
-+++ linux26.macbook/scripts/kconfig/conf.c	2006-07-22 11:57:17.000000000 +0200
-@@ -21,6 +21,7 @@
+diff -ur linux-2.6.27/scripts/kconfig/conf.c linux-2.6.27.work/scripts/kconfig/conf.c
+--- linux-2.6.27/scripts/kconfig/conf.c	2008-10-10 00:13:53.000000000 +0200
++++ linux-2.6.27.work/scripts/kconfig/conf.c	2008-10-19 14:39:10.000000000 +0200
+@@ -22,6 +22,7 @@
  	ask_all,
  	ask_new,
  	ask_silent,
@@ -60,31 +32,7 @@ for various new 2.5/2.6 kernels by Rene Rebe <rene@exactcode.de>.
  	set_default,
  	set_yes,
  	set_mod,
-@@ -83,6 +84,15 @@
- 	}
- 
- 	switch (input_mode) {
-+	case set_no2mod:
-+		if (type == S_TRISTATE &&
-+			sym_get_tristate_value(sym) == no) {
-+			fprintf(stderr, "Setting %s to 'm'.\n", sym->name);
-+			line[0] = 'm';
-+			line[1] = '\n';
-+			line[2] = 0;
-+			break;
-+		}
- 	case set_no:
- 	case set_mod:
- 	case set_yes:
-@@ -387,6 +387,7 @@
- 		case set_random:
- 			if (is_new)
- 				def = (rand() % cnt) + 1;
-+		case set_no2mod:
- 		case set_default:
- 		case set_yes:
- 		case set_mod:
-@@ -515,7 +515,7 @@
+@@ -438,7 +439,7 @@
  	bindtextdomain(PACKAGE, LOCALEDIR);
  	textdomain(PACKAGE);
  
@@ -92,8 +40,8 @@ for various new 2.5/2.6 kernels by Rene Rebe <rene@exactcode.de>.
 +	while ((opt = getopt(ac, av, "osdD:nmMyrh")) != -1) {
  		switch (opt) {
  		case 'o':
- 			input_mode = ask_new;
-@@ -523,6 +534,9 @@
+ 			input_mode = ask_silent;
+@@ -460,6 +461,9 @@
  		case 'm':
  			input_mode = set_mod;
  			break;
@@ -103,11 +51,75 @@ for various new 2.5/2.6 kernels by Rene Rebe <rene@exactcode.de>.
  		case 'y':
  			input_mode = set_yes;
  			break;
-@@ -565,6 +579,7 @@
- 		}
- 	case ask_all:
- 	case ask_new:
-+	case set_no2mod:
- 		conf_read(NULL);
+@@ -533,6 +537,9 @@
+ 		else if (!stat("all.config", &tmpstat))
+ 			conf_read_simple("all.config", S_DEF_USER);
  		break;
- 	case set_no:
++	case set_no2mod:
++		conf_read_simple(".config", S_DEF_USER);
++		break;
+ 	default:
+ 		break;
+ 	}
+@@ -559,6 +566,9 @@
+ 	case set_mod:
+ 		conf_set_all_new_symbols(def_mod);
+ 		break;
++	case set_no2mod:
++		conf_set_all_new_symbols(def_no2mod);
++		break;
+ 	case set_random:
+ 		conf_set_all_new_symbols(def_random);
+ 		break;
+diff -ur linux-2.6.27/scripts/kconfig/confdata.c linux-2.6.27.work/scripts/kconfig/confdata.c
+--- linux-2.6.27/scripts/kconfig/confdata.c	2008-10-10 00:13:53.000000000 +0200
++++ linux-2.6.27.work/scripts/kconfig/confdata.c	2008-10-19 14:43:05.000000000 +0200
+@@ -832,6 +835,7 @@
+ 				sym->def[S_DEF_USER].tri = yes;
+ 				break;
+ 			case def_mod:
++			case def_no2mod:
+ 				sym->def[S_DEF_USER].tri = mod;
+ 				break;
+ 			case def_no:
+diff -ur linux-2.6.27/scripts/kconfig/lkc.h linux-2.6.27.work/scripts/kconfig/lkc.h
+--- linux-2.6.27/scripts/kconfig/lkc.h	2008-10-10 00:13:53.000000000 +0200
++++ linux-2.6.27.work/scripts/kconfig/lkc.h	2008-10-19 14:14:59.000000000 +0200
+@@ -46,6 +46,7 @@
+ 	def_default,
+ 	def_yes,
+ 	def_mod,
++	def_no2mod,
+ 	def_no,
+ 	def_random
+ };
+diff -ur linux-2.6.27/scripts/kconfig/Makefile linux-2.6.27.work/scripts/kconfig/Makefile
+--- linux-2.6.27/scripts/kconfig/Makefile	2008-10-10 00:13:53.000000000 +0200
++++ linux-2.6.27.work/scripts/kconfig/Makefile	2008-10-19 14:14:59.000000000 +0200
+@@ -2,7 +2,7 @@
+ # Kernel configuration targets
+ # These targets are used from top-level makefile
+ 
+-PHONY += oldconfig xconfig gconfig menuconfig config silentoldconfig update-po-config
++PHONY += oldconfig xconfig gconfig menuconfig config silentoldconfig no2modconfig update-po-config
+ 
+ Kconfig := arch/$(SRCARCH)/Kconfig
+ 
+@@ -61,6 +61,9 @@
+ allmodconfig: $(obj)/conf
+ 	$< -m $(Kconfig)
+ 
++no2modconfig: scripts/kconfig/conf
++	$< -M $(Kconfig)
++
+ defconfig: $(obj)/conf
+ ifeq ($(KBUILD_DEFCONFIG),)
+ 	$< -d $(Kconfig)
+@@ -83,6 +86,7 @@
+ 	@echo  '  randconfig	  - New config with random answer to all options'
+ 	@echo  '  defconfig	  - New config with default answer to all options'
+ 	@echo  '  allmodconfig	  - New config selecting modules when possible'
++	@echo  '  no2modconfig    - New config selecting modules for disabled options'
+ 	@echo  '  allyesconfig	  - New config where all options are accepted with yes'
+ 	@echo  '  allnoconfig	  - New config where all options are answered with no'
+ 
