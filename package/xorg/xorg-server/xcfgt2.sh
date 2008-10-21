@@ -20,7 +20,7 @@ tmp=`mktemp`
 
 echo "XcfgT2 (C) 2005 - 2008 Rene Rebe, ExactCODE"
 
-card="`lspci | sed -n 's/.*[^-]VGA .*: //p'`" # not Non-VGA
+card="`lspci | sed -n 's/.*[^-]VGA[^:]*: //p'`" # not Non-VGA
 [ "$card" ] || card="`cat /sys/class/graphics/fb0/name 2>/dev/null`"
 
 echo "Video card: $card"
