@@ -16,9 +16,36 @@
 
 # Quick T2 SDE live X driver matching ...
 
+var_append() {
+	local x="${3// /}"
+        eval "[ \"\$$1\" ] && $1=\"\${$1}$2\"" || true
+        eval "$1=\"\${$1}\$x\""
+}
+
 tmp=`mktemp`
 
 echo "XcfgT2 (C) 2005 - 2008 Rene Rebe, ExactCODE"
+
+sysid=
+if type -p dmidecode >/dev/null; then
+  sysid=" "
+  var_append sysid ':' "`dmidecode -s system-manufacturer`"
+  var_append sysid ':' "`dmidecode -s system-product-name`"
+  var_append sysid ':' "`dmidecode -s baseboard-manufacturer`"
+  var_append sysid ':' "`dmidecode -s baseboard-product-name`"
+  if [ "`dmidecode -s system-serial-number`" ]; then
+	var_append sysid ':' "`dmidecode -s system-serial-number`"
+  else
+	var_append sysid ':' "`dmidecode -s baseboard-serial-number`"
+  fi
+  sysid="${sysid# :}"
+fi
+
+# Apple Inc.:MacBookPro3,1:Apple Inc.:Mac-F4238BC8:W...
+# PhoenixAward:945GM:PhoenixAward:945GM:0123456789
+# ::IntelCorporation:D945GCLF2:
+# ASUSTeK Computer INC.:900:ASUSTeK Computer INC.:900:EeePC-1234567890
+echo "SystemID: $sysid"
 
 card="`lspci | sed -n 's/.*[^-]VGA[^:]*: //p'`" # not Non-VGA
 [ "$card" ] || card="`cat /sys/class/graphics/fb0/name 2>/dev/null`"
