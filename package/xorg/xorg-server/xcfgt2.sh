@@ -88,6 +88,7 @@ xdriver="xdriver= `cat /proc/cmdline`"; xdriver=${xdriver##*xdriver=}; xdriver=$
 depth=16 # safe default for even older cards
 case "$xdrv" in
 	fbdev|nv|nvidia|sunffb) depth=24 ;;
+	vmware) depth= ;;
 esac
 
 # manual override
@@ -188,7 +189,11 @@ sed -e "s/\$xdrv/$xdrv/g" -e "s/\$modes/$modes/g" -e "s/\$depth/$depth/g" \
     -e "s/\$vert_refresh/$vert_refresh/g" \
     /etc/X11/xorg.conf.template > /etc/X11/xorg.conf
 
-if [ $ddc = 0 ]; then
+if [ -z "$depth" ]; then
+	sed -i '/DefaultDepth/d' /etc/X11/xorg.conf
+fi
+
+if [ "$ddc" = 0 ]; then
 	echo "Adding NoDDC option"
 	sed -i 's/.*Ident.*Card.*/&\n    Option\t"NoDDC"\n/' /etc/X11/xorg.conf 
 fi
