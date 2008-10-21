@@ -103,10 +103,10 @@ modes=""
 
 
 # manual, boot command line overrides
-xdriver="xdriver= `cat cmdline`"; xdriver=${xdriver##*xdriver=}; xdriver=${xdriver%% *}
-xmodes="xmodes= `cat cmdline`"; xmodes=${xmodes##*xmodes=}; xmodes=${xmodes%% *}
-xdepth="xdepth= `cat cmdline`"; xdepth=${xdepth##*xdepth=}; xdepth=${xdepth%% *}
-xddc="xddc= `cat cmdline`"; xddc=${xddc##*xddc=}; xddc=${xddc%% *}
+xdriver="xdriver= `cat /proc/cmdline`"; xdriver=${xdriver##*xdriver=}; xdriver=${xdriver%% *}
+xmodes="xmodes= `cat /proc/cmdline`"; xmodes=${xmodes##*xmodes=}; xmodes=${xmodes%% *}
+xdepth="xdepth= `cat /proc/cmdline`"; xdepth=${xdepth##*xdepth=}; xdepth=${xdepth%% *}
+xddc="xddc= `cat /proc/cmdline`"; xddc=${xddc##*xddc=}; xddc=${xddc%% *}
 
 [ "$xdriver" ] && xdrv="$xdriver"
 [ "$xmodes" ] && modes="$(echo $xmodes | sed 's/,/ /g; s/[^ ]\+/"&"/g')"
