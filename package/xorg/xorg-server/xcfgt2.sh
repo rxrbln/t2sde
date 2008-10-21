@@ -20,7 +20,7 @@ tmp=`mktemp`
 
 echo "XcfgT2 (C) 2005 - 2008 Rene Rebe, ExactCODE"
 
-card="`lspci | sed -n 's/.*VGA .*: //p'`"
+card="`lspci | sed -n 's/.*[^-]VGA .*: //p'`" # not Non-VGA
 [ "$card" ] || card="`cat /sys/class/graphics/fb0/name 2>/dev/null`"
 
 echo "Video card: $card"
@@ -31,21 +31,18 @@ case  `uname -m` in
 	i*86*|x86*64)	xdrv=vesa ;;
 	*)		xdrv=fbdev ;;
 esac
-ddc=1
-depth=16
-modules=
 
 case `echo "$card" | tr A-Z a-z` in
 	*radeon*)       xdrv=radeon ;;
-	*geforce*)	xdrv=nv ; depth=24 ;;
+	*geforce*)	xdrv=nv ;;
 	*cirrus*)	xdrv=cirrus ;;
 	*savage*)	xdrv=savage ;;
 	*unichrome*|*castlerock*)	xdrv=via ;;
 	*virge*)	xdrv=s3virge ;;
-	"ps3 fb")		xdrv=fbdev ; depth=24 ;;
+	"ps3 fb")	xdrv=fbdev ;;
 	*s3*)		xdrv=s3 ;;
 
-	*intel*7*)		xdrv=i740 ;;
+	*intel*7*)	xdrv=i740 ;;
 	*intel*8*|*intel*9*|*intel*mobile*)	xdrv=intel ;;
 
 	*trident*)	xdrv=trident ;;
@@ -73,16 +70,33 @@ case `echo "$card" | tr A-Z a-z` in
 	*ati\ *)	xdrv=ati ;;
 	*sis*|*xgi*)	xdrv=sis ;;
 
-	creator\ 3d|elite\ 3d)	xdrv=sunffb ; depth=24 ;;
+	creator\ 3d|elite\ 3d)	xdrv=sunffb ;;
 
 	# must be last so *nv* does not match one of the above
-	*nv*)		xdrv=nv ; depth=24 ;;
+	*nv*)		xdrv=nv
 esac
 
-# use the nvidia binary only driver - if available ...
-if [ "$xdrv" = nv -a -f /usr/X11/lib/xorg/modules/drivers/nvidia_drv.so ]; then
+# maybe binary nvidia driver?
+[ "$xdrv" = nv -a -f /usr/X11/lib/xorg/modules/drivers/nvidia_drv.so ] &&
 	xdrv=nvidia
 
+# manual override
+xdriver="xdriver= `cat /proc/cmdline`"; xdriver=${xdriver##*xdriver=}; xdriver=${xdriver%% *}
+[ "$xdriver" ] && xdrv="$xdriver"
+
+
+depth=16 # safe default for even older cards
+case "$xdrv" in
+	fbdev|nv|nvidia|sunffb) depth=24 ;;
+esac
+
+# manual override
+xdepth="xdepth= `cat /proc/cmdline`"; xdepth=${xdepth##*xdepth=}; xdepth=${xdepth%% *}
+[ "$xdepth" ] && depth="$xdepth"
+
+
+# use the nvidia binary only driver - if available ...
+if [ "$xdrv" = "nvidia" ]; then
 	echo "Installing nvidia GL libraries and headers ..."
 	rm -rf /usr/X11/lib/libGL.*
 	cp -arv /usr/src/nvidia/lib/* /usr/X11/lib/
@@ -94,23 +108,16 @@ if [ "$xdrv" = nv -a -f /usr/X11/lib/xorg/modules/drivers/nvidia_drv.so ]; then
 	ldconfig /usr/X11/lib
 fi
 
-horiz_sync=""
-vert_refresh=""
-modes=""
-
-
-# known automatic "DB" quirks
-
+horiz_sync=
+vert_refresh=
+modes=
+ddc=1
 
 # manual, boot command line overrides
-xdriver="xdriver= `cat /proc/cmdline`"; xdriver=${xdriver##*xdriver=}; xdriver=${xdriver%% *}
 xmodes="xmodes= `cat /proc/cmdline`"; xmodes=${xmodes##*xmodes=}; xmodes=${xmodes%% *}
-xdepth="xdepth= `cat /proc/cmdline`"; xdepth=${xdepth##*xdepth=}; xdepth=${xdepth%% *}
 xddc="xddc= `cat /proc/cmdline`"; xddc=${xddc##*xddc=}; xddc=${xddc%% *}
 
-[ "$xdriver" ] && xdrv="$xdriver"
 [ "$xmodes" ] && modes="$(echo $xmodes | sed 's/,/ /g; s/[^ ]\+/"&"/g')"
-[ "$xdepth" ] && depth="$xdepth"
 [ "$xddc" ] && ddc="$xddc"
 
 
