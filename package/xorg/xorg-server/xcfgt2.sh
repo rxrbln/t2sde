@@ -66,8 +66,8 @@ case `echo "$card" | tr A-Z a-z` in
 	"ps3 fb")	xdrv=fbdev ;;
 	*s3*)		xdrv=s3 ;;
 
-	*intel*7*)	xdrv=i740 ;;
 	*intel*8*|*intel*9*|*intel*mobile*)	xdrv=intel ;;
+	*intel*7*)	xdrv=i740 ;;
 
 	*trident*)	xdrv=trident ;;
 	*rendition*)	xdrv=rendition ;;
