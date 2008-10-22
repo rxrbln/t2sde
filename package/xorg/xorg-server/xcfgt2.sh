@@ -33,18 +33,15 @@ if type -p dmidecode >/dev/null; then
   var_append sysid ':' "`dmidecode -s system-product-name`"
   var_append sysid ':' "`dmidecode -s baseboard-manufacturer`"
   var_append sysid ':' "`dmidecode -s baseboard-product-name`"
-  if [ "`dmidecode -s system-serial-number`" ]; then
-	var_append sysid ':' "`dmidecode -s system-serial-number`"
-  else
-	var_append sysid ':' "`dmidecode -s baseboard-serial-number`"
-  fi
+  var_append sysid ':' "`dmidecode -s system-serial-number`"
+  var_append sysid ':' "`dmidecode -s baseboard-serial-number`"
   sysid="${sysid# :}"
 fi
 
-# Apple Inc.:MacBookPro3,1:Apple Inc.:Mac-F4238BC8:W...
-# PhoenixAward:945GM:PhoenixAward:945GM:0123456789
-# ::IntelCorporation:D945GCLF2:
-# ASUSTeK Computer INC.:900:ASUSTeK Computer INC.:900:EeePC-1234567890
+# Apple Inc.:MacBookPro3,1:Apple Inc.:Mac-F4238BC8::
+# PhoenixAward:945GM:PhoenixAward:945GM:0123456789:
+# ::IntelCorporation:D945GCLF2::
+# ASUSTeK Computer INC.:900:ASUSTeK Computer INC.:900:EeePC-1234567890:EeePC
 echo "SystemID: $sysid"
 
 card="`lspci | sed -n 's/.*[^-]VGA[^:]*: //p'`" # not Non-VGA
