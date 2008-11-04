@@ -14,6 +14,8 @@
 #
 #Description: Initial RAM disk (initrd) / RAM FS (initramfs)
 
+# TODO: share code with livecd imager
+
 set -e
 imagelocation="$build_toolchain/rootfs"	# where the roofs is prepared
 
@@ -77,7 +79,7 @@ EOT
 	chmod +x $$.sh
 	case $x in
 		*/scrollkeeper) echo "$x left out" ;;
-		*) chroot . /$$.sh
+		*) chroot . /bin/sh -c ". /etc/profile; /$x" && true ;;
 	esac
 	rm $$.sh
 done
