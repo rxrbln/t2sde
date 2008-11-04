@@ -80,7 +80,7 @@ mount none proc -t proc
 for x in sbin/ldconfig etc/postinstall.d/*; do
 	case $x in
 		*/scrollkeeper) echo "$x left out" ;;
-		*) chroot . /bin/bash -c ". /etc/profile; /$x" && true ;;
+		*) chroot . /bin/sh -c ". /etc/profile; /$x" && true ;;
 	esac
 done
 umount proc
