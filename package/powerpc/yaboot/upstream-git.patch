@@ -1,0 +1,518 @@
+diff --git a/Makefile b/Makefile
+index ce0dc06..fe2f2fd 100644
+--- a/Makefile
++++ b/Makefile
+@@ -21,7 +21,7 @@ TEXTADDR	= 0x200000
+ MALLOCADDR	= 0x300000
+ MALLOCSIZE	= 0x100000
+ # Load kernel and ramdisk at real-base.  If there is overlap, will retry until find open space
+-KERNELADDR	= 0x00C00000
++KERNELADDR	= 0x00000000
+ 
+ # Set this to the prefix of your cross-compiler, if you have one.
+ # Else leave it empty.
+@@ -35,8 +35,8 @@ OBJCOPY		:= $(CROSS)objcopy
+ 
+ # The flags for the yaboot binary.
+ #
+-YBCFLAGS = -Os $(CFLAGS) -nostdinc -Wall -isystem `$(CC) -print-file-name=include` -fsigned-char
+-YBCFLAGS += -DVERSION=\"${VERSION}\"	#"
++YBCFLAGS = -Os -m32 $(CFLAGS) -nostdinc -Wall -isystem `$(CC) -m32 -print-file-name=include` -fsigned-char
++YBCFLAGS += -DVERSION=\"${VERSION}${VERSIONEXTRA}\"	#"
+ YBCFLAGS += -DTEXTADDR=$(TEXTADDR) -DDEBUG=$(DEBUG)
+ YBCFLAGS += -DMALLOCADDR=$(MALLOCADDR) -DMALLOCSIZE=$(MALLOCSIZE)
+ YBCFLAGS += -DKERNELADDR=$(KERNELADDR)
+@@ -64,7 +64,7 @@ endif
+ 
+ # Link flags
+ #
+-LFLAGS = -Ttext $(TEXTADDR) -Bstatic
++LFLAGS = -Ttext $(TEXTADDR) -Bstatic -melf32ppclinux
+ 
+ # Libraries
+ #
+@@ -99,7 +99,7 @@ OBJS += second/fs_reiserfs.o
+ endif
+ 
+ # compilation
+-lgcc = `$(CC) -print-libgcc-file-name`
++lgcc = `$(CC) -m32 -print-libgcc-file-name`
+ 
+ all: yaboot addnote mkofboot
+ 
+diff --git a/include/bootinfo.h b/include/bootinfo.h
+index f61409a..7602e48 100644
+--- a/include/bootinfo.h
++++ b/include/bootinfo.h
+@@ -34,6 +34,7 @@
+ #define _MACH_classic	0x00000400	/* RPCG RPX-Classic 8xx board */
+ #define _MACH_oak	0x00000800	/* IBM "Oak" 403 eval. board */
+ #define _MACH_walnut	0x00001000	/* IBM "Walnut" 405GP eval. board */
++#define _MACH_bplan	0x00002000	/* Pegasos/Efika, broken partition #s */
+ 
+ struct bi_record {
+      unsigned long tag;			/* tag ID */
+@@ -51,6 +52,8 @@ struct bi_record {
+ 
+ #endif /* _PPC_BOOTINFO_H */
+ 
++extern int _machine;
++
+ /*
+  * Local variables:
+  * c-file-style: "k&r"
+diff --git a/include/prom.h b/include/prom.h
+index f5ee88f..eacee77 100644
+--- a/include/prom.h
++++ b/include/prom.h
+@@ -37,6 +37,9 @@ typedef void *phandle;
+ #define PROM_INVALID_HANDLE	((prom_handle)-1UL)
+ #define BOOTDEVSZ               (2048) /* iscsi args can be in excess of 1040 bytes */
+ #define TOK_ISCSI               "iscsi"
++#define PROM_CLAIM_MAX_ADDR	0x8000000
++#define BOOTLASTSZ		1024
++#define FW_NBR_REBOOTSZ		4
+ 
+ struct prom_args;
+ typedef int (*prom_entry)(struct prom_args *);
+@@ -85,6 +88,7 @@ int prom_set_color(prom_handle device, int color, int r, int g, int b);
+ 
+ /* memory */
+ 
++void *prom_claim_chunk(void *virt, unsigned int size, unsigned int align);
+ void *prom_claim (void *virt, unsigned int size, unsigned int align);
+ void prom_release(void *virt, unsigned int size);
+ void prom_map (void *phys, void *virt, int size);
+diff --git a/second/fs_ext2.c b/second/fs_ext2.c
+index 3240ce2..67571f2 100644
+--- a/second/fs_ext2.c
++++ b/second/fs_ext2.c
+@@ -35,6 +35,7 @@
+ #include "fs.h"
+ #include "errors.h"
+ #include "debug.h"
++#include "bootinfo.h"
+ 
+ #define FAST_VERSION
+ #define MAX_READ_RANGE	256
+@@ -170,7 +171,8 @@ ext2_open(	struct boot_file_t*	file,
+ 
+      /* Open the OF device for the entire disk */
+      strncpy(buffer, dev_name, 1020);
+-     strcat(buffer, ":0");
++     if (_machine != _MACH_bplan)
++	  strcat(buffer, ":0");
+ 
+      DEBUG_F("<%s>\n", buffer);
+ 
+diff --git a/second/fs_of.c b/second/fs_of.c
+index 76474ee..0d554c5 100644
+--- a/second/fs_of.c
++++ b/second/fs_of.c
+@@ -44,9 +44,8 @@
+ #include "errors.h"
+ #include "debug.h"
+ 
+-#define LOAD_BUFFER_POS		0x600000
+-/* this cannot be safely increased any further */
+-#define LOAD_BUFFER_SIZE	0x600000
++#define LOAD_BUFFER_POS		0x00000000
++#define LOAD_BUFFER_SIZE	0x01000000
+ 
+ static int of_open(struct boot_file_t* file, const char* dev_name,
+ 		   struct partition_t* part, const char* file_name);
+@@ -166,7 +165,9 @@ of_net_open(struct boot_file_t* file, const char* dev_name,
+ 	  return FILE_ERR_BAD_FSYS;
+      }
+ 
+-     file->buffer = prom_claim((void *)LOAD_BUFFER_POS, LOAD_BUFFER_SIZE, 0);
++
++     file->buffer = prom_claim_chunk((void *)LOAD_BUFFER_POS,
++                                     LOAD_BUFFER_SIZE, 0);
+      if (file->buffer == (void *)-1) {
+ 	  prom_printf("Can't claim memory for TFTP download\n");
+ 	  prom_close(file->of_device);
+diff --git a/second/fs_reiserfs.c b/second/fs_reiserfs.c
+index 4ad1c2e..238f523 100644
+--- a/second/fs_reiserfs.c
++++ b/second/fs_reiserfs.c
+@@ -29,6 +29,7 @@
+ #include "fs.h"
+ #include "errors.h"
+ #include "debug.h"
++#include "bootinfo.h"
+ #include "reiserfs/reiserfs.h"
+ 
+ /* Exported in struct fs_t */
+@@ -84,7 +85,10 @@ reiserfs_open( struct boot_file_t *file, const char *dev_name,
+      else
+ 	  INFO->partition_offset = 0;
+ 
+-     sprintf( buffer, "%s:%d", dev_name, 0 ); /* 0 is full disk in OF */
++     strncpy(buffer, dev_name, 1020);
++     if (_machine != _MACH_bplan)
++	  strcat(buffer, ":0");  /* 0 is full disk in (non-buggy) OF */
++
+      file->of_device = prom_open( buffer );
+      DEBUG_F( "Trying to open dev_name=%s; filename=%s; partition offset=%Lu\n",
+ 	      buffer, file_name, INFO->partition_offset );
+diff --git a/second/fs_xfs.c b/second/fs_xfs.c
+index 9a2aaa6..04d6cf3 100644
+--- a/second/fs_xfs.c
++++ b/second/fs_xfs.c
+@@ -30,6 +30,7 @@
+ #include "xfs/xfs.h"
+ #include "errors.h"
+ #include "debug.h"
++#include "bootinfo.h"
+ 
+ #define SECTOR_BITS 9
+ 
+@@ -77,7 +78,9 @@ xfs_open(struct boot_file_t *file, const char *dev_name,
+ 	else
+ 		partition_offset = 0;
+ 
+-	sprintf(buffer, "%s:%d", dev_name, 0); /* 0 is full disk in OF */
++	strncpy(buffer, dev_name, 1020);
++	if (_machine != _MACH_bplan)
++		strcat(buffer, ":0");  /* 0 is full disk in (non-buggy) OF */
+ 	DEBUG_F("Trying to open dev_name=%s; filename=%s; partition offset=%Lu\n",
+ 		buffer, file_name, partition_offset);
+ 	file->of_device = prom_open(buffer);
+diff --git a/second/partition.c b/second/partition.c
+index 0cb8ae8..d20a0ed 100644
+--- a/second/partition.c
++++ b/second/partition.c
+@@ -40,6 +40,7 @@
+ #include "linux/iso_fs.h"
+ #include "debug.h"
+ #include "errors.h"
++#include "bootinfo.h"
+ #include "byteorder.h"
+ 
+ /* We currently don't check the partition type, some users
+@@ -286,7 +287,7 @@ partition_amiga_lookup( const char *dev_name, prom_handle disk,
+ 	for (i=0; i < possible; i++) used[i] = 0;
+ 
+ 
+-	for (part = amiga_block[AMIGA_PARTITIONS], partition = 0;
++	for (part = amiga_block[AMIGA_PARTITIONS], partition = 1;
+ 		part != AMIGA_END;
+ 		part = amiga_block[AMIGA_PART_NEXT], partition++)
+ 	{
+@@ -337,7 +338,8 @@ partitions_lookup(const char *device)
+      unsigned int prom_blksize, iso_root_block;
+ 
+      strncpy(block_buffer, device, 2040);
+-     strcat(block_buffer, ":0");
++     if (_machine != _MACH_bplan)
++	  strcat(block_buffer, ":0");
+ 
+      /* Open device */
+      disk = prom_open(block_buffer);
+diff --git a/second/prom.c b/second/prom.c
+index e9c5843..4ad7277 100644
+--- a/second/prom.c
++++ b/second/prom.c
+@@ -568,6 +568,25 @@ prom_sleep (int seconds)
+      while (prom_getms() <= end);
+ }
+ 
++/* if address given is claimed look for other addresses to get the needed
++ * space before giving up
++ */
++void *
++prom_claim_chunk(void *virt, unsigned int size, unsigned int align)
++{
++     void *found, *addr;
++     for(addr=virt; addr <= (void*)PROM_CLAIM_MAX_ADDR;
++         addr+=(0x100000/sizeof(addr))) {
++          found = prom_claim(addr, size, 0);
++          if (found != (void *)-1) {
++               DEBUG_F("claimed %i at 0x%x (0x%x)\n",size,(int)found,(int)virt);
++               return(found);
++          }
++     }
++     prom_printf("Claim error, can't allocate %x at 0x%x\n",size,(int)virt);
++     return((void*)-1);
++}
++
+ void *
+ prom_claim (void *virt, unsigned int size, unsigned int align)
+ {
+diff --git a/second/yaboot.c b/second/yaboot.c
+index 0232d33..d6e8017 100644
+--- a/second/yaboot.c
++++ b/second/yaboot.c
+@@ -114,6 +114,9 @@ int useconf = 0;
+ char bootdevice[BOOTDEVSZ];
+ char bootoncelabel[1024];
+ char bootargs[1024];
++char bootlastlabel[BOOTLASTSZ] = {0};
++char fw_nbr_reboots[FW_NBR_REBOOTSZ] = {0};
++long  fw_reboot_cnt = 0;
+ char *password = NULL;
+ struct boot_fspec_t boot;
+ int _machine = _MACH_Pmac;
+@@ -178,6 +181,7 @@ yaboot_start (unsigned long r3, unsigned long r4, unsigned long r5)
+ {
+      int result;
+      void* malloc_base = NULL;
++     unsigned long addr;
+      prom_handle root;
+ 
+      /* OF seems to do it, but I'm not very confident */
+@@ -196,7 +200,10 @@ yaboot_start (unsigned long r3, unsigned long r4, unsigned long r5)
+      prom_init ((prom_entry) r5);
+ 
+      /* Allocate some memory for malloc'ator */
+-     malloc_base = prom_claim((void *)MALLOCADDR, MALLOCSIZE, 0);
++     for (addr = MALLOCADDR; addr <= MALLOCADDR * 16 ;addr+=0x100000) {
++	  malloc_base = prom_claim((void *)addr, MALLOCSIZE, 0);
++	  if (malloc_base != (void *)-1) break;
++     }
+      if (malloc_base == (void *)-1) {
+ 	  prom_printf("Can't claim malloc buffer (%d bytes at 0x%08x)\n",
+ 		      MALLOCSIZE, MALLOCADDR);
+@@ -219,7 +226,10 @@ yaboot_start (unsigned long r3, unsigned long r4, unsigned long r5)
+      root = prom_finddevice("/");
+      if (root != 0) {
+ 	  static char model[256];
+-	  if (prom_getprop(root, "device_type", model, 256 ) > 0 &&
++	  if (prom_getprop(root, "CODEGEN,vendor", model, 256) > 0 &&
++	      !strncmp("bplan", model, 5))
++	       _machine = _MACH_bplan;
++	  else if (prom_getprop(root, "device_type", model, 256 ) > 0 &&
+ 	      !strncmp("chrp", model, 4))
+ 	       _machine = _MACH_chrp;
+ 	  else {
+@@ -455,7 +465,7 @@ static int load_my_config_file(struct boot_fspec_t *orig_fspec)
+      struct bootp_packet *packet;
+      int rc = 0;
+      struct boot_fspec_t fspec = *orig_fspec;
+-     char *cfgpath = (_machine == _MACH_chrp) ? "/etc/" : "";
++     char *cfgpath = (_machine == _MACH_chrp || _machine == _MACH_bplan) ? "/etc/" : "";
+      int flen;
+      int minlen;
+ 
+@@ -654,6 +664,8 @@ int get_params(struct boot_param_t* params)
+      static char imagepath[1024];
+      static char initrdpath[1024];
+      static char sysmappath[1024];
++     static char manualinitrd[1024];
++     static int definitrd = 1, hasarg = 0;
+ 
+      pause_after = 0;
+      memset(params, 0, sizeof(*params));
+@@ -665,7 +677,7 @@ int get_params(struct boot_param_t* params)
+ 
+      cmdinit();
+ 
+-     if (first) {
++     if (first && !fw_reboot_cnt) {
+ 	  first = 0;
+ 	  imagename = bootargs;
+ 	  word_split(&imagename, &params->args);
+@@ -680,6 +692,13 @@ int get_params(struct boot_param_t* params)
+ 	       timeout = simple_strtol(q, NULL, 0);
+      }
+ 
++     /* If this is a reboot due to FW detecting CAS changes then 
++      * set timeout to 1.  The last kernel booted will be booted 
++      * again automatically.  It should seem seamless to the user
++     */
++     if (fw_reboot_cnt) 
++          timeout = 1;
++
+      prom_printf("boot: ");
+      c = -1;
+      if (timeout != -1) {
+@@ -716,7 +735,9 @@ int get_params(struct boot_param_t* params)
+ 	  if (!imagename) {
+ 	       if (bootoncelabel[0] != 0)
+ 		    imagename = bootoncelabel;
+-	       else
++	       else if (bootlastlabel[0] != 0)
++                         imagename = bootlastlabel;
++               else
+ 		    imagename = cfg_get_default();
+ 	  }
+ 	  if (imagename)
+@@ -733,10 +754,53 @@ int get_params(struct boot_param_t* params)
+ 	  word_split(&imagename, &params->args);
+      }
+ 
++     /* initrd setup via cmd console */
++     /* first, check if the user uses it with some label */
++     if (!strncmp(params->args, "initrd=", 7)) {
++         DEBUG_F("params->args: %s\n", params->args);
++         definitrd = 0;
++     }
++     /* after, check if there is the 'initrd=' in the imagename string */
++     if (!strncmp(imagename, "initrd=", 7) || !definitrd) {
++
++         /* return the value of definitrd to 1 */
++         if (!definitrd)
++             definitrd = 1;
++
++         /* args = "initrd=blah" */
++         char *args = NULL;
++
++         if (params->args) {
++            args = params->args;
++            params->args = NULL;
++            hasarg = 1;
++         } else
++            args = imagename;
++
++         if (strlen(args)){
++             /* copy the string after the '=' to manualinitrd */
++             strcpy(manualinitrd, args+7);
++             definitrd = 0;
++             prom_printf("New initrd file specified: %s\n", manualinitrd);
++         } else {
++             prom_printf("ERROR: no initrd specified!\n");
++             return 0;
++         }
++
++         /* set imagename with the default values of the config file */
++         if ((prom_get_devtype(boot.dev) == FILE_DEVICE_NET) && !hasarg)
++             imagename = cfg_get_default();
++         else
++             imagename = cfg_get_default();
++     }
++
+      /* chrp gets this wrong, force it -- Cort */
+      if ( useconf && (!imagename || imagename[0] == 0 ))
+ 	  imagename = cfg_get_default();
+ 
++     /* write the imagename out so it can be reused on reboot if necessary */
++     prom_set_options("boot-last-label", imagename, strlen(imagename));
++
+      label = 0;
+      defdevice = boot.dev;
+ 
+@@ -794,6 +858,12 @@ int get_params(struct boot_param_t* params)
+ 	       "resides on, and \"partno\" is the partition number the image resides on.\n"
+ 	       "Note that the comma (,) is only required if you specify an OpenFirmware\n"
+ 	       "device, if you only specify a filename you should not start it with a \",\"\n\n"
++           "To boot a alternative initrd file rather than specified in the yaboot\n"
++           "configuration file, use the \"initrd\" command on Yaboot's prompt: \n"
++           "\"initrd=[name.img]\". This will load the \"name.img\" file after the default\n"
++           "kernel image. You can, also, specify a different initrd file to any other\n"
++           "label of the yaboot configuration file. Just type \"label initrd=[name.img]\"\n"
++           "and the specified initrd file will be loaded.\n\n"
+ 	       "To load an alternative config file rather than /etc/yaboot.conf, enter\n"
+ 	       "its device, partno and path, on Open Firmware Prompt:\n"
+ 	       "boot conf=device:partno,/path/to/configfile\n."
+@@ -923,14 +993,22 @@ int get_params(struct boot_param_t* params)
+ 	  prom_printf("%s: Unable to parse\n", imagepath);
+ 	  return 0;
+      }
+-     DEBUG_F("after parse_device_path: dev=%s part=%d file=%s\n", params->kernel.dev,
+-	     params->kernel.part, params->kernel.file);
+-
++     DEBUG_F("after parse_device_path: dev=%s part=%d file=%s\n", params->kernel.dev, params->kernel.part, params->kernel.file);
+      if (useconf) {
+ 	  p = cfg_get_strg(label, "initrd");
+ 	  if (p && *p) {
+-	       DEBUG_F("Parsing initrd path <%s>\n", p);
+-	       strncpy(initrdpath, p, 1024);
++
++           /* check if user seted to use a initrd file from boot console */
++           if (!definitrd && p != manualinitrd) {
++               if (manualinitrd[0] != "/" && (prom_get_devtype(defdevice_bak) != FILE_DEVICE_NET)) {
++                   strcpy(initrdpath, "/");
++                   strcat(initrdpath, manualinitrd);
++               } else
++                   strncpy(initrdpath, manualinitrd, 1024);
++           } else
++               strncpy(initrdpath, p, 1024);
++
++	       DEBUG_F("Parsing initrd path <%s>\n", initrdpath);
+ 	       if (!parse_device_path(initrdpath, defdevice, defpart,
+ 				      "/root.bin", &params->rd)) {
+ 		    prom_printf("%s: Unable to parse\n", imagepath);
+@@ -1233,7 +1311,7 @@ load_elf32(struct boot_file_t *file, loadinfo_t *loadinfo)
+      Elf32_Ehdr		*e = &(loadinfo->elf.elf32hdr);
+      Elf32_Phdr		*p, *ph;
+      int			size = sizeof(Elf32_Ehdr) - sizeof(Elf_Ident);
+-     unsigned long	addr, loadaddr;
++     unsigned long	loadaddr;
+ 
+      /* Read the rest of the Elf header... */
+      if ((*(file->fs->read))(file, size, &e->e_version) < size) {
+@@ -1321,13 +1399,7 @@ load_elf32(struct boot_file_t *file, loadinfo_t *loadinfo)
+           loadaddr = loadinfo->load_loc;
+      }
+ 
+-     /* On some systems, loadaddr may already be claimed, so try some
+-      * other nearby addresses before giving up.
+-      */
+-     for(addr=loadaddr; addr <= loadaddr * 8 ;addr+=0x100000) {
+-	  loadinfo->base = prom_claim((void *)addr, loadinfo->memsize, 0);
+-	  if (loadinfo->base != (void *)-1) break;
+-     }
++     loadinfo->base = prom_claim_chunk((void *)loadaddr, loadinfo->memsize, 0);
+      if (loadinfo->base == (void *)-1) {
+ 	  prom_printf("Claim error, can't allocate kernel memory\n");
+ 	  goto bail;
+@@ -1377,7 +1449,7 @@ load_elf64(struct boot_file_t *file, loadinfo_t *loadinfo)
+      Elf64_Ehdr		*e = &(loadinfo->elf.elf64hdr);
+      Elf64_Phdr		*p, *ph;
+      int			size = sizeof(Elf64_Ehdr) - sizeof(Elf_Ident);
+-     unsigned long	addr, loadaddr;
++     unsigned long	loadaddr;
+ 
+      /* Read the rest of the Elf header... */
+      if ((*(file->fs->read))(file, size, &e->e_version) < size) {
+@@ -1465,13 +1537,7 @@ load_elf64(struct boot_file_t *file, loadinfo_t *loadinfo)
+           loadaddr = e->e_entry;
+      }
+ 
+-     /* On some systems, loadaddr may already be claimed, so try some
+-      * other nearby addresses before giving up.
+-      */
+-     for(addr=loadaddr; addr <= loadaddr * 8 ;addr+=0x100000) {
+-	  loadinfo->base = prom_claim((void *)addr, loadinfo->memsize, 0);
+-	  if (loadinfo->base != (void *)-1) break;
+-     }
++     loadinfo->base = prom_claim_chunk((void *)loadaddr, loadinfo->memsize, 0);
+      if (loadinfo->base == (void *)-1) {
+ 	  prom_printf("Claim error, can't allocate kernel memory\n");
+ 	  goto bail;
+@@ -1625,6 +1691,7 @@ int
+ yaboot_main(void)
+ {
+      char *ptype;
++     char *endp;
+      int conf_given = 0;
+      char conf_path[1024];
+ 
+@@ -1635,6 +1702,11 @@ yaboot_main(void)
+      DEBUG_F("/chosen/bootargs = %s\n", bootargs);
+      prom_get_chosen("bootpath", bootdevice, BOOTDEVSZ);
+      DEBUG_F("/chosen/bootpath = %s\n", bootdevice);
++     if (prom_get_options("ibm,client-architecture-support-reboot",fw_nbr_reboots, FW_NBR_REBOOTSZ) == -1 )
++        prom_get_options("ibm,fw-nbr-reboots",fw_nbr_reboots, FW_NBR_REBOOTSZ);
++     fw_reboot_cnt = simple_strtol(fw_nbr_reboots,&endp,10);
++     if (fw_reboot_cnt > 0L)
++          prom_get_options("boot-last-label", bootlastlabel, BOOTLASTSZ);
+ 
+      /* If conf= specified on command line, it overrides
+         Usage: conf=device:partition,/path/to/conffile
+@@ -1678,11 +1750,13 @@ yaboot_main(void)
+ 	  prom_printf("%s: Unable to parse\n", bootdevice);
+ 	  return -1;
+      }
++     if (_machine == _MACH_bplan && !conf_given)
++        boot.part++;
+      DEBUG_F("After parse_device_path: dev=%s, part=%d, file=%s\n",
+ 	     boot.dev, boot.part, boot.file);
+ 
+      if (!conf_given) {
+-         if (_machine == _MACH_chrp)
++         if (_machine == _MACH_chrp || _machine == _MACH_bplan)
+              boot.file = "/etc/";
+          else if (strlen(boot.file)) {
+              if (!strncmp(boot.file, "\\\\", 2))
