@@ -1,0 +1,109 @@
+# Fix the Link detection in MacOS
+# Author Alex Graf - agraf@suse 
+Index: kvm-75/qemu/hw/rtl8139.c
+===================================================================
+--- kvm-75.orig/qemu/hw/rtl8139.c
++++ kvm-75/qemu/hw/rtl8139.c
+@@ -422,6 +422,9 @@ static void RTL8139TallyCounters_load(QE
+ /* Saves values of tally counters to VM state file */
+ static void RTL8139TallyCounters_save(QEMUFile* f, RTL8139TallyCounters *tally_counters);
+ 
++static uint32_t rtl8139_io_readb(void *opaque, uint8_t addr);
++static uint32_t rtl8139_io_readw(void *opaque, uint8_t addr);
++
+ typedef struct RTL8139State {
+     uint8_t phys[8]; /* mac address */
+     uint8_t mult[8]; /* multicast mask array */
+@@ -462,6 +465,7 @@ typedef struct RTL8139State {
+ 
+     uint16_t CpCmd;
+     uint8_t  TxThresh;
++    enum NICLink link;
+ 
+     PCIDevice *pci_dev;
+     VLANClientState *vc;
+@@ -1227,7 +1231,7 @@ static void rtl8139_reset(RTL8139State *
+     s->Config0 = 0x0; /* No boot ROM */
+     s->Config1 = 0xC; /* IO mapped and MEM mapped registers available */
+     s->Config3 = 0x1; /* fast back-to-back compatible */
+-    s->Config5 = 0x0;
++    s->Config5 = Cfg5_LDPS;
+ 
+     s->CSCR = CSCR_F_LINK_100 | CSCR_HEART_BIT | CSCR_LD;
+ 
+@@ -1251,6 +1255,13 @@ static void rtl8139_reset(RTL8139State *
+     s->TimerInt = 0;
+     s->TCTR_base = 0;
+ 
++    s->eeprom.contents[10] = s->Config0 | s->Config1 << 8;
++    s->eeprom.contents[6] = (rtl8139_io_readb(s, MediaStatus) & 0xc0) | ((rtl8139_io_readw(s, BasicModeCtrl) >> 8) & 0x23)
++                          | (s->Config3 << 8);
++    s->eeprom.contents[12] = s->Config4 << 8;
++
++    s->eeprom.contents[15] = s->Config5 << 8;
++
+     /* reset tally counters */
+     RTL8139TallyCounters_clear(&s->tally_counters);
+ }
+@@ -2846,7 +2857,7 @@ static uint32_t rtl8139_io_readb(void *o
+             break;
+ 
+         case MediaStatus:
+-            ret = 0xd0;
++            ret = 0xd0 | ((s->link == Link_10mbps) << 3);
+             DEBUG_PRINT(("RTL8139: MediaStatus read 0x%x\n", ret));
+             break;
+ 
+@@ -3440,6 +3451,15 @@ PCIDevice *pci_rtl8139_init(PCIBus *bus,
+ 
+     s->pci_dev = (PCIDevice *)d;
+     memcpy(s->macaddr, nd->macaddr, 6);
++    switch(nd->link) {
++        case Link_10mbps:
++        case Link_100mbps:
++            s->link = nd->link;
++            break;
++        default:
++            s->link = Link_100mbps;
++            break;
++    }
+     rtl8139_reset(s);
+     s->vc = qemu_new_vlan_client(nd->vlan, rtl8139_receive,
+                                  rtl8139_can_receive, s);
+Index: kvm-75/qemu/net.h
+===================================================================
+--- kvm-75.orig/qemu/net.h
++++ kvm-75/qemu/net.h
+@@ -55,12 +55,20 @@ void net_client_uninit(NICInfo *nd);
+ 
+ #define MAX_NICS 8
+ 
++enum NICLink {
++    Link_default,
++    Link_10mbps,
++    Link_100mbps,
++    Link_1000mbps,
++};
++
+ struct NICInfo {
+     uint8_t macaddr[6];
+     const char *model;
+     VLANState *vlan;
+     int devfn;
+     int used;
++    enum NICLink link;
+ };
+ 
+ extern int nb_nics;
+Index: kvm-75/qemu/vl.c
+===================================================================
+--- kvm-75.orig/qemu/vl.c
++++ kvm-75/qemu/vl.c
+@@ -5555,6 +5555,7 @@ int net_client_init(const char *device,
+         }
+         nd->vlan = vlan;
+         nd->used = 1;
++        nd->link = Link_default;
+         nb_nics++;
+         vlan->nb_guest_devs++;
+         ret = idx;
