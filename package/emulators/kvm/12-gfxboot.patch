@@ -1,0 +1,130 @@
+# Fixes boot with gfxboot of SUSE 10.0 till openSUSE 10.3 and other
+# distributions which use this version of gfxboot.
+# Has been discussed upstream, but upstream does not seem to care
+# much and wants to go for full emulation of this, but it's a project
+# for multible months to do that.
+# Room for improvement: Should use an explicitly defined illegal
+# instruction, not just one which happens to be illegal with current
+# CPUs.
+# Signed-off-by: Alex Graf - agraf@suse
+===================================================================
+Index: kernel/include/asm-x86/kvm_host.h
+===================================================================
+--- ./kernel/include/asm-x86/kvm_host.h.orig
++++ ./kernel/include/asm-x86/kvm_host.h
+@@ -240,6 +240,7 @@ struct kvm_vcpu_arch {
+ 	u32 regs_avail;
+ 	u32 regs_dirty;
+ 
++	u16 backup_ss;
+ 	unsigned long cr0;
+ 	unsigned long cr2;
+ 	unsigned long cr3;
+Index: kernel/x86/vmx.c
+===================================================================
+--- ./kernel/x86/vmx.c.orig
++++ ./kernel/x86/vmx.c
+@@ -1301,8 +1301,10 @@ static void fix_pmode_dataseg(int seg, s
+ static void enter_pmode(struct kvm_vcpu *vcpu)
+ {
+ 	unsigned long flags;
++	unsigned long rip;
++	u8 opcodes[2];
+ 	struct vcpu_vmx *vmx = to_vmx(vcpu);
+-
++ 
+ 	vmx->emulation_required = 1;
+ 	vcpu->arch.rmode.active = 0;
+ 
+@@ -1328,12 +1330,39 @@ static void enter_pmode(struct kvm_vcpu
+ 	fix_pmode_dataseg(VCPU_SREG_GS, &vcpu->arch.rmode.gs);
+ 	fix_pmode_dataseg(VCPU_SREG_FS, &vcpu->arch.rmode.fs);
+ 
++	/* Save real mode SS */
++	vcpu->arch.backup_ss = vmcs_read16(GUEST_SS_SELECTOR);
++
+ 	vmcs_write16(GUEST_SS_SELECTOR, 0);
+ 	vmcs_write32(GUEST_SS_AR_BYTES, 0x93);
+ 
+ 	vmcs_write16(GUEST_CS_SELECTOR,
+ 		     vmcs_read16(GUEST_CS_SELECTOR) & ~SELECTOR_RPL_MASK);
+ 	vmcs_write32(GUEST_CS_AR_BYTES, 0x9b);
++
++	/* VMX checks for SS.CPL = CS.CPL on VM entry, if we are in
++	 * protected mode. This fails on the transistion from real mode
++	 * to protected mode, as just after that, SS still contains the
++	 * real mode segment, which does not know anything about CPLs.
++	 * 
++	 * As far as I know only gfxboot exploits this feature, by using
++	 * the old real mode SS value to find a new SS selector in protected
++	 * mode. This happens using a mov %ss, %eax instruction, which we
++	 * can patch to an invalid opcode and emulate later on, giving eax
++	 * the real SS value, that existed before the protected mode
++	 * switch. */
++	rip = kvm_rip_read(vcpu) + vmcs_readl(GUEST_CS_BASE) + 14;
++	emulator_read_std(rip, (void *)opcodes, 2, vcpu);
++
++	if ( opcodes[0] ==  0x8c && opcodes[1] == 0xd0 ) {
++		vcpu_printf(vcpu, "%s: patching mov SS\n", __FUNCTION__);
++		opcodes[0] = 0x0f;
++		opcodes[1] = 0x0c;
++		if (emulator_write_emulated(rip, opcodes,
++		    2, vcpu) != X86EMUL_CONTINUE)
++			vcpu_printf(vcpu, "%s: unable to patch mov SS\n",
++				__FUNCTION__);
++	}
+ }
+ 
+ static gva_t rmode_tss_base(struct kvm *kvm)
+Index: kernel/x86/x86.c
+===================================================================
+--- ./kernel/x86/x86.c.orig
++++ ./kernel/x86/x86.c
+@@ -2444,13 +2444,14 @@ int emulate_instruction(struct kvm_vcpu
+ 
+ 		r = x86_decode_insn(&vcpu->arch.emulate_ctxt, &emulate_ops);
+ 
+-		/* Reject the instructions other than VMCALL/VMMCALL when
++		/* Reject the instructions other than VMCALL/VMMCALL/HACKS when
+ 		 * try to emulate invalid opcode */
+ 		c = &vcpu->arch.emulate_ctxt.decode;
+ 		if ((emulation_type & EMULTYPE_TRAP_UD) &&
+-		    (!(c->twobyte && c->b == 0x01 &&
++		    ((!(c->twobyte && c->b == 0x01 &&
+ 		      (c->modrm_reg == 0 || c->modrm_reg == 3) &&
+-		       c->modrm_mod == 3 && c->modrm_rm == 1)))
++		       c->modrm_mod == 3 && c->modrm_rm == 1)) &&
++		       c->b != 0x0c))
+ 			return EMULATE_FAIL;
+ 
+ 		++vcpu->stat.insn_emulation;
+Index: kernel/x86/x86_emulate.c
+===================================================================
+--- ./kernel/x86/x86_emulate.c.orig
++++ ./kernel/x86/x86_emulate.c
+@@ -196,7 +196,7 @@ static u16 opcode_table[256] = {
+ static u16 twobyte_table[256] = {
+ 	/* 0x00 - 0x0F */
+ 	0, Group | GroupDual | Group7, 0, 0, 0, 0, ImplicitOps, 0,
+-	ImplicitOps, ImplicitOps, 0, 0, 0, ImplicitOps | ModRM, 0, 0,
++	ImplicitOps, ImplicitOps, 0, 0, ImplicitOps, ImplicitOps | ModRM, 0, 0,
+ 	/* 0x10 - 0x1F */
+ 	0, 0, 0, 0, 0, 0, 0, 0, ImplicitOps | ModRM, 0, 0, 0, 0, 0, 0, 0,
+ 	/* 0x20 - 0x2F */
+@@ -1898,6 +1898,16 @@ twobyte_insn:
+ 	case 0x18:		/* Grp16 (prefetch/nop) */
+ 		c->dst.type = OP_NONE;
+ 		break;
++	case 0x0c: /* Invalid (used to patch mov %ss, %eax) */
++		/* This opcode is declared invalid, according to the Intel
++		 * specification. As it is only used on VMX, we do not have
++		 * to take AMD instructions into account. For more
++		 * information, why this is needed, please see
++		 * vmx.c:enter_pmode.
++		 */
++		c->dst.type = OP_NONE;
++		c->regs[VCPU_REGS_RAX] = ctxt->vcpu->arch.backup_ss;
++		break;
+ 	case 0x20: /* mov cr, reg */
+ 		if (c->modrm_mod != 3)
+ 			goto cannot_emulate;
