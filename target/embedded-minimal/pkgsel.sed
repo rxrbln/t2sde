@@ -16,7 +16,7 @@
 # (with stage 1, as canadian cross they would end up in the
 #  target system!).
 
-/ binutila /		{ s,^. [^ ]*,X 0---------,; p; d; }
+/ binutils /		{ s,^. [^ ]*,X 0---------,; p; d; }
 / gcc /			{ s,^. [^ ]*,X 0---------,; p; d; }
 / gmp /			{ s,^. [^ ]*,X 0---------,; p; d; }
 / mpfr /		{ s,^. [^ ]*,X 0---------,; p; d; }
