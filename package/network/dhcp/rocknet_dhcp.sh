@@ -12,8 +12,14 @@
 # GNU General Public License can be found in the file COPYING.
 # --- T2-COPYRIGHT-NOTE-END ---
 
+dhclient_start () {
+	[ -e /proc/net/if_inet6 ] || dopt='-4'
+	ip link set $if up
+	/sbin/dhclient -q $dopt $if
+}
+
 public_dhcp() {
-	addcode up   5 5 "ip link set $if up ; /sbin/dhclient -q $if"
+	addcode up   5 5 "dhclient_start"
 	addcode down 5 5 "killall -TERM dhclient"
 	addcode down 5 6 "sleep 2 ; ip addr flush $if && ip link set $if down || ifconfig $if down"
 }
