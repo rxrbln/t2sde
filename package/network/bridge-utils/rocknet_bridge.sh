@@ -15,7 +15,9 @@
 public_bridge() {
 	addcode up 2 5 "brctl addbr $if"
 	addcode up 3 5 "ip link set $1 up"
-	addcode up 3 6 "brctl addif $if $1"
+	for i; do
+		addcode up 3 6 "brctl addif $if $i"
+	done
 
 	# interfaces are implicitly removed form tbe bridge on delbr
 	addcode down 1 1 "brctl delbr $if"
