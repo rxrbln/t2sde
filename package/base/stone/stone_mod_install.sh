@@ -50,8 +50,8 @@ part_mkfs() {
 	}
 
 	maybe_add ext4  'journaling'            'mkfs.ext4'
-	maybe_add ext3	'journaling'		'mkfs.ext2' '-j'
-	maybe_add ext2	'non-journaling'	'mkfs.ext2'
+	maybe_add ext3	'journaling'		'mkfs.ext2' '-j' '-I 128'
+	maybe_add ext2	'non-journaling'	'mkfs.ext2' '-I 128'
 	maybe_add reiserfs 'journaling'		'mkfs.reiserfs'
 	maybe_add reiser4 'high-performance journaling' 'mkfs.reiser4'
 	maybe_add jfs	'IBM journaling'	'mkfs.jfs'
