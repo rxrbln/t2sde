@@ -1,3 +1,20 @@
+Alexander Graf implemented multi-boot kernel loading during
+his work to run Darwin inside Qemu/KVM. As the boot loader
+expects to load the kernel in an EFI environment a custom
+booter is used to load the kernel using a legacy BIOS.
+
+The ELF machine type needs to include 386 on X86_64 systems
+in order to load 32bit kernels on 64bit machines.
+
+This is a port of the patch to the new extload / INT 19
+machinery (including minor cleanups).
+
+The fread call was fixed to maximally load the kernel's
+file size to loading kernels less than 8192 bytes, e.g.
+ the GRUB multi-boot example kernel.
+
+Signed-off-by: René Rebe <rene@exactcode.de>
+
 Index: kvm-75/qemu/elf_ops.h
 ===================================================================
 --- kvm-75.orig/qemu/elf_ops.h
@@ -15,7 +32,7 @@ Index: kvm-75/qemu/elf_ops.h
      if (pentry)
 --- kvm-81/qemu/hw/pc.c.orig	2008-12-22 19:12:34.000000000 +0100
 +++ kvm-81/qemu/hw/pc.c	2008-12-22 19:46:46.000000000 +0100
-@@ -542,6 +542,438 @@
+@@ -542,6 +542,450 @@
      return size;
  }
  
@@ -65,7 +82,7 @@ Index: kvm-75/qemu/elf_ops.h
 +    *p++ = 0xfa;                /* CLI */
 +    *p++ = 0xfc;                /* CLD */
 +
-+    // 660f011528000000               lgdt        [0x28]
++    /* 660f011528000000            lgdt        [0x28] */
 +    *p++ = 0x66;                /* 32-bit operand size */
 +    *p++ = 0x67;                /* 32-bit addr size */
 +    *p++ = 0x0f;                /* LGDT [0x128] */
@@ -204,7 +221,7 @@ Index: kvm-75/qemu/elf_ops.h
 +    *p++ = 0xc0;
 +
 +    /* the JMP sets CS for us and gets us to 32-bit */
-+    ip = 0x000d0000 + (p - rom) + 8; // set i to the IP after the JMP // XXX
++    ip = 0x000d0000 + (p - rom) + 8; /* XXX: set i to the IP after the JMP */
 +    *p++ = 0x66;                /* 32-bit operand size */
 +    *p++ = 0xea;                /* JMP */
 +    *p++ = ip;        /* IP */
@@ -252,20 +269,20 @@ Index: kvm-75/qemu/elf_ops.h
 +    *p++ = 0x00;
 +
 +    { /* GDT loading */
-+        uint32_t gdt_base = 0x000d0000 + (p - rom); // 0x00007c00 is the first IP; // XXX
++        uint32_t gdt_base = 0x000d0000 + (p - rom); /* XXX: 0x00007c00 is the first IP */
 +        uint32_t gdtr = gdt_base + 0x28;
-+        uint8_t gdt[] = { // GDT base: 0x00000100
-+            // 0x00
++        uint8_t gdt[] = { /* GDT base: 0x00000100 */
++            /* 0x00 */
 +            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-+            // 0x08: code segment (base=0, limit=0xfffff, type=32bit code exec/read, DPL=0, 4k)
++            /* 0x08: code segment (base=0, limit=0xfffff, type=32bit code exec/read, DPL=0, 4k) */
 +            0xff, 0xff, 0x00, 0x00, 0x00, 0x9a, 0xcf, 0x00,
-+            // 0x10: data segment (base=0, limit=0xfffff, type=32bit data read/write, DPL=0, 4k)
++            /* 0x10: data segment (base=0, limit=0xfffff, type=32bit data read/write, DPL=0, 4k) */
 +            0xff, 0xff, 0x00, 0x00, 0x00, 0x92, 0xcf, 0x00,
-+            // 0x18: code segment (base=0, limit=0x0ffff, type=16bit code exec/read/conf, DPL=0, 1b)
++            /* 0x18: code segment (base=0, limit=0x0ffff, type=16bit code exec/read/conf, DPL=0, 1b) */
 +            0xff, 0xff, 0x00, 0x00, 0x00, 0x9e, 0x00, 0x00,
-+            // 0x20: data segment (base=0, limit=0x0ffff, type=16bit data read/write, DPL=0, 1b)
++            /* 0x20: data segment (base=0, limit=0x0ffff, type=16bit data read/write, DPL=0, 1b) */
 +            0xff, 0xff, 0x00, 0x00, 0x00, 0x92, 0x00, 0x00,
-+            // 0x28: gdtdesc
++            /* 0x28: gdtdesc */
 +            0x27, 0x00, gdt_base, gdt_base >> 8, gdt_base >> 16, gdt_base >> 24
 +        };
 +
@@ -277,7 +294,9 @@ Index: kvm-75/qemu/elf_ops.h
 +        *pgdt++ = gdtr >> 24;
 +    }
 +
++#if 0
 +    fprintf(stderr, "qemu: multiboot loader code is %d bytes long.\n", (int)(p-rom));
++#endif
 +
 +    /* sign rom */
 +    sum = 0;
@@ -303,9 +322,9 @@ Index: kvm-75/qemu/elf_ops.h
 +    uint32_t mb_bootinfo = 0x90000;
 +    uint32_t tmp_size;
 +
-+    // Ok, let's see if it is a multiboot image
-+    for(i = 0; i < 8144; i += 4) { // the header is 12x32bit long, so
-+                                   // the latest entry may be 8192 - 48
++    /* Ok, let's see if it is a multiboot image.
++	The header is 12x32bit long, so the latest entry may be 8192 - 48. */
++    for(i = 0; i < (8192 - 48); i += 4) {
 +        if(ldl_p(header+i) == 0x1BADB002) {
 +            uint32_t checksum = ldl_p(header+i+8);
 +            flags = ldl_p(header+i+4);
@@ -318,13 +337,15 @@ Index: kvm-75/qemu/elf_ops.h
 +        }
 +    }
 +    
-+    if(!is_multiboot) return 0; // no multiboot
++    if(!is_multiboot) return 0; /* no multiboot */
++#if 0
 +    fprintf(stderr, "qemu: I believe we found a multiboot image!\n");
++#endif
 +
-+    if(flags & 0x00000004) { // MULTIBOOT_HEADER_HAS_VBE
++    if(flags & 0x00000004) { /* MULTIBOOT_HEADER_HAS_VBE */
 +        fprintf(stderr, "qemu: multiboot knows VBE. we don't.\n");
 +    } 
-+    if(!(flags & 0x00010000)) { // MULTIBOOT_HEADER_HAS_ADDR
++    if(!(flags & 0x00010000)) { /* MULTIBOOT_HEADER_HAS_ADDR */
 +        uint64_t elf_entry;
 +        int kernel_size;
 +        fclose(f);
@@ -336,8 +357,10 @@ Index: kvm-75/qemu/elf_ops.h
 +        mh_load_addr = mh_entry_addr = elf_entry;
 +        mb_kernel_size = kernel_size;
 +
++#if 0
 +        fprintf(stderr, "qemu: loading multiboot-elf kernel (%#x bytes) with entry %#zx\n",
 +                mb_kernel_size, (size_t)mh_entry_addr);
++#endif
 +    } else {
 +        /* Valid if mh_flags sets MULTIBOOT_HEADER_HAS_ADDR. */
 +        uint32_t mh_header_addr = ldl_p(header+i+12);
@@ -363,8 +386,10 @@ Index: kvm-75/qemu/elf_ops.h
 +        
 +        fseek(f, mb_kernel_text_offset, SEEK_SET);
 +
++#if 0
 +        fprintf(stderr, "qemu: loading multiboot kernel (%#x bytes) at %#zx\n",
 +                mb_kernel_size, mb_kernel_addr - phys_ram_base);
++#endif
 +
 +        if ((tmp_size=fread(mb_kernel_addr, 1, mb_kernel_size, f)) != mb_kernel_size) {
 +            fprintf(stderr, "qemu: read error on multiboot kernel '%s' (%#x != %#x)\n", kernel_filename, tmp_size, mb_kernel_size);
@@ -374,9 +399,9 @@ Index: kvm-75/qemu/elf_ops.h
 +    }
 +
 +
-+    // load modules
++    /* load modules */
 +
-+    stl_p(phys_ram_base + mb_bootinfo + 20, 0x0); // mods_count
++    stl_p(phys_ram_base + mb_bootinfo + 20, 0x0); /* mods_count */
 +    if(initrd_filename) {
 +        uint32_t mb_mod_info = mb_bootinfo + 0x100;
 +        uint32_t mb_mod_cmdline = mb_bootinfo+ 0x300;
@@ -392,11 +417,13 @@ Index: kvm-75/qemu/elf_ops.h
 +                *next_initrd = '\0';
 +            /* if a space comes after the module filename, treat everything after that as parameters */
 +            strcpy(phys_ram_base + mb_mod_cmdline, initrd_filename);
-+            stl_p(phys_ram_base + mb_mod_info + 8, mb_mod_cmdline); // string
++            stl_p(phys_ram_base + mb_mod_info + 8, mb_mod_cmdline); /* string */
 +            mb_mod_cmdline += strlen(initrd_filename) + 1;
 +            if(next_space = strchr(initrd_filename, ' '))
 +                *next_space = '\0';
-+printf("multiboot loading module: %s\n", initrd_filename);
++#if 0
++	     printf("multiboot loading module: %s\n", initrd_filename);
++#endif
 +            f = fopen(initrd_filename, "rb");
 +            if(f) {
 +                mb_mod_start = (mb_mod_start + mb_mod_length + (TARGET_PAGE_SIZE - 1))
@@ -414,20 +441,20 @@ Index: kvm-75/qemu/elf_ops.h
 +                stl_p(phys_ram_base + mb_mod_info + 0, mb_mod_start);
 +                stl_p(phys_ram_base + mb_mod_info + 4, mb_mod_start + mb_mod_length);
 +printf("mod_start: %#x\nmod_end:   %#x\n", mb_mod_start, mb_mod_start + mb_mod_length);
-+                stl_p(phys_ram_base + mb_mod_info + 12, 0x0); // reserved
++                stl_p(phys_ram_base + mb_mod_info + 12, 0x0); /* reserved */
 +            }
 +            initrd_filename = next_initrd+1;
 +            mb_mod_info += 16;
 +        } while(next_initrd);
-+        stl_p(phys_ram_base + mb_bootinfo + 20, mb_mod_count); // mods_count
-+        stl_p(phys_ram_base + mb_bootinfo + 24, mb_bootinfo + 0x100); // mods_addr
++        stl_p(phys_ram_base + mb_bootinfo + 20, mb_mod_count); /* mods_count */
++        stl_p(phys_ram_base + mb_bootinfo + 24, mb_bootinfo + 0x100); /* mods_addr */
 +    }
 +
 +    /* Commandline support */
 +    stl_p(phys_ram_base + mb_bootinfo + 16, mb_bootinfo + 0x200);
 +    strcpy((char*)(phys_ram_base + mb_bootinfo + 0x200), kernel_cmdline);
 +        
-+    // the kernel is where we want it to be now
++    /* the kernel is where we want it to be now */
 +
 +#define MULTIBOOT_FLAGS_MEMORY (1 << 0)
 +#define MULTIBOOT_FLAGS_BOOT_DEVICE (1 << 1)
@@ -439,16 +466,18 @@ Index: kvm-75/qemu/elf_ops.h
 +                                     | MULTIBOOT_FLAGS_CMDLINE
 +                                     | MULTIBOOT_FLAGS_MODULES
 +                                     | MULTIBOOT_FLAGS_MMAP);
-+    stl_p(phys_ram_base + mb_bootinfo + 4, 640 * 1024); // mem_lower
-+    stl_p(phys_ram_base + mb_bootinfo + 8, ram_size); // mem_upper
-+    stl_p(phys_ram_base + mb_bootinfo + 12, 0x8001ffff); // XXX: use the -boot switch?
-+    stl_p(phys_ram_base + mb_bootinfo + 48, 0x9000); // mmap_addr
++    stl_p(phys_ram_base + mb_bootinfo + 4, 640 * 1024); /* mem_lower */
++    stl_p(phys_ram_base + mb_bootinfo + 8, ram_size); /* mem_upper */
++    stl_p(phys_ram_base + mb_bootinfo + 12, 0x8001ffff); /* XXX: use the -boot switch? */
++    stl_p(phys_ram_base + mb_bootinfo + 48, 0x9000); /* mmap_addr */
 +
++#if 0
 +    fprintf(stderr, "multiboot: mh_entry_addr = %#x\n", mh_entry_addr);
++#endif
 +
 +    generate_bootsect_multiboot(option_rom, mh_entry_addr, mb_bootinfo);
 +    
-+    return 1; // yes, we are multiboot
++    return 1; /* yes, we are multiboot */
 +}
 +
  static void load_linux(uint8_t *option_rom,
@@ -468,7 +497,7 @@ Index: kvm-75/qemu/elf_ops.h
      f = fopen(kernel_filename, "rb");
      if (!f || !(kernel_size = get_file_size(f)) ||
 -	fread(header, 1, 1024, f) != 1024) {
-+	fread(header, 1, 8192, f) != 8192) {
++	fread(header, 1, MIN(8192, kernel_size), f) != MIN(8192, kernel_size)) {
  	fprintf(stderr, "qemu: could not load kernel '%s'\n",
  		kernel_filename);
  	exit(1);
@@ -483,8 +512,8 @@ Index: kvm-75/qemu/elf_ops.h
 +    if (ldl_p(header+0x202) == 0x53726448) {
 +        protocol = lduw_p(header+0x206);
 +    } else {
-+        // This looks like a multiboot kernel. If it is, let's stop 
-+        // treating it like Linux.
++        /* This looks like a multiboot kernel. If it is, let's stop 
++           treating it like a Linux kernel. */
 +        if(load_multiboot(option_rom,f,kernel_filename,initrd_filename, kernel_cmdline, header))
 +            return;
 +        protocol = 0;
