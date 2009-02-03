@@ -30,9 +30,9 @@ Index: kvm-75/qemu/elf_ops.h
          goto fail;
  
      if (pentry)
---- kvm-81/qemu/hw/pc.c.orig	2008-12-22 19:12:34.000000000 +0100
-+++ kvm-81/qemu/hw/pc.c	2008-12-22 19:46:46.000000000 +0100
-@@ -542,6 +542,452 @@
+--- kvm-83/qemu/hw/pc.c.orig	2009-02-03 21:48:15.000000000 +0100
++++ kvm-83/qemu/hw/pc.c	2009-02-03 21:48:35.000000000 +0100
+@@ -537,6 +537,461 @@
      return size;
  }
  
@@ -97,7 +97,7 @@ Index: kvm-75/qemu/elf_ops.h
 +
 +    *p++ = 0x66;                /* 32-bit operand size */
 +    *p++ = 0x67;                /* 32-bit addr size */
-+    *p++ = 0xbf;                /* MOV EDI,0x9004 */
++    *p++ = 0xbf;                /* MOV EDI,0x9004 - mmap start after first size */
 +    *p++ = 0x04;
 +    *p++ = 0x90;
 +    *p++ = 0x00;
@@ -106,17 +106,26 @@ Index: kvm-75/qemu/elf_ops.h
 +    pmmaploop = p;
 +    *p++ = 0x66;                /* 32-bit operand size */
 +    *p++ = 0x67;                /* 32-bit addr size */
-+    *p++ = 0xb8;                /* MOV EAX,0x20 */
-+    *p++ = 0x20;
++    *p++ = 0xb8;                /* MOV EAX,0x14 - a mmap entry size */
++    *p++ = 0x14;
 +    *p++ = 0x00;
 +    *p++ = 0x00;
 +    *p++ = 0x00;
 +
 +    *p++ = 0x66;                /* 32-bit operand size */
 +    *p++ = 0x67;                /* 32-bit addr size */
-+    *p++ = 0x89;                /* MOV -4(EDI),EAX */
++    *p++ = 0x89;                /* MOV -4(EDI),EAX - store entry size */
 +    *p++ = 0x47;
 +    *p++ = 0xfc;
++
++    /* setup ES (from DI) for real mode BIOS */
++    *p++ = 0x89;                /* MOV AX,DI */
++    *p++ = 0xf8;
++    *p++ = 0xc1;                /* SHR AX,0x10 (/65536 for segment) */
++    *p++ = 0xe8;
++    *p++ = 0x10;
++    *p++ = 0x8e;                /* MOV ES,AX */
++    *p++ = 0xc0;
 +
 +    *p++ = 0x66;                /* 32-bit operand size */
 +    *p++ = 0x67;                /* 32-bit addr size */
@@ -136,8 +145,8 @@ Index: kvm-75/qemu/elf_ops.h
 +
 +    *p++ = 0x66;                /* 32-bit operand size */
 +    *p++ = 0x67;                /* 32-bit addr size */
-+    *p++ = 0xb9;                /* MOV ECX,0x20 */
-+    *p++ = 0x20;
++    *p++ = 0xb9;                /* MOV ECX,0x14 - max buffer size */
++    *p++ = 0x14;
 +    *p++ = 0x00;
 +    *p++ = 0x00;
 +    *p++ = 0x00;
@@ -147,13 +156,13 @@ Index: kvm-75/qemu/elf_ops.h
 +
 +    *p++ = 0x66;                /* 32-bit operand size */
 +    *p++ = 0x67;                /* 32-bit addr size */
-+    *p++ = 0xb8;                /* MOV EAX, 0x24 */
-+    *p++ = 0x24;
++    *p++ = 0xb8;                /* MOV EAX, 0x18 - whole entry size */
++    *p++ = 0x18;
 +    *p++ = 0x00;
 +    *p++ = 0x00;
 +    *p++ = 0x00;
 +    
-+    *p++ = 0xf7;                /* MUL AX, BX */
++    *p++ = 0xf7;                /* MUL AX, BX  - bx contains index returned */
 +    *p++ = 0xe3;
 +
 +    *p++ = 0x66;                /* 32-bit operand size */
@@ -171,7 +180,7 @@ Index: kvm-75/qemu/elf_ops.h
 +    *p++ = 0x00;
 +    *p++ = 0x00;
 +
-+    /* store the amount of blocks in the bootinfo struct */
++    /* store the total sizes in the bootinfo struct */
 +    *p++ = 0x66;                /* 32-bit operand size */
 +    *p++ = 0x67;                /* 32-bit addr size */
 +    *p++ = 0xa3;                /* MOV [bootinfo+0x2c], EAX */
@@ -193,7 +202,7 @@ Index: kvm-75/qemu/elf_ops.h
 +
 +    *p++ = 0x66;                /* 32-bit operand size */
 +    *p++ = 0x67;                /* 32-bit addr size */
-+    *p++ = 0x21;                /* AND EBX, EBX */
++    *p++ = 0x21;                /* AND EBX, EBX - got an index back? for JNZ */
 +    *p++ = 0xdb;
 +
 +    /* process next entry */
@@ -485,7 +494,7 @@ Index: kvm-75/qemu/elf_ops.h
  static void load_linux(uint8_t *option_rom,
                         const char *kernel_filename,
  		       const char *initrd_filename,
-@@ -553,7 +985,7 @@
+@@ -548,7 +1003,7 @@
      uint16_t real_seg;
      int setup_size, kernel_size, initrd_size, cmdline_size;
      uint32_t initrd_max;
@@ -494,7 +503,7 @@ Index: kvm-75/qemu/elf_ops.h
      target_phys_addr_t real_addr, prot_addr, cmdline_addr, initrd_addr;
      FILE *f, *fi;
  
-@@ -563,7 +995,8 @@
+@@ -558,7 +1013,8 @@
      /* load the kernel header */
      f = fopen(kernel_filename, "rb");
      if (!f || !(kernel_size = get_file_size(f)) ||
@@ -504,23 +513,22 @@ Index: kvm-75/qemu/elf_ops.h
  	fprintf(stderr, "qemu: could not load kernel '%s'\n",
  		kernel_filename);
  	exit(1);
-@@ -575,8 +1007,13 @@
+@@ -570,8 +1026,13 @@
  #endif
      if (ldl_p(header+0x202) == 0x53726448)
  	protocol = lduw_p(header+0x206);
 -    else
--	protocol = 0;
 +    else {
 +	/* This looks like a multiboot kernel. If it is, let's stop 
 +	   treating it like a Linux kernel. */
 +	if(load_multiboot(option_rom,f,kernel_filename,initrd_filename, kernel_cmdline, header))
 +	   return;
-+	protocol = 0;
+ 	protocol = 0;
 +    }
  
      if (protocol < 0x200 || !(header[0x211] & 0x01)) {
  	/* Low kernel */
-@@ -669,7 +1106,7 @@
+@@ -664,7 +1125,7 @@
      }
  
      /* store the finalized header and load the rest of the kernel */
@@ -529,7 +537,7 @@ Index: kvm-75/qemu/elf_ops.h
  
      setup_size = header[0x1f1];
      if (setup_size == 0)
-@@ -678,7 +1115,8 @@
+@@ -673,7 +1134,8 @@
      setup_size = (setup_size+1)*512;
      kernel_size -= setup_size;	/* Size of protected-mode code */
  
