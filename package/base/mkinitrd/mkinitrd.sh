@@ -79,7 +79,7 @@ echo "Copying kernel modules ..."
 	-e reiserfs -e reiser4 -e ext2 -e ext3 -e ext4 -e /jfs -e /xfs \
 	-e isofs -e udf -e /unionfs -e ntfs -e fat -e dm-mod \
 	-e /ide/ -e /ata/ -e /scsi/ -e /message/ \
-	-e cciss -e ips \
+	-e cciss -e ips -e virtio \
 	-e hci -e usb-storage -e sbp2 \
 	-e drivers/net/ -e drivers/md/ -e '/ipv6\.' -e usbhid |
   while read fn ; do
