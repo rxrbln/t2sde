@@ -1,3 +1,4 @@
+
 #qemu-only -> submit upstream qemu, but improve first: 
 # undo rather hacky pci_enabled -> model > MODEL_ISA changes 
 # and replace checks wether to enable newer emulated Mac hardware 
@@ -5,13 +6,12 @@
 # like this: pc_init1(.... , ISA, ...) 
 #            pc_init1(.... , PCI | IOAPIC | PIIX, ..... 
 #            pc_init1(.... , PCI | ICH6, LPC, SMC , ...) 
-Index: kvm-83/qemu/hw/pc.c
-===================================================================
---- kvm-83.orig/qemu/hw/pc.c
-+++ kvm-83.orig/qemu/hw/pc.c
-@@ -63,6 +63,12 @@ static PITState *pit;
- static IOAPICState *ioapic;
- static PCIDevice *i440fx_state;
+ 
+--- kvm-86/hw/pc.c.orig	2009-05-19 18:29:02.000000000 +0200
++++ kvm-86/hw/pc.c	2009-05-26 18:28:37.000000000 +0200
+@@ -91,6 +91,12 @@
+     qemu_register_reset(option_rom_reset, rrd);
+ }
  
 +enum pc_model {
 +    MODEL_ISA = 0,
@@ -22,7 +22,7 @@ Index: kvm-83/qemu/hw/pc.c
  static void ioport80_write(void *opaque, uint32_t addr, uint32_t data)
  {
  }
-@@ -804,7 +810,7 @@ static void pc_init1(ram_addr_t ram_size
+@@ -870,7 +876,7 @@
                       const char *boot_device,
                       const char *kernel_filename, const char *kernel_cmdline,
                       const char *initrd_filename,
@@ -31,7 +31,7 @@ Index: kvm-83/qemu/hw/pc.c
  {
      char buf[1024];
      int ret, linux_boot, i;
-@@ -832,15 +838,19 @@ static void pc_init1(ram_addr_t ram_size
+@@ -899,15 +905,19 @@
  
      /* init CPUs */
      if (cpu_model == NULL) {
@@ -54,8 +54,8 @@ Index: kvm-83/qemu/hw/pc.c
      }
  
      vmport_init();
-@@ -879,8 +889,16 @@ static void pc_init1(ram_addr_t ram_size
-     vga_ram_addr = qemu_ram_alloc(vga_ram_size);
+@@ -944,8 +954,16 @@
+ 
  
      /* BIOS load */
 -    if (bios_name == NULL)
@@ -73,7 +73,7 @@ Index: kvm-83/qemu/hw/pc.c
      snprintf(buf, sizeof(buf), "%s/%s", bios_dir, bios_name);
      bios_size = get_image_size(buf);
      if (bios_size <= 0 ||
-@@ -988,7 +1006,7 @@ vga_bios_error:
+@@ -1017,7 +1035,7 @@
      i8259 = i8259_init(cpu_irq[0]);
      ferr_irq = i8259[13];
  
@@ -82,32 +82,33 @@ Index: kvm-83/qemu/hw/pc.c
          pci_bus = i440fx_init(&i440fx_state, i8259);
          piix3_devfn = piix3_init(pci_bus, -1);
      } else {
-@@ -1001,7 +1019,7 @@ vga_bios_error:
+@@ -1030,14 +1048,14 @@
      register_ioport_write(0xf0, 1, 1, ioportF0_write, NULL);
  
      if (cirrus_vga_enabled) {
 -        if (pci_enabled) {
 +        if (model > MODEL_ISA) {
-             pci_cirrus_vga_init(pci_bus,
-                                 phys_ram_base + vga_ram_addr,
-                                 vga_ram_addr, vga_ram_size);
-@@ -1010,13 +1028,13 @@ vga_bios_error:
-                                 vga_ram_addr, vga_ram_size);
+             pci_cirrus_vga_init(pci_bus, vga_ram_size);
+         } else {
+             isa_cirrus_vga_init(vga_ram_size);
          }
      } else if (vmsvga_enabled) {
 -        if (pci_enabled)
 +        if (model > MODEL_ISA)
-             pci_vmsvga_init(pci_bus, phys_ram_base + vga_ram_addr,
-                             vga_ram_addr, vga_ram_size);
+             pci_vmsvga_init(pci_bus, vga_ram_size);
+         else
+             fprintf(stderr, "%s: vmware_vga: no PCI bus\n", __FUNCTION__);
+
+@@ -1041,7 +1059,7 @@
          else
              fprintf(stderr, "%s: vmware_vga: no PCI bus\n", __FUNCTION__);
      } else if (std_vga_enabled) {
 -        if (pci_enabled) {
 +        if (model > MODEL_ISA) {
-             pci_vga_init(pci_bus, phys_ram_base + vga_ram_addr,
-                          vga_ram_addr, vga_ram_size, 0, 0);
+             pci_vga_init(pci_bus, vga_ram_size, 0, 0);
          } else {
-@@ -1032,8 +1050,13 @@ vga_bios_error:
+             isa_vga_init(vga_ram_size);
+@@ -1055,8 +1073,13 @@
      register_ioport_read(0x92, 1, 1, ioport92_read, NULL);
      register_ioport_write(0x92, 1, 1, ioport92_write, NULL);
  
@@ -123,7 +124,7 @@ Index: kvm-83/qemu/hw/pc.c
      }
  #ifdef USE_KVM_PIT
      if (kvm_enabled() && qemu_kvm_pit_in_kernel())
-@@ -1045,7 +1068,7 @@ vga_bios_error:
+@@ -1068,7 +1091,7 @@
      if (!no_hpet) {
          hpet_init(i8259);
      }
@@ -132,7 +133,7 @@ Index: kvm-83/qemu/hw/pc.c
          pic_set_alt_irq_func(isa_pic, ioapic_set_irq, ioapic);
      }
  
-@@ -1066,7 +1089,7 @@ vga_bios_error:
+@@ -1091,7 +1114,7 @@
      for(i = 0; i < nb_nics; i++) {
          NICInfo *nd = &nd_table[i];
  
@@ -141,7 +142,7 @@ Index: kvm-83/qemu/hw/pc.c
              pc_init_ne2k_isa(nd, i8259);
          else
              pci_nic_init(pci_bus, nd, -1, "rtl8139");
-@@ -1087,19 +1110,25 @@ vga_bios_error:
+@@ -1112,19 +1135,25 @@
  	    hd[i] = NULL;
      }
  
@@ -175,7 +176,7 @@ Index: kvm-83/qemu/hw/pc.c
  #endif
  
      for(i = 0; i < MAX_FD; i++) {
-@@ -1113,11 +1142,11 @@ vga_bios_error:
+@@ -1138,11 +1167,11 @@
  
      cmos_init(below_4g_mem_size, above_4g_mem_size, boot_device, hd);
  
@@ -189,7 +190,7 @@ Index: kvm-83/qemu/hw/pc.c
          uint8_t *eeprom_buf = qemu_mallocz(8 * 256); /* XXX: make this persistent */
          i2c_bus *smbus;
  
-@@ -1132,7 +1161,7 @@ vga_bios_error:
+@@ -1157,7 +1186,7 @@
          i440fx_init_memory_mappings(i440fx_state);
      }
  
@@ -198,7 +199,7 @@ Index: kvm-83/qemu/hw/pc.c
  	int max_bus;
          int bus, unit;
          void *scsi;
-@@ -1151,7 +1180,7 @@ vga_bios_error:
+@@ -1176,7 +1205,7 @@
      }
  
      /* Add virtio block devices */
@@ -207,7 +208,7 @@ Index: kvm-83/qemu/hw/pc.c
          int index;
          int unit_id = 0;
  
-@@ -1174,11 +1203,11 @@ vga_bios_error:
+@@ -1199,11 +1228,11 @@
      }
  
      /* Add virtio balloon device */
@@ -221,7 +222,7 @@ Index: kvm-83/qemu/hw/pc.c
          for(i = 0; i < MAX_VIRTIO_CONSOLES; i++) {
              if (virtcon_hds[i])
                  virtio_console_init(pci_bus, virtcon_hds[i]);
-@@ -1193,6 +1222,18 @@ vga_bios_error:
+@@ -1218,6 +1247,18 @@
  #endif /* USE_KVM_DEVICE_ASSIGNMENT */
  }
  
@@ -240,7 +241,7 @@ Index: kvm-83/qemu/hw/pc.c
  static void pc_init_pci(ram_addr_t ram_size, int vga_ram_size,
                          const char *boot_device,
                          const char *kernel_filename,
-@@ -1202,7 +1243,7 @@ static void pc_init_pci(ram_addr_t ram_s
+@@ -1227,7 +1268,7 @@
  {
      pc_init1(ram_size, vga_ram_size, boot_device,
               kernel_filename, kernel_cmdline,
@@ -249,7 +250,7 @@ Index: kvm-83/qemu/hw/pc.c
  }
  
  static void pc_init_isa(ram_addr_t ram_size, int vga_ram_size,
-@@ -1214,7 +1255,7 @@ static void pc_init_isa(ram_addr_t ram_s
+@@ -1239,7 +1280,7 @@
  {
      pc_init1(ram_size, vga_ram_size, boot_device,
               kernel_filename, kernel_cmdline,
@@ -258,7 +259,7 @@ Index: kvm-83/qemu/hw/pc.c
  }
  
  /* set CMOS shutdown status register (index 0xF) as S3_resume(0xFE)
-@@ -1233,6 +1274,14 @@ QEMUMachine pc_machine = {
+@@ -1257,6 +1298,13 @@
      .max_cpus = 255,
  };
  
@@ -266,7 +267,6 @@ Index: kvm-83/qemu/hw/pc.c
 +    .name = "mac",
 +    .desc = "Intel-Mac",
 +    .init = pc_init_mac,
-+    .ram_require = VGA_RAM_SIZE + PC_MAX_BIOS_SIZE,
 +    .max_cpus = 255,
 +};
 +
@@ -275,8 +275,8 @@ Index: kvm-83/qemu/hw/pc.c
      .desc = "ISA-only PC",
 Index: kvm-83/qemu/hw/boards.h
 ===================================================================
---- kvm-83.orig/qemu/hw/boards.h
-+++ kvm-83/qemu/hw/boards.h
+--- qemu/hw/boards.h
++++ qemu/hw/boards.h
 @@ -34,6 +34,7 @@ extern QEMUMachine axisdev88_machine;
  /* pc.c */
  extern QEMUMachine pc_machine;
@@ -285,15 +285,13 @@ Index: kvm-83/qemu/hw/boards.h
  
  /* ppc.c */
  extern QEMUMachine prep_machine;
-Index: kvm-83/qemu/target-i386/machine.c
-===================================================================
---- kvm-83.orig/qemu/target-i386/machine.c
-+++ kvm-83/qemu/target-i386/machine.c
-@@ -10,6 +10,7 @@ void register_machines(void)
+--- kvm-86/target-i386/machine.c.vanilla	2009-05-26 18:25:12.000000000 +0200
++++ kvm-86/target-i386/machine.c	2009-05-26 18:25:21.000000000 +0200
+@@ -10,6 +10,7 @@
  {
      qemu_register_machine(&pc_machine);
      qemu_register_machine(&isapc_machine);
 +    qemu_register_machine(&mac_machine);
- }
- 
- static void cpu_put_seg(QEMUFile *f, SegmentCache *dt)
+ #ifdef CONFIG_XEN
+     qemu_register_machine(&xenpv_machine);
+ #endif
