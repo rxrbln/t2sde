@@ -4,7 +4,7 @@
  * 
  * T2 SDE: luabash.c
  * Copyright (C) 2006 The T2 SDE Project
- * Copyright (C) 2006 Valentin Ziegler & Rene Rebe
+ * Copyright (C) 2006 - 2009 Valentin Ziegler & Rene Rebe, ExactCODE GmbH
  * 
  * More information can be found in the files COPYING and README.
  * 
@@ -267,7 +267,7 @@ static const char *getvar(const char *name)
 
 /* lua bash wrapper */
 
-#define LUABASH_VERSION "lua bash wrapper version 0.0.2 (C) 2006 Valentin Ziegler & Rene Rebe"
+#define LUABASH_VERSION "lua bash wrapper 0.0.3 (C) 2006 - 2009 Valentin Ziegler & Rene Rebe"
 
 #define LUA_ERRMSG fprintf(stderr, "lua bash error: %s\n", lua_tostring(L, -1))
 #define LUA_ERRMSG_FAIL {LUA_ERRMSG; return EXECUTION_FAILURE;}
@@ -404,7 +404,8 @@ static int init_luabash()
 
     if (bash_version[0]=='2')
       current_flavor=bash_version_v2;
-    else if (bash_version[0]=='3')
+    else if (bash_version[0]=='3' ||
+             bash_version[0]=='4')
       current_flavor=bash_version_v3;
 
     if (current_flavor==bash_version_unknown) {
