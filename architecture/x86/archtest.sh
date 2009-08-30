@@ -25,3 +25,7 @@ esac
 
 arch_target="${arch_machine}-t2-linux-gnu"
 
+if [ "$SDECFG_KERNEL" == "mingw" ]; then
+	# TODO: make dynamic, coordinate with architectures
+	arch_target=$arch_machine-pc-mingw32
+fi
