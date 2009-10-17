@@ -22,7 +22,7 @@ mkdir -p $disksdir/2nd_stage; cd $disksdir/2nd_stage
 
 #
 package_map='00-dirtree
-glibc
+glibc              zlib
 parted             mac-fdisk          pdisk
 xfsprogs           mkdosfs            jfsutils
 e2fsprogs          reiserfsprogs      reiser4progs       genromfs
