@@ -3,7 +3,7 @@ T2 SDE - System Development Environment
 
   http://www.t2-project.org/
 
-T2 on SPARC and Ultra SPARC was primarily developed by Rene Rebe - ExactCode.
+T2 on SPARC and Ultra SPARC was primarily developed by Rene Rebe - ExactCODE.
 Based on former work in ROCK Linux by Armijn Hemel, Jan Veninga and Stefan
 Koerner!
 
