@@ -170,7 +170,9 @@ This dialog allows you to modify your discs parition layout and to create filesy
 
 		# protect for the case no discs are present ...
 		found=0
-		for x in $( cd /dev/; ls hd[a-z] sd[a-z] 2> /dev/null ); do
+		for x in /sys/block/*/device; do
+			x=${x%/device}; x=${x#/sys/block/}
+			[ "$x" = "*" ] && continue
 			grep -q cdrom /proc/ide/$x/media 2>/dev/null && continue
 			disk_add $x
 			found=1
