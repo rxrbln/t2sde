@@ -54,6 +54,7 @@ part_mkfs() {
 	maybe_add ext2	'non-journaling'	'mkfs.ext2'
 	maybe_add reiserfs 'journaling'		'mkfs.reiserfs'
 	maybe_add reiser4 'high-performance journaling' 'mkfs.reiser4'
+	maybe_add btrfs 'Better journaling, extents' 'mkfs.btrfs'
 	maybe_add jfs	'IBM journaling'	'mkfs.jfs'
 	maybe_add xfs	'Sgi journaling'	'mkfs.xfs' '-f'
 
