@@ -39,7 +39,7 @@ var_append pkg_filter ' ' 'scons python perl perl-xml-parser intltool'
 . target/generic/build.sh
 
 # now this is a hack - and x86 specific anyway :-(
-if [ "SDECFG_TARGET_RESCUE_STYLE" = "livecd" ]; then
+if [ "$SDECFG_TARGET_RESCUE_STYLE" = "livecd" ]; then
   if [[ $arch = x86* ]]; then
 	case "$SDECFG_X86_CD_LOADER" in
 	grub)
