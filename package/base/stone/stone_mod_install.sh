@@ -49,7 +49,7 @@ part_mkfs() {
 	  fi
 	}
 
-	maybe_add ext4  'journaling'            'mkfs.ext4'
+	maybe_add ext4	'journaling, extents'	'mkfs.ext4'
 	maybe_add ext3	'journaling'		'mkfs.ext3'
 	maybe_add ext2	'non-journaling'	'mkfs.ext2'
 	maybe_add reiserfs 'journaling'		'mkfs.reiserfs'
