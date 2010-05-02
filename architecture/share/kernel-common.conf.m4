@@ -113,7 +113,8 @@ dnl for 2.5/6 we do want the ALSA OSS emulation ...
 dnl
 CONFIG_SND_OSSEMUL=m
 
-dnl Input devices
+dnl Basic Input devices
+dnl Good old standard ports, classic serial, PS/2, should just work.
 dnl
 CONFIG_INPUT=y
 CONFIG_INPUT_EVDEV=y
@@ -125,6 +126,8 @@ CONFIG_INPUT_TOUCHSCREEN=y
 CONFIG_INPUT_TABLET=y
 CONFIG_INPUT_MISC=y
 CONFIG_INPUT_EVBUG=m
+CONFIG_SERIO=y
+CONFIG_SERIO_I8042=y
 CONFIG_SERIO_PCIPS2=y
 CONFIG_MOUSE_SERIAL=y
 CONFIG_MOUSE_PS2=y
