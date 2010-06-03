@@ -12,9 +12,10 @@ dnl the Free Software Foundation; version 2 of the License. A copy of the
 dnl GNU General Public License can be found in the file COPYING.
 dnl --- T2-COPYRIGHT-NOTE-END ---
 
-dnl Enable experimental features (like DevFS ;-)
+dnl Enable experimental features, and stagging drivers
 dnl
 CONFIG_EXPERIMENTAL=y
+CONFIG_STAGING=y
 
 dnl On default we build SMP kernels and mods
 dnl
