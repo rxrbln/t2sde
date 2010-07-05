@@ -69,10 +69,11 @@
 
 	echo
 	cat <<- 'EOT'
-		dnl Allow more than about a GB of RAM by default
+		dnl Allow more than 4GB (split 3/1) of RAM by default
+		dnl (and NX (Execute Disable) protection)
 		dnl
 		CONFIG_HIGHMEM=y
-		CONFIG_HIGHMEM4G=y
+		CONFIG_HIGHMEM64G=y
 
 		include(`kernel-x86.conf.m4')
 		include(`kernel-common.conf.m4')
