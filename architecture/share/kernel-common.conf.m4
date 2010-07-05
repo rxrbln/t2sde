@@ -16,10 +16,12 @@ dnl Enable experimental features, and stagging drivers
 dnl
 CONFIG_EXPERIMENTAL=y
 CONFIG_STAGING=y
+# CONFIG_STAGING_EXCLUDE_BUILD is not set
 
 dnl On default we build SMP kernels and mods
 dnl
 CONFIG_SMP=y
+CONFIG_SCHED_SMT=y
 CONFIG_IRQ_ALL_CPUS=y
 
 dnl No HZ and HPET, if the arch has it ...
@@ -33,11 +35,18 @@ dnl just the default, a arch or target might still set other defaults
 # CONFIG_PREEMPT_RT is not set
 CONFIG_PREEMPT_NONE=y
 
+dnl misc nice to have features
+CONFIG_KSM=y
 CONFIG_KEXEC=y
+# CONFIG_COMPAT_BRK is not set
+CONFIG_PARAVIRT_GUEST=y
+CONFIG_PARAVIRT=y
+CONFIG_KVM_GUEST=y
 
 dnl Power Management
 dnl
 CONFIG_PM=y
+CONFIG_PM_RUNTIME=y
 CONFIG_PM_LEGACY=y
 CONFIG_HOTPLUG_CPU=y
 CONFIG_HIBERNATION=y
@@ -69,13 +78,14 @@ CONFIG_PNP=y
 dnl Common buses
 dnl
 CONFIG_PCI=y
+CONFIG_PCIEPORTBUS=y
 CONFIG_PCI_MSI=y
+CONFIG_PCI_IOV=y
 
 dnl PCI name database is also quite big (another >80kB) - so let's use user-
 dnl space tools like lspci to use a non-kernel database
 dnl
 # CONFIG_PCI_NAMES ist not set
-
 
 dnl Loopback device can always be useful
 dnl
@@ -175,6 +185,7 @@ dnl
 CONFIG_VT=y
 CONFIG_VGA_CONSOLE=y
 CONFIG_VIDEO_SELECT=y
+CONFIG_VIDEO_OUTPUT_CONTROL=y
 CONFIG_FB=y
 CONFIG_FRAMEBUFFER_CONSOLE=y
 CONFIG_FRAMEBUFFER_CONSOLE_ROTATION=y
