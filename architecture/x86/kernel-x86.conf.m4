@@ -12,6 +12,9 @@ dnl the Free Software Foundation; version 2 of the License. A copy of the
 dnl GNU General Public License can be found in the file COPYING.
 dnl --- T2-COPYRIGHT-NOTE-END ---
 
+CONFIG_EFI=y
+CONFIG_SFI=y
+
 dnl Memory Type Range Register support
 dnl and other x86 goodies ...
 dnl
@@ -34,11 +37,13 @@ CONFIG_ACPI_SYSFS_POWER=y
 CONFIG_ACPI_PROC_EVENT=y
 CONFIG_ACPI_AC=y
 CONFIG_ACPI_BATTERY=y
+CONFIG_ACPI_SBS=y
 CONFIG_ACPI_BUTTON=y
 CONFIG_ACPI_VIDEO=y
 CONFIG_ACPI_FAN=y
 CONFIG_ACPI_DOCK=y
 CONFIG_ACPI_PROCESSOR=y
+CONFIG_ACPI_PROCESSOR_AGGREGATOR=y
 CONFIG_ACPI_HOTPLUG_CPU=y
 CONFIG_ACPI_THERMAL=y
 
