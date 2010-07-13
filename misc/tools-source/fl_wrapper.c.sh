@@ -11,7 +11,7 @@ cat << EOT
  * T2 SDE: misc/tools-source/fl_wrapper.c.sh
  * Copyright (C) 2004 - 2010 The T2 SDE Project
  * Copyright (C) 1998 - 2003 ROCK Linux Project
- * Copyright (C) 2006 - 2007 Rene Rebe <rene@exactcode.de>
+ * Copyright (C) 2006 - 2010 Rene Rebe <rene@exactcode.de>
  * 
  * More information can be found in the files COPYING and README.
  * 
@@ -45,6 +45,8 @@ cat << EOT
 
 #define open   xxx_open
 #define open64 xxx_open64
+#define openat xxx_openat
+#define openat64 xxx_openat64
 #define mkfifo xxx_mkfifo
 #define mknod  xxx_mknod
 #define __xmknod xxx___xmknod
@@ -83,6 +85,8 @@ cat << EOT
 #undef mkfifo
 #undef open
 #undef open64
+#undef openat
+#undef openat64
 
 static void * get_dl_symbol(char *);
 
@@ -217,6 +221,8 @@ EOT
 
 add_wrapper 'int,   open,    const char* f, int a, ...'
 add_wrapper 'int,   open64,  const char* f, int a, ...'
+add_wrapper 'int,   openat,  int dirfd, const char* f, int a, ...'
+add_wrapper 'int,   openat64,int dirfd, const char* f, int a, ...'
 
 add_wrapper 'FILE*, fopen,   const char* f, const char* g'
 add_wrapper 'FILE*, fopen64, const char* f, const char* g'
