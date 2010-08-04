@@ -40,6 +40,8 @@
 
 	echo
 	cat <<- 'EOT'
+		CONFIG_NR_CPUS=32
+
 		CONFIG_IA32_EMULATION=y
 
 		dnl Other useful stuff
