@@ -116,6 +116,6 @@ CONFIG_PMU_HD_BLINK=y
 dnl some network teaks (the GMAC is obsoleted by SUNGEM)
 dnl
 # CONFIG_GMAC is not set
-CONFIG_SUNGEM=y
+CONFIG_SUNGEM=m
 
 CONFIG_XMON=y
