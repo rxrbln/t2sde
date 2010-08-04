@@ -40,6 +40,8 @@ dnl additional 2.6 kernel configs
 
 CONFIG_ALTIVEC=y
 
+CONFIG_NR_CPUS=32
+
 dnl Platform specific support
 dnl
 
