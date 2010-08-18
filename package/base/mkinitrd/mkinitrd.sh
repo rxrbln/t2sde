@@ -114,7 +114,7 @@ echo "Injecting programs and configuration ..."
 cp -ar ${root}/etc/udev $tmpdir/etc/
 [ -e ${root}/lib/udev/rules.d ] && cp -ar ${root}/lib/udev/rules.d $tmpdir/lib/udev
 [ -e ${root}/etc/mdadm.conf ] && cp -ar ${root}/etc/mdadm.conf $tmpdir/etc/
-mkdir -p $tmpdir/etc/modprobe.d && cp -ar ${root}/etc/modprobe.d/modprobe.conf $tmpdir/etc/modprobe.d/
+cp -ar ${root}/etc/modprobe.* $tmpdir/etc/ 2>/dev/null || true
 # in theory all, but fat and currently only cdrom_id is needed ...
 cp -ar ${root}/lib/udev/cdrom_id $tmpdir/lib/udev/
 
