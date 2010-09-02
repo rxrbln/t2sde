@@ -134,7 +134,6 @@ char* eval_cond_arg (char * arg, int argc, char ** argv) {
 /* newargv memory management, realloc if newargv is filled */
 inline char** realloc_if_needed(int c1, int* newargc, char** newargv) {
 	if (c1 + 1 >= *newargc) { /* +1 for NULL-sentinel */
-		printf("realloc %d to %d\n", *newargc, *newargc * 2);
 		*newargc *= 2;
 		newargv = realloc (newargv, sizeof(char*) * *newargc);
 	}
