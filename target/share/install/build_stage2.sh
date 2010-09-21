@@ -103,7 +103,7 @@ mkdir -p mnt/source mnt/target
 echo '$STONE install' > etc/stone.d/default.sh
 
 echo_status "Creating 2nd_stage archive."
-tar -c * > $isofsdir/2nd_stage.tar # | gzip -9 # .gz
+tar -c * | bzip2 > $isofsdir/2nd_stage.tar.bz2
 
 cd ..
 
@@ -173,7 +173,7 @@ echo_status "Creating links for identical files."
 link_identical_files
 
 echo_status "Creating 2nd_stage_small archive."
-tar -c * > $isofsdir/2nd_stage_small.tar # | gzip -9 # .gz
+tar -c * | bzip2 -4 > $isofsdir/2nd_stage_small.tar.bz2
 
 cd ..
 
