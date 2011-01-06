@@ -1,6 +1,6 @@
 #!/bin/sh
 
-echo "T2 SDE early userspace (C) 2005 - 2010 Rene Rebe, ExactCODE"
+echo "T2 SDE early userspace (C) 2005 - 2011 Rene Rebe, ExactCODE"
 
 PATH=/sbin:/bin:/usr/bin:/usr/sbin
 
@@ -15,8 +15,8 @@ echo "Populating u/dev ..."
 mknod /dev/null c 1 3
 mknod /dev/zero c 1 5
 udevd &
-udevtrigger
-udevsettle
+udevadm trigger
+udevadm settle
 [ -e /dev/console ] || mknod /dev/console c 5 1
 [ -e /dev/tty ] || mknod /dev/tty c 5 0
 
