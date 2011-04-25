@@ -241,7 +241,7 @@ end
 
 --
 
-print "Lua Bash accel. (C) 2006-2011 by Valentin Ziegler & Rene Rebe, ExactCODE"
+print "Lua Bash accel. (C) 2006-2011 by Valentin Ziegler & Rene Rebe, ExactCODE GmbH"
 
 -- register shortcuts for the functions above
 bash.register("pkglistread")
