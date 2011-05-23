@@ -57,7 +57,14 @@ public:
 private:
 
   void ExecCurl () {
-    int ret = system(GetCommand().c_str());
+    std::string cmd = GetCommand();
+    size_t it = cmd.find("&");
+    while (it != std::string::npos) {
+      cmd.replace(it, it, "\\");
+      it = cmd.find("&", it + 2);
+    }
+
+    int ret = system(cmd.c_str());
     if (ret != 0)
       switch (ret) {
       case 1:
