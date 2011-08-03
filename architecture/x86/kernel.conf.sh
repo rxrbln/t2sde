@@ -35,6 +35,7 @@
 		 "pentium3	PENTIUMIII"	\
 		 "pentium4	PENTIUM4"	\
 		 "pentium-m	PENTIUMM"	\
+		 "atom		ATOM"		\
 	         "geodelx	GEODE_LX"	\
 		 "k6		K6"		\
 		 "k6-2		K6"		\
@@ -55,7 +56,7 @@
 	#
 	for x in 386 486 586 586TSC 586MMX 686 PENTIUMIII PENTIUM4 PENTIUMM \
 	         K6 K7 K8 ELAN CRUSOE WINCHIPC6 WINCHIP2 WINCHIP3D \
-	         CYRIXIII VIAC3_2 GEODE_LX
+	         CYRIXIII VIAC3_2 ATOM GEODE_LX
 	do
 		if [ "$linux_arch" != "$x" ]
 		then echo "# CONFIG_M$x is not set"
