@@ -1,0 +1,167 @@
+diff --git a/configure.ac b/configure.ac
+index 29cf772..a6eafa3 100644
+--- a/configure.ac
++++ b/configure.ac
+@@ -24,7 +24,7 @@
+ AC_PREREQ([2.60])
+ AC_INIT([xf86-video-neomagic],
+         [1.2.7],
+-        [https://bugs.freedesktop.org/enter_bug.cgi?product=xorg],
++        [https://bugs.freedesktop.org/enter_bug.cgi?product=xorg&component=Driver/Neomagic],
+         [xf86-video-neomagic])
+ AC_CONFIG_SRCDIR([Makefile.am])
+ AC_CONFIG_HEADERS([config.h])
+@@ -53,14 +53,6 @@ AC_ARG_WITH(xorg-module-dir,
+             [moduledir="$withval"],
+             [moduledir="$libdir/xorg/modules"])
+ 
+-
+-# Store the list of server defined optional extensions in REQUIRED_MODULES
+-XORG_DRIVER_CHECK_EXT(RANDR, randrproto)
+-XORG_DRIVER_CHECK_EXT(RENDER, renderproto)
+-XORG_DRIVER_CHECK_EXT(XV, videoproto)
+-XORG_DRIVER_CHECK_EXT(DPMSExtension, xextproto)
+-XORG_DRIVER_CHECK_EXT(XFreeXDGA, xf86dgaproto)
+-
+ # Obtain compiler/linker options for the driver dependencies
+ PKG_CHECK_MODULES(XORG, [xorg-server >= 1.0.99.901 xproto fontsproto $REQUIRED_MODULES])
+ 
+diff --git a/src/neo.h b/src/neo.h
+index 6aecc33..6812e7a 100644
+--- a/src/neo.h
++++ b/src/neo.h
+@@ -320,3 +320,14 @@ typedef struct {
+ #define PROBED_NM2097	0x83
+ #define PROBED_NM2160	0x44
+ #define PROBED_NM2200	0x45
++
++#define PCI_VENDOR_NEOMAGIC		0x10C8
++#define PCI_CHIP_NM2070			0x0001
++#define PCI_CHIP_NM2090			0x0002
++#define PCI_CHIP_NM2093			0x0003
++#define PCI_CHIP_NM2097			0x0083
++#define PCI_CHIP_NM2160			0x0004
++#define PCI_CHIP_NM2200			0x0005
++#define PCI_CHIP_NM2230			0x0025
++#define PCI_CHIP_NM2360			0x0006
++#define PCI_CHIP_NM2380			0x0016
+diff --git a/src/neo_2090.c b/src/neo_2090.c
+index 5049ab4..2f1efc8 100644
+--- a/src/neo_2090.c
++++ b/src/neo_2090.c
+@@ -42,7 +42,6 @@ CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+ #include "xf86.h"
+ #include "xf86_OSproc.h"
+ #include "compiler.h"
+-#include "xf86PciInfo.h"
+ 
+ /* Drivers that use XAA need this */
+ #include "xf86fbman.h"
+diff --git a/src/neo_dga.c b/src/neo_dga.c
+index b6346c5..c5d60d5 100644
+--- a/src/neo_dga.c
++++ b/src/neo_dga.c
+@@ -29,7 +29,6 @@
+ #include "xf86.h"
+ #include "xf86_OSproc.h"
+ #include "xf86Pci.h"
+-#include "xf86PciInfo.h"
+ #include "neo.h"
+ #include "neo_reg.h"
+ #include "dgaproc.h"
+@@ -38,10 +37,10 @@
+ static Bool NEO_OpenFramebuffer(ScrnInfoPtr, char **, unsigned char **, 
+ 					int *, int *, int *);
+ static Bool NEO_SetMode(ScrnInfoPtr, DGAModePtr);
+-static void NEO_Sync(ScrnInfoPtr);
+ static int  NEO_GetViewport(ScrnInfoPtr);
+ static void NEO_SetViewport(ScrnInfoPtr, int, int, int);
+ #ifdef HAVE_XAA_H
++static void NEO_Sync(ScrnInfoPtr);
+ static void NEO_FillRect(ScrnInfoPtr, int, int, int, int, unsigned long);
+ static void NEO_BlitRect(ScrnInfoPtr, int, int, int, int, int, int);
+ #if 0
+@@ -57,8 +56,8 @@ DGAFunctionRec NEODGAFuncs = {
+    NEO_SetMode,
+    NEO_SetViewport,
+    NEO_GetViewport,
+-   NEO_Sync,
+ #ifdef HAVE_XAA_H
++   NEO_Sync,
+    NEO_FillRect,
+    NEO_BlitRect,
+ #if 0
+@@ -219,17 +218,14 @@ NEO_FillRect (
+     }
+ }
+ 
+-
+ static void 
+ NEO_Sync(
+    ScrnInfoPtr pScrn
+ ){
+     NEOPtr pNEO = NEOPTR(pScrn);
+-#ifdef HAVE_XAA_H
+     if(pNEO->AccelInfoRec) {
+ 	(*pNEO->AccelInfoRec->Sync)(pScrn);
+     }
+-#endif
+ }
+ 
+ static void 
+diff --git a/src/neo_driver.c b/src/neo_driver.c
+index d7369e2..a17b925 100644
+--- a/src/neo_driver.c
++++ b/src/neo_driver.c
+@@ -60,9 +60,6 @@ CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+ #include "xf86RAC.h"
+ #endif
+ 
+-/* Drivers for PCI hardware need this */
+-#include "xf86PciInfo.h"
+-
+ /* Drivers that need to access the PCI config space directly need this */
+ #include "xf86Pci.h"
+ 
+@@ -72,9 +69,6 @@ CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+ /* All drivers initialising the SW cursor need this */
+ #include "mipointer.h"
+ 
+-/* All drivers implementing backing store need this */
+-#include "mibstore.h"
+-
+ /* All drivers using the mi colormap manipulation need this */
+ #include "micmap.h"
+ 
+@@ -1621,7 +1615,6 @@ NEOScreenInit(SCREEN_INIT_ARGS_DECL)
+                    "Acceleration %s Initialized\n",ret ? "" : "not");
+     } 
+ 
+-    miInitializeBackingStore(pScreen);
+     xf86SetBackingStore(pScreen);
+     xf86SetSilkenMouse(pScreen);
+ 
+diff --git a/src/neo_i2c.c b/src/neo_i2c.c
+index 82d1f2a..5bbb3fb 100644
+--- a/src/neo_i2c.c
++++ b/src/neo_i2c.c
+@@ -44,7 +44,6 @@ CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+ #include "compiler.h"
+ 
+ #include "xf86Pci.h"
+-#include "xf86PciInfo.h"
+ 
+ #include "vgaHW.h"
+ 
+diff --git a/src/neo_shadow.c b/src/neo_shadow.c
+index 2df7657..04efe4f 100644
+--- a/src/neo_shadow.c
++++ b/src/neo_shadow.c
+@@ -10,7 +10,6 @@
+ 
+ #include "xf86.h"
+ #include "xf86_OSproc.h"
+-#include "xf86PciInfo.h"
+ #include "xf86Pci.h"
+ #include "shadowfb.h"
+ #include "servermd.h"
