@@ -125,6 +125,7 @@ CONFIG_SOUND=m
 dnl for 2.5/6 we do want the ALSA OSS emulation ...
 dnl
 CONFIG_SND_OSSEMUL=m
+CONFIG_SND_DYNAMIC_MINORS=y
 
 dnl Basic Input devices
 dnl Good old standard ports, classic serial, PS/2, should just work.
@@ -155,6 +156,7 @@ CONFIG_LEDS_TRIGGER_IDE_DISK=y
 dnl USB drivers
 dnl
 CONFIG_USB=m
+CONFIG_USB_DYNAMIC_MINORS=y
 CONFIG_USB_DEVICEFS=y
 CONFIG_USB_SUSPEND=y
 CONFIG_USB_EHCI_HCD=m
