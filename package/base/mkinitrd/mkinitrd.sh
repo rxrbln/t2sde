@@ -82,7 +82,8 @@ echo "Copying kernel modules ..."
 	-e /ide/ -e /ata/ -e /scsi/ -e /message/ \
 	-e cciss -e ips -e virtio \
 	-e hci -e usb-common -e usb-storage -e sbp2 \
-	-e /net/ -e drivers/md/ -e '/ipv6\.' -e usbhid -e hid-apple |
+	-e /net/ -e drivers/md/ -e '/ipv6\.' \
+	-e usbhid -e hid-generic -e hid-apple |
   while read fn ; do
 
 	for x in $fn `modinfo $fn | grep depends |
@@ -187,7 +188,7 @@ fi
 #
 echo "Archiving ..."
 ( cd $tmpdir
-  find . | cpio -o -H newc | gzip -c9 > ${root}/boot/initrd-$kernelver.img
+  find . | cpio -o -H newc | gzip -c6 > ${root}/boot/initrd-$kernelver.img
 )
 
 # display the resulting image
