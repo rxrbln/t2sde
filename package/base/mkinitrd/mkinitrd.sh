@@ -75,6 +75,33 @@ mknod $tmpdir/dev/console c 5 1
 echo "Copying kernel modules ..."
 
 (
+  declare -A added
+  add_depend() {
+     local x="$1"
+     if [ "${added["$x"]}" != 1 ]; then
+	added["$x"]=1
+
+	# expand to full name if it was a depend
+	[ $x = ${x##*/} ] && x=`find $moddir/kernel -name "$x.*o"`
+
+	echo -n "${x##*/} "
+
+	# strip $root prefix
+	xt=${x##$root}
+
+	mkdir -p `dirname $tmpdir/$xt`
+	cp $x $tmpdir/$xt 2>/dev/null
+	
+	# add it's deps, too
+	for fn in `modinfo $x | sed -n -e 's/,/ /g' -e 's/^depends://p'`; do
+	     add_depend "$fn"
+	done
+     else
+        #echo "already there"
+	:
+     fi
+  }
+
   find $moddir/kernel -type f |
   grep -v -e /wireless/ -e netfilter |
   grep  -e reiserfs -e reiser4 -e ext2 -e ext3 -e ext4 -e btrfs -e /jfs -e /xfs \
@@ -84,23 +111,8 @@ echo "Copying kernel modules ..."
 	-e hci -e usb-common -e usb-storage -e sbp2 \
 	-e /net/ -e drivers/md/ -e '/ipv6\.' \
 	-e usbhid -e hid-generic -e hid-apple |
-  while read fn ; do
-
-	for x in $fn `modinfo $fn | grep depends |
-	         cut -d : -f 2- | sed -e 's/ //g' -e 's/,/ /g' `
-	do
-		# expand to full name if it was a depend
-		[ $x = ${x##*/} ] &&
-		x=`find $moddir/kernel -name "$x.*o"`
-
-		echo -n "${x##*/} "
-
-		# strip $root prefix
-		xt=${x##$root}
-
-		mkdir -p `dirname $tmpdir/$xt`
-		cp $x $tmpdir/$xt 2>/dev/null
-	done
+  while read fn; do
+	add_depend "$fn"
   done
 ) | fold -s ; echo
 
