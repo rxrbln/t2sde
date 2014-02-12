@@ -20,7 +20,7 @@ ssh_create_hostpair(){
                 "/usr/bin/ssh-keygen -t rsa1 -f /etc/ssh/ssh_host_key -N '' ; \
 		 /usr/bin/ssh-keygen -t dsa  -f /etc/ssh/ssh_host_dsa_key -N '' ; \
 		 /usr/bin/ssh-keygen -t rsa  -f /etc/ssh/ssh_host_rsa_key -N '' ; \
-		 /usr/bin/ssh-keygen -t ecdsa  -f /etc/ssh/ssh_host_ecdsa_key -N '' "
+		 /usr/bin/ssh-keygen -t ecdsa  -f /etc/ssh/ssh_host_ecdsa_key -N '' ; \
 		 /usr/bin/ssh-keygen -t ed25519  -f /etc/ssh/ssh_host_ed25519_key -N '' "
 }
 
