@@ -15,11 +15,11 @@
 case "$SDECFG_ARM64_ENDIANESS" in
 	eb)
 		arch_bigendian=yes
-		arch_machine=armeb ;;
+		arch_machine=aarch64_eb ;;
 		
 	*)
 		arch_bigendian=no
-		arch_machine=arm ;;
+		arch_machine=aarch64 ;;
 esac
 
 arch_target="${arch_machine}-t2-linux-${SDECFG_ARM64_ABI}"
