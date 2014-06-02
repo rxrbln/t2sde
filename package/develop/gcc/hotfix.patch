@@ -1,0 +1,93 @@
+--- a/gcc/ipa-devirt.c	2014-04-08 07:35:11.000000000 +0200
++++ b/gcc/ipa-devirt.c	2014-05-10 16:46:14.502859179 +0200
+@@ -987,6 +987,17 @@
+   context->outer_type = expected_type;
+   context->offset = 0;
+   context->maybe_derived_type = true;
++  context->maybe_in_construction = true;
++  /* POD can be changed to an instance of a polymorphic type by
++     placement new.  Here we play safe and assume that any
++     non-polymorphic type is POD.  */
++  if ((TREE_CODE (type) != RECORD_TYPE
++       || !TYPE_BINFO (type)
++       || !polymorphic_type_binfo_p (TYPE_BINFO (type)))
++      && (TREE_CODE (TYPE_SIZE (type)) != INTEGER_CST
++	  || (offset + tree_to_uhwi (TYPE_SIZE (expected_type)) <=
++	      tree_to_uhwi (TYPE_SIZE (type)))))
++    return true;
+   return false;
+ }
+ 
+--- a/gcc/testsuite/g++.dg/ipa/devirt-11.C	2013-09-08 18:42:21.000000000 +0200
++++ b/gcc/testsuite/g++.dg/ipa/devirt-11.C	2014-05-10 16:46:14.503859198 +0200
+@@ -45,5 +45,5 @@
+ /* While inlining function called once we should devirtualize a new call to fn2
+    and two to fn3. While doing so the new symbol for fn2 needs to be
+    introduced.  */
+-/* { dg-final { scan-ipa-dump-times "Discovered a virtual call to a known target" 3 "inline"  } } */
++/* { dg-final { scan-ipa-dump-times "Discovered a virtual call to a known target" 1 "inline"  } } */
+ /* { dg-final { cleanup-ipa-dump "inline" } } */
+--- a/gcc/testsuite/g++.dg/ipa/devirt-31.C	1970-01-01 01:00:00.000000000 +0100
++++ b/gcc/testsuite/g++.dg/ipa/devirt-31.C	2014-05-10 16:46:14.503859198 +0200
+@@ -0,0 +1,23 @@
++/* { dg-options "-O2 -std=c++11 -fdump-ipa-inline"  } */
++#include <new>
++
++class EmbeddedObject {
++public:
++  virtual int val() { return 2; }
++};
++
++class Container {
++  alignas(EmbeddedObject) char buffer[sizeof(EmbeddedObject)];
++public:
++  EmbeddedObject *obj() { return (EmbeddedObject*)buffer; }
++  Container() { new (buffer) EmbeddedObject(); }
++};
++
++Container o;
++
++int main()
++{
++  __builtin_printf("%d\n", o.obj()->val());
++}
++/* { dg-final { scan-ipa-dump-not "__builtin_unreachable"  "inline"  } } */
++/* { dg-final { cleanup-ipa-dump "inline" } } */
+--- a/gcc/tree-ssa-threadedge.c	2014-01-02 23:23:26.000000000 +0100
++++ b/gcc/tree-ssa-threadedge.c	2014-05-10 16:45:59.053571881 +0200
+@@ -387,7 +387,34 @@
+           && (gimple_code (stmt) != GIMPLE_CALL
+               || gimple_call_lhs (stmt) == NULL_TREE
+               || TREE_CODE (gimple_call_lhs (stmt)) != SSA_NAME))
+-	continue;
++	{
++	  /* STMT might still have DEFS and we need to invalidate any known
++	     equivalences for them.
++
++	     Consider if STMT is a GIMPLE_ASM with one or more outputs that
++	     feeds a conditional inside a loop.  We might derive an equivalence
++	     due to the conditional.  */
++	  tree op;
++	  ssa_op_iter iter;
++
++	  if (backedge_seen)
++	    FOR_EACH_SSA_TREE_OPERAND (op, stmt, iter, SSA_OP_DEF)
++	      {
++		/* This call only invalidates equivalences created by
++		   PHI nodes.  This is by design to keep the cost of
++		   of invalidation reasonable.  */
++		invalidate_equivalences (op, stack, src_map, dst_map);
++
++		/* However, conditionals can imply values for real
++		   operands as well.  And those won't be recorded in the
++		   maps.  In fact, those equivalences may be recorded totally
++		   outside the threading code.  We can just create a new
++		   temporary NULL equivalence here.  */
++	        record_temporary_equivalence (op, NULL_TREE, stack);
++	      }
++
++	  continue;
++	}
+ 
+       /* The result of __builtin_object_size depends on all the arguments
+ 	 of a phi node. Temporarily using only one edge produces invalid
