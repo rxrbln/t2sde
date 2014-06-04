@@ -33,7 +33,7 @@
 		 "haswell	MCORE2"		\
 		 "broadwell	MCORE2"		\
 		 "bonnel	ATOM"		\
-		 "silvermont	ATOM
+		 "silvermont	ATOM"
 	do
 		set $x
 		[[ "$SDECFG_X8664_OPT" = $1 ]] && linux_arch=$2
