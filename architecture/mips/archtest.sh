@@ -13,10 +13,10 @@
 # --- T2-COPYRIGHT-NOTE-END ---
 
 case "$SDECFG_MIPS_ENDIANESS" in
-	el)
+    EL)
 	arch_bigendian=no
 	arch_target="mipsel-t2-linux-gnu" ;;
-	eb)
+    EB)
 	arch_bigendian=yes
 	arch_target="mips-t2-linux-gnu" ;;
 esac
