@@ -67,7 +67,7 @@ if [ "$root" ]; then
 	  if mount -t $fs $root /rootfs -o ro 2> /dev/null; then
 		echo "Successfully mounted rootfs as $fs."
 		# TODO: later on search other places if we want 100% backward compat.
-		init=${init:-/bin/init} 
+		init=${init:-/sbin/init} 
 		if [ -f /rootfs/$init ]; then
 			kill %1
 			mount -t none /dev -o move /rootfs/dev
