@@ -198,6 +198,8 @@ CONFIG_IEEE1394_SBP2=m
 dnl Crypto API
 dnl
 CONFIG_CRYPTO=y
+dnl Fix btrfs in initrd, as no explicit dependency
+CONFIG_CRYPTO_CRC32C=y
 
 dnl Console (FB) Options
 dnl
