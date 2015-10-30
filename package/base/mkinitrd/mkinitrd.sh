@@ -15,6 +15,8 @@
 
 set -e
 
+map=`mktemp`
+
 if [ $UID != 0 ]; then
 	echo "Non root - exiting ..."
 	exit 1
@@ -82,7 +84,7 @@ echo "Copying kernel modules ..."
 	added["$x"]=1
 
 	# expand to full name if it was a depend
-	[ $x = ${x##*/} ] && x=`find $moddir/kernel -name "$x.*o"`
+	[ $x = ${x##*/} ] && x=`sed -n "/\/$x\..*o$/{p; q}" $map`
 
 	echo -n "${x##*/} "
 
@@ -102,7 +104,8 @@ echo "Copying kernel modules ..."
      fi
   }
 
-  find $moddir/kernel -type f |
+  find $moddir/kernel -type f > $map
+  cat $map |
   grep -v -e /wireless/ -e netfilter |
   grep  -e reiserfs -e reiser4 -e ext2 -e ext3 -e ext4 -e btrfs -e /jfs -e /xfs \
 	-e isofs -e udf -e /unionfs -e ntfs -e fat -e dm-mod \
@@ -206,4 +209,4 @@ echo "Archiving ..."
 # display the resulting image
 #
 du -sh ${root}/boot/initrd-$kernelver.img
-rm -rf $tmpdir
+rm -rf $tmpdir $map
