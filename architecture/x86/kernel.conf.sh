@@ -47,6 +47,7 @@
 		 "athlon-xp	K7"		\
 		 "athlon-mp	K7"
 	do
+		set $x # split line into $1, $2
 		[ "$1" == "pentiumpro" ] && pae=1
 		if [ "$1" == "$SDECFG_X86_OPT" ]; then
 			linux_arch=$2
