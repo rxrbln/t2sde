@@ -171,7 +171,7 @@ done
 
 # setup optional programs
 #
-for x in ${root}/sbin/{hotplug++,insmod.old,mdadm}
+for x in ${root}/sbin/{vgchange,hotplug++,insmod.old,mdadm}
 do
   if [ ! -e $x ]; then
 	echo "Warning: Skipped optional file $x!"
