@@ -175,23 +175,37 @@ getdevice()
 	devicelist=`ls /dev/sr* /dev/cdrom* /dev/floppy* 2>/dev/null`
 
 	# if no dev, wait for devices to appear, default Linux USB settle delay is 5s
-	i=0
+	local i=0; local default=
 	while [ -z "$devicelist" -a $i -le 6 ]; do
 		# with udev the above links are not created yet, so try to find
 		# device based on sysfs
+		local j=1
 		for x in /sys/block/*/device; do
 			x=${x%/device}; x=${x#/sys/block/}
-			#[ "`cat /sys/block/$x/removable`" = 1 ] || continue
+			local dev=/dev/$x
+			dev=`readlink $dev`; [ -z "$dev" -a "$x" != "*" ] && dev=/dev/$x
+
+			x=${dev%[0-9]*}; x=${x#/dev/}
+			local model=`cat /sys/block/$x/device/{vendor,model} | tr -d '\n' 2>/dev/null`
 
 			# all partitions
-			x=/dev/$x
-			for dev in `ls ${x}*`; do
-				[ "$dev" != "$x" ] && devicelist="$devicelist $dev"
+			local devs=`ls ${dev}[0-9]*`
+			local parts
+			if [ "${devs//[$IFS]/}" != "$dev" ]; then
+				parts=1
+				echo "     ${j//?/ }  $dev     $model" # header
+				model=""
+			fi
+			for d in $devs; do
+				if [ -z "$parts" -o $d != $dev ]; then
+					echo "     $j. $d${model:+     $model}"
+					devicelist="$devicelist $dev"
+					[ -z "$default" -a "`cat /sys/block/$x/removable`" == 1 ] && default=$j
+					: $(( j++ ))
+				fi
 			done
-			# if none the device itself
-			[ -z "$devicelist" ] && devicelist="$devicelist $x"
-	        done
-		
+		done
+
 		if [ -z "$devicelist" ]; then
 			echo "Waiting for devices to appear."
 	 	 	sleep 1
@@ -204,21 +218,8 @@ getdevice()
 		echo "No device found."
 		return
 	fi
-
-	i=1
-	default=
-	for dev in $devicelist ; do
-		x=`readlink $dev`; [ "$x" ] && [[ "$x" != /dev/* ]] && x=/dev/$x
-		[ "$x" ] && dev=$x
-		x=${dev%[0-9]*}
-		x=${x#/dev/}
-		model=`cat /sys/block/$x/device/{vendor,model} | tr -d '\n' 2>/dev/null`
-		echo "     $i. $dev	$model"
-		[ -z "$default" -a "`cat /sys/block/$x/removable`" == 1 ] && default=$i
-		: $(( i++ ))
-	done
+	
 	[ "$default" ] || default=1
-
 	echo -en "\nEnter number or device file name (default=$default): "
 
 	in=; [ $autoload = 0 ] && read in || echo
@@ -230,7 +231,7 @@ getdevice()
 		else
 			i=1
 			for x in $devicelist; do
-				[ $in = $i ] && device=$x
+				[ $in = $i ] && device=$x && break
 				: $(( i++ ))
 			done
 		fi
