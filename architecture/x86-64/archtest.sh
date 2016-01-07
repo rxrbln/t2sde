@@ -13,4 +13,4 @@
 # --- T2-COPYRIGHT-NOTE-END ---
 
 [ "$SDECFG_X8664_X32" = 1 ] &&
-	arch_sizeof_long=4 && arch_siezof_char_p=4
+	arch_sizeof_long=4 && arch_sizeof_char_p=4
