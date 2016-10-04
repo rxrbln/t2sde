@@ -27,6 +27,8 @@ umask 022
 . scripts/functions.in
 . misc/output/parse-config
 
+compressor="zstd -18"
+
 eval "$(egrep '^(sdever)=' scripts/parse-config)"
 base=$(pwd -P)
 
@@ -69,6 +71,8 @@ if [ "$1" = -mk-cksum ] ; then
 	    echo "No such file."
 	elif [ "${x%.bz2}" != "$x" -o "${x%.tbz2}" != "$x" -o "${x%.tbz}" != "$x" ] ; then
 	    bunzip2 < "$x" | cksum | cut -f1 -d' '
+	elif [ "${x%.zst}" != "$x" -o "${x%.tzst}" != "$x" -o "${x%.zstd}" != "$x" ] ; then
+	    zstd -d < "$x" | cksum | cut -f1 -d' '
 	elif [ "${x%.xz}" != "$x" ] ; then
 	    xzcat < "$x" | cksum | cut -f1 -d' '
 	elif [ "${x%.gz}" != "$x" -o "${x%.tgz}" != "$x" ] ; then
@@ -477,45 +481,54 @@ download_file() {
 		# Convert a .gz to .bz2 and test checksum
 		#
 		*.gz|*.tgz)
-			echo "bzip'ing gzip file + cksum-test: $gzfile"
+			echo "compressing gzip file + cksum-test: $gzfile"
 			gunzip < "$gzfile" > src/down.$$.dat
 			if cksum_chk src/down.$$.dat $cksum "$gzfile" ; then
-				bzip2 < src/down.$$.dat > "$bzfile" ; rm -f "$gzfile"
+				$compressor < src/down.$$.dat > "$bzfile" ; rm -f "$gzfile"
 			fi
 			rm -f src/down.$$.dat
 			;;
 		# Compress plain .tar .gz to .bz2 and test checksum
 		#
 		*.tar)
-			echo "cksum-test + bzip'ing file: $gzfile"
+			echo "compressing tar file + cksum-test: $gzfile"
 			if cksum_chk "$gzfile" $cksum "$gzfile" ; then
-				bzip2 < "$gzfile" > "$bzfile" ; rm -f "$gzfile"
+				$compressor < "$gzfile" > "$bzfile" ; rm -f "$gzfile"
 			fi
 			;;
 		# Convert a .Z to .bz2 and test checksum
 		*.Z)
-			echo "bzip'ing Z file + cksum-test: $gzfile"
+			echo "compressing Z file + cksum-test: $gzfile"
 			uncompress < "$gzfile" > src/down.$$.dat
 			if cksum_chk src/down.$$.dat $cksum "$gzfile" ; then
-				bzip2 < src/down.$$.dat > "$bzfile" ; rm -f "$gzfile"
+				$compressor < src/down.$$.dat > "$bzfile" ; rm -f "$gzfile"
 			fi
 			rm -f src/down.$$.dat
 			;;
 		# Convert a .xz to .bz2 and test checksum
 		*.xz)
-			echo "bzip'ing xz file + cksum-test: $gzfile"
+			echo "compressing xz file + cksum-test: $gzfile"
 			xzcat < "$gzfile" > src/down.$$.dat
 			if cksum_chk src/down.$$.dat $cksum "$gzfile" ; then
-				bzip2 < src/down.$$.dat > "$bzfile" ; rm -f "$gzfile"
+				$compressor < src/down.$$.dat > "$bzfile" ; rm -f "$gzfile"
 			fi
 			rm -f src/down.$$.dat
 			;;
-		# Execute a cksum test on a bzip2 file
-		#
+ 		# Convert a .bz2 to .bz2 and test checksum
 		*.bz2|*.tbz2|.tbz)
-			echo "cksum-test (bzip2): $bzfile"
+			echo "compressing bzip2 file + cksum-test: $gzfile"
+			bzcat < "$gzfile" > src/down.$$.dat
+			if cksum_chk src/down.$$.dat $cksum "$gzfile" ; then
+				$compressor < src/down.$$.dat > "$bzfile" ; rm -f "$gzfile"
+			fi
+			rm -f src/down.$$.dat
+			;;
+		# Execute a cksum test on a zstd file
+		#
+		*.zstd|*.zst|*.zs|.tzs)
+			echo "cksum-test (zstd): $bzfile"
 			if [ $nocheck = 0 ] ; then
-				bunzip2 < "$bzfile" > src/down.$$.dat
+				zstdcat < "$bzfile" > src/down.$$.dat
 				cksum_chk src/down.$$.dat $cksum "$bzfile" \
 					|| downloaderror=1
 			fi
@@ -637,6 +650,8 @@ download_file_now() {
 			  typeexpr="gzip compressed data" ;;
 		      *.bz2|*.tbz2|*.tbz)
 			  typeexpr="bzip2 compressed data" ;;
+		      *.zst|*.tzst|*.zstd)
+			  typeexpr="zstd compressed data" ;;
 		      *.Z|*.tZ)
 			  typeexpr="compress'd data" ;;
 		      *.zip)
@@ -762,7 +777,7 @@ download_file_now() {
 		if [ `find -type f | wc -l` -gt 4 ]; then
 			find `basename $module` | xargs touch -t 200001010000
 			tar --owner root --group root \
-			    --use-compress-program=bzip2 \
+			    --use-compress-program="$compressor" \
 			    -cf $tarname `basename $module`
 			mv $tarname $saved_pwd/$bzfile
 		else
