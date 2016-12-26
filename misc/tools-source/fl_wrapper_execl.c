@@ -7,6 +7,11 @@
  *  glibc-2.2.5/posix/execl.c
  */
 
+#ifndef __GLIBC__
+/* e.g. musl */
+extern char** __environ;
+#endif
+
 /* Execute PATH with all arguments after PATH until
    a NULL pointer and environment from `environ'.  */
 int
@@ -52,7 +57,7 @@ execl (const char *path, const char *arg, ...)
     }
   va_end (args);
 
-  return execve (path, (char *const *) argv, environ);
+  return execve (path, (char *const *) argv, __environ);
 }
 
 /*
@@ -197,7 +202,7 @@ script_execute (const char *file, char *const argv[])
       }
 
     /* Execute the shell.  */
-    execve (new_argv[0], new_argv, environ);
+    execve (new_argv[0], new_argv, __environ);
   }
 }
 
@@ -219,7 +224,7 @@ execvp (file, argv)
   if (strchr (file, '/') != NULL)
     {
       /* Don't search when it contains a slash.  */
-      execve (file, argv, environ);
+      execve (file, argv, __environ);
 
       if (errno == ENOEXEC)
 	script_execute (file, argv);
@@ -272,7 +277,7 @@ execvp (file, argv)
 	    startp = (char *) memcpy (name - (p - path), path, p - path);
 
 	  /* Try to execute this name.  If it works, execv will not return.  */
-	  execve (startp, argv, environ);
+	  execve (startp, argv, __environ);
 
 	  if (errno == ENOEXEC)
 	    script_execute (startp, argv);
