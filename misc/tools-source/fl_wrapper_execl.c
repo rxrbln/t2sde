@@ -52,7 +52,7 @@ execl (const char *path, const char *arg, ...)
     }
   va_end (args);
 
-  return execve (path, (char *const *) argv, __environ);
+  return execve (path, (char *const *) argv, environ);
 }
 
 /*
@@ -197,7 +197,7 @@ script_execute (const char *file, char *const argv[])
       }
 
     /* Execute the shell.  */
-    execve (new_argv[0], new_argv, __environ);
+    execve (new_argv[0], new_argv, environ);
   }
 }
 
@@ -219,7 +219,7 @@ execvp (file, argv)
   if (strchr (file, '/') != NULL)
     {
       /* Don't search when it contains a slash.  */
-      execve (file, argv, __environ);
+      execve (file, argv, environ);
 
       if (errno == ENOEXEC)
 	script_execute (file, argv);
@@ -272,7 +272,7 @@ execvp (file, argv)
 	    startp = (char *) memcpy (name - (p - path), path, p - path);
 
 	  /* Try to execute this name.  If it works, execv will not return.  */
-	  execve (startp, argv, __environ);
+	  execve (startp, argv, environ);
 
 	  if (errno == ENOEXEC)
 	    script_execute (startp, argv);
