@@ -99,6 +99,8 @@ struct status_t {
 	time_t  ctime;
 };
 
+static int initialized = 0;
+
 #ifdef FLWRAPPER_BASEDIR
 static void check_write_access(const char * , const char * );
 #endif
@@ -148,7 +150,7 @@ $ret_type $function($p1)
 	errno=old_errno;
 
 #if DEBUG == 1
-	fprintf(stderr, "fl_wrapper.so debug [%d]: going to run original $function() at %p (wrapper is at %p).\n",
+	fprintf(stderr, "fl_wrapper.so debug [%d]: going to run original $function() at %p (wrapper at %p).\n",
 		getpid(), orig_$function, $function);
 #endif
 
@@ -205,7 +207,7 @@ $ret_type $function($p1)
 	errno=old_errno;
 
 #if DEBUG == 1
-	fprintf(stderr, "fl_wrapper.so debug [%d]: going to run original $function() at %p (wrapper is at %p).\n",
+	fprintf(stderr, "fl_wrapper.so debug [%d]: going to run original $function() at %p (wrapper at %p).\n",
 		getpid(), orig_$function, $function);
 #endif
 	rc = orig_$function($p2);
@@ -380,6 +382,8 @@ void __attribute__ ((constructor)) fl_wrapper_init()
 	copy_getenv(filterdir, "FLWRAPPER_FILTERDIR");
 	copy_getenv(wlog, "FLWRAPPER_WLOG");
 	copy_getenv(rlog, "FLWRAPPER_RLOG");
+
+	initialized = 1;
 }
 
 #ifdef FLWRAPPER_BASEDIR
@@ -403,6 +407,8 @@ static void handle_file_access_before(const char * func, const char * file,
                                struct status_t * status)
 {
 	struct stat st;
+
+	if (!initialized) return;
 #if DEBUG == 1
 	fprintf(stderr, "fl_wrapper.so debug [%d]: begin of handle_file_access_before(\"%s\", \"%s\", xxx)\n",
 		getpid(), func, file);
@@ -466,6 +472,7 @@ static void handle_file_access_after(const char * func, const char * file,
 	char absfile [PATH_MAX];
 	int fd; struct stat st;
 
+	if (!initialized) return;
 #if DEBUG == 1
 	fprintf(stderr, "fl_wrapper.so debug [%d]: begin of handle_file_access_after(\"%s\", \"%s\", xxx)\n",
 		getpid(), func, file);
@@ -508,11 +515,11 @@ static void handle_file_access_after(const char * func, const char * file,
 #endif
 	if (fd == -1) return;
 
-    flock(fd, LOCK_EX);
-    lseek(fd, 0, SEEK_END);
+	flock(fd, LOCK_EX);
+	lseek(fd, 0, SEEK_END);
 
-    sprintf(buf,"%s.%s:\t%s\n", cmdname, func, absfile);
-    write(fd,buf,strlen(buf));
+	sprintf(buf,"%s.%s:\t%s\n", cmdname, func, absfile);
+	write(fd,buf,strlen(buf));
 
 	close(fd);
 #if DEBUG == 1
