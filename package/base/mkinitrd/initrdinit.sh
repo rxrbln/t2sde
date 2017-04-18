@@ -62,15 +62,7 @@ sed 's/[^ ]* *[^ t]* *[^ ]* *[^ ]* *\([0-9]*\), *\([0-9]*\) .*/\1:\2/'`
 	echo "$resume" > /sys/power/resume
 fi
 
-# try best match / detected rootfs first, all the others thereafter
-filesystems=`disktype $root 2>/dev/null |
-             sed -e '/file system/!d' -e 's/file system.*//' -e 's/ //g' \
-                 -e 'y/ABCDEFGHIJKLMNOPQRSTUVWXYZ/abcdefghijklmnopqrstuvwxyz/' \
-                 -e 's/fat32/vfat/'
-             sed '1!G ; $p ; h ; d' /proc/filesystems | sed /^nodev/d`
-
 mkdir /rootfs
-
 if [ "$root" ]; then
   echo "Mounting rootfs ..."
 
@@ -79,6 +71,13 @@ if [ "$root" ]; then
     if [ -e $root ]; then
 	type -p cryptsetup && cryptsetup isLuks $root &&
 		cryptsetup luksOpen $root rootfs && root=/dev/mapper/rootfs
+
+	# try best match / detected rootfs first, all the others thereafter
+	filesystems=`disktype $root 2>/dev/null |
+	    sed -e '/file system/!d' -e 's/file system.*//' -e 's/ //g' \
+		-e 'y/ABCDEFGHIJKLMNOPQRSTUVWXYZ/abcdefghijklmnopqrstuvwxyz/' \
+		-e 's/fat32/vfat/'
+	    sed '/^nodev/d' /proc/filesystems | sed '1!G ; $p ; h ; d'`
 	for fs in $filesystems; do
 	  if mount -t $fs -o ro $root /rootfs 2> /dev/null; then
 		echo "Successfully mounted rootfs as $fs."
