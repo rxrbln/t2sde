@@ -128,11 +128,11 @@ echo "Injecting programs and configuration ..."
 # copying config
 #
 cp -ar ${root}/etc/udev $tmpdir/etc/
-[ -e ${root}/lib/udev/rules.d ] && cp -ar ${root}/lib/udev/rules.d $tmpdir/lib/udev
+[ -e ${root}/lib/udev/rules.d ] && cp -ar ${root}/lib/udev/rules.d $tmpdir/lib/udev/
 [ -e ${root}/etc/mdadm.conf ] && cp -ar ${root}/etc/mdadm.conf $tmpdir/etc/
 cp -ar ${root}/etc/modprobe.* $tmpdir/etc/ 2>/dev/null || true
 # in theory all, but fat and currently only cdrom_id is needed ...
-#cp -ar ${root}/lib/udev/cdrom_id $tmpdir/lib/udev/
+#cp -a ${root}/lib/udev/cdrom_id $tmpdir/lib/udev/
 
 # copy dynamic libraries, if any.
 #
@@ -162,7 +162,7 @@ copy_dyn_libs () {
 
 # setup programs
 #
-for x in ${root}/sbin/{udevd,udevadm,modprobe,insmod} \
+for x in ${root}/sbin/{udevd,udevadm,modprobe,insmod,blkid} \
          ${root}/usr/sbin/disktype
 do
 	cp $x $tmpdir/sbin/
