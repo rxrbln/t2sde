@@ -18,9 +18,8 @@ echo "T2 SDE early userspace (C) 2005 - 2017 Rene Rebe, ExactCODE"
 PATH=/sbin:/bin:/usr/bin:/usr/sbin
 
 echo "Mounting /dev, /proc and /sys ..."
-mount -t devtmpfs none /dev -o mode=755
-mount -t proc  none /proc
-mount -t usbfs none /proc/bus/usb 2> /dev/null
+mount -t devtmpfs -o mode=755 none /dev
+mount -t proc none /proc
 mount -t sysfs none /sys
 ln -s /proc/self/fd /dev/fd
 
@@ -81,15 +80,15 @@ if [ "$root" ]; then
 	type -p cryptsetup && cryptsetup isLuks $root &&
 		cryptsetup luksOpen $root rootfs && root=/dev/mapper/rootfs
 	for fs in $filesystems; do
-	  if mount -t $fs $root /rootfs -o ro 2> /dev/null; then
+	  if mount -t $fs -o ro $root /rootfs 2> /dev/null; then
 		echo "Successfully mounted rootfs as $fs."
 		# TODO: later on search other places if we want 100% backward compat.
 		init=${init:-/sbin/init} 
 		if [ -f /rootfs/$init ]; then
 			kill %1
-			mount -t none /dev -o move /rootfs/dev
-			mount -t none /proc -o move /rootfs/proc
-			mount -t none /sys -o move /rootfs/sys
+			mount -t none -o move /dev /rootfs/dev
+			mount -t none -o move /proc /rootfs/proc
+			mount -t none -o move /sys /rootfs/sys
 
 			exec switch_root /rootfs $init $*
 		else
