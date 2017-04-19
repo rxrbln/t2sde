@@ -136,25 +136,29 @@ cp -ar ${root}/etc/modprobe.* $tmpdir/etc/ 2>/dev/null || true
 
 # copy dynamic libraries, if any.
 #
+declare -A added
 copy_dyn_libs () {
 	# we can not use ldd(1) as it loads the object, which does not work on cross builds
 	for lib in `readelf -a $1 | sed -n 's/.*Shared library.*\[\([^]\]*\)\]/\1/p'`; do
 		[[ $1 = *bin/* ]] && echo "Warning: $1 is dynamically linked!"
 		for libdir in $root/lib{64,}/ $root/usr/lib{64,}/; do
 			if [ -e $libdir$lib ]; then
-				xlibdir=${libdir#$root}
-				echo "$1 NEEDS $xlibdir$lib"
+			    xlibdir=${libdir#$root}
+			    echo "	$1 NEEDS $xlibdir$lib"
+
+			    if [ "${added["$$xlibdir$lib"]}" != 1 ]; then
+				added["$$xlibdir$lib"]=1
 
 				mkdir -p $tmpdir$xlibdir
-
 				while local x=`readlink $libdir$lib`; [ "$x" ]; do
-					echo " $libdir$lib SYMLINKS to $x"
+					echo "	$libdir$lib SYMLINKS to $x"
 					ln -sfv $x $tmpdir$xlibdir$lib
 					lib=$x
 				done
 				cp -fv $libdir$lib $tmpdir$xlibdir$lib
 
 				copy_dyn_libs $libdir$lib
+			    fi
 			fi
 		done
 	done
