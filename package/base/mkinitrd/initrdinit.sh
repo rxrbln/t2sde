@@ -77,7 +77,7 @@ if [ "$root" ]; then
 	    sed -e '/file system/!d' -e 's/file system.*//' -e 's/ //g' \
 		-e 'y/ABCDEFGHIJKLMNOPQRSTUVWXYZ/abcdefghijklmnopqrstuvwxyz/' \
 		-e 's/fat32/vfat/'
-	    sed '/^nodev/d' /proc/filesystems | sed '1!G ; $p ; h ; d'`
+	    sed '/^nodev/d' /proc/filesystems | sed '1!G; $p; h; d'`
 	for fs in $filesystems; do
 	  if mount -t $fs -o ro $root /rootfs 2> /dev/null; then
 		echo "Successfully mounted rootfs as $fs."
