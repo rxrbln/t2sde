@@ -8,7 +8,7 @@ T2 SDE
 <BOOT-SCRIPT>
 " screen" output
 load-base release-load-area
-boot cd:,\boot\yaboot
+boot cd:,\boot\grub.elf
 </BOOT-SCRIPT>
 <OS-BADGE-ICONS>
 1010
