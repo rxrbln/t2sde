@@ -19,7 +19,7 @@
 create_kernel_list() {
 	first=1
 	for x in `(cd /boot/ ; ls vmlinux_* ) | sort -r` ; do
-		ver=${x/vmlinuz_/}
+		ver=${x/vmlinux_/}
 		if [ $first = 1 ] ; then
 			label=linux ; first=0
 		else
@@ -30,7 +30,7 @@ create_kernel_list() {
 
 menuentry "T2/Linux $label" {
 	set root=$bootdrive$bootpath
-	kernel /$x root=$rootdev ro
+	linux /$x root=$rootdev ro
 	initrd /initrd-${ver}.img
 }
 EOT
@@ -96,7 +96,7 @@ $( cat /boot/grub2/grub.cfg )"
 grub_inst() {
 	mount /dev/sda2 /mnt
 	cp -vf /boot/grub2/grub.cfg /mnt
-	echo "configfile (ieee1275,apple2)/grub.cgg" > /tmp/grub.cfg
+	echo "configfile (ieee1275/hd,apple2)/grub.cfg" > /tmp/grub.cfg
 	grub-mkimage -O powerpc-ieee1275 -p /mnt -o /mnt/grub.elf \
 		-c /tmp/grub.cfg -d /usr/lib64/grub/powerpc-ieee1275/ \
 		part_gpt part_msdos ntfs ntfscomp hfsplus fat ext2 iso9660 \
@@ -116,7 +116,7 @@ T2 SDE
 <BOOT-SCRIPT>
 " screen" output
 load-base release-load-area
-boot cd:,\grub.elf
+boot hd:2,\grub.elf
 </BOOT-SCRIPT>
 <OS-BADGE-ICONS>
 1010
