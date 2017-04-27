@@ -144,14 +144,14 @@ copy_dyn_libs () {
 		for libdir in $root/lib{64,}/ $root/usr/lib{64,}/; do
 			if [ -e $libdir$lib ]; then
 			    xlibdir=${libdir#$root}
-			    echo "	$1 NEEDS $xlibdir$lib"
+			    echo "	${1#$root} NEEDS $xlibdir$lib"
 
-			    if [ "${added["$$xlibdir$lib"]}" != 1 ]; then
-				added["$$xlibdir$lib"]=1
+			    if [ "${added["$xlibdir$lib"]}" != 1 ]; then
+				added["$xlibdir$lib"]=1
 
 				mkdir -p $tmpdir$xlibdir
 				while local x=`readlink $libdir$lib`; [ "$x" ]; do
-					echo "	$libdir$lib SYMLINKS to $x"
+					echo "	$xlibdir$lib SYMLINKS to $x"
 					ln -sfv $x $tmpdir$xlibdir$lib
 					lib=$x
 				done
@@ -175,11 +175,11 @@ done
 
 # setup optional programs
 #
-for x in ${root}/sbin/{vgchange,hotplug++,insmod.old,mdadm} \
+for x in ${root}/sbin/{vgchange,insmod.old,mdadm} \
 	 $(root)/usr/sbin/cryptsetup
 do
   if [ ! -e $x ]; then
-	echo "Warning: Skipped optional file $x!"
+	echo "Warning: Skipped optional file ${x#$root}!"
   else
 	cp $x $tmpdir/sbin/
 	ln -sf insmod.old $tmpdir/sbin/modprobe.old
@@ -210,8 +210,4 @@ echo "Archiving ..."
 ( cd $tmpdir
   find . | cpio -o -H newc | gzip -c6 > ${root}/boot/initrd-$kernelver.img
 )
-
-# display the resulting image
-#
-du -sh ${root}/boot/initrd-$kernelver.img
 rm -rf $tmpdir $map
