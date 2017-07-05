@@ -95,6 +95,8 @@ CONFIG_PCI=y
 CONFIG_PCIEPORTBUS=y
 CONFIG_PCI_MSI=y
 CONFIG_PCI_IOV=y
+CONFIG_I2C=m
+CONFIG_SPI=y
 
 dnl PCI name database is also quite big (another >80kB) - so let's use user-
 dnl space tools like lspci to use a non-kernel database
