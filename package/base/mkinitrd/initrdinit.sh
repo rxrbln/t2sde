@@ -44,7 +44,7 @@ for x in /lib/modules/*/kernel/fs/{*/,}*.*o ; do
 	modprobe $x 2> /dev/null
 done
 
-echo "Assembling MD arrays"
+echo "Assembling MD/LVM arrays"
 [ -e /sbin/mdadm ] && mdadm --assemble --scan
 [ -e /sbin/vgchange ] && vgchange -ay
 
