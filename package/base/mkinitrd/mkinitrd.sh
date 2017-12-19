@@ -208,6 +208,6 @@ fi
 #
 echo "Archiving ..."
 ( cd $tmpdir
-  find . | cpio -o -H newc | gzip -c6 > ${root}/boot/initrd-$kernelver.img
+  find . | cpio -o -H newc | zstd -19 -T0 > ${root}/boot/initrd-$kernelver.img
 )
 rm -rf $tmpdir $map
