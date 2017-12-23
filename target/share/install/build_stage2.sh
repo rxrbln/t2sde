@@ -114,7 +114,7 @@ mkdir -p dev proc tmp bin etc share
 mkdir -p mnt/source mnt/target
 ln -s bin sbin ; ln -s . usr
 
-progs="agetty bash cat cp date dd df ifconfig ln ls $packager mkdir mke2fs \
+progs="agetty bash cat cp date dd df dmesg ifconfig ln ls $packager mkdir mke2fs \
        mkswap mount mv rm reboot route sleep swapoff swapon sync umount \
        eject chmod chroot grep halt rmdir sh shutdown uname killall5 \
        stone mktemp sort fold sed mkreiserfs cut head tail disktype bzip2 gzip"
@@ -169,6 +169,8 @@ for i in gui_text mod_install mod_packages mod_gas default ; do
 	cp ../2nd_stage/etc/stone.d/$i.sh etc/stone.d
 done
 
+copy_and_parse_from_source $base/target/share/install/rootfs $PWD
+
 echo_status "Creating links for identical files."
 link_identical_files
 
@@ -176,4 +178,3 @@ echo_status "Creating 2nd_stage_small archive."
 tar -c * | bzip2 -4 > $isofsdir/2nd_stage_small.tar.bz2
 
 cd ..
-
