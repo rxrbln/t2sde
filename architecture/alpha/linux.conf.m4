@@ -17,9 +17,9 @@ CONFIG_ALPHA_GENERIC=y
 # CONFIG_BINFMT_EM86 is not set
 
 
-include(`kernel-common.conf.m4')
-include(`kernel-block.conf.m4')
+include(`linux-common.conf.m4')
+include(`linux-block.conf.m4')
 CONFIG_BLK_DEV_CY82C693=y
 
-include(`kernel-net.conf.m4')
-include(`kernel-fs.conf.m4')
+include(`linux-net.conf.m4')
+include(`linux-fs.conf.m4')

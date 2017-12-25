@@ -16,7 +16,7 @@ define(`MIPS', `MIPS')dnl
 CONFIG_MIPS=y
 CONFIG_MIPS32=y
 
-include(`kernel-common.conf.m4')
-include(`kernel-block.conf.m4')
-include(`kernel-net.conf.m4')
-include(`kernel-fs.conf.m4')
+include(`linux-common.conf.m4')
+include(`linux-block.conf.m4')
+include(`linux-net.conf.m4')
+include(`linux-fs.conf.m4')
