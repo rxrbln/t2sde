@@ -52,10 +52,10 @@ CONFIG_FONT_8x16=y
 CONFIG_FONT_SUN8x16=y
 CONFIG_FONT_SUN12x22=y
 
-include(`kernel-common.conf.m4')
-include(`kernel-block.conf.m4')
-include(`kernel-net.conf.m4')
-include(`kernel-fs.conf.m4')
+include(`linux-common.conf.m4')
+include(`linux-block.conf.m4')
+include(`linux-net.conf.m4')
+include(`linux-fs.conf.m4')
 
 dnl LSI Logic / Symbios Logic (formerly NCR) 53c810 (rev 01)
 dnl does not work reliable with MMIO on my Ultra SPARC 5 -ReneR
