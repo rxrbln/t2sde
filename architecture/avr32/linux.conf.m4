@@ -17,10 +17,10 @@ dnl       the $board_defconfig is used then
 dnl
 define(`AVR32', `Atmel AVR32')dnl
 
-include(`kernel-common.conf.m4')
-include(`kernel-block.conf.m4')
-include(`kernel-net.conf.m4')
-include(`kernel-fs.conf.m4')
+include(`linux-common.conf.m4')
+include(`linux-block.conf.m4')
+include(`linux-net.conf.m4')
+include(`linux-fs.conf.m4')
 
 CONFIG_AVR32=y
 CONFIG_EMBEDDED=y
