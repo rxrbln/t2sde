@@ -97,6 +97,7 @@ case `echo "$card" | tr A-Z a-z` in
 
 	creator\ 3d|elite\ 3d)	xdrv=sunffb ;;
 	tcx*) xdrv=suntcx; depth=8 ;;
+	gx* |tgx*) xdrv=suncg6; depth=8 ;;
 
 	# must be last so *nv* does not match one of the above
 	*nv*)		xdrv=nv
