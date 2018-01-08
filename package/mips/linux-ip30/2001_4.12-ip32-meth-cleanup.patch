@@ -1,0 +1,232 @@
+diff --git a/drivers/net/ethernet/sgi/meth.c b/drivers/net/ethernet/sgi/meth.c
+index ea55abd62ec7..aa744f247885 100644
+--- a/drivers/net/ethernet/sgi/meth.c
++++ b/drivers/net/ethernet/sgi/meth.c
+@@ -73,14 +73,18 @@ struct meth_private {
+ 
+ 	/* in-memory copy of DMA Control register */
+ 	unsigned long dma_ctrl;
++
+ 	/* address of PHY, used by mdio_* functions, initialized in mdio_probe */
+ 	unsigned long phy_addr;
++
++	/* TX stuff. */
+ 	tx_packet *tx_ring;
+ 	dma_addr_t tx_ring_dma;
+ 	struct sk_buff *tx_skbs[TX_RING_ENTRIES];
+ 	dma_addr_t tx_skb_dmas[TX_RING_ENTRIES];
+ 	unsigned long tx_read, tx_write, tx_count;
+ 
++	/* RX stuff. */
+ 	rx_packet *rx_ring[RX_RING_ENTRIES];
+ 	dma_addr_t rx_ring_dmas[RX_RING_ENTRIES];
+ 	struct sk_buff *rx_skbs[RX_RING_ENTRIES];
+@@ -118,6 +122,7 @@ static inline void load_eaddr(struct net_device *dev)
+ 	while ((___rval = mace->eth.phy_data) & MDIO_BUSY) {	\
+ 		udelay(25);					\
+ 	}
++
+ /*read phy register, return value read */
+ static unsigned long mdio_read(struct meth_private *priv, unsigned long phyreg)
+ {
+@@ -135,16 +140,20 @@ static int mdio_probe(struct meth_private *priv)
+ {
+ 	int i;
+ 	unsigned long p2, p3, flags;
++
+ 	/* check if phy is detected already */
+-	if(priv->phy_addr>=0&&priv->phy_addr<32)
++	if (priv->phy_addr >= 0 && priv->phy_addr < 32)
+ 		return 0;
++
+ 	spin_lock_irqsave(&priv->meth_lock, flags);
+-	for (i=0;i<32;++i){
+-		priv->phy_addr=i;
+-		p2=mdio_read(priv,2);
+-		p3=mdio_read(priv,3);
+-#if MFE_DEBUG>=2
+-		switch ((p2<<12)|(p3>>4)){
++
++	for (i = 0; i < 32; i++) {
++		priv->phy_addr = i;
++		p2 = mdio_read(priv, 2);
++		p3 = mdio_read(priv, 3);
++
++#if MFE_DEBUG >= 2
++		switch ((p2 << 12) | (p3 >> 4)) {
+ 		case PHY_QS6612X:
+ 			DPRINTK("PHY is QS6612X\n");
+ 			break;
+@@ -159,17 +168,19 @@ static int mdio_probe(struct meth_private *priv)
+ 			break;
+ 		}
+ #endif
+-		if(p2!=0xffff&&p2!=0x0000){
+-			DPRINTK("PHY code: %x\n",(p2<<12)|(p3>>4));
++
++		if (p2 != 0xffff && p2 != 0x0000) {
++			DPRINTK("PHY code: %x\n", ((p2 << 12) | (p3 >> 4)));
+ 			break;
+ 		}
+ 	}
+ 	spin_unlock_irqrestore(&priv->meth_lock, flags);
+-	if(priv->phy_addr<32) {
++
++	if (priv->phy_addr < 32)
+ 		return 0;
+-	}
+-	DPRINTK("Oopsie! PHY is not known!\n");
+-	priv->phy_addr=-1;
++
++	DPRINTK("Error: Unknown PHY chip!\n");
++	priv->phy_addr = -1;
+ 	return -ENODEV;
+ }
+ 
+@@ -276,7 +287,7 @@ int meth_reset(struct net_device *dev)
+ 	struct meth_private *priv = netdev_priv(dev);
+ 
+ 	/* Reset card */
+-	mace->eth.mac_ctrl = SGI_MAC_RESET;
++	mace->eth.mac_ctrl = METH_CORE_RESET;
+ 	udelay(1);
+ 	mace->eth.mac_ctrl = 0;
+ 	udelay(25);
+diff --git a/drivers/net/ethernet/sgi/meth.h b/drivers/net/ethernet/sgi/meth.h
+index 5b145c6bad60..9634ef18c48a 100644
+--- a/drivers/net/ethernet/sgi/meth.h
++++ b/drivers/net/ethernet/sgi/meth.h
+@@ -1,6 +1,9 @@
+-
+ /*
+- * snull.h -- definitions for the network module
++ * meth.h -- definitions for the SGI O2 Fast Ethernet device
++ *
++ * Note: Driver may have been derived from sample source code from the book
++ * "Linux Device Drivers", but the exact history cannot be determined.  As
++ * such, the below copyright is present just in case.
+  *
+  * Copyright (C) 2001 Alessandro Rubini and Jonathan Corbet
+  * Copyright (C) 2001 O'Reilly & Associates
+@@ -12,58 +15,84 @@
+  * Drivers" by Alessandro Rubini and Jonathan Corbet, published
+  * by O'Reilly & Associates.   No warranty is attached;
+  * we cannot take responsibility for errors or fitness for use.
++ *
++ *
++ * This copyright is for any changes whose history is known.
++ *
++ * Copyright (C) 2001-2003 Ilya Volynets
++ * Copyright (C) 2015 Joshua Kinard
++ *
++ *	This program is free software; you can redistribute it and/or
++ *	modify it under the terms of the GNU General Public License
++ *	as published by the Free Software Foundation; either version
++ *	2 of the License, or (at your option) any later version.
+  */
+ 
+ /* version dependencies have been confined to a separate file */
+ 
+ /* Tunable parameters */
+ #define TX_RING_ENTRIES 64	/* 64-512?*/
++#define RX_RING_ENTRIES 16	/* Do not change */
+ 
+-#define RX_RING_ENTRIES 16 /* Do not change */
+ /* Internal constants */
+ #define TX_RING_BUFFER_SIZE	(TX_RING_ENTRIES*sizeof(tx_packet))
+-#define RX_BUFFER_SIZE 1546 /* ethenet packet size */
+-#define METH_RX_BUFF_SIZE 4096
+-#define METH_RX_HEAD 34 /* status + 3 quad garbage-fill + 2 byte zero-pad */
+-#define RX_BUFFER_OFFSET (sizeof(rx_status_vector)+2) /* staus vector + 2 bytes of padding */
++#define RX_BUFFER_SIZE 1546			  /* ethernet pkt size */
++#define RX_BUFFER_OFFSET (sizeof(rx_status_vector) + 2) /* stauts vector +2 bytes of padding */
+ #define RX_BUCKET_SIZE 256
++#define METH_RX_BUFF_SIZE 4096
++
++/* status +
++ * 3 quad garbage-fill +
++ * 2 byte zero-pad
++ */
++#define METH_RX_HEAD 34
++
+ 
+ /* For more detailed explanations of what each field menas,
+-   see Nick's great comments to #defines below (or docs, if
+-   you are lucky enough toget hold of them :)*/
++ * see Nick's great comments to #defines below (or docs, if
++ * you are lucky enough toget hold of them :)
++ */
+ 
+ /* tx status vector is written over tx command header upon
+-   dma completion. */
+-
++ * dma completion.
++ */
+ typedef struct tx_status_vector {
+-	u64		sent:1; /* always set to 1...*/
+-	u64		pad0:34;/* always set to 0 */
+-	u64		flags:9;			/*I'm too lazy to specify each one separately at the moment*/
+-	u64		col_retry_cnt:4;	/*collision retry count*/
+-	u64		len:16;				/*Transmit length in bytes*/
++	u64	sent:1;			/* Always set to one */
++	u64	pad0:34;		/* Always filled with zeroes */
++	u64	drp_late_coll:1;	/* Tx dropped/late collision */
++	u64	can_xsv_defr:1;		/* Tx cancelled/excessive deferral */
++	u64	drp_xs_coll:1;		/* Tx dropped/excess collisions */
++	u64	abrt_underrun:1;	/* Tx aborted/underrun */
++	u64	abrt_xsv_len:1;		/* Tx aborted/excessive length */
++	u64	success:1;		/* Tx completed successfully */
++	u64	pkt_deferred:1;		/* Pkt deferred on at least one Tx attempt */
++	u64	crc_error:1;		/* CRC error on at least one Tx attempt */
++	u64	late_coll:1;		/* Late collision on at least one Tx attempt */
++	u64	col_retry_cnt:4;	/* Collision retry count */
++	u64	len:16;			/* Tx length in bytes */
+ } tx_status_vector;
+ 
+-/*
+- * Each packet is 128 bytes long.
++/* Each packet is 128 bytes long.
+  * It consists of header, 0-3 concatination
+  * buffer pointers and up to 120 data bytes.
+  */
+ typedef struct tx_packet_hdr {
+-	u64		pad1:36; /*should be filled with 0 */
+-	u64		cat_ptr3_valid:1,	/*Concatination pointer valid flags*/
+-			cat_ptr2_valid:1,
+-			cat_ptr1_valid:1;
+-	u64		tx_int_flag:1;		/*Generate TX intrrupt when packet has been sent*/
+-	u64		term_dma_flag:1;	/*Terminate transmit DMA on transmit abort conditions*/
+-	u64		data_offset:7;		/*Starting byte offset in ring data block*/
+-	u64		data_len:16;		/*Length of valid data in bytes-1*/
++	u64	pad1:36;		/* Should be filled with 0's */
++	u64	cat_ptr3_valid:1;	/* Concat pointer valid flags */
++	u64     cat_ptr2_valid:1;
++	u64     cat_ptr1_valid:1;
++	u64	tx_int_flag:1;		/* Gen Tx intr when pkt is sent */
++	u64	term_dma_flag:1;	/* Terminate tx DMA on tx abort cond */
++	u64	data_offset:7;		/* Start byte offset in ring data blk */
++	u64	data_len:16;		/* Len of valid data in bytes - 1 */
+ } tx_packet_hdr;
++
+ typedef union tx_cat_ptr {
+ 	struct {
+-		u64		pad2:16; /* should be 0 */
+-		u64		len:16;				/*length of buffer data - 1*/
+-		u64		start_addr:29;		/*Physical starting address*/
+-		u64		pad1:3; /* should be zero */
++		u64	pad2:16;	/* Should be 0 */
++		u64	len:16;		/* length of buffer data - 1 */
++		u64	start_addr:29;	/* Physical starting address */
++		u64	pad1:3;		/* Should be 0 */
+ 	} form;
+ 	u64 raw;
+ } tx_cat_ptr;
+@@ -114,7 +143,7 @@ typedef struct rx_packet {
+ 
+ 	/* Bits in METH_MAC */
+ 
+-#define SGI_MAC_RESET		BIT(0)	/* 0: MAC110 active in run mode, 1: Global reset signal to MAC110 core is active */
++#define METH_CORE_RESET		BIT(0)	/* 0: MAC110 active in run mode, 1: Global reset signal to MAC110 core is active */
+ #define METH_PHY_FDX		BIT(1) /* 0: Disable full duplex, 1: Enable full duplex */
+ #define METH_PHY_LOOP	BIT(2) /* 0: Normal operation, follows 10/100mbit and M10T/MII select, 1: loops internal MII bus */
+ 				       /*    selects ignored */

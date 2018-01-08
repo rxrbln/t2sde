@@ -1,0 +1,550 @@
+diff --git a/arch/mips/Kconfig.debug b/arch/mips/Kconfig.debug
+index 4f252b7b60cf..26e2b0452213 100644
+--- a/arch/mips/Kconfig.debug
++++ b/arch/mips/Kconfig.debug
+@@ -52,6 +52,19 @@ config EARLY_IMPACT_PRINTK
+ 	  for debugging purposes.  It is fixed at 1280x1024 resolution and
+ 	  overwrites top-to-bottom.  A solid red line indicates the last line
+ 	  of text written.
++
++config EARLY_ODYSSEY_PRINTK
++	bool "Early Odyssey printk" if EXPERT
++	depends on (SGI_IP30 || SGI_IP35) && EARLY_PRINTK
++	select FB_ODYSSEY_EARLY
++	select FONT_SUPPORT
++	select FONT_8x16
++	help
++	  This options enables utilizing the Odyssey as an early boot console
++	  for debugging purposes.  It is fixed at 1280x1024 resolution and
++	  overwrites top-to-bottom.  A solid red line indicates the last line
++	  of text written.
++
+ endchoice
+ 
+ config USE_GENERIC_EARLY_PRINTK_8250
+diff --git a/arch/mips/kernel/setup.c b/arch/mips/kernel/setup.c
+index 61d12babf4b5..344381da7adc 100644
+--- a/arch/mips/kernel/setup.c
++++ b/arch/mips/kernel/setup.c
+@@ -57,6 +57,10 @@ struct screen_info screen_info;
+ 	extern void setup_early_impact_printk(void);
+ #endif
+ 
++#if defined(CONFIG_EARLY_ODYSSEY_PRINTK)
++	extern void setup_early_odyssey_printk(void);
++#endif
++
+ /*
+  * Setup information
+  *
+@@ -963,6 +967,8 @@ void __init setup_arch(char **cmdline_p)
+ #ifdef CONFIG_EARLY_PRINTK
+ #if defined(CONFIG_EARLY_IMPACT_PRINTK)
+ 	setup_early_impact_printk();
++#elif defined(CONFIG_EARLY_ODYSSEY_PRINTK)
++	setup_early_odyssey_printk();
+ #else
+ 	setup_early_printk();
+ #endif
+diff --git a/arch/mips/sgi-common/Makefile b/arch/mips/sgi-common/Makefile
+index ff862b0c7abd..70499ee1c2ec 100644
+--- a/arch/mips/sgi-common/Makefile
++++ b/arch/mips/sgi-common/Makefile
+@@ -3,3 +3,4 @@
+ #
+ 
+ obj-$(CONFIG_EARLY_IMPACT_PRINTK)	+= impact-earlycon.o
++obj-$(CONFIG_EARLY_ODYSSEY_PRINTK)	+= odyssey-earlycon.o
+diff --git a/arch/mips/sgi-common/odyssey-earlycon.c b/arch/mips/sgi-common/odyssey-earlycon.c
+new file mode 100644
+index 000000000000..1267b430da97
+--- /dev/null
++++ b/arch/mips/sgi-common/odyssey-earlycon.c
+@@ -0,0 +1,45 @@
++/*
++ * Wrapper for an early console using the using the Odyssey Graphics Card
++ * as a debugging/early boot console.
++ *
++ * Copyright (c) 2004-2007 Stanislaw Skowronek
++ * Copyright (c) 2014 Joshua Kinard
++ */
++#include <linux/kernel.h>
++#include <linux/console.h>
++#include <linux/printk.h>
++#include <linux/init.h>
++
++#include <asm/setup.h>
++
++extern void odyssey_earlyinit(void);
++extern void odyssey_earlychar(u8 c, u32 f);
++extern struct console *early_console;
++
++static void
++early_odyssey_write(struct console *co, const char *s, u32 count)
++{
++	/* Do each character */
++	while (count--)
++		odyssey_earlychar(*s++, 0xa0a0a0);
++}
++
++static struct console
++early_odyssey_cons = {
++	.name			= "early_odyssey",
++	.write			= early_odyssey_write,
++	.flags			= CON_PRINTBUFFER | CON_BOOT,
++	.index			= -1,
++};
++
++void __init
++setup_early_odyssey_printk(void)
++{
++	if (early_console)
++		return;
++
++	odyssey_earlyinit();
++	early_console = &early_odyssey_cons;
++
++	register_console(&early_odyssey_cons);
++}
+diff --git a/drivers/video/fbdev/Kconfig b/drivers/video/fbdev/Kconfig
+index f8a5dda9e555..0e01ad7778cf 100644
+--- a/drivers/video/fbdev/Kconfig
++++ b/drivers/video/fbdev/Kconfig
+@@ -833,6 +833,10 @@ config FB_IMPACT
+ 	help
+ 	  SGI Impact (MardiGras/MGRAS) graphics card support.
+ 
++config FB_ODYSSEY_EARLY
++	bool
++	depends on (SGI_IP30 || SGI_IP35)
++
+ config FB_ODYSSEY
+ 	tristate "SGI Odyssey graphics support"
+ 	depends on FB && (SGI_IP30 || SGI_IP35)
+diff --git a/drivers/video/fbdev/Makefile b/drivers/video/fbdev/Makefile
+index b6c052461276..f2d7763d0f3c 100644
+--- a/drivers/video/fbdev/Makefile
++++ b/drivers/video/fbdev/Makefile
+@@ -132,6 +132,7 @@ obj-$(CONFIG_FB_SM712)		  += sm712fb.o
+ obj-$(CONFIG_FB_IMPACT)		  += impact.o
+ obj-$(CONFIG_FB_IMPACT_EARLY)	  += impact_early.o
+ obj-$(CONFIG_FB_ODYSSEY)	  += odyssey.o
++obj-$(CONFIG_FB_ODYSSEY_EARLY)	  += odyssey_early.o
+ 
+ # Platform or fallback drivers go here
+ obj-$(CONFIG_FB_UVESA)            += uvesafb.o
+diff --git a/drivers/video/fbdev/odyssey_early.c b/drivers/video/fbdev/odyssey_early.c
+new file mode 100644
+index 000000000000..a209f2b0149a
+--- /dev/null
++++ b/drivers/video/fbdev/odyssey_early.c
+@@ -0,0 +1,409 @@
++/*
++ * linux/drivers/video/odyssey_early.c
++ *  -- SGI Octane Odyssey (VPro) graphics
++ *
++ *  Copyright (c) 2004 by Stanislaw Skowronek
++ *  Copyright (c) 2011-14 by Joshua Kinard (Fixes, Maintenance)
++ *
++ *  Separated from linux/drivers/video/fbdev/odyssey.c
++ *
++ *  This driver provides direct access to the Odyssey hardware for
++ *  early_console support.  It can typically be initialized after the
++ *  CPU(s) have been setup, but before anything else, like IRQs.  Handy for
++ *  debugging core startup code on a machine as difficult as Octane.
++ *
++ *  When running, the driver will draw a solid red line across the screen
++ *  to denote the current output line.  It will scroll from top to the bottom
++ *  of the screen and then begin overwriting from the top again.
++ */
++
++#include <linux/module.h>
++#include <linux/kernel.h>
++#include <linux/errno.h>
++#include <linux/string.h>
++#include <linux/font.h>
++#include <linux/platform_device.h>
++
++#include <video/odyssey.h>
++
++#define MMIO_FIXED 0x900000001b000000
++
++static u32
++odyssey_early_ieee754_packed(int val)
++{
++	u32 sign, exp;
++
++	if (!val)
++		return 0;
++
++	sign = (val & 0x80000000);
++
++	if (sign)
++		val = -val;
++
++	if (val & 0xff000000)
++		return 0;
++
++	exp = 150;
++	while (!(val & 0x00800000)) {
++		val <<= 1;
++		exp--;
++	}
++
++	return (sign | (exp << 23) | (val & 0x007fffff));
++}
++
++static void
++odyssey_earlyflush(unsigned long mmio)
++{
++	odyssey_wait_cfifo(mmio);
++	ODY_CFIFO_W(mmio) = 0x00010443;
++	ODY_CFIFO_W(mmio) = 0x000000fa;
++	ODY_CFIFO_W(mmio) = 0x00010046;
++	ODY_CFIFO_W(mmio) = 0x00010046;
++	ODY_CFIFO_W(mmio) = 0x00010019;
++	ODY_CFIFO_W(mmio) = 0x00010443;
++	ODY_CFIFO_W(mmio) = 0x00000096;
++	ODY_CFIFO_W(mmio) = 0x00010046;
++	ODY_CFIFO_W(mmio) = 0x00010046;
++	ODY_CFIFO_W(mmio) = 0x00010046;
++	ODY_CFIFO_W(mmio) = 0x00010046;
++	ODY_CFIFO_W(mmio) = 0x00010443;
++	ODY_CFIFO_W(mmio) = 0x000000fa;
++	ODY_CFIFO_W(mmio) = 0x00010046;
++	ODY_CFIFO_W(mmio) = 0x00010046;
++}
++
++static void
++odyssey_earlysmallflush(unsigned long mmio)
++{
++	odyssey_wait_cfifo(mmio);
++	ODY_CFIFO_W(mmio) = 0x00010443;
++	ODY_CFIFO_W(mmio) = 0x000000fa;
++	ODY_CFIFO_W(mmio) = 0x00010046;
++	ODY_CFIFO_W(mmio) = 0x00010046;
++}
++
++static void
++odyssey_earlyrect(int x, int y, int w, int h, u32 c)
++{
++	ODY_CFIFO_W(MMIO_FIXED) = 0x00014400;		/* glBegin */
++	ODY_CFIFO_W(MMIO_FIXED) = 0x00000007;		/* GL_QUADS */
++	ODY_CFIFO_W(MMIO_FIXED) = 0xc580cc08;		/* glColor3ub */
++	ODY_CFIFO_W(MMIO_FIXED) = (c & 255);
++	ODY_CFIFO_W(MMIO_FIXED) = ((c >> 8) & 255);
++	ODY_CFIFO_W(MMIO_FIXED) = ((c >> 16) & 255);
++	ODY_CFIFO_W(MMIO_FIXED) = 0x8080c800;		/* glVertex2i */
++	ODY_CFIFO_W(MMIO_FIXED) = x;
++	ODY_CFIFO_W(MMIO_FIXED) = y;
++	ODY_CFIFO_W(MMIO_FIXED) = 0x8080c800;		/* glVertex2i */
++	ODY_CFIFO_W(MMIO_FIXED) = (x + w);
++	ODY_CFIFO_W(MMIO_FIXED) = y;
++	ODY_CFIFO_W(MMIO_FIXED) = 0x8080c800;		/* glVertex2i */
++	ODY_CFIFO_W(MMIO_FIXED) = (x + w);
++	ODY_CFIFO_W(MMIO_FIXED) = (y + h);
++	ODY_CFIFO_W(MMIO_FIXED) = 0x8080c800;		/* glVertex2i */
++	ODY_CFIFO_W(MMIO_FIXED) = x;
++	ODY_CFIFO_W(MMIO_FIXED) = (y + h);
++	ODY_CFIFO_W(MMIO_FIXED) = 0x00014001;		/* glEnd */
++	odyssey_earlysmallflush(MMIO_FIXED);
++}
++
++static void
++odyssey_earlypaintchar(int x, int y, u8 *b, u32 c, u32 a)
++{
++	int i, j;
++
++	odyssey_earlysmallflush(MMIO_FIXED);
++	ODY_CFIFO_W(MMIO_FIXED) = 0x00010405;
++	ODY_CFIFO_W(MMIO_FIXED) = 0x00002400;
++	ODY_CFIFO_W(MMIO_FIXED) = 0xc580cc08;
++	ODY_CFIFO_W(MMIO_FIXED) = 0x00000000;
++	ODY_CFIFO_W(MMIO_FIXED) = 0x00000000;
++	ODY_CFIFO_W(MMIO_FIXED) = 0x00000000;
++	ODY_CFIFO_W(MMIO_FIXED) = 0x00011453;
++	ODY_CFIFO_W(MMIO_FIXED) = 0x00000002;
++	ODY_CFIFO_W(MMIO_FIXED) = 0x00000000;
++	ODY_CFIFO_W(MMIO_FIXED) = 0x00000000;
++	ODY_CFIFO_W(MMIO_FIXED) = 0x00000000;
++	ODY_CFIFO_W(MMIO_FIXED) = 0x00000000;
++	odyssey_earlyflush(MMIO_FIXED);
++	ODY_CFIFO_W(MMIO_FIXED) = 0x2900812f;
++	ODY_CFIFO_W(MMIO_FIXED) = 0x00014400;
++	ODY_CFIFO_W(MMIO_FIXED) = 0x0000000a;
++	ODY_CFIFO_W(MMIO_FIXED) = 0xcf80a92f;
++	ODY_CFIFO_W(MMIO_FIXED) = 0x00000000;
++	ODY_CFIFO_W(MMIO_FIXED) = 0x00000000;
++	ODY_CFIFO_W(MMIO_FIXED) = 0x00000000;
++	ODY_CFIFO_W(MMIO_FIXED) = 0x00000000;
++	ODY_CFIFO_W(MMIO_FIXED) = odyssey_early_ieee754_packed(x);
++	ODY_CFIFO_W(MMIO_FIXED) = odyssey_early_ieee754_packed(y);
++	ODY_CFIFO_W(MMIO_FIXED) = 0x00000000;
++	ODY_CFIFO_W(MMIO_FIXED) = odyssey_early_ieee754_packed(x + 8);
++	ODY_CFIFO_W(MMIO_FIXED) = odyssey_early_ieee754_packed(y + 16);
++	ODY_CFIFO_W(MMIO_FIXED) = 0x00000000;
++	ODY_CFIFO_W(MMIO_FIXED) = 0x8080c800;
++	ODY_CFIFO_W(MMIO_FIXED) = 0x00000000;
++	ODY_CFIFO_W(MMIO_FIXED) = 0x00000000;
++	ODY_CFIFO_W(MMIO_FIXED) = 0x00004570;
++	ODY_CFIFO_W(MMIO_FIXED) = 0x0f00104c;
++	ODY_CFIFO_W(MMIO_FIXED) = 0x00000071;
++
++	for (j = 0; j < 16; j++) {
++		ODY_CFIFO_W(MMIO_FIXED) = 0x00004570;
++		ODY_CFIFO_W(MMIO_FIXED) = 0x0fd1104c;
++		ODY_CFIFO_W(MMIO_FIXED) = 0x00000071;
++		ODY_CFIFO_W(MMIO_FIXED) = 0x00016011;
++		for (i = 7; i >= 0; i--)
++			if ((b[j] >> i) & 1)
++				ODY_CFIFO_W(MMIO_FIXED) = c;
++			else
++				ODY_CFIFO_W(MMIO_FIXED) = a;
++	}
++
++	ODY_CFIFO_W(MMIO_FIXED) = 0x00014001;
++	odyssey_earlysmallflush(MMIO_FIXED);
++	ODY_CFIFO_W(MMIO_FIXED) = 0x290080d6;
++	ODY_CFIFO_W(MMIO_FIXED) = 0x00011453;
++	ODY_CFIFO_W(MMIO_FIXED) = 0x00000000;
++	ODY_CFIFO_W(MMIO_FIXED) = 0x00000000;
++	ODY_CFIFO_W(MMIO_FIXED) = 0x00000000;
++	ODY_CFIFO_W(MMIO_FIXED) = 0x00000000;
++	ODY_CFIFO_W(MMIO_FIXED) = 0x00000000;
++	ODY_CFIFO_W(MMIO_FIXED) = 0x00010405;
++	ODY_CFIFO_W(MMIO_FIXED) = 0x00002000;
++	odyssey_earlyflush(MMIO_FIXED);
++}
++
++static void __init
++odyssey_earlyhwinit(void)
++{
++	int x;
++	u32 i, v;
++
++	/* odyssey_initbuzzgfe */
++	ODY_CFIFO_W(MMIO_FIXED) = 0x20008003;
++	ODY_CFIFO_W(MMIO_FIXED) = 0x21008010;
++	ODY_CFIFO_W(MMIO_FIXED) = 0x22008000;
++	ODY_CFIFO_W(MMIO_FIXED) = 0x23008002;
++	ODY_CFIFO_W(MMIO_FIXED) = 0x2400800c;
++	ODY_CFIFO_W(MMIO_FIXED) = 0x2500800e;
++	ODY_CFIFO_W(MMIO_FIXED) = 0x27008000;
++	ODY_CFIFO_W(MMIO_FIXED) = 0x28008000;
++	ODY_CFIFO_W(MMIO_FIXED) = 0x290080d6;
++	ODY_CFIFO_W(MMIO_FIXED) = 0x2a0080e0;
++	ODY_CFIFO_W(MMIO_FIXED) = 0x2c0080ea;
++	ODY_CFIFO_W(MMIO_FIXED) = 0x2e008380;
++	ODY_CFIFO_W(MMIO_FIXED) = 0x2f008000;
++	ODY_CFIFO_W(MMIO_FIXED) = 0x30008000;
++	ODY_CFIFO_W(MMIO_FIXED) = 0x31008000;
++	ODY_CFIFO_W(MMIO_FIXED) = 0x32008000;
++	ODY_CFIFO_W(MMIO_FIXED) = 0x33008000;
++	ODY_CFIFO_W(MMIO_FIXED) = 0x34008000;
++	ODY_CFIFO_W(MMIO_FIXED) = 0x35008000;
++	ODY_CFIFO_W(MMIO_FIXED) = 0x310081e0;
++	odyssey_earlyflush(MMIO_FIXED);
++
++	/* odyssey_initbuzzxform */
++	ODY_CFIFO_W(MMIO_FIXED) = 0x9080bda2;
++	ODY_CFIFO_W(MMIO_FIXED) = 0x3f800000;
++	ODY_CFIFO_W(MMIO_FIXED) = 0x3f000000;
++	ODY_CFIFO_W(MMIO_FIXED) = 0xbf800000;
++	ODY_CFIFO_W(MMIO_FIXED) = 0x00000000;
++	ODY_CFIFO_W(MMIO_FIXED) = 0x4e000000;
++	ODY_CFIFO_W(MMIO_FIXED) = 0x40400000;
++	ODY_CFIFO_W(MMIO_FIXED) = 0x4e000000;
++	ODY_CFIFO_W(MMIO_FIXED) = 0x4d000000;
++	ODY_CFIFO_W(MMIO_FIXED) = 0x00000000;
++	ODY_CFIFO_W(MMIO_FIXED) = 0x00000000;
++	ODY_CFIFO_W(MMIO_FIXED) = 0x00000000;
++	ODY_CFIFO_W(MMIO_FIXED) = 0x00000000;
++	ODY_CFIFO_W(MMIO_FIXED) = 0x00000000;
++	ODY_CFIFO_W(MMIO_FIXED) = 0x00000000;
++	ODY_CFIFO_W(MMIO_FIXED) = 0x00000000;
++	ODY_CFIFO_W(MMIO_FIXED) = 0x00000000;
++	ODY_CFIFO_W(MMIO_FIXED) = 0x34008000;
++	ODY_CFIFO_W(MMIO_FIXED) = 0x9080bdc8;
++	ODY_CFIFO_W(MMIO_FIXED) = 0x3f800000;
++	ODY_CFIFO_W(MMIO_FIXED) = 0x00000000;
++	ODY_CFIFO_W(MMIO_FIXED) = 0x00000000;
++	ODY_CFIFO_W(MMIO_FIXED) = 0x3f000000;
++	ODY_CFIFO_W(MMIO_FIXED) = 0x00000000;
++	ODY_CFIFO_W(MMIO_FIXED) = 0x3f800000;
++	ODY_CFIFO_W(MMIO_FIXED) = 0x00000000;
++	ODY_CFIFO_W(MMIO_FIXED) = 0x3f000000;
++	ODY_CFIFO_W(MMIO_FIXED) = 0x00000000;
++	ODY_CFIFO_W(MMIO_FIXED) = 0x00000000;
++	ODY_CFIFO_W(MMIO_FIXED) = 0x3f800000;
++	ODY_CFIFO_W(MMIO_FIXED) = 0x00000000;
++	ODY_CFIFO_W(MMIO_FIXED) = 0x00000000;
++	ODY_CFIFO_W(MMIO_FIXED) = 0x00000000;
++	ODY_CFIFO_W(MMIO_FIXED) = 0x00000000;
++	ODY_CFIFO_W(MMIO_FIXED) = 0x3f800000;
++	ODY_CFIFO_W(MMIO_FIXED) = 0x34008010;
++	ODY_CFIFO_W(MMIO_FIXED) = 0x908091df;
++	ODY_CFIFO_W(MMIO_FIXED) = 0x00000000;
++	ODY_CFIFO_W(MMIO_FIXED) = 0x00000000;
++	ODY_CFIFO_W(MMIO_FIXED) = 0x00000000;
++	ODY_CFIFO_W(MMIO_FIXED) = 0x3f800000;
++	ODY_CFIFO_W(MMIO_FIXED) = 0x34008000;
++	odyssey_earlyflush(MMIO_FIXED);
++
++	/* odyssey_initbuzzrast */
++	ODY_CFIFO_W(MMIO_FIXED) = 0x0001203b;
++	ODY_CFIFO_W(MMIO_FIXED) = 0x00001000;
++	ODY_CFIFO_W(MMIO_FIXED) = 0x00000000;
++	ODY_CFIFO_W(MMIO_FIXED) = 0x00001000;
++	ODY_CFIFO_W(MMIO_FIXED) = 0x00000000;
++	ODY_CFIFO_W(MMIO_FIXED) = 0x00001000;
++	ODY_CFIFO_W(MMIO_FIXED) = 0x00000000;
++	ODY_CFIFO_W(MMIO_FIXED) = 0x00001000;
++	ODY_CFIFO_W(MMIO_FIXED) = 0x00000000;
++	ODY_CFIFO_W(MMIO_FIXED) = 0x0001084a;
++	ODY_CFIFO_W(MMIO_FIXED) = 0x00000080;
++	ODY_CFIFO_W(MMIO_FIXED) = 0x00000080;
++	ODY_CFIFO_W(MMIO_FIXED) = 0x00010845;
++	ODY_CFIFO_W(MMIO_FIXED) = 0x000000ff;
++	ODY_CFIFO_W(MMIO_FIXED) = 0x000076ff;
++	ODY_CFIFO_W(MMIO_FIXED) = 0x0001141b;
++	ODY_CFIFO_W(MMIO_FIXED) = 0x00000001;
++	ODY_CFIFO_W(MMIO_FIXED) = 0x00000000;
++	ODY_CFIFO_W(MMIO_FIXED) = 0x00000000;
++	ODY_CFIFO_W(MMIO_FIXED) = 0x00000000;
++	ODY_CFIFO_W(MMIO_FIXED) = 0x00000000;
++	ODY_CFIFO_W(MMIO_FIXED) = 0x00011c16;
++	ODY_CFIFO_W(MMIO_FIXED) = 0x00000000;
++	ODY_CFIFO_W(MMIO_FIXED) = 0x00000000;
++	ODY_CFIFO_W(MMIO_FIXED) = 0x00000000;
++	ODY_CFIFO_W(MMIO_FIXED) = 0x00000000;
++	ODY_CFIFO_W(MMIO_FIXED) = 0x03000000;
++	ODY_CFIFO_W(MMIO_FIXED) = 0x00000000;
++	ODY_CFIFO_W(MMIO_FIXED) = 0x00000000;
++	ODY_CFIFO_W(MMIO_FIXED) = 0x00010404;
++	ODY_CFIFO_W(MMIO_FIXED) = 0x00000000;
++	ODY_CFIFO_W(MMIO_FIXED) = 0x00011023;
++	ODY_CFIFO_W(MMIO_FIXED) = 0x00ff0ff0;
++	ODY_CFIFO_W(MMIO_FIXED) = 0x00ff0ff0;
++	ODY_CFIFO_W(MMIO_FIXED) = 0x00000000;
++	ODY_CFIFO_W(MMIO_FIXED) = 0x000000ff;
++	ODY_CFIFO_W(MMIO_FIXED) = 0x00011017;
++	ODY_CFIFO_W(MMIO_FIXED) = 0x00002000;
++	ODY_CFIFO_W(MMIO_FIXED) = 0x00000050;
++	ODY_CFIFO_W(MMIO_FIXED) = 0x20004950;
++	ODY_CFIFO_W(MMIO_FIXED) = 0x00000000;
++	ODY_CFIFO_W(MMIO_FIXED) = 0x0001204b;
++	ODY_CFIFO_W(MMIO_FIXED) = 0x00000000;
++	ODY_CFIFO_W(MMIO_FIXED) = 0x004ff3ff;
++	ODY_CFIFO_W(MMIO_FIXED) = 0x00ffffff;
++	ODY_CFIFO_W(MMIO_FIXED) = 0x00000000;
++	ODY_CFIFO_W(MMIO_FIXED) = 0x00ffffff;
++	ODY_CFIFO_W(MMIO_FIXED) = 0x00000000;
++	ODY_CFIFO_W(MMIO_FIXED) = 0x00ffffff;
++	ODY_CFIFO_W(MMIO_FIXED) = 0x00000000;
++	odyssey_earlyflush(MMIO_FIXED);
++
++	/* odyssey_initpbjvc */
++	odyssey_wait_dfifo(MMIO_FIXED, 0);
++	for (x = 0; x < 16; x++)
++		odyssey_dfifo_write(MMIO_FIXED, (0x2900 | x), 0x905215a6);
++
++	odyssey_wait_dfifo(MMIO_FIXED, 0);
++	for (x = 16; x < 32; x++)
++		odyssey_dfifo_write(MMIO_FIXED, (0x2900 | x), 0x905215a6);
++
++	odyssey_wait_dfifo(MMIO_FIXED, 0);
++	odyssey_dfifo_write(MMIO_FIXED, 0x2581, 0x00000000);
++
++
++	/* odyssey_initpbjgamma */
++	for (i = 0; i < 0x200; i++) {
++		if ((i & 15) == 0)
++			odyssey_wait_dfifo(MMIO_FIXED, 0);
++		v = (i >> 2);
++		v = ((v << 20) | (v << 10) | v);
++		odyssey_dfifo_write(MMIO_FIXED, (i + 0x1a00), v);
++	}
++
++	for (i = 0x200; i < 0x300; i++) {
++		if ((i & 15) == 0)
++			odyssey_wait_dfifo(MMIO_FIXED, 0);
++		v = (((i - 0x200) >> 1) + 0x80);
++		v = ((v << 20) | (v << 10) | v);
++		odyssey_dfifo_write(MMIO_FIXED, (i + 0x1a00), v);
++	}
++
++	for (i = 0x300; i < 0x600; i++) {
++		if ((i & 15) == 0)
++			odyssey_wait_dfifo(MMIO_FIXED, 0);
++		v = ((i - 0x300) + 0x100);
++		v = ((v << 20) | (v << 10) | v);
++		odyssey_dfifo_write(MMIO_FIXED, (i + 0x1a00), v);
++	}
++}
++
++static int posx = -1, posy;
++DEFINE_SPINLOCK(odyssey_earlylock);
++void
++odyssey_earlychar(u8 c, u32 f)
++{
++	unsigned long flags;
++
++	spin_lock_irqsave(&odyssey_earlylock, flags);
++
++	if (posx != -1) {
++		if (c == '\n') {
++			posy += 16;
++
++			if (posy >= 1024)
++				posy = 0;
++
++			posx = 0;
++		} else {
++			if (posx == 0) {
++				odyssey_earlyrect(0, posy, 1280, 16, 0x000000);
++				if ((posy + 16) < 1024)
++					odyssey_earlyrect(0, (posy + 16),
++							  1280, 2, 0x0000ff);
++			}
++
++			odyssey_earlypaintchar(posx, posy,
++					       (u8 *)font_vga_8x16.data +
++					       (c << 4), f, 0);
++			posx += 8;
++
++			if (posx >= 1280) {
++				posx = 0;
++				posy++;
++
++				if (posy >= 1024)
++					posy = 0;
++			}
++		}
++	}
++
++	spin_unlock_irqrestore(&odyssey_earlylock, flags);
++}
++
++void
++odyssey_earlystring(char *s, u32 f)
++{
++	while (*s)
++		odyssey_earlychar(*(s++), f);
++}
++
++void __init
++odyssey_earlyinit(void)
++{
++	odyssey_earlyhwinit();
++	odyssey_earlyrect(0, 0, 1280, 1024, 0);
++	posx = 0;
++	posy = 0;
++	odyssey_earlystring("Odyssey early console ready.\n", 0xffffff);
++}
++
++MODULE_AUTHOR("Stanislaw Skowronek <skylark@unaligned.org>");
++MODULE_AUTHOR("Joshua Kinard <kumba@gentoo.org>");
++MODULE_DESCRIPTION("SGI Odyssey (Buzz) Early Printk Driver");
++MODULE_LICENSE("GPL");
++MODULE_VERSION("0.42.1");
++MODULE_ALIAS("platform:odyssey_early");
