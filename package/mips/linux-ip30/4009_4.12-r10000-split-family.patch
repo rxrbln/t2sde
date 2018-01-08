@@ -1,0 +1,194 @@
+diff --git a/arch/mips/Kconfig b/arch/mips/Kconfig
+index 2828ecde133d..ece8607b4231 100644
+--- a/arch/mips/Kconfig
++++ b/arch/mips/Kconfig
+@@ -674,6 +674,7 @@ config SGI_IP27
+ 	select HW_HAS_PCI
+ 	select NR_CPUS_DEFAULT_64
+ 	select SYS_HAS_CPU_R10000
++	select SYS_HAS_CPU_R12K_R14K_R16K
+ 	select SYS_SUPPORTS_64BIT_KERNEL
+ 	select SYS_SUPPORTS_BIG_ENDIAN
+ 	select SYS_SUPPORTS_NUMA
+@@ -735,6 +736,7 @@ config SGI_IP32
+ 	select RM7000_CPU_SCACHE
+ 	select SYS_HAS_CPU_R5000
+ 	select SYS_HAS_CPU_R10000 if BROKEN
++	select SYS_HAS_CPU_R12K_R14K_R16K if BROKEN
+ 	select SYS_HAS_CPU_RM7000
+ 	select SYS_HAS_CPU_NEVADA
+ 	select SYS_SUPPORTS_64BIT_KERNEL
+@@ -1650,7 +1652,18 @@ config CPU_R10000
+ 	select CPU_SUPPORTS_HIGHMEM
+ 	select CPU_SUPPORTS_HUGEPAGES
+ 	help
+-	  MIPS Technologies R10000-series processors.
++	  MIPS Technologies R10000 processor.
++
++config CPU_R12K_R14K_R16K
++	bool "R12k/R14k/R16k"
++	depends on SYS_HAS_CPU_R12K_R14K_R16K
++	select CPU_HAS_PREFETCH
++	select CPU_SUPPORTS_32BIT_KERNEL
++	select CPU_SUPPORTS_64BIT_KERNEL
++	select CPU_SUPPORTS_HIGHMEM
++	select CPU_SUPPORTS_HUGEPAGES
++	help
++	  MIPS Technologies R12k/R14k/R16k-series processors.
+ 
+ config CPU_RM7000
+ 	bool "RM7000"
+@@ -1950,6 +1963,9 @@ config SYS_HAS_CPU_R8000
+ config SYS_HAS_CPU_R10000
+ 	bool
+ 
++config SYS_HAS_CPU_R12K_R14K_R16K
++	bool
++
+ config SYS_HAS_CPU_RM7000
+ 	bool
+ 
+@@ -2632,7 +2648,7 @@ config NODES_SHIFT
+ 
+ config HW_PERF_EVENTS
+ 	bool "Enable hardware performance counter support for perf events"
+-	depends on PERF_EVENTS && !OPROFILE && (CPU_MIPS32 || CPU_MIPS64 || CPU_R10000 || CPU_SB1 || CPU_CAVIUM_OCTEON || CPU_XLP || CPU_LOONGSON3)
++	depends on PERF_EVENTS && !OPROFILE && (CPU_MIPS32 || CPU_MIPS64 || CPU_R10000 || CPU_R12K_R14K_R16K || CPU_SB1 || CPU_CAVIUM_OCTEON || CPU_XLP || CPU_LOONGSON3)
+ 	default y
+ 	help
+ 	  Enable hardware performance counter support for perf events. If
+diff --git a/arch/mips/Makefile b/arch/mips/Makefile
+index 02a1787c888c..197f0b7b2f48 100644
+--- a/arch/mips/Makefile
++++ b/arch/mips/Makefile
+@@ -182,6 +182,9 @@ cflags-$(CONFIG_CPU_SB1)	+= $(call cc-option,-mno-mips3d)
+ cflags-$(CONFIG_CPU_R8000)	+= -march=r8000 -Wa,--trap
+ cflags-$(CONFIG_CPU_R10000)	+= $(call cc-option,-march=r10000,-march=r8000) \
+ 			-Wa,--trap
++cflags-$(CONFIG_CPU_R12K_R14K_R16K)	+= $(call cc-option,-march=r12000,-march=r8000) \
++			$(call cc-option,-mno-fix-r10000,) \
++			-Wa,--trap
+ cflags-$(CONFIG_CPU_CAVIUM_OCTEON) += $(call cc-option,-march=octeon) -Wa,--trap
+ ifeq (,$(findstring march=octeon, $(cflags-$(CONFIG_CPU_CAVIUM_OCTEON))))
+ cflags-$(CONFIG_CPU_CAVIUM_OCTEON) += -Wa,-march=octeon
+diff --git a/arch/mips/include/asm/cpu-type.h b/arch/mips/include/asm/cpu-type.h
+index bdd6dc18e65c..39eb8b03f797 100644
+--- a/arch/mips/include/asm/cpu-type.h
++++ b/arch/mips/include/asm/cpu-type.h
+@@ -165,6 +165,8 @@ static inline int __pure __get_cpu_type(const int cpu_type)
+ 
+ #ifdef CONFIG_SYS_HAS_CPU_R10000
+ 	case CPU_R10000:
++#endif
++#ifdef CONFIG_SYS_HAS_CPU_R12K_R14K_R16K
+ 	case CPU_R12000:
+ 	case CPU_R14000:
+ 	case CPU_R16000:
+diff --git a/arch/mips/include/asm/hazards.h b/arch/mips/include/asm/hazards.h
+index e0fecf206f2c..ee9003bf8ea1 100644
+--- a/arch/mips/include/asm/hazards.h
++++ b/arch/mips/include/asm/hazards.h
+@@ -157,7 +157,8 @@ do {									\
+ 
+ #elif defined(CONFIG_MIPS_ALCHEMY) || defined(CONFIG_CPU_CAVIUM_OCTEON) || \
+ 	defined(CONFIG_CPU_LOONGSON2) || defined(CONFIG_LOONGSON3_ENHANCEMENT) || \
+-	defined(CONFIG_CPU_R10000) || defined(CONFIG_CPU_R5500) || defined(CONFIG_CPU_XLR)
++	defined(CONFIG_CPU_R10000) || defined(CONFIG_CPU_R12K_R14K_R16K) || \
++	defined(CONFIG_CPU_R5500) || defined(CONFIG_CPU_XLR)
+ 
+ /*
+  * R10000 rocks - all hazards handled in hardware, so this becomes a nobrainer.
+diff --git a/arch/mips/include/asm/mach-ip27/war.h b/arch/mips/include/asm/mach-ip27/war.h
+index 4ee0e4bdf4fb..e901a816736a 100644
+--- a/arch/mips/include/asm/mach-ip27/war.h
++++ b/arch/mips/include/asm/mach-ip27/war.h
+@@ -18,7 +18,12 @@
+ #define MIPS_CACHE_SYNC_WAR		0
+ #define TX49XX_ICACHE_INDEX_INV_WAR	0
+ #define ICACHE_REFILLS_WORKAROUND_WAR	0
+-#define R10000_LLSC_WAR			1
+ #define MIPS34K_MISSED_ITLB_WAR		0
+ 
++#ifdef CONFIG_CPU_R10000
++#define R10000_LLSC_WAR			1
++#else
++#define R10000_LLSC_WAR			0
++#endif
++
+ #endif /* __ASM_MIPS_MACH_IP27_WAR_H */
+diff --git a/arch/mips/include/asm/module.h b/arch/mips/include/asm/module.h
+index 702c273e67a9..02aa2065dfcd 100644
+--- a/arch/mips/include/asm/module.h
++++ b/arch/mips/include/asm/module.h
+@@ -122,6 +122,8 @@ search_module_dbetables(unsigned long addr)
+ #define MODULE_PROC_FAMILY "R8000 "
+ #elif defined CONFIG_CPU_R10000
+ #define MODULE_PROC_FAMILY "R10000 "
++#elif defined CONFIG_CPU_R12K_R14K_R16K
++#define MODULE_PROC_FAMILY "R12K/R14K/R16K "
+ #elif defined CONFIG_CPU_RM7000
+ #define MODULE_PROC_FAMILY "RM7000 "
+ #elif defined CONFIG_CPU_SB1
+diff --git a/arch/mips/oprofile/Makefile b/arch/mips/oprofile/Makefile
+index 070afdb297df..050a44eff91f 100644
+--- a/arch/mips/oprofile/Makefile
++++ b/arch/mips/oprofile/Makefile
+@@ -11,6 +11,7 @@ oprofile-y				:= $(DRIVER_OBJS) common.o backtrace.o
+ oprofile-$(CONFIG_CPU_MIPS32)		+= op_model_mipsxx.o
+ oprofile-$(CONFIG_CPU_MIPS64)		+= op_model_mipsxx.o
+ oprofile-$(CONFIG_CPU_R10000)		+= op_model_mipsxx.o
++oprofile-$(CONFIG_CPU_R12K_R14K_R16K)	+= op_model_mipsxx.o
+ oprofile-$(CONFIG_CPU_SB1)		+= op_model_mipsxx.o
+ oprofile-$(CONFIG_CPU_XLR)		+= op_model_mipsxx.o
+ oprofile-$(CONFIG_CPU_LOONGSON2)	+= op_model_loongson2.o
+diff --git a/arch/mips/sgi-ip27/Platform b/arch/mips/sgi-ip27/Platform
+index 1fb9c2ea7c8f..4ad7060a33ac 100644
+--- a/arch/mips/sgi-ip27/Platform
++++ b/arch/mips/sgi-ip27/Platform
+@@ -6,14 +6,15 @@
+ # be 16kb aligned or the handling of the current variable will break.
+ #
+ ifdef CONFIG_SGI_IP27
+-platform-$(CONFIG_SGI_IP27)	+= sgi-ip27/
+-cflags-$(CONFIG_SGI_IP27)	+= -I$(srctree)/arch/mips/include/asm/mach-ip27
++platform-$(CONFIG_SGI_IP27)		+= sgi-ip27/
++cflags-$(CONFIG_SGI_IP27)		+= -I$(srctree)/arch/mips/include/asm/mach-ip27
++cflags-$(CONFIG_CPU_R12K_R14K_R16K)	+= -mno-fix-r10000
+ ifdef CONFIG_MAPPED_KERNEL
+-load-$(CONFIG_SGI_IP27)		+= 0xc00000004001c000
+-OBJCOPYFLAGS			:= --change-addresses=0x3fffffff80000000
+-dataoffset-$(CONFIG_SGI_IP27)	+= 0x01000000
++load-$(CONFIG_SGI_IP27)			+= 0xc00000004001c000
++OBJCOPYFLAGS				:= --change-addresses=0x3fffffff80000000
++dataoffset-$(CONFIG_SGI_IP27)		+= 0x01000000
+ else
+-load-$(CONFIG_SGI_IP27)		+= 0xa80000000001c000
+-OBJCOPYFLAGS			:= --change-addresses=0x57ffffff80000000
++load-$(CONFIG_SGI_IP27)			+= 0xa80000000001c000
++OBJCOPYFLAGS				:= --change-addresses=0x57ffffff80000000
+ endif
+ endif
+diff --git a/arch/mips/sgi-ip32/Platform b/arch/mips/sgi-ip32/Platform
+index 0fea556f3641..589930560088 100644
+--- a/arch/mips/sgi-ip32/Platform
++++ b/arch/mips/sgi-ip32/Platform
+@@ -8,4 +8,6 @@
+ #
+ platform-$(CONFIG_SGI_IP32)	+= sgi-ip32/
+ cflags-$(CONFIG_SGI_IP32)	+= -I$(srctree)/arch/mips/include/asm/mach-ip32
++cflags-$(CONFIG_CPU_R10000)		+= -mr10k-cache-barrier=load-store
++cflags-$(CONFIG_CPU_R12K_R14K_R16K)	+= -mno-fix-r10000 -mr10k-cache-barrier=load-store
+ load-$(CONFIG_SGI_IP32)		+= 0xffffffff80004000
+diff --git a/drivers/video/fbdev/gbefb.c b/drivers/video/fbdev/gbefb.c
+index 1a242b1338e9..4fd936ab20f8 100644
+--- a/drivers/video/fbdev/gbefb.c
++++ b/drivers/video/fbdev/gbefb.c
+@@ -45,7 +45,7 @@ struct gbefb_par {
+ 
+ /* macro for fastest write-though access to the framebuffer */
+ #ifdef CONFIG_MIPS
+-#ifdef CONFIG_CPU_R10000
++#if defined(CONFIG_CPU_R10000) || defined(CONFIG_CPU_R12K_R14K_R16K)
+ #define pgprot_fb(_prot) (((_prot) & (~_CACHE_MASK)) | _CACHE_UNCACHED_ACCELERATED)
+ #else
+ #define pgprot_fb(_prot) (((_prot) & (~_CACHE_MASK)) | _CACHE_CACHABLE_NO_WA)
