@@ -1,0 +1,303 @@
+diff --git a/arch/mips/include/asm/xtalk/xwidget.h b/arch/mips/include/asm/xtalk/xwidget.h
+index 9f71148f9ff4..cb0bf300b437 100644
+--- a/arch/mips/include/asm/xtalk/xwidget.h
++++ b/arch/mips/include/asm/xtalk/xwidget.h
+@@ -196,41 +196,257 @@ static const struct widget_ident __initconst widget_idents[] = {
+ 	}
+ };
+ 
+-/*
+- * according to the crosstalk spec, only 32-bits access to the widget
+- * configuration registers is allowed.	some widgets may allow 64-bits
+- * access but software should not depend on it.	 registers beyond the
+- * widget target flush register are widget dependent thus will not be
+- * defined here
++/* Common widget bits */
++#define XTALK_NODEV		0xffffffff
++
++/* Common Xbow bits */
++#define XBOW_REG_LINK_STAT_0	0x114
++#define XBOW_REG_LINK_BLK_SIZE	0x40
++#define XBOW_REG_LINK_ALIVE	0x80000000
++
++/**
++ * xwidget_platform_data - platform data for xtalk widgets.
++ * @nasid: signed short for the NUMA node ID.
++ * @masterwid: master xtalk widget for this xwidget (HUB, HEART, BEDROCK)
++ * @bridge_pdata: pointer to struct bridge_platform_data.
+  */
++struct xwidget_platform_data {
++	s16 nasid;
++	s8 masterwid;
++	struct bridge_platform_data *bridge_pdata;
++};
++
+ #ifndef __ASSEMBLY__
+-typedef u32 widgetreg_t;
+ 
+-/* widget configuration registers */
+-typedef volatile struct widget_cfg {
+-	widgetreg_t		w_pad_0;		/* 0x00 */
+-	widgetreg_t		w_id;			/* 0x04 */
+-	widgetreg_t		w_pad_1;		/* 0x08 */
+-	widgetreg_t		w_status;		/* 0x0c */
+-	widgetreg_t		w_pad_2;		/* 0x10 */
+-	widgetreg_t		w_err_upper_addr;	/* 0x14 */
+-	widgetreg_t		w_pad_3;		/* 0x18 */
+-	widgetreg_t		w_err_lower_addr;	/* 0x1c */
+-	widgetreg_t		w_pad_4;		/* 0x20 */
+-	widgetreg_t		w_control;		/* 0x24 */
+-	widgetreg_t		w_pad_5;		/* 0x28 */
+-	widgetreg_t		w_req_timeout;		/* 0x2c */
+-	widgetreg_t		w_pad_6;		/* 0x30 */
+-	widgetreg_t		w_intdest_upper_addr;	/* 0x34 */
+-	widgetreg_t		w_pad_7;		/* 0x38 */
+-	widgetreg_t		w_intdest_lower_addr;	/* 0x3c */
+-	widgetreg_t		w_pad_8;		/* 0x40 */
+-	widgetreg_t		w_err_cmd_word;		/* 0x44 */
+-	widgetreg_t		w_pad_9;		/* 0x48 */
+-	widgetreg_t		w_llp_cfg;		/* 0x4c */
+-	widgetreg_t		w_pad_10;		/* 0x50 */
+-	widgetreg_t		w_tflush;		/* 0x54 */
+-} widget_cfg_t;
++/* ----------------------------------------------------------------------- */
++
++
++/**
++ * union xbow_reg - 64-bit/32-bit access to Crossbow/XBOW registers.
++ * @q: 64-bit register access; uncommon, but may exist on certain widgets.
++ * @l.__pad: upper 32-bits of padding.
++ * @l.data: lower 32-bits of register data.
++ *
++ * Per the Crosstalk specification, all registers are 32-bits or less in size
++ * and are aligned to a 64-bit boundary.  Register data begins at bits 31:0
++ * and can only be accessed by a Crosstalk double-word packet type.
++ *
++ * However, some Crosstalk widgets may allow for 64-bit register access, so
++ * this union provides for a u64 data type specifically for these rare
++ * instances.
++ */
++union xbow_reg {
++	u64 q;			/* 64-bit access */
++	struct {
++		u32 __pad;	/* upper 32-bits padding */
++		u32 data;	/* lower 32-bits data */
++	} l;
++};
++
++
++/**
++ * struct xwidget_cmn_regs - Crosstalk common widget config registers.
++ * @id: widget ID.
++ * @status: widget 0 status (read-only).
++ * @err_upper: upper 32-bits of error address.
++ * @err_lower: lower 32-bits of error address.
++ * @wid_ctrl: widget 0 control.
++ * @pkt_timo: packet timeout.
++ * @int_upper: upper 32-bits of interrupt destination address.
++ * @int_lower: lower 32-bits of interrupt destination address.
++ * @err_cmdword: error command
++ * @llp_ctrl: Link Level Protocol (LLP) control.
++ * @stat_clr: widget 0 status (read & clear).
++ * @arb_reload: arbitration reload.
++ * @perf_ctr_a: perf counter A.
++ * @perf_ctr_b: perf counter B.
++ * @nic: Number-In-a-Can (NIC).
++ *
++ * Crossbow registers beyond the 'stat_clr' register are widget-dependent and
++ * were originally not specified.  However, this struct defines all registers
++ * up to offset 0x78.  Widget-specific code will need to rename the 'stat_clr'
++ * widget and beyond to whatever purpose it serves.  See asm/pci/bridge.h for
++ * example macros after the definition of 'struct bridge_regs'.
++ */
++struct xwidget_cmn_regs {
++	union xbow_reg id;		/* 0x00000000 */
++	union xbow_reg status;		/*	 +008 */
++	union xbow_reg err_upper;	/*	 +010 */
++	union xbow_reg err_lower;	/*	 +018 */
++	union xbow_reg wid_ctrl;	/*	 +020 */
++	union xbow_reg pkt_timo;	/*	 +028 */
++	union xbow_reg int_upper;	/*	 +030 */
++	union xbow_reg int_lower;	/*	 +038 */
++	union xbow_reg err_cmdword;	/*	 +040 */
++	union xbow_reg llp_ctrl;	/*	 +048 */
++	union xbow_reg stat_clr;	/*	 +050 */
++	union xbow_reg arb_reload;	/*	 +058 */
++	union xbow_reg perf_ctr_a;	/*	 +060 */
++	union xbow_reg perf_ctr_b;	/*	 +068 */
++	union xbow_reg nic;		/*	 +070 */
++};
++
++
++/**
++ * struct xwidget_link_regs - Crosstalk per-link widget registers.
++ * @ibuf_flush: link input buffer flush.
++ * @ctrl: link control.
++ * @status: link status (read-only).
++ * @arb_upper: upper 32-bits of link arbitration address.
++ * @arb_lower: lower 32-bits of link arbitration address.
++ * @stat_clr: link status (read & clear).
++ * @reset: link reset.
++ * @aux_stat: link auxiliary control.
++ *
++ * There are eight sets of these registers, starting at offset +0x100 in
++ * crosstalk address space.  Each set of registers is 0x40 in size.  They
++ * are labeled in hex as 'link 8' to 'link f', representing the eight
++ * possible crosstalk widgets per XBOW ASIC.
++ */
++struct xwidget_link_regs {
++	union xbow_reg ibuf_flush;	/* 0x0000 */
++	union xbow_reg ctrl;		/*    +08 */
++	union xbow_reg status;		/*    +10 */
++	union xbow_reg arb_upper;	/*    +18 */
++	union xbow_reg arb_lower;	/*    +20 */
++	union xbow_reg stat_clr;	/*    +28 */
++	union xbow_reg reset;		/*    +30 */
++	union xbow_reg aux_stat;	/*    +38 */
++};
++
++
++/**
++ * struct xwidget_regs - Crosstalk widget register access.
++ * @common: common widget registers.
++ * @link_8: link-specific widget registers for widget 0x8.
++ * @link_9: ... widget 0x9.
++ * @link_a: ... widget 0xa.
++ * @link_b: ... widget 0xb.
++ * @link_c: ... widget 0xc.
++ * @link_d: ... widget 0xd.
++ * @link_e: ... widget 0xe.
++ * @link_f: ... widget 0xf.
++ * @rsvd: reserved address space from 0x00000300 to 0x00ffffff.
++ */
++struct xwidget_regs {
++	struct xwidget_cmn_regs		common;	/* 0x00000000 */
++	struct xwidget_link_regs	link_8;	/* 0x00000100 */
++	struct xwidget_link_regs	link_9;	/* 0x00000140 */
++	struct xwidget_link_regs	link_a;	/* 0x00000180 */
++	struct xwidget_link_regs	link_b;	/* 0x000001c0 */
++	struct xwidget_link_regs	link_c;	/* 0x00000200 */
++	struct xwidget_link_regs	link_d;	/* 0x00000240 */
++	struct xwidget_link_regs	link_e;	/* 0x00000280 */
++	struct xwidget_link_regs	link_f;	/* 0x000002c0 */
++	u64 rsvd[0x1fffa0];			/* 0x00000300 */
++};
++
++/*
++ * Shortcut macros to access bits 31:0 of each Crosstalk common config
++ * registers.  They cannot be used by themselves, but must be accessed off of
++ * a defined 'struct xwidget_regs' variable.  64-bit access should access
++ * the 'q' member directly if needed.  Some known widgets (e.g. BRIDGE) use
++ * parts of this structure for its own widget register accesses.
++ */
++#define xw_id			common.id.l.data		/* ro */
++#define xw_status		common.status.l.data		/* ro */
++#define xw_err_upper		common.err_upper.l.data		/* ro */
++#define xw_err_lower		common.err_lower.l.data		/* ro */
++#define xw_wid_ctrl		common.wid_ctrl.l.data		/* rw */
++#define xw_pkt_timo		common.pkt_timo.l.data		/* rw */
++#define xw_int_upper		common.int_upper.l.data		/* rw */
++#define xw_int_lower		common.int_lower.l.data		/* rw */
++#define xw_err_cmdword		common.err_cmdword.l.data	/* rw */
++#define xw_llp_ctrl		common.llp_ctrl.l.data		/* rw */
++#define xw_stat_clr		common.stat_clr.l.data		/* ro/clr */
++#define xw_arb_reload		common.arb_reload.l.data	/* rw */
++#define xw_perf_ctr_a		common.perf_ctr_a.l.data	/* rw */
++#define xw_perf_ctr_b		common.perf_ctr_b.l.data	/* rw */
++#define xw_nic			common.nic.l.data		/* rw */
++
++/*
++ * Shortcut macros to access bits 31:0 of each Crosstalk link-specific config
++ * register.  They cannot be used by themselves, but must be accessed off of
++ * a defined 'struct xwidget_regs' variable.
++ */
++#define xw_link_8_ibuf_flush	link_8.ibuf_flush.l.data	/* ro */
++#define xw_link_8_ctrl		link_8.ctrl.l.data		/* rw */
++#define xw_link_8_status	link_8.status.l.data		/* ro */
++#define xw_link_8_arb_upper	link_8.arb_upper.l.data		/* rw */
++#define xw_link_8_arb_lower	link_8.arb_lower.l.data		/* rw */
++#define xw_link_8_stat_clr	link_8.stat_clr.l.data		/* ro/clr */
++#define xw_link_8_reset		link_8.reset.l.data		/* wo */
++#define xw_link_8_aux_stat	link_8.aux_stat.l.data		/* ro */
++
++#define xw_link_9_ibuf_flush	link_9.ibuf_flush.l.data	/* ro */
++#define xw_link_9_ctrl		link_9.ctrl.l.data		/* rw */
++#define xw_link_9_status	link_9.status.l.data		/* ro */
++#define xw_link_9_arb_upper	link_9.arb_upper.l.data		/* rw */
++#define xw_link_9_arb_lower	link_9.arb_lower.l.data		/* rw */
++#define xw_link_9_stat_clr	link_9.stat_clr.l.data		/* ro/clr */
++#define xw_link_9_reset		link_9.reset.l.data		/* wo */
++#define xw_link_9_aux_stat	link_9.aux_stat.l.data		/* ro */
++
++#define xw_link_a_ibuf_flush	link_a.ibuf_flush.l.data	/* ro */
++#define xw_link_a_ctrl		link_a.ctrl.l.data		/* rw */
++#define xw_link_a_status	link_a.status.l.data		/* ro */
++#define xw_link_a_arb_upper	link_a.arb_upper.l.data		/* rw */
++#define xw_link_a_arb_lower	link_a.arb_lower.l.data		/* rw */
++#define xw_link_a_stat_clr	link_a.stat_clr.l.data		/* ro/clr */
++#define xw_link_a_reset		link_a.reset.l.data		/* wo */
++#define xw_link_a_aux_stat	link_a.aux_stat.l.data		/* ro */
++
++#define xw_link_b_ibuf_flush	link_b.ibuf_flush.l.data	/* ro */
++#define xw_link_b_ctrl		link_b.ctrl.l.data		/* rw */
++#define xw_link_b_status	link_b.status.l.data		/* ro */
++#define xw_link_b_arb_upper	link_b.arb_upper.l.data		/* rw */
++#define xw_link_b_arb_lower	link_b.arb_lower.l.data		/* rw */
++#define xw_link_b_stat_clr	link_b.stat_clr.l.data		/* ro/clr */
++#define xw_link_b_reset		link_b.reset.l.data		/* wo */
++#define xw_link_b_aux_stat	link_b.aux_stat.l.data		/* ro */
++
++#define xw_link_c_ibuf_flush	link_c.ibuf_flush.l.data	/* ro */
++#define xw_link_c_ctrl		link_c.ctrl.l.data		/* rw */
++#define xw_link_c_status	link_c.status.l.data		/* ro */
++#define xw_link_c_arb_upper	link_c.arb_upper.l.data		/* rw */
++#define xw_link_c_arb_lower	link_c.arb_lower.l.data		/* rw */
++#define xw_link_c_stat_clr	link_c.stat_clr.l.data		/* ro/clr */
++#define xw_link_c_reset		link_c.reset.l.data		/* wo */
++#define xw_link_c_aux_stat	link_c.aux_stat.l.data		/* ro */
++
++#define xw_link_d_ibuf_flush	link_d.ibuf_flush.l.data	/* ro */
++#define xw_link_d_ctrl		link_d.ctrl.l.data		/* rw */
++#define xw_link_d_status	link_d.status.l.data		/* ro */
++#define xw_link_d_arb_upper	link_d.arb_upper.l.data		/* rw */
++#define xw_link_d_arb_lower	link_d.arb_lower.l.data		/* rw */
++#define xw_link_d_stat_clr	link_d.stat_clr.l.data		/* ro/clr */
++#define xw_link_d_reset		link_d.reset.l.data		/* wo */
++#define xw_link_d_aux_stat	link_d.aux_stat.l.data		/* ro */
++
++#define xw_link_e_ibuf_flush	link_e.ibuf_flush.l.data	/* ro */
++#define xw_link_e_ctrl		link_e.ctrl.l.data		/* rw */
++#define xw_link_e_status	link_e.status.l.data		/* ro */
++#define xw_link_e_arb_upper	link_e.arb_upper.l.data		/* rw */
++#define xw_link_e_arb_lower	link_e.arb_lower.l.data		/* rw */
++#define xw_link_e_stat_clr	link_e.stat_clr.l.data		/* ro/clr */
++#define xw_link_e_reset		link_e.reset.l.data		/* wo */
++#define xw_link_e_aux_stat	link_e.aux_stat.l.data		/* ro */
++
++#define xw_link_f_ibuf_flush	link_f.ibuf_flush.l.data	/* ro */
++#define xw_link_f_ctrl		link_f.ctrl.l.data		/* rw */
++#define xw_link_f_status	link_f.status.l.data		/* ro */
++#define xw_link_f_arb_upper	link_f.arb_upper.l.data		/* rw */
++#define xw_link_f_arb_lower	link_f.arb_lower.l.data		/* rw */
++#define xw_link_f_stat_clr	link_f.stat_clr.l.data		/* ro/clr */
++#define xw_link_f_reset		link_f.reset.l.data		/* wo */
++#define xw_link_f_aux_stat	link_f.aux_stat.l.data		/* ro */
++
++
++
++/* ----------------------------------------------------------------------- */
++/* XXX: Old/pre-existing Crosstalk data types.  Keep/rewrite later. */
++
++typedef u32 widgetreg_t;
+ 
+ typedef struct {
+ 	unsigned int	didn:4;
+@@ -274,6 +490,8 @@ typedef struct xwidget_hwid_s {
+ 	((hwid2)->mfg_num == XWIDGET_MFG_NUM_NONE) || \
+ 	((hwid1)->mfg_num == (hwid2)->mfg_num)))
+ 
++/* ----------------------------------------------------------------------- */
++
+ #endif /* !__ASSEMBLY__ */
+ 
+ #endif /* _ASM_XTALK_XWIDGET_H */

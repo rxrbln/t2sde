@@ -1,0 +1,514 @@
+diff --git a/drivers/rtc/rtc-m48t35.c b/drivers/rtc/rtc-m48t35.c
+index 810f4ea481e4..23136ec6bfab 100644
+--- a/drivers/rtc/rtc-m48t35.c
++++ b/drivers/rtc/rtc-m48t35.c
+@@ -14,41 +14,56 @@
+  * option) any later version.
+  */
+ 
+-#include <linux/module.h>
+-#include <linux/rtc.h>
+-#include <linux/slab.h>
+-#include <linux/platform_device.h>
+ #include <linux/bcd.h>
+ #include <linux/io.h>
+-#include <linux/err.h>
+-
+-struct m48t35_rtc {
+-	u8	pad[0x7ff8];    /* starts at 0x7ff8 */
+-	u8	control;
+-	u8	sec;
+-	u8	min;
+-	u8	hour;
+-	u8	day;
+-	u8	date;
+-	u8	month;
+-	u8	year;
+-};
++#include <linux/module.h>
++#include <linux/platform_device.h>
++#include <linux/rtc.h>
++#include <linux/rtc/m48t35.h>
+ 
+-#define M48T35_RTC_SET		0x80
+-#define M48T35_RTC_READ		0x40
+ 
+-struct m48t35_priv {
+-	struct rtc_device *rtc;
+-	struct m48t35_rtc __iomem *reg;
+-	size_t size;
+-	unsigned long baseaddr;
+-	spinlock_t lock;
+-};
++/* ----------------------------------------------------------------------- */
++/* Standard read/write functions if platform does not provide overrides */
++
++/**
++ * m48t35_read - read a value from an rtc register.
++ * @rtc: pointer to the m48t35 rtc structure.
++ * @reg: the register address to read.
++ */
++static u8
++m48t35_read(struct m48t35_priv *rtc, int reg)
++{
++	return readb((u8 __iomem *)rtc->regs + reg);
++}
++
++/**
++ * m48t35_write - write a value to an rtc register.
++ * @rtc: pointer to the m48t35 rtc structure.
++ * @reg: the register address to write.
++ * @value: value to write to the register.
++ */
++static void
++m48t35_write(struct m48t35_priv *rtc, int reg, u8 value)
++{
++	writeb(value, ((u8 __iomem *)rtc->regs + reg));
++}
++/* ----------------------------------------------------------------------- */
+ 
+-static int m48t35_read_time(struct device *dev, struct rtc_time *tm)
++
++/* ----------------------------------------------------------------------- */
++/* Read/Set Time & Alarm functions */
++
++/**
++ * m48t35_rtc_read_time - reads the time registers.
++ * @dev: pointer to device structure.
++ * @tm: pointer to rtc_time structure.
++ */
++static int
++m48t35_rtc_read_time(struct device *dev, struct rtc_time *tm)
+ {
+-	struct m48t35_priv *priv = dev_get_drvdata(dev);
+-	u8 control;
++	struct platform_device *pdev = to_platform_device(dev);
++	struct m48t35_priv *rtc = platform_get_drvdata(pdev);
++	u8 ctrl;
+ 
+ 	/*
+ 	 * Only the values that we read from the RTC are set. We leave
+@@ -56,17 +71,17 @@ static int m48t35_read_time(struct device *dev, struct rtc_time *tm)
+ 	 * RTC has RTC_DAY_OF_WEEK, we ignore it, as it is only updated
+ 	 * by the RTC when initially set to a non-zero value.
+ 	 */
+-	spin_lock_irq(&priv->lock);
+-	control = readb(&priv->reg->control);
+-	writeb(control | M48T35_RTC_READ, &priv->reg->control);
+-	tm->tm_sec = readb(&priv->reg->sec);
+-	tm->tm_min = readb(&priv->reg->min);
+-	tm->tm_hour = readb(&priv->reg->hour);
+-	tm->tm_mday = readb(&priv->reg->date);
+-	tm->tm_mon = readb(&priv->reg->month);
+-	tm->tm_year = readb(&priv->reg->year);
+-	writeb(control, &priv->reg->control);
+-	spin_unlock_irq(&priv->lock);
++	spin_lock_irq(&rtc->lock);
++	ctrl = rtc->read(rtc, RTC_CTRL);
++	rtc->write(rtc, RTC_CTRL, (ctrl | RTC_CTRL_R));
++	tm->tm_sec = rtc->read(rtc, RTC_SECS);
++	tm->tm_min = rtc->read(rtc, RTC_MINS);
++	tm->tm_hour = rtc->read(rtc, RTC_HRS);
++	tm->tm_mday = rtc->read(rtc, RTC_MDAY);
++	tm->tm_mon = rtc->read(rtc, RTC_MONTH);
++	tm->tm_year = rtc->read(rtc, RTC_YEAR);
++	rtc->write(rtc, RTC_CTRL, ctrl);
++	spin_unlock_irq(&rtc->lock);
+ 
+ 	tm->tm_sec = bcd2bin(tm->tm_sec);
+ 	tm->tm_min = bcd2bin(tm->tm_min);
+@@ -82,110 +97,217 @@ static int m48t35_read_time(struct device *dev, struct rtc_time *tm)
+ 	tm->tm_year += 70;
+ 	if (tm->tm_year <= 69)
+ 		tm->tm_year += 100;
++	tm->tm_mon--;  /* tm_mon starts at zero */
+ 
+-	tm->tm_mon--;
+ 	return rtc_valid_tm(tm);
+ }
+ 
+-static int m48t35_set_time(struct device *dev, struct rtc_time *tm)
++/**
++ * m48t35_rtc_set_time - sets the time registers.
++ * @dev: pointer to device structure.
++ * @tm: pointer to rtc_time structure.
++ */
++static int
++m48t35_rtc_set_time(struct device *dev, struct rtc_time *tm)
+ {
+-	struct m48t35_priv *priv = dev_get_drvdata(dev);
+-	unsigned char mon, day, hrs, min, sec;
+-	unsigned int yrs;
+-	u8 control;
+-
+-	yrs = tm->tm_year + 1900;
+-	mon = tm->tm_mon + 1;   /* tm_mon starts at zero */
+-	day = tm->tm_mday;
+-	hrs = tm->tm_hour;
+-	min = tm->tm_min;
+-	sec = tm->tm_sec;
+-
+-	if (yrs < 1970)
+-		return -EINVAL;
++	struct platform_device *pdev = to_platform_device(dev);
++	struct m48t35_priv *rtc = platform_get_drvdata(pdev);
++	u8 ctrl, seconds, minutes, hours, mday, month;
++	u32 years;
+ 
+-	yrs -= 1970;
+-	if (yrs > 255)    /* They are unsigned */
+-		return -EINVAL;
++	years = (tm->tm_year + 1900);
++	month = (tm->tm_mon + 1);  /* tm_mon starts at zero */
++	mday = tm->tm_mday;
++	hours = tm->tm_hour;
++	minutes = tm->tm_min;
++	seconds = tm->tm_sec;
++
++	/*
++	 * Perform Sanity Checks:
++	 *   - Months: !> 12, Month Day != 0.
++	 *   - Month Day !> Max days in current month.
++	 *   - Hours !>= 24, Mins !>= 60, Secs !>= 60, & Weekday !> 7.
++	 */
++	if ((tm->tm_mon > 11) || (mday == 0))
++		return -EDOM;
++
++	if (tm->tm_mday > rtc_month_days(tm->tm_mon, tm->tm_year))
++		return -EDOM;
++
++	if ((tm->tm_hour >= 24) || (tm->tm_min >= 60) || (tm->tm_sec >= 60))
++		return -EDOM;
++
++	if (years < 1970)
++		return -EDOM;
+ 
+-	if (yrs > 169)
++	years -= 1970;
++	if (years > 255)    /* They are unsigned */
+ 		return -EINVAL;
+ 
+-	if (yrs >= 100)
+-		yrs -= 100;
+-
+-	sec = bin2bcd(sec);
+-	min = bin2bcd(min);
+-	hrs = bin2bcd(hrs);
+-	day = bin2bcd(day);
+-	mon = bin2bcd(mon);
+-	yrs = bin2bcd(yrs);
+-
+-	spin_lock_irq(&priv->lock);
+-	control = readb(&priv->reg->control);
+-	writeb(control | M48T35_RTC_SET, &priv->reg->control);
+-	writeb(yrs, &priv->reg->year);
+-	writeb(mon, &priv->reg->month);
+-	writeb(day, &priv->reg->date);
+-	writeb(hrs, &priv->reg->hour);
+-	writeb(min, &priv->reg->min);
+-	writeb(sec, &priv->reg->sec);
+-	writeb(control, &priv->reg->control);
+-	spin_unlock_irq(&priv->lock);
++	if (years > 169)
++		return -EDOM;
++
++	if (years >= 100)
++		years -= 100;
++
++	seconds = bin2bcd(seconds);
++	minutes = bin2bcd(minutes);
++	hours = bin2bcd(hours);
++	mday = bin2bcd(mday);
++	month = bin2bcd(month);
++	years = bin2bcd(years);
++
++	spin_lock_irq(&rtc->lock);
++	ctrl = rtc->read(rtc, RTC_CTRL);
++	rtc->write(rtc, RTC_CTRL, (ctrl | RTC_CTRL_W));
++	rtc->write(rtc, RTC_SECS, seconds);
++	rtc->write(rtc, RTC_MINS, minutes);
++	rtc->write(rtc, RTC_HRS, hours);
++	rtc->write(rtc, RTC_MDAY, mday);
++	rtc->write(rtc, RTC_MONTH, month);
++	rtc->write(rtc, RTC_YEAR, years);
++	rtc->write(rtc, RTC_CTRL, ctrl);
++	spin_unlock_irq(&rtc->lock);
++
+ 	return 0;
+ }
++/* ----------------------------------------------------------------------- */
+ 
+-static const struct rtc_class_ops m48t35_ops = {
+-	.read_time	= m48t35_read_time,
+-	.set_time	= m48t35_set_time,
++
++/* ----------------------------------------------------------------------- */
++/* RTC Class operations */
++
++static const struct rtc_class_ops m48t35_rtc_ops = {
++	.read_time	= m48t35_rtc_read_time,
++	.set_time	= m48t35_rtc_set_time,
+ };
++/* ----------------------------------------------------------------------- */
++
++
++/* ----------------------------------------------------------------------- */
++/* Driver Probe/Removal */
+ 
+-static int m48t35_probe(struct platform_device *pdev)
++/**
++ * m48t35_rtc_probe - initializes rtc driver.
++ * @pdev: pointer to platform_device structure.
++ */
++static int m48t35_rtc_probe(struct platform_device *pdev)
+ {
++	struct m48t35_priv *rtc;
++	struct m48t35_rtc_platform_data *pdata;
+ 	struct resource *res;
+-	struct m48t35_priv *priv;
++	u8 secs;
++
++	/* Get the platform data. */
++	pdata = (struct m48t35_rtc_platform_data *) pdev->dev.platform_data;
++	if (!pdata)
++		return -ENODEV;
++
++	/* Allocate memory for the rtc device. */
++	rtc = devm_kzalloc(&pdev->dev, sizeof(struct m48t35_priv), GFP_KERNEL);
++	if (!rtc)
++		return -ENOMEM;
+ 
++	/* Get the platform resources. */
+ 	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
+ 	if (!res)
+ 		return -ENODEV;
+-	priv = devm_kzalloc(&pdev->dev, sizeof(struct m48t35_priv), GFP_KERNEL);
+-	if (!priv)
+-		return -ENOMEM;
++	rtc->size = resource_size(res);
++
++	/* Request a memory region s the platform supports it. */
++	if (pdata->req_mem_region)
++		if (!devm_request_mem_region(&pdev->dev, res->start, rtc->size,
++					     pdev->name))
++			return -EBUSY;
++	rtc->req_mem_region = pdata->req_mem_region;
+ 
+-	priv->size = resource_size(res);
+ 	/*
+-	 * kludge: remove the #ifndef after ioc3 resource
+-	 * conflicts are resolved
++	 * Set the base address for the rtc, and ioremap its
++	 * registers.
+ 	 */
+-#ifndef CONFIG_SGI_IP27
+-	if (!devm_request_mem_region(&pdev->dev, res->start, priv->size,
+-				     pdev->name))
+-		return -EBUSY;
+-#endif
+-	priv->baseaddr = res->start;
+-	priv->reg = devm_ioremap(&pdev->dev, priv->baseaddr, priv->size);
+-	if (!priv->reg)
++	rtc->baseaddr = res->start;
++	rtc->regs = devm_ioremap(&pdev->dev, res->start, rtc->size);
++	if (!rtc->regs)
+ 		return -ENOMEM;
+ 
+-	spin_lock_init(&priv->lock);
++	/* Assign the read function, if defined, else use the default. */
++	if (pdata->plat_read)
++		rtc->read = pdata->plat_read;
++	else
++		rtc->read = m48t35_read;
++
++	/* Assign the write function, if defined, else use the default. */
++	if (pdata->plat_write)
++		rtc->write = pdata->plat_write;
++	else
++		rtc->write = m48t35_write;
+ 
+-	platform_set_drvdata(pdev, priv);
++	/* Init the spinlock & set the driver data. */
++	spin_lock_init(&rtc->lock);
++	platform_set_drvdata(pdev, rtc);
+ 
+-	priv->rtc = devm_rtc_device_register(&pdev->dev, "m48t35",
+-				  &m48t35_ops, THIS_MODULE);
+-	return PTR_ERR_OR_ZERO(priv->rtc);
++	/* Turn the oscillator on if is not already on (ST = 0). */
++	secs = rtc->read(rtc, RTC_SECS);
++	if (secs & RTC_SECS_ST)
++		secs &= ~(RTC_SECS_ST);
++
++	/* Register the device as an RTC. */
++	rtc->dev = devm_rtc_device_register(&pdev->dev, "m48t35",
++					    &m48t35_rtc_ops, THIS_MODULE);
++
++	return PTR_ERR_OR_ZERO(rtc->dev);
+ }
+ 
++/**
++ * m48t35_rtc_remove - removes rtc driver.
++ * @pdev: pointer to platform_device structure.
++ */
++static int
++m48t35_rtc_remove(struct platform_device *pdev)
++{
++	struct m48t35_priv *rtc = platform_get_drvdata(pdev);
++
++	devm_rtc_device_unregister(&pdev->dev, rtc->dev);
++
++	return 0;
++}
++
++/**
++ * m48t35_rtc_driver - rtc driver properties.
++ */
+ static struct platform_driver m48t35_platform_driver = {
+ 	.driver		= {
+ 		.name	= "rtc-m48t35",
+ 	},
+-	.probe		= m48t35_probe,
++	.probe		= m48t35_rtc_probe,
++	.remove		= m48t35_rtc_remove,
+ };
+ 
+-module_platform_driver(m48t35_platform_driver);
++/**
++ * m48t35_rtc_init - rtc module init.
++ */
++static int __init
++m48t35_rtc_init(void)
++{
++	return platform_driver_register(&m48t35_platform_driver);
++}
++
++/**
++ * m48t35_rtc_exit - rtc module exit.
++ */
++static void __exit
++m48t35_rtc_exit(void)
++{
++	platform_driver_unregister(&m48t35_platform_driver);
++}
++
++module_init(m48t35_rtc_init);
++module_exit(m48t35_rtc_exit);
++/* ----------------------------------------------------------------------- */
++
+ 
+ MODULE_AUTHOR("Thomas Bogendoerfer <tsbogend@alpha.franken.de>");
+-MODULE_DESCRIPTION("M48T35 RTC driver");
++MODULE_AUTHOR("Joshua Kinard <kumba@gentoo.org>");
++MODULE_DESCRIPTION("SGS-Thomson M48T35 RTC driver");
+ MODULE_LICENSE("GPL");
+ MODULE_ALIAS("platform:rtc-m48t35");
+diff --git a/include/linux/rtc/m48t35.h b/include/linux/rtc/m48t35.h
+new file mode 100644
+index 000000000000..8ad50a05bac8
+--- /dev/null
++++ b/include/linux/rtc/m48t35.h
+@@ -0,0 +1,103 @@
++/*
++ * Definitions for the registers, addresses, and platform data of the
++ * SGS-Thomson M48T35 Timekeeper RAM chip.
++ *
++ * Copyright (C) 2000 Silicon Graphics, Inc.
++ * Written by Ulf Carlsson (ulfc@engr.sgi.com)
++ *
++ * Copyright (C) 2008 Thomas Bogendoerfer
++ * Copyright (C) 2014 Joshua Kinard <kumba@gentoo.org>.
++ *
++ * Based on code written by Paul Gortmaker.
++ *
++ * References:
++ *    M48T35/M48T35Y 5V, 256Kb (32Kb x8) TIMEKEEPER SRAM, Doc ID 2611, Rev 10.
++ *
++ * This program is free software; you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License version 2 as
++ * published by the Free Software Foundation.
++ */
++
++#ifndef _LINUX_RTC_M48T35_H_
++#define _LINUX_RTC_M48T35_H_
++
++#include <linux/rtc.h>
++#include <linux/platform_device.h>
++
++/**
++ * struct m48t35_priv - M48T35 private data structure.
++ * @dev: pointer to the rtc_device structure.
++ * @regs: iomapped base address pointer of the RTC registers.
++ * @baseaddr: base address of the RTC device.
++ * @size: resource size.
++ * @lock: private lock variable for spin locking/unlocking.
++ * @req_mem_region: bool to call devm_request_mem_region or not.
++ * @read: pointer to platform read rtc function.
++ * @write: pointer to platform write rtc function.
++ */
++struct m48t35_priv {
++	struct rtc_device *dev;
++	void __iomem *regs;
++	resource_size_t baseaddr;
++	size_t size;
++	spinlock_t lock;
++	bool req_mem_region;
++	u8 (*read)(struct m48t35_priv *, int);
++	void (*write)(struct m48t35_priv *, int, u8);
++};
++
++
++/**
++ * struct m48t35_rtc_platform_data - platform data structure.
++ * @req_mem_region: platform-specific bool to call devm_request_mem_region.
++ * @plat_read: platform-specific read rtc function.
++ * @plat_write: platform-specific write rtc function.
++ *
++ */
++struct m48t35_rtc_platform_data {
++	const bool req_mem_region;
++	u8 (*plat_read)(struct m48t35_priv *, int);
++	void (*plat_write)(struct m48t35_priv *, int, u8);
++};
++
++
++/*
++ * RTC Registers.
++ */
++#define RTC_CTRL		0x7ff8
++#define RTC_SECS		0x7ff9	/* Seconds 00-59 */
++#define RTC_MINS		0x7ffa	/* Minutes 00-59 */
++#define RTC_HRS			0x7ffb	/* Hours 00-23 */
++#define RTC_WDAY		0x7ffc	/* Day of Week 01-07 / Century bit */
++#define RTC_MDAY		0x7ffd	/* Day of Month 01-31 */
++#define RTC_MONTH		0x7ffe	/* Month 01-12 */
++#define RTC_YEAR		0x7fff	/* Year 00-99 */
++
++/*
++ * Bit masks for the Time registers.
++ */
++#define RTC_SECS_MASK		0x7f	/* - x x x x x x x */
++#define RTC_MINS_MASK		0x7f	/* - x x x x x x x */
++#define RTC_HRS_MASK		0x3f	/* - - x x x x x x */
++#define RTC_WDAY_MASK		0x07	/* - - - - - x x x */
++#define RTC_MDAY_MASK		0x3f	/* - - x x x x x x */
++#define RTC_MONTH_MASK		0x1f	/* - - - x x x x x */
++#define RTC_YEAR_MASK		0xff	/* x x x x x x x x */
++
++/*
++ * Bit names for the Control Register.
++ */
++#define RTC_CTRL_W		BIT(7)	/* Write bit */
++#define RTC_CTRL_R		BIT(6)	/* Read bit */
++#define RTC_CTRL_S		BIT(5)	/* Sign bit */
++#define RTC_CTRL_CALIBRATE_MASK	0x1f	/* Calibration bits*/
++
++/*
++ * Bit names for other misc bits.
++ */
++#define RTC_SECS_ST		BIT(7)	/* Stop bit */
++#define RTC_WDAY_FT		BIT(6)	/* Frequency test bit */
++#define RTC_WDAY_CEB		BIT(5)	/* Century enable bit */
++#define RTC_WDAY_CB		BIT(4)	/* Century bit */
++
++#endif /* _LINUX_RTC_M48T35_H_ */

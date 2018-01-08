@@ -1,0 +1,6173 @@
+diff --git a/arch/mips/Kbuild.platforms b/arch/mips/Kbuild.platforms
+index f5f1bdb292de..5462ce27adbc 100644
+--- a/arch/mips/Kbuild.platforms
++++ b/arch/mips/Kbuild.platforms
+@@ -29,6 +29,7 @@ platforms += ralink
+ platforms += rb532
+ platforms += sgi-ip22
+ platforms += sgi-ip27
++platforms += sgi-ip30
+ platforms += sgi-ip32
+ platforms += sibyte
+ platforms += sni
+diff --git a/arch/mips/Kconfig b/arch/mips/Kconfig
+index d5acc2995a0a..eb18939f7188 100644
+--- a/arch/mips/Kconfig
++++ b/arch/mips/Kconfig
+@@ -721,6 +721,33 @@ config SGI_IP28
+         This is the SGI Indigo2 with R10000 processor.  To compile a Linux
+         kernel that runs on these, say Y here.
+ 
++config SGI_IP30
++	bool "SGI IP30 (Octane/Octane2) (EXPERIMENTAL)"
++	select MIPS_SGI
++	select FW_ARC
++	select FW_ARC64
++	select BOOT_ELF64
++	select CEVT_R4K
++	select CSRC_R4K
++	select SYNC_R4K if SMP
++	select DMA_COHERENT
++	select ZONE_DMA32
++	select HW_HAS_PCI
++	select NR_CPUS_DEFAULT_2
++	select PCI_DOMAINS
++	select SYS_HAS_EARLY_PRINTK
++	select SYS_HAS_CPU_R10000
++	select SYS_HAS_CPU_R12K_R14K_R16K
++	select SYS_SUPPORTS_64BIT_KERNEL
++	select SYS_SUPPORTS_BIG_ENDIAN
++	select SYS_SUPPORTS_SMP
++	select MIPS_L1_CACHE_SHIFT_7
++	select ARC_MEMORY
++	select ARC_PROMLIB
++	help
++	  These are the SGI Octane and Octane2 graphics workstations.  To
++	  compile a Linux kernel that runs on these, say Y here.
++
+ config SGI_IP32
+ 	bool "SGI IP32 (O2)"
+ 	select FW_ARC
+@@ -1337,12 +1364,12 @@ config ARC_CONSOLE
+ 
+ config ARC_MEMORY
+ 	bool
+-	depends on MACH_JAZZ || SNI_RM || SGI_IP32
++	depends on MACH_JAZZ || SNI_RM || SGI_IP30 || SGI_IP32
+ 	default y
+ 
+ config ARC_PROMLIB
+ 	bool
+-	depends on MACH_JAZZ || SNI_RM || SGI_IP22 || SGI_IP28 || SGI_IP32
++	depends on MACH_JAZZ || SNI_RM || SGI_IP22 || SGI_IP28 || SGI_IP30 || SGI_IP32
+ 	default y
+ 
+ config FW_ARC64
+diff --git a/arch/mips/include/asm/dma-mapping.h b/arch/mips/include/asm/dma-mapping.h
+index aba71385f9d1..43a02e3792d9 100644
+--- a/arch/mips/include/asm/dma-mapping.h
++++ b/arch/mips/include/asm/dma-mapping.h
+@@ -5,7 +5,7 @@
+ #include <asm/dma-coherence.h>
+ #include <asm/cache.h>
+ 
+-#ifndef CONFIG_SGI_IP27 /* Kludge to fix 2.6.39 build for IP27 */
++#if !defined(CONFIG_SGI_IP27) && !defined(CONFIG_SGI_IP30) /* Kludge to fix 2.6.39 build for IP27 & IP30 */
+ #include <dma-coherence.h>
+ #endif
+ 
+diff --git a/arch/mips/include/asm/dma.h b/arch/mips/include/asm/dma.h
+index 5b9ed1bffdbc..60d0cd358e36 100644
+--- a/arch/mips/include/asm/dma.h
++++ b/arch/mips/include/asm/dma.h
+@@ -86,6 +86,9 @@
+ #if defined(CONFIG_SGI_IP22) || defined(CONFIG_SGI_IP28)
+ /* don't care; ISA bus master won't work, ISA slave DMA supports 32bit addr */
+ #define MAX_DMA_ADDRESS		PAGE_OFFSET
++#elif defined(CONFIG_SGI_IP30)
++#define MAX_DMA_ADDRESS		(PAGE_OFFSET + 0x80000000UL)
++#undef MAX_DMA_CHANNELS
+ #else
+ #define MAX_DMA_ADDRESS		(PAGE_OFFSET + 0x01000000)
+ #endif
+diff --git a/arch/mips/include/asm/mach-ip30/addrs.h b/arch/mips/include/asm/mach-ip30/addrs.h
+new file mode 100644
+index 000000000000..30dcc7e3ef99
+--- /dev/null
++++ b/arch/mips/include/asm/mach-ip30/addrs.h
+@@ -0,0 +1,32 @@
++/*
++ * IP30/Octane Xtalk-to-PCIBR addresses.
++ * XXX: Move to pcibr.h?  Or create xtalk.h?
++ *
++ * Copyright (C) 2004-2007 Stanislaw Skowronek <skylark@unaligned.org>
++ *               2007,2015 Joshua Kinard <kumba@gentoo.org>
++ *
++ * This file is subject to the terms and conditions of the GNU General Public
++ * License.  See the file "COPYING" in the main directory of this archive
++ * for more details.
++ */
++#ifndef __ASM_MACH_IP30_ADDRS_H
++#define __ASM_MACH_IP30_ADDRS_H
++
++#include <asm/sn/types.h>
++
++#define NODE_SWIN_BASE(nasid, widget) \
++	(0x0000000010000000 | (((unsigned long)(widget)) << 24))
++#define NODE_BWIN_BASE(nasid, widget) \
++	(0x0000001000000000 | (((unsigned long)(widget)) << 36))
++
++#define RAW_NODE_SWIN_BASE(nasid, widget) \
++	(0x9000000010000000 | (((unsigned long)(widget)) << 24))
++#define RAW_NODE_BWIN_BASE(nasid, widget) \
++	(0x9000001000000000 | (((unsigned long)(widget)) << 36))
++
++#define NODE_OFFSET(_n)		0
++
++#define SWIN_SIZE		0x1000000
++#define BWIN_SIZE		0x1000000000L
++
++#endif /* __ASM_MACH_IP30_ADDRS_H */
+diff --git a/arch/mips/include/asm/mach-ip30/cpu-feature-overrides.h b/arch/mips/include/asm/mach-ip30/cpu-feature-overrides.h
+new file mode 100644
+index 000000000000..ab72dbf37a0f
+--- /dev/null
++++ b/arch/mips/include/asm/mach-ip30/cpu-feature-overrides.h
+@@ -0,0 +1,85 @@
++/*
++ * IP30/Octane cpu-features overrides.
++ *
++ * Copyright (C) 2003 Ralf Baechle <ralf@linux-mips.org>
++ * 		 2004-2007 Stanislaw Skowronek <skylark@unaligned.org>
++ *		 2009 Johannes Dickgreber <tanzy@gmx.de>
++ * 		 2015 Joshua Kinard <kumba@gentoo.org>
++ *
++ * This file is subject to the terms and conditions of the GNU General Public
++ * License.  See the file "COPYING" in the main directory of this archive
++ * for more details.
++ */
++#ifndef __ASM_MACH_IP30_CPU_FEATURE_OVERRIDES_H
++#define __ASM_MACH_IP30_CPU_FEATURE_OVERRIDES_H
++
++#include <asm/cpu.h>
++
++/*
++ * IP30 only supports R1[024]000 processors, all using the same config
++ */
++#define cpu_has_tlb			1
++#define cpu_has_tlbinv			0
++#define cpu_has_segments		0
++#define cpu_has_eva			0
++#define cpu_has_htw			0
++#define cpu_has_rixiex			0
++#define cpu_has_maar			0
++#define cpu_has_rw_llb			0
++#define cpu_has_3kex			0
++#define cpu_has_4kex			1
++#define cpu_has_3k_cache		0
++#define cpu_has_4k_cache		1
++#define cpu_has_6k_cache		0
++#define cpu_has_8k_cache		0
++#define cpu_has_tx39_cache		0
++#define cpu_has_fpu			1
++#define cpu_has_nofpuex			0
++#define cpu_has_32fpr			1
++#define cpu_has_counter			1
++#define cpu_has_watch			1
++#define cpu_has_64bits			1
++#define cpu_has_divec			0
++#define cpu_has_vce			0
++#define cpu_has_cache_cdex_p		0
++#define cpu_has_cache_cdex_s		0
++#define cpu_has_prefetch		1
++#define cpu_has_mcheck			0
++#define cpu_has_ejtag			0
++#define cpu_has_llsc			1
++#define cpu_has_mips16			0
++#define cpu_has_mdmx			0
++#define cpu_has_mips3d			0
++#define cpu_has_smartmips		0
++#define cpu_has_rixi			0
++#define cpu_has_xpa			0
++#define cpu_has_vtag_icache		0
++#define cpu_has_dc_aliases		0
++#define cpu_has_ic_fills_f_dc		0
++
++#define cpu_icache_snoops_remote_store	1
++
++#define cpu_has_mips32r1		0
++#define cpu_has_mips32r2		0
++#define cpu_has_mips64r1		0
++#define cpu_has_mips64r2		0
++#define cpu_has_mips32r6		0
++#define cpu_has_mips64r6		0
++
++#define cpu_has_dsp			0
++#define cpu_has_dsp2			0
++#define cpu_has_mipsmt			0
++#define cpu_has_userlocal		0
++#define cpu_has_inclusive_pcaches	1
++#define cpu_hwrena_impl_bits		0
++#define cpu_has_perf_cntr_intr_bit	0
++#define cpu_has_vz			0
++#define cpu_has_fre			0
++#define cpu_has_cdmm			0
++
++#define cpu_dcache_line_size()		32
++#define cpu_icache_line_size()		64
++#define cpu_scache_line_size()		128
++
++#endif /* __ASM_MACH_IP30_CPU_FEATURE_OVERRIDES_H */
++
+diff --git a/arch/mips/include/asm/mach-ip30/cpu.h b/arch/mips/include/asm/mach-ip30/cpu.h
+new file mode 100644
+index 000000000000..228aceb1fa9c
+--- /dev/null
++++ b/arch/mips/include/asm/mach-ip30/cpu.h
+@@ -0,0 +1,45 @@
++/*
++ * This file is subject to the terms and conditions of the GNU General Public
++ * License.  See the file "COPYING" in the main directory of this archive
++ * for more details.
++ *
++ * mach-ip30/cpu.h: IP30 percpu defines.  Inspired by IP27's percpu.
++ *
++ * Copyright (C) 2016 Joshua Kinard <kumba@gentoo.org>
++ */
++
++#ifndef __ASM_MACH_IP30_CPU_H
++#define __ASM_MACH_IP30_CPU_H
++
++#include <asm/mach-ip30/irq.h>
++
++/**
++ * struct ip30_heart_data - global data for the HEART ASIC in an IP30 system.
++ * @slice_map: keeps track of which CPUs have been initialized on this HEART.
++ * @irq_alloc_map: which IRQ bits have been allocated on this HEART.
++ * @irq_to_bit: maps allocated IRQs to assigned HEART bits.
++ * @bit_to_irq: maps assigned HEART bits to allocated IRQs.
++ */
++struct ip30_heart_data {
++	unsigned long slice_map;
++	unsigned long irq_alloc_map;
++	s8 irq_to_bit[BITS_PER_HEART];
++	s8 bit_to_irq[BITS_PER_HEART];
++	s8 irq_owner[BITS_PER_HEART];
++	raw_spinlock_t lock;
++};
++
++/**
++ * struct ip30_percpu_data - percpu data for each CPU in an IP30 system.
++ * @id: ID of the CPU
++ * @irq_mask: unsigned long to hold the HEART_ISR mask.
++ * @irq_owner: boolean array to mark if a CPU owns an IRQ.
++ */
++struct ip30_percpu_data {
++	u32 id;
++	u8 slice;
++	unsigned long irq_mask;
++	struct ip30_heart_data *heart;
++};
++
++#endif /* __ASM_MACH_IP30_CPU_H */
+diff --git a/arch/mips/include/asm/mach-ip30/dma-coherence.h b/arch/mips/include/asm/mach-ip30/dma-coherence.h
+new file mode 100644
+index 000000000000..9bb35f79fb81
+--- /dev/null
++++ b/arch/mips/include/asm/mach-ip30/dma-coherence.h
+@@ -0,0 +1,142 @@
++/*
++ * IP30/Octane DMA coherence overrides.
++ *
++ * Copyright (C) 2006 Ralf Baechle <ralf@linux-mips.org>
++ *               2009 Johannes Dickgreber <tanzy@gmx.de>
++ *               2007,2016 Joshua Kinard <kumba@gentoo.org>
++ *
++ * Derived from include/asm-mips/mach-ip27/dma-coherence.h
++ * and based on code found in the old dma-ip30.c, which is
++ * Copyright (C) 2004-2007 Stanislaw Skowronek <skylark@unaligned.org>
++ *
++ * This file is subject to the terms and conditions of the GNU General Public
++ * License.  See the file "COPYING" in the main directory of this archive
++ * for more details.
++ */
++#ifndef __ASM_MACH_IP30_DMA_COHERENCE_H
++#define __ASM_MACH_IP30_DMA_COHERENCE_H
++
++#include <asm/dma.h>
++
++#include <asm/pci/bridge.h>
++
++#include <asm/mach-ip30/addrs.h>
++#include <asm/mach-ip30/sysinfo.h>
++
++/**
++ * dev_to_heart - get an address for a specified device relative to the HEART.
++ * @dev: pointer to device struct.
++ * @addr: DMA address of device.
++ *
++ * Returns an address, relative to the HEART, for a specified device.
++ */
++static inline dma_addr_t
++dev_to_heart(struct device *dev, dma_addr_t addr)
++{
++	/* XXX: Always return an address relative to HEART? */
++	return ((IP30_WIDGET_HEART << PCI64_ATTR_TARG_SHFT) | addr);
++}
++
++/**
++ * plat_map_dma_mem - platform-specific DMA memory-mapping hook.
++ * @dev: pointer to struct device.
++ * @addr: memory address to map to DMA.
++ * @size: amount of memory to map (unused on this platform).
++ *
++ * Returns a dma_addr_t pointing to allocated DMA memory from the
++ * point of view of the HEART.
++ */
++static inline dma_addr_t
++plat_map_dma_mem(struct device *dev, void *addr, size_t size)
++{
++	dma_addr_t pa = dev_to_heart(dev, virt_to_phys(addr));
++	return pa;
++}
++
++/**
++ * plat_map_dma_mem_page - platform-specific DMA mapping hook for struct page.
++ * @dev: pointer to struct device.
++ * @page: pointer to struct page.
++ *
++ * Returns a dma_addr_t pointing to a single page of allocated DMA memory
++ * from the point of view of the HEART.
++ */
++static inline dma_addr_t
++plat_map_dma_mem_page(struct device *dev, struct page *page)
++{
++	dma_addr_t pa = dev_to_heart(dev, page_to_phys(page));
++	return pa;
++}
++
++/**
++ * plat_dma_addr_to_phys - convert DMA address to physical address.
++ * @dev: pointer to struct device.
++ * @dma_addr: DMA address to convert.
++ *
++ * Returns the derived physical address from the passed DMA address.
++ */
++static inline unsigned long
++plat_dma_addr_to_phys(struct device *dev, dma_addr_t dma_addr)
++{
++	return dma_addr & ~(0xffUL << 56);
++}
++
++/**
++ * plat_unmap_dma_mem - platform-specific way to unmap DMA memory (?).
++ * @dev: pointer to struct device.
++ * @dma_addr: DMA address to unmap.
++ * @size: size of memory being unmapped (?).
++ * @direction: DMA direction enum.
++ *
++ * Unused on this platform (why?).
++ */
++static inline void
++plat_unmap_dma_mem(struct device *dev, dma_addr_t dma_addr, size_t size,
++		   enum dma_data_direction direction)
++{
++	/* Empty */
++}
++
++/**
++ * plat_dma_supported - indicates if DMA is supported on this platform.
++ * @dev: pointer to struct device.
++ * @mask: DMA address to compare against.
++ *
++ * Returns 1 if mask is > DMA_MASK(24), else 0.
++ */
++static inline int
++plat_dma_supported(struct device *dev, u64 mask)
++{
++	/*
++	 * XXX: We fall back to GFP_DMA when the mask isn't all 1s, so we
++	 * can't guarantee allocations that must be within a tighter range
++	 * than GFP_DMA.
++	 */
++	if (mask < DMA_BIT_MASK(24))
++		return 0;
++
++	return 1;
++}
++
++/**
++ * plat_post_dma_flush - hook for extra platform-specific flushing.
++ * @dev: pointer to struct device.
++ */
++static inline void
++plat_post_dma_flush(struct device *dev)
++{
++	/* Empty */
++}
++
++/**
++ * plat_device_is_coherent - indicates if DMA is coherent on this platform.
++ * @dev: pointer to struct device.
++ */
++static inline int
++plat_device_is_coherent(struct device *dev)
++{
++	/* IP30 is fully coherent */
++	return 1;
++}
++
++#endif /* __ASM_MACH_IP30_DMA_COHERENCE_H */
+diff --git a/arch/mips/include/asm/mach-ip30/heart.h b/arch/mips/include/asm/mach-ip30/heart.h
+new file mode 100644
+index 000000000000..817d2e206756
+--- /dev/null
++++ b/arch/mips/include/asm/mach-ip30/heart.h
+@@ -0,0 +1,267 @@
++/*
++ * IP30/Octane HEART chip definitions split out from asm/mach-ip30/heart.h
++ *
++ * Copyright (C) 2004-2007 Stanislaw Skowronek <skylark@unaligned.org>
++ *		 2009 Johannes Dickgreber <tanzy@gmx.de>
++ *		 2007-2015 Joshua Kinard <kumba@gentoo.org>
++ *
++ * This file is subject to the terms and conditions of the GNU General Public
++ * License.  See the file "COPYING" in the main directory of this archive
++ * for more details.
++ */
++#ifndef __ASM_MACH_IP30_HEART_H
++#define __ASM_MACH_IP30_HEART_H
++
++#include <linux/types.h>
++#include <linux/time.h>
++
++#include <asm/mach-ip30/sysinfo.h>
++
++
++#define HEART_XKPHYS_BASE	((void *)(IO_BASE | 0x000000000ff00000ULL))
++
++/**
++ * struct ip30_heart_regs - struct that maps IP30 HEART registers.
++ * @mode: HEART_MODE - Purpose Unknown, machine reset called from here.
++ * @sdram_mode: HEART_SDRAM_MODE - purpose unknown.
++ * @mem_refresh: HEART_MEM_REF - purpose unknown.
++ * @mem_req_arb: HEART_MEM_REQ_ARB - purpose unknown.
++ * @mem_cfg.q: union for 64bit access to HEART_MEMCFG - 4x 64bit registers.
++ * @mem_cfg.l: union for 32bit access to HEART_MEMCFG - 8x 32bit registers.
++ * @fc_mode: HEART_FC_MODE - Purpose Unknown, possibly for GFX flow control.
++ * @fc_timer_limit: HEART_FC_TIMER_LIMIT - purpose unknown.
++ * @fc_addr: HEART_FC0_ADDR, HEART_FC1_ADDR - purpose unknown.
++ * @fc_credit_cnt: HEART_FC0_CR_CNT, HEART_FC1_CR_CNT - purpose unknown.
++ * @fc_timer: HEART_FC0_TIMER, HEART_FC1_TIMER - purpose unknown.
++ * @status: HEART_STATUS - HEART status information.
++ * @bus_err_addr: HEART_BERR_ADDR - likely contains addr of recent SIGBUS.
++ * @bus_err_misc: HEART_BERR_MISC - purpose unknown.
++ * @mem_err_addr: HEART_MEMERR_ADDR - likely contains addr of recent mem err.
++ * @mem_err_data: HEART_MEMERR_DATA - purpose unknown.
++ * @piur_acc_err: HEART_PIUR_ACC_ERR - likely for access err to HEART regs.
++ * @mlan_clock_div: HEART_MLAN_CLK_DIV - MicroLAN clock divider.
++ * @mlan_ctrl: HEART_MLAN_CTL - MicroLAN control.
++ * @__pad0: 0x0f40 bytes of padding -> next HEART register 0x01000.
++ * @undefined: Undefined/diag register, write to it triggers PIUR_ACC_ERR.
++ * @__pad1: 0xeff8 bytes of padding -> next HEART register 0x10000.
++ * @imr: HEART_IMR0 to HEART_IMR3 - per-cpu interrupt mask register.
++ * @set_isr: HEART_SET_ISR - set interrupt status register.
++ * @clear_isr: HEART_CLR_ISR - clear interrupt status register.
++ * @isr: HEART_ISR - interrupt status register (read-only).
++ * @imsr: HEART_IMSR - purpose unknown.
++ * @cause: HEART_CAUSE - HEART cause information.
++ * @__pad2: 0xffb8 bytes of padding -> next HEART register 0x20000.
++ * @count: HEART_COUNT - 52-bit counter.
++ * @__pad3: 0xfff8 bytes of padding -> next HEART register 0x30000.
++ * @compare: HEART_COMPARE - 24-bit compare.
++ * @__pad4: 0xfff8 bytes of padding -> next HEART register 0x40000.
++ * @trigger: HEART_TRIGGER - purpose unknown.
++ * @__pad5: 0xfff8 bytes of padding -> next HEART register 0x50000.
++ * @cpuid: HEART_PRID - contains CPU ID of CPU currently accessing HEART.
++ * @__pad6: 0xfff8 bytes of padding -> next HEART register 0x60000.
++ * @sync: HEART_SYNC - purpose unknown.
++ *
++ * HEART is the main system controller ASIC for IP30 system.  It incorporates
++ * a memory controller, interrupt status/cause/set/clear management, basic
++ * timer with count/compare, and other functionality.  For Linux, not all of
++ * HEART's functions are fully understood.
++ *
++ * Implementation note: All HEART registers are 64bits-wide, but the mem_cfg
++ * register only reports correct values if queried in 32bits.  Hence the need
++ * for a union.  Even though mem_cfg.l has 8 array slots, we only ever query
++ * up to 4 of those.  IP30 has 8 DIMM slots arranged into 4 banks, w/ 2 DIMMs
++ * per bank.  Each 32bit read accesses one of these banks.  Perhaps HEART was
++ * designed to address up to 8 banks (16 DIMMs)?  We may never know.
++ */
++struct ip30_heart_regs {		/* 0x0ff00000 */
++	u64 mode;			/* +  0x00000 */
++	/* Memory */
++	u64 sdram_mode;			/* +  0x00008 */
++	u64 mem_refresh;		/* +  0x00010 */
++	u64 mem_req_arb;		/* +  0x00018 */
++	union {
++		u64 q[IP30_MAX_MEMORY_BANKS];		/* readq() */
++		u32 l[IP30_MAX_MEMORY_BANKS * 2];	/* readl() */
++	} mem_cfg;			/* +  0x00020 */
++	/* Flow control (gfx?) */
++	u64 fc_mode;			/* +  0x00040 */
++	u64 fc_timer_limit;		/* +  0x00048 */
++	u64 fc_addr[2];			/* +  0x00050 */
++	u64 fc_credit_cnt[2];		/* +  0x00060 */
++	u64 fc_timer[2];		/* +  0x00070 */
++	/* Status */
++	u64 status;			/* +  0x00080 */
++	/* Bus error */
++	u64 bus_err_addr;		/* +  0x00088 */
++	u64 bus_err_misc;		/* +  0x00090 */
++	/* Memory error */
++	u64 mem_err_addr;		/* +  0x00098 */
++	u64 mem_err_data;		/* +  0x000a0 */
++	/* Misc */
++	u64 piur_acc_err;		/* +  0x000a8 */
++	u64 mlan_clock_div;		/* +  0x000b0 */
++	u64 mlan_ctrl;			/* +  0x000b8 */
++	u64 __pad0[0x01e8];		/* +  0x000c0 + 0x0f40 */
++	/* Undefined */
++	u64 undefined;			/* +  0x01000 */
++	u64 __pad1[0x1dff];		/* +  0x01008 + 0xeff8 */
++	/* Interrupts */
++	u64 imr[IP30_MAX_HEART_CPUS];	/* +  0x10000 */
++	u64 set_isr;			/* +  0x10020 */
++	u64 clear_isr;			/* +  0x10028 */
++	u64 isr;			/* +  0x10030 */
++	u64 imsr;			/* +  0x10038 */
++	u64 cause;			/* +  0x10040 */
++	u64 __pad2[0x1ff7];		/* +  0x10048 + 0xffb8 */
++	/* Timer */
++	u64 count;			/* +  0x20000 */
++	u64 __pad3[0x1fff];		/* +  0x20008 + 0xfff8 */
++	u64 compare;			/* +  0x30000 */
++	u64 __pad4[0x1fff];		/* +  0x30008 + 0xfff8 */
++	u64 trigger;			/* +  0x40000 */
++	u64 __pad5[0x1fff];		/* +  0x40008 + 0xfff8 */
++	/* Misc */
++	u64 cpuid;			/* +  0x50000 */
++	u64 __pad6[0x1fff];		/* +  0x50008 + 0xfff8 */
++	u64 sync;			/* +  0x60000 */
++};
++
++
++/* For timer-related bits. */
++#define HEART_NS_PER_CYCLE	80
++#define HEART_CYCLES_PER_SEC	(NSEC_PER_SEC / HEART_NS_PER_CYCLE)
++
++
++/*
++ * XXX: Everything below this comment will either go away or be cleaned
++ *      up to fit in better with Linux.  A lot of the bit definitions for
++ *      HEART were derived from IRIX's sys/RACER/heart.h header file.
++ */
++
++/* HEART Masks */
++/* XXX: GENMASK() */
++#define HEART_ATK_MASK		0x0007ffffffffffff	/* HEART attack mask */
++#define HEART_ACK_ALL_MASK	0xffffffffffffffff	/* Ack everything */
++#define HEART_CLR_ALL_MASK	0x0000000000000000	/* Clear all */
++#define HEART_BR_ERR_MASK	0x7ff8000000000000	/* BRIDGE error mask */
++#define HEART_CPU0_ERR_MASK	0x8ff8000000000000	/* CPU0 error mask */
++#define HEART_CPU1_ERR_MASK	0x97f8000000000000	/* CPU1 error mask */
++#define HEART_CPU2_ERR_MASK	0xa7f8000000000000	/* CPU2 error mask */
++#define HEART_CPU3_ERR_MASK	0xc7f8000000000000	/* CPU3 error mask */
++#define HEART_ERR_MASK		0x1ff			/* HEART error mask */
++#define HEART_ERR_MASK_START	51			/* HEART error start */
++#define HEART_ERR_MASK_END	63			/* HEART error end */
++#define NON_HEART_IRQ_ST	0x0004000000000000	/* Where non-HEART IRQs begin */
++
++/* Bits in the HEART_MODE register. */
++#define HM_PROC_DISABLE_SHFT		60
++#define HM_PROC_DISABLE_MSK		((ulong) 0xf << HM_PROC_DISABLE_SHFT)
++#define HM_PROC_DISABLE(x)		((ulong) 0x1 << (x) + HM_PROC_DISABLE_SHFT)
++#define HM_MAX_PSR			((ulong) 0x7 << 57)
++#define HM_MAX_IOSR			((ulong) 0x7 << 54)
++#define HM_MAX_PEND_IOSR		((ulong) 0x7 << 51)
++#define HM_TRIG_SRC_SEL_MSK		((ulong) 0x7 << 48)
++#define HM_TRIG_HEART_EXC		((ulong) 0x0 << 48)
++#define HM_TRIG_REG_BIT 		((ulong) 0x1 << 48)
++#define HM_TRIG_SYSCLK			((ulong) 0x2 << 48)
++#define HM_TRIG_MEMCLK_2X		((ulong) 0x3 << 48)
++#define HM_TRIG_MEMCLK			((ulong) 0x4 << 48)
++#define HM_TRIG_IOCLK			((ulong) 0x5 << 48)
++#define HM_PIU_TEST_MODE		((ulong) 0xf << 40)
++#define HM_GP_FLAG_MSK			((ulong) 0xf << 36)
++#define HM_GP_FLAG(x)			((ulong) 0x1 << (x) + 36)
++#define HM_MAX_PROC_HYST		((ulong) 0xf << 32)
++#define HM_LLP_WRST_AFTER_RST		((ulong) 0x1 << 28)
++#define HM_LLP_LINK_RST 		((ulong) 0x1 << 27)
++#define HM_LLP_WARM_RST 		((ulong) 0x1 << 26)
++#define HM_COR_ECC_LCK			((ulong) 0x1 << 25)
++#define HM_REDUCED_PWR			((ulong) 0x1 << 24)
++#define HM_COLD_RST			((ulong) 0x1 << 23)
++#define HM_SW_RST			((ulong) 0x1 << 22)
++#define HM_MEM_FORCE_WR 		((ulong) 0x1 << 21)
++#define HM_DB_ERR_GEN			((ulong) 0x1 << 20)
++#define HM_SB_ERR_GEN			((ulong) 0x1 << 19)
++#define HM_CACHED_PIO_EN		((ulong) 0x1 << 18)
++#define HM_CACHED_PROM_EN		((ulong) 0x1 << 17)
++#define HM_PE_SYS_COR_ERE		((ulong) 0x1 << 16)
++#define HM_GLOBAL_ECC_EN		((ulong) 0x1 << 15)
++#define HM_IO_COH_EN			((ulong) 0x1 << 14)
++#define HM_INT_EN			((ulong) 0x1 << 13)
++#define HM_DATA_CHK_EN			((ulong) 0x1 << 12)
++#define HM_REF_EN			((ulong) 0x1 << 11)
++#define HM_BAD_SYSWR_ERE		((ulong) 0x1 << 10)
++#define HM_BAD_SYSRD_ERE		((ulong) 0x1 << 9)
++#define HM_SYSSTATE_ERE 		((ulong) 0x1 << 8)
++#define HM_SYSCMD_ERE			((ulong) 0x1 << 7)
++#define HM_NCOR_SYS_ERE 		((ulong) 0x1 << 6)
++#define HM_COR_SYS_ERE			((ulong) 0x1 << 5)
++#define HM_DATA_ELMNT_ERE		((ulong) 0x1 << 4)
++#define HM_MEM_ADDR_PROC_ERE		((ulong) 0x1 << 3)
++#define HM_MEM_ADDR_IO_ERE		((ulong) 0x1 << 2)
++#define HM_NCOR_MEM_ERE 		((ulong) 0x1 << 1)
++#define HM_COR_MEM_ERE			((ulong) 0x1 << 0)
++
++/* Bits in the HEART_MEM_REF register. */
++#define HEART_MEMREF_REFS(x)		((ulong) (0xf & (x)) << 16)
++#define HEART_MEMREF_PERIOD(x)		((ulong) (0xffff & (x)))
++#define HEART_MEMREF_REFS_VAL		HEART_MEMREF_REFS(8)
++#define HEART_MEMREF_PERIOD_VAL 	HEART_MEMREF_PERIOD(0x4000)
++#define HEART_MEMREF_VAL		(HEART_MEMREF_REFS_VAL | \
++					 HEART_MEMREF_PERIOD_VAL)
++
++/* Bits in the HEART_MEM_REQ_ARB register. */
++#define HEART_MEMARB_IODIS		(1  << 20)
++#define HEART_MEMARB_MAXPMWRQS		(15 << 16)
++#define HEART_MEMARB_MAXPMRRQS		(15 << 12)
++#define HEART_MEMARB_MAXPMRQS		(15 << 8)
++#define HEART_MEMARB_MAXRRRQS		(15 << 4)
++#define HEART_MEMARB_MAXGBRRQS		(15)
++
++/* Bits in the HEART_MEMCFG<x> registers. */
++#define HEART_MEMCFG_VALID		0x80000000	/* Bank is valid */
++#define HEART_MEMCFG_DENSITY		0x01c00000	/* Mem density */
++#define HEART_MEMCFG_SIZE_MASK		0x003f0000	/* Mem size mask */
++#define HEART_MEMCFG_ADDR_MASK		0x000001ff	/* Base addr mask */
++#define HEART_MEMCFG_SIZE_SHIFT		16		/* Mem size shift */
++#define HEART_MEMCFG_DENSITY_SHIFT	22		/* Density Shift */
++#define HEART_MEMCFG_UNIT_SHIFT		25		/* Unit Shift, 32MB */
++
++/* Bits in the HEART_STATUS register */
++#define HEART_STAT_HSTL_SDRV		((ulong) 0x1 << 14)
++#define HEART_STAT_FC_CR_OUT(x) 	((ulong) 0x1 << (x) + 12)
++#define HEART_STAT_DIR_CNNCT		((ulong) 0x1 << 11)
++#define HEART_STAT_TRITON		((ulong) 0x1 << 10)
++#define HEART_STAT_R4K			((ulong) 0x1 << 9)
++#define HEART_STAT_BIG_ENDIAN		((ulong) 0x1 << 8)
++#define HEART_STAT_PROC_SHFT		4
++#define HEART_STAT_PROC_MSK		((ulong) 0xf << HEART_STAT_PROC_SHFT)
++#define HEART_STAT_PROC_ACTIVE(x)	((ulong) 0x1 << \
++					 ((x) + HEART_STAT_PROC_SHFT))
++#define HEART_STAT_WIDGET_ID		0xf
++
++/* Bits in the HEART_CAUSE register */
++#define HC_PE_SYS_COR_ERR_MSK		((ulong) 0xf << 60)
++#define HC_PE_SYS_COR_ERR(x)		((ulong) 0x1 << (x) + 60)
++#define HC_PIOWDB_OFLOW 		((ulong) 0x1 << 44)
++#define HC_PIORWRB_OFLOW		((ulong) 0x1 << 43)
++#define HC_PIUR_ACC_ERR 		((ulong) 0x1 << 42)
++#define HC_BAD_SYSWR_ERR		((ulong) 0x1 << 41)
++#define HC_BAD_SYSRD_ERR		((ulong) 0x1 << 40)
++#define HC_SYSSTATE_ERR_MSK		((ulong) 0xf << 36)
++#define HC_SYSSTATE_ERR(x)		((ulong) 0x1 << (x) + 36)
++#define HC_SYSCMD_ERR_MSK		((ulong) 0xf << 32)
++#define HC_SYSCMD_ERR(x)		((ulong) 0x1 << (x) + 32)
++#define HC_NCOR_SYSAD_ERR_MSK		((ulong) 0xf << 28)
++#define HC_NCOR_SYSAD_ERR(x)		((ulong) 0x1 << (x) + 28)
++#define HC_COR_SYSAD_ERR_MSK		((ulong) 0xf << 24)
++#define HC_COR_SYSAD_ERR(x)		((ulong) 0x1 << (x) + 24)
++#define HC_DATA_ELMNT_ERR_MSK		((ulong) 0xf << 20)
++#define HC_DATA_ELMNT_ERR(x)		((ulong) 0x1 << (x) + 20)
++#define HC_WIDGET_ERR			((ulong) 0x1 << 16)
++#define HC_MEM_ADDR_ERR_PROC_MSK	((ulong) 0xf << 4)
++#define HC_MEM_ADDR_ERR_PROC(x) 	((ulong) 0x1 << (x) + 4)
++#define HC_MEM_ADDR_ERR_IO		((ulong) 0x1 << 2)
++#define HC_NCOR_MEM_ERR 		((ulong) 0x1 << 1)
++#define HC_COR_MEM_ERR			((ulong) 0x1 << 0)
++
++#endif /* __ASM_MACH_IP30_HEART_H */
+diff --git a/arch/mips/include/asm/mach-ip30/irq.h b/arch/mips/include/asm/mach-ip30/irq.h
+new file mode 100644
+index 000000000000..56dbae7fefe7
+--- /dev/null
++++ b/arch/mips/include/asm/mach-ip30/irq.h
+@@ -0,0 +1,171 @@
++/*
++ * HEART IRQ defines separated out from asm/mach-ip30/heart.h
++ *
++ * Copyright (C) 2009 Johannes Dickgreber <tanzy@gmx.de>
++ *		 2014-2016 Joshua Kinard <kumba@gentoo.org>
++ *
++ * This file is subject to the terms and conditions of the GNU General Public
++ * License.  See the file "COPYING" in the main directory of this archive
++ * for more details.
++ */
++
++#ifndef __ASM_MACH_IP30_IRQ_H
++#define __ASM_MACH_IP30_IRQ_H
++
++/*
++ * HEART has 64 hardware interrupts, but use 128 to leave room for a few
++ * software interrupts as well (such as the CPU timer interrupt.
++ */
++#define NR_IRQS 			128
++
++#define BITS_PER_HEART			64
++
++extern int ip30_alloc_irq_num(void);
++extern void ip30_assign_irq_num(int irq);
++extern void __init ip30_install_ipi(void);
++
++
++/*
++ * HEART has 64 interrupt vectors available to it, subdivided into five
++ * priority levels.  They are numbered 0 to 63.
++ */
++#define HEART_INT_BASE			0
++#define HEART_NUM_IRQS			BITS_PER_HEART
++
++/*
++ * These are the five interrupt priority levels and their corresponding
++ * CPU IPx interrupt pins.
++ *
++ * Level 4 - Error Interrupts.
++ * Level 3 - HEART timer interrupt.
++ * Level 2 - CPU IPI, CPU debug, power putton, general device interrupts.
++ * Level 1 - General device interrupts.
++ * Level 0 - General device GFX flow control interrupts.
++ */
++#define HEART_L4_INT_MASK		0xfff8000000000000ULL	/* IP6 */
++#define HEART_L3_INT_MASK		0x0004000000000000ULL	/* IP5 */
++#define HEART_L2_INT_MASK		0x0003ffff00000000ULL	/* IP4 */
++#define HEART_L1_INT_MASK		0x00000000ffff0000ULL	/* IP3 */
++#define HEART_L0_INT_MASK		0x000000000000ffffULL	/* IP2 */
++
++/* HEART L0 Interrupts (Low Priority) */
++#define HEART_L0_INT_BASE		(HEART_INT_BASE    +  0)
++#define HEART_L0_INT_GENERIC		(HEART_L0_INT_BASE +  0) /*  0 */
++#define HEART_L0_INT_FLOW_CTRL_HWTR_0	(HEART_L0_INT_BASE +  1) /*  1 */
++#define HEART_L0_INT_FLOW_CTRL_HWTR_1	(HEART_L0_INT_BASE +  2) /*  2 */
++#define HEART_L0_INT_LOCAL_0		(HEART_L0_INT_BASE +  3) /*  3 */
++#define HEART_L0_INT_LOCAL_1		(HEART_L0_INT_BASE +  4) /*  4 */
++#define HEART_L0_INT_LOCAL_2		(HEART_L0_INT_BASE +  5) /*  5 */
++#define HEART_L0_INT_LOCAL_3		(HEART_L0_INT_BASE +  6) /*  6 */
++#define HEART_L0_INT_LOCAL_4		(HEART_L0_INT_BASE +  7) /*  7 */
++#define HEART_L0_INT_LOCAL_5		(HEART_L0_INT_BASE +  8) /*  8 */
++#define HEART_L0_INT_LOCAL_6		(HEART_L0_INT_BASE +  9) /*  9 */
++#define HEART_L0_INT_LOCAL_7		(HEART_L0_INT_BASE + 10) /* 10 */
++#define HEART_L0_INT_LOCAL_8		(HEART_L0_INT_BASE + 11) /* 11 */
++#define HEART_L0_INT_LOCAL_9		(HEART_L0_INT_BASE + 12) /* 12 */
++#define HEART_L0_INT_LOCAL_A		(HEART_L0_INT_BASE + 13) /* 13 */
++#define HEART_L0_INT_LOCAL_B		(HEART_L0_INT_BASE + 14) /* 14 */
++#define HEART_L0_INT_LOCAL_C		(HEART_L0_INT_BASE + 15) /* 15 */
++
++/* HEART L1 Interrupts (Med Priority) */
++#define HEART_L1_INT_BASE		(HEART_L0_INT_BASE + 16)
++#define HEART_L1_INT_LOCAL_0		(HEART_L1_INT_BASE +  0) /* 16 */
++#define HEART_L1_INT_LOCAL_1		(HEART_L1_INT_BASE +  1) /* 17 */
++#define HEART_L1_INT_LOCAL_2		(HEART_L1_INT_BASE +  2) /* 18 */
++#define HEART_L1_INT_LOCAL_3		(HEART_L1_INT_BASE +  3) /* 19 */
++#define HEART_L1_INT_LOCAL_4		(HEART_L1_INT_BASE +  4) /* 20 */
++#define HEART_L1_INT_LOCAL_5		(HEART_L1_INT_BASE +  5) /* 21 */
++#define HEART_L1_INT_LOCAL_6		(HEART_L1_INT_BASE +  6) /* 22 */
++#define HEART_L1_INT_LOCAL_7		(HEART_L1_INT_BASE +  7) /* 23 */
++#define HEART_L1_INT_LOCAL_8		(HEART_L1_INT_BASE +  8) /* 24 */
++#define HEART_L1_INT_LOCAL_9		(HEART_L1_INT_BASE +  9) /* 25 */
++#define HEART_L1_INT_LOCAL_A		(HEART_L1_INT_BASE + 10) /* 26 */
++#define HEART_L1_INT_LOCAL_B		(HEART_L1_INT_BASE + 11) /* 27 */
++#define HEART_L1_INT_LOCAL_C		(HEART_L1_INT_BASE + 12) /* 28 */
++#define HEART_L1_INT_LOCAL_D		(HEART_L1_INT_BASE + 13) /* 29 */
++#define HEART_L1_INT_LOCAL_E		(HEART_L1_INT_BASE + 14) /* 30 */
++#define HEART_L1_INT_LOCAL_F		(HEART_L1_INT_BASE + 15) /* 31 */
++
++/* HEART L2 Interrupts (High Priority) */
++#define HEART_L2_INT_BASE		(HEART_L1_INT_BASE + 16)
++#define HEART_L2_INT_LOCAL_0		(HEART_L2_INT_BASE +  0) /* 32 */
++#define HEART_L2_INT_LOCAL_1		(HEART_L2_INT_BASE +  1) /* 33 */
++#define HEART_L2_INT_LOCAL_2		(HEART_L2_INT_BASE +  2) /* 34 */
++#define HEART_L2_INT_LOCAL_3		(HEART_L2_INT_BASE +  3) /* 35 */
++#define HEART_L2_INT_LOCAL_4		(HEART_L2_INT_BASE +  4) /* 36 */
++#define HEART_L2_INT_LOCAL_5		(HEART_L2_INT_BASE +  5) /* 37 */
++#define HEART_L2_INT_LOCAL_6		(HEART_L2_INT_BASE +  6) /* 38 */
++#define HEART_L2_INT_LOCAL_7		(HEART_L2_INT_BASE +  7) /* 39 */
++#define HEART_L2_INT_LOCAL_8		(HEART_L2_INT_BASE +  8) /* 40 */
++#define HEART_L2_INT_POWER_BTN		(HEART_L2_INT_BASE +  9) /* 41 */
++#define HEART_L2_INT_DEBUG_CPU_0	(HEART_L2_INT_BASE + 10) /* 42 */
++#define HEART_L2_INT_DEBUG_CPU_1	(HEART_L2_INT_BASE + 11) /* 43 */
++#define HEART_L2_INT_DEBUG_CPU_2	(HEART_L2_INT_BASE + 12) /* 44 */
++#define HEART_L2_INT_DEBUG_CPU_3	(HEART_L2_INT_BASE + 13) /* 45 */
++#define HEART_L2_INT_IPI_CPU_0		(HEART_L2_INT_BASE + 14) /* 46 */
++#define HEART_L2_INT_IPI_CPU_1		(HEART_L2_INT_BASE + 15) /* 47 */
++#define HEART_L2_INT_IPI_CPU_2		(HEART_L2_INT_BASE + 16) /* 48 */
++#define HEART_L2_INT_IPI_CPU_3		(HEART_L2_INT_BASE + 17) /* 49 */
++#define HEART_L2_INT_TIMER_CPU(x)	(HEART_L2_INT_DEBUG_CPU_0 + (x))
++#define HEART_L2_INT_IPI_CPU(x)		(HEART_L2_INT_IPI_CPU_0 + (x))
++
++/* HEART L3 Interrupts (Compare/Counter Timer) */
++#define HEART_L3_INT_BASE		(HEART_L2_INT_BASE + 18)
++#define HEART_L3_INT_TIMER		(HEART_L3_INT_BASE +  0) /* 50 */
++
++/* HEART L4 Interrupts (Errors) */
++#define HEART_L4_INT_BASE		(HEART_L3_INT_BASE +  1)
++#define HEART_L4_INT_XWID_ERR_9		(HEART_L4_INT_BASE +  0) /* 51 */
++#define HEART_L4_INT_XWID_ERR_A		(HEART_L4_INT_BASE +  1) /* 52 */
++#define HEART_L4_INT_XWID_ERR_B		(HEART_L4_INT_BASE +  2) /* 53 */
++#define HEART_L4_INT_XWID_ERR_C		(HEART_L4_INT_BASE +  3) /* 54 */
++#define HEART_L4_INT_XWID_ERR_D		(HEART_L4_INT_BASE +  4) /* 55 */
++#define HEART_L4_INT_XWID_ERR_E		(HEART_L4_INT_BASE +  5) /* 56 */
++#define HEART_L4_INT_XWID_ERR_F		(HEART_L4_INT_BASE +  6) /* 57 */
++#define HEART_L4_INT_XWID_ERR_XBOW	(HEART_L4_INT_BASE +  7) /* 58 */
++#define HEART_L4_INT_CPU_BUS_ERR_0	(HEART_L4_INT_BASE +  8) /* 59 */
++#define HEART_L4_INT_CPU_BUS_ERR_1	(HEART_L4_INT_BASE +  9) /* 60 */
++#define HEART_L4_INT_CPU_BUS_ERR_2	(HEART_L4_INT_BASE + 10) /* 61 */
++#define HEART_L4_INT_CPU_BUS_ERR_3	(HEART_L4_INT_BASE + 11) /* 62 */
++#define HEART_L4_INT_HEART_EXCP		(HEART_L4_INT_BASE + 12) /* 63 */
++#define HEART_L4_INT_CPU_BUS_ERR(x)	(HEART_L4_INT_CPU_BUS_ERR_0 + (x))
++
++/* Anything beyond 63 is software-based */
++/* But we start at 71 for the hell of it. */
++#define MIPS_CPU_IRQ_BASE		(HEART_INT_BASE + HEART_NUM_IRQS + 7)
++
++/* Hardwired L0 Interrupts for IP30 */
++/* None yet ... */
++
++/* Hardwired L1 Interrupts for IP30 */
++/* None yet ... */
++
++/*
++ * Hardwired L2 Interrupts for IP30
++ *
++ * Not exactly hardwired, but hijacked.
++ */
++#define HEART_L2_INT_RESCHED_CPU_0	HEART_L2_INT_DEBUG_CPU_0
++#define HEART_L2_INT_RESCHED_CPU_1	HEART_L2_INT_DEBUG_CPU_1
++#define HEART_L2_INT_CALL_CPU_0		HEART_L2_INT_IPI_CPU_0
++#define HEART_L2_INT_CALL_CPU_1		HEART_L2_INT_IPI_CPU_1
++
++/* Hardwired L3 Interrupts for IP30 */
++/* None */
++
++/* Hardwired L4 Interrupts for IP30 */
++#define HEART_L4_INT_XWID_ERR_PCI_CAGE	HEART_L4_INT_XWID_ERR_C	/* Cardcage */
++#define HEART_L4_INT_XWID_ERR_PCI_BASE	HEART_L4_INT_XWID_ERR_F	/* BaseIO */
++
++/*
++ * Power Switch is hardwired to IRQ #41, via BaseIO BRIDGE slot #6.
++ *
++ * Not sure about "acfail", but looks hardwired via BaseIO BRIDGE slot #7.
++ * Maybe this means it'll show up as a non-specific BRIDGE error?  Is there
++ * a status bit that can be read somewhere to verify?
++ */
++#define IP30_POWER_IRQ		HEART_L2_INT_POWER_BTN
++
++#include_next <irq.h>
++
++#endif /* __ASM_MACH_IP30_IRQ_H */
+diff --git a/arch/mips/include/asm/mach-ip30/kmalloc.h b/arch/mips/include/asm/mach-ip30/kmalloc.h
+new file mode 100644
+index 000000000000..070737cb4b0f
+--- /dev/null
++++ b/arch/mips/include/asm/mach-ip30/kmalloc.h
+@@ -0,0 +1,18 @@
++/*
++ * mach-generic kmalloc overrides for IP30.
++ *
++ * Copyright (C) 2009 Johannes Dickgreber <tanzy@gmx.de>
++ *
++ * This file is subject to the terms and conditions of the GNU General Public
++ * License.  See the file "COPYING" in the main directory of this archive
++ * for more details.
++ */
++#ifndef __ASM_MACH_IP30_KMALLOC_H
++#define __ASM_MACH_IP30_KMALLOC_H
++
++#define ARCH_DMA_MINALIGN	8
++
++#define ARCH_SLAB_MINALIGN	128
++
++#endif /* __ASM_MACH_IP30_KMALLOC_H */
++
+diff --git a/arch/mips/include/asm/mach-ip30/leds.h b/arch/mips/include/asm/mach-ip30/leds.h
+new file mode 100644
+index 000000000000..648be9bf9bff
+--- /dev/null
++++ b/arch/mips/include/asm/mach-ip30/leds.h
+@@ -0,0 +1,52 @@
++/*
++ * IP30/Octane LED definitions for the lightbar.
++ *
++ * Copyright (C) 2004-2007 Stanislaw Skowronek <skylark@unaligned.org>
++ *
++ * This file is subject to the terms and conditions of the GNU General Public
++ * License.  See the file "COPYING" in the main directory of this archive
++ * for more details.
++ */
++#ifndef __ASM_MACH_IP30_LEDS_H
++#define __ASM_MACH_IP30_LEDS_H
++
++/*
++ * The LEDs driver reads in a stream of opcodes, two bytes each. The highest
++ * two bits of first byte define the opcode type. Next six bits are parameter
++ * one, and the last eight bits are parameter two.
++ * If a LEDS_LOOP(0) opcode is encountered, the stream is terminated on this
++ * opcode and no operations are performed until a new stream is loaded.
++ * If a LEDS_LOOP(n>0) opcode is encountered, the whole stream is looped.
++ * If neither of these opcodes appears until the end of the stream, the behavior
++ * is the same as at LEDS_LOOP(0), however a warning will be printed.
++ */
++
++/*
++ * Set LED brightness.  Low bits select LED, next byte sets brightness.
++ */
++#define LEDS_OP_SET	0
++
++
++/*
++ * Wait for 'x' ms, where x = (param2 * (1 << param1)); if x = 0, then stop.
++ */
++#define LEDS_OP_WAIT	1
++
++
++/*
++ * Restart the LEDs, waiting for 'x' ms; if n = 0, then stop.
++ */
++#define LEDS_OP_LOOP	2
++
++
++/*
++ * Reserved opcode
++ */
++#define LEDS_OP_RSVD	3
++
++/*
++ * Anyone who wonders why you can't loop without a delay should consider the
++ * fact that we are processing this opcode inside the kernel.
++ */
++
++#endif /* __ASM_MACH_IP30_LEDS_H */
+diff --git a/arch/mips/include/asm/mach-ip30/mangle-port.h b/arch/mips/include/asm/mach-ip30/mangle-port.h
+new file mode 100644
+index 000000000000..9a25887956cd
+--- /dev/null
++++ b/arch/mips/include/asm/mach-ip30/mangle-port.h
+@@ -0,0 +1,25 @@
++/*
++ * This file is subject to the terms and conditions of the GNU General Public
++ * License.  See the file "COPYING" in the main directory of this archive
++ * for more details.
++ *
++ * Copyright (C) 2003, 2004 Ralf Baechle
++ */
++#ifndef __ASM_MACH_IP30_MANGLE_PORT_H
++#define __ASM_MACH_IP30_MANGLE_PORT_H
++
++#define __swizzle_addr_b(port)	((port)^3)
++#define __swizzle_addr_w(port)	((port)^2)
++#define __swizzle_addr_l(port)	(port)
++#define __swizzle_addr_q(port)	(port)
++
++#define ioswabb(a,x)		(x)
++#define __mem_ioswabb(a,x)	(x)
++#define ioswabw(a,x)		(x)
++#define __mem_ioswabw(a,x)	cpu_to_le16(x)
++#define ioswabl(a,x)		(x)
++#define __mem_ioswabl(a,x)	cpu_to_le32(x)
++#define ioswabq(a,x)		(x)
++#define __mem_ioswabq(a,x)	cpu_to_le64(x)
++
++#endif /* __ASM_MACH_IP30_MANGLE_PORT_H */
+diff --git a/arch/mips/include/asm/mach-ip30/pcibr.h b/arch/mips/include/asm/mach-ip30/pcibr.h
+new file mode 100644
+index 000000000000..dde26e3347e8
+--- /dev/null
++++ b/arch/mips/include/asm/mach-ip30/pcibr.h
+@@ -0,0 +1,41 @@
++/*
++ * Definitions for the built-in PCI bridge
++ *
++ * Copyright (C) 2004-2007 Stanislaw Skowronek <skylark@unaligned.org>
++ *
++ * This file is subject to the terms and conditions of the GNU General Public
++ * License.  See the file "COPYING" in the main directory of this archive
++ * for more details.
++ */
++#ifndef __ASM_MACH_IP30_PCIBR_H
++#define __ASM_MACH_IP30_PCIBR_H
++
++#include <asm/pci/bridge.h>
++#include <asm/xtalk/xwidget.h>
++#include <asm/mach-ip30/irq.h>
++
++/* Xtalk */
++#define PCIBR_OFFSET_MEM	0x200000
++#define PCIBR_OFFSET_IO		0xa00000
++#define PCIBR_OFFSET_END	0xc00000
++
++/* How HEART sees beginning of 16M I/O Widget space. */
++#define PCIBR_DIR_ALLOC_BASE	0x1000000
++
++/*
++ * This is how XIO sees HEART's ISR register.
++ */
++#define PCIBR_XIO_SEES_HEART	0x00000080
++
++#define PCIBR_IRQ_BASE		8
++
++#define PCIBR_MAX_BRIDGES	8	/* Max # of PCI buses/Bridge */
++#define PCIBR_MAX_DEV_BRIDGE	8	/* Max # of devs/PCI bus */
++
++/*
++ * Used by ip30-bridge.c and ip30-irq.c.
++ */
++extern struct bridge_controller *ip30_irq_to_bridge[];
++extern u32 ip30_irq_to_slot[];
++
++#endif /* __ASM_MACH_IP30_PCIBR_H */
+diff --git a/arch/mips/include/asm/mach-ip30/racermp.h b/arch/mips/include/asm/mach-ip30/racermp.h
+new file mode 100644
+index 000000000000..132eb5889df6
+--- /dev/null
++++ b/arch/mips/include/asm/mach-ip30/racermp.h
+@@ -0,0 +1,40 @@
++/*
++ * IP30/Octane MPCONF definitions for the SMP support.
++ *
++ * Copyright (C) 2005-2007 Stanislaw Skowronek <skylark@unaligned.org>
++ *		 2009 Johannes Dickgreber <tanzy@gmx.de>
++ *
++ * This file is subject to the terms and conditions of the GNU General Public
++ * License.  See the file "COPYING" in the main directory of this archive
++ * for more details.
++ */
++#ifndef __ASM_MACH_IP30_RACERMP_H
++#define __ASM_MACH_IP30_RACERMP_H
++
++#include <linux/types.h>
++
++extern void asmlinkage ip30_smp_bootstrap(void);
++extern void ip30_cpu_irq_init(int cpu);
++
++#define MPCONF_MAGIC	0xbaddeed2
++#define	MPCONF_ADDR	0xa800000000000600L
++#define MPCONF_SIZE  	0x80
++#define MPCONF(x)	(MPCONF_ADDR + (x) * MPCONF_SIZE)
++
++/* Octane can theoretically do 4 CPUs, but only 2 are physically possible */
++#define MP_NCPU		4
++
++#define MP_MAGIC(x)     ((void *)(MPCONF(x) + 0x00))
++#define MP_PRID(x)      ((void *)(MPCONF(x) + 0x04))
++#define MP_PHYSID(x)    ((void *)(MPCONF(x) + 0x08))
++#define MP_VIRTID(x)    ((void *)(MPCONF(x) + 0x0c))
++#define MP_SCACHESZ(x)  ((void *)(MPCONF(x) + 0x10))
++#define MP_FANLOADS(x)  ((void *)(MPCONF(x) + 0x14))
++#define MP_LAUNCH(x)    ((void *)(MPCONF(x) + 0x18))
++#define MP_RNDVZ(x)     ((void *)(MPCONF(x) + 0x20))
++#define MP_STACKADDR(x) ((void *)(MPCONF(x) + 0x40))
++#define MP_LPARM(x)     ((void *)(MPCONF(x) + 0x48))
++#define MP_RPARM(x)     ((void *)(MPCONF(x) + 0x50))
++#define MP_IDLEFLAG(x)  ((void *)(MPCONF(x) + 0x58))
++
++#endif /* __ASM_MACH_IP30_RACERMP_H */
+diff --git a/arch/mips/include/asm/mach-ip30/spaces.h b/arch/mips/include/asm/mach-ip30/spaces.h
+new file mode 100644
+index 000000000000..0989cbbc9a6e
+--- /dev/null
++++ b/arch/mips/include/asm/mach-ip30/spaces.h
+@@ -0,0 +1,19 @@
++/*
++ * This file is subject to the terms and conditions of the GNU General Public
++ * License.  See the file "COPYING" in the main directory of this archive
++ * for more details.
++ *
++ * Copyright (C) 2016 Joshua Kinard <kumba@gentoo.org>
++ *
++ */
++#ifndef _ASM_MACH_IP30_SPACES_H
++#define _ASM_MACH_IP30_SPACES_H
++
++/*
++ * Memory in IP30/Octane is offset 512MB in the physical address space.
++ */
++#define PHYS_OFFSET	_AC(0x20000000, UL)
++
++#include <asm/mach-generic/spaces.h>
++
++#endif /* _ASM_MACH_IP30_SPACES_H */
+diff --git a/arch/mips/include/asm/mach-ip30/sysinfo.h b/arch/mips/include/asm/mach-ip30/sysinfo.h
+new file mode 100644
+index 000000000000..024d77dd3cb2
+--- /dev/null
++++ b/arch/mips/include/asm/mach-ip30/sysinfo.h
+@@ -0,0 +1,56 @@
++/*
++ * IP30/Octane misc system defines that don't fit into other headers.
++ *
++ * Copyright (C) 2004-2007 Stanislaw Skowronek <skylark@unaligned.org>
++ *               2015-2016 Joshua Kinard <kumba@gentoo.org>
++ *
++ * This file is subject to the terms and conditions of the GNU General Public
++ * License.  See the file "COPYING" in the main directory of this archive
++ * for more details.
++ */
++#ifndef __ASM_MACH_IP30_SYSINFO_H
++#define __ASM_MACH_IP30_SYSINFO_H
++
++/* Hardcoded IP30 xtalk widget IDs. */
++#define IP30_WIDGET_XBOW	_AC(0x0, UL)	/* XBow is always 0 */
++#define IP30_WIDGET_HEART	_AC(0x8, UL)	/* HEART is always 8 */
++#define IP30_WIDGET_GFX_1	_AC(0xc, UL)	/* 1st GFX slot is always 12 */
++#define IP30_WIDGET_PCI_CAGE	_AC(0xd, UL)	/* PCI Cage is always 13 */
++#define IP30_WIDGET_PCI_BASE	_AC(0xf, UL)	/* BaseIO PCI is always 15 */
++
++/* On the BaseIO BRIDGE, two slots are hardwired for special functions */
++#define IP30_BASEIO_2ND_IOC3	4
++#define IP30_BASEIO_PWR_BTN	6
++/* XXX: There's a hardwire for "acfail", too, but where? */
++
++/*
++ * ARCS will report up to the first 1GB of
++ * memory if queried.  Anything beyond that
++ * is marked as reserved.
++ */
++#define IP30_MAX_PROM_MEMORY	_AC(0x40000000, UL)
++
++/*
++ * Memory in the Octane starts at 512MB, for
++ * unknown reasons.
++ */
++#define IP30_MEMORY_BASE	_AC(0x20000000, UL)
++
++/*
++ * If using ARCS to probe for memory, then
++ * remaining memory will start at this offset.
++ */
++#define IP30_REAL_MEMORY_START	(IP30_MEMORY_BASE + IP30_MAX_PROM_MEMORY)
++
++/*
++ * There are 8 DIMM slots on an IP30 system
++ * board, but it appears that they are grouped
++ * into four banks of two slots each.
++ */
++#define IP30_MAX_MEMORY_BANKS	4
++
++/* HEART can support up to four CPUs, but in IP30, only two are possible. */
++#define IP30_MAX_HEART_CPUS	4
++#define IP30_MAX_REAL_CPUS	2
++
++#endif /* __ASM_MACH_IP30_SYSINFO_H */
+diff --git a/arch/mips/include/asm/mach-ip30/war.h b/arch/mips/include/asm/mach-ip30/war.h
+new file mode 100644
+index 000000000000..16ac55c78d1b
+--- /dev/null
++++ b/arch/mips/include/asm/mach-ip30/war.h
+@@ -0,0 +1,29 @@
++/*
++ * This file is subject to the terms and conditions of the GNU General Public
++ * License.  See the file "COPYING" in the main directory of this archive
++ * for more details.
++ *
++ * Copyright (C) 2002, 2004, 2007 by Ralf Baechle <ralf@linux-mips.org>
++ */
++#ifndef __ASM_MIPS_MACH_IP30_WAR_H
++#define __ASM_MIPS_MACH_IP30_WAR_H
++
++#define R4600_V1_INDEX_ICACHEOP_WAR	0
++#define R4600_V1_HIT_CACHEOP_WAR	0
++#define R4600_V2_HIT_CACHEOP_WAR	0
++#define MIPS_CACHE_SYNC_WAR		0
++#define BCM1250_M3_WAR			0
++#define SIBYTE_1956_WAR			0
++#define MIPS4K_ICACHE_REFILL_WAR	0
++#define MIPS34K_MISSED_ITLB_WAR		0
++#define R5432_CP0_INTERRUPT_WAR		0
++#define TX49XX_ICACHE_INDEX_INV_WAR	0
++#define ICACHE_REFILLS_WORKAROUND_WAR	0
++
++#ifdef CONFIG_CPU_R10000
++#define R10000_LLSC_WAR			1
++#else
++#define R10000_LLSC_WAR			0
++#endif
++
++#endif /* __ASM_MIPS_MACH_IP30_WAR_H */
+diff --git a/arch/mips/include/asm/xtalk/xwidget.h b/arch/mips/include/asm/xtalk/xwidget.h
+index 9366bdaf8337..52e277f2455e 100644
+--- a/arch/mips/include/asm/xtalk/xwidget.h
++++ b/arch/mips/include/asm/xtalk/xwidget.h
+@@ -207,6 +207,19 @@ static const struct widget_ident __initconst widget_idents[] = {
+  #define XTALK_BRIDGE		IP27_WIDGET_PCI_BASE
+  #define XTALK_LOW_DEV		HUB_WIDGET_ID_MIN
+  #define XTALK_HIGH_DEV		HUB_WIDGET_ID_MAX
++#elif defined(CONFIG_SGI_IP30)
++ #include <asm/mach-ip30/sysinfo.h>
++
++ #define IP30_XTALK_NUM_WID	16
++
++ /* Widget bits */
++ #define XTALK_XBOW		IP30_WIDGET_XBOW
++ #define XTALK_HEART		IP30_WIDGET_HEART
++ #define XTALK_PCIBR		IP30_WIDGET_PCI_CAGE
++ #define XTALK_BRIDGE		IP30_WIDGET_PCI_BASE
++ #define XTALK_XIO1		IP30_WIDGET_GFX_1
++ #define XTALK_LOW_DEV		XTALK_HEART
++ #define XTALK_HIGH_DEV		XTALK_BRIDGE
+ #endif
+ 
+ /* Common widget bits */
+diff --git a/arch/mips/kernel/setup.c b/arch/mips/kernel/setup.c
+index 01d1dbde5fbf..f15cc2582831 100644
+--- a/arch/mips/kernel/setup.c
++++ b/arch/mips/kernel/setup.c
+@@ -917,16 +917,20 @@ static void __init resource_init(void)
+ 			res->name = "reserved";
+ 		}
+ 
+-		request_resource(&iomem_resource, res);
++		res->start = start;
++		res->end = end;
+ 
+-		/*
+-		 *  We don't know which RAM region contains kernel data,
+-		 *  so we try it repeatedly and let the resource manager
+-		 *  test it.
+-		 */
+-		request_resource(res, &code_resource);
+-		request_resource(res, &data_resource);
+-		request_crashkernel(res);
++		res->flags = IORESOURCE_MEM | IORESOURCE_BUSY;
++		if (request_resource(&iomem_resource, res) == 0) {
++			/*
++			 *  We don't know which RAM region contains kernel data,
++			 *  so we try it repeatedly and let the resource manager
++			 *  test it.
++			 */
++			request_resource(res, &code_resource);
++			request_resource(res, &data_resource);
++			request_crashkernel(res);
++		}
+ 	}
+ }
+ 
+diff --git a/arch/mips/pci/Makefile b/arch/mips/pci/Makefile
+index 7ff66cce2cf7..658395bb1a5a 100644
+--- a/arch/mips/pci/Makefile
++++ b/arch/mips/pci/Makefile
+@@ -38,6 +38,7 @@ obj-$(CONFIG_PMC_MSP7120_GW)	+= fixup-pmcmsp.o ops-pmcmsp.o
+ obj-$(CONFIG_PMC_MSP7120_EVAL)	+= fixup-pmcmsp.o ops-pmcmsp.o
+ obj-$(CONFIG_PMC_MSP7120_FPGA)	+= fixup-pmcmsp.o ops-pmcmsp.o
+ obj-$(CONFIG_SGI_IP27)		+= ops-bridge.o pci-bridge.o
++obj-$(CONFIG_SGI_IP30)		+= ops-bridge.o pci-bridge.o
+ obj-$(CONFIG_SGI_IP32)		+= fixup-ip32.o ops-mace.o pci-ip32.o
+ obj-$(CONFIG_SIBYTE_SB1250)	+= fixup-sb1250.o pci-sb1250.o
+ obj-$(CONFIG_SIBYTE_BCM112X)	+= fixup-sb1250.o pci-sb1250.o
+diff --git a/arch/mips/pci/ops-bridge.c b/arch/mips/pci/ops-bridge.c
+index 28efce2dcb7d..6126fbb25283 100644
+--- a/arch/mips/pci/ops-bridge.c
++++ b/arch/mips/pci/ops-bridge.c
+@@ -14,6 +14,9 @@
+ #include <asm/sn/arch.h>
+ #include <asm/sn/intr.h>
+ #include <asm/sn/sn0/hub.h>
++#elif defined(CONFIG_SGI_IP30)
++#include <asm/mach-ip30/addrs.h>
++#include <asm/mach-ip30/pcibr.h>
+ #endif
+ 
+ /*
+diff --git a/arch/mips/pci/pci-bridge.c b/arch/mips/pci/pci-bridge.c
+index b1a1623b91fb..9cd2dc74f556 100644
+--- a/arch/mips/pci/pci-bridge.c
++++ b/arch/mips/pci/pci-bridge.c
+@@ -32,6 +32,10 @@
+ #if defined(CONFIG_SGI_IP27)
+ #include <asm/mach-ip27/pcibr.h>
+ #include <asm/mach-ip27/sysinfo.h>
++#elif defined(CONFIG_SGI_IP30)
++#include <asm/mach-ip30/addrs.h>
++#include <asm/mach-ip30/sysinfo.h>
++#include <asm/mach-ip30/pcibr.h>
+ #else
+ #error "Unknown CONFIG_SGI_IP??"
+ #endif
+diff --git a/arch/mips/sgi-ip30/BUGS b/arch/mips/sgi-ip30/BUGS
+new file mode 100644
+index 000000000000..d62c0cca45f9
+--- /dev/null
++++ b/arch/mips/sgi-ip30/BUGS
+@@ -0,0 +1,58 @@
++>2GB RAM:
++ - In order to use more than 2GB RAM in IP30/Octane requires selecting
++   VERY specific values for certain Kconfig options.  Specifically,
++   the following options under the "Kernel type" submenu:
++     - PAGE_SIZE
++     - Maximum Zone Order
++     - Transparent Hugepages (THP)
++
++   A table of the specific settings is below:
++    PAGE_SIZE | Zone Order | THP
++   -----------|------------|-----
++       4KB    | 11 to 13   |  N
++      16KB    | 12 Only    |  Y
++      64KB*   | 14 Only    |  Y
++
++   Any other configuration of these three options will likely lead to
++   Instruction Bus Errors (IBEs) when the kernel loads userland up (when it
++   execve()'s /sbin/init).  Even then, however, the machine will still be
++   very unstable (depending on the operations it does).  Heavy disk I/O
++   still seems capable of crashing the machine due to either NULL pointer
++   dereferences, unhandled kernel unaligned accesses, or Instruction Bus
++   Errors.
++
++   * Impact users cannot currently use an Impact board with 64KB PAGE_SIZE,
++     THP, and >2GB RAM.  This will trigger a NULL pointer deference in
++     impact_resize_kpool() (when called initially from impact_common_probe()
++     to set the initial 64KB kpool on pool '0') due to (possibly) vzalloc()
++     returning a NULL pointer when allocating kpool_virt[pool].
++
++   * THP still has issues on R1x000 CPUs, so user beware.  YMMV.
++
++
++DMA:
++- BRIDGE DMA was switched over to 64-bit addressing.  This is
++  largely untested, but it seems to hold up well.  This switchover
++  reduces the complexity of dma-coherence.h significantly (once
++  the 32-bit code is removed completely).  This will help in chasing
++  down any remaining DMA issues.
++
++
++High-density memory DIMMs [KSG-OCTR12/2048] (2x 1GB DIMMs):
++- Installed in bank 0 (the 1st bank) by themselves (2GB RAM) will cause
++  machine to hang somewhere after calling check_bugs() in init/main.c.
++
++- Installed in banks 1 to 3, high-density RAM is placed first in the
++  address map.  ip30-memory.c appears to fix most problems with this,
++  but likely, this continues to aggravate the known DMA bugs.
++
++
++XBOW/XTALK:
++- Really need to create proper bus interfaces for dealing with XIO
++  devices.  Likely, a lot of good code can be borrowed from old
++  arch/ia64 code from Linux-2.4 and Linux-2.5.
++
++
++Miscellaneous:
++- CONFIG_SLUB is still broken.  Fails added /sys node due to duplicate
++  :dt-00000128 entries.
+diff --git a/arch/mips/sgi-ip30/Makefile b/arch/mips/sgi-ip30/Makefile
+new file mode 100644
+index 000000000000..86a855d9dae2
+--- /dev/null
++++ b/arch/mips/sgi-ip30/Makefile
+@@ -0,0 +1,13 @@
++#
++# Makefile for the IP30 specific kernel interface routines under Linux.
++#
++
++obj-y	:= ip30-irq.o ip30-irqno.o ip30-memory.o ip30-power.o ip30-setup.o \
++	   ip30-timer.o ip30-xtalk.o
++
++obj-$(CONFIG_EARLY_PRINTK)	+= ip30-console.o
++obj-$(CONFIG_PCI)		+= ip30-bridge.o
++obj-$(CONFIG_SMP)		+= ip30-smp.o ip30-smp-glue.o
++obj-$(CONFIG_SGI_IOC3)		+= ip30-platform.o
++
++EXTRA_AFLAGS := $(CFLAGS)
+diff --git a/arch/mips/sgi-ip30/Platform b/arch/mips/sgi-ip30/Platform
+new file mode 100644
+index 000000000000..403a8112147d
+--- /dev/null
++++ b/arch/mips/sgi-ip30/Platform
+@@ -0,0 +1,10 @@
++#
++# SGI-IP30 (Octane/Octane2)
++#
++ifdef CONFIG_SGI_IP30
++platform-$(CONFIG_SGI_IP30)		+= sgi-ip30/
++cflags-$(CONFIG_SGI_IP30)		+= -I$(srctree)/arch/mips/include/asm/mach-ip30
++cflags-$(CONFIG_CPU_R12K_R14K_R16K)	+= -mno-fix-r10000
++#load-$(CONFIG_SGI_IP30)		+= 0xa800000020080000
++load-$(CONFIG_SGI_IP30)			+= 0xa800000020004000
++endif
+diff --git a/arch/mips/sgi-ip30/ip30-bridge.c b/arch/mips/sgi-ip30/ip30-bridge.c
+new file mode 100644
+index 000000000000..26c59c003fd3
+--- /dev/null
++++ b/arch/mips/sgi-ip30/ip30-bridge.c
+@@ -0,0 +1,319 @@
++/*
++ * This file is subject to the terms and conditions of the GNU General Public
++ * License.  See the file "COPYING" in the main directory of this archive
++ * for more details.
++ *
++ * ip30-bridge.c: BRIDGE platform device setup for IP30.
++ *
++ * Copyright (C) 2016 Joshua Kinard <kumba@gentoo.org>
++ */
++
++#include <linux/export.h>
++#include <linux/init.h>
++#include <linux/platform_device.h>
++
++#include <asm/addrspace.h>
++#include <asm/pci/bridge.h>
++
++#include <asm/mach-ip30/addrs.h>
++#include <asm/mach-ip30/pcibr.h>
++#include <asm/mach-ip30/sysinfo.h>
++
++/* Defined in ip30-irq.c. */
++extern int ip30_request_irq(void);
++
++/* Defined in arch/mips/pci/pci-bridge.c */
++extern u32 bridge_alloc_rrbs(u8, u8, u8, u8, bool, bool, bool, bool);
++
++
++/**
++ * ip30_setup_baseio_rrbs - alloc the read response buffers on IP30 BaseIO.
++ * @bridge: const pointer to a BRIDGE structure.
++ * @census: array of bools indicating if a slot is populated or not. (unused)
++ *
++ * RRB values were re-calculated by evaluating the RRB layout for IP27 via
++ * the original "sn00_rrb_alloc" function, found in
++ * arch/ia64/sn/io/ml_iograph.c in Linux-2.5.70, and taking into account the
++ * fact that IP30's BaseIO is the system board, and the four main PCI devices
++ * are soldered to the board and cannot be easily changed.
++ *
++ * IP27's logic is:
++ *  - 3+ RRBs for scsi0 (qla)
++ *  - 2  RRBs for scsi1 (qla, external)
++ *  - 2+ RRBs for IOC3 ethernet
++ *  - 1  RRB  for IOC3 I/O (kb/mouse, serial ports)
++ *
++ * There are two 32-bit registers for manipulating the RRB layout.  The first
++ * register handles even-numbered slots (0, 2, 4, & 6) and the second register
++ * handles odd-numbered slots (1, 3, 5, & 7).  RRB assignment involves
++ * frobbing four bits per RRB, for a total of 8 RRBs split between the four
++ * BRIDGE slots in each register.  For each RRB, the four bits are in order:
++ *  - Buffer Enable (1 bit)
++ *  - Virtual Channel Enable (1 bit)
++ *  - Device Number Assigned (upper two bits of device number)
++ *
++ * IP30 only has 4 real PCI devices attached to the BaseIO BRIDGE chip, thus
++ * calculating the RRB assignment is a bit easier than the IP27 case:
++ *  - Slot 0 (qla), 4 RRBs
++ *  - Slot 1 (qla), 4 RRBs
++ *  - Slot 2 (IOC3), 3 RRBs (Ethernet)
++ *  - Slot 3 (RAD1), 4 RRBs
++ *  - Slot 4 (IOC3), 1 RRB (I/O)
++ *  - Slot 5 (PROM Password Jumper?), 0 RRB
++ *  - Slot 6 (Power Button IRQ), 0 RRB
++ *  - Slot 7 (AC Fail IRQ), 0 RRB
++ */
++static void __init
++ip30_setup_baseio_rrbs(struct bridge_controller *bc, const bool *census)
++{
++	u32 rrbs;
++
++	/* Even RRBs */
++	rrbs = bridge_alloc_rrbs(4, 3, 1, 0, false, false, false, false);
++	bridge_write_reg(rrbs, bc, b_dev_even_rrb);
++
++	/* Odd RRBs */
++	rrbs = bridge_alloc_rrbs(4, 4, 0, 0, false, false, false, false);
++	bridge_write_reg(rrbs, bc, b_dev_odd_rrb);
++}
++
++/**
++ * ip30_bridge_alloc_irq - platform-specific BRIDGE IRQ allocator.
++ * @dev: pointer to struct pci_dev for the specific PCI device.
++ *
++ * Returns the assigned IRQ or -1 if no IRQ was allocated.
++ */
++int __init
++ip30_bridge_alloc_irq(struct pci_dev *dev)
++{
++	struct pci_dev *rdev = bridge_root_dev(dev);
++	struct bridge_controller *bc = BRIDGE_CONTROLLER(dev->bus);
++	int slot = PCI_SLOT(rdev->devfn);
++	int irq;
++
++	irq = bc->pci_int[slot];
++	if (irq == -1) {
++		irq = ip30_request_irq();
++		if (irq < 0)
++			goto out;
++
++		bc->pci_int[slot] = irq;
++	} else if ((bc->widget_id == IP30_WIDGET_PCI_BASE) &&
++		   (dev->device == PCI_DEVICE_ID_SGI_IOC3)) {
++		/*
++		 * XXX: BaseIO IOC3 needs a second IRQ, which will also be
++		 * hardwired to BRIDGE slot #4.  But don't overwrite the
++		 * dev->irq assignment, as the ethernet is primary.
++		 */
++		irq = ip30_request_irq();
++		ip30_irq_to_bridge[irq] = bc;
++		ip30_irq_to_slot[irq] = IP30_BASEIO_2ND_IOC3;
++		goto out;
++	}
++
++	ip30_irq_to_bridge[irq] = bc;
++	ip30_irq_to_slot[irq] = slot;
++	dev->irq = irq;
++
++out:
++	return irq;
++}
++
++/* OK, spikey dildo time */
++#define AT_FAIL	0
++#define AT_D32	1
++#define AT_D64	2
++#define AT_DIO	3
++#define AT_WIN	4
++
++static char *
++at_names[] __initdata = {
++	"[Failed]",
++	"Direct 32-bit",
++	"Direct 64-bit",
++	"Direct I/O",
++	"Window"
++};
++
++/**
++ * struct ip30_bridge_resource - IP30-specific BRIDGE resource data.
++ * @win_p: array that holds the pointer for the specific address window.
++ * @win_io: array that sets if the window is a devio or direct-mapped.
++ * @dio_p: temporarily stores the last devio pointer value.
++ * @d64_p: temporarily stores the last direct-mapped pointer value.
++ */
++struct ip30_bridge_resource {
++	u32 win_p[PCIBR_MAX_DEV_BRIDGE];
++	int win_io[PCIBR_MAX_DEV_BRIDGE];
++	u32 dio_p;
++	u32 d64_p;
++};
++
++static struct ip30_bridge_resource
++ip30_br[PCIBR_MAX_BRIDGES] __initdata;
++
++
++/**
++ * ip30_bridge_align - aligns a device resource pointer to a specific size.
++ * @ptr: resource pointer value to align
++ * @size: size of the resource.
++ */
++static inline u32 __init
++ip30_bridge_align(u32 ptr, u32 size)
++{
++	return (ptr + size - 1) & ~(size - 1);
++}
++
++/**
++ * ip30_bridge_win_size - gets the window size of the specified BRIDGE slot.
++ * @n: number of the current BRIDGE slot.
++ *
++ * BRIDGE slots 0 and 1 have 2GB windows to crosstalk space, while all
++ * remaining slots have only 1GB windows.
++ */
++static inline u32 __init
++ip30_bridge_win_size(int n)
++{
++	return (n < 2) ? 0x200000 : 0x100000;
++}
++
++/**
++ * ip30_bridge_win_base - gets the window base of the specified BRIDGE slot.
++ * @n: number of the current BRIDGE slot.
++ */
++static inline u32 __init
++ip30_bridge_win_base(int n)
++{
++	return (n < 3) ? (0x200000 * (n + 1)) : (0x100000 * (n + 4));
++}
++
++/**
++ * ip30_bridge_pre_enable - config BRIDGE address space prior to probe.
++ * @hose: pointer to struct pci_controller for the BRIDGE chip being probed.
++ * @dev: pointer to struct pci_dev (for this BRIDGE?)
++ * @bar: PCI BAR number.
++ */
++static int __init
++ip30_bridge_pre_enable(struct pci_controller *hose, struct pci_dev *dev,
++		       int bar)
++{
++	struct bridge_controller *bc = (struct bridge_controller *)hose;
++	struct ip30_bridge_resource *br = &ip30_br[bc->pc.index];
++	struct resource *rs = &dev->resource[bar];
++	int i, j, where, at = AT_FAIL;
++	int slot = PCI_SLOT(dev->devfn);
++	int is_io = !!(rs->flags & IORESOURCE_IO);
++	u32 size = ((rs->end - rs->start) + 1);
++	u32 base = 0, balign = 0;
++	u32 reg;
++	unsigned long vma = 0;
++
++	/* Check for nonexistant resources */
++	if (size < 2)
++		return 0;
++
++	/* Try direct mappings first */
++	if (!is_io) {
++		base = ip30_bridge_align(br->d64_p, size);
++		vma = (base + BRIDGE_PCI_MEM64_BASE);
++		br->d64_p = (base + size);
++		at = AT_D64;
++	} else {
++		/*
++		 * Bridge Hardware Bug WAR #482741 (discovered in ia64 code):
++		 * The 4G area that maps directly from XIO space to PCI I/O
++		 * space is busted until Bridge Rev D.
++		 */
++		reg = bridge_read_reg(bc, b_wid_id);
++		if (XWIDGET_REV_NUM(reg) >= BRIDGE_REV_D) {
++			base = ip30_bridge_align(br->dio_p, size);
++			vma = (base + BRIDGE_PCI_IO_BASE);
++			br->dio_p = (base + size);
++			at = AT_DIO;
++		}
++	}
++
++	/* OK, that failed, try finding a compatible DevIO */
++	if (at == AT_FAIL) {
++		for (j = 0; j < PCIBR_MAX_DEV_BRIDGE; j++) {
++			i = ((j + slot) & 7);
++			if (!br->win_p[i] || br->win_io[i] != is_io)
++				continue;
++
++			balign = ip30_bridge_align(br->win_p[i], size);
++			if ((balign + size) <= ip30_bridge_win_size(i)) {
++				base = balign;
++				br->win_p[i] = (base + size);
++				base += ip30_bridge_win_base(i);
++				vma = base;
++				at = AT_WIN;
++				break;
++			}
++		}
++	}
++
++	/* if everything else fails, allocate a new DevIO */
++	if (at == AT_FAIL) {
++		for (j = 0; j < PCIBR_MAX_DEV_BRIDGE; j++) {
++			i = ((j + slot) & 7);
++			if (!br->win_p[i] && size <= ip30_bridge_win_size(i)) {
++				br->win_p[i] = size;
++				br->win_io[i] = is_io;
++				base = ip30_bridge_win_base(i);
++				vma = base;
++				at = AT_WIN;
++				/* Set the DevIO params */
++				reg = bridge_read_reg(bc, b_device(i));
++				if (is_io)
++					reg &= ~BRIDGE_DEV_DEV_IO_MEM;
++				else
++					reg |= BRIDGE_DEV_DEV_IO_MEM;
++				reg &= ~BRIDGE_DEV_OFF_MASK;
++				reg |= (ip30_bridge_win_base(i) >>
++					BRIDGE_DEV_OFF_ADDR_SHFT);
++				bridge_write_reg(reg, bc, b_device(i));
++				break;
++			}
++		}
++	}
++
++	/* Get the real VMA */
++	if (vma < PCIBR_OFFSET_END)
++		vma += NODE_SWIN_BASE(bc->nasid, bc->widget_id);
++	else
++		vma += NODE_BWIN_BASE(bc->nasid, bc->widget_id);
++
++	/* Print device info to console */
++	pr_info("ip30-bridge: %s Bar %d with size 0x%08x at bus 0x%08x "
++		"vma 0x%016lx is %s.\n", pci_name(dev), bar, size,
++		base, vma, at_names[at]);
++
++	if (at == AT_FAIL)
++		return -ENOMEM;
++
++	/* Set the device resource to the new address */
++	rs->start = vma;
++	rs->end = ((vma + size) - 1);
++
++	/* Update PCI device config. */
++	where = (PCI_BASE_ADDRESS_0 + (sizeof(u32) * bar));
++	pci_read_config_dword(dev, where,  &reg);
++	reg &= 0xf;
++	reg |= (base & (~0xf));
++	pci_write_config_dword(dev, where, reg);
++
++	return 0;
++}
++
++struct bridge_platform_data
++ip30_bridge_platform_data[] __initdata = {
++	{
++		.xio_target_addr = PCIBR_XIO_SEES_HEART,
++		.baseio_widget_id = IP30_WIDGET_PCI_BASE,
++		.iomem_swap = false,
++		.add_512 = true,
++		.setup_baseio_rrbs = ip30_setup_baseio_rrbs,
++		.alloc_irq = ip30_bridge_alloc_irq,
++		.pre_enable = ip30_bridge_pre_enable,
++	},
++};
+diff --git a/arch/mips/sgi-ip30/ip30-console.c b/arch/mips/sgi-ip30/ip30-console.c
+new file mode 100644
+index 000000000000..fad98d41ad5c
+--- /dev/null
++++ b/arch/mips/sgi-ip30/ip30-console.c
+@@ -0,0 +1,37 @@
++/*
++ * This file is subject to the terms and conditions of the GNU General Public
++ * License.  See the file "COPYING" in the main directory of this archive
++ * for more details.
++ *
++ * Copyright (C) 2001, 2002 Ralf Baechle
++ */
++
++#include <asm/page.h>
++#include <asm/sgi/ioc3.h>
++#include <asm/delay.h>
++
++#include <linux/serial.h>
++#include <linux/serial_core.h>
++
++#define IOC3_CLK	(22000000 / 3)
++#define IOC3_FLAGS	(0)
++
++static inline struct ioc3_uartregs *
++console_uart(void)
++{
++	struct ioc3 *ioc3;
++
++	ioc3 = (struct ioc3 *)((void *)(0x900000001f600000));
++	return &ioc3->sregs.uarta;
++}
++
++void
++prom_putchar(char c)
++{
++	struct ioc3_uartregs *uart = console_uart();
++
++	while ((((u8 __iomem)uart->iu_lsr) & 0x20) == 0)
++		cpu_relax();
++
++	uart->iu_thr = c;
++}
+diff --git a/arch/mips/sgi-ip30/ip30-irq.c b/arch/mips/sgi-ip30/ip30-irq.c
+new file mode 100644
+index 000000000000..58a0a281622d
+--- /dev/null
++++ b/arch/mips/sgi-ip30/ip30-irq.c
+@@ -0,0 +1,683 @@
++/*
++ * This file is subject to the terms and conditions of the GNU General Public
++ * License.  See the file "COPYING" in the main directory of this archive
++ * for more details.
++ *
++ * ip30-irq.c: Highlevel interrupt handling for IP30 architecture.
++ *
++ * Originally inspired by ip27-irq.c and ip32-irq.c, later used to refactor
++ * ip27-irq-pci.c, which was then used to replace the original logic with
++ * what is used on IP27.  As such, the original code is:
++ *   Copyright (C) 2004-2007 Stanislaw Skowronek <skylark@unaligned.org>
++ *   Copyright (C) 2009 Johannes Dickgreber <tanzy@gmx.de>
++ *   Copyright (C) 2007-2014 Joshua Kinard <kumba@gentoo.org>
++ *
++ * While the new-and-improved IRQ code from IP27 is:
++ *   Copyright (C) 1999, 2000 Ralf Baechle (ralf@gnu.org)
++ *   Copyright (C) 1999, 2000 Silicon Graphics, Inc.
++ *   Copyright (C) 1999-2001 Kanoj Sarcar
++ *   Copyright (C) 2016 Joshua Kinard <kumba@gentoo.org>
++ *
++ */
++#include <linux/errno.h>
++#include <linux/init.h>
++#include <linux/interrupt.h>
++#include <linux/irq.h>
++#include <linux/percpu.h>
++#include <linux/spinlock.h>
++#include <linux/tick.h>
++#include <linux/types.h>
++
++#include <asm/irq_cpu.h>
++#include <asm/pci/bridge.h>
++
++#include <asm/mach-ip30/addrs.h>
++#include <asm/mach-ip30/cpu.h>
++#include <asm/mach-ip30/heart.h>
++#include <asm/mach-ip30/irq.h>
++#include <asm/mach-ip30/pcibr.h>
++#include <asm/mach-ip30/racermp.h>
++#include <asm/mach-ip30/sysinfo.h>
++
++#define heart_read	__raw_readq
++#define heart_write	__raw_writeq
++
++#undef IP30_DEBUG_IRQ
++
++extern struct ip30_heart_regs __iomem *heart_regs;
++
++struct bridge_controller *ip30_irq_to_bridge[NR_IRQS];
++u32 ip30_irq_to_slot[NR_IRQS];
++
++/* Defined in ip30-setup.c */
++DECLARE_PER_CPU(struct ip30_percpu_data, ip30_cpu);
++
++/* ----------------------------------------------------------------------- */
++
++/**
++ * ip30_earmark_irq_bit - earmarks a free interrupt bit in the HEART to an irq.
++ * @heart: pointer to struct ip30_heart_data.
++ * @irq: int value of irq to assign.
++ *
++ * This function finds the first free bit in HEART's irq_alloc_map and
++ * earmarks it for assignment to the requested IRQ number.  It then returns
++ * the earmarked bit.
++ *
++ * CPU ownership takes place in ip30_startup_heart_irq(), which is where the
++ * IRQ bring up happens.
++ */
++static int
++ip30_earmark_irq_bit(const struct ip30_percpu_data *cpud, int irq)
++{
++	u32 bit;
++
++	bit = find_first_zero_bit(&cpud->heart->irq_alloc_map, BITS_PER_HEART);
++	if (bit >= BITS_PER_HEART)
++		panic("IP30: HEART flooded with IRQ assignments!\n");
++
++	smp_mb__before_atomic();
++	set_bit(bit, &cpud->heart->irq_alloc_map);
++	cpud->heart->irq_to_bit[irq] = bit;
++	cpud->heart->bit_to_irq[bit] = irq;
++	smp_mb__after_atomic();
++
++	return bit;
++}
++
++/**
++ * ip30_set_heart_bit - sets a bit in irq_mask for a specific CPU.
++ * @bit: int value of the interrupt bit to set.
++ */
++static inline void
++ip30_set_heart_bit(int bit)
++{
++	struct ip30_percpu_data *cpud = this_cpu_ptr(&ip30_cpu);
++
++	set_bit(bit, &cpud->irq_mask);
++	heart_write(cpud->irq_mask, &heart_regs->imr[cpud->id]);
++}
++
++/**
++ * ip30_clear_heart_bit - clears a bit in irq_mask for a specific CPU.
++ * @bit: int value of the interrupt bit to clear.
++ */
++static inline void
++ip30_clear_heart_bit(int bit)
++{
++	struct ip30_percpu_data *cpud = this_cpu_ptr(&ip30_cpu);
++
++	clear_bit(bit, &cpud->irq_mask);
++	heart_write(cpud->irq_mask, &heart_regs->imr[cpud->id]);
++}
++
++/**
++ * ip30_do_error_irq - IRQ dispatch for all HEART error IRQs (51 - 63).
++ */
++static noinline void
++ip30_do_error_irq(void)
++{
++	int i;
++	u64 pending, mask, cause, error_irqs, err_reg;
++	int cpu = smp_processor_id();
++
++	irq_enter();
++	pending = heart_read(&heart_regs->isr);
++	mask = heart_read(&heart_regs->imr[cpu]);
++	cause = heart_read(&heart_regs->cause);
++	error_irqs = (pending & HEART_L4_INT_MASK & mask);
++
++	/* Bail if there's nothing to process (how did we get here, then?) */
++	if (unlikely(!error_irqs)) {
++		irq_exit();
++		return;
++	}
++
++	/* Prevent any of the error IRQs from firing again. */
++	heart_write(mask & ~(pending), &heart_regs->imr[cpu]);
++
++	/* Ack all error IRQs. */
++	heart_write(HEART_L4_INT_MASK, &heart_regs->clear_isr);
++
++	/*
++	 * If we also have a cause value, then something happened, so loop
++	 * through the error IRQs and report a "heart attack" for each one
++	 * and print the value of the HEART cause register.  This is really
++	 * primitive right now, but it should hopefully work until a more
++	 * robust error handling routine can be put together.
++	 *
++	 * Refer to ip30-heart.h for the HC_* macros to work out the cause
++	 * that got us here.
++	 */
++	if (cause > 0) {
++		pr_alert("IP30: CPU%d: HEART ATTACK! ISR = 0x%.16llx, "
++			 "IMR = 0x%.16llx, CAUSE = 0x%.16llx\n", cpu,
++			 pending, mask, cause);
++
++		if (cause & HC_COR_MEM_ERR) {
++			err_reg = heart_read(&heart_regs->mem_err_addr);
++			pr_cont("  HEART_MEMERR_ADDR = 0x%.16llx\n", err_reg);
++		}
++
++		/* i = 63; i >= 51; i-- */
++		for (i = HEART_ERR_MASK_END; i >= HEART_ERR_MASK_START; i--)
++			if ((pending >> i) & 1)
++				pr_cont("  HEART Error IRQ #%d\n", i);
++
++		/* XXX: Seems possible to loop forever here, so panic(). */
++		panic("IP30: Entered ip30_do_error_irq!\n");
++	}
++
++	/* Unmask the error IRQs. */
++	heart_write(mask, &heart_regs->imr[cpu]);
++	irq_exit();
++}
++
++/**
++ * ip30_find_first_set_msb - finds the first most significant bit set.
++ * @dword: u64 value in which to find the first bit set.
++ */
++static inline u32
++ip30_find_first_set_msb(u64 dword)
++{
++	/* b: bit, s: shift */
++	u32 b = 0, s;
++
++	s = 32; if (dword >> s == 0) s = 0; b += s; dword >>= s;
++	s = 16; if (dword >> s == 0) s = 0; b += s; dword >>= s;
++	s =  8; if (dword >> s == 0) s = 0; b += s; dword >>= s;
++	s =  4; if (dword >> s == 0) s = 0; b += s; dword >>= s;
++	s =  2; if (dword >> s == 0) s = 0; b += s; dword >>= s;
++	s =  1; if (dword >> s == 0) s = 0; b += s;
++
++	return b;
++}
++
++/**
++ * ip30_do_heart_irq - IRQ dispatch for all HEART L0, L1, L2 IRQs (0 - 49).
++ */
++static noinline void
++ip30_do_heart_irq(void)
++{
++	int irq, irq_bit;
++	u64 pend, mask;
++	const struct ip30_percpu_data *cpud = this_cpu_ptr(&ip30_cpu);
++
++	raw_spin_lock(&cpud->heart->lock);
++	pend = heart_read(&heart_regs->isr);
++	mask = (heart_read(&heart_regs->imr[cpud->id]) &
++		(HEART_L0_INT_MASK | HEART_L1_INT_MASK | HEART_L2_INT_MASK));
++	raw_spin_unlock(&cpud->heart->lock);
++
++	pend &= mask;
++	if (unlikely(!pend))
++		return;
++
++	irq_bit = ip30_find_first_set_msb(pend);
++	irq = cpud->heart->bit_to_irq[irq_bit];
++	do_IRQ(irq);
++}
++
++/* ----------------------------------------------------------------------- */
++
++
++
++/* ----------------------------------------------------------------------- */
++
++/**
++ * plat_irq_dispatch - platform IRQ dispatch.
++ *
++ * Interrupts are disabled.
++ */
++asmlinkage void
++plat_irq_dispatch(void)
++{
++	unsigned long pending;
++
++	pending = (read_c0_cause() & read_c0_status() & ST0_IM);
++
++	/* L5, CPU Counter/Compare */
++	if (likely(pending & CAUSEF_IP7))
++		do_IRQ(MIPS_CPU_IRQ_BASE);
++	/* L3, HEART Counter/Compare */
++	else if (likely(pending & CAUSEF_IP5))
++		do_IRQ(HEART_L3_INT_TIMER);
++	/* L0-L2, HEART normal IRQs + IPI/SMP IRQs */
++	else if (likely(pending & (CAUSEF_IP2 | CAUSEF_IP3 | CAUSEF_IP4)))
++		ip30_do_heart_irq();
++	/* L4, HEART Errors */
++	else if (unlikely(pending & CAUSEF_IP6))
++		ip30_do_error_irq();
++}
++
++/* ----------------------------------------------------------------------- */
++
++
++
++/* ----------------------------------------------------------------------- */
++/* HEART IRQ Ops */
++
++/**
++ * ip30_startup_heart_irq - assigns a HEART IRQ to a CPU and/or Bridge slot.
++ * @d: struct irq_data containing IRQ information.
++ *
++ * Returns 0.
++ */
++static unsigned int
++ip30_startup_heart_irq(struct irq_data *d)
++{
++	u32 slot, reg;
++	int irq_bit;
++	unsigned long flags;
++	struct bridge_controller *bc;
++	struct ip30_percpu_data *cpud = this_cpu_ptr(&ip30_cpu);
++
++#ifdef IP30_DEBUG_IRQ
++	pr_info("IP30: CPU%d: IRQ %d startup\n", cpud->id, d->irq);
++#endif
++
++	/* This CPU will now claim ownership of the IRQ. */
++	raw_spin_lock_irqsave(&cpud->heart->lock, flags);
++	cpud->heart->irq_owner[d->irq] = cpud->id;
++	irq_bit = cpud->heart->irq_to_bit[d->irq];
++
++	/*
++	 * Handle BRIDGE IRQs.
++	 *
++	 * b_int_addr(slot) - Points to the HEART so that BRIDGE can trigger
++	 *	interrupts directly for the specific device slot.
++	 *
++	 * b_int_mode - Enable the sending of an interrupt clear packet to
++	 *	the HEART on a high-to-low transition of the interrupt pin.
++	 *
++	 * b_int_device - We assume the bridge to have a 1:1 mapping between
++	 * 	devices (slots) and interrupt numbers.
++	 */
++	bc = ip30_irq_to_bridge[d->irq];
++	if (bc) {
++		slot = ip30_irq_to_slot[d->irq];
++		/* b_int_addr */
++		bridge_write_reg(irq_bit, bc, b_int_addr(slot));
++		/* b_int_enable */
++		reg = bridge_read_reg(bc, b_int_enable);
++		bridge_write_reg((reg | BIT(slot)), bc, b_int_enable);
++		/* b_int_mode */
++		reg = bridge_read_reg(bc, b_int_mode);
++		bridge_write_reg((reg | BIT(slot)), bc, b_int_mode);
++		/* b_int_device */
++		reg = bridge_read_reg(bc, b_int_device);
++		reg &= ~BRIDGE_INT_DEV_MASK(slot);
++		reg |= BRIDGE_INT_DEV_SET(slot, slot);
++		bridge_write_reg(reg, bc, b_int_device);
++		/* flush */
++		BRIDGE_FLUSH(bc);
++	}
++
++	/* Unmask IRQ */
++	ip30_set_heart_bit(irq_bit);
++	raw_spin_unlock_irqrestore(&cpud->heart->lock, flags);
++
++	/* Never anything pending. */
++	return 0;
++}
++
++/**
++ * ip30_shutdown_heart_irq - removes a HEART IRQ from a CPU and/or Bridge slot.
++ * @d: struct irq_data containing IRQ information.
++ */
++static void
++ip30_shutdown_heart_irq(struct irq_data *d)
++{
++	u32 slot, reg;
++	int irq_bit;
++	unsigned long flags;
++	struct bridge_controller *bc;
++	struct ip30_percpu_data *cpud = this_cpu_ptr(&ip30_cpu);
++
++	/* Mask the IRQ on HEART */
++	raw_spin_lock_irqsave(&cpud->heart->lock, flags);
++	irq_bit = cpud->heart->irq_to_bit[d->irq];
++	ip30_clear_heart_bit(irq_bit);
++
++	/* Ditto for BRIDGE */
++	bc = ip30_irq_to_bridge[d->irq];
++	if (bc) {
++		slot = ip30_irq_to_slot[d->irq];
++		reg = bridge_read_reg(bc, b_int_enable);
++		bridge_write_reg((reg & ~(BIT(slot))), bc, b_int_enable);
++		BRIDGE_FLUSH(bc);
++	}
++
++	/* Release ownership of the IRQ. */
++	cpud->heart->irq_owner[d->irq] = -1;
++	raw_spin_unlock_irqrestore(&cpud->heart->lock, flags);
++
++#ifdef IP30_DEBUG_IRQ
++	pr_info("IP30: CPU%d: IRQ %d shutdown\n", cpud->id, d->irq);
++#endif
++}
++
++/**
++ * ip30_ack_heart_irq - acks a HEART IRQ.
++ * @d: struct irq_data containing IRQ information.
++ */
++static void
++ip30_ack_heart_irq(struct irq_data *d)
++{
++	unsigned long flags;
++	const struct ip30_percpu_data *cpud = this_cpu_ptr(&ip30_cpu);
++
++	/* Ack */
++	raw_spin_lock_irqsave(&cpud->heart->lock, flags);
++	heart_write(cpud->heart->irq_to_bit[d->irq], &heart_regs->clear_isr);
++	raw_spin_unlock_irqrestore(&cpud->heart->lock, flags);
++}
++
++/**
++ * ip30_mask_heart_irq - masks a HEART IRQ.
++ * @d: struct irq_data containing IRQ information.
++ */
++static void
++ip30_mask_heart_irq(struct irq_data *d)
++{
++	unsigned long flags;
++	const struct ip30_percpu_data *cpud = this_cpu_ptr(&ip30_cpu);
++
++	/* Mask */
++	raw_spin_lock_irqsave(&cpud->heart->lock, flags);
++	ip30_clear_heart_bit(cpud->heart->irq_to_bit[d->irq]);
++	raw_spin_unlock_irqrestore(&cpud->heart->lock, flags);
++}
++
++/**
++ * ip30_mask_and_ack_heart_irq - masks and acks a HEART IRQ.
++ * @d: struct irq_data containing IRQ information.
++ */
++static void
++ip30_mask_and_ack_heart_irq(struct irq_data *d)
++{
++	unsigned long flags;
++	const struct ip30_percpu_data *cpud = this_cpu_ptr(&ip30_cpu);
++	const s8 bit = cpud->heart->irq_to_bit[d->irq];
++
++	raw_spin_lock_irqsave(&cpud->heart->lock, flags);
++
++	/* Mask */
++	ip30_clear_heart_bit(bit);
++
++	/* Ack */
++	heart_write(bit, &heart_regs->clear_isr);
++	raw_spin_unlock_irqrestore(&cpud->heart->lock, flags);
++}
++
++/**
++ * ip30_unmask_heart_irq - unmasks a HEART IRQ.
++ * @d: struct irq_data containing IRQ information.
++ */
++static void
++ip30_unmask_heart_irq(struct irq_data *d)
++{
++	unsigned long flags;
++	const struct ip30_percpu_data *cpud = this_cpu_ptr(&ip30_cpu);
++
++	/* Unmask */
++	raw_spin_lock_irqsave(&cpud->heart->lock, flags);
++	ip30_set_heart_bit(cpud->heart->irq_to_bit[d->irq]);
++	raw_spin_unlock_irqrestore(&cpud->heart->lock, flags);
++}
++
++#ifdef CONFIG_SMP
++static DEFINE_RAW_SPINLOCK(ip30_heart_affinity_lock);
++
++static int
++ip30_set_heart_irq_affinity(struct irq_data *d, const struct cpumask *mask,
++			    bool force)
++{
++	int int_on, tmp;
++	unsigned long flags;
++	struct ip30_percpu_data *old_cpud, *new_cpud;
++
++	/* Get percpu data for the new CPU first. */
++	tmp = cpu_logical_map(cpumask_first_and(mask, cpu_online_mask));
++	new_cpud = &per_cpu(ip30_cpu, tmp);
++
++	/* Use the new CPU percpu access to fetch the old CPU. */
++	tmp = new_cpud->heart->irq_owner[d->irq];
++	old_cpud = &per_cpu(ip30_cpu, tmp);
++
++	/* Protect against other affinity changers and IMR manipulation */
++	raw_spin_lock_irqsave(&ip30_heart_affinity_lock, flags);
++
++	/* Mask the IRQ on the old CPU, if needed. */
++	int_on = !(test_bit(d->irq, &old_cpud->irq_mask));
++	if (int_on) {
++		set_bit(d->irq, &old_cpud->irq_mask);
++		heart_write(old_cpud->irq_mask,
++			    &heart_regs->imr[old_cpud->id]);
++	}
++
++	/* Update the mask for the new CPU. */
++	new_cpud->heart->irq_owner[d->irq] = new_cpud->id;
++	if (int_on) {
++		clear_bit(d->irq, &new_cpud->irq_mask);
++		heart_write(new_cpud->irq_mask,
++			    &heart_regs->imr[new_cpud->id]);
++	}
++	raw_spin_unlock_irqrestore(&ip30_heart_affinity_lock, flags);
++
++	return 0;
++}
++#endif
++
++/**
++ * struct ip30_heart_irq - HEART struct irq_chip ops.
++ * @irq_startup: startup function.
++ * @irq_shutdown: shutdown function.
++ * @irq_ack: ack function.
++ * @irq_mask: mask function.
++ * @irq_mask_ack: mask & ack function.
++ * @irq_unmask: unmask function.
++ * @irq_disable: disable (mask) function.
++ * @irq_enable: enable (unmask) function.
++ */
++static struct irq_chip __read_mostly
++ip30_heart_irq = {
++	.name			= "HEART",
++	.irq_startup		= ip30_startup_heart_irq,
++	.irq_shutdown		= ip30_shutdown_heart_irq,
++	.irq_ack		= ip30_ack_heart_irq,
++	.irq_mask		= ip30_mask_heart_irq,
++	.irq_mask_ack		= ip30_mask_and_ack_heart_irq,
++	.irq_unmask		= ip30_unmask_heart_irq,
++	.irq_disable		= ip30_mask_heart_irq,
++	.irq_enable		= ip30_unmask_heart_irq,
++#ifdef CONFIG_SMP
++	.irq_set_affinity	= ip30_set_heart_irq_affinity,
++#endif
++};
++
++/* ----------------------------------------------------------------------- */
++
++
++
++/* ----------------------------------------------------------------------- */
++/* irq_cpu.c says it's incompatible w/ SMP, so we roll our own. */
++
++static inline void
++ip30_unmask_r10k_timer_irq(struct irq_data *d)
++{
++	set_c0_status(STATUSF_IP7);
++}
++
++static inline void
++ip30_mask_r10k_timer_irq(struct irq_data *d)
++{
++	clear_c0_status(STATUSF_IP7);
++}
++
++static struct irq_chip __read_mostly
++ip30_r10k_timer_irq_controller = {
++	.name		= "CPU",
++	.irq_ack	= ip30_mask_r10k_timer_irq,
++	.irq_mask	= ip30_mask_r10k_timer_irq,
++	.irq_mask_ack	= ip30_mask_r10k_timer_irq,
++	.irq_unmask	= ip30_unmask_r10k_timer_irq,
++	.irq_eoi	= ip30_unmask_r10k_timer_irq,
++	.irq_disable	= ip30_mask_r10k_timer_irq,
++	.irq_enable	= ip30_unmask_r10k_timer_irq,
++};
++
++/* ----------------------------------------------------------------------- */
++
++
++
++/* ----------------------------------------------------------------------- */
++
++/**
++ * ip30_request_irq - requests an irq number.
++ *
++ * Returns the allocated IRQ number assigned to a specific HEART interrupt bit.
++ */
++int
++ip30_request_irq(void)
++{
++	int irq_bit;
++	int irq_num = ip30_alloc_irq_num();
++	unsigned long flags;
++	const struct ip30_percpu_data *cpud = this_cpu_ptr(&ip30_cpu);
++
++	/* Bail if ip30_alloc_irq_num() failed. */
++	if (irq_num < 0)
++		return irq_num;
++
++	/* Assign the IRQ to a free HEART interrupt bit. */
++	raw_spin_lock_irqsave(&cpud->heart->lock, flags);
++	irq_bit = ip30_earmark_irq_bit(cpud, irq_num);
++	raw_spin_unlock_irqrestore(&cpud->heart->lock, flags);
++
++	/* Assign the irq_chip handler. */
++	irq_set_chip_and_handler(irq_num, &ip30_heart_irq, handle_level_irq);
++
++	/* Make sure it's not already pending when we connect it. */
++	raw_spin_lock_irqsave(&cpud->heart->lock, flags);
++	heart_write(irq_bit, &heart_regs->clear_isr);
++	raw_spin_unlock_irqrestore(&cpud->heart->lock, flags);
++
++	return irq_num;
++}
++
++/* ----------------------------------------------------------------------- */
++
++
++
++/* ----------------------------------------------------------------------- */
++/* SMP IPI Setup */
++
++/**
++ * __ip30_install_ipi - sets up interprocessor interrupts on each CPU.
++ */
++static void __init
++__ip30_install_ipi(u32 irq)
++{
++	struct ip30_percpu_data *cpud = this_cpu_ptr(&ip30_cpu);
++
++	smp_mb__before_atomic();
++	set_bit(irq, &cpud->heart->irq_alloc_map);
++	set_bit(irq, &cpud->irq_mask);
++	cpud->heart->irq_owner[irq] = cpud->id;
++	cpud->heart->irq_to_bit[irq] = irq; /* These two are 1-to-1 mapped. */
++	cpud->heart->bit_to_irq[irq] = irq;
++	smp_mb__after_atomic();
++	ip30_assign_irq_num(irq);
++	heart_write(BIT_ULL(irq), &heart_regs->clear_isr);
++}
++
++/**
++ * ip30_install_ipi - extern func called from either ip30-init or ip30-smp.
++ */
++void __init
++ip30_install_ipi(void)
++{
++	const struct ip30_percpu_data *cpud = this_cpu_ptr(&ip30_cpu);
++	u8 slice = cpud->slice;
++
++	__ip30_install_ipi(HEART_L2_INT_RESCHED_CPU_0 + slice);
++	__ip30_install_ipi(HEART_L2_INT_CALL_CPU_0 + slice);
++
++	heart_write(cpud->irq_mask, &heart_regs->imr[cpud->id]);
++}
++
++/* ----------------------------------------------------------------------- */
++
++
++
++/* ----------------------------------------------------------------------- */
++/* Arch IRQ initialization - runs on CPU0 only. */
++
++/**
++ * arch_init_irq - arch initialization function.
++ */
++void __init
++arch_init_irq(void)
++{
++	int i;
++	struct ip30_percpu_data *cpud = this_cpu_ptr(&ip30_cpu);
++
++	/* Disable IRQs. */
++	clear_c0_status(ST0_IM);
++
++	/* Mask all IRQs. */
++	heart_write(HEART_CLR_ALL_MASK, &heart_regs->imr[0]);
++	heart_write(HEART_CLR_ALL_MASK, &heart_regs->imr[1]);
++	heart_write(HEART_CLR_ALL_MASK, &heart_regs->imr[2]);
++	heart_write(HEART_CLR_ALL_MASK, &heart_regs->imr[3]);
++
++	/* Ack everything. */
++	heart_write(HEART_ACK_ALL_MASK, &heart_regs->clear_isr);
++
++	/* Enable specific HEART error IRQs for each CPU. */
++	heart_write(HEART_CPU0_ERR_MASK, &heart_regs->imr[0]);
++	heart_write(HEART_CPU1_ERR_MASK, &heart_regs->imr[1]);
++	heart_write(HEART_CPU2_ERR_MASK, &heart_regs->imr[2]);
++	heart_write(HEART_CPU3_ERR_MASK, &heart_regs->imr[3]);
++
++#ifdef CONFIG_SMP
++	for (i = HEART_L2_INT_DEBUG_CPU_0; i <= HEART_L2_INT_IPI_CPU_3; i++)
++		irq_set_chip_and_handler(i, &ip30_heart_irq,
++					 handle_percpu_irq);
++#endif
++	irq_set_chip_and_handler(HEART_L3_INT_TIMER, &ip30_heart_irq,
++				 handle_level_irq);
++
++	/*
++	 * Some HEART bits are reserved by hardware or by software convention.
++	 * Mark these as reserved right away so they won't be accidentally
++	 * used later.
++	 */
++	for (i = HEART_INT_BASE; i < PCIBR_IRQ_BASE; i++)
++		__set_bit(i, &cpud->heart->irq_alloc_map);
++
++	/* Reserve IRQ/bit #41 for the power button. */
++	ip30_assign_irq_num(HEART_L2_INT_POWER_BTN);
++	__set_bit(HEART_L2_INT_POWER_BTN, &cpud->heart->irq_alloc_map);
++
++	/* Reserve IRQ/bit #50 for the HEART counter. */
++	ip30_assign_irq_num(HEART_L3_INT_TIMER);
++	__set_bit(HEART_L3_INT_TIMER, &cpud->heart->irq_alloc_map);
++
++	/* Reserve the error interrupts (#51 to #63). */
++	for (i = HEART_L4_INT_XWID_ERR_9; i <= HEART_L4_INT_HEART_EXCP; i++) {
++		ip30_assign_irq_num(i);
++		__set_bit(i, &cpud->heart->irq_alloc_map);
++	}
++
++	/* Init CPU0 IRQs */
++	irq_set_chip_and_handler(MIPS_CPU_IRQ_BASE,
++				 &ip30_r10k_timer_irq_controller,
++				 handle_percpu_irq);
++	change_c0_status(ST0_IM, (STATUSF_IP2 | STATUSF_IP3 | STATUSF_IP4 |
++				  STATUSF_IP5 | STATUSF_IP6 | STATUSF_IP7));
++
++	pr_info("IP30: HEART interrupt controller initialized.\n");
++}
++
++/* ----------------------------------------------------------------------- */
+diff --git a/arch/mips/sgi-ip30/ip30-irqno.c b/arch/mips/sgi-ip30/ip30-irqno.c
+new file mode 100644
+index 000000000000..b7a6876f3d21
+--- /dev/null
++++ b/arch/mips/sgi-ip30/ip30-irqno.c
+@@ -0,0 +1,64 @@
++/*
++ * This file is subject to the terms and conditions of the GNU General Public
++ * License.  See the file "COPYING" in the main directory of this archive
++ * for more details.
++ */
++#include <linux/init.h>
++#include <linux/irq.h>
++#include <linux/types.h>
++
++#include <asm/barrier.h>
++
++static DECLARE_BITMAP(irq_map, NR_IRQS);
++
++
++/* ----------------------------------------------------------------------- */
++
++/**
++ * ip30_alloc_irq_num - finds a free irq in irq_map.
++ *
++ * Returns the first free IRQ number in irq_map.  This IRQ will later
++ * be linked to a specific HEART interrupt bit.
++ */
++int
++ip30_alloc_irq_num(void)
++{
++	int irq;
++
++again:
++	irq = find_first_zero_bit(irq_map, NR_IRQS);
++
++	if (unlikely(irq >= NR_IRQS))
++		return -ENOSPC;
++
++	if (test_and_set_bit(irq, irq_map))
++		goto again;
++
++	return irq;
++}
++
++/**
++ * ip30_assign_irq_num - assign an irq in irq_map.
++ * @irq: unsigned int of irq to free.
++ */
++void
++ip30_assign_irq_num(int irq)
++{
++	smp_mb__before_atomic();
++	set_bit(irq, irq_map);
++	smp_mb__after_atomic();
++}
++
++/**
++ * ip30_free_irq_num - free an irq in irq_map and make it available again.
++ * @irq: unsigned int of irq to free.
++ */
++void
++ip30_free_irq_num(int irq)
++{
++	smp_mb__before_atomic();
++	clear_bit(irq, irq_map);
++	smp_mb__after_atomic();
++}
++
++/* ----------------------------------------------------------------------- */
+diff --git a/arch/mips/sgi-ip30/ip30-memory.c b/arch/mips/sgi-ip30/ip30-memory.c
+new file mode 100644
+index 000000000000..76f88d4475ec
+--- /dev/null
++++ b/arch/mips/sgi-ip30/ip30-memory.c
+@@ -0,0 +1,356 @@
++/*
++ * This file is subject to the terms and conditions of the GNU General Public
++ * License.  See the file "COPYING" in the main directory of this archive
++ * for more details.
++ *
++ * SGI IP30 memory setup.
++ *
++ * Copyright (C) 2004-2007 Stanislaw Skowronek <skylark@unaligned.org>
++ *               2009 Johannes Dickgreber <tanzy@gmx.de>
++ *               2015 Joshua Kinard <kumba@gentoo.org>
++ */
++
++#include <linux/init.h>
++#include <linux/kernel.h>
++#include <linux/mm.h>
++#include <linux/types.h>
++
++#ifdef CONFIG_PROC_FS
++#include <linux/proc_fs.h>
++#include <linux/seq_file.h>
++#endif
++
++#include <asm/bootinfo.h>
++#include <asm/io.h>
++
++#include <asm/mach-ip30/addrs.h>
++#include <asm/mach-ip30/sysinfo.h>
++#include <asm/mach-ip30/heart.h>
++
++#define DEBUG 0
++#define MEM_SHIFT(x) ((x) >> 20)
++#define ARCS_MEM(x, y) ({		\
++	s64 __x = (x);			\
++	s64 __y = (y);			\
++	s64 __r = (__x - __y);		\
++	__r > 0 ? __r : 0; })
++
++#define heart_mem_read	__raw_readl
++
++/* Defined in ip30-setup.c */
++extern const struct ip30_heart_regs __iomem *heart_regs;
++
++/*
++ * Memory in the IP30 system is arranged into four banks, with each bank
++ * containing two DIMM slots each:
++ *    ______________________________
++ *   |   ___________ ___________    |
++ *   |  | | | | | | | | | | | | |   |
++ *   |  | | | | | | | | | | | | |   |
++ *   |  | |  CPU - SINGLE/DUAL  |   ||
++ *   |  | | | | | | | | | | | | |   ||   <- Compression connector -
++ *   |  | | | | | | | | | | | | |   ||        Never touch!
++ *   |   ----------- -----------    |
++ *   |      _____     _____         |
++ *   |     |     |   |     |        |
++ *   |     |HEART|   |BRIDG|        |
++ *   |     |_____|   |_____|        |
++ *   |                              |
++ *   | 1 =====================  B1  |
++ *   | 2 =====================  B1  ||
++ *   | 3 =====================  B2  ||   <- Compression connector -
++ *   | 4 =====================  B2  ||        Never touch!
++ *   | 5 =====================  B3  |
++ *   | 6 =====================  B3  |
++ *   | 7 =====================  B4  |
++ *   | 8 =====================  B4  |
++ *    ------------------------------
++ *
++ * IP30 physical memory starts at 512MB (0x20000000), and ARCS will have
++ * already detected and mapped the first 1GB of RAM.  Anything beyond 1GB
++ * is marked as 'reserved' by ARCS.
++ *
++ * Physical memory is contiguously mapped, but not always in bank order.
++ *
++ * When high-density memory is installed (6, 110b), it appears that
++ * regardless of which bank it is installed in, it will be mapped into
++ * physical memory space first.
++ *
++ * XXX: Currently, >2GB of RAM will cause problems with BRIDGE DMA.
++ */
++
++/**
++ * struct ip30_arcs_info - per-bank arcs information.
++ * @mem: bank is within the first 1GB of RAM, which is detected by ARCS.
++ * @xtra: amount of memory above 1GB that is in this bank.
++ */
++struct ip30_arcs_info {
++	bool mem;
++	phys_addr_t xtra;
++};
++
++/**
++ * struct ip30_mem_bank - represents a single memory bank in IP30.
++ * @num: bank number.
++ * @valid: bank has memory detected.
++ * @size: amount of memory in the bank.
++ * @addr: starting physical address of the bank.
++ * @density: memory density of the bank.
++ * @arcs: struct ip30_arcs_info which contains per-bank arcs info.
++ */
++struct ip30_mem_bank {
++	u32 num;
++	bool valid;
++	phys_addr_t size;
++	phys_addr_t addr;
++	u8 density;
++	struct ip30_arcs_info arcs;
++};
++
++/**
++ * struct ip30_mem_info - represents IP30's detected memory setup.
++ * @total_mem: total amount of memory detected.
++ * @bank: struct ip30_mem_bank array which contains per-bank information.
++ */
++struct ip30_mem_info {
++	phys_addr_t total_mem;
++	struct ip30_mem_bank b[IP30_MAX_MEMORY_BANKS];
++};
++
++static struct ip30_mem_info ip30_mem;
++
++/**
++ * ip30_mem_get_size - calc memory size from HEART_MEMCFG0 bank data.
++ * @memdata: unsigned integer of memory bank config data from HEART_MEMCFG0.
++ *
++ * Returns phys_addr_t value of the converted size.
++ */
++static inline phys_addr_t __init
++ip30_mem_get_size(const u32 memdata)
++{
++	return ((((memdata & HEART_MEMCFG_SIZE_MASK) >>
++		  HEART_MEMCFG_SIZE_SHIFT) + 1) << HEART_MEMCFG_UNIT_SHIFT);
++}
++
++/**
++ * ip30_mem_get_addr - calc memory address from HEART_MEMCFG0 bank data.
++ * @memdata: unsigned integer of memory bank config data from HEART_MEMCFG0.
++ *
++ * Returns phys_addr_t value of memory's starting address.
++ */
++static inline phys_addr_t __init
++ip30_mem_get_addr(const u32 memdata)
++{
++	return (((memdata & HEART_MEMCFG_ADDR_MASK) <<
++		 HEART_MEMCFG_UNIT_SHIFT) + IP30_MEMORY_BASE);
++}
++
++/**
++ * ip30_mem_get_density - calc memory density from HEART_MEMCFG0 bank data.
++ * @memdata: unsigned integer of memory bank config data from HEART_MEMCFG0.
++ *
++ * Returns u8 value of memory's density.
++ */
++static inline u8 __init
++ip30_mem_get_density(const u32 memdata)
++{
++	return ((memdata & HEART_MEMCFG_DENSITY) >>
++		HEART_MEMCFG_DENSITY_SHIFT);
++}
++
++/**
++ * ip30_mem_parse_data - parse per-bank memory data.
++ * @i: memory bank to read.
++ * @h: struct ip30_heart_regs pointer to the HEART ASIC.
++ */
++static struct ip30_mem_bank __init
++ip30_mem_parse_data(const int i)
++{
++	u32 memdata;
++	struct ip30_mem_bank mb;
++
++	memdata = heart_mem_read(&heart_regs->mem_cfg.l[i]);
++	mb.num = i;
++	mb.valid = (memdata & HEART_MEMCFG_VALID);
++	mb.size = 0;
++	mb.addr = 0;
++	mb.density = 0;
++	mb.arcs.mem = false;
++	mb.arcs.xtra = 0;
++
++	if (mb.valid) {
++		mb.size = ip30_mem_get_size(memdata);
++		mb.addr = ip30_mem_get_addr(memdata);
++		mb.density = ip30_mem_get_density(memdata);
++		mb.arcs.mem = (mb.addr < IP30_REAL_MEMORY_START);
++		mb.arcs.xtra = ARCS_MEM(mb.size, IP30_MAX_PROM_MEMORY);
++	}
++
++	return mb;
++}
++
++#ifdef CONFIG_PROC_FS
++static int
++ip30_mem_proc_show(struct seq_file *m, void *v)
++{
++	int i;
++
++	seq_printf(m, "total_mem: %lluMB\n", MEM_SHIFT(ip30_mem.total_mem));
++
++	for (i = 0; i < IP30_MAX_MEMORY_BANKS; i++) {
++		if (!ip30_mem.b[i].valid)
++			continue;
++
++		seq_printf(m, "bank%d: %.4lluMB @ 0x%.8llx [d%d]\n",
++			   ip30_mem.b[i].num, MEM_SHIFT(ip30_mem.b[i].size),
++			   ip30_mem.b[i].addr, ip30_mem.b[i].density);
++	}
++
++	return 0;
++}
++
++static int
++ip30_mem_proc_open(struct inode *inode, struct file *file)
++{
++	return single_open(file, ip30_mem_proc_show, PDE_DATA(inode));
++}
++
++static const struct
++file_operations ip30_mem_proc_fops = {
++	.open		= ip30_mem_proc_open,
++	.read		= seq_read,
++	.llseek		= seq_lseek,
++	.release	= single_release,
++};
++
++static int __init
++ip30_mem_create_proc(void)
++{
++	struct proc_dir_entry *ent;
++
++	ent = proc_create_data("ip30_meminfo", S_IRUGO, NULL,
++			       &ip30_mem_proc_fops, NULL);
++	if (!ent) {
++		pr_err("IP30: Unable to create ip30_meminfo /proc entry\n");
++		return -1;
++	}
++
++	return 0;
++}
++#endif /* CONFIG_PROC_FS */
++
++#if DEBUG
++/**
++ * ip30_mem_debug - print the per-bank information.
++ */
++static void __init
++ip30_mem_debug(void)
++{
++	int i;
++	char *bit = "DEBUG: IP30: MEM:\0";
++
++	pr_info("%s total:            %lluMB\n----------------\n", bit,
++		MEM_SHIFT(ip30_mem.total_mem));
++	for (i = 0; i < IP30_MAX_MEMORY_BANKS; i++) {
++		pr_info("%s bank%d->valid:     %s\n", bit, ip30_mem.b[i].num,
++			(ip30_mem.b[i].valid ? "true" : "false"));
++		if (ip30_mem.b[i].valid) {
++			pr_info("%s bank%d->size:      %.4lluMB\n", bit,
++				ip30_mem.b[i].num,
++				MEM_SHIFT(ip30_mem.b[i].size));
++			pr_info("%s bank%d->addr:      0x%.8llx\n", bit,
++				ip30_mem.b[i].num, ip30_mem.b[i].addr);
++			pr_info("%s bank%d->density:   %u\n", bit,
++				ip30_mem.b[i].num, ip30_mem.b[i].density);
++			pr_info("%s bank%d->arcs.mem:  %s\n", bit,
++				ip30_mem.b[i].num,
++				(ip30_mem.b[i].arcs.mem ? "true" : "false"));
++			if (ip30_mem.b[i].arcs.mem)
++				pr_info("%s bank%d->arcs.xtra: %.4lluMB\n",
++					bit, ip30_mem.b[i].num,
++					MEM_SHIFT(ip30_mem.b[i].arcs.xtra));
++		}
++		pr_info("--------\n");
++	}
++}
++#endif /* DEBUG */
++
++/**
++ * ip30_mem_init - init platform memory.
++ */
++void __init
++ip30_mem_init(void)
++{
++	int i;
++	bool found;
++	struct ip30_mem_info mem;
++
++	/* Poll HEART for per-bank mem info and parse it. */
++	for (i = 0; i < IP30_MAX_MEMORY_BANKS; i++)
++		mem.b[i] = ip30_mem_parse_data(i);
++
++	/*
++	 * Sort the banks by address from least to greatest.  We want the
++	 * lowest addresses to come first, as IP30 appears to put high-density
++	 * DIMMs first in the address map, even if they're not in the first
++	 * bank.
++	 */
++	do {
++		found = false;
++		for (i = 1; i < IP30_MAX_MEMORY_BANKS; i++)
++			if (mem.b[i-1].addr > mem.b[i].addr) {
++				swap(mem.b[i], mem.b[i-1]);
++				found = true;
++			}
++	} while (found);
++
++	/*
++	 * Add the valid banks to the memory map.  Banks that are within the
++	 * ARCS-detected range are not added unless the bank contains >1GB
++	 * of RAM.
++	 */
++	mem.total_mem = 0;
++	for (i = 0; i < IP30_MAX_MEMORY_BANKS; i++) {
++		mem.total_mem += mem.b[i].size;
++
++		if (!mem.b[i].valid)
++			continue;
++
++		if (!(mem.b[i].arcs.mem)) {
++			add_memory_region(mem.b[i].addr, mem.b[i].size,
++					  BOOT_MEM_RAM);
++		} else {
++			if (mem.b[i].arcs.xtra > 0) {
++				add_memory_region(IP30_REAL_MEMORY_START,
++						  mem.b[i].arcs.xtra,
++						  BOOT_MEM_RAM);
++			}
++		}
++	}
++
++	/*
++	 * Remove the 'reserved' memory beyond 1GB that ARCS detected from
++	 * boot_mem_map, as it describes a duplicate address range.
++	 */
++	for (i = 0; i < BOOT_MEM_MAP_MAX; i++) {
++		if ((boot_mem_map.map[i].addr == IP30_REAL_MEMORY_START) &&
++		    (boot_mem_map.map[i].type == BOOT_MEM_RESERVED)) {
++			boot_mem_map.map[i].addr = 0;
++			boot_mem_map.map[i].size = 0;
++			boot_mem_map.map[i].type = 0;
++			boot_mem_map.nr_map--;
++			break;
++		}
++	}
++
++	ip30_mem = mem;
++	pr_info("Detected %lluMB of physical memory.\n",
++		MEM_SHIFT(ip30_mem.total_mem));
++#if DEBUG
++	ip30_mem_debug();
++#endif
++}
++
++#ifdef CONFIG_PROC_FS
++late_initcall(ip30_mem_create_proc);
++#endif
+diff --git a/arch/mips/sgi-ip30/ip30-platform.c b/arch/mips/sgi-ip30/ip30-platform.c
+new file mode 100644
+index 000000000000..f8df7d2fa9cc
+--- /dev/null
++++ b/arch/mips/sgi-ip30/ip30-platform.c
+@@ -0,0 +1,128 @@
++/*
++ * This file is subject to the terms and conditions of the GNU General Public
++ * License.  See the file "COPYING" in the main directory of this archive
++ * for more details.
++ *
++ * ip30-platform.c: Miscellaneous platform device initialization for IP30.
++ *
++ * Copyright (C) 2014 Joshua Kinard <kumba@gentoo.org>
++ *
++ *
++ */
++
++#include <linux/module.h>
++#include <linux/init.h>
++#include <linux/platform_device.h>
++#include <linux/rtc/ds1685.h>
++#include <linux/ioc3.h>
++
++#include <asm/addrspace.h>
++#include <asm/pci/bridge.h>
++#include <asm/sgi/ioc3.h>
++#include <asm/mach-ip30/addrs.h>
++#include <asm/mach-ip30/heart.h>
++#include <asm/mach-ip30/racermp.h>
++
++extern void ip30_prepare_poweroff(void);
++
++static struct ioc3_driver_data *ioc3;
++
++/*
++ * On IP30, because the RTC (a DS1687) is behind the IOC3 on the generic
++ * ByteBus regions, we have to write the RTC address of interest to
++ * IOC3_BYTEBUS_DEV1, then read the data from IOC3_BYTEBUS_DEV2.
++ */
++#define IP30_RTC_ADDR ((void *)(ioc3->vma) + IOC3_BYTEBUS_DEV1)
++#define IP30_RTC_DATA ((void *)(ioc3->vma) + IOC3_BYTEBUS_DEV2)
++
++
++/**
++ * ip30_rtc_read - read a value from an rtc register.
++ * @rtc: pointer to the ds1685 rtc structure.
++ * @reg: the register address to read.
++ */
++u8
++ip30_rtc_read(struct ds1685_priv *rtc, int reg)
++{
++	writeb((reg & 0x7f), IP30_RTC_ADDR);
++	return readb(IP30_RTC_DATA);
++}
++
++/**
++ * ip30_rtc_read - write a value to an rtc register.
++ * @rtc: pointer to the ds1685 rtc structure.
++ * @reg: the register address to write.
++ * @value: value to write to the register.
++ */
++void
++ip30_rtc_write(struct ds1685_priv *rtc, int reg, u8 value)
++{
++	writeb((reg & 0x7f), IP30_RTC_ADDR);
++	writeb(value, IP30_RTC_DATA);
++}
++
++static struct ds1685_rtc_platform_data
++ip30_rtc_platform_data[] = {
++	{
++		.bcd_mode = false,
++		.no_irq = true,
++		.uie_unsupported = true,
++		.alloc_io_resources = false,
++		.plat_read = ip30_rtc_read,
++		.plat_write = ip30_rtc_write,
++		.plat_prepare_poweroff = ip30_prepare_poweroff,
++	},
++};
++
++struct platform_device
++ip30_rtc_device = {
++	.name = "rtc-ds1685",
++	.id = -1,
++	.dev = {
++		.platform_data = ip30_rtc_platform_data,
++	},
++};
++EXPORT_SYMBOL(ip30_rtc_device);
++
++/* IOC3 Metadriver probe/remove */
++static int
++ip30_ioc3_rtc_probe(struct ioc3_submodule *is, struct ioc3_driver_data *idd)
++{
++	int ret;
++
++	/* This code only applies to an Octane */
++	if (ioc3 || (idd->class != IOC3_CLASS_BASE_IP30))
++		return 1;
++
++	ioc3 = idd;
++	ret = platform_device_register(&ip30_rtc_device);
++
++	return ret;
++}
++
++static int
++ip30_ioc3_rtc_remove(struct ioc3_submodule *is, struct ioc3_driver_data *idd)
++{
++	if (ioc3 != idd)
++		return 1;
++
++	platform_device_unregister(&ip30_rtc_device);
++	ioc3 = NULL;
++
++	return 0;
++}
++
++/* entry/exit functions */
++static struct ioc3_submodule
++ip30_ioc3_rtc_submodule = {
++	.name = "rtc",
++	.probe = ip30_ioc3_rtc_probe,
++	.remove = ip30_ioc3_rtc_remove,
++	.owner = THIS_MODULE,
++};
++
++ioc3_submodule_driver(ip30_ioc3_rtc_submodule);
++
++MODULE_AUTHOR("Joshua Kinard <kumba@gentoo.org>");
++MODULE_LICENSE("GPL");
++MODULE_DESCRIPTION("Platform setup for SGI Octane (IP30)");
+diff --git a/arch/mips/sgi-ip30/ip30-power.c b/arch/mips/sgi-ip30/ip30-power.c
+new file mode 100644
+index 000000000000..92c590e16391
+--- /dev/null
++++ b/arch/mips/sgi-ip30/ip30-power.c
+@@ -0,0 +1,156 @@
++/*
++ * This file is subject to the terms and conditions of the GNU General Public
++ * License.  See the file "COPYING" in the main directory of this archive
++ * for more details.
++ *
++ * ip30-power.c: Software powerdown and reset handling for IP30 architecture.
++ *
++ * Copyright (C) 2004-2007 Stanislaw Skowronek <skylark@unaligned.org>
++ *               2014 Joshua Kinard <kumba@gentoo.org>
++ *               2009 Johannes Dickgreber <tanzy@gmx.de>
++ */
++
++#include <linux/init.h>
++#include <linux/kernel.h>
++#include <linux/module.h>
++#include <linux/sched.h>
++#include <linux/notifier.h>
++#include <linux/delay.h>
++#include <linux/interrupt.h>
++#include <linux/pm.h>
++#include <linux/rtc/ds1685.h>
++
++#include <asm/reboot.h>
++#include <asm/mach-ip30/heart.h>
++
++#define heart_read	__raw_readq
++#define heart_write	__raw_writeq
++
++/* Defined in ip30-setup.c */
++extern struct ip30_heart_regs __iomem *heart_regs;
++
++/* RTC Powers off the machine, just like IP32. */
++#ifdef CONFIG_SGI_IOC3
++extern struct platform_device ip30_rtc_device;
++#endif
++
++/* Handle Power events */
++static struct timer_list ip30_power_timer;
++static int has_panicked, shutting_down;
++
++static void __noreturn ip30_machine_restart(char *cmd)
++{
++	/*
++	 * Execute HEART cold reset
++	 *   Yes, it's cold-HEARTed!
++	 */
++	/* XXX: HM_COLD_RST = 1UL << 23 */
++	heart_write((heart_read(&heart_regs->mode) | HM_COLD_RST),
++		    &heart_regs->mode);
++	unreachable();
++}
++
++static void __noreturn ip30_poweroff(void *data)
++{
++	void (*poweroff_func)(struct platform_device *) =
++		symbol_get(ds1685_rtc_poweroff);
++
++#ifdef CONFIG_MODULES
++	/* If the first __symbol_get failed, our module wasn't loaded. */
++	if (!poweroff_func) {
++		request_module("rtc-ds1685");
++		poweroff_func = symbol_get(ds1685_rtc_poweroff);
++	}
++#endif
++
++	if (!poweroff_func)
++		pr_emerg("IP30: DS1685 RTC not available for power-off.  "
++			 "Spinning forever ...\n");
++	else {
++		/* Kill interrupts */
++		heart_write(HEART_CLR_ALL_MASK, &heart_regs->imr[0]);
++		heart_write(HEART_CLR_ALL_MASK, &heart_regs->imr[1]);
++		heart_write(HEART_CLR_ALL_MASK, &heart_regs->imr[2]);
++		heart_write(HEART_CLR_ALL_MASK, &heart_regs->imr[3]);
++		heart_write(HEART_ACK_ALL_MASK, &heart_regs->clear_isr);
++
++		(*poweroff_func)((struct platform_device *)data);
++		symbol_put(ds1685_rtc_poweroff);
++	}
++
++	unreachable();
++}
++
++static void ip30_machine_halt(void)
++{
++#ifdef CONFIG_SGI_IOC3
++	ip30_poweroff(&ip30_rtc_device);
++#else
++	unreachable();
++#endif
++}
++
++static void ip30_power_timeout(unsigned long data)
++{
++#ifdef CONFIG_SGI_IOC3
++	ip30_poweroff(&ip30_rtc_device);
++#else
++	unreachable();
++#endif
++}
++
++void ip30_prepare_poweroff(void)
++{
++	if (has_panicked)
++		return;
++
++	if (shutting_down) {
++		/* No init process or button pressed twice.  */
++#ifdef CONFIG_SGI_IOC3
++		pr_emerg("IP30: Immediate powerdown...\n");
++		ip30_poweroff(&ip30_rtc_device);
++#else
++		pr_emerg("IP30: Immediate halt...\n");
++		unreachable();
++#endif
++	}
++
++	/* XXX: See if we can do something w/ the LED. */
++	shutting_down = 1;
++	pr_info("IP30: Power button pressed, beginning shutdown "
++		"sequence ...\n");
++//	blink_timer.data = POWERDOWN_FREQ;
++//	blink_timeout(POWERDOWN_FREQ);
++
++	init_timer(&ip30_power_timer);
++	ip30_power_timer.function = ip30_power_timeout;
++	ip30_power_timer.expires = jiffies + (30 * HZ);
++	add_timer(&ip30_power_timer);
++}
++
++
++static irqreturn_t ip30_power_irq(int irq, void *dev_id)
++{
++	ip30_prepare_poweroff();
++
++	return IRQ_HANDLED;
++}
++
++static struct irqaction ip30_powerbtn_irqaction = {
++	.handler = ip30_power_irq,
++	.flags = IRQF_NOBALANCING,
++	.name = "powerbtn",
++};
++
++static int __init ip30_reboot_setup(void)
++{
++	setup_irq(IP30_POWER_IRQ, &ip30_powerbtn_irqaction);
++
++	_machine_restart = ip30_machine_restart;
++	_machine_halt = ip30_machine_halt;
++	pm_power_off = ip30_machine_halt;
++
++	return 0;
++}
++
++subsys_initcall(ip30_reboot_setup);
+diff --git a/arch/mips/sgi-ip30/ip30-setup.c b/arch/mips/sgi-ip30/ip30-setup.c
+new file mode 100644
+index 000000000000..fc11d75b7d46
+--- /dev/null
++++ b/arch/mips/sgi-ip30/ip30-setup.c
+@@ -0,0 +1,110 @@
++/*
++ * This file is subject to the terms and conditions of the GNU General Public
++ * License.  See the file "COPYING" in the main directory of this archive
++ * for more details.
++ *
++ * SGI IP30 miscellaneous setup bits.
++ *
++ * Copyright (C) 2004-2007 Stanislaw Skowronek <skylark@unaligned.org>
++ *               2007 Joshua Kinard <kumba@gentoo.org>
++ *               2009 Johannes Dickgreber <tanzy@gmx.de>
++ */
++
++#include <linux/init.h>
++#include <linux/io.h>
++#include <linux/kernel.h>
++#include <linux/percpu.h>
++
++#include <asm/smp-ops.h>
++#include <asm/sgialib.h>
++#include <asm/time.h>
++
++#include <asm/mach-ip30/cpu.h>
++#include <asm/mach-ip30/heart.h>
++#include <asm/mach-ip30/irq.h>
++
++#define heart_read	__raw_readq
++#define heart_write	__raw_writeq
++
++extern struct plat_smp_ops ip30_smp_ops;
++extern void __init ip30_mem_init(void);
++
++DEFINE_PER_CPU(struct ip30_percpu_data, ip30_cpu);
++EXPORT_PER_CPU_SYMBOL(ip30_cpu);
++
++/* Structure of accessible HEART registers located in XKPHYS space. */
++const struct ip30_heart_regs __iomem *heart_regs = HEART_XKPHYS_BASE;
++
++/* HEART global data. */
++static struct ip30_heart_data ip30_heart;
++
++/**
++ * ip30_cpu_time_init - platform time initialization.
++ */
++static void __init
++ip30_cpu_time_init(void)
++{
++	u64 heart_compare;
++	const struct ip30_percpu_data *cpud = this_cpu_ptr(&ip30_cpu);
++
++	heart_compare = (heart_read(&heart_regs->count) +
++			 (HEART_CYCLES_PER_SEC / 10));
++	write_c0_count(0);
++	while ((heart_read(&heart_regs->count) - heart_compare) & 0x800000)
++		cpu_relax();
++	mips_hpt_frequency = (read_c0_count() * 10);
++	pr_info("IP30: CPU%d: %d MHz CPU detected.\n", cpud->id,
++		(mips_hpt_frequency * 2) / 1000000);
++}
++
++void __init
++ip30_per_cpu_init(void)
++{
++	int cpu = smp_processor_id();
++	u8 slice = heart_read(&heart_regs->cpuid);
++	struct ip30_percpu_data *cpud = this_cpu_ptr(&ip30_cpu);
++	int i;
++
++	/* Disable all interrupts. */
++	clear_c0_status(ST0_IM);
++
++	/* Populate the percpu struct for IP30 CPU data. */
++	cpud->id = cpu;
++	cpud->slice = slice;
++	cpud->heart = &ip30_heart;
++
++	/* Initialize the array tracking which CPU owns what IRQ number. */
++	for (i = 0; i < BITS_PER_HEART; i++) {
++		cpud->heart->irq_owner[i] = -1;
++		__clear_bit(i, &cpud->irq_mask);
++	}
++
++	/* Done with ip30_percpu_data. */
++	smp_wmb();
++
++	ip30_cpu_time_init();
++	ip30_install_ipi();
++}
++
++/**
++ * plat_mem_setup - despite the name, misc setup happens here.
++ */
++void __init
++plat_mem_setup(void)
++{
++	/* Init the HEART spinlock. */
++	raw_spin_lock_init(&ip30_heart.lock);
++
++	/* Run memory setup */
++	ip30_mem_init();
++
++	/* XXX: Hard lock on /sbin/init if this flag isn't specified. */
++	prom_flags |= PROM_FLAG_DONT_FREE_TEMP;
++
++#ifdef CONFIG_SMP
++	register_smp_ops(&ip30_smp_ops);
++#endif
++
++	ip30_per_cpu_init();
++	set_io_port_base(IO_BASE);
++}
+diff --git a/arch/mips/sgi-ip30/ip30-smp-glue.S b/arch/mips/sgi-ip30/ip30-smp-glue.S
+new file mode 100644
+index 000000000000..ba5a3808d381
+--- /dev/null
++++ b/arch/mips/sgi-ip30/ip30-smp-glue.S
+@@ -0,0 +1,23 @@
++/*
++ * This file is subject to the terms and conditions of the GNU General Public
++ * License.  See the file "COPYING" in the main directory of this archive
++ * for more details.
++ *
++ * Copyright (C) 2005-2007 Stanislaw Skowronek
++ */
++
++#include <asm/asm.h>
++#include <asm/mipsregs.h>
++#include <asm/regdef.h>
++#include <asm/stackframe.h>
++#include <linux/init.h>
++
++	__INIT
++	.text
++	.set	noat
++	.set	reorder
++	.align	5
++LEAF(ip30_smp_bootstrap)
++	move	gp, a0
++	j	smp_bootstrap
++	END(ip30_smp_bootstrap)
+diff --git a/arch/mips/sgi-ip30/ip30-smp.c b/arch/mips/sgi-ip30/ip30-smp.c
+new file mode 100644
+index 000000000000..934932a05566
+--- /dev/null
++++ b/arch/mips/sgi-ip30/ip30-smp.c
+@@ -0,0 +1,295 @@
++/*
++ * This file is subject to the terms and conditions of the GNU General Public
++ * License.  See the file "COPYING" in the main directory of this archive
++ * for more details.
++ *
++ * ip30-smp.c: SMP on IP30 architecture.
++ * Based off of the original IP30 SMP code, with inspiration from ip27-smp.c
++ * and smp-bmips.c.
++ *
++ * Copyright (C) 2005-2007 Stanislaw Skowronek <skylark@unaligned.org>
++ *               2006-2007, 2014-2015 Joshua Kinard <kumba@gentoo.org>
++ *               2009 Johannes Dickgreber <tanzy@gmx.de>
++ */
++
++#include <linux/init.h>
++#include <linux/interrupt.h>
++#include <linux/irq.h>
++#include <linux/kernel.h>
++#include <linux/kernel_stat.h>
++#include <linux/percpu.h>
++#include <linux/sched.h>
++#include <linux/spinlock_types.h>
++#include <linux/tick.h>
++#include <linux/sched/task_stack.h>
++
++#include <asm/cacheflush.h>
++#include <asm/time.h>
++#include <asm/tlbflush.h>
++
++#include <asm/mach-ip30/cpu.h>
++#include <asm/mach-ip30/heart.h>
++#include <asm/mach-ip30/racermp.h>
++
++#define heart_read	__raw_readq
++#define heart_write	__raw_writeq
++
++#define mpconf_read	__raw_readl
++
++extern void generic_smp_call_function_interrupt(void);
++extern void scheduler_ipi(void);
++
++/* Defined in ip30-setup.c */
++DECLARE_PER_CPU(struct ip30_percpu_data, ip30_cpu);
++extern void __init ip30_per_cpu_init(void);
++extern struct ip30_heart_regs __iomem *heart_regs;
++
++/* ----------------------------------------------------------------------- */
++/* SMP IPI Ops */
++
++/**
++ * ip30_smp_send_ipi_single - Send an action to another CPU via IPI.
++ * @cpu: integer CPU to send IPI to with action.
++ * @action: u32 integer containing list of actions to take OR'ed together.
++ *
++ * Runs on CPUx and sends an IPI to CPUy.
++ */
++static void
++ip30_smp_send_ipi_single(int cpu, u32 action)
++{
++	int irq;
++	unsigned long flags;
++	const struct ip30_percpu_data *cpud = &per_cpu(ip30_cpu, cpu);
++
++	switch (action) {
++	case SMP_RESCHEDULE_YOURSELF:
++		irq = HEART_L2_INT_RESCHED_CPU_0;
++		break;
++	case SMP_CALL_FUNCTION:
++		irq = HEART_L2_INT_CALL_CPU_0;
++		break;
++	default:
++		panic("IP30: Unknown action value in %s!\n", __func__);
++	}
++
++	irq += cpud->slice;
++
++	/* Poke the other CPU -- it's got mail! */
++	raw_spin_lock_irqsave(&cpud->heart->lock, flags);
++	heart_write(BIT_ULL(irq), &heart_regs->set_isr);
++	raw_spin_unlock_irqrestore(&cpud->heart->lock, flags);
++}
++
++/**
++ * ip30_smp_send_ipi_mask - Send an action to many CPUs via IPI.
++ * @mask: cpumask of CPUs to send IPI to with action.
++ * @action: u32 integer containing list of actions to take OR'ed together.
++ */
++static void
++ip30_smp_send_ipi_mask(const struct cpumask *mask, u32 action)
++{
++	u32 i;
++
++	for_each_cpu(i, mask)
++		ip30_smp_send_ipi_single(i, action);
++}
++
++/**
++ * ip30_smp_ipi_irq - IRQ handler that runs on CPUy and services the IPI.
++ * @irq: integer of IRQ# for IPI being serviced.
++ * @dev_id: void pointer to dev_id data.
++ */
++static irqreturn_t
++ip30_smp_ipi_irq(int irq, void *dev_id)
++{
++	int heart_bit;
++	const struct ip30_percpu_data *cpud = this_cpu_ptr(&ip30_cpu);
++
++	if (!cpud->heart->irq_owner[irq])
++		return IRQ_NONE;
++	else
++		heart_bit = cpud->heart->irq_to_bit[irq];
++
++	/* Kernel statistics. */
++	kstat_incr_irq_this_cpu(irq);
++
++	/* Clear the interrupt. */
++	/* XXX: We don't have to do this on IP27, why? */
++	raw_spin_lock(&cpud->heart->lock);
++	heart_write(BIT_ULL(heart_bit), &heart_regs->clear_isr);
++	raw_spin_unlock(&cpud->heart->lock);
++
++	switch (heart_bit) {
++	case HEART_L2_INT_RESCHED_CPU_0:
++	case HEART_L2_INT_RESCHED_CPU_1:
++		scheduler_ipi();
++		break;
++	case HEART_L2_INT_CALL_CPU_0:
++	case HEART_L2_INT_CALL_CPU_1:
++		generic_smp_call_function_interrupt();
++		break;
++	default:
++		panic("IP30: Received unknown SMP IPI IRQ %d on CPU%d!", irq,
++		      cpud->id);
++	}
++
++	return IRQ_HANDLED;
++}
++
++/* ----------------------------------------------------------------------- */
++
++
++/* ----------------------------------------------------------------------- */
++/* SMP CPU Bringup - CPU0 Code */
++
++/**
++ * ip30_smp_setup - probes MP_CONF for additional CPUs.
++ *
++ * Runs on CPU0
++ */
++static void __init
++ip30_smp_setup(void)
++{
++	int i;
++	int ncpu = 0;
++
++	init_cpu_possible(cpumask_of(0));
++
++	/* Scan the MPCONF structure and enumerate available CPUs. */
++	for (i = 0; i < NR_CPUS; i++) {
++		if (mpconf_read(MP_MAGIC(i)) == MPCONF_MAGIC) {
++			set_cpu_possible(i, true);
++			__cpu_number_map[i] = ++ncpu;
++			__cpu_logical_map[ncpu] = i;
++			pr_info("IP30: Slot: %d, PrID: %.8x, PhyID: %d, "
++				"VirtID: %d\n", i,
++				mpconf_read(MP_PRID(i)),
++				mpconf_read(MP_PHYSID(i)),
++				mpconf_read(MP_VIRTID(i)));
++		}
++	}
++	pr_info("IP30: Detected %d CPU(s) present.\n", ncpu);
++
++	/*
++	 * Set the coherency algorithm to '5' (cacheable coherent
++	 * exclusive on write).  This is needed on IP30 SMP, especially
++	 * for R14000 CPUs, otherwise, instruction bus errors will
++	 * occur upon reaching userland.
++	 */
++	change_c0_config(CONF_CM_CMASK, CONF_CM_CACHABLE_COW);
++}
++
++/**
++ * ip30_smp_prepare_cpus - requests CPU0 IPI interrupt.
++ * @max_cpus: unused by IP30 SMP code.
++ *
++ * Runs on CPU0
++ */
++static void __init
++ip30_smp_prepare_cpus(unsigned int max_cpus)
++{
++	const struct ip30_percpu_data *cpud = this_cpu_ptr(&ip30_cpu);
++
++	/* Request an IRQ number for CPU0's IPIs. */
++	if (request_irq(HEART_L2_INT_RESCHED_CPU_0, ip30_smp_ipi_irq,
++			IRQF_PERCPU, "cpu0-rsch", ip30_smp_ipi_irq))
++		panic("IP30: Can't request CPU%d "
++		      "HEART_L2_INT_RESCHED_CPU_0 IPI", cpud->id);
++	if (request_irq(HEART_L2_INT_CALL_CPU_0, ip30_smp_ipi_irq,
++			IRQF_PERCPU, "cpu0-call", ip30_smp_ipi_irq))
++		panic("IP30: Can't request CPU%d "
++		      "HEART_L2_INT_CALL_CPU_0 IPI", cpud->id);
++}
++
++/**
++ * ip30_smp_boot_secondary - boots remaining CPUs into ip30_smp_bootstrap.
++ * @cpu: integer of CPUx to prepare before booting.
++ * @idle: struct task_struct containing idle task for CPUx.
++ *
++ * Runs on CPU0 and boots CPUx, where x > 0
++ */
++static void __init
++ip30_smp_boot_secondary(int cpu, struct task_struct *idle)
++{
++	/* Stack pointer (sp). */
++	heart_write(__KSTK_TOS(idle), MP_STACKADDR(cpu));
++
++	/* Global pointer (gp). */
++	heart_write((unsigned long)task_thread_info(idle), MP_LPARM(cpu));
++
++	/* Boot CPUx. */
++	heart_write((unsigned long)ip30_smp_bootstrap, MP_LAUNCH(cpu));
++
++	/* CPUx now executes ip30_smp_init_secondary, then ip30_smp_finish */
++	/* then control returns here and CPU0 finishes. */
++}
++
++/* ----------------------------------------------------------------------- */
++
++
++/* ----------------------------------------------------------------------- */
++/* SMP CPU Bringup - CPUx Code */
++
++/**
++ * ip30_smp_init_secondary - requests CPUs's IPI IRQ and unmasks interrupts.
++ *
++ * Runs on CPUx, where x > 0, after cache probe.
++ */
++static void __init
++ip30_smp_init_secondary(void)
++{
++	const struct ip30_percpu_data *cpud;
++
++	ip30_per_cpu_init();
++	cpud = this_cpu_ptr(&ip30_cpu);
++
++	/* Request an IRQ number for CPU1's IPIs. */
++	if (request_irq(HEART_L2_INT_RESCHED_CPU_1, ip30_smp_ipi_irq,
++			IRQF_PERCPU, "cpu1-rsch", ip30_smp_ipi_irq))
++		panic("IP30: Can't request CPU%d "
++		      "HEART_L2_INT_RESCHED_CPU_1 IPI", cpud->id);
++	if (request_irq(HEART_L2_INT_CALL_CPU_1, ip30_smp_ipi_irq,
++			IRQF_PERCPU, "cpu1-call", ip30_smp_ipi_irq))
++		panic("IP30: Can't request CPU%d "
++		      "HEART_L2_INT_CALL_CPU_1 IPI", cpud->id);
++
++	/* Enable the necessary interrupt bits. */
++	change_c0_status(ST0_IM, (STATUSF_IP2 | STATUSF_IP3 | STATUSF_IP4 |
++				  STATUSF_IP6 | STATUSF_IP7));
++}
++
++/**
++ * ip30_smp_finish - Sets CPU1 counter and enables interrupts.
++ *
++ * Runs on CPUx, where x > 0, before entering the idle loop.
++ */
++static void __init
++ip30_smp_finish(void)
++{
++	/* Make sure an interrupt won't happen for a little bit. */
++	write_c0_compare(read_c0_count() + mips_hpt_frequency / HZ);
++	local_irq_enable();
++}
++
++/**
++ * struct ip30_smp_ops - IP30 SMP ops.
++ * @send_ipi_single: send one interprocessor interrupt.
++ * @send_ipi_mask: send interprocessor interrup to each CPU.
++ * @smp_setup: probe for additional CPUs.
++ * @prepare_cpus: setup CPU0 IPI interrupt.
++ * @boot_secondary: boot additional CPUs.
++ * @init_secondary: setup CPUx IPI interrupts.
++ * @smp_finish: setup CPUx counter, enable IRQs.
++ */
++struct plat_smp_ops __read_mostly
++ip30_smp_ops = {
++	.send_ipi_single	= ip30_smp_send_ipi_single,
++	.send_ipi_mask		= ip30_smp_send_ipi_mask,
++	.smp_setup		= ip30_smp_setup,
++	.prepare_cpus		= ip30_smp_prepare_cpus,
++	.boot_secondary		= ip30_smp_boot_secondary,
++	.init_secondary		= ip30_smp_init_secondary,
++	.smp_finish		= ip30_smp_finish,
++};
++
++/* ----------------------------------------------------------------------- */
+diff --git a/arch/mips/sgi-ip30/ip30-timer.c b/arch/mips/sgi-ip30/ip30-timer.c
+new file mode 100644
+index 000000000000..b8094d533b6d
+--- /dev/null
++++ b/arch/mips/sgi-ip30/ip30-timer.c
+@@ -0,0 +1,269 @@
++/*
++ * This file is subject to the terms and conditions of the GNU General Public
++ * License.  See the file "COPYING" in the main directory of this archive
++ * for more details.
++ *
++ * ip30-timer.c: Clocksource/clockevent support for the
++ *               HEART chip in SGI Octane (IP30) systems.
++ *
++ * Copyright (C) 2004-2007 Stanislaw Skowronek <skylark@unaligned.org>
++ * Copyright (C) 2009 Johannes Dickgreber <tanzy@gmx.de>
++ * Copyright (C) 2011 Joshua Kinard <kumba@gentoo.org>
++ */
++
++#include <linux/clocksource.h>
++#include <linux/cpumask.h>
++#include <linux/init.h>
++#include <linux/kernel.h>
++#include <linux/percpu.h>
++#include <linux/sched_clock.h>
++
++#include <asm/time.h>
++#include <asm/mach-ip30/cpu.h>
++#include <asm/mach-ip30/heart.h>
++
++#define heart_read	__raw_readq
++#define heart_write	__raw_writeq
++
++/* Defined in ip30-setup.c */
++DECLARE_PER_CPU(struct ip30_percpu_data, ip30_cpu);
++extern struct ip30_heart_regs __iomem *heart_regs;
++
++/* ----------------------------------------------------------------------- */
++/* HEART Clocksource setup. */
++
++/**
++ * ip30_heart_counter_read - read HEART counter register (52-bit).
++ * @clocksource: pointer to clocksource struct. (unused)
++ *
++ * Returns u64 value of the HEART count register.
++ */
++static u64
++ip30_heart_counter_read(struct clocksource *cs)
++{
++	u64 cnt;
++	unsigned long flags;
++	const struct ip30_percpu_data *cpud = this_cpu_ptr(&ip30_cpu);
++
++	raw_spin_lock_irqsave(&cpud->heart->lock, flags);
++	cnt = heart_read(&heart_regs->count);
++	raw_spin_unlock_irqrestore(&cpud->heart->lock, flags);
++
++	return cnt;
++}
++
++/**
++ * struct ip30_heart_clocksource - HEART clocksource definition.
++ * @name: self-explanatory.
++ * @rating: quality of this clocksource (HEART has 80ns cycle time).
++ * @read: pointer to function to read the counter register.
++ * @mask: bitmask for the counter (52bit counter/24bit compare).
++ * @flags: clocksource flags.
++ */
++struct clocksource
++ip30_heart_clocksource = {
++	.name	= "HEART",
++	.rating	= 400,
++	.read	= ip30_heart_counter_read,
++	.mask	= CLOCKSOURCE_MASK(52),
++	.flags	= (CLOCK_SOURCE_IS_CONTINUOUS | CLOCK_SOURCE_VALID_FOR_HRES),
++};
++
++/**
++ * ip30_heart_read_sched_clock - make the HEART counter the sched_clock() source.
++ *
++ * Returns u64 value of the HEART count register.
++ */
++static u64 notrace
++ip30_heart_read_sched_clock(void)
++{
++	u64 cnt;
++	unsigned long flags;
++	const struct ip30_percpu_data *cpud = this_cpu_ptr(&ip30_cpu);
++
++	raw_spin_lock_irqsave(&cpud->heart->lock, flags);
++	cnt = heart_read(&heart_regs->count);
++	raw_spin_unlock_irqrestore(&cpud->heart->lock, flags);
++
++	return cnt;
++}
++
++/**
++ * ip30_heart_clocksource_init - init the clocksource for HEART.
++ */
++static void __init
++ip30_heart_clocksource_init(void)
++{
++	struct clocksource *cs = &ip30_heart_clocksource;
++
++	clocksource_register_hz(cs, HEART_CYCLES_PER_SEC);
++
++	sched_clock_register(ip30_heart_read_sched_clock, 52,
++			     HEART_CYCLES_PER_SEC);
++}
++
++/* ----------------------------------------------------------------------- */
++
++
++/* ----------------------------------------------------------------------- */
++/* HEART Clockevent setup. */
++
++/*
++ * HEART clockevent structure.
++ */
++static struct clock_event_device ip30_heart_clockevent;
++
++/**
++ * ip30_heart_next_event - resets the compare bit on HEART.
++ * @delta: difference between count and compare.
++ * @evt: pointer to clock_event_device struct.
++ *
++ * Returns -ETIME if &heart_regs->count > cnt, else 0.
++ */
++static int
++ip30_heart_next_event(unsigned long delta, struct clock_event_device *evt)
++{
++	u64 cnt, ret;
++	unsigned long flags;
++	const struct ip30_percpu_data *cpud = this_cpu_ptr(&ip30_cpu);
++
++	/*
++	 * Read HEART's current counter, add the delta, then write that
++	 * value back to HEART's compare register.
++	 */
++	raw_spin_lock_irqsave(&cpud->heart->lock, flags);
++	cnt = (heart_read(&heart_regs->count) + delta);
++	heart_write(cnt, &heart_regs->compare);
++	ret = heart_read(&heart_regs->count);
++	raw_spin_unlock_irqrestore(&cpud->heart->lock, flags);
++
++	return ((ret >= cnt) ? -ETIME : 0);
++}
++
++/**
++ * ip30_heart_event_handler - Clock event handler on HEART.
++ * @cd: pointer to clock_event_device struct.
++ *
++ * Not supported on HEART.
++ */
++static void
++ip30_heart_event_handler(struct clock_event_device *cd)
++{
++	/* Nothing to do  */
++}
++
++/**
++ * ip30_heart_compare_irq - IRQ handler for the HEART compare interrupt.
++ * @irq: IRQ number.
++ * @dev_id: void pointer to the clock_event_device struct.
++ *
++ * Always returns IRQ_HANDLED.
++ */
++static irqreturn_t
++ip30_heart_compare_irq(int irq, void *dev_id)
++{
++	struct clock_event_device *cd = dev_id;
++	const struct ip30_percpu_data *cpud = this_cpu_ptr(&ip30_cpu);
++
++	/* Ack the IRQ. */
++	raw_spin_lock(&cpud->heart->lock);
++	heart_write(BIT_ULL(irq), &heart_regs->clear_isr);
++	raw_spin_unlock(&cpud->heart->lock);
++	cd->event_handler(cd);
++
++	return IRQ_HANDLED;
++}
++
++/**
++ * struct ip30_heart_timer_irqaction - irqaction block for HEART.
++ * @name: self-explanatory.
++ * @flags: HEART counter IRQ flags.
++ * @handler: pointer to IRQ handler for the counter interrupt.
++ * @dev_id: void pointer to the HEART device cookie.
++ * @irq: HEART's counter IRQ number.
++ */
++static struct irqaction
++ip30_heart_timer_irqaction = {
++	.name		= "heart_timer",
++	.flags		= IRQF_TIMER | IRQF_NOBALANCING,
++	.handler	= ip30_heart_compare_irq,
++	.dev_id		= &ip30_heart_clockevent,
++	.irq		= HEART_L3_INT_TIMER,
++};
++
++/**
++ * ip30_heart_clockevent_init - HEART clockevent initialization.
++ */
++void __init
++ip30_heart_clockevent_init(void)
++{
++	struct clock_event_device *cd = &ip30_heart_clockevent;
++
++	cd->name = "HEART";
++	cd->features = CLOCK_EVT_FEAT_ONESHOT;
++	clockevent_set_clock(cd, HEART_CYCLES_PER_SEC);
++	cd->max_delta_ns = clockevent_delta2ns(0xfffffffffffff, cd);
++	cd->max_delta_ticks = 0xfffffffffffff;
++	cd->min_delta_ns = clockevent_delta2ns(0x300, cd);
++	cd->min_delta_ticks = 0x300;
++	cd->rating = 400;
++	cd->irq = HEART_L3_INT_TIMER;
++	cd->cpumask = cpumask_of(0);  /* Only 1 CPU can ACK, make it CPU0. */
++	cd->set_next_event = ip30_heart_next_event;
++	cd->event_handler = ip30_heart_event_handler;
++	clockevents_register_device(cd);
++}
++
++/**
++ * ip30_heart_clockevent_irq_init - allocates a dynamic IRQ for HEART TIMER.
++ * @d: struct irq_data containing IRQ information.
++ */
++static inline void __init
++ip30_heart_clockevent_irq_init(void)
++{
++	unsigned long flags;
++	struct ip30_percpu_data *cpud = this_cpu_ptr(&ip30_cpu);
++	const u32 irq = HEART_L3_INT_TIMER;
++
++	smp_mb__before_atomic();
++	set_bit(irq, &cpud->heart->irq_alloc_map);
++	set_bit(irq, &cpud->irq_mask);
++	cpud->heart->irq_owner[irq] = cpud->id;
++	cpud->heart->irq_to_bit[irq] = irq; /* These two are 1-to-1 mapped. */
++	cpud->heart->bit_to_irq[irq] = irq;
++	smp_mb__after_atomic();
++	ip30_assign_irq_num(irq);
++	raw_spin_lock_irqsave(&cpud->heart->lock, flags);
++	heart_write(BIT_ULL(irq), &heart_regs->clear_isr);
++	raw_spin_unlock_irqrestore(&cpud->heart->lock, flags);
++	irq_set_affinity(irq, cpumask_of(cpud->id));
++	setup_irq(irq, &ip30_heart_timer_irqaction);
++}
++
++/* ----------------------------------------------------------------------- */
++
++
++/* ----------------------------------------------------------------------- */
++
++/**
++ * plat_time_init - platform time initialization.
++ */
++void __init
++plat_time_init(void)
++{
++	ip30_heart_clocksource_init();
++	ip30_heart_clockevent_irq_init();
++	ip30_heart_clockevent_init();
++}
++
++/**
++ * get_c0_compare_int - override for arch/mips/kernel/cevt-r4k.c
++ *
++ * Always returns MIPS_CPU_IRQ_BASE.
++ */
++unsigned int
++get_c0_compare_int(void) {
++	return MIPS_CPU_IRQ_BASE;
++}
++
++/* ----------------------------------------------------------------------- */
+diff --git a/arch/mips/sgi-ip30/ip30-xtalk.c b/arch/mips/sgi-ip30/ip30-xtalk.c
+new file mode 100644
+index 000000000000..86f6abad8676
+--- /dev/null
++++ b/arch/mips/sgi-ip30/ip30-xtalk.c
+@@ -0,0 +1,160 @@
++/*
++ * This file is subject to the terms and conditions of the GNU General Public
++ * License.  See the file "COPYING" in the main directory of this archive
++ * for more details.
++ *
++ * ip30-xtalk.c - Very basic Crosstalk (XIO) detection support.
++ *   Copyright (C) 2004-2007 Stanislaw Skowronek <skylark@unaligned.org>
++ *   Copyright (C) 2009 Johannes Dickgreber <tanzy@gmx.de>
++ *   Copyright (C) 2007, 2014-2016 Joshua Kinard <kumba@gentoo.org>
++ */
++
++#include <linux/init.h>
++#include <linux/kernel.h>
++#include <linux/platform_device.h>
++
++#include <asm/xtalk/xwidget.h>
++
++#include <asm/mach-ip30/heart.h>
++#include <asm/mach-ip30/addrs.h>
++#include <asm/mach-ip30/pcibr.h>
++
++#define xtalk_read	__raw_readl
++
++struct widget_data {
++	u32 mfgr;
++	u32 part;
++	char *name;
++	char *rev;
++};
++
++/* XXX: Kill */
++unsigned long inline
++xtalk_get_swin(int node, int wid)
++{
++	return NODE_SWIN_BASE(node, wid);
++}
++
++static void __init
++xtalk_bridge_platform_setup(nasid_t nasid, const struct widget_data *wd,
++			    s8 widget, s8 master_wid)
++{
++	struct platform_device *xw_pdev;
++	struct xwidget_platform_data *xw_pdata;
++	extern struct bridge_platform_data ip30_bridge_platform_data;
++
++	xw_pdata = kzalloc(sizeof(struct xwidget_platform_data), GFP_KERNEL);
++	xw_pdata->nasid = nasid;
++	xw_pdata->masterwid = master_wid;
++	xw_pdata->bridge_pdata = &ip30_bridge_platform_data;
++
++	xw_pdev = kzalloc(sizeof(struct platform_device), GFP_KERNEL);
++	xw_pdev->name = wd->name;
++	xw_pdev->id = widget;
++	xw_pdev->dev.platform_data = xw_pdata;
++
++	platform_device_register(xw_pdev);
++	pr_info("xtalk:n%d/%x %s widget (rev %s) registered as a "
++		"platform device.\n", nasid, widget, wd->name, wd->rev);
++}
++
++static unsigned int __init
++xtalk_get_widget_data(nasid_t nasid, s8 wid)
++{
++	unsigned int link_stat;
++
++	if (wid != XTALK_XBOW &&
++	    (wid < XTALK_LOW_DEV || wid > XTALK_HIGH_DEV))
++		return XTALK_NODEV;
++
++	if (wid) {
++		link_stat = xtalk_read((void *)(RAW_NODE_SWIN_BASE(nasid, 0) +
++						XBOW_REG_LINK_STAT_0 +
++						XBOW_REG_LINK_BLK_SIZE *
++						(wid - XTALK_LOW_DEV)));
++		/* Is the link alive? */
++		if (!(link_stat & XBOW_REG_LINK_ALIVE))
++			return XTALK_NODEV;
++	}
++
++	return xtalk_read((void *)(RAW_NODE_SWIN_BASE(nasid, wid) + WIDGET_ID));
++}
++
++static struct widget_data __init *
++xtalk_get_widget_info(nasid_t nasid, s8 widget)
++{
++	u32 wid_data, rev;
++	struct widget_data *wd;
++	const struct widget_ident *wi;
++
++	wd = kzalloc(sizeof(struct widget_data), GFP_KERNEL);
++	if (!wd)
++		return NULL;
++
++	wid_data = xtalk_get_widget_data(nasid, widget);
++	if (wid_data == XTALK_NODEV)
++		return NULL;
++
++	rev = XWIDGET_REV_NUM(wid_data);
++	for (wi = widget_idents; wi->name; wi++)
++		if ((wi->mfgr == XWIDGET_MFG_NUM(wid_data)) &&
++			(wi->part == XWIDGET_PART_NUM(wid_data)))
++			break;
++
++	if (unlikely(wi->name == NULL)) {
++		pr_info("xtalk:n%d/%x unknown widget 0x%08x\n", nasid,
++			widget, wid_data);
++		return NULL;
++	}
++
++	wd->mfgr = wi->mfgr;
++	wd->part = wi->part;
++	wd->name = wi->name;
++	wd->rev = (wi->revs[rev] ? wi->revs[rev] : "unknown");
++
++	return wd;
++}
++
++static void __init
++xtalk_init_widget(nasid_t nasid, s8 widget, s8 masterwid)
++{
++	struct widget_data *wd;
++
++	wd = xtalk_get_widget_info(nasid, widget);
++	if (!wd)
++		return;
++
++	switch (wd->part) {
++	case WIDGET_BRIDG_PART_NUM:
++	case WIDGET_XBRDG_PART_NUM:
++		xtalk_bridge_platform_setup(nasid, wd, widget, masterwid);
++		break;
++	default:
++		if (platform_device_register_simple(wd->name, widget, NULL, 0))
++			pr_info("xtalk:n%d/%x %s widget (rev %s) "
++				"registered as a platform device.\n", nasid,
++				widget, wd->name, wd->rev);
++	}
++	kzfree(wd);
++}
++
++static int __init
++ip30_xtalk_init(void)
++{
++	int i;
++
++	/* XXX: kludge alert.. */
++	ioport_resource.end = ~0UL;
++
++	/*
++	 * Walk widget IDs backwards so that BaseIO is probed first.  This
++	 * ensures that the BaseIO IOC3 is always detected as eth0.
++	 */
++	for (i = IP30_XTALK_NUM_WID; i > 0; i--)
++		/* There is only one node on IP30. */
++		xtalk_init_widget(0, i, XTALK_HEART);
++
++	return 0;
++}
++
++arch_initcall(ip30_xtalk_init);
+diff --git a/drivers/char/Kconfig b/drivers/char/Kconfig
+index 31adbebf812e..ddfff1cacc55 100644
+--- a/drivers/char/Kconfig
++++ b/drivers/char/Kconfig
+@@ -354,6 +354,14 @@ config DS1302
+ 
+ endif # RTC_LIB
+ 
++config SGI_IP30_LEDS
++	bool "SGI Octane LED support"
++	depends on SGI_IP30 && SGI_IOC3
++	help
++	  If you say Y here and create a character special file /dev/leds with
++	  major number 10 and minor number 42 using mknod ("man mknod"), you
++	  will be able to control the lightbar on your Octane.
++
+ config DTLK
+ 	tristate "Double Talk PC internal speech card support"
+ 	depends on ISA
+diff --git a/drivers/char/Makefile b/drivers/char/Makefile
+index 6e6c244a66a0..16ee3e161761 100644
+--- a/drivers/char/Makefile
++++ b/drivers/char/Makefile
+@@ -26,6 +26,7 @@ obj-$(CONFIG_SONYPI)		+= sonypi.o
+ obj-$(CONFIG_RTC)		+= rtc.o
+ obj-$(CONFIG_HPET)		+= hpet.o
+ obj-$(CONFIG_EFI_RTC)		+= efirtc.o
++obj-$(CONFIG_SGI_IP30_LEDS)	+= ip30-leds.o
+ obj-$(CONFIG_DS1302)		+= ds1302.o
+ obj-$(CONFIG_XILINX_HWICAP)	+= xilinx_hwicap/
+ ifeq ($(CONFIG_GENERIC_NVRAM),y)
+diff --git a/drivers/char/ip30-leds.c b/drivers/char/ip30-leds.c
+new file mode 100644
+index 000000000000..3a33a68475d0
+--- /dev/null
++++ b/drivers/char/ip30-leds.c
+@@ -0,0 +1,266 @@
++/*
++ * This file is subject to the terms and conditions of the GNU General Public
++ * License.  See the file "COPYING" in the main directory of this archive
++ * for more details.
++ *
++ *	Driver for the LEDs in SGI Octane.
++ *
++ *	Copyright (C) 2004-2007 Stanislaw Skowronek <skylark@unaligned.org>
++ */
++
++#include <linux/bcd.h>
++#include <linux/module.h>
++#include <linux/kernel.h>
++#include <linux/types.h>
++#include <linux/miscdevice.h>
++#include <linux/ioport.h>
++#include <linux/fcntl.h>
++#include <linux/rtc.h>
++#include <linux/init.h>
++#include <linux/poll.h>
++#include <linux/proc_fs.h>
++#include <linux/delay.h>
++#include <linux/notifier.h>
++
++#include <linux/miscdevice.h>
++#include <asm/mach-ip30/leds.h>
++
++#include <asm/io.h>
++#include <asm/uaccess.h>
++
++#include <linux/ioc3.h>
++
++#define LEDS_STREAM_SIZE	4096
++
++
++/* hardware dependent LEDs driver */
++static struct ioc3_driver_data *ioc3 = NULL;
++static unsigned int leds_buff;
++
++static void ip30_leds_begin(void)
++{
++	leds_buff = ioc3->gpdr_shadow;
++}
++
++static void ip30_leds_set(int led, unsigned char state)
++{
++	state >>= 7;
++	leds_buff &= ~(1 << led);
++	leds_buff |= state << led;
++}
++
++static void ip30_leds_end(void)
++{
++	ioc3_gpio(ioc3, 3, leds_buff);
++}
++
++
++/* generic LEDs stream interpreter part */
++static spinlock_t leds_lock =  __SPIN_LOCK_UNLOCKED(&leds_lock);;
++static int leds_are_open = 0;
++static struct timer_list leds_timer;
++static unsigned char leds_stream[LEDS_STREAM_SIZE];
++static int leds_pc = 0;
++
++static void leds_timer_proc(unsigned long param)
++{
++	unsigned long timer_ms = 0;
++	int end_flag = 0;
++	unsigned char byte1, byte2;
++
++	ip30_leds_begin();
++
++	while (!end_flag) {
++		byte1 = leds_stream[leds_pc++];
++		byte2 = leds_stream[leds_pc++];
++
++		switch (byte1 >> 6) {
++		case LEDS_OP_SET:
++			ip30_leds_set(byte1 & 0x3f, byte2);
++			break;
++		case LEDS_OP_LOOP:
++			leds_pc = 0;
++		case LEDS_OP_WAIT:
++			timer_ms = ((unsigned long)byte2) << (byte1 & 0x3f);
++			end_flag = 1;
++			break;
++		case LEDS_OP_RSVD:
++			printk(KERN_INFO "ip30-leds: Stream to the future!\n");
++			leds_pc = 0;
++			timer_ms = 0;
++			end_flag = 1;
++			break;
++		}
++
++		if(leds_pc >= LEDS_STREAM_SIZE) {
++			printk(KERN_INFO "ip30-leds: The Neverending Stream?\n");
++			leds_pc = 0;
++			timer_ms = 0;
++			end_flag = 1;
++		}
++	}
++
++	ip30_leds_end();
++
++	if (timer_ms) {
++		timer_ms = (timer_ms * HZ) / 1000;
++		leds_timer.expires = jiffies + timer_ms;
++		add_timer(&leds_timer);
++	}
++}
++
++static int leds_open(struct inode *inode, struct file *file)
++{
++	spin_lock_irq(&leds_lock);
++	if (leds_are_open) {
++		spin_unlock_irq(&leds_lock);
++		return -EBUSY;
++	}
++	leds_are_open = 1;
++	del_timer(&leds_timer);
++	memset(leds_stream, 0xFF, LEDS_STREAM_SIZE);
++	spin_unlock_irq(&leds_lock);
++
++	return 0;
++}
++
++static int leds_release(struct inode *inode, struct file *file)
++{
++	spin_lock_irq(&leds_lock);
++	leds_are_open = 0;
++	leds_pc = 0;
++	leds_timer.expires = (jiffies + 1);
++	leds_timer.function = leds_timer_proc;
++	add_timer(&leds_timer);
++	spin_unlock_irq(&leds_lock);
++
++	return 0;
++}
++
++static ssize_t leds_write(struct file *file, const char *buf, size_t count, loff_t * ppos)
++{
++	if (count > LEDS_STREAM_SIZE)
++		return -ENOSPC;
++	copy_from_user(leds_stream, buf, count);
++	return count;
++}
++
++static struct file_operations leds_fops = {
++	.owner		= THIS_MODULE,
++	.open		= leds_open,
++	.write		= leds_write,
++	.release	= leds_release,
++};
++
++static struct miscdevice leds_dev= {
++	LEDS_MINOR,
++	"leds",
++	&leds_fops
++};
++
++
++/* special hacks */
++static int panic_event(struct notifier_block *this, unsigned long event,
++                      void *ptr)
++{
++	del_timer(&leds_timer);
++	memset(leds_stream, 0xFF, LEDS_STREAM_SIZE);
++
++	leds_stream[0] = 0x00;
++	leds_stream[1] = 0x00;
++	leds_stream[2] = 0x01;
++	leds_stream[3] = 0xFF;
++
++	leds_stream[4] = 0x49;
++	leds_stream[5] = 0x01;
++
++	leds_stream[6] = 0x01;
++	leds_stream[7] = 0x00;
++	leds_stream[8] = 0x00;
++	leds_stream[9] = 0xFF;
++
++	leds_stream[10] = 0x89;
++	leds_stream[11] = 0x01;
++
++	leds_pc = 0;
++	leds_timer.expires = (jiffies + 1);
++	leds_timer.function = leds_timer_proc;
++	add_timer(&leds_timer);
++
++	return NOTIFY_DONE;
++}
++
++static struct notifier_block panic_block = {
++	.notifier_call	= panic_event,
++};
++
++
++/* IOC3 SuperIO probe */
++static int ioc3led_probe(struct ioc3_submodule *is, struct ioc3_driver_data *idd)
++{
++	int i, p = 0;
++	if (ioc3 || idd->class != IOC3_CLASS_BASE_IP30)
++		return 1; /* no sense in setting LEDs on the MENETs */
++
++	ioc3 = idd;
++
++	if (misc_register(&leds_dev)) {
++		printk(KERN_ERR "ip30-leds: There is no place for me here <sob, sniff>.\n");
++		return 1;
++	}
++
++	for (i = 0; i < 3; i++) {
++		leds_stream[p++] = 0x00;
++		leds_stream[p++] = 0x00;
++		leds_stream[p++] = 0x01;
++		leds_stream[p++] = 0xff;
++
++		leds_stream[p++] = 0x48;
++		leds_stream[p++] = 0x01;
++
++		leds_stream[p++] = 0x01;
++		leds_stream[p++] = 0x00;
++		leds_stream[p++] = 0x00;
++		leds_stream[p++] = 0xff;
++
++		leds_stream[p++] = 0x48;
++		leds_stream[p++] = 0x01;
++	}
++	leds_stream[p++] = 0x80;
++	leds_stream[p++] = 0x00;
++
++	init_timer(&leds_timer);
++	leds_timer.expires = (jiffies + 1);
++	leds_timer.function = leds_timer_proc;
++	add_timer(&leds_timer);
++
++	atomic_notifier_chain_register(&panic_notifier_list, &panic_block);
++
++	return 0;
++}
++
++static int ioc3led_remove(struct ioc3_submodule *is, struct ioc3_driver_data *idd)
++{
++	if (ioc3 != idd)
++		return 1;
++
++	misc_deregister(&leds_dev);
++	ioc3 = NULL;
++	return 0;
++}
++
++
++/* entry/exit functions */
++static struct ioc3_submodule ioc3led_submodule = {
++	.name = "leds",
++	.probe = ioc3led_probe,
++	.remove = ioc3led_remove,
++	.owner = THIS_MODULE,
++};
++
++ioc3_submodule_driver(ioc3led_submodule);
++
++MODULE_AUTHOR("Stanislaw Skowronek <skylark@unaligned.org>");
++MODULE_DESCRIPTION("SGI Octane (IP30) LEDS Driver");
++MODULE_LICENSE("GPL");
++MODULE_VERSION("R28");
+diff --git a/drivers/net/ethernet/sgi/Kconfig b/drivers/net/ethernet/sgi/Kconfig
+index e304e4f957d0..f9efe42c0bfc 100644
+--- a/drivers/net/ethernet/sgi/Kconfig
++++ b/drivers/net/ethernet/sgi/Kconfig
+@@ -5,7 +5,7 @@
+ config NET_VENDOR_SGI
+ 	bool "SGI devices"
+ 	default y
+-	depends on (PCI && SGI_IP27) || SGI_IP32
++	depends on (PCI && (SGI_IP27 || SGI_IP30)) || SGI_IP32
+ 	---help---
+ 	  If you have a network (Ethernet) card belonging to this class, say Y.
+ 
+diff --git a/drivers/net/ethernet/sgi/ioc3-eth.c b/drivers/net/ethernet/sgi/ioc3-eth.c
+index 8797f6632ccb..c595ad17a827 100644
+--- a/drivers/net/ethernet/sgi/ioc3-eth.c
++++ b/drivers/net/ethernet/sgi/ioc3-eth.c
+@@ -130,8 +130,13 @@ ioc3_map(void *ptr, unsigned long dma_attr)
+ 	return ((0xaUL << PCI64_ATTR_TARG_SHFT) | dma_attr |
+ 		((unsigned long)ptr & TO_PHYS_MASK));
+ #else
++#ifdef CONFIG_SGI_IP30
++	return ((0x8UL << PCI64_ATTR_TARG_SHFT) | dma_attr |
++		((unsigned long)ptr & TO_PHYS_MASK));
++#else
+ 	return virt_to_bus(ptr);
+ #endif
++#endif
+ }
+ 
+ static void
+@@ -591,7 +596,7 @@ ioc3_init(struct net_device *dev)
+ 	(void)readl(&vma->emcr);
+ 
+ 	/* Misc registers  */
+-#ifdef CONFIG_SGI_IP27
++#if defined(CONFIG_SGI_IP27) || defined(CONFIG_SGI_IP30)
+ 	/* Barrier on last store */
+ 	writel(readl(&vma->erbar) |
+ 		(ERBAR_BARRIER_BIT << ERBAR_RXBARR_SHIFT), &vma->erbar);
+diff --git a/drivers/tty/serial/ioc3_serial.c b/drivers/tty/serial/ioc3_serial.c
+index a20af47594a4..29712d82e9af 100644
+--- a/drivers/tty/serial/ioc3_serial.c
++++ b/drivers/tty/serial/ioc3_serial.c
+@@ -130,8 +130,11 @@ static unsigned int Submodule_slot;
+ static unsigned long ioc3_map(void *ptr, unsigned long dma_attr)
+ {
+ #if defined(CONFIG_SGI_IP27)
+-	return (0xaUL << PCI64_ATTR_TARG_SHFT) | dma_attr |
+-		((unsigned long)ptr & TO_PHYS_MASK);
++	return ((0xaUL << PCI64_ATTR_TARG_SHFT) | dma_attr |
++		((unsigned long)ptr & TO_PHYS_MASK));
++#elif defined(CONFIG_SGI_IP30)
++	return ((0x8UL << PCI64_ATTR_TARG_SHFT) | dma_attr |
++		((unsigned long)ptr & TO_PHYS_MASK));
+ #else
+ 	return virt_to_bus(ptr);
+ #endif
+diff --git a/drivers/video/logo/Kconfig b/drivers/video/logo/Kconfig
+index 0037104d66ac..7c331d523dc7 100644
+--- a/drivers/video/logo/Kconfig
++++ b/drivers/video/logo/Kconfig
+@@ -54,7 +54,7 @@ config LOGO_PARISC_CLUT224
+ 
+ config LOGO_SGI_CLUT224
+ 	bool "224-color SGI Linux logo"
+-	depends on SGI_IP22 || SGI_IP27 || SGI_IP32
++	depends on SGI_IP22 || SGI_IP27 || SGI_IP30 || SGI_IP32
+ 	default y
+ 
+ config LOGO_SUN_CLUT224
+diff --git a/include/linux/miscdevice.h b/include/linux/miscdevice.h
+index 762b5fec3383..d20ccc93d25c 100644
+--- a/include/linux/miscdevice.h
++++ b/include/linux/miscdevice.h
+@@ -20,6 +20,7 @@
+ #define APOLLO_MOUSE_MINOR	7	/* unused */
+ #define PC110PAD_MINOR		9	/* unused */
+ /*#define ADB_MOUSE_MINOR	10	FIXME OBSOLETE */
++#define LEDS_MINOR		42
+ #define WATCHDOG_MINOR		130	/* Watchdog timer     */
+ #define TEMP_MINOR		131	/* Temperature Sensor */
+ #define APM_MINOR_DEV		134
+diff --git a/include/linux/pci_ids.h b/include/linux/pci_ids.h
+index 5f6b71d15393..5c64643012cd 100644
+--- a/include/linux/pci_ids.h
++++ b/include/linux/pci_ids.h
+@@ -1057,6 +1057,7 @@
+ #define PCI_VENDOR_ID_SGI		0x10a9
+ #define PCI_DEVICE_ID_SGI_IOC3		0x0003
+ #define PCI_DEVICE_ID_SGI_LITHIUM	0x1002
++#define PCI_DEVICE_ID_SGI_RAD1		0x0005
+ #define PCI_DEVICE_ID_SGI_IOC4		0x100a
+ 
+ #define PCI_VENDOR_ID_WINBOND		0x10ad
+diff --git a/include/sound/rad1.h b/include/sound/rad1.h
+new file mode 100644
+index 000000000000..3acbb6cd36f2
+--- /dev/null
++++ b/include/sound/rad1.h
+@@ -0,0 +1,119 @@
++/*
++ * This file is subject to the terms and conditions of the GNU General Public
++ * License.  See the file "COPYING" in the main directory of this archive
++ * for more details.
++ *
++ * Copyright (C) 2004-2007 Stanislaw Skowronek <skylark@unaligned.org>
++ */
++
++#ifndef _SOUND_RAD1_H
++#define _SOUND_RAD1_H
++
++#include <linux/types.h>
++
++#define RAD1_ADATRX	0
++#define RAD1_AESRX	1
++#define RAD1_ATOD	2
++#define RAD1_ADATSUBRX	3
++#define RAD1_AESSUBRX	4
++#define RAD1_ADATTX	5
++#define RAD1_AESTX	6
++#define RAD1_DTOA	7
++#define RAD1_STATUS	8
++
++struct rad1regs {
++	u32 pci_status;			/* 0x00000000 */
++	u32 adat_rx_msc_ust; 		/* 0x00000004 */
++	u32 adat_rx_msc0_submsc; 	/* 0x00000008 */
++	u32 aes_rx_msc_ust;	 	/* 0x0000000c */
++	u32 aes_rx_msc0_submsc; 	/* 0x00000010 */
++	u32 atod_msc_ust;		/* 0x00000014 */
++	u32 atod_msc0_submsc; 		/* 0x00000018 */
++	u32 adat_tx_msc_ust; 		/* 0x0000001c */
++	u32 adat_tx_msc0_submsc; 	/* 0x00000020 */
++	u32 aes_tx_msc_ust; 		/* 0x00000024 */
++	u32 aes_tx_msc0_submsc; 	/* 0x00000028 */
++	u32 dtoa_msc_ust; 		/* 0x0000002c */
++	u32 ust_register; 		/* 0x00000030 */
++	u32 gpio_status;		/* 0x00000034 */
++	u32 chip_status1; 		/* 0x00000038 */
++	u32 chip_status0;		/* 0x0000003c */
++
++	u32 ust_clock_control; 		/* 0x00000040 */
++	u32 adat_rx_control; 		/* 0x00000044 */
++	u32 aes_rx_control;	 	/* 0x00000048 */
++	u32 atod_control; 		/* 0x0000004c */
++	u32 adat_tx_control; 		/* 0x00000050 */
++	u32 aes_tx_control; 		/* 0x00000054 */
++	u32 dtoa_control; 		/* 0x00000058 */
++	u32 status_timer; 		/* 0x0000005c */
++
++	u32 _pad70[4];
++
++	u32 misc_control; 		/* 0x00000070 */
++	u32 pci_holdoff;		/* 0x00000074 */
++	u32 pci_arb_control; 		/* 0x00000078 */
++
++	u32 volume_control; 		/* 0x0000007c */
++
++	u32 reset;			/* 0x00000080 */
++
++	u32 gpio0;			/* 0x00000084 */
++	u32 gpio1;			/* 0x00000088 */
++	u32 gpio2;			/* 0x0000008c */
++	u32 gpio3;			/* 0x00000090 */
++
++	u32 _pada0[3];
++
++	u32 clockgen_ictl; 		/* 0x000000a0 */
++	u32 clockgen_rem;	 	/* 0x000000a4 */
++	u32 freq_synth_mux_sel[4]; 	/* 0x000000a8 */
++	u32 mpll0_lock_control;		/* 0x000000b8 */
++	u32 mpll1_lock_control;	 	/* 0x000000bc */
++
++	u32 _pad400[208];
++
++	/* descriptor RAM */
++	struct {
++		u32 loadr; 		/* 0x00000400 + 12*idx */
++		u32 hiadr; 		/* 0x00000404 + 12*idx */
++		u32 control;		/* 0x00000408 + 12*idx */
++	} pci_descr[16];
++
++	/* running descriptors */
++	struct {
++		u32 loadr;
++		u32 control;
++	} pci_lc[9];
++	u32 pci_hiadr[9];
++
++	u32 _pad1000[693];
++
++	u32 adat_subcode_txa_u[24];	/* 0x00001000 */
++	u32 adat_subcode_txa_unused;	/* 0x00001060 */
++
++	u32 _pad1080[7];
++
++	u32 adat_subcode_txb_u[24];	/* 0x00001080 */
++	u32 adat_subcode_txb_unused;	/* 0x000010e0 */
++
++	u32 _pad1100[7];
++
++	u32 aes_subcode_txa_lu[6];	/* 0x00001100 */
++	u32 aes_subcode_txa_lc[6];	/* 0x00001118 */
++	u32 aes_subcode_txa_lv[6];	/* 0x00001130 */
++	u32 aes_subcode_txa_ru[6];	/* 0x00001148 */
++	u32 aes_subcode_txa_rc[6];	/* 0x00001160 */
++	u32 aes_subcode_txa_rv0[2];	/* 0x00001178 */
++	u32 aes_subcode_txb_lu[6];	/* 0x00001180 */
++	u32 aes_subcode_txb_lc[6];	/* 0x00001198 */
++	u32 aes_subcode_txb_lv[6];	/* 0x000011b0 */
++	u32 aes_subcode_txb_ru[6];	/* 0x000011c8 */
++	u32 aes_subcode_txb_rc[6];	/* 0x000011e0 */
++	u32 aes_subcode_txb_rv0[2];	/* 0x000011f8 */
++	u32 aes_subcode_txa_rv2[4];	/* 0x00001200 */
++	u32 aes_subcode_txb_rv2[4];	/* 0x00001210 */
++	u32 aes_subcode_tx_unused; 	/* 0x00001220 */
++};
++
++#endif /* _SOUND_RAD1_H */
+diff --git a/include/video/edid.h b/include/video/edid.h
+index 0cb8b2a92b75..43cce30ccdb0 100644
+--- a/include/video/edid.h
++++ b/include/video/edid.h
+@@ -3,7 +3,5 @@
+ 
+ #include <uapi/video/edid.h>
+ 
+-#ifdef CONFIG_X86
+ extern struct edid_info edid_info;
+-#endif
+ #endif /* __linux_video_edid_h__ */
+diff --git a/sound/pci/Kconfig b/sound/pci/Kconfig
+index 32151d8c6bb8..bb4a452b5ea8 100644
+--- a/sound/pci/Kconfig
++++ b/sound/pci/Kconfig
+@@ -899,6 +899,12 @@ config SND_YMFPCI
+ 	  To compile this driver as a module, choose M here: the module
+ 	  will be called snd-ymfpci.
+ 
++config SND_RAD1
++	tristate "SGI RAD1"
++	depends on SND && SGI_IP30
++	help
++	  Say 'Y' or 'M' to include support for SGI RAD1 Pro Audio in Octane.
++
+ endif	# SND_PCI
+ 
+ source "sound/pci/hda/Kconfig"
+diff --git a/sound/pci/Makefile b/sound/pci/Makefile
+index 54fe325e3aa5..e5fb57bec305 100644
+--- a/sound/pci/Makefile
++++ b/sound/pci/Makefile
+@@ -21,6 +21,7 @@ snd-fm801-objs := fm801.o
+ snd-intel8x0-objs := intel8x0.o
+ snd-intel8x0m-objs := intel8x0m.o
+ snd-maestro3-objs := maestro3.o
++snd-rad1-objs := rad1.o
+ snd-rme32-objs := rme32.o
+ snd-rme96-objs := rme96.o
+ snd-sis7019-objs := sis7019.o
+@@ -47,6 +48,7 @@ obj-$(CONFIG_SND_FM801) += snd-fm801.o
+ obj-$(CONFIG_SND_INTEL8X0) += snd-intel8x0.o
+ obj-$(CONFIG_SND_INTEL8X0M) += snd-intel8x0m.o
+ obj-$(CONFIG_SND_MAESTRO3) += snd-maestro3.o
++obj-$(CONFIG_SND_RAD1) += snd-rad1.o
+ obj-$(CONFIG_SND_RME32) += snd-rme32.o
+ obj-$(CONFIG_SND_RME96) += snd-rme96.o
+ obj-$(CONFIG_SND_SIS7019) += snd-sis7019.o
+diff --git a/sound/pci/rad1.c b/sound/pci/rad1.c
+new file mode 100644
+index 000000000000..9536df300865
+--- /dev/null
++++ b/sound/pci/rad1.c
+@@ -0,0 +1,1527 @@
++/*
++ * rad1.c - ALSA driver for SGI RAD1 (as found in Octane and Octane2)
++ * Copyright (C) 2004-2007 by Stanislaw Skowronek <skylark@unaligned.org>
++ *
++ * This program is free software; you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation; either version 2 of the License, or
++ * (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program; if not, write to the Free Software
++ * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA02111-1307 USA
++ */
++
++#include <linux/delay.h>
++#include <linux/init.h>
++#include <linux/pci.h>
++#include <linux/slab.h>
++#include <linux/timer.h>
++#include <linux/spinlock.h>
++#include <linux/module.h>
++
++#include <sound/core.h>
++#include <sound/initval.h>
++#include <sound/pcm.h>
++#include <sound/control.h>
++
++#include <sound/rad1.h>
++
++struct snd_rad1_pipe {
++	unsigned long pma;		/* physical addr of the ring */
++	int *vma;			/* virtual addr of the ring */
++	struct snd_pcm_substream *subs;	/* ALSA substream */
++	struct snd_pcm *pcm;
++	unsigned int pnum;		/* number of periods */
++	unsigned int plen;		/* length of period (in bytes) */
++	unsigned int hptr;		/* hardware pointer */
++	int adma;			/* DMA active flag */
++	unsigned int qptr;		/* queue pointer */
++};
++
++struct snd_rad1 {
++	spinlock_t lock;
++	struct snd_card *card;
++	struct pci_dev *pci;
++	unsigned long mmio_phys;
++	struct rad1regs *mmio;
++	int timer_active;
++	struct timer_list timer;
++	struct snd_rad1_pipe pipes[9];
++
++	/* random stuff */
++	int last_aesrx_rate;
++
++	/* card controls */
++	unsigned int attctrl;		/* Attenuation control */
++	unsigned int rt_atod;		/* AtoD routing */
++	unsigned int rt_aesr;		/* AES Rx routing */
++	unsigned int rt_adat;		/* ADAT Rx routing */
++	unsigned int rt_opto;		/* Optical Out routing */
++};
++
++/* ----------------------------------------------------------------------- */
++
++
++/* ----------------------------------------------------------------------- */
++/* Hardware initialization, DMa, Pipe setup */
++static void
++snd_rad1_hw_init(struct snd_rad1 *chip)
++{
++	/* The hex values listed here are, for the most part, unknown values
++	 * determined by running portions of the IRIX kernel inside of Linux
++	 * as a userland application and then extracting the run-time info.
++	 *
++	 * We could define them via macros if we wanted, but the macro names
++	 * would be no more intelligible as RAD1_ANCIENT_MU_* than they are
++	 * simple hex numbers, so until the purpose of each value is known,
++	 * they shall remain as simple hex numbers.
++	 *
++	 * The same applies for pretty much any other hex number found in
++	 * driver that isn't a bit mask or some sort.  One day, we may figure
++	 * it all out, and create an appropriate header file to define them
++	 * all as intelligible macros.
++	 */
++	struct rad1regs *mmio = chip->mmio;
++
++	mmio->reset =			0xffffffff;
++	udelay(1000);
++	mmio->reset =			0xffe3cffe;
++	mmio->pci_holdoff =		0x08000010;
++	mmio->pci_arb_control =		0x00fac688;
++
++	/* I/O routing */
++	/* Mike 03000000; LineIn 05000000 */
++	mmio->atod_control =		0x03000000;
++	chip->rt_atod =			0x03000000;
++
++	/* Default */
++	mmio->dtoa_control =		0x20000000;
++
++	/* Optical In 00000018; AES In 00000010 */
++	mmio->aes_rx_control =		0x00000018;
++	chip->rt_aesr =			0x00000018;
++
++	/* Default */
++	mmio->aes_tx_control =		0x40000000;
++
++	/* Disabled a0000000; Optical In a0000018 */
++	mmio->adat_rx_control =		0xa0000000;
++	chip->rt_adat =			0xa0000000;
++
++	/* Default */
++	mmio->adat_tx_control =		0x20000000;
++	mmio->gpio3 =			0x00000002;
++	mmio->misc_control =		0x00001500;
++	mmio->mpll0_lock_control =	0x9fffffff;
++	mmio->mpll1_lock_control =	0x9fffffff;
++	mmio->reset =			0xffe3c0fe;
++	udelay(1000);
++	mmio->clockgen_ictl =		0x02000001;
++	mmio->reset =			0xffe24070;
++	udelay(1000);
++	mmio->reset =			0xffe20000;
++	mmio->gpio2 =			0x00000002;
++	mmio->volume_control =		0xd6d6d6d6;
++	chip->attctrl =			0xd6d6d6d6;
++	udelay(1000);
++
++	/* AES-Optical Out 00001040; AES-AES Out 00001440 */
++	mmio->misc_control =		0x00001040;
++	chip->rt_opto =			0x00001040;
++	mmio->reset =			0xffe20100;
++	mmio->freq_synth_mux_sel[3] =	0x00000001;
++	mmio->clockgen_rem =		0x0000ffff;
++	mmio->clockgen_ictl =		0x10000603;
++	mmio->reset =			0xffe20000;
++	mmio->reset =			0xffe20200;
++	mmio->freq_synth_mux_sel[2] =	0x00000001;
++	mmio->clockgen_rem =		0x0000ffff;
++	mmio->clockgen_ictl =		0x20000603;
++	mmio->reset =			0xffe20000;
++	mmio->reset =			0xffe20400;
++	mmio->freq_synth_mux_sel[1] =	0x00000001;
++	mmio->clockgen_rem =		0x0000ffff;
++	mmio->clockgen_ictl =		0x40000603;
++	mmio->reset =			0xffe20000;
++	mmio->reset =			0xffe20800;
++	mmio->freq_synth_mux_sel[0] =	0x00000001;
++	mmio->clockgen_rem =		0x0000ffff;
++	mmio->clockgen_ictl =		0x80000603;
++	mmio->reset =			0xffe20000;
++	mmio->gpio1 =			0x00000003;
++	udelay(10000);
++}
++
++static void
++snd_rad1_setup_dma_pipe(struct snd_rad1 *chip, int pidx)
++{
++	struct snd_rad1_pipe *pipe = (chip->pipes + pidx);
++	struct rad1regs *mmio = chip->mmio;
++
++	if ((-pipe->pnum * pipe->plen) & 0x7f)
++		printk(KERN_WARNING "rad1: pipe %d has unaligned size %d\n",
++		       pidx, (pipe->pnum * pipe->plen));
++
++	mmio->pci_descr[pidx].hiadr = (pipe->pma >> 32);
++	mmio->pci_descr[pidx].loadr = (pipe->pma & 0xffffffff);
++	mmio->pci_descr[pidx].control = (((-pipe->pnum * pipe->plen) &
++	                                  0xffffff80) | (pidx << 3));
++
++	mmio->pci_hiadr[pidx] = (pipe->pma >> 32);
++	mmio->pci_lc[pidx].loadr = (pipe->pma & 0xffffffff);
++	mmio->pci_lc[pidx].control = (((-pipe->pnum * pipe->plen) &
++	                               0xffffff80) | (pidx << 3));
++}
++
++static void
++snd_rad1_activate_timer(struct snd_rad1 *chip)
++{
++	if (!chip->timer_active) {
++		chip->timer.expires = (jiffies + 1);
++		add_timer(&chip->timer);
++		chip->timer_active = 1;
++	}
++}
++
++static void
++snd_rad1_run_pipe(struct snd_rad1 *chip, int pidx, int adma)
++{
++	struct snd_rad1_pipe *pipe = (chip->pipes + pidx);
++	struct rad1regs *mmio = chip->mmio;
++
++	if (pipe->adma != adma) {
++		pipe->adma = adma;
++
++		switch (pidx) {
++		case RAD1_ATOD:
++			mmio->atod_control = (chip->rt_atod | adma);
++			break;
++		case RAD1_DTOA:
++			mmio->dtoa_control = (0x20000000 | adma);
++			break;
++		case RAD1_AESRX:
++			mmio->aes_rx_control = (chip->rt_aesr | adma);
++			break;
++		case RAD1_AESTX:
++			mmio->aes_tx_control = (0x40000000 | adma);
++			break;
++		}
++	}
++
++	if (adma)
++		snd_rad1_activate_timer(chip);
++}
++
++static void
++snd_rad1_poll_pipe(struct snd_rad1 *chip, int pidx, int is_tx)
++{
++	struct snd_rad1_pipe *pipe = (chip->pipes + pidx);
++	unsigned long flags;
++	unsigned int hptr = (pipe->pnum * pipe->plen) +
++	                     (chip->mmio->pci_lc[pidx].control & 0xffffff80);
++
++	spin_lock_irqsave(&chip->lock, flags);
++	if (pipe->adma && pipe->subs) {
++		/* use hardware pointer to detect period crossing */
++		if ((hptr / pipe->plen) != (pipe->hptr / pipe->plen)) {
++			if (is_tx)
++				pipe->qptr = (hptr / 8);
++			else
++				pipe->qptr = (pipe->hptr / 8);
++			spin_unlock_irqrestore(&chip->lock, flags);
++			snd_pcm_period_elapsed(pipe->subs);
++			spin_lock_irqsave(&chip->lock, flags);
++		}
++		pipe->hptr = hptr;
++	}
++	spin_unlock_irqrestore(&chip->lock, flags);
++}
++
++static void
++snd_rad1_poll_timer(unsigned long chip_virt)
++{
++	struct snd_rad1 *chip = (struct snd_rad1 *)chip_virt;
++	int adma = 0;
++
++	if (chip->pipes[RAD1_ATOD].adma) {
++		snd_rad1_poll_pipe(chip, RAD1_ATOD, 0);
++		adma = 1;
++	}
++
++	if (chip->pipes[RAD1_DTOA].adma) {
++		snd_rad1_poll_pipe(chip, RAD1_DTOA, 1);
++		adma = 1;
++	}
++
++	if (chip->pipes[RAD1_AESRX].adma) {
++		snd_rad1_poll_pipe(chip, RAD1_AESRX, 0);
++		adma = 1;
++	}
++
++	if (chip->pipes[RAD1_AESTX].adma) {
++		snd_rad1_poll_pipe(chip, RAD1_AESTX, 1);
++		adma = 1;
++	}
++
++	if (adma) {
++		chip->timer.expires = (jiffies + 1);
++		add_timer(&chip->timer);
++	} else
++		chip->timer_active = 0;
++}
++
++static int
++snd_rad1_free_pipe(struct snd_pcm_substream *substream, int pidx)
++{
++	struct snd_rad1 *chip = snd_pcm_substream_chip(substream);
++	struct snd_rad1_pipe *pipe = (chip->pipes + pidx);
++	unsigned long flags;
++
++	spin_lock_irqsave(&chip->lock, flags);
++	snd_rad1_run_pipe(chip, pidx, 0);
++	pipe->subs = NULL;
++	spin_unlock_irqrestore(&chip->lock, flags);
++
++	return snd_pcm_lib_free_pages(substream);
++}
++
++static inline long
++snd_rad1_gcd(long x, long y)
++{
++	long t;
++
++	if (x < y) {
++		t = x;
++		x = y;
++		y = t;
++	}
++
++	while (y) {
++		y = x % (t = y);
++		x = t;
++	}
++
++	return x;
++}
++
++static void
++snd_rad1_red_frac(long *n, long *d, long max)
++{
++	long gcd = snd_rad1_gcd(*n, *d);
++
++	if (unlikely(!gcd))
++		return;
++
++	*n /= gcd;
++	*d /= gcd;
++
++	/* XXX: Lose precision [sic] */
++	while ((*n > max) || (*d > max)) {
++		*n >>= 1;
++		*d >>= 1;
++	}
++}
++
++static void
++snd_rad1_set_aestx_subcode(struct snd_rad1 *chip, unsigned char *sub_lc,
++                           unsigned char *sub_rc)
++{
++	struct rad1regs *mmio = chip->mmio;
++	unsigned int i, j, lc[6], rc[6];
++
++	for (i = 0; i < 6; i++) {
++		lc[i] = 0;
++		rc[i] = 0;
++		for (j = 0; j < 4; j++) {
++			lc[i] |= (sub_lc[i * 4 + j] << (j << 3));
++			rc[i] |= (sub_rc[i * 4 + j] << (j << 3));
++		}
++	}
++
++	for (i = 0; i < 6; i++) {
++		mmio->aes_subcode_txa_lu[i] = 0x00000000;
++		mmio->aes_subcode_txa_lc[i] = lc[i];
++		mmio->aes_subcode_txa_lv[i] = 0x00000000;
++		mmio->aes_subcode_txa_ru[i] = 0x00000000;
++		mmio->aes_subcode_txa_rc[i] = rc[i];
++		mmio->aes_subcode_txb_lu[i] = 0x00000000;
++		mmio->aes_subcode_txb_lc[i] = lc[i];
++		mmio->aes_subcode_txb_lv[i] = 0x00000000;
++		mmio->aes_subcode_txb_ru[i] = 0x00000000;
++		mmio->aes_subcode_txb_rc[i] = rc[i];
++	}
++
++	for (i = 0; i < 2; i++) {
++		mmio->aes_subcode_txa_rv0[i] = 0x00000000;
++		mmio->aes_subcode_txb_rv0[i] = 0x00000000;
++	}
++
++	for (i = 0; i < 4; i++) {
++		mmio->aes_subcode_txa_rv2[i] = 0x00000000;
++		mmio->aes_subcode_txb_rv2[i] = 0x00000000;
++	}
++}
++
++static void
++snd_rad1_genset_aestx_subcode(struct snd_rad1 *chip, int rate)
++{
++	int i;
++	unsigned char lc[24], rc[24];
++
++	for (i = 0; i < 24; i++) {
++		lc[i] = 0x00;
++		rc[i] = 0x00;
++	}
++
++	lc[0] = 0x04;	/* PRO=0, !AUDIO=0, COPY=1, PRE=000, MODE=00 */
++	rc[0] = 0x04;
++	lc[1] = 0x01;	/* Laser Optical, CD IEC-908 */
++	rc[1] = 0x01;
++	lc[2] = 0x10;	/* SOURCE=0000, CHANNEL=0001 */
++	rc[2] = 0x20;	/* SOURCE=0000, CHANNEL=0010 */
++
++	/*
++	 * RAD1 systems have generally decent clock sources,
++	 * so we mark them as Level I
++	 */
++	switch (rate) {
++	case 32000:
++		lc[3] = 0x0c;	/* Level I, 32 kHz */
++		rc[3] = 0x0c;
++		break;
++	case 44100:
++		lc[3] = 0x00;	/* Level I, 44.1 kHz */
++		rc[3] = 0x00;
++		break;
++	case 48000:
++		lc[3] = 0x04;	/* Level I, 48 kHz */
++		rc[3] = 0x04;
++		break;
++	default:
++		/* Not a valid IEC-958 sample rate */
++		lc[3] = 0x10;	/* Level III, 44.1 kHz */
++		rc[3] = 0x10;
++	}
++	snd_rad1_set_aestx_subcode(chip, lc, rc);
++}
++
++static void
++snd_rad1_set_cg(struct snd_rad1 *chip, int cg, long rate,
++				long base, unsigned muxsel)
++{
++	struct rad1regs *mmio = chip->mmio;
++	long div, rem;
++	unsigned flags;
++
++	snd_rad1_red_frac(&base, &rate, 0xffff);
++	div = (base / rate);
++	rem = (base % rate);
++	snd_rad1_red_frac(&rem, &rate, 0xffff);
++	flags = (((rem * 2) < rate) ? 0x600 : 0x200);
++
++	mmio->reset = 0xffe20000 | (0x100 << cg);
++	mmio->freq_synth_mux_sel[3 - cg] = muxsel;
++	mmio->clockgen_rem = (rem << 16) | (0x10000 - rate);
++	mmio->clockgen_ictl = (flags | (0x10000000 << cg) | (div - 1));
++	mmio->reset = 0xffe20000;
++}
++
++/* Select best master clock source for low jitter */
++static inline void
++snd_rad1_set_cgms(struct snd_rad1 *chip, int cg, long rate)
++{
++	if (!(176400 % rate))
++		snd_rad1_set_cg(chip, cg, rate, 176400, 0);
++	else
++		snd_rad1_set_cg(chip, cg, rate, 192000, 1);
++}
++
++static inline void
++snd_rad1_setrate_pipe(struct snd_rad1 *chip, int pidx, int rate)
++{
++	if (pidx == RAD1_ATOD)
++		snd_rad1_set_cgms(chip, 0, rate);
++
++	if (pidx == RAD1_DTOA)
++		snd_rad1_set_cgms(chip, 1, rate);
++
++	if (pidx == RAD1_AESTX) {
++		snd_rad1_set_cgms(chip, 2, rate);
++		snd_rad1_genset_aestx_subcode(chip, rate);
++	}
++}
++
++static int
++snd_rad1_prepare_pipe(struct snd_pcm_substream *substream, int pidx)
++{
++	struct snd_rad1 *chip = snd_pcm_substream_chip(substream);
++	struct snd_pcm_runtime *runtime = substream->runtime;
++	struct snd_rad1_pipe *pipe = (chip->pipes + pidx);
++	unsigned long flags;
++
++	spin_lock_irqsave(&chip->lock, flags);
++	snd_rad1_run_pipe(chip, pidx, 0);
++	spin_unlock_irqrestore(&chip->lock, flags);
++
++	pipe->subs = substream;
++	pipe->vma = (int *)runtime->dma_area;
++	pipe->pma = runtime->dma_addr;
++	pipe->pnum = runtime->periods;
++	pipe->plen = frames_to_bytes(runtime, runtime->period_size);
++
++	snd_rad1_setrate_pipe(chip, pidx, runtime->rate);
++
++	pipe->hptr = 0;
++	pipe->qptr = 0;
++	snd_rad1_setup_dma_pipe(chip, pidx);
++
++	return 0;
++}
++
++static void
++snd_rad1_detect_aesrx_rate(struct snd_rad1 *chip, struct snd_pcm_hardware *hw)
++{
++	int rate;
++	unsigned sc = (((chip->mmio->chip_status0) >> 24) & 7);
++	static int rates[8] = {0, 48000, 44100, 32000, 48000,
++	                       44100, 44056, 32000};
++
++	if (!rates[sc]) {
++		printk(KERN_INFO "rad1: Warning: Recording from an unlocked "
++		       "IEC958 source.  Assuming sample rate: %d.\n",
++		       chip->last_aesrx_rate);
++		rate = chip->last_aesrx_rate;
++	} else
++		rate = rates[sc];
++
++	chip->last_aesrx_rate = rate;
++	hw->rate_min = rate;
++	hw->rate_max = rate;
++
++	switch (rate) {
++	case 32000:
++		hw->rates = SNDRV_PCM_RATE_32000;
++		break;
++	case 44056:
++		hw->rates = SNDRV_PCM_RATE_CONTINUOUS;
++		break;
++	case 48000:
++		hw->rates = SNDRV_PCM_RATE_48000;
++	case 44100:
++	default:
++		hw->rates = SNDRV_PCM_RATE_44100;
++		break;
++	}
++}
++
++static int
++snd_rad1_trigger_pipe(struct snd_pcm_substream *substream, int pidx, int cmd)
++{
++	struct snd_rad1 *chip = snd_pcm_substream_chip(substream);
++	int result = 0;
++
++	switch (cmd) {
++	case SNDRV_PCM_TRIGGER_START:
++	case SNDRV_PCM_TRIGGER_RESUME:
++		snd_rad1_run_pipe(chip, pidx, 1);
++		break;
++	case SNDRV_PCM_TRIGGER_STOP:
++	case SNDRV_PCM_TRIGGER_SUSPEND:
++		snd_rad1_run_pipe(chip, pidx, 0);
++		break;
++	default:
++		result = -EINVAL;
++	}
++
++	return result;
++}
++
++static snd_pcm_uframes_t
++snd_rad1_ptr_pipe(struct snd_pcm_substream *substream, int pidx)
++{
++	struct snd_rad1 *chip = snd_pcm_substream_chip(substream);
++
++	return chip->pipes[pidx].qptr;
++}
++
++/* ----------------------------------------------------------------------- */
++
++
++/* ----------------------------------------------------------------------- */
++/* ATOD pipe */
++static struct snd_pcm_hardware
++snd_rad1_atod_hw = {
++	.info			= (SNDRV_PCM_INFO_INTERLEAVED |
++	                           SNDRV_PCM_INFO_MMAP |
++	                           SNDRV_PCM_INFO_MMAP_VALID |
++	                           SNDRV_PCM_INFO_BLOCK_TRANSFER),
++	.rates			= (SNDRV_PCM_RATE_CONTINUOUS |
++	                           SNDRV_PCM_RATE_32000 |
++	                           SNDRV_PCM_RATE_44100 |
++	                           SNDRV_PCM_RATE_48000),
++	.formats		= SNDRV_PCM_FMTBIT_S24_BE,
++	.rate_min		= 32000,
++	.rate_max		= 48000,
++	.channels_min		= 2,
++	.channels_max		= 2,
++	.buffer_bytes_max	= 1048576,
++	.period_bytes_min	= 4096,
++	.period_bytes_max	= 4096,
++	.periods_min		= 4,
++	.periods_max		= 256,
++};
++
++static int
++snd_rad1_atod_open(struct snd_pcm_substream *substream)
++{
++	struct snd_pcm_runtime *runtime = substream->runtime;
++
++	runtime->hw = snd_rad1_atod_hw;
++
++	return 0;
++}
++
++static int
++snd_rad1_atod_close(struct snd_pcm_substream *substream)
++{
++	struct snd_rad1 *chip = snd_pcm_substream_chip(substream);
++
++	snd_rad1_run_pipe(chip, RAD1_ATOD, 0);
++
++	return 0;
++}
++
++static int
++snd_rad1_atod_params(struct snd_pcm_substream *substream,
++                     struct snd_pcm_hw_params *hw_params)
++{
++	return snd_pcm_lib_malloc_pages(substream,
++	                                params_buffer_bytes(hw_params));
++}
++
++static int
++snd_rad1_atod_free(struct snd_pcm_substream *substream)
++{
++	return snd_rad1_free_pipe(substream, RAD1_ATOD);
++}
++
++static int
++snd_rad1_atod_prepare(struct snd_pcm_substream *substream)
++{
++	return snd_rad1_prepare_pipe(substream, RAD1_ATOD);
++}
++
++static int
++snd_rad1_atod_trigger(struct snd_pcm_substream *substream, int cmd)
++{
++	return snd_rad1_trigger_pipe(substream, RAD1_ATOD, cmd);
++}
++
++static snd_pcm_uframes_t
++snd_rad1_atod_ptr(struct snd_pcm_substream *substream)
++{
++	return snd_rad1_ptr_pipe(substream, RAD1_ATOD);
++}
++
++static struct snd_pcm_ops
++snd_rad1_atod_ops = {
++	.open = snd_rad1_atod_open,
++	.close = snd_rad1_atod_close,
++	.hw_params = snd_rad1_atod_params,
++	.hw_free = snd_rad1_atod_free,
++	.prepare = snd_rad1_atod_prepare,
++	.trigger = snd_rad1_atod_trigger,
++	.pointer = snd_rad1_atod_ptr,
++	.ioctl = snd_pcm_lib_ioctl,
++};
++
++static void
++snd_rad1_atod_pcm_free(struct snd_pcm *pcm)
++{
++	snd_pcm_lib_preallocate_free_for_all(pcm);
++}
++
++static int
++snd_rad1_new_atod(struct snd_rad1 *chip, int dev)
++{
++	struct snd_pcm *pcm;
++	int err;
++
++	err = snd_pcm_new(chip->card, "RAD1 AtoD", dev, 0, 1, &pcm);
++	if (unlikely(err < 0))
++		return err;
++
++	pcm->private_data = chip;
++	pcm->private_free = snd_rad1_atod_pcm_free;
++	strlcpy(pcm->name, "RAD1 AtoD", sizeof(pcm->name));
++	chip->pipes[RAD1_ATOD].pcm = pcm;
++	snd_pcm_set_ops(pcm, SNDRV_PCM_STREAM_CAPTURE, &snd_rad1_atod_ops);
++	snd_pcm_lib_preallocate_pages_for_all(pcm, SNDRV_DMA_TYPE_DEV,
++	                                      snd_dma_pci_data(chip->pci),
++	                                      65536, 65536);
++
++	return 0;
++}
++
++/* ----------------------------------------------------------------------- */
++
++
++/* ----------------------------------------------------------------------- */
++/* DTOA pipe */
++static struct
++snd_pcm_hardware snd_rad1_dtoa_hw = {
++	.info			= (SNDRV_PCM_INFO_INTERLEAVED |
++	                           SNDRV_PCM_INFO_MMAP |
++	                           SNDRV_PCM_INFO_MMAP_VALID |
++	                           SNDRV_PCM_INFO_BLOCK_TRANSFER),
++	.rates			= (SNDRV_PCM_RATE_CONTINUOUS |
++	                           SNDRV_PCM_RATE_32000 |
++	                           SNDRV_PCM_RATE_44100 |
++	                           SNDRV_PCM_RATE_48000),
++	.formats		= SNDRV_PCM_FMTBIT_S24_BE,
++	.rate_min		= 32000,
++	.rate_max		= 48000,
++	.channels_min		= 2,
++	.channels_max		= 2,
++	.buffer_bytes_max	= 1048576,
++	.period_bytes_min	= 4096,
++	.period_bytes_max	= 4096,
++	.periods_min		= 4,
++	.periods_max		= 256,
++};
++
++static int
++snd_rad1_dtoa_open(struct snd_pcm_substream *substream)
++{
++	struct snd_pcm_runtime *runtime = substream->runtime;
++
++	runtime->hw = snd_rad1_dtoa_hw;
++
++	return 0;
++}
++
++static int
++snd_rad1_dtoa_close(struct snd_pcm_substream *substream)
++{
++	struct snd_rad1 *chip = snd_pcm_substream_chip(substream);
++
++	snd_rad1_run_pipe(chip, RAD1_DTOA, 0);
++
++	return 0;
++}
++
++static int
++snd_rad1_dtoa_params(struct snd_pcm_substream *substream,
++                     struct snd_pcm_hw_params *hw_params)
++{
++	return snd_pcm_lib_malloc_pages(substream,
++	                                params_buffer_bytes(hw_params));
++}
++
++static int
++snd_rad1_dtoa_free(struct snd_pcm_substream *substream)
++{
++	return snd_rad1_free_pipe(substream, RAD1_DTOA);
++}
++
++static int
++snd_rad1_dtoa_prepare(struct snd_pcm_substream *substream)
++{
++	return snd_rad1_prepare_pipe(substream, RAD1_DTOA);
++}
++
++static int
++snd_rad1_dtoa_trigger(struct snd_pcm_substream *substream, int cmd)
++{
++	return snd_rad1_trigger_pipe(substream, RAD1_DTOA, cmd);
++}
++
++static snd_pcm_uframes_t
++snd_rad1_dtoa_ptr(struct snd_pcm_substream *substream)
++{
++	return snd_rad1_ptr_pipe(substream, RAD1_DTOA);
++}
++
++static struct snd_pcm_ops
++snd_rad1_dtoa_ops = {
++	.open = snd_rad1_dtoa_open,
++	.close = snd_rad1_dtoa_close,
++	.hw_params = snd_rad1_dtoa_params,
++	.hw_free = snd_rad1_dtoa_free,
++	.prepare = snd_rad1_dtoa_prepare,
++	.trigger = snd_rad1_dtoa_trigger,
++	.pointer = snd_rad1_dtoa_ptr,
++	.ioctl = snd_pcm_lib_ioctl,
++};
++
++static void
++snd_rad1_dtoa_pcm_free(struct snd_pcm *pcm)
++{
++	snd_pcm_lib_preallocate_free_for_all(pcm);
++}
++
++static int
++snd_rad1_new_dtoa(struct snd_rad1 *chip, int dev)
++{
++	struct snd_pcm *pcm;
++	int err;
++
++	err = snd_pcm_new(chip->card, "RAD1 DtoA", dev, 1, 0, &pcm);
++	if (unlikely(err < 0))
++		return err;
++
++	pcm->private_data = chip;
++	pcm->private_free = snd_rad1_dtoa_pcm_free;
++	strlcpy(pcm->name, "RAD1 DtoA", sizeof(pcm->name));
++	chip->pipes[RAD1_DTOA].pcm = pcm;
++	snd_pcm_set_ops(pcm, SNDRV_PCM_STREAM_PLAYBACK, &snd_rad1_dtoa_ops);
++	snd_pcm_lib_preallocate_pages_for_all(pcm, SNDRV_DMA_TYPE_DEV,
++	                                      snd_dma_pci_data(chip->pci),
++	                                      65536, 65536);
++
++	return 0;
++}
++
++/* ----------------------------------------------------------------------- */
++
++
++/* ----------------------------------------------------------------------- */
++/* AESRX pipe */
++static struct snd_pcm_hardware
++snd_rad1_aesrx_hw = {
++	.info			= (SNDRV_PCM_INFO_INTERLEAVED |
++	                           SNDRV_PCM_INFO_MMAP |
++	                           SNDRV_PCM_INFO_MMAP_VALID |
++	                           SNDRV_PCM_INFO_BLOCK_TRANSFER),
++	.rates			= (SNDRV_PCM_RATE_32000 |
++	                           SNDRV_PCM_RATE_44100 |
++	                           SNDRV_PCM_RATE_48000),
++	.formats		= SNDRV_PCM_FMTBIT_S24_BE,
++	.rate_min		= 32000,
++	.rate_max		= 48000,
++	.channels_min		= 2,
++	.channels_max		= 2,
++	.buffer_bytes_max	= 1048576,
++	.period_bytes_min	= 4096,
++	.period_bytes_max	= 4096,
++	.periods_min		= 4,
++	.periods_max		= 256,
++};
++
++static int
++snd_rad1_aesrx_open(struct snd_pcm_substream *substream)
++{
++	struct snd_pcm_runtime *runtime = substream->runtime;
++	struct snd_rad1 *chip = snd_pcm_substream_chip(substream);
++
++	runtime->hw = snd_rad1_aesrx_hw;
++	snd_rad1_detect_aesrx_rate(chip, &runtime->hw);
++
++	return 0;
++}
++
++static int
++snd_rad1_aesrx_close(struct snd_pcm_substream *substream)
++{
++	struct snd_rad1 *chip = snd_pcm_substream_chip(substream);
++
++	snd_rad1_run_pipe(chip, RAD1_AESRX, 0);
++
++	return 0;
++}
++
++static int
++snd_rad1_aesrx_params(struct snd_pcm_substream *substream,
++                      struct snd_pcm_hw_params *hw_params)
++{
++	return snd_pcm_lib_malloc_pages(substream,
++	                                params_buffer_bytes(hw_params));
++}
++
++static int
++snd_rad1_aesrx_free(struct snd_pcm_substream *substream)
++{
++	return snd_rad1_free_pipe(substream, RAD1_AESRX);
++}
++
++static int
++snd_rad1_aesrx_prepare(struct snd_pcm_substream *substream)
++{
++	return snd_rad1_prepare_pipe(substream, RAD1_AESRX);
++}
++
++static int
++snd_rad1_aesrx_trigger(struct snd_pcm_substream *substream, int cmd)
++{
++	return snd_rad1_trigger_pipe(substream, RAD1_AESRX, cmd);
++}
++
++static snd_pcm_uframes_t
++snd_rad1_aesrx_ptr(struct snd_pcm_substream *substream)
++{
++	return snd_rad1_ptr_pipe(substream, RAD1_AESRX);
++}
++
++static struct snd_pcm_ops
++snd_rad1_aesrx_ops = {
++	.open = snd_rad1_aesrx_open,
++	.close = snd_rad1_aesrx_close,
++	.hw_params = snd_rad1_aesrx_params,
++	.hw_free = snd_rad1_aesrx_free,
++	.prepare = snd_rad1_aesrx_prepare,
++	.trigger = snd_rad1_aesrx_trigger,
++	.pointer = snd_rad1_aesrx_ptr,
++	.ioctl = snd_pcm_lib_ioctl,
++};
++
++static void
++snd_rad1_aesrx_pcm_free(struct snd_pcm *pcm)
++{
++	snd_pcm_lib_preallocate_free_for_all(pcm);
++}
++
++static int
++snd_rad1_new_aesrx(struct snd_rad1 *chip, int dev)
++{
++	struct snd_pcm *pcm;
++	int err;
++
++	err = snd_pcm_new(chip->card, "RAD1 AES Rx", dev, 0, 1, &pcm);
++	if (unlikely(err < 0))
++		return err;
++
++	pcm->private_data = chip;
++	pcm->private_free = snd_rad1_aesrx_pcm_free;
++	strlcpy(pcm->name, "RAD1 AES Rx", sizeof(pcm->name));
++	chip->pipes[RAD1_AESRX].pcm = pcm;
++	snd_pcm_set_ops(pcm, SNDRV_PCM_STREAM_CAPTURE, &snd_rad1_aesrx_ops);
++	snd_pcm_lib_preallocate_pages_for_all(pcm, SNDRV_DMA_TYPE_DEV,
++	                                      snd_dma_pci_data(chip->pci),
++	                                      65536, 65536);
++	chip->last_aesrx_rate = 44100;
++
++	return 0;
++}
++
++/* ----------------------------------------------------------------------- */
++
++
++/* ----------------------------------------------------------------------- */
++/* AESTX pipe */
++static struct snd_pcm_hardware
++snd_rad1_aestx_hw = {
++	.info			= (SNDRV_PCM_INFO_INTERLEAVED |
++	                           SNDRV_PCM_INFO_MMAP |
++	                           SNDRV_PCM_INFO_MMAP_VALID |
++	                           SNDRV_PCM_INFO_BLOCK_TRANSFER),
++	.rates			= (SNDRV_PCM_RATE_32000 |
++	                           SNDRV_PCM_RATE_44100 |
++	                           SNDRV_PCM_RATE_48000),
++	.formats		= SNDRV_PCM_FMTBIT_S24_BE,
++	.rate_min		= 32000,
++	.rate_max		= 48000,
++	.channels_min		= 2,
++	.channels_max		= 2,
++	.buffer_bytes_max	= 1048576,
++	.period_bytes_min	= 4096,
++	.period_bytes_max	= 4096,
++	.periods_min		= 4,
++	.periods_max		= 256,
++};
++
++static int
++snd_rad1_aestx_open(struct snd_pcm_substream *substream)
++{
++	struct snd_pcm_runtime *runtime = substream->runtime;
++
++	runtime->hw = snd_rad1_aestx_hw;
++
++	return 0;
++}
++
++static int
++snd_rad1_aestx_close(struct snd_pcm_substream *substream)
++{
++	struct snd_rad1 *chip = snd_pcm_substream_chip(substream);
++
++	snd_rad1_run_pipe(chip, RAD1_AESTX, 0);
++
++	return 0;
++}
++
++static int
++snd_rad1_aestx_params(struct snd_pcm_substream *substream,
++                      struct snd_pcm_hw_params *hw_params)
++{
++	return snd_pcm_lib_malloc_pages(substream,
++	                                params_buffer_bytes(hw_params));
++}
++
++static int
++snd_rad1_aestx_free(struct snd_pcm_substream *substream)
++{
++	return snd_rad1_free_pipe(substream, RAD1_AESTX);
++}
++
++static int
++snd_rad1_aestx_prepare(struct snd_pcm_substream *substream)
++{
++	return snd_rad1_prepare_pipe(substream, RAD1_AESTX);
++}
++
++static int
++snd_rad1_aestx_trigger(struct snd_pcm_substream *substream, int cmd)
++{
++	return snd_rad1_trigger_pipe(substream, RAD1_AESTX, cmd);
++}
++
++static snd_pcm_uframes_t
++snd_rad1_aestx_ptr(struct snd_pcm_substream *substream)
++{
++	return snd_rad1_ptr_pipe(substream, RAD1_AESTX);
++}
++
++static struct snd_pcm_ops
++snd_rad1_aestx_ops = {
++	.open = snd_rad1_aestx_open,
++	.close = snd_rad1_aestx_close,
++	.hw_params = snd_rad1_aestx_params,
++	.hw_free = snd_rad1_aestx_free,
++	.prepare = snd_rad1_aestx_prepare,
++	.trigger = snd_rad1_aestx_trigger,
++	.pointer = snd_rad1_aestx_ptr,
++	.ioctl = snd_pcm_lib_ioctl,
++};
++
++static void
++snd_rad1_aestx_pcm_free(struct snd_pcm *pcm)
++{
++	snd_pcm_lib_preallocate_free_for_all(pcm);
++}
++
++static int
++snd_rad1_new_aestx(struct snd_rad1 *chip, int dev)
++{
++	struct snd_pcm *pcm;
++	int err;
++
++	err = snd_pcm_new(chip->card, "RAD1 AES Tx", dev, 1, 0, &pcm);
++	if (unlikely(err < 0))
++		return err;
++
++	pcm->private_data = chip;
++	pcm->private_free = snd_rad1_aestx_pcm_free;
++	strlcpy(pcm->name, "RAD1 AES Tx", sizeof(pcm->name));
++	chip->pipes[RAD1_AESTX].pcm = pcm;
++	snd_pcm_set_ops(pcm, SNDRV_PCM_STREAM_PLAYBACK, &snd_rad1_aestx_ops);
++	snd_pcm_lib_preallocate_pages_for_all(pcm, SNDRV_DMA_TYPE_DEV,
++	                                      snd_dma_pci_data(chip->pci),
++	                                      65536, 65536);
++
++	return 0;
++}
++
++/* ----------------------------------------------------------------------- */
++
++
++/* ----------------------------------------------------------------------- */
++/* Volume control */
++static int
++snd_rad1_control_pv_info(struct snd_kcontrol *kcontrol,
++                         struct snd_ctl_elem_info *uinfo)
++{
++	uinfo->type = SNDRV_CTL_ELEM_TYPE_INTEGER;
++	uinfo->count = 2;
++	uinfo->value.integer.min = 0;
++	uinfo->value.integer.max = 255;
++
++	return 0;
++}
++
++static int
++snd_rad1_control_pv_get(struct snd_kcontrol *kcontrol,
++                        struct snd_ctl_elem_value *u)
++{
++	int shift = (kcontrol->private_value * 16);
++	unsigned long flags;
++	struct snd_rad1 *chip = snd_kcontrol_chip(kcontrol);
++
++	spin_lock_irqsave(&chip->lock, flags);
++	u->value.integer.value[0] = ((chip->attctrl >> shift) & 0xff);
++	u->value.integer.value[1] = ((chip->attctrl >> (8 + shift)) & 0xff);
++	spin_unlock_irqrestore(&chip->lock, flags);
++
++	return 0;
++}
++
++static int
++snd_rad1_control_pv_put(struct snd_kcontrol *kcontrol,
++                        struct snd_ctl_elem_value *u)
++{
++	int change = 0;
++	int shift = (kcontrol->private_value * 16);
++	unsigned long flags;
++	struct snd_rad1 *chip = snd_kcontrol_chip(kcontrol);
++
++	spin_lock_irqsave(&chip->lock, flags);
++	if (u->value.integer.value[0] != ((chip->attctrl >> shift) & 0xff))
++		change = 1;
++
++	if (u->value.integer.value[1] != ((chip->attctrl >> (8 + shift)) & 0xff))
++		change = 1;
++
++	if (change) {
++		chip->attctrl &= (0xffff << (16 - shift));
++		chip->attctrl |= (u->value.integer.value[0] << shift);
++		chip->attctrl |= (u->value.integer.value[1] << (8 + shift));
++		chip->mmio->volume_control = chip->attctrl;
++	}
++	spin_unlock_irqrestore(&chip->lock, flags);
++
++	return change;
++}
++
++/* ----------------------------------------------------------------------- */
++
++
++/* ----------------------------------------------------------------------- */
++/* AES Tx route control */
++static int
++snd_rad1_control_tr_info(struct snd_kcontrol *kcontrol,
++                         struct snd_ctl_elem_info *uinfo)
++{
++	static char *rts[2] = {"Optical", "Coaxial"};
++
++	uinfo->type = SNDRV_CTL_ELEM_TYPE_ENUMERATED;
++	uinfo->count = 1;
++	uinfo->value.enumerated.items = 2;
++
++	if (uinfo->value.enumerated.item > 1)
++		uinfo->value.enumerated.item = 1;
++
++	strlcpy(uinfo->value.enumerated.name,
++	        rts[uinfo->value.enumerated.item],
++	        sizeof(uinfo->value.enumerated.name));
++
++	return 0;
++}
++
++static int
++snd_rad1_control_tr_get(struct snd_kcontrol *kcontrol,
++                        struct snd_ctl_elem_value *u)
++{
++	unsigned long flags;
++	struct snd_rad1 *chip = snd_kcontrol_chip(kcontrol);
++
++	spin_lock_irqsave(&chip->lock, flags);
++	if (chip->rt_opto == 0x00001440)
++		u->value.enumerated.item[0] = 1;
++	else
++		u->value.enumerated.item[0] = 0;
++	spin_unlock_irqrestore(&chip->lock, flags);
++
++	return 0;
++}
++
++static int
++snd_rad1_control_tr_put(struct snd_kcontrol *kcontrol,
++                        struct snd_ctl_elem_value *u)
++{
++	int change = 0;
++	unsigned long flags;
++	struct snd_rad1 *chip = snd_kcontrol_chip(kcontrol);
++
++	spin_lock_irqsave(&chip->lock, flags);
++	if (u->value.enumerated.item[0] && (chip->rt_opto != 0x00001440))
++		change = 1;
++
++	if (!u->value.enumerated.item[0] && (chip->rt_opto == 0x00001440))
++		change = 1;
++
++	if (change) {
++		if (u->value.enumerated.item[0])
++			chip->rt_opto = 0x00001440;
++		else
++			chip->rt_opto = 0x00001040;
++		chip->mmio->misc_control = chip->rt_opto;
++	}
++	spin_unlock_irqrestore(&chip->lock, flags);
++
++	return change;
++}
++
++/* ----------------------------------------------------------------------- */
++
++
++/* ----------------------------------------------------------------------- */
++/* AES Rx route control */
++static int
++snd_rad1_control_rr_get(struct snd_kcontrol *kcontrol,
++                        struct snd_ctl_elem_value *u)
++{
++	struct snd_rad1 *chip = snd_kcontrol_chip(kcontrol);
++	unsigned long flags;
++
++	spin_lock_irqsave(&chip->lock, flags);
++	if (chip->rt_aesr == 0x00000010)
++		u->value.enumerated.item[0] = 1;
++	else
++		u->value.enumerated.item[0] = 0;
++	spin_unlock_irqrestore(&chip->lock, flags);
++
++	return 0;
++}
++
++static int
++snd_rad1_control_rr_put(struct snd_kcontrol *kcontrol,
++                        struct snd_ctl_elem_value *u)
++{
++	struct snd_rad1 *chip = snd_kcontrol_chip(kcontrol);
++	unsigned long flags;
++	int change = 0;
++
++	spin_lock_irqsave(&chip->lock, flags);
++	if (u->value.enumerated.item[0] && (chip->rt_aesr != 0x00000010))
++		change = 1;
++
++	if (!u->value.enumerated.item[0] && (chip->rt_aesr == 0x00000010))
++		change = 1;
++
++	if (change) {
++		if (u->value.enumerated.item[0]) {
++			chip->rt_aesr = 0x00000010;
++			chip->rt_adat = 0xa0000018;
++		} else {
++			chip->rt_aesr = 0x00000018;
++			chip->rt_adat = 0xa0000000;
++		}
++		chip->mmio->aes_rx_control = (chip->rt_aesr |
++		                              chip->pipes[RAD1_AESRX].adma);
++		chip->mmio->adat_rx_control = (chip->rt_adat |
++		                               chip->pipes[RAD1_ADATRX].adma);
++	}
++	spin_unlock_irqrestore(&chip->lock, flags);
++
++	return change;
++}
++
++
++/* ----------------------------------------------------------------------- */
++
++
++/* ----------------------------------------------------------------------- */
++/* AtoD route control */
++static int
++snd_rad1_control_ar_info(struct snd_kcontrol *kcontrol,
++                         struct snd_ctl_elem_info *uinfo)
++{
++	static char *rts[2] = {"Mic", "Line"};
++
++	uinfo->type = SNDRV_CTL_ELEM_TYPE_ENUMERATED;
++	uinfo->count = 1;
++	uinfo->value.enumerated.items = 2;
++
++	if (uinfo->value.enumerated.item > 1)
++		uinfo->value.enumerated.item = 1;
++
++	strlcpy(uinfo->value.enumerated.name,
++	        rts[uinfo->value.enumerated.item],
++	        sizeof(uinfo->value.enumerated.name));
++
++	return 0;
++}
++
++static int
++snd_rad1_control_ar_get(struct snd_kcontrol *kcontrol,
++                        struct snd_ctl_elem_value *u)
++{
++	struct snd_rad1 *chip = snd_kcontrol_chip(kcontrol);
++	unsigned long flags;
++
++	spin_lock_irqsave(&chip->lock, flags);
++	if (chip->rt_atod == 0x05000000)
++		u->value.enumerated.item[0] = 1;
++	else
++		u->value.enumerated.item[0] = 0;
++	spin_unlock_irqrestore(&chip->lock, flags);
++
++	return 0;
++}
++
++static int
++snd_rad1_control_ar_put(struct snd_kcontrol *kcontrol,
++                        struct snd_ctl_elem_value *u)
++{
++	struct snd_rad1 *chip = snd_kcontrol_chip(kcontrol);
++	unsigned long flags;
++	int change = 0;
++
++	spin_lock_irqsave(&chip->lock, flags);
++	if (u->value.enumerated.item[0] && (chip->rt_atod != 0x05000000))
++		change = 1;
++
++	if (!u->value.enumerated.item[0] && (chip->rt_atod == 0x05000000))
++		change = 1;
++
++	if (change) {
++		if (u->value.enumerated.item[0])
++			chip->rt_atod = 0x05000000;
++		else
++			chip->rt_atod = 0x03000000;
++		chip->mmio->atod_control = (chip->rt_atod |
++		                            chip->pipes[RAD1_ATOD].adma);
++	}
++	spin_unlock_irqrestore(&chip->lock, flags);
++
++	return change;
++}
++
++/* ----------------------------------------------------------------------- */
++
++
++/* ----------------------------------------------------------------------- */
++/* Controls */
++static struct snd_kcontrol_new
++snd_rad1_controls[] = {
++	{
++		.iface		= SNDRV_CTL_ELEM_IFACE_MIXER,
++		.name		= "Master Playback Volume",
++		.info		= snd_rad1_control_pv_info,
++		.get		= snd_rad1_control_pv_get,
++		.put		= snd_rad1_control_pv_put,
++		.private_value	= 1
++	},
++	{
++		.iface		= SNDRV_CTL_ELEM_IFACE_MIXER,
++		.name		= "Line Capture Volume",
++		.info		= snd_rad1_control_pv_info,
++		.get		= snd_rad1_control_pv_get,
++		.put		= snd_rad1_control_pv_put,
++		.private_value	= 0
++	},
++	{
++		.iface		= SNDRV_CTL_ELEM_IFACE_MIXER,
++		.name		= "IEC958 Playback Routing",
++		.info		= snd_rad1_control_tr_info,
++		.get		= snd_rad1_control_tr_get,
++		.put		= snd_rad1_control_tr_put
++	},
++	{
++		.iface		= SNDRV_CTL_ELEM_IFACE_MIXER,
++		.name		= "IEC958 Capture Routing",
++		.info		= snd_rad1_control_tr_info, /* clone */
++		.get		= snd_rad1_control_rr_get,
++		.put		= snd_rad1_control_rr_put
++	},
++	{
++		.iface		= SNDRV_CTL_ELEM_IFACE_MIXER,
++		.name		= "Line Capture Routing",
++		.info		= snd_rad1_control_ar_info,
++		.get		= snd_rad1_control_ar_get,
++		.put		= snd_rad1_control_ar_put
++	},
++};
++
++static int
++snd_rad1_add_controls(struct snd_rad1 *chip)
++{
++	int idx, err;
++
++	for (idx = 0; idx < 5; idx++) {
++		err = snd_ctl_add(chip->card,
++		                  snd_ctl_new1(&snd_rad1_controls[idx], chip));
++		if (unlikely(err < 0))
++			return err;
++	}
++
++	return 0;
++}
++
++/* ----------------------------------------------------------------------- */
++
++
++/* ----------------------------------------------------------------------- */
++/* Create/Probe/Free/Module */
++
++static int
++snd_rad1_free(struct snd_rad1 *chip)
++{
++	if (chip->mmio) {
++		iounmap((void *)(chip->mmio));
++		chip->mmio = NULL;
++	}
++	kfree(chip);
++
++	return 0;
++}
++
++static int
++snd_rad1_dev_free(struct snd_device *device)
++{
++	struct snd_rad1 *chip = device->device_data;
++
++	return snd_rad1_free(chip);
++}
++
++static int
++snd_rad1_create(struct snd_card *card, struct pci_dev *pci,
++                struct snd_rad1 **rchip)
++{
++	int error = -ENODEV;
++	struct snd_rad1 *chip;
++	static struct snd_device_ops ops = {
++		.dev_free = snd_rad1_dev_free,
++	};
++
++	*rchip = NULL;
++
++	if (unlikely(pci_enable_device(pci)))
++		goto out;
++
++	if (unlikely(pci_request_regions(pci, "rad1")))
++		goto out_disable_dev;
++
++	pci_write_config_byte(pci, PCI_LATENCY_TIMER, 64);
++	pci_set_master(pci);
++
++	chip = kzalloc(sizeof(struct snd_rad1), GFP_KERNEL);
++	if (unlikely(!chip)) {
++		error = -ENOMEM;
++		goto out_rel_region;
++	}
++
++	init_timer(&chip->timer);
++	chip->timer.function = snd_rad1_poll_timer;
++	chip->timer.data = (unsigned long)chip;
++
++	chip->card = card;
++	chip->pci = pci;
++
++	spin_lock_init(&chip->lock);
++
++	chip->mmio_phys = pci_resource_start(pci, 0);
++	chip->mmio = ioremap_nocache(chip->mmio_phys,
++	                             pci_resource_len(pci, 0));
++
++	snd_rad1_hw_init(chip);
++
++	if (snd_device_new(card, SNDRV_DEV_LOWLEVEL, chip, &ops))
++		goto out_rad1_free;
++
++	snd_card_set_dev(card, &pci->dev);
++	*rchip = chip;
++
++	return 0;
++
++out_rad1_free:
++	snd_rad1_free(chip);
++out_rel_region:
++	pci_release_regions(pci);
++out_disable_dev:
++	pci_disable_device(pci);
++out:
++	return error;
++}
++
++static struct pci_device_id
++snd_rad1_ids[] = {
++	{ PCI_VENDOR_ID_SGI, PCI_DEVICE_ID_SGI_RAD1, PCI_ANY_ID, PCI_ANY_ID, 0, 0, 0, },
++	{ 0, },
++};
++
++static int index[SNDRV_CARDS] = SNDRV_DEFAULT_IDX;
++static char *id[SNDRV_CARDS] = SNDRV_DEFAULT_STR;
++static int enable[SNDRV_CARDS] = SNDRV_DEFAULT_ENABLE_PNP;
++static int ndev;
++
++static int
++snd_rad1_probe(struct pci_dev *pci, const struct pci_device_id *pci_id)
++{
++	struct snd_card *card;
++	struct snd_rad1 *chip;
++	int err;
++
++	if (unlikely(ndev >= SNDRV_CARDS))
++		return -ENODEV;
++
++	if (unlikely(!enable[ndev])) {
++		ndev++;
++		return -ENOENT;
++	}
++
++	err = snd_card_new(NULL, index[ndev], id[ndev], THIS_MODULE, 0, &card);
++	if (unlikely(err < 0))
++		return err;
++
++	err = snd_rad1_create(card, pci, &chip);
++	if (unlikely(err < 0)) {
++		snd_card_free(card);
++		return err;
++	}
++
++	strlcpy(card->driver, "RAD1", sizeof(card->driver));
++	strlcpy(card->shortname, "RADAudio", sizeof(card->shortname));
++	snprintf(card->longname, sizeof(card->longname),
++	         "SGI RAD Audio at 0x%lx", chip->mmio_phys);
++
++	/* create pipes */
++	snd_rad1_new_dtoa(chip, 0);
++	snd_rad1_new_atod(chip, 1);
++	snd_rad1_new_aestx(chip, 2);
++	snd_rad1_new_aesrx(chip, 3);
++	snd_rad1_add_controls(chip);
++
++	err = snd_card_register(card);
++	if (unlikely(err < 0)) {
++		snd_card_free(card);
++		return err;
++	}
++
++	pci_set_drvdata(pci, card);
++	ndev++;
++
++	return 0;
++}
++
++static void
++snd_rad1_remove(struct pci_dev *pci)
++{
++	snd_card_free(pci_get_drvdata(pci));
++	pci_set_drvdata(pci, NULL);
++}
++
++MODULE_DEVICE_TABLE(pci, snd_rad1_ids);
++
++static struct pci_driver
++rad1_driver = {
++	.name = "rad1",
++	.id_table = snd_rad1_ids,
++	.probe = snd_rad1_probe,
++	.remove = snd_rad1_remove,
++};
++
++static int __init
++alsa_card_rad1_init(void)
++{
++	return pci_register_driver(&rad1_driver);
++}
++
++static void __exit
++alsa_card_rad1_exit(void)
++{
++	pci_unregister_driver(&rad1_driver);
++}
++
++MODULE_AUTHOR("Stanislaw Skowronek <skylark@unaligned.org>");
++MODULE_DESCRIPTION("SGI Octane (IP30) RAD1 Alsa Audio Driver");
++MODULE_LICENSE("GPL");
++MODULE_VERSION("0.42.1");
++
++module_init(alsa_card_rad1_init)
++module_exit(alsa_card_rad1_exit)

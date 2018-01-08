@@ -1,0 +1,77 @@
+diff --git a/arch/mips/sgi-ip30/ip30-bridge.c b/arch/mips/sgi-ip30/ip30-bridge.c
+index 26c59c003fd3..5421409a136c 100644
+--- a/arch/mips/sgi-ip30/ip30-bridge.c
++++ b/arch/mips/sgi-ip30/ip30-bridge.c
+@@ -62,19 +62,29 @@ extern u32 bridge_alloc_rrbs(u8, u8, u8, u8, bool, bool, bool, bool);
+  *  - Slot 5 (PROM Password Jumper?), 0 RRB
+  *  - Slot 6 (Power Button IRQ), 0 RRB
+  *  - Slot 7 (AC Fail IRQ), 0 RRB
++ *
++ * Additionally, for the two QLA channels, the virtual channel bit is also
++ * enabled, as this is the only driver in Linux capable of using this feature
++ * at present (that we know of).
+  */
+ static void __init
+ ip30_setup_baseio_rrbs(struct bridge_controller *bc, const bool *census)
+ {
+-	u32 rrbs;
++	u32 rrbs, reg[2];
+ 
+ 	/* Even RRBs */
+-	rrbs = bridge_alloc_rrbs(4, 3, 1, 0, false, false, false, false);
++	rrbs = bridge_alloc_rrbs(4, 3, 1, 0, true, false, false, false);
+ 	bridge_write_reg(rrbs, bc, b_dev_even_rrb);
+ 
+ 	/* Odd RRBs */
+-	rrbs = bridge_alloc_rrbs(4, 4, 0, 0, false, false, false, false);
++	rrbs = bridge_alloc_rrbs(4, 4, 0, 0, true, false, false, false);
+ 	bridge_write_reg(rrbs, bc, b_dev_odd_rrb);
++
++	/* qla1280 sits on slots 0 and 1, so enable the virtual channel. */
++	reg[0] = bridge_read_reg(bc, b_device(0));
++	bridge_write_reg((reg[0] | BRIDGE_DEV_VIRTUAL_EN), bc, b_device(0));
++	reg[1] = bridge_read_reg(bc, b_device(1));
++	bridge_write_reg((reg[1] | BRIDGE_DEV_VIRTUAL_EN), bc, b_device(1));
+ }
+ 
+ /**
+diff --git a/drivers/scsi/qla1280.c b/drivers/scsi/qla1280.c
+index 22a6ef1bcf0e..61261249e9c4 100644
+--- a/drivers/scsi/qla1280.c
++++ b/drivers/scsi/qla1280.c
+@@ -368,7 +368,7 @@
+ 
+ #if defined(CONFIG_IA64_GENERIC) || defined(CONFIG_IA64_SGI_SN2)
+ #include <asm/sn/io.h>
+-#elif defined(CONFIG_SGI_IP27)
++#elif defined(CONFIG_SGI_IP27) || defined(CONFIG_SGI_IP30)
+ #include <asm/pci/bridge.h>
+ #endif
+ 
+@@ -1455,7 +1455,7 @@ qla1280_initialize_adapter(struct scsi_qla_host *ha)
+ 		ha->flags.use_pci_vchannel = 1;
+ 		driver_setup.no_nvram = 1;
+ 	}
+-#elif defined(CONFIG_SGI_IP27)
++#elif defined(CONFIG_SGI_IP27) || defined(CONFIG_SGI_IP30)
+ 	if (ha->host_no == 0) {
+ 		printk(KERN_INFO "scsi(%li): Enabling vchannel on BRIDGE "
+ 		       "for SGI/MIPS\n", ha->host_no);
+@@ -2919,7 +2919,7 @@ qla1280_64bit_start_scsi(struct scsi_qla_host *ha, struct srb * sp)
+ 				break;
+ 
+ 			dma_handle = sg_dma_address(s);
+-#if defined(CONFIG_IA64_GENERIC) || defined(CONFIG_IA64_SGI_SN2) || defined(CONFIG_SGI_IP27)
++#if defined(CONFIG_IA64_GENERIC) || defined(CONFIG_IA64_SGI_SN2) || defined(CONFIG_SGI_IP27) || defined(CONFIG_SGI_IP30)
+ 			if (ha->flags.use_pci_vchannel)
+ 				sn_pci_set_vchan(ha->pdev,
+ 						 (unsigned long *)&dma_handle,
+@@ -2981,7 +2981,7 @@ qla1280_64bit_start_scsi(struct scsi_qla_host *ha, struct srb * sp)
+ 				if (cnt == 5)
+ 					break;
+ 				dma_handle = sg_dma_address(s);
+-#if defined(CONFIG_IA64_GENERIC) || defined(CONFIG_IA64_SGI_SN2) || defined(CONFIG_SGI_IP27)
++#if defined(CONFIG_IA64_GENERIC) || defined(CONFIG_IA64_SGI_SN2) || defined(CONFIG_SGI_IP27) || defined(CONFIG_SGI_IP30)
+ 				if (ha->flags.use_pci_vchannel)
+ 					sn_pci_set_vchan(ha->pdev,
+ 							 (unsigned long *)&dma_handle,

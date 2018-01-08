@@ -1,0 +1,50 @@
+diff --git a/arch/mips/include/asm/pci.h b/arch/mips/include/asm/pci.h
+index 1000c1b4c875..2b1754db51ff 100644
+--- a/arch/mips/include/asm/pci.h
++++ b/arch/mips/include/asm/pci.h
+@@ -48,6 +48,9 @@ struct pci_controller {
+ 	unsigned int need_domain_info;
+ #endif
+ 
++	/* BRIDGE/XBRIDGE may need to config things before bringup */
++	int (*pre_enable)(struct pci_controller *, struct pci_dev *, int);
++
+ 	/* Optional access methods for reading/writing the bus number
+ 	   of the PCI controller */
+ 	int (*get_busno)(void);
+diff --git a/arch/mips/pci/pci-legacy.c b/arch/mips/pci/pci-legacy.c
+index a6e0b05437a6..2eb6a4d6cfcb 100644
+--- a/arch/mips/pci/pci-legacy.c
++++ b/arch/mips/pci/pci-legacy.c
+@@ -7,6 +7,7 @@
+  * Copyright (C) 2003, 04, 11 Ralf Baechle (ralf@linux-mips.org)
+  * Copyright (C) 2011 Wind River Systems,
+  *   written by Ralf Baechle (ralf@linux-mips.org)
++ * Copyright (C) 2004-2007 Stanislaw Skowronek <skylark@unaligned.org>
+  */
+ #include <linux/bug.h>
+ #include <linux/kernel.h>
+@@ -232,6 +233,7 @@ static int pcibios_enable_resources(struct pci_dev *dev, int mask)
+ 	u16 cmd, old_cmd;
+ 	int idx;
+ 	struct resource *r;
++	struct pci_controller *hose = (struct pci_controller *)dev->sysdata;
+ 
+ 	pci_read_config_word(dev, PCI_COMMAND, &cmd);
+ 	old_cmd = cmd;
+@@ -240,6 +242,15 @@ static int pcibios_enable_resources(struct pci_dev *dev, int mask)
+ 		if (!(mask & (1 << idx)))
+ 			continue;
+ 
++		/*
++		 * Some devices, like BRIDGE/XBRIDGE, may need to do a little
++		 * housekeeping prior to the generic code setting up the PCI
++		 * resources.
++		 */
++		if (hose->pre_enable)
++			if (hose->pre_enable(hose, dev, idx) < 0)
++				return -EINVAL;
++
+ 		r = &dev->resource[idx];
+ 		if (!(r->flags & (IORESOURCE_IO | IORESOURCE_MEM)))
+ 			continue;

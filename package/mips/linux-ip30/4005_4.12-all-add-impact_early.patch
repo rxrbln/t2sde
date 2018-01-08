@@ -1,0 +1,341 @@
+diff --git a/arch/mips/Kconfig.debug b/arch/mips/Kconfig.debug
+index 2558e02f7ef8..4f252b7b60cf 100644
+--- a/arch/mips/Kconfig.debug
++++ b/arch/mips/Kconfig.debug
+@@ -41,6 +41,17 @@ config EARLY_PRINTK_8250
+ 	  If you say Y here, it will be possible to use a 8250/16550 serial
+ 	  port as the boot console.
+ 
++config EARLY_IMPACT_PRINTK
++	bool "Early Impact printk" if EXPERT
++	depends on (SGI_IP22 || SGI_IP26 || SGI_IP28 || SGI_IP30) && EARLY_PRINTK
++	select FB_IMPACT_EARLY
++	select FONT_SUPPORT
++	select FONT_8x16
++	help
++	  This options enables utilizing the Impact as an early boot console
++	  for debugging purposes.  It is fixed at 1280x1024 resolution and
++	  overwrites top-to-bottom.  A solid red line indicates the last line
++	  of text written.
+ endchoice
+ 
+ config USE_GENERIC_EARLY_PRINTK_8250
+diff --git a/arch/mips/kernel/setup.c b/arch/mips/kernel/setup.c
+index 01d1dbde5fbf..61d12babf4b5 100644
+--- a/arch/mips/kernel/setup.c
++++ b/arch/mips/kernel/setup.c
+@@ -53,6 +53,10 @@ EXPORT_SYMBOL(cpu_data);
+ struct screen_info screen_info;
+ #endif
+ 
++#if defined(CONFIG_EARLY_IMPACT_PRINTK)
++	extern void setup_early_impact_printk(void);
++#endif
++
+ /*
+  * Setup information
+  *
+@@ -957,8 +961,12 @@ void __init setup_arch(char **cmdline_p)
+ 
+ 	setup_early_fdc_console();
+ #ifdef CONFIG_EARLY_PRINTK
++#if defined(CONFIG_EARLY_IMPACT_PRINTK)
++	setup_early_impact_printk();
++#else
+ 	setup_early_printk();
+ #endif
++#endif
+ 	cpu_report();
+ 	check_bugs_early();
+ 
+diff --git a/arch/mips/sgi-common/Makefile b/arch/mips/sgi-common/Makefile
+index bb8e588093eb..ff862b0c7abd 100644
+--- a/arch/mips/sgi-common/Makefile
++++ b/arch/mips/sgi-common/Makefile
+@@ -1,3 +1,5 @@
+ #
+ # Makefile for common bits shared by various SGI systems
+ #
++
++obj-$(CONFIG_EARLY_IMPACT_PRINTK)	+= impact-earlycon.o
+diff --git a/arch/mips/sgi-common/impact-earlycon.c b/arch/mips/sgi-common/impact-earlycon.c
+new file mode 100644
+index 000000000000..eb104736b1a5
+--- /dev/null
++++ b/arch/mips/sgi-common/impact-earlycon.c
+@@ -0,0 +1,45 @@
++/*
++ * Wrapper for an early console using the using the Impact Graphics Card
++ * as a debugging/early boot console.
++ *
++ * Copyright (c) 2004-2007 Stanislaw Skowronek
++ * Copyright (c) 2014-2015 Joshua Kinard
++ */
++#include <linux/kernel.h>
++#include <linux/console.h>
++#include <linux/printk.h>
++#include <linux/init.h>
++
++#include <asm/setup.h>
++
++extern void impact_early_init(void);
++extern void impact_early_char(u8 c, u32 f);
++extern struct console *early_console;
++
++static void
++early_impact_write(struct console *co, const char *s, u32 count)
++{
++	/* Do each character */
++	while (count--)
++		impact_early_char(*s++, 0xa0a0a0);
++}
++
++static struct console
++early_impact_cons = {
++	.name			= "early_impact",
++	.write			= early_impact_write,
++	.flags			= CON_PRINTBUFFER | CON_BOOT,
++	.index			= -1,
++};
++
++void __init
++setup_early_impact_printk(void)
++{
++	if (early_console)
++		return;
++
++	impact_early_init();
++	early_console = &early_impact_cons;
++
++	register_console(&early_impact_cons);
++}
+diff --git a/drivers/video/fbdev/Kconfig b/drivers/video/fbdev/Kconfig
+index a62d8bad1dc1..97babc46dcbf 100644
+--- a/drivers/video/fbdev/Kconfig
++++ b/drivers/video/fbdev/Kconfig
+@@ -823,6 +823,10 @@ config FB_GBE_MEM
+ 	  This is the amount of memory reserved for the framebuffer,
+ 	  which can be any value between 1MB and 8MB.
+ 
++config FB_IMPACT_EARLY
++	bool
++	depends on (SGI_IP22 || SGI_IP26 || SGI_IP27 || SGI_IP28 || SGI_IP30)
++
+ config FB_IMPACT
+ 	tristate "SGI Impact graphics support"
+ 	depends on FB && (SGI_IP22 || SGI_IP26 || SGI_IP27 || SGI_IP28 || SGI_IP30)
+diff --git a/drivers/video/fbdev/Makefile b/drivers/video/fbdev/Makefile
+index 28e0c4ec129b..1e9e620cbe92 100644
+--- a/drivers/video/fbdev/Makefile
++++ b/drivers/video/fbdev/Makefile
+@@ -130,6 +130,7 @@ obj-$(CONFIG_FB_HYPERV)		  += hyperv_fb.o
+ obj-$(CONFIG_FB_OPENCORES)	  += ocfb.o
+ obj-$(CONFIG_FB_SM712)		  += sm712fb.o
+ obj-$(CONFIG_FB_IMPACT)		  += impact.o
++obj-$(CONFIG_FB_IMPACT_EARLY)	  += impact_early.o
+ 
+ # Platform or fallback drivers go here
+ obj-$(CONFIG_FB_UVESA)            += uvesafb.o
+diff --git a/drivers/video/fbdev/impact_early.c b/drivers/video/fbdev/impact_early.c
+new file mode 100644
+index 000000000000..0ab9c77b5245
+--- /dev/null
++++ b/drivers/video/fbdev/impact_early.c
+@@ -0,0 +1,197 @@
++/*
++ * linux/drivers/video/impact_early.c
++ *  -- SGI Octane/Indigo2 MardiGras (IMPACT) graphics
++ *
++ *  Copyright (c) 2004 by Stanislaw Skowronek
++ *  Copyright (c) 2005 by Peter Fuerst (Indigo2 Support)
++ *  Copyright (c) 2011-2014 by Joshua Kinard (Fixes, Maintenance)
++ *
++ *  Separated from linux/drivers/video/fbdev/impact.c
++ *
++ *  This driver provides direct access to the Impact hardware for
++ *  early_console support.  It can typically be initialized after the
++ *  CPU(s) have been setup, but before anything else, like IRQs.  Handy for
++ *  debugging core startup code on a machine as difficult as Octane or the
++ *  Indigo2 Impact R10000 (because of a non-coherent cache).
++ *
++ *  When running, the driver will draw a solid red line across the screen
++ *  to denote the current output line.  It will scroll from top to the bottom
++ *  of the screen and then begin overwriting from the top again.
++ */
++
++#include <linux/module.h>
++#include <linux/kernel.h>
++#include <linux/errno.h>
++#include <linux/string.h>
++#include <linux/font.h>
++#include <linux/platform_device.h>
++
++#include <video/impact.h>
++
++static int posx = -1;
++static int posy = -1;
++DEFINE_SPINLOCK(impact_early_lock);
++
++/**
++ * impact_wait_cfifo_empty - wait until impact CFIFO buffer is empty.
++ * @info: struct fb_info pointer to framebuffer data.
++ */
++static inline void
++impact_early_wait_cfifo_empty(void)
++{
++	while (IMP_FIFOSTATUS(MMIO_FIXED) & MSK_CFIFO_CNT)
++		cpu_relax();
++}
++
++/**
++ * impact_early_rect - early fill rectangle (?).
++ * @x: x point.
++ * @y: y point.
++ * @w: width.
++ * @h: height.
++ * @c: color.
++ */
++static void
++impact_early_rect(u32 x, u32 y, u32 w, u32 h, u32 c)
++{
++	impact_early_wait_cfifo_empty();
++	IMP_CFIFO(MMIO_FIXED) = IMP_CMD_PP1FILLMODE(0x6300, IMP_LO_COPY);
++	IMP_CFIFO(MMIO_FIXED) = IMP_CMD_FILLMODE(0);
++	IMP_CFIFO(MMIO_FIXED) = IMP_CMD_PACKEDCOLOR(c);
++	IMP_CFIFO(MMIO_FIXED) = IMP_CMD_BLOCKXYSTARTI(x, y);
++	IMP_CFIFO(MMIO_FIXED) = IMP_CMD_BLOCKXYENDI(((x + w) - 1),
++							  ((y + h) - 1));
++	IMP_CFIFO(MMIO_FIXED) = IMP_CMD_IR_ALIAS(0x18);
++}
++
++/**
++ * impact_early_paintchar - early character drawing.
++ * @x: x point.
++ * @y: y point.
++ * @b: u8 pointer to font data.
++ * @c: color.
++ * @a: alpha (?).
++ */
++static void
++impact_early_paintchar(u32 x, u32 y, u8 *b, u32 c, u32 a)
++{
++	int v;
++
++	impact_early_wait_cfifo_empty();
++	IMP_CFIFO(MMIO_FIXED) = IMP_CMD_PP1FILLMODE(0x6300, IMP_LO_COPY);
++	IMP_CFIFO(MMIO_FIXED) = IMP_CMD_FILLMODE(0x400018);
++	IMP_CFIFO(MMIO_FIXED) = IMP_CMD_PACKEDCOLOR(c);
++	IMP_CFIFO(MMIO_FIXED) = IMP_CMD_BKGRD_RG(a & 0xffff);
++	IMP_CFIFO(MMIO_FIXED) = IMP_CMD_BKGRD_BA((a & 0xff0000) >> 16);
++	IMP_CFIFO(MMIO_FIXED) = IMP_CMD_BLOCKXYSTARTI(x, y);
++	IMP_CFIFO(MMIO_FIXED) = IMP_CMD_BLOCKXYENDI((x + 7), (y + 15));
++	IMP_CFIFO(MMIO_FIXED) = IMP_CMD_IR_ALIAS(0x18);
++
++	for (v = 0; v < 16; v++)
++		IMP_CFIFO(MMIO_FIXED) = IMP_CMD_CHAR((*(b++)) << 24);
++}
++
++/**
++ * impact_early_char - print character to early_console.
++ * @c: character to print.
++ * @f: line color (?).
++ */
++void
++impact_early_char(u8 c, u32 f)
++{
++	unsigned long flags;
++
++	spin_lock_irqsave(&impact_early_lock, flags);
++	if (posx == -1)
++		goto out;
++
++	if (c == '\n') {
++		posy += 16;
++
++		if (posy >= 1024)
++			posy = 0;
++
++		posx = 0;
++	} else {
++		if (posx == 0) {
++			impact_early_rect(0, posy, 1280, 16, 0x000000);
++			if ((posy + 16) < 1024)
++				impact_early_rect(0, (posy + 16),
++						  1280, 2, 0x0000ff);
++		}
++
++		impact_early_paintchar(posx, posy,
++				       ((u8 *)font_vga_8x16.data + (c << 4)),
++				       f, 0);
++		posx += 8;
++
++		if (posx >= 1280) {
++			posx = 0;
++			posy++;
++
++			if (posy >= 1024)
++				posy = 0;
++		}
++	}
++
++out:
++	spin_unlock_irqrestore(&impact_early_lock, flags);
++}
++
++/**
++ * impact_early_string - print string to early_console.
++ * @s: string to print.
++ * @f: line color (?).
++ */
++void
++impact_early_string(u8 *s, u32 f)
++{
++	while (*s)
++		impact_early_char(*(s++), f);
++}
++
++/**
++ * impact_early_hw_init - early hardware init.
++ */
++static void __init
++impact_early_hw_init(void)
++{
++	IMP_CFIFO_HW(MMIO_FIXED) = VAL_CFIFO_HW;
++	IMP_CFIFO_LW(MMIO_FIXED) = VAL_CFIFO_LW;
++	IMP_CFIFO_DELAY(MMIO_FIXED) = VAL_CFIFO_DELAY;
++	IMP_DFIFO_HW(MMIO_FIXED) = VAL_DFIFO_HW;
++	IMP_DFIFO_LW(MMIO_FIXED) = VAL_DFIFO_LW;
++	IMP_DFIFO_DELAY(MMIO_FIXED) = VAL_DFIFO_DELAY;
++	IMP_CFIFO(MMIO_FIXED) = IMP_CMD_COLORMASKLSBSA(0xffffff);
++	IMP_CFIFO(MMIO_FIXED) = IMP_CMD_COLORMASKLSBSB(0xffffff);
++	IMP_CFIFO(MMIO_FIXED) = IMP_CMD_COLORMASKMSBS(0);
++	IMP_CFIFO(MMIO_FIXED) = IMP_CMD_XFRMASKLO(0xffffff);
++	IMP_CFIFO(MMIO_FIXED) = IMP_CMD_XFRMASKHI(0xffffff);
++	IMP_CFIFO(MMIO_FIXED) = IMP_CMD_DRBPOINTERS(0xc8240);
++	IMP_CFIFO(MMIO_FIXED) = IMP_CMD_CONFIG(0xcac);
++	IMP_CFIFO(MMIO_FIXED) = IMP_CMD_XYWIN(0, 0x3ff);
++	IMP_XMAP_PP1SELECT(MMIO_FIXED) = 0x01;
++	IMP_XMAP_INDEX(MMIO_FIXED) = 0x00;
++	IMP_XMAP_MAIN_MODE(MMIO_FIXED) = 0x07a4;
++	IMP_VC3_INDEXDATA(MMIO_FIXED) = 0x1d000100;
++}
++
++/**
++ * impact_early_init - init impact early_console.
++ */
++void __init
++impact_early_init(void)
++{
++	impact_early_hw_init();
++	impact_early_rect(0, 0, 1280, 1024, 0);
++	posx = 0;
++	posy = 0;
++	impact_early_string("Impact early console ready.\n", 0xffffff);
++}
++
++MODULE_AUTHOR("Stanislaw Skowronek <skylark@unaligned.org>");
++MODULE_AUTHOR("Joshua Kinard <kumba@gentoo.org>");
++MODULE_DESCRIPTION("SGI Impact Early Printk Driver");
++MODULE_LICENSE("GPL");
++MODULE_VERSION("0.42.3");
++MODULE_ALIAS("platform:impact_early");

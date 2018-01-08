@@ -1,0 +1,1686 @@
+diff --git a/drivers/video/fbdev/Kconfig b/drivers/video/fbdev/Kconfig
+index 5c6696bb56da..a62d8bad1dc1 100644
+--- a/drivers/video/fbdev/Kconfig
++++ b/drivers/video/fbdev/Kconfig
+@@ -823,6 +823,12 @@ config FB_GBE_MEM
+ 	  This is the amount of memory reserved for the framebuffer,
+ 	  which can be any value between 1MB and 8MB.
+ 
++config FB_IMPACT
++	tristate "SGI Impact graphics support"
++	depends on FB && (SGI_IP22 || SGI_IP26 || SGI_IP27 || SGI_IP28 || SGI_IP30)
++	help
++	  SGI Impact (MardiGras/MGRAS) graphics card support.
++
+ config FB_SBUS
+ 	bool "SBUS and UPA framebuffers"
+ 	depends on (FB = y) && SPARC
+diff --git a/drivers/video/fbdev/Makefile b/drivers/video/fbdev/Makefile
+index ee8c81405a7f..28e0c4ec129b 100644
+--- a/drivers/video/fbdev/Makefile
++++ b/drivers/video/fbdev/Makefile
+@@ -129,6 +129,7 @@ obj-$(CONFIG_FB_PUV3_UNIGFX)      += fb-puv3.o
+ obj-$(CONFIG_FB_HYPERV)		  += hyperv_fb.o
+ obj-$(CONFIG_FB_OPENCORES)	  += ocfb.o
+ obj-$(CONFIG_FB_SM712)		  += sm712fb.o
++obj-$(CONFIG_FB_IMPACT)		  += impact.o
+ 
+ # Platform or fallback drivers go here
+ obj-$(CONFIG_FB_UVESA)            += uvesafb.o
+diff --git a/drivers/video/fbdev/impact.c b/drivers/video/fbdev/impact.c
+new file mode 100644
+index 000000000000..d4f9925dfaf6
+--- /dev/null
++++ b/drivers/video/fbdev/impact.c
+@@ -0,0 +1,1296 @@
++/*
++ * drivers/video/fbdev/impact.c
++ *   SGI Octane MardiGras (IMPACTSR) graphics
++ *   SGI Indigo2 MardiGras (IMPACT) graphics
++ *
++ * Copyright (c)
++ *   2004-2006 by Stanislaw Skowronek <skylark@unaligned.org> (author)
++ *   2005 by Peter Fuerst <post@pfrst.de> (Indigo2 adaptation)
++ *   2007-2009 by Johannes Dickgreber <tanzy@gmx.de> (platform_driver)
++ *   2014 by Thomas Bogendoerfer <tsbogend@alpha.franken.de> (gio_driver)
++ *   2011-2015 by Joshua Kinard <kumba@gentoo.org> (upkeeping/maintenance)
++ *
++ * Based on linux/drivers/video/skeletonfb.c
++ *
++ * This driver, as most of the IP30 (SGI Octane) port, is a result of massive
++ * amounts of reverse engineering and trial-and-error. If anyone is interested
++ * in helping with it, please contact me: <skylark@unaligned.org>.
++ *
++ * The basic functions of this driver are filling and blitting rectangles.
++ * To achieve the latter, two DMA operations are used on Impact. It is unclear
++ * to me, why is it so, but even Xsgi (the IRIX X11 server) does it this way.
++ * It seems that fb->fb operations are not operational on these cards.
++ *
++ * For this purpose, a kernel DMA pool is allocated (pool number 0). This pool
++ * is (by default) 64kB in size. An ioctl could be used to set the value at
++ * run-time. Applications can use this pool, however proper locking has to be
++ * guaranteed. Kernel should be locked out from this pool by an ioctl.
++ *
++ * The IMPACT is quite well worked-out currently, except for the Geometry
++ * Engines (GE11). Any information about use of those devices would be very
++ * useful. It would enable a Linux OpenGL driver, as most of OpenGL calls are
++ * supported directly by the hardware. So far, I can't initialize the GE11.
++ * Verification of microcode crashes the graphics.
++ *
++ * This file is subject to the terms and conditions of the GNU General Public
++ * License. See the file COPYING in the main directory of this archive for
++ * more details.
++ */
++
++#include <linux/module.h>
++#include <linux/kernel.h>
++#include <linux/errno.h>
++#include <linux/string.h>
++#include <linux/mm.h>
++#include <linux/tty.h>
++#include <linux/slab.h>
++#include <linux/delay.h>
++#include <linux/fb.h>
++#include <linux/init.h>
++#include <linux/vmalloc.h>
++#include <linux/module.h>
++#include <linux/dma-mapping.h>
++#include <linux/spinlock.h>
++#include <linux/font.h>
++
++#include <video/impact.h>
++
++#ifndef SGI_INDIGO2
++/* IP27/IP30 */
++#include <linux/platform_device.h>
++#define USE_POOLS		5
++extern unsigned long xtalk_get_swin(int node, int wid);
++#else
++/* IP22/IP28 */
++#include <asm/sgi/mc.h>
++#include <asm/gio_device.h>
++#define USE_POOLS		4
++#endif
++
++#define MAX_POOLS		5
++#define IMP_KPOOL_SIZE		65536
++#define ALPHA_WAR		33
++
++/**
++ * struct impact_par - Impact private data.
++ * @mmio_virt: virtual mmio base.
++ * @mmio_base: physical mmio base.
++ * @pool_txtbl: txtbl[p][i] = pgidx(phys[p][i]).
++ * @pool_txnum: valid: txtbl[p][0 ... (txnum[p] - 1)].
++ * @pool_txmax: alloc: txtbl[p][0 ... (txmax[p] - 1)].
++ * @pool_txphys: txphys[p] = dma_addr(txtbl[p]).
++ * @kpool_virt: virt[p]: txnum[p] page_addr.
++ * @kpool_phys: phys[p][i] = dma_addr(virt[p][i]).
++ * @kpool_size: TBD.
++ * @num_rss: TBD.
++ * @open_flag: TBD.
++ * @lock: private lock variable for spin locking/unlocking.
++ * @pseudo_palette: TBD.
++ * @dev: struct device pointer for generic device data.
++ */
++struct impact_par {
++	/* I/O bases. */
++	void * __iomem mmio_virt;
++	unsigned long mmio_base;
++
++	/* DMA pool management. */
++	u32 *pool_txtbl[MAX_POOLS];
++	u32 pool_txnum[MAX_POOLS];
++	u32 pool_txmax[MAX_POOLS];
++	unsigned long pool_txphys[MAX_POOLS];
++
++	/* Kernel DMA pools. */
++	unsigned long **kpool_virt[MAX_POOLS];
++	unsigned long *kpool_phys[MAX_POOLS];
++	u32 kpool_size[MAX_POOLS];
++
++	/* Board config. */
++	u32 num_ge;
++	u32 num_rss;
++
++	/* Locking. */
++	int open_flag;
++	spinlock_t lock;
++
++	/* Misc. */
++	u32 pseudo_palette[16];
++	struct device *dev;
++};
++
++static struct fb_fix_screeninfo
++impact_fix_default = {
++#ifndef SGI_INDIGO2
++	.id =		"ImpactSR 0RSS",
++#else
++	.id =		"Impact",
++#endif
++	.smem_start =	0,
++	.smem_len =	0,
++	.type =		FB_TYPE_PACKED_PIXELS,
++	.visual =	FB_VISUAL_TRUECOLOR,
++	.xpanstep =	0,
++	.ypanstep =	0,
++	.ywrapstep =	0,
++	.line_length =	0,
++	.accel =	FB_ACCEL_SGI_IMPACT,
++};
++
++static struct fb_var_screeninfo
++impact_var_default = {
++	.xres =		1280,
++	.yres =		1024,
++	.xres_virtual =	1280,
++	.yres_virtual =	1024,
++	.bits_per_pixel = 24,
++	.red =		{ .offset = 0, .length = 8 },
++	.green =	{ .offset = 8, .length = 8 },
++	.blue =		{ .offset = 16, .length = 8 },
++	.transp =	{ .offset = 24, .length = 8 },
++};
++
++
++/* ----------------------------------------------------------------------- */
++/* Gory details */
++#define MMIO (((struct impact_par *)info->par)->mmio_virt)
++
++/**
++ * impact_wait_cfifo_empty - wait until impact CFIFO buffer is empty.
++ * @info: struct fb_info pointer to framebuffer data.
++ */
++static inline void
++impact_wait_cfifo_empty(struct fb_info *info)
++{
++	while (IMP_FIFOSTATUS(MMIO) & MSK_CFIFO_CNT)
++		cpu_relax();
++}
++
++/**
++ * impact_wait_dma_done - wait until pending DMA operations are complete.
++ * @info: struct fb_info pointer to framebuffer data.
++ */
++static inline void
++impact_wait_dma_done(struct fb_info *info)
++{
++	while (IMP_DMABUSY(MMIO) & 0x1f)
++		cpu_relax();
++
++	while (!(IMP_STATUS(MMIO) & 1))
++		cpu_relax();
++
++	while (!(IMP_STATUS(MMIO) & 2))	/* RSS_IDLE */
++		cpu_relax();
++
++	while (!(IMP_RESTATUS(MMIO) & 0x100))
++		cpu_relax();
++}
++
++/**
++ * impact_wait_dma_ready - wait until DMA is ready.
++ * @info: struct fb_info pointer to framebuffer data.
++ */
++static inline void
++impact_wait_dma_ready(struct fb_info *info)
++{
++	IMP_CFIFOW(MMIO) = 0x000e0100;
++	while (IMP_DMABUSY(MMIO) & 0x1eff)
++		cpu_relax();
++
++	while (!(IMP_STATUS(MMIO) & 2))
++		cpu_relax();
++}
++/* ----------------------------------------------------------------------- */
++
++
++/* ----------------------------------------------------------------------- */
++/* DMA management */
++
++/**
++ * impact_detachtxtbl - TBD.
++ * @info: struct fb_info pointer to framebuffer data.
++ * @pool: DMA pool number.
++ */
++static inline void
++impact_detachtxtbl(struct fb_info *info, unsigned long pool)
++{
++	/* Clear DMA pool. */
++	impact_wait_cfifo_empty(info);
++	impact_wait_dma_done(info);
++	IMP_CFIFOPW1(MMIO) = IMP_CMD_HQ_TXBASE(pool);
++	IMP_CFIFOP(MMIO) = 0x0000000000000009;
++	IMP_CFIFOP(MMIO) = IMP_CMD_HQ_TXMAX(pool, 0);
++	IMP_CFIFOP(MMIO) = IMP_CMD_HQ_PGBITS(pool, 0);
++#ifndef SGI_INDIGO2
++	IMP_CFIFOP(MMIO) = IMP_CMD_HQ_484B(pool, 0x00080000);
++#endif
++	impact_wait_cfifo_empty(info);
++	impact_wait_dma_ready(info);
++}
++
++/**
++ * impact_initdma - init impact DMA.
++ * @info: struct fb_info pointer to framebuffer data.
++ */
++static inline void __init
++impact_initdma(struct fb_info *info)
++{
++	struct impact_par *par = info->par;
++	unsigned long pool;
++
++	/* Clear DMA pools. */
++	for (pool = 0; pool < MAX_POOLS; pool++) {
++		impact_detachtxtbl(info, pool);
++		par->pool_txmax[pool] = 0;
++		par->pool_txnum[pool] = 0;
++	}
++
++	/* Set DMA parameters. */
++	impact_wait_cfifo_empty(info);
++	IMP_CFIFOP(MMIO) = IMP_CMD_HQ_PGSIZE(0);
++	IMP_CFIFOP(MMIO) = IMP_CMD_HQ_STACKPTR(0);
++#ifndef SGI_INDIGO2
++	IMP_CFIFOP(MMIO) = IMP_CMD_HQ_484A(0, 0x00180000);
++#endif
++	IMP_CFIFOPW(MMIO) = 0x000e0100;
++	IMP_CFIFOPW(MMIO) = 0x000e0100;
++	IMP_CFIFOPW(MMIO) = 0x000e0100;
++	IMP_CFIFOPW(MMIO) = 0x000e0100;
++	IMP_CFIFOPW(MMIO) = 0x000e0100;
++#ifndef SGI_INDIGO2
++	IMP_REG32(MMIO, 0x40918) = 0x00680000;
++	IMP_REG32(MMIO, 0x40920) = 0x80280000;
++	IMP_REG32(MMIO, 0x40928) = 0x00000000;
++#endif
++}
++
++/**
++ * impact_writetxtbl - write to the texture (?) tables.
++ * @info: struct fb_info pointer to framebuffer data.
++ * @pool: DMA pool number.
++ */
++static void
++impact_writetxtbl(struct fb_info *info, int pool)
++{
++	struct impact_par *par = info->par;
++
++	impact_wait_cfifo_empty(info);
++	impact_wait_dma_done(info);
++
++	/* Inform the card about a new DMA pool. */
++	IMP_CFIFOPW1(MMIO) = IMP_CMD_HQ_TXBASE(pool);
++	IMP_CFIFOP(MMIO) = par->pool_txphys[pool];
++	IMP_CFIFOP(MMIO) = IMP_CMD_HQ_TXMAX(pool, par->pool_txnum[pool]);
++	IMP_CFIFOP(MMIO) = IMP_CMD_HQ_PGBITS(pool, 0x0a);
++#ifndef SGI_INDIGO2
++	IMP_CFIFOP(MMIO) = IMP_CMD_HQ_484B(pool, 0x00180000);
++#endif
++	IMP_CFIFOPW(MMIO) = 0x000e0100;
++	IMP_CFIFOPW(MMIO) = 0x000e0100;
++	IMP_CFIFOPW(MMIO) = 0x000e0100;
++	IMP_CFIFOPW(MMIO) = 0x000e0100;
++	IMP_CFIFOPW(MMIO) = 0x000e0100;
++
++	impact_wait_cfifo_empty(info);
++	impact_wait_dma_ready(info);
++}
++
++/**
++ * impact_dma_alloc - use correct dma alloc func based on machine type.
++ * @dev: struct device pointer to pass to dma_alloc_[non]coherent().
++ * @size: dma size to alloc.
++ * @dma_handle: pointer to dma handle.
++ * @gfp: gfp flags.
++ */
++static inline void
++*impact_dma_alloc(struct device *dev, size_t size, dma_addr_t *dma_handle,
++		  gfp_t gfp)
++{
++#ifndef SGI_INDIGO2
++	/* IP27/IP30 are coherent. */
++	return dma_alloc_coherent(dev, size, dma_handle, gfp);
++#else
++	/* IP22/IP28 are noncoherent. */
++	return dma_alloc_noncoherent(dev, size, dma_handle, gfp);
++#endif
++}
++
++/**
++ * impact_dma_free - use correct dma free func based on machine type.
++ * @dev: struct device pointer to pass to dma_free_[non]coherent().
++ * @size: dma size to free.
++ * @vaddr: void pointer to virtual address to free.
++ * @dma_handle: dma handle address.
++ */
++static inline void
++impact_dma_free(struct device *dev, size_t size, void *vaddr,
++		dma_addr_t dma_handle)
++{
++#ifndef SGI_INDIGO2
++	/* IP27/IP30 are coherent. */
++	dma_free_coherent(dev, size, vaddr, dma_handle);
++#else
++	/* IP22/IP28 are noncoherent. */
++	dma_free_noncoherent(dev, size, vaddr, dma_handle);
++#endif
++}
++
++/**
++ * impact_alloctxtbl - allocate the texture (?) tables.
++ * @info: struct fb_info pointer to framebuffer data.
++ * @pool: DMA pool number.
++ * @pages: number of memory pages to allocate.
++ */
++static void
++impact_alloctxtbl(struct fb_info *info, int pool, int pages)
++{
++	int alloc_count;
++	u32 *dma_alloc;
++	dma_addr_t dma_handle;
++	struct impact_par *par = info->par;
++
++	if (pages > par->pool_txmax[pool]) {
++		/* Grow the pool; unlikely, but supported. */
++		alloc_count = pages;
++		if (alloc_count < 1024)
++			alloc_count = 1024;
++
++		if (par->pool_txmax[pool])
++			impact_dma_free(par->dev, (par->pool_txmax[pool] * 4),
++					par->pool_txtbl[pool],
++					par->pool_txphys[pool]);
++		dma_alloc = impact_dma_alloc(par->dev, (alloc_count * 4),
++					     &dma_handle, GFP_KERNEL);
++		par->pool_txtbl[pool] = dma_alloc;
++		par->pool_txphys[pool] = dma_handle;
++		par->pool_txmax[pool] = alloc_count;
++	}
++	par->pool_txnum[pool] = pages;
++}
++
++/**
++ * impact_resize_kpool - resize kernel DMA pools.
++ * @info: struct fb_info pointer to framebuffer data.
++ * @pool: DMA pool number.
++ * @size: new pool size.
++ * @growonly: only grow the pool (?).
++ */
++static void
++impact_resize_kpool(struct fb_info *info, int pool, int size, bool growonly)
++{
++	int i, pages;
++	unsigned long *dma_alloc;
++	dma_addr_t dma_handle;
++	struct impact_par *par = info->par;
++
++	if (growonly && (par->kpool_size[pool] >= size))
++		return;
++
++	/* Single line smallcopy (1280 * 4) MUST work. */
++	if (size < 8192)
++		size = 8192;
++	pages = ((size + (PAGE_SIZE - 1)) >> PAGE_SHIFT);
++
++	/* Before manipulating the tbl, detach it from the card. */
++	impact_detachtxtbl(info, pool);
++	if (par->kpool_size[pool] > 0) {
++		for (i = 0; i < par->pool_txnum[pool]; i++) {
++			ClearPageReserved(
++				  virt_to_page(par->kpool_virt[pool][i]));
++			impact_dma_free(par->dev, PAGE_SIZE,
++					par->kpool_virt[pool][i],
++					par->kpool_phys[pool][i]);
++		}
++		vfree(par->kpool_phys[pool]);
++		vfree(par->kpool_virt[pool]);
++	}
++	impact_alloctxtbl(info, pool, pages);
++
++	par->kpool_virt[pool] = vzalloc(pages * sizeof(unsigned long));
++	par->kpool_phys[pool] = vzalloc(pages * sizeof(unsigned long));
++	for (i = 0; i < par->pool_txnum[pool]; i++) {
++		dma_alloc = impact_dma_alloc(par->dev, PAGE_SIZE,
++					     &dma_handle, GFP_KERNEL);
++		par->kpool_virt[pool][i] = dma_alloc;
++		SetPageReserved(virt_to_page(par->kpool_virt[pool][i]));
++		par->kpool_phys[pool][i] = dma_handle;
++		par->pool_txtbl[pool][i] = (dma_handle >> PAGE_SHIFT);
++	}
++	dma_cache_sync(NULL, par->pool_txtbl[pool], (i * 4),
++		       DMA_BIDIRECTIONAL);
++
++	/* Finally, reattach the tbl to the card. */
++	impact_writetxtbl(info, pool);
++	par->kpool_size[pool] = (pages * PAGE_SIZE);
++}
++/* ----------------------------------------------------------------------- */
++
++
++/* ----------------------------------------------------------------------- */
++/* Basic drawing stuff */
++
++/**
++ * impact_rect - fill rectangle (?).
++ * @info: struct fb_info pointer to framebuffer data.
++ * @r: const struct fb_fillrect pointer to rectangle fill data.
++ * @lo: PP1 logic operation.
++ */
++static void
++impact_rect(struct fb_info *info, const struct fb_fillrect *r, u32 lo)
++{
++	u32 palette;
++
++	impact_wait_cfifo_empty(info);
++
++	if (lo == IMP_LO_COPY)
++		IMP_CFIFO(MMIO) = IMP_CMD_PP1FILLMODE(0x6300, lo);
++	else
++		IMP_CFIFO(MMIO) = IMP_CMD_PP1FILLMODE(0x6304, lo);
++
++	palette = ((u32 *)info->pseudo_palette)[r->color];
++	IMP_CFIFO(MMIO) = IMP_CMD_FILLMODE(0);
++	IMP_CFIFO(MMIO) = IMP_CMD_PACKEDCOLOR(palette);
++	IMP_CFIFO(MMIO) = IMP_CMD_BLOCKXYSTARTI(r->dx, r->dy);
++	IMP_CFIFO(MMIO) = IMP_CMD_BLOCKXYENDI(((r->dx + r->width) - 1),
++					      ((r->dy + r->height) - 1));
++	IMP_CFIFO(MMIO) = IMP_CMD_IR_ALIAS(0x18);
++}
++
++/**
++ * impact_smallcopy - copy a small area (?).
++ * @info: struct fb_info pointer to framebuffer data.
++ * @new: const struct fb_copyarea pointer to new area data.
++ */
++static void
++impact_smallcopy(struct fb_info *info, const struct fb_copyarea *a)
++{
++	u32 tw;
++	struct impact_par *par = info->par;
++
++	if (unlikely(a->width < 1 || a->height < 1))
++		return;
++
++	tw = ((a->width + 1) & ~1);
++
++	/* Setup and perform DMA from RE to host. */
++	impact_wait_dma_done(info);
++
++	/*
++	 * Select the RSS to read from.
++	 *
++	 * XXX: Beware, only Indigo2 MaxImpact has 2 REs, SI/HI will hang!
++	 */
++	if (par->num_rss == 2) {
++		if (a->sy & 1)
++			IMP_CFIFO(MMIO) = IMP_CMD_CONFIG(0xca5);
++		else
++			IMP_CFIFO(MMIO) = IMP_CMD_CONFIG(0xca4);
++	} else {
++		IMP_CFIFO(MMIO) = IMP_CMD_CONFIG(0xca4);
++	}
++
++	IMP_CFIFO(MMIO) = IMP_CMD_PIXCMD(2);
++	IMP_CFIFO(MMIO) = IMP_CMD_PP1FILLMODE(0x2200, IMP_LO_COPY);
++	IMP_CFIFO(MMIO) = IMP_CMD_COLORMASKLSBSA(0xffffff);
++	IMP_CFIFO(MMIO) = IMP_CMD_COLORMASKLSBSB(0xffffff);
++	IMP_CFIFO(MMIO) = IMP_CMD_COLORMASKMSBS(0);
++	IMP_CFIFO(MMIO) = IMP_CMD_DRBPOINTERS(0xc8240);
++	IMP_CFIFO(MMIO) = IMP_CMD_BLOCKXYSTARTI(a->sx,
++						((a->sy + a->height) - 1));
++	IMP_CFIFO(MMIO) = IMP_CMD_BLOCKXYENDI(((a->sx + tw) - 1), a->sy);
++	IMP_CFIFO(MMIO) = IMP_CMD_XFRMASKLO(0xffffff);
++	IMP_CFIFO(MMIO) = IMP_CMD_XFRMASKHI(0xffffff);
++	IMP_CFIFO(MMIO) = IMP_CMD_XFRSIZE(tw, a->height);
++	IMP_CFIFO(MMIO) = IMP_CMD_XFRCOUNTERS(tw, a->height);
++	IMP_CFIFO(MMIO) = IMP_CMD_XFRMODE(0x00080);
++	IMP_CFIFO(MMIO) = IMP_CMD_FILLMODE(0x01000000);
++	IMP_CFIFO(MMIO) = IMP_CMD_HQ_PIXELFORMAT(0x200);
++	IMP_CFIFO(MMIO) = IMP_CMD_HQ_SCANWIDTH(tw << 2);
++	IMP_CFIFO(MMIO) = IMP_CMD_HQ_DMATYPE(0x0a);
++	IMP_CFIFO(MMIO) = IMP_CMD_HQ_PG_LIST_0(0x80000000);
++	IMP_CFIFO(MMIO) = IMP_CMD_HQ_PG_WIDTH(tw << 2);
++	IMP_CFIFO(MMIO) = IMP_CMD_HQ_PG_OFFSET(0);
++	IMP_CFIFO(MMIO) = IMP_CMD_HQ_PG_STARTADDR(0);
++	IMP_CFIFO(MMIO) = IMP_CMD_HQ_PG_LINECNT(a->height);
++	IMP_CFIFO(MMIO) = IMP_CMD_HQ_PG_WIDTHA(tw << 2);
++	IMP_CFIFO(MMIO) = IMP_CMD_XFRCONTROL(8);
++	IMP_CFIFO(MMIO) = IMP_CMD_GLINE_XSTARTF(1);
++	IMP_CFIFO(MMIO) = IMP_CMD_IR_ALIAS(0x18);
++	IMP_CFIFO(MMIO) = IMP_CMD_HQ_DMACTRL_0(8);
++	IMP_CFIFO(MMIO) = IMP_CMD_XFRCONTROL(9);
++	impact_wait_dma_ready(info);
++	IMP_CFIFO(MMIO) = IMP_CMD_GLINE_XSTARTF(0);
++	IMP_CFIFO(MMIO) = IMP_CMD_RE_TOGGLECNTX(0);
++	IMP_CFIFO(MMIO) = IMP_CMD_XFRCOUNTERS(0, 0);
++
++	/* Setup and perform DMA from host to RE. */
++	impact_wait_dma_done(info);
++	IMP_CFIFO(MMIO) = IMP_CMD_CONFIG(0xca4);
++	IMP_CFIFO(MMIO) = IMP_CMD_PP1FILLMODE(0x6200, IMP_LO_COPY);
++	IMP_CFIFO(MMIO) = IMP_CMD_BLOCKXYSTARTI(a->dx,
++						((a->dy + a->height) - 1));
++	IMP_CFIFO(MMIO) = IMP_CMD_BLOCKXYENDI(((a->dx + tw) - 1), a->dy);
++	IMP_CFIFO(MMIO) = IMP_CMD_FILLMODE(0x01400000);
++	IMP_CFIFO(MMIO) = IMP_CMD_XFRMODE(0x00080);
++	IMP_CFIFO(MMIO) = IMP_CMD_HQ_PIXELFORMAT(0x600);
++	IMP_CFIFO(MMIO) = IMP_CMD_HQ_SCANWIDTH(tw << 2);
++	IMP_CFIFO(MMIO) = IMP_CMD_HQ_DMATYPE(0x0c);
++	IMP_CFIFO(MMIO) = IMP_CMD_PIXCMD(3);
++	IMP_CFIFO(MMIO) = IMP_CMD_XFRSIZE(tw, a->height);
++	IMP_CFIFO(MMIO) = IMP_CMD_XFRCOUNTERS(tw, a->height);
++	IMP_CFIFO(MMIO) = IMP_CMD_GLINE_XSTARTF(1);
++	IMP_CFIFO(MMIO) = IMP_CMD_IR_ALIAS(0x18);
++	IMP_CFIFO(MMIO) = IMP_CMD_XFRCONTROL(1);
++	IMP_CFIFO(MMIO) = IMP_CMD_HQ_PG_LIST_0(0x80000000);
++	IMP_CFIFO(MMIO) = IMP_CMD_HQ_PG_OFFSET(0);
++	IMP_CFIFO(MMIO) = IMP_CMD_HQ_PG_STARTADDR(0);
++	IMP_CFIFO(MMIO) = IMP_CMD_HQ_PG_LINECNT(a->height);
++	IMP_CFIFO(MMIO) = IMP_CMD_HQ_PG_WIDTHA(tw << 2);
++	IMP_CFIFO(MMIO) = IMP_CMD_HQ_DMACTRL_0(0);
++	IMP_CFIFOW1(MMIO) = 0x000e0400;
++	impact_wait_dma_done(info);
++	IMP_CFIFO(MMIO) = IMP_CMD_GLINE_XSTARTF(0);
++	IMP_CFIFO(MMIO) = IMP_CMD_RE_TOGGLECNTX(0);
++	IMP_CFIFO(MMIO) = IMP_CMD_XFRCOUNTERS(0, 0);
++}
++/* ----------------------------------------------------------------------- */
++
++
++/* ----------------------------------------------------------------------- */
++/* Accelerated functions */
++
++/**
++ * impact_fb_fillrect - draws a rectangle.
++ * @info: struct fb_info pointer to framebuffer data.
++ * @r: const struct fb_fillrect pointer to rectangle fill data.
++ */
++static void
++impact_fb_fillrect(struct fb_info *info, const struct fb_fillrect *r)
++{
++	struct impact_par *par = info->par;
++	unsigned long flags;
++
++	spin_lock_irqsave(&par->lock, flags);
++	if (!par->open_flag) {
++		switch (r->rop) {
++		case ROP_XOR:
++			impact_rect(info, r, IMP_LO_XOR);
++			break;
++		case ROP_COPY:
++		default:
++			impact_rect(info, r, IMP_LO_COPY);
++			break;
++		}
++	}
++	spin_unlock_irqrestore(&par->lock, flags);
++}
++
++/**
++ * impact_fb_copyarea - copy data from one area to another.
++ * @info: struct fb_info pointer to framebuffer data.
++ * @area: const struct fb_copyarea pointer to area data.
++ */
++static void
++impact_fb_copyarea(struct fb_info *info, const struct fb_copyarea *area)
++{
++	u32 th;
++	struct fb_copyarea tmp, new;
++	struct impact_par *par = info->par;
++	unsigned long flags;
++
++	if ((area->width < 1) || (area->height < 1))
++		return;
++
++	tmp.width = area->width;
++	tmp.height = area->height;
++
++	spin_lock_irqsave(&par->lock, flags);
++	if (par->open_flag)
++		goto out;
++
++	tmp.sx = area->sx;
++	tmp.sy = (0x3ff - ((area->sy + tmp.height) - 1));
++	tmp.dx = area->dx;
++	tmp.dy = (0x3ff - ((area->dy + tmp.height) - 1));
++	th = (par->kpool_size[0] / (tmp.width * 4));
++
++	IMP_CFIFO(MMIO) = IMP_CMD_XYWIN(0, 0);
++	if (tmp.dy > tmp.sy) {
++		tmp.dy += tmp.height;
++		tmp.sy += tmp.height;
++		while (tmp.height > 0) {
++			new = tmp;
++			new.height = ((th > tmp.height) ? tmp.height : th);
++			new.sy -= new.height;
++			new.dy -= new.height;
++			impact_smallcopy(info, &new);
++			tmp.dy -= new.height;
++			tmp.sy -= new.height;
++			tmp.height -= new.height;
++		}
++	} else {
++		while (tmp.height > 0) {
++			new = tmp;
++			new.height = ((th > tmp.height) ? tmp.height : th);
++			impact_smallcopy(info, &new);
++			tmp.dy += new.height;
++			tmp.sy += new.height;
++			tmp.height -= new.height;
++		}
++	}
++	IMP_CFIFO(MMIO) = IMP_CMD_PIXCMD(0);
++	IMP_CFIFO(MMIO) = IMP_CMD_HQ_PIXELFORMAT(0xe00);
++	IMP_CFIFO(MMIO) = IMP_CMD_CONFIG(0xcac);
++	IMP_CFIFO(MMIO) = IMP_CMD_XYWIN(0, 0x3ff);
++
++out:
++	spin_unlock_irqrestore(&par->lock, flags);
++}
++
++/**
++ * impact_fb_imageblit_8bpp - draw 8bpp blits (?).
++ * @info: struct fb_info pointer to framebuffer data.
++ * @img: const struct fb_image pointer to image data.
++ *
++ * 8-bpp blits are done as PIO draw operations; the pixels are unpacked
++ * into 32-bpp values from the current palette in software.
++ */
++static void
++impact_fb_imageblit_8bpp(struct fb_info *info, const struct fb_image *img)
++{
++	bool bit;
++	int i, u, v;
++	const u8 *dp;
++	u32 pix, pal[256];
++
++	/* Setup PIO to RE. */
++	impact_wait_cfifo_empty(info);
++	IMP_CFIFO(MMIO) = IMP_CMD_PP1FILLMODE(0x6300, IMP_LO_COPY);
++	IMP_CFIFO(MMIO) = IMP_CMD_BLOCKXYSTARTI(img->dx, img->dy);
++	IMP_CFIFO(MMIO) = IMP_CMD_BLOCKXYENDI(((img->dx + img->width) - 1),
++					      ((img->dy + img->height) - 1));
++	IMP_CFIFO(MMIO) = IMP_CMD_FILLMODE(0x00c00000);
++	IMP_CFIFO(MMIO) = IMP_CMD_XFRMODE(0x00080);
++	IMP_CFIFO(MMIO) = IMP_CMD_XFRSIZE(img->width, img->height);
++	IMP_CFIFO(MMIO) = IMP_CMD_XFRCOUNTERS(img->width, img->height);
++	IMP_CFIFO(MMIO) = IMP_CMD_GLINE_XSTARTF(1);
++	IMP_CFIFO(MMIO) = IMP_CMD_IR_ALIAS(0x18);
++
++	/* XXX: Another workaround, 33 writes to alpha. */
++	for (i = 0; i < ALPHA_WAR; i++)
++		IMP_CFIFO(MMIO) = IMP_CMD_ALPHA(0);
++	IMP_CFIFO(MMIO) = IMP_CMD_XFRCONTROL(2);
++
++	/* Pairs of pixels are sent in two writes to the RE. */
++	bit = false;
++	dp = img->data;
++	for (v = 0; v < 256; v++)
++		pal[v] = ((u32 *)info->pseudo_palette)[v];
++	for (v = 0; v < img->height; v++) {
++		for (u = 0; u < img->width; u++) {
++			pix = pal[*(dp++)];
++			if (bit)
++				IMP_CFIFO(MMIO) = IMP_CMD_CHAR_L(pix);
++			else
++				IMP_CFIFO(MMIO) = IMP_CMD_CHAR_H(pix);
++			bit ^= true;
++		}
++	}
++	if (bit)
++		IMP_CFIFO(MMIO) = IMP_CMD_CHAR_L(0);
++
++	IMP_CFIFO(MMIO) = IMP_CMD_GLINE_XSTARTF(0);
++	IMP_CFIFO(MMIO) = IMP_CMD_RE_TOGGLECNTX(0);
++	IMP_CFIFO(MMIO) = IMP_CMD_XFRCOUNTERS(0, 0);
++}
++
++/**
++ * impact_fb_imageblit_1bpp - draw 1bpp blits (?).
++ * @info: struct fb_info pointer to framebuffer data.
++ * @img: const struct fb_image pointer to image data.
++ *
++ * 1-bpp blits are done as character drawing; the bitmaps are drawn as
++ * 8-bit wide strips; technically, Impact supports 16-pixel wide characters,
++ * but Linux bitmap alignment is 8 bits and most draws are 8 pixels wide
++ * (font width), anyway.
++ */
++static void
++impact_fb_imageblit_1bpp(struct fb_info *info, const struct fb_image *img)
++{
++	u32 x, y, w, h, b;
++	int u, v, a;
++	const u8 *d;
++
++	impact_wait_cfifo_empty(info);
++	IMP_CFIFO(MMIO) = IMP_CMD_PP1FILLMODE(0x6300, IMP_LO_COPY);
++	IMP_CFIFO(MMIO) = IMP_CMD_FILLMODE(0x400018);
++
++	a = ((u32 *)info->pseudo_palette)[img->fg_color];
++	IMP_CFIFO(MMIO) = IMP_CMD_PACKEDCOLOR(a);
++
++	a = ((u32 *)info->pseudo_palette)[img->bg_color];
++	IMP_CFIFO(MMIO) = IMP_CMD_BKGRD_RG(a & 0xffff);
++	IMP_CFIFO(MMIO) = IMP_CMD_BKGRD_BA((a & 0xff0000) >> 16);
++
++	x = img->dx;
++	y = img->dy;
++	w = img->width;
++	h = img->height;
++	b = ((w + 7) / 8);
++	for (u = 0; u < b; u++) {
++		impact_wait_cfifo_empty(info);
++		a = ((w < 8) ? w : 8);
++		d = (img->data + u);
++
++		IMP_CFIFO(MMIO) = IMP_CMD_BLOCKXYSTARTI(x, y);
++		IMP_CFIFO(MMIO) = IMP_CMD_BLOCKXYENDI(((x + a) - 1),
++						      ((y + h) - 1));
++		IMP_CFIFO(MMIO) = IMP_CMD_IR_ALIAS(0x18);
++
++		for (v = 0; v < h; v++) {
++			IMP_CFIFO(MMIO) = IMP_CMD_CHAR((*d) << 24);
++			d += b;
++		}
++
++		w -= a;
++		x += a;
++	}
++}
++
++/**
++ * impact_fb_imageblit - draws a image to the display.
++ * @info: struct fb_info pointer to framebuffer data.
++ * @img: const struct fb_image pointer to image data.
++ */
++static void
++impact_fb_imageblit(struct fb_info *info, const struct fb_image *img)
++{
++	struct impact_par *par = info->par;
++	unsigned long flags;
++
++	spin_lock_irqsave(&par->lock, flags);
++	if (!par->open_flag) {
++		switch (img->depth) {
++		case 1:
++			impact_fb_imageblit_1bpp(info, img);
++			break;
++		case 8:
++			impact_fb_imageblit_8bpp(info, img);
++			break;
++		}
++	}
++	spin_unlock_irqrestore(&par->lock, flags);
++}
++
++/**
++ * impact_fb_sync - wait for blit idle (unimplemented).
++ * @info: struct fb_info pointer to framebuffer data.
++ *
++ * Returns 0.
++ */
++static int
++impact_fb_sync(struct fb_info *info)
++{
++	return 0;
++}
++
++/**
++ * impact_fb_blank - blank the display.
++ * @blank_mode: specifies the blanking mode.
++ * @info: struct fb_info pointer to framebuffer data.
++ */
++static int
++impact_fb_blank(int blank_mode, struct fb_info *info)
++{
++	switch (blank_mode) {
++	case FB_BLANK_UNBLANK:		/* Unblanking */
++		IMP_REG8(MMIO, 0x61811) = 4;
++		IMP_REG8(MMIO, 0x61910) = 0xff;
++		IMP_REG8(MMIO, 0x60d88) = 3;
++		break;
++	case FB_BLANK_NORMAL:		/* Normal blanking */
++	case FB_BLANK_VSYNC_SUSPEND:	/* VESA blank (vsync off) */
++	case FB_BLANK_HSYNC_SUSPEND:	/* VESA blank (hsync off) */
++	case FB_BLANK_POWERDOWN:	/* Poweroff */
++		IMP_REG8(MMIO, 0x61811) = 4;
++		IMP_REG8(MMIO, 0x61910) = 0;
++		IMP_REG8(MMIO, 0x60d88) = 1;
++		break;
++	}
++
++	return 0;
++}
++
++/**
++ * impact_fb_setcolreg - set the specified color register.
++ * @regno: register number.
++ * @r: red value.
++ * @g: green value.
++ * @b: blue value.
++ * @a: alpha value.
++ * @info: struct fb_info pointer to framebuffer data.
++ */
++static int
++impact_fb_setcolreg(u32 regno, u32 r, u32 g, u32 b, u32 a,
++		    struct fb_info *info)
++{
++	if (regno > 255)
++		return 1;
++
++	((u32 *)info->pseudo_palette)[regno] =
++		(r >> 8) | (g & 0x00ff00) | ((b << 8) & 0xff0000);
++	return 0;
++}
++/* ----------------------------------------------------------------------- */
++
++
++/* ----------------------------------------------------------------------- */
++/* Framebuffer access */
++
++/**
++ * impact_fb_read - read from the framebuffer (unimplemented).
++ * @info: struct fb_info pointer to framebuffer data.
++ * @buf: s8 pointer to buffer.
++ * @count: bytes of data to read.
++ * @ppos: loff_t pointer to ??.
++ */
++static ssize_t
++impact_fb_read(struct fb_info *info, char *buf, size_t count, loff_t *ppos)
++{
++	return -EINVAL;
++}
++
++/**
++ * impact_fb_write - write to the framebuffer (unimplemented).
++ * @info: struct fb_info pointer to framebuffer data.
++ * @buf: const s8 pointer to buffer.
++ * @count: bytes of data to write.
++ * @ppos: loff_t pointer to ??.
++ */
++static ssize_t
++impact_fb_write(struct fb_info *info, const char *buf, size_t count,
++		loff_t *ppos)
++{
++	return -EINVAL;
++}
++/* ----------------------------------------------------------------------- */
++
++
++/* ----------------------------------------------------------------------- */
++/* Userland access */
++
++/**
++ * impact_fb_ioctl - framebuffer ioctl() access (unimplemented).
++ * @info: struct fb_info pointer to framebuffer data.
++ * @cmd: ioctl command.
++ * @arg: ioctl argument.
++ */
++static int
++impact_fb_ioctl(struct fb_info *info, u32 cmd, unsigned long arg)
++{
++	return -EINVAL;
++}
++/* ----------------------------------------------------------------------- */
++
++
++/* ----------------------------------------------------------------------- */
++/* Mmap/open/release. */
++
++/**
++ * impact_fb_mmap - framebuffer ioctl() access (unimplemented).
++ * @info: struct fb_info pointer to framebuffer data.
++ * @vma: struct vm_area_struct pointer for virtual memory info.
++ */
++static int
++impact_fb_mmap(struct fb_info *info, struct vm_area_struct *vma)
++{
++	int ret;
++	u32 pool, i, n;
++	unsigned long size = (vma->vm_end - vma->vm_start);
++	unsigned long offset = (vma->vm_pgoff << PAGE_SHIFT);
++	unsigned long start = vma->vm_start;
++	unsigned long pfn;
++	struct impact_par *par = info->par;
++
++	switch (offset) {
++	case 0x0000000:
++	default:
++		if (unlikely((offset + size) > 0x200000))
++			return -EINVAL;
++
++		if (unlikely(vma->vm_pgoff > (~0UL >> PAGE_SHIFT)))
++			return -EINVAL;
++
++		vma->vm_page_prot = pgprot_noncached(vma->vm_page_prot);
++		vma->vm_flags |= VM_IO;
++		pfn = ((par->mmio_base + offset) >> PAGE_SHIFT);
++		ret = remap_pfn_range(vma, vma->vm_start, pfn, size,
++				      vma->vm_page_prot);
++		if (unlikely(ret))
++			return -EAGAIN;
++		break;
++	case 0x1000000:
++	case 0x2000000:
++	case 0x3000000:
++	case 0x8000000:
++	case 0x9000000:
++	case 0xa000000:
++	case 0xb000000:
++		if (unlikely(size > 0x1000000))
++			return -EINVAL;
++
++		pool = ((offset >> 24) & 3);
++		n = (((size + PAGE_SIZE) - 1) >> PAGE_SHIFT);
++
++		if ((n * PAGE_SIZE) != par->kpool_size[pool])
++			impact_resize_kpool(info, pool, size,
++					    (offset & 0x8000000));
++		for (i = 0; i < n; i++) {
++			pfn = (par->kpool_phys[pool][i] >> PAGE_SHIFT);
++			ret = remap_pfn_range(vma, start, pfn, PAGE_SIZE,
++					      vma->vm_page_prot);
++			if (unlikely(ret))
++				return -EAGAIN;
++			start += PAGE_SIZE;
++		}
++	}
++
++	return 0;
++}
++
++/**
++ * impact_fb_open - framebuffer open().
++ * @info: struct fb_info pointer to framebuffer data.
++ * @user: flag to indicate usermode access.
++ */
++static int
++impact_fb_open(struct fb_info *info, int user)
++{
++	struct impact_par *par = info->par;
++	unsigned long flags;
++
++	spin_lock_irqsave(&par->lock, flags);
++	if (user)
++		par->open_flag++;
++	spin_unlock_irqrestore(&par->lock, flags);
++
++	return 0;
++}
++
++/**
++ * impact_fb_release - framebuffer release().
++ * @info: struct fb_info pointer to framebuffer data.
++ * @user: flag to indicate usermode access.
++ */
++static int
++impact_fb_release(struct fb_info *info, int user)
++{
++	struct impact_par *par = info->par;
++	unsigned long flags;
++
++	spin_lock_irqsave(&par->lock, flags);
++	if (user && par->open_flag)
++		par->open_flag--;
++	spin_unlock_irqrestore(&par->lock, flags);
++
++	return 0;
++}
++/* ----------------------------------------------------------------------- */
++
++
++/* ----------------------------------------------------------------------- */
++/* Impact framebuffer operations */
++
++static struct
++fb_ops impact_ops = {
++	.owner		= THIS_MODULE,
++	.fb_read	= impact_fb_read,
++	.fb_write	= impact_fb_write,
++	.fb_blank	= impact_fb_blank,
++	.fb_fillrect	= impact_fb_fillrect,
++	.fb_copyarea	= impact_fb_copyarea,
++	.fb_imageblit	= impact_fb_imageblit,
++	.fb_sync	= impact_fb_sync,
++	.fb_ioctl	= impact_fb_ioctl,
++	.fb_setcolreg	= impact_fb_setcolreg,
++	.fb_mmap	= impact_fb_mmap,
++	.fb_open	= impact_fb_open,
++	.fb_release	= impact_fb_release,
++};
++/* ----------------------------------------------------------------------- */
++
++
++/* ----------------------------------------------------------------------- */
++/* Hardware initialization */
++
++/**
++ * impact_inithq - init impact HQ3/4.
++ * @info: struct fb_info pointer to framebuffer data.
++ */
++static inline void __init
++impact_inithq(struct fb_info *info)
++{
++	/* Not really needed, the friendly PROM did this already for us... */
++	/* CFIFO parameters */
++	IMP_CFIFO_HW(MMIO) = VAL_CFIFO_HW;
++	IMP_CFIFO_LW(MMIO) = VAL_CFIFO_LW;
++	IMP_CFIFO_DELAY(MMIO) = VAL_CFIFO_DELAY;
++
++	/* DFIFO parameters */
++	IMP_DFIFO_HW(MMIO) = VAL_DFIFO_HW;
++	IMP_DFIFO_LW(MMIO) = VAL_DFIFO_LW;
++	IMP_DFIFO_DELAY(MMIO) = VAL_DFIFO_DELAY;
++}
++
++/**
++ * impact_initrss - init impact RSS.
++ * @info: struct fb_info pointer to framebuffer data.
++ */
++static inline void __init
++impact_initrss(struct fb_info *info)
++{
++	/* Transfer mask registers. */
++	IMP_CFIFO(MMIO) = IMP_CMD_COLORMASKLSBSA(0xffffff);
++	IMP_CFIFO(MMIO) = IMP_CMD_COLORMASKLSBSB(0xffffff);
++	IMP_CFIFO(MMIO) = IMP_CMD_COLORMASKMSBS(0);
++	IMP_CFIFO(MMIO) = IMP_CMD_XFRMASKLO(0xffffff);
++	IMP_CFIFO(MMIO) = IMP_CMD_XFRMASKHI(0xffffff);
++
++	/* Use the main plane. */
++	IMP_CFIFO(MMIO) = IMP_CMD_DRBPOINTERS(0xc8240);
++
++	/* Set the RE into vertical flip mode. */
++	IMP_CFIFO(MMIO) = IMP_CMD_CONFIG(0xcac);
++	IMP_CFIFO(MMIO) = IMP_CMD_XYWIN(0, 0x3ff);
++}
++
++/**
++ * impact_initxmap - init impact XMAP.
++ * @info: struct fb_info pointer to framebuffer data.
++ */
++static inline void __init
++impact_initxmap(struct fb_info *info)
++{
++	/* Set XMAP into 24-bpp mode. */
++	IMP_XMAP_PP1SELECT(MMIO) = 0x01;
++	IMP_XMAP_INDEX(MMIO) = 0x00;
++	IMP_XMAP_MAIN_MODE(MMIO) = 0x07a4;
++}
++
++/**
++ * impact_initvc3 - init impact VC3.
++ * @info: struct fb_info pointer to framebuffer data.
++ */
++static inline void __init
++impact_initvc3(struct fb_info *info)
++{
++	/* Cursor Begone! (disable DISPLAY bit) */
++	IMP_VC3_INDEXDATA(MMIO) = 0x1d000100;
++}
++
++/**
++ * impact_hw_init - init impact hardware.
++ * @info: struct fb_info pointer to framebuffer data.
++ */
++static inline void __init
++impact_hw_init(struct fb_info *info)
++{
++	/* initialize hardware */
++	impact_inithq(info);
++	impact_initvc3(info);
++	impact_initrss(info);
++	impact_initxmap(info);
++	impact_initdma(info);
++}
++/* ----------------------------------------------------------------------- */
++
++
++/* ----------------------------------------------------------------------- */
++/* XIO/GIO Probing - a bit ugly... */
++
++/**
++ * impact_common_probe - probe code common to both XIO/GIO buses.
++ * @info: struct fb_info pointer to framebuffer data.
++ * @par: struct impact_par pointer to impact data.
++ */
++static int
++impact_common_probe(struct fb_info *info, struct impact_par *par)
++{
++	int i, ret;
++
++	/* Set defaults. */
++	info->screen_base = NULL;
++	info->fbops = &impact_ops;
++	info->var = impact_var_default;
++	info->fix = impact_fix_default;
++	info->flags =  (FBINFO_DEFAULT |
++			FBINFO_HWACCEL_COPYAREA |
++			FBINFO_HWACCEL_FILLRECT |
++			FBINFO_HWACCEL_IMAGEBLIT);
++	info->pseudo_palette = par->pseudo_palette;
++	info->fix.mmio_start = par->mmio_base;
++	info->fix.mmio_len   = 0x200000;
++
++	/* Get board config. */
++	par->num_ge = IMP_BDVERS1(par->mmio_virt) & 3;
++	par->num_rss = par->num_ge;
++	info->fix.id[9] = '0' + par->num_rss;
++
++	/* Init hardware. */
++	impact_hw_init(info);
++
++	/* Initialize kpools. */
++	impact_resize_kpool(info, 0, 65536, false);
++	for (i = 1; i < USE_POOLS; ++i)
++		impact_resize_kpool(info, i, 8192, false);
++
++	/* Alloc cmap. */
++	ret = fb_alloc_cmap(&info->cmap, 256, 0);
++	if (ret)
++		goto err_alloc_cmap;
++
++	/* Register framebuffer. */
++	ret = register_framebuffer(info);
++	if (ret)
++		goto err_reg_fb;
++
++	pr_info("fb%d: %s frame buffer device\n", info->node, info->fix.id);
++	return 0;
++
++err_reg_fb:
++	fb_dealloc_cmap(&info->cmap);
++err_alloc_cmap:
++	framebuffer_release(info);
++	return ret;
++}
++
++#ifndef SGI_INDIGO2
++/**
++ * impact_xio_probe - probe for impact card on XIO bus.
++ * @dev: struct platform_device pointer to device information.
++ */
++static int
++impact_xio_probe(struct platform_device *dev)
++{
++	int ret;
++	struct fb_info *info = NULL;
++	struct impact_par *par = NULL;
++
++	info = framebuffer_alloc(sizeof(struct impact_par), &dev->dev);
++	if (!info)
++		return -ENOMEM;
++
++	par = info->par;
++	par->dev = &dev->dev;
++	par->open_flag = 0;
++	spin_lock_init(&par->lock);
++
++	par->mmio_base = xtalk_get_swin(0, dev->id);
++	par->mmio_virt = ioremap_nocache(par->mmio_base, 0x200000);
++
++	ret = impact_common_probe(info, par);
++	platform_set_drvdata(dev, info);
++
++	return ret;
++}
++
++static struct platform_driver
++impact_driver = {
++	.probe = impact_xio_probe,
++	/* add remove someday */
++	.driver = {
++		.name = "impact",
++	},
++};
++
++static int __init
++impact_init(void)
++{
++	return platform_driver_register(&impact_driver);
++}
++
++static void __exit
++impact_exit(void)
++{
++	platform_driver_unregister(&impact_driver);
++}
++
++MODULE_ALIAS("platform:impact");
++
++#else /* SGI_INDIGO2 */
++
++/**
++ * impact_gio_probe - probe for impact card on GIO bus.
++ * @dev: struct gio_device pointer to device information.
++ * @id: const struct gio_device_id pointer to GIO dev id.
++ */
++static int
++impact_gio_probe(struct gio_device *dev, const struct gio_device_id *id)
++{
++	int ret;
++	struct fb_info *info;
++	struct impact_par *par;
++
++	if (!dev->resource.start)
++		return -EINVAL;
++
++	if (!request_mem_region(dev->resource.start, 0x200000, "Impact"))
++		return -ENODEV;
++
++	info = framebuffer_alloc(sizeof(struct impact_par), &dev->dev);
++	if (!info)
++		return -ENOMEM;
++
++	par = info->par;
++	par->dev = &dev->dev;
++	par->open_flag = 0;
++	spin_lock_init(&par->lock);
++
++	par->mmio_base = dev->resource.start;
++	par->mmio_virt = ioremap(par->mmio_base, 0x200000);
++	gio_set_master(dev);
++
++	ret = impact_common_probe(info, par);
++
++	return ret;
++}
++
++static struct gio_device_id
++impact_ids[] = {
++	{ .id = 0x10 },
++	{ .id = 0xff }
++};
++
++static struct gio_driver
++impact_driver = {
++	.name = "impact",
++	.id_table = impact_ids,
++	.probe = impact_gio_probe,
++	/* add remove someday */
++};
++
++static int __init
++impact_init(void)
++{
++	return gio_register_driver(&impact_driver);
++}
++
++static void __exit
++impact_exit(void)
++{
++	 gio_unregister_driver(&impact_driver);
++}
++
++MODULE_ALIAS("gio:impact");
++
++#endif /* SGI_INDIGO2 */
++/* ----------------------------------------------------------------------- */
++
++
++module_init(impact_init);
++module_exit(impact_exit);
++
++MODULE_AUTHOR("Stanislaw Skowronek <skylark@unaligned.org>");
++MODULE_AUTHOR("Johannes Dickgreber <tanzy@gmx.de>");
++MODULE_AUTHOR("Joshua Kinard <kumba@gentoo.org>");
++MODULE_DESCRIPTION("SGI Impact/MardiGras Video Driver");
++MODULE_LICENSE("GPL");
++MODULE_VERSION("0.42.3");
+diff --git a/include/uapi/linux/fb.h b/include/uapi/linux/fb.h
+index fb795c3b3c17..07d266124388 100644
+--- a/include/uapi/linux/fb.h
++++ b/include/uapi/linux/fb.h
+@@ -132,6 +132,7 @@
+ #define FB_ACCEL_NEOMAGIC_NM2360 97	/* NeoMagic NM2360              */
+ #define FB_ACCEL_NEOMAGIC_NM2380 98	/* NeoMagic NM2380              */
+ #define FB_ACCEL_PXA3XX		 99	/* PXA3xx			*/
++#define FB_ACCEL_SGI_IMPACT	666	/* SGI Impact (MGRAS)		*/
+ 
+ #define FB_ACCEL_SAVAGE4        0x80	/* S3 Savage4                   */
+ #define FB_ACCEL_SAVAGE3D       0x81	/* S3 Savage3D                  */
+diff --git a/include/video/impact.h b/include/video/impact.h
+new file mode 100644
+index 000000000000..2efa228fc6d9
+--- /dev/null
++++ b/include/video/impact.h
+@@ -0,0 +1,337 @@
++/*
++ * linux/drivers/video/impact.h
++ *   SGI Octane MardiGras (IMPACTSR) graphics
++ *   SGI Indigo2 MardiGras (IMPACT) graphics
++ *
++ * Copyright (c)
++ *   2004-2006 by Stanislaw Skowronek <skylark@unaligned.org> (author)
++ *   2005 by Peter Fuerst <post@pfrst.de> (Indigo2 adaptation)
++ *   2007-2009 by Johannes Dickgreber <tanzy@gmx.de> (platform_driver)
++ *   2014 by Thomas Bogendoerfer <tsbogend@alpha.franken.de> (gio_driver)
++ *   2011-2015 by Joshua Kinard <kumba@gentoo.org> (upkeeping/maintenance)
++ *
++ * This file is subject to the terms and conditions of the GNU General Public
++ * License. See the file COPYING in the main directory of this archive for
++ * more details.
++ */
++
++#ifndef _IMPACT_H
++#define _IMPACT_H
++
++/* IP22/IP28 have HQ3, IP30 has HQ4. */
++#if defined(CONFIG_SGI_IP22) || defined(CONFIG_SGI_IP28)
++#define SGI_INDIGO2 1
++#else
++#undef SGI_INDIGO2
++#endif
++
++/* Some fixed register values. */
++#ifndef SGI_INDIGO2
++ /* ImpactSR (HQ4) registers */
++ #define VAL_CFIFO_HW			0x47
++ #define VAL_CFIFO_LW			0x14
++ #define VAL_CFIFO_DELAY		0x64
++ #define VAL_DFIFO_HW			0x40
++ #define VAL_DFIFO_LW			0x10
++ #define VAL_DFIFO_DELAY		0
++ #define MSK_CFIFO_CNT			0xff
++ #define USEPOOLS			5
++ #define MMIO_FIXED			0x900000001c000000
++#else
++ /* Impact (HQ3) registers */
++ #define VAL_CFIFO_HW			0x20 /* 0x18 ? */
++ #define VAL_CFIFO_LW			0x14
++ #define VAL_CFIFO_DELAY		0x64
++ #define VAL_DFIFO_HW			0x28
++ #define VAL_DFIFO_LW			0x14
++ #define VAL_DFIFO_DELAY		0xfff
++ #define MSK_CFIFO_CNT			0x7f
++ #define USEPOOLS			4
++ #define MMIO_FIXED			0x900000001f000000
++#endif
++
++/* Convenient access macros */
++#define IMP_REG64(vma, off)		(*(volatile u64 *)((vma) + (off)))
++#define IMP_REG32(vma, off)		(*(volatile u32 *)((vma) + (off)))
++#define IMP_REG16(vma, off)		(*(volatile u16 *)((vma) + (off)))
++#define IMP_REG8(vma, off)		(*(volatile u8 *)((vma) + (off)))
++
++#ifndef SGI_INDIGO2
++ /* ImpactSR (HQ4) register offsets */
++ #define IMP_CFIFO(vma)			IMP_REG64(vma, 0x020400)
++ #define IMP_CFIFOW(vma)		IMP_REG32(vma, 0x020400)
++ #define IMP_CFIFOW1(vma)		IMP_REG32(vma, 0x020404)
++ #define IMP_CFIFOP(vma)		IMP_REG64(vma, 0x130400)
++ #define IMP_CFIFOPW(vma)		IMP_REG32(vma, 0x130400)
++ #define IMP_CFIFOPW1(vma)		IMP_REG32(vma, 0x130404)
++
++ #define IMP_STATUS(vma)		IMP_REG32(vma, 0x020000)
++ #define IMP_FIFOSTATUS(vma)		IMP_REG32(vma, 0x020008)
++ #define IMP_GIOSTATUS(vma)		IMP_REG32(vma, 0x020100)
++ #define IMP_DMABUSY(vma)		IMP_REG32(vma, 0x020200)
++
++ #define IMP_CFIFO_HW(vma)		IMP_REG32(vma, 0x040000)
++ #define IMP_CFIFO_LW(vma)		IMP_REG32(vma, 0x040008)
++ #define IMP_CFIFO_DELAY(vma)		IMP_REG32(vma, 0x040010)
++ #define IMP_DFIFO_HW(vma)		IMP_REG32(vma, 0x040020)
++ #define IMP_DFIFO_LW(vma)		IMP_REG32(vma, 0x040028)
++ #define IMP_DFIFO_DELAY(vma)		IMP_REG32(vma, 0x040030)
++
++ #define IMP_XMAP_OFF(off)		(0x71c00 + (off))
++ #define IMP_VC3_OFF(off)		(0x72000 + (off))
++ #define IMP_RSS_OFF(off)		(0x2c000 + (off))
++#else
++ /* Impact (HQ3) register offsets */
++ #define IMP_CFIFO(vma)			IMP_REG64(vma, 0x070080)
++ #define IMP_CFIFOW(vma)		IMP_REG32(vma, 0x070080)
++ #define IMP_CFIFOW1(vma)		IMP_REG32(vma, 0x070084)
++ #define IMP_CFIFOP(vma)		IMP_REG64(vma, 0x050080)
++ #define IMP_CFIFOPW(vma)		IMP_REG32(vma, 0x050080)
++ #define IMP_CFIFOPW1(vma)		IMP_REG32(vma, 0x050084)
++
++ #define IMP_STATUS(vma)		IMP_REG32(vma, 0x070000)
++ #define IMP_FIFOSTATUS(vma)		IMP_REG32(vma, 0x070004)
++ #define IMP_GIOSTATUS(vma)		IMP_REG32(vma, 0x070100)
++ #define IMP_DMABUSY(vma)		IMP_REG32(vma, 0x070104)
++
++ #define IMP_CFIFO_HW(vma)		IMP_REG32(vma, 0x050020)
++ #define IMP_CFIFO_LW(vma)		IMP_REG32(vma, 0x050024)
++ #define IMP_CFIFO_DELAY(vma)		IMP_REG32(vma, 0x050028)
++ #define IMP_DFIFO_HW(vma)		IMP_REG32(vma, 0x05002c)
++ #define IMP_DFIFO_LW(vma)		IMP_REG32(vma, 0x050030)
++ #define IMP_DFIFO_DELAY(vma)		IMP_REG32(vma, 0x050034)
++
++ #define IMP_XMAP_OFF(off)		(0x61c00 + (off))
++ #define IMP_VC3_OFF(off)		(0x62000 + (off))
++ #define IMP_RSS_OFF(off)		(0x7c000 + (off))
++#endif
++
++#define IMP_RESTATUS(vma)		IMP_REG32(vma, IMP_RSS_OFF(0x578))
++
++#define IMP_XMAP_PP1SELECT(vma)		IMP_REG8(vma, IMP_XMAP_OFF(0x008))
++#define IMP_XMAP_INDEX(vma)		IMP_REG8(vma, IMP_XMAP_OFF(0x088))
++#define IMP_XMAP_CONFIG(vma)		IMP_REG32(vma, IMP_XMAP_OFF(0x100))
++#define IMP_XMAP_CONFIGB(vma)		IMP_REG8(vma, IMP_XMAP_OFF(0x108))
++#define IMP_XMAP_BUF_SELECT(vma)	IMP_REG32(vma, IMP_XMAP_OFF(0x180))
++#define IMP_XMAP_MAIN_MODE(vma)		IMP_REG32(vma, IMP_XMAP_OFF(0x200))
++#define IMP_XMAP_OVERLAY_MODE(vma)	IMP_REG32(vma, IMP_XMAP_OFF(0x280))
++#define IMP_XMAP_DIB(vma)		IMP_REG32(vma, IMP_XMAP_OFF(0x300))
++#define IMP_XMAP_DIB_DW(vma)		IMP_REG32(vma, IMP_XMAP_OFF(0x340))
++#define IMP_XMAP_RE_RAC(vma)		IMP_REG32(vma, IMP_XMAP_OFF(0x380))
++
++#define IMP_VC3_INDEX(vma)		IMP_REG8(vma, IMP_VC3_OFF(0x008))
++#define IMP_VC3_INDEXDATA(vma)		IMP_REG32(vma, IMP_VC3_OFF(0x038))
++#define IMP_VC3_DATA(vma)		IMP_REG16(vma, IMP_VC3_OFF(0x0b0))
++#define IMP_VC3_RAM(vma)		IMP_REG16(vma, IMP_VC3_OFF(0x190))
++
++#define IMP_BDVERS0(vma)		IMP_REG8(vma, IMP_VC3_OFF(0x408))
++#define IMP_BDVERS1(vma)		IMP_REG8(vma, IMP_VC3_OFF(0x488))
++
++
++/* FIFO status */
++#ifdef SGI_INDIGO2
++  #define IMP_CFIFO_MAX		64
++#else
++  #define IMP_CFIFO_MAX		128
++#endif
++#define IMP_BFIFO_MAX		16
++
++
++/* Commands for CFIFO */
++#define IMP_CMD_WRITERSS(reg, val)				\
++	(((0x00180004L | ((reg) << 8)) << 32) | ((u32)(val) & 0xffffffff))
++
++#define IMP_CMD_EXECRSS(reg, val)				\
++	(((0x001c0004L | ((reg) << 8)) << 32) | ((u32)(val) & 0xffffffff))
++
++#define IMP_CMD_GLINE_XSTARTF(v)	IMP_CMD_WRITERSS(0x00c, v)
++#define IMP_CMD_IR_ALIAS(v)		IMP_CMD_EXECRSS(0x045, v)
++#define IMP_CMD_BLOCKXYSTARTI(x, y)	IMP_CMD_WRITERSS(0x046, ((x) << 16) | (y))
++#define IMP_CMD_BLOCKXYENDI(x, y)	IMP_CMD_WRITERSS(0x047, ((x) << 16) | (y))
++#define IMP_CMD_PACKEDCOLOR(v)		IMP_CMD_WRITERSS(0x05b, v)
++#define IMP_CMD_RED(v)			IMP_CMD_WRITERSS(0x05c, v)
++#define IMP_CMD_ALPHA(v)		IMP_CMD_WRITERSS(0x05f, v)
++#define IMP_CMD_CHAR(v)			IMP_CMD_EXECRSS(0x070, v)
++#define IMP_CMD_CHAR_H(v)		IMP_CMD_WRITERSS(0x070, v)
++#define IMP_CMD_CHAR_L(v)		IMP_CMD_EXECRSS(0x071, v)
++#define IMP_CMD_XFRCONTROL(v)		IMP_CMD_WRITERSS(0x102, v)
++#define IMP_CMD_FILLMODE(v)		IMP_CMD_WRITERSS(0x110, v)
++#define IMP_CMD_CONFIG(v)		IMP_CMD_WRITERSS(0x112, v)
++#define IMP_CMD_XYWIN(x, y)		IMP_CMD_WRITERSS(0x115, ((y) << 16) | (x))
++#define IMP_CMD_BKGRD_RG(v)		IMP_CMD_WRITERSS(0x140, ((v) << 8))
++#define IMP_CMD_BKGRD_BA(v)		IMP_CMD_WRITERSS(0x141, ((v) << 8))
++#define IMP_CMD_WINMODE(v)		IMP_CMD_WRITERSS(0x14f, v)
++#define IMP_CMD_XFRSIZE(x, y)		IMP_CMD_WRITERSS(0x153, ((y) << 16) | (x))
++#define IMP_CMD_XFRMASKLO(v)		IMP_CMD_WRITERSS(0x156, v)
++#define IMP_CMD_XFRMASKHI(v)		IMP_CMD_WRITERSS(0x157, v)
++#define IMP_CMD_XFRCOUNTERS(x, y)	IMP_CMD_WRITERSS(0x158, ((y) << 16) | (x))
++#define IMP_CMD_XFRMODE(v)		IMP_CMD_WRITERSS(0x159, v)
++#define IMP_CMD_RE_TOGGLECNTX(v)	IMP_CMD_WRITERSS(0x15f, v)
++#define IMP_CMD_PIXCMD(v)		IMP_CMD_WRITERSS(0x160, v)
++#define IMP_CMD_PP1FILLMODE(m, o)	IMP_CMD_WRITERSS(0x161, (m) | (o << 26))
++#define IMP_CMD_COLORMASKMSBS(v)	IMP_CMD_WRITERSS(0x162, v)
++#define IMP_CMD_COLORMASKLSBSA(v)	IMP_CMD_WRITERSS(0x163, v)
++#define IMP_CMD_COLORMASKLSBSB(v)	IMP_CMD_WRITERSS(0x164, v)
++#define IMP_CMD_BLENDFACTOR(v)		IMP_CMD_WRITERSS(0x165, v)
++#define IMP_CMD_DRBPOINTERS(v)		IMP_CMD_WRITERSS(0x16d, v)
++
++#define IMP_UNSIGNED(v)			((unsigned)(v) & 0xffffffff)
++
++#define	IMP_CMD_HQ_PIXELFORMAT(v)	(0x000c000400000000L | IMP_UNSIGNED(v))
++#define	IMP_CMD_HQ_SCANWIDTH(v)		(0x000a020400000000L | IMP_UNSIGNED(v))
++#define	IMP_CMD_HQ_DMATYPE(v)		(0x000a060400000000L | IMP_UNSIGNED(v))
++#define	IMP_CMD_HQ_PG_LIST_0(v)		(0x0008000400000000L | IMP_UNSIGNED(v))
++#define	IMP_CMD_HQ_PG_WIDTH(v)		(0x0008040400000000L | IMP_UNSIGNED(v))
++#define	IMP_CMD_HQ_PG_OFFSET(v)		(0x0008050400000000L | IMP_UNSIGNED(v))
++#define	IMP_CMD_HQ_PG_STARTADDR(v)	(0x0008060400000000L | IMP_UNSIGNED(v))
++#define	IMP_CMD_HQ_PG_LINECNT(v)	(0x0008070400000000L | IMP_UNSIGNED(v))
++#define	IMP_CMD_HQ_PG_WIDTHA(v)		(0x0008080400000000L | IMP_UNSIGNED(v))
++#define IMP_CMD_HQ_PGSIZE(v)		(0x00482a0400000000L | IMP_UNSIGNED(v))
++#define IMP_CMD_HQ_STACKPTR(v)		(0x00483a0400000000L | IMP_UNSIGNED(v))
++#define IMP_CMD_HQ_TXBASE(p)		(0x00482008 | ((p) << 9))
++
++#define IMP_CMD_HQ_DMACTRL_0(v)		(0x00080b04000000b1L | ((v) & 8))
++
++#define IMP_CMD_HQ_TXMAX(p, v)					\
++	(0x0048300400000000L | IMP_UNSIGNED(v) |		\
++	 ((unsigned long)(p) << 40))
++
++#define IMP_CMD_HQ_PGBITS(p, v)					\
++	(0x00482b0400000000L | IMP_UNSIGNED(v) |		\
++	 ((unsigned long)(p) << 40))
++
++#define IMP_CMD_HQ_484A(p, v)					\
++	((0x00484a0400000000L + ((unsigned long)(p) << 40)) |	\
++	 IMP_UNSIGNED(v))
++
++#define IMP_CMD_HQ_484B(p, v)					\
++	((0x00484b0400000000L + ((unsigned long)(p) << 40)) |	\
++	 IMP_UNSIGNED(v))
++
++/*
++ * Logic operations for the PP1:
++ *    - SI = source invert
++ *    - DI = dest invert
++ *    - RI = result invert
++ */
++#define IMP_LO_AND			0x01
++#define IMP_LO_SI_AND			0x04
++#define IMP_LO_DI_AND			0x02
++#define IMP_LO_RI_AND			0x0e
++
++#define IMP_LO_OR			0x07
++#define IMP_LO_SI_OR			0x0d
++#define IMP_LO_DI_OR			0x0b
++#define IMP_LO_RI_OR			0x08
++
++#define IMP_LO_XOR			0x06
++#define IMP_LO_RI_XOR			0x09
++
++#define IMP_LO_NOP			0x05
++#define IMP_LO_RI_NOP			0x0a
++
++#define IMP_LO_COPY			0x03
++#define IMP_LO_RI_COPY			0x0c
++
++#define IMP_LO_CLEAR			0x00
++#define IMP_LO_SET			0x0f
++
++/* Blending factors */
++#define IMP_BLEND_ALPHA			0x0704c900
++
++
++
++/*
++ * For the future.  These will replace the above
++ * macros to make the code look more C-like.
++ */
++/*
++static inline void ImpactCFifoCmd64(unsigned long vma, unsigned cmd,
++				    unsigned reg, unsigned val)
++{
++// #if (_MIPS_SZLONG == 64) see Xmd.h
++#if 1
++	IMP_CFIFO(vma) = (unsigned long long)(cmd | reg << 8) << 32 | val;
++#else
++	IMP_CFIFOW(vma) = cmd | reg << 8;
++	IMP_CFIFOW(vma) = val;
++#endif
++}
++
++static inline void ImpactCFifoPCmd32(unsigned long vma, unsigned cmd,
++				     unsigned reg)
++{
++	IMP_CFIFOPW(vma) = cmd | reg << 8;
++}
++
++static inline void ImpactCFifoPCmd32lo(unsigned long vma, unsigned cmd,
++				       unsigned reg)
++{
++	IMP_CFIFOPW1(vma) = cmd | reg << 8;
++}
++
++static inline void ImpactCmdWriteRss(unsigned long vma, unsigned reg,
++				     unsigned val)
++{
++	ImpactCFifoCmd64(vma, 0x00180004, reg, val);
++}
++
++static inline void ImpactCmdExecRss(unsigned long vma, unsigned reg,
++				    unsigned val)
++{
++	ImpactCFifoCmd64(vma, 0x001c0004, reg, val);
++}
++
++#define impact_cmd_gline_xstartf(a, v)		ImpactCmdWriteRss(a, 0x000c, v)
++#define impact_cmd_ir_alias(a, v)		ImpactCmdExecRss(a, 0x0045, v)
++#define impact_cmd_blockxystarti(a, x, y)	ImpactCmdWriteRss(a, 0x0046, (x) << 16 | (y))
++#define impact_cmd_blockxyendi(a, x, y)		ImpactCmdWriteRss(a, 0x0047, (x) << 16 | (y))
++#define impact_cmd_packedcolor(a, v)		ImpactCmdWriteRss(a, 0x005b, v)
++#define impact_cmd_red(a, v)			ImpactCmdWriteRss(a, 0x005c, v)
++#define impact_cmd_alpha(a, v)			ImpactCmdWriteRss(a, 0x005f, v)
++#define impact_cmd_char(a, v)			ImpactCmdExecRss(a, 0x0070, v)
++#define impact_cmd_char_h(a, v)			ImpactCmdWriteRss(a, 0x0070, v)
++#define impact_cmd_char_l(a, v)			ImpactCmdExecRss(a, 0x0071, v)
++#define impact_cmd_xfrcontrol(a, v)		ImpactCmdWriteRss(a, 0x0102, v)
++#define impact_cmd_fillmode(a, v)		ImpactCmdWriteRss(a, 0x0110, v)
++#define impact_cmd_config(a, v)			ImpactCmdWriteRss(a, 0x0112, v)
++#define impact_cmd_xywin(a, x, y)		ImpactCmdWriteRss(a, 0x0115, (y) << 16 | (x))
++#define impact_cmd_bkgrd_rg(a, v)		ImpactCmdWriteRss(a, 0x0140, (v) << 8)
++#define impact_cmd_bkgrd_ba(a, v)		ImpactCmdWriteRss(a, 0x0141, (v) << 8)
++#define impact_cmd_winmode(a, v)		ImpactCmdWriteRss(a, 0x014f, v)
++#define impact_cmd_xfrsize(a, x, y)		ImpactCmdWriteRss(a, 0x0153, (y) << 16 | (x))
++#define impact_cmd_xfrmasklo(a, v)		ImpactCmdWriteRss(a, 0x0156, v)
++#define impact_cmd_xfrmaskhi(a, v)		ImpactCmdWriteRss(a, 0x0157, v)
++#define impact_cmd_xfrcounters(a, x, y)		ImpactCmdWriteRss(a, 0x0158, (y) << 16 | (x))
++#define impact_cmd_xfrmode(a, v)		ImpactCmdWriteRss(a, 0x0159, v)
++#define impact_cmd_re_togglecntx(a, v)		ImpactCmdWriteRss(a, 0x015f, v)
++#define impact_cmd_pixcmd(a, v)			ImpactCmdWriteRss(a, 0x0160, v)
++#define impact_cmd_pp1fillmode(a, m, o)		ImpactCmdWriteRss(a, 0x0161, (m) | (o) << 26)
++#define impact_cmd_colormaskmsbs(a, v)		ImpactCmdWriteRss(a, 0x0162, v)
++#define impact_cmd_colormasklsbsa(a, v)		ImpactCmdWriteRss(a, 0x0163, v)
++#define impact_cmd_colormasklsbsb(a, v)		ImpactCmdWriteRss(a, 0x0164, v)
++#define impact_cmd_blendfactor(a, v)		ImpactCmdWriteRss(a, 0x0165, v)
++#define impact_cmd_drbpointers(a, v)		ImpactCmdWriteRss(a, 0x016d, v)
++
++#define	impact_cmd_hq_pixelformat(a, v)		ImpactCFifoCmd64(a, 0x000c0004, 0, v)
++#define	impact_cmd_hq_scanwidth(a, v)		ImpactCFifoCmd64(a, 0x000a0204, 0, v)
++#define	impact_cmd_hq_dmatype(a, v)		ImpactCFifoCmd64(a, 0x000a0604, 0, v)
++#define	impact_cmd_hq_pg_list_0(a, v)		ImpactCFifoCmd64(a, 0x00080004, 0, v)
++#define	impact_cmd_hq_pg_width(a, v)		ImpactCFifoCmd64(a, 0x00080404, 0, v)
++#define	impact_cmd_hq_pg_offset(a, v)		ImpactCFifoCmd64(a, 0x00080504, 0, v)
++#define	impact_cmd_hq_pg_startaddr(a, v)	ImpactCFifoCmd64(a, 0x00080604, 0, v)
++#define	impact_cmd_hq_pg_linecnt(a, v)		ImpactCFifoCmd64(a, 0x00080704, 0, v)
++#define	impact_cmd_hq_pg_widtha(a, v)		ImpactCFifoCmd64(a, 0x00080804, 0, v)
++#define	impact_cmd_hq_dmactrl_0(a, v)		ImpactCFifoCmd64(a, 0x00080b04, 0, 0xb1 | (v) & 8)
++
++#define impact_cmd_hq_txbase(a, p)		ImpactCFifoPCmd32lo(a, (0x00482008 | (p) << 9), 0)
++#define impact_cmd_hq_txmax(a, p, v)		ImpactCFifoPCmd64(a, (0x00483004 | (p) << 8), 0, v)
++#define impact_cmd_hq_pgbits(a, p, v)		ImpactCFifoPCmd64(a, (0x00482b04 + ((p) << 8)), 0, v)
++#define impact_cmd_hq_pgsize(a, v)		ImpactCFifoPCmd64(a, 0x00482a04, 0, v)
++#define impact_cmd_hq_stackptr(a, v)		ImpactCFifoPCmd64(a, 0x00483a04, 0, v)
++
++#define impact_cmd_hq_484A(a, p, v)		ImpactCFifoPCmd64(a, (0x00484a04 + ((p) << 8)), 0, v)
++#define impact_cmd_hq_484B(a, p, v)		ImpactCFifoPCmd64(a, (0x00484b04 + ((p) << 8)), 0, v)
++*/
++
++#endif /* _IMPACT_H */
