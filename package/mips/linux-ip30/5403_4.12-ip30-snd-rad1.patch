@@ -32,12 +32,12 @@ index 000000000000..3acbb6cd36f2
 +
 +#define RAD1_ADATRX	0
 +#define RAD1_AESRX	1
-+#define RAD1_ATOD	2
++#define RAD1_ADC	2
 +#define RAD1_ADATSUBRX	3
 +#define RAD1_AESSUBRX	4
 +#define RAD1_ADATTX	5
 +#define RAD1_AESTX	6
-+#define RAD1_DTOA	7
++#define RAD1_DAC	7
 +#define RAD1_STATUS	8
 +
 +struct rad1regs {
@@ -46,13 +46,13 @@ index 000000000000..3acbb6cd36f2
 +	u32 adat_rx_msc0_submsc; 	/* 0x00000008 */
 +	u32 aes_rx_msc_ust;	 	/* 0x0000000c */
 +	u32 aes_rx_msc0_submsc; 	/* 0x00000010 */
-+	u32 atod_msc_ust;		/* 0x00000014 */
-+	u32 atod_msc0_submsc; 		/* 0x00000018 */
++	u32 adc_msc_ust;		/* 0x00000014 */
++	u32 adc_msc0_submsc; 		/* 0x00000018 */
 +	u32 adat_tx_msc_ust; 		/* 0x0000001c */
 +	u32 adat_tx_msc0_submsc; 	/* 0x00000020 */
 +	u32 aes_tx_msc_ust; 		/* 0x00000024 */
 +	u32 aes_tx_msc0_submsc; 	/* 0x00000028 */
-+	u32 dtoa_msc_ust; 		/* 0x0000002c */
++	u32 dac_msc_ust; 		/* 0x0000002c */
 +	u32 ust_register; 		/* 0x00000030 */
 +	u32 gpio_status;		/* 0x00000034 */
 +	u32 chip_status1; 		/* 0x00000038 */
@@ -61,10 +61,10 @@ index 000000000000..3acbb6cd36f2
 +	u32 ust_clock_control; 		/* 0x00000040 */
 +	u32 adat_rx_control; 		/* 0x00000044 */
 +	u32 aes_rx_control;	 	/* 0x00000048 */
-+	u32 atod_control; 		/* 0x0000004c */
++	u32 adc_control; 		/* 0x0000004c */
 +	u32 adat_tx_control; 		/* 0x00000050 */
 +	u32 aes_tx_control; 		/* 0x00000054 */
-+	u32 dtoa_control; 		/* 0x00000058 */
++	u32 dac_control; 		/* 0x00000058 */
 +	u32 status_timer; 		/* 0x0000005c */
 +
 +	u32 _pad70[4];
@@ -178,7 +178,7 @@ new file mode 100644
 index 000000000000..9536df300865
 --- /dev/null
 +++ b/sound/pci/rad1.c
-@@ -0,0 +1,1528 @@
+@@ -0,0 +1,1527 @@
 +/*
 + * rad1.c - ALSA driver for SGI RAD1 (as found in Octane and Octane2)
 + * Copyright (C) 2004-2007 by Stanislaw Skowronek <skylark@unaligned.org>
@@ -241,7 +241,7 @@ index 000000000000..9536df300865
 +
 +	/* card controls */
 +	unsigned int attctrl;		/* Attenuation control */
-+	unsigned int rt_atod;		/* AtoD routing */
++	unsigned int rt_adc;		/* AtoD routing */
 +	unsigned int rt_aesr;		/* AES Rx routing */
 +	unsigned int rt_adat;		/* ADAT Rx routing */
 +	unsigned int rt_opto;		/* Optical Out routing */
@@ -279,11 +279,11 @@ index 000000000000..9536df300865
 +
 +	/* I/O routing */
 +	/* Mike 03000000; LineIn 05000000 */
-+	mmio->atod_control =		0x03000000;
-+	chip->rt_atod =			0x03000000;
++	mmio->adc_control =		0x03000000;
++	chip->rt_adc =			0x03000000;
 +
 +	/* Default */
-+	mmio->dtoa_control =		0x20000000;
++	mmio->dac_control =		0x20000000;
 +
 +	/* Optical In 00000018; AES In 00000010 */
 +	mmio->aes_rx_control =		0x00000018;
@@ -381,11 +381,11 @@ index 000000000000..9536df300865
 +		pipe->adma = adma;
 +
 +		switch (pidx) {
-+		case RAD1_ATOD:
-+			mmio->atod_control = (chip->rt_atod | adma);
++		case RAD1_ADC:
++			mmio->adc_control = (chip->rt_adc | adma);
 +			break;
-+		case RAD1_DTOA:
-+			mmio->dtoa_control = (0x20000000 | adma);
++		case RAD1_DAC:
++			mmio->dac_control = (0x20000000 | adma);
 +			break;
 +		case RAD1_AESRX:
 +			mmio->aes_rx_control = (chip->rt_aesr | adma);
@@ -431,13 +431,13 @@ index 000000000000..9536df300865
 +	struct snd_rad1 *chip = (struct snd_rad1 *)chip_virt;
 +	int adma = 0;
 +
-+	if (chip->pipes[RAD1_ATOD].adma) {
-+		snd_rad1_poll_pipe(chip, RAD1_ATOD, 0);
++	if (chip->pipes[RAD1_ADC].adma) {
++		snd_rad1_poll_pipe(chip, RAD1_ADC, 0);
 +		adma = 1;
 +	}
 +
-+	if (chip->pipes[RAD1_DTOA].adma) {
-+		snd_rad1_poll_pipe(chip, RAD1_DTOA, 1);
++	if (chip->pipes[RAD1_DAC].adma) {
++		snd_rad1_poll_pipe(chip, RAD1_DAC, 1);
 +		adma = 1;
 +	}
 +
@@ -496,8 +496,7 @@ index 000000000000..9536df300865
 +snd_rad1_red_frac(long *n, long *d, long max)
 +{
 +	long gcd = snd_rad1_gcd(*n, *d);
-+
-+	if (unlikely(!gcd))
++	if (!gcd)
 +		return;
 +
 +	*n /= gcd;
@@ -627,10 +626,10 @@ index 000000000000..9536df300865
 +static inline void
 +snd_rad1_setrate_pipe(struct snd_rad1 *chip, int pidx, int rate)
 +{
-+	if (pidx == RAD1_ATOD)
++	if (pidx == RAD1_ADC)
 +		snd_rad1_set_cgms(chip, 0, rate);
 +
-+	if (pidx == RAD1_DTOA)
++	if (pidx == RAD1_DAC)
 +		snd_rad1_set_cgms(chip, 1, rate);
 +
 +	if (pidx == RAD1_AESTX) {
@@ -736,9 +735,9 @@ index 000000000000..9536df300865
 +
 +
 +/* ----------------------------------------------------------------------- */
-+/* ATOD pipe */
++/* ADC pipe */
 +static struct snd_pcm_hardware
-+snd_rad1_atod_hw = {
++snd_rad1_adc_hw = {
 +	.info			= (SNDRV_PCM_INFO_INTERLEAVED |
 +	                           SNDRV_PCM_INFO_MMAP |
 +	                           SNDRV_PCM_INFO_MMAP_VALID |
@@ -747,7 +746,7 @@ index 000000000000..9536df300865
 +	                           SNDRV_PCM_RATE_32000 |
 +	                           SNDRV_PCM_RATE_44100 |
 +	                           SNDRV_PCM_RATE_48000),
-+	.formats		= SNDRV_PCM_FMTBIT_S24_BE,
++	.formats		= SNDRV_PCM_FMTBIT_S24_LE,
 +	.rate_min		= 32000,
 +	.rate_max		= 48000,
 +	.channels_min		= 2,
@@ -760,27 +759,27 @@ index 000000000000..9536df300865
 +};
 +
 +static int
-+snd_rad1_atod_open(struct snd_pcm_substream *substream)
++snd_rad1_adc_open(struct snd_pcm_substream *substream)
 +{
 +	struct snd_pcm_runtime *runtime = substream->runtime;
 +
-+	runtime->hw = snd_rad1_atod_hw;
++	runtime->hw = snd_rad1_adc_hw;
 +
 +	return 0;
 +}
 +
 +static int
-+snd_rad1_atod_close(struct snd_pcm_substream *substream)
++snd_rad1_adc_close(struct snd_pcm_substream *substream)
 +{
 +	struct snd_rad1 *chip = snd_pcm_substream_chip(substream);
 +
-+	snd_rad1_run_pipe(chip, RAD1_ATOD, 0);
++	snd_rad1_run_pipe(chip, RAD1_ADC, 0);
 +
 +	return 0;
 +}
 +
 +static int
-+snd_rad1_atod_params(struct snd_pcm_substream *substream,
++snd_rad1_adc_params(struct snd_pcm_substream *substream,
 +                     struct snd_pcm_hw_params *hw_params)
 +{
 +	return snd_pcm_lib_malloc_pages(substream,
@@ -788,62 +787,62 @@ index 000000000000..9536df300865
 +}
 +
 +static int
-+snd_rad1_atod_free(struct snd_pcm_substream *substream)
++snd_rad1_adc_free(struct snd_pcm_substream *substream)
 +{
-+	return snd_rad1_free_pipe(substream, RAD1_ATOD);
++	return snd_rad1_free_pipe(substream, RAD1_ADC);
 +}
 +
 +static int
-+snd_rad1_atod_prepare(struct snd_pcm_substream *substream)
++snd_rad1_adc_prepare(struct snd_pcm_substream *substream)
 +{
-+	return snd_rad1_prepare_pipe(substream, RAD1_ATOD);
++	return snd_rad1_prepare_pipe(substream, RAD1_ADC);
 +}
 +
 +static int
-+snd_rad1_atod_trigger(struct snd_pcm_substream *substream, int cmd)
++snd_rad1_adc_trigger(struct snd_pcm_substream *substream, int cmd)
 +{
-+	return snd_rad1_trigger_pipe(substream, RAD1_ATOD, cmd);
++	return snd_rad1_trigger_pipe(substream, RAD1_ADC, cmd);
 +}
 +
 +static snd_pcm_uframes_t
-+snd_rad1_atod_ptr(struct snd_pcm_substream *substream)
++snd_rad1_adc_ptr(struct snd_pcm_substream *substream)
 +{
-+	return snd_rad1_ptr_pipe(substream, RAD1_ATOD);
++	return snd_rad1_ptr_pipe(substream, RAD1_ADC);
 +}
 +
 +static struct snd_pcm_ops
-+snd_rad1_atod_ops = {
-+	.open = snd_rad1_atod_open,
-+	.close = snd_rad1_atod_close,
-+	.hw_params = snd_rad1_atod_params,
-+	.hw_free = snd_rad1_atod_free,
-+	.prepare = snd_rad1_atod_prepare,
-+	.trigger = snd_rad1_atod_trigger,
-+	.pointer = snd_rad1_atod_ptr,
++snd_rad1_adc_ops = {
++	.open = snd_rad1_adc_open,
++	.close = snd_rad1_adc_close,
++	.hw_params = snd_rad1_adc_params,
++	.hw_free = snd_rad1_adc_free,
++	.prepare = snd_rad1_adc_prepare,
++	.trigger = snd_rad1_adc_trigger,
++	.pointer = snd_rad1_adc_ptr,
 +	.ioctl = snd_pcm_lib_ioctl,
 +};
 +
 +static void
-+snd_rad1_atod_pcm_free(struct snd_pcm *pcm)
++snd_rad1_adc_pcm_free(struct snd_pcm *pcm)
 +{
 +	snd_pcm_lib_preallocate_free_for_all(pcm);
 +}
 +
 +static int
-+snd_rad1_new_atod(struct snd_rad1 *chip, int dev)
++snd_rad1_new_adc(struct snd_rad1 *chip, int dev)
 +{
 +	struct snd_pcm *pcm;
 +	int err;
 +
 +	err = snd_pcm_new(chip->card, "RAD1 ADC", dev, 0, 1, &pcm);
-+	if (unlikely(err < 0))
++	if (err < 0)
 +		return err;
 +
 +	pcm->private_data = chip;
-+	pcm->private_free = snd_rad1_atod_pcm_free;
++	pcm->private_free = snd_rad1_adc_pcm_free;
 +	strlcpy(pcm->name, "RAD1 ADC", sizeof(pcm->name));
-+	chip->pipes[RAD1_ATOD].pcm = pcm;
-+	snd_pcm_set_ops(pcm, SNDRV_PCM_STREAM_CAPTURE, &snd_rad1_atod_ops);
++	chip->pipes[RAD1_ADC].pcm = pcm;
++	snd_pcm_set_ops(pcm, SNDRV_PCM_STREAM_CAPTURE, &snd_rad1_adc_ops);
 +	snd_pcm_lib_preallocate_pages_for_all(pcm, SNDRV_DMA_TYPE_DEV,
 +	                                      snd_dma_pci_data(chip->pci),
 +	                                      65536, 65536);
@@ -855,9 +854,9 @@ index 000000000000..9536df300865
 +
 +
 +/* ----------------------------------------------------------------------- */
-+/* DTOA pipe */
++/* DAC pipe */
 +static struct
-+snd_pcm_hardware snd_rad1_dtoa_hw = {
++snd_pcm_hardware snd_rad1_dac_hw = {
 +	.info			= (SNDRV_PCM_INFO_INTERLEAVED |
 +	                           SNDRV_PCM_INFO_MMAP |
 +	                           SNDRV_PCM_INFO_MMAP_VALID |
@@ -866,7 +865,7 @@ index 000000000000..9536df300865
 +	                           SNDRV_PCM_RATE_32000 |
 +	                           SNDRV_PCM_RATE_44100 |
 +	                           SNDRV_PCM_RATE_48000),
-+	.formats		= SNDRV_PCM_FMTBIT_S24_BE,
++	.formats		= SNDRV_PCM_FMTBIT_S24_LE,
 +	.rate_min		= 32000,
 +	.rate_max		= 48000,
 +	.channels_min		= 2,
@@ -879,27 +878,27 @@ index 000000000000..9536df300865
 +};
 +
 +static int
-+snd_rad1_dtoa_open(struct snd_pcm_substream *substream)
++snd_rad1_dac_open(struct snd_pcm_substream *substream)
 +{
 +	struct snd_pcm_runtime *runtime = substream->runtime;
 +
-+	runtime->hw = snd_rad1_dtoa_hw;
++	runtime->hw = snd_rad1_dac_hw;
 +
 +	return 0;
 +}
 +
 +static int
-+snd_rad1_dtoa_close(struct snd_pcm_substream *substream)
++snd_rad1_dac_close(struct snd_pcm_substream *substream)
 +{
 +	struct snd_rad1 *chip = snd_pcm_substream_chip(substream);
 +
-+	snd_rad1_run_pipe(chip, RAD1_DTOA, 0);
++	snd_rad1_run_pipe(chip, RAD1_DAC, 0);
 +
 +	return 0;
 +}
 +
 +static int
-+snd_rad1_dtoa_params(struct snd_pcm_substream *substream,
++snd_rad1_dac_params(struct snd_pcm_substream *substream,
 +                     struct snd_pcm_hw_params *hw_params)
 +{
 +	return snd_pcm_lib_malloc_pages(substream,
@@ -907,62 +906,62 @@ index 000000000000..9536df300865
 +}
 +
 +static int
-+snd_rad1_dtoa_free(struct snd_pcm_substream *substream)
++snd_rad1_dac_free(struct snd_pcm_substream *substream)
 +{
-+	return snd_rad1_free_pipe(substream, RAD1_DTOA);
++	return snd_rad1_free_pipe(substream, RAD1_DAC);
 +}
 +
 +static int
-+snd_rad1_dtoa_prepare(struct snd_pcm_substream *substream)
++snd_rad1_dac_prepare(struct snd_pcm_substream *substream)
 +{
-+	return snd_rad1_prepare_pipe(substream, RAD1_DTOA);
++	return snd_rad1_prepare_pipe(substream, RAD1_DAC);
 +}
 +
 +static int
-+snd_rad1_dtoa_trigger(struct snd_pcm_substream *substream, int cmd)
++snd_rad1_dac_trigger(struct snd_pcm_substream *substream, int cmd)
 +{
-+	return snd_rad1_trigger_pipe(substream, RAD1_DTOA, cmd);
++	return snd_rad1_trigger_pipe(substream, RAD1_DAC, cmd);
 +}
 +
 +static snd_pcm_uframes_t
-+snd_rad1_dtoa_ptr(struct snd_pcm_substream *substream)
++snd_rad1_dac_ptr(struct snd_pcm_substream *substream)
 +{
-+	return snd_rad1_ptr_pipe(substream, RAD1_DTOA);
++	return snd_rad1_ptr_pipe(substream, RAD1_DAC);
 +}
 +
 +static struct snd_pcm_ops
-+snd_rad1_dtoa_ops = {
-+	.open = snd_rad1_dtoa_open,
-+	.close = snd_rad1_dtoa_close,
-+	.hw_params = snd_rad1_dtoa_params,
-+	.hw_free = snd_rad1_dtoa_free,
-+	.prepare = snd_rad1_dtoa_prepare,
-+	.trigger = snd_rad1_dtoa_trigger,
-+	.pointer = snd_rad1_dtoa_ptr,
++snd_rad1_dac_ops = {
++	.open = snd_rad1_dac_open,
++	.close = snd_rad1_dac_close,
++	.hw_params = snd_rad1_dac_params,
++	.hw_free = snd_rad1_dac_free,
++	.prepare = snd_rad1_dac_prepare,
++	.trigger = snd_rad1_dac_trigger,
++	.pointer = snd_rad1_dac_ptr,
 +	.ioctl = snd_pcm_lib_ioctl,
 +};
 +
 +static void
-+snd_rad1_dtoa_pcm_free(struct snd_pcm *pcm)
++snd_rad1_dac_pcm_free(struct snd_pcm *pcm)
 +{
 +	snd_pcm_lib_preallocate_free_for_all(pcm);
 +}
 +
 +static int
-+snd_rad1_new_dtoa(struct snd_rad1 *chip, int dev)
++snd_rad1_new_dac(struct snd_rad1 *chip, int dev)
 +{
 +	struct snd_pcm *pcm;
 +	int err;
 +
 +	err = snd_pcm_new(chip->card, "RAD1 DAC", dev, 1, 0, &pcm);
-+	if (unlikely(err < 0))
++	if (err < 0)
 +		return err;
 +
 +	pcm->private_data = chip;
-+	pcm->private_free = snd_rad1_dtoa_pcm_free;
++	pcm->private_free = snd_rad1_dac_pcm_free;
 +	strlcpy(pcm->name, "RAD1 DAC", sizeof(pcm->name));
-+	chip->pipes[RAD1_DTOA].pcm = pcm;
-+	snd_pcm_set_ops(pcm, SNDRV_PCM_STREAM_PLAYBACK, &snd_rad1_dtoa_ops);
++	chip->pipes[RAD1_DAC].pcm = pcm;
++	snd_pcm_set_ops(pcm, SNDRV_PCM_STREAM_PLAYBACK, &snd_rad1_dac_ops);
 +	snd_pcm_lib_preallocate_pages_for_all(pcm, SNDRV_DMA_TYPE_DEV,
 +	                                      snd_dma_pci_data(chip->pci),
 +	                                      65536, 65536);
@@ -984,7 +983,7 @@ index 000000000000..9536df300865
 +	.rates			= (SNDRV_PCM_RATE_32000 |
 +	                           SNDRV_PCM_RATE_44100 |
 +	                           SNDRV_PCM_RATE_48000),
-+	.formats		= SNDRV_PCM_FMTBIT_S24_BE,
++	.formats		= SNDRV_PCM_FMTBIT_S24_LE,
 +	.rate_min		= 32000,
 +	.rate_max		= 48000,
 +	.channels_min		= 2,
@@ -1075,7 +1074,7 @@ index 000000000000..9536df300865
 +	int err;
 +
 +	err = snd_pcm_new(chip->card, "RAD1 AES Rx", dev, 0, 1, &pcm);
-+	if (unlikely(err < 0))
++	if (err < 0)
 +		return err;
 +
 +	pcm->private_data = chip;
@@ -1105,7 +1104,7 @@ index 000000000000..9536df300865
 +	.rates			= (SNDRV_PCM_RATE_32000 |
 +	                           SNDRV_PCM_RATE_44100 |
 +	                           SNDRV_PCM_RATE_48000),
-+	.formats		= SNDRV_PCM_FMTBIT_S24_BE,
++	.formats		= SNDRV_PCM_FMTBIT_S24_LE,
 +	.rate_min		= 32000,
 +	.rate_max		= 48000,
 +	.channels_min		= 2,
@@ -1194,7 +1193,7 @@ index 000000000000..9536df300865
 +	int err;
 +
 +	err = snd_pcm_new(chip->card, "RAD1 AES Tx", dev, 1, 0, &pcm);
-+	if (unlikely(err < 0))
++	if (err < 0)
 +		return err;
 +
 +	pcm->private_data = chip;
@@ -1427,7 +1426,7 @@ index 000000000000..9536df300865
 +	unsigned long flags;
 +
 +	spin_lock_irqsave(&chip->lock, flags);
-+	if (chip->rt_atod == 0x05000000)
++	if (chip->rt_adc == 0x05000000)
 +		u->value.enumerated.item[0] = 1;
 +	else
 +		u->value.enumerated.item[0] = 0;
@@ -1445,19 +1444,19 @@ index 000000000000..9536df300865
 +	int change = 0;
 +
 +	spin_lock_irqsave(&chip->lock, flags);
-+	if (u->value.enumerated.item[0] && (chip->rt_atod != 0x05000000))
++	if (u->value.enumerated.item[0] && (chip->rt_adc != 0x05000000))
 +		change = 1;
 +
-+	if (!u->value.enumerated.item[0] && (chip->rt_atod == 0x05000000))
++	if (!u->value.enumerated.item[0] && (chip->rt_adc == 0x05000000))
 +		change = 1;
 +
 +	if (change) {
 +		if (u->value.enumerated.item[0])
-+			chip->rt_atod = 0x05000000;
++			chip->rt_adc = 0x05000000;
 +		else
-+			chip->rt_atod = 0x03000000;
-+		chip->mmio->atod_control = (chip->rt_atod |
-+		                            chip->pipes[RAD1_ATOD].adma);
++			chip->rt_adc = 0x03000000;
++		chip->mmio->adc_control = (chip->rt_adc |
++		                            chip->pipes[RAD1_ADC].adma);
 +	}
 +	spin_unlock_irqrestore(&chip->lock, flags);
 +
@@ -1518,7 +1517,7 @@ index 000000000000..9536df300865
 +	for (idx = 0; idx < 5; idx++) {
 +		err = snd_ctl_add(chip->card,
 +		                  snd_ctl_new1(&snd_rad1_controls[idx], chip));
-+		if (unlikely(err < 0))
++		if (err < 0)
 +			return err;
 +	}
 +
@@ -1563,17 +1562,17 @@ index 000000000000..9536df300865
 +
 +	*rchip = NULL;
 +
-+	if (unlikely(pci_enable_device(pci)))
++	if (pci_enable_device(pci))
 +		goto out;
 +
-+	if (unlikely(pci_request_regions(pci, "rad1")))
++	if (pci_request_regions(pci, "rad1"))
 +		goto out_disable_dev;
 +
 +	pci_write_config_byte(pci, PCI_LATENCY_TIMER, 64);
 +	pci_set_master(pci);
 +
 +	chip = kzalloc(sizeof(struct snd_rad1), GFP_KERNEL);
-+	if (unlikely(!chip)) {
++	if (!chip) {
 +		error = -ENOMEM;
 +		goto out_rel_region;
 +	}
@@ -1628,20 +1627,20 @@ index 000000000000..9536df300865
 +	struct snd_rad1 *chip;
 +	int err;
 +
-+	if (unlikely(ndev >= SNDRV_CARDS))
++	if (ndev >= SNDRV_CARDS)
 +		return -ENODEV;
 +
-+	if (unlikely(!enable[ndev])) {
++	if (!enable[ndev]) {
 +		ndev++;
 +		return -ENOENT;
 +	}
 +
 +	err = snd_card_new(&pci->dev, index[ndev], id[ndev], THIS_MODULE, 0, &card);
-+	if (unlikely(err < 0))
++	if (err < 0)
 +		return err;
 +
 +	err = snd_rad1_create(card, pci, &chip);
-+	if (unlikely(err < 0)) {
++	if (err < 0) {
 +		snd_card_free(card);
 +		return err;
 +	}
@@ -1652,14 +1651,14 @@ index 000000000000..9536df300865
 +	         "SGI RAD Audio at 0x%lx", chip->mmio_phys);
 +
 +	/* create pipes */
-+	snd_rad1_new_dtoa(chip, 0);
-+	snd_rad1_new_atod(chip, 1);
++	snd_rad1_new_dac(chip, 0);
++	snd_rad1_new_adc(chip, 1);
 +	snd_rad1_new_aestx(chip, 2);
 +	snd_rad1_new_aesrx(chip, 3);
 +	snd_rad1_add_controls(chip);
 +
 +	err = snd_card_register(card);
-+	if (unlikely(err < 0)) {
++	if (err < 0) {
 +		snd_card_free(card);
 +		return err;
 +	}
@@ -1700,10 +1699,10 @@ index 000000000000..9536df300865
 +}
 +
 +MODULE_AUTHOR("Stanislaw Skowronek <skylark@unaligned.org>");
-+MODULE_AUTHOR("Rene Rebe <rene@exactcode.de");
++MODULE_AUTHOR("René Rebe <rene@exactcode.de");
 +MODULE_DESCRIPTION("SGI Octane (IP30) RAD1 ALSA driver");
 +MODULE_LICENSE("GPL");
-+MODULE_VERSION("0.42.2");
++MODULE_VERSION("0.42.3");
 +
 +module_init(alsa_card_rad1_init)
 +module_exit(alsa_card_rad1_exit)
