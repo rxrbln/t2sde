@@ -1,0 +1,380 @@
+#! /bin/sh /usr/share/dpatch/dpatch-run
+## 12_ELF64_on_M32.dpatch by  <jblache@debian.org>
+##
+## All lines beginning with `## DP:' are a description of the patch.
+## DP: Add support for loading ELF64 kernels on 32bit PROMs.
+## DP: (some code shamelessly stolen from arcboot)
+
+@DPATCH@
+diff -urNad arcload-0.5~/loader/main.c arcload-0.5/loader/main.c
+--- arcload-0.5~/loader/main.c	2007-09-11 16:17:27.000000000 +0000
++++ arcload-0.5/loader/main.c	2007-09-11 16:18:32.000000000 +0000
+@@ -30,6 +30,17 @@
+ // malloc pool size
+ #define ARENA		1048576
+ 
++
++typedef union {
++	unsigned char e_ident[EI_NIDENT];
++	Elf32_Ehdr e32;
++	Elf64_Ehdr e64;
++} Elf_Ehdr;
++
++#ifdef M32
++INT is_elf64 = 1;
++#endif
++
+ INT checkmemmap(ULONG elf_start, ULONG elf_size)
+ {
+ 	MEMORYDESCRIPTOR *md;
+@@ -84,84 +95,112 @@
+ #endif
+ }
+ 
+-ULONG load_elf(CHAR *fname)
+-{
+-	BDEV file;
++
+ #ifdef M32
+-	Elf32_Ehdr hdr;
++Elf64_Addr load_elf32(Elf32_Ehdr *hdr, BDEV *file)
++{
+ 	Elf32_Phdr ph[N_PHDR];
+-	ULONG elf_ehdr_size = sizeof(Elf32_Ehdr);
+-	ULONG elf_phdr_size = sizeof(Elf32_Phdr);
+-#else
+-	Elf64_Ehdr hdr;
+-	Elf64_Phdr ph[N_PHDR];
+-	ULONG elf_ehdr_size = sizeof(Elf64_Ehdr);
+-	ULONG elf_phdr_size = sizeof(Elf64_Phdr);
+-#endif
+ 	INT i, j, nph = 0;
+ 	ULONG left, pos;
+ 	UCHAR *ptr;
+ 
+-	/* Open */
+-	if(bopen(&file, fname)) {
+-		printf("Opening %s failed.\n\r", fname);
++	/* Not Relocatable? */
++	if(hdr->e_type != ET_EXEC) {
++		printf("ELF file is not executable.\n\r");
++		printf("Relocatable files are not supported, sorry.\n\r");
+ 		return 0;
+ 	}
+ 
+-	printf("Loading %s...\n\r", fname);
+-
+-	/* Read ELF Header */
+-	if(bread(&file, elf_ehdr_size, &hdr)<0) {
+-		printf("Error reading ELF header.\n\r");
+-		goto close;
++	/* Does the ELF have any Program Headers? */
++	if(hdr->e_phnum == 0) {
++		printf("ELF file contains no Program Headers.\n\r");
++		return 0;
+ 	}
+ 
+-	/* Is is an ELF binary? */
+-	if((hdr.e_ident[0] != 0x7f) || 
+-	   (hdr.e_ident[1] != 'E')  || 
+-	   (hdr.e_ident[2] != 'L')  ||
+-	   (hdr.e_ident[3] != 'F'))
+-	{
+-		printf("ELF magic invalid.\n\r");
+-		goto close;
++	/* Save LOAD headers */
++	for(i = 0; i < hdr->e_phnum; i++) {
++		bseek(file, (hdr->e_phoff + (i * hdr->e_phentsize)));
++		if(bread(file, sizeof(Elf32_Phdr), ph+nph)<0) {
++			printf("Can't read program header %u at 0x%x!\n\r", i, hdr->e_phoff + (i * hdr->e_phentsize));
++			return 0;
++		}
++
++		if(ph[nph].p_type != PT_LOAD)
++			continue;
++
++		nph++;
++		if(nph>=N_PHDR) {
++			printf("ELF file has too many LOAD headers (over N_PHDR).\n\r");
++			return 0;
++		}
+ 	}
+ 
+-	/* 32 or 64 bit? */
+-#ifdef M32
+-	if(hdr.e_ident[EI_CLASS] != ELFCLASS32) {
+-		printf("ELF file is not 32-bit.\n\r");
+-#else
+-	if(hdr.e_ident[EI_CLASS] != ELFCLASS64) {
+-		printf("ELF file is not 64-bit.\n\r");
+-#endif
+-		goto close;
++	/* Was a LOAD header found? */
++	if(!nph) {
++		printf("ELF file contains no LOAD header.\n\r");
++		return 0;
+ 	}
+ 
+-	/* Big Endian? */
+-	if(hdr.e_ident[EI_DATA] != ELFDATA2MSB) {
+-		printf("ELF file is not big-endian.\n\r");
+-		goto close;
++	/* Realize LOAD headers */
++	for(i = 0; i < nph; i++) {
++		/* Check the Memory Map */
++		if(checkmemmap(vtophys(ph[i].p_vaddr), ph[i].p_memsz)) {
++			printf("File can't be loaded into current memory map.\n\r");
++			return 0;
++		}
++
++		/* Load the ELF into memory */
++		printf("Reading %u bytes... ", (ULONG)ph[i].p_filesz);
++		left = ph[i].p_filesz;
++		pos = 0;
++		ptr = (UCHAR *)ph[i].p_vaddr;
++		bseek(file, ph[i].p_offset);
++		while(left > 0) {
++			j = ((left > READBLOCK) ? READBLOCK : left);
++			if(bread(file, j, ptr)<0) {
++				printf("failed at %u!\n\r", (ULONG)pos);
++				return 0;
++			}
++			left -= j;
++			ptr += j;
++			pos += j;
++		}
++		printf("OK.\n\r");
++		ptr = (UCHAR *)(ph[i].p_vaddr + ph[i].p_filesz);
++		for(pos = ph[i].p_filesz; pos < ph[i].p_memsz; pos++)
++			*(ptr++) = 0;
+ 	}
+ 
++	return (Elf64_Addr) hdr->e_entry;
++}
++#endif /* M32 */
++
++Elf64_Addr load_elf64(Elf64_Ehdr *hdr, BDEV *file)
++{
++	Elf64_Phdr ph[N_PHDR];
++	INT i, j, nph = 0;
++	ULONG left, pos;
++	UCHAR *ptr;
++
+ 	/* Not Relocatable? */
+-	if(hdr.e_ident[EI_DATA] != ET_EXEC) {
++	if(hdr->e_type != ET_EXEC) {
+ 		printf("ELF file is not executable.\n\r");
+ 		printf("Relocatable files are not supported, sorry.\n\r");
+-		goto close;
++		return 0;
+ 	}
+ 
+ 	/* Does the ELF have any Program Headers? */
+-	if(hdr.e_phnum == 0) {
++	if(hdr->e_phnum == 0) {
+ 		printf("ELF file contains no Program Headers.\n\r");
+-		goto close;
++		return 0;
+ 	}
+ 
+ 	/* Save LOAD headers */
+-	for(i = 0; i < hdr.e_phnum; i++) {
+-		bseek(&file, (hdr.e_phoff + (i * hdr.e_phentsize)));
+-		if(bread(&file, elf_phdr_size, ph+nph)<0) {
+-			printf("Can't read program header %u at 0x%x!\n\r", i, hdr.e_phoff + (i * hdr.e_phentsize));
+-			goto close;
++	for(i = 0; i < hdr->e_phnum; i++) {
++		bseek(file, (hdr->e_phoff + (i * hdr->e_phentsize)));
++		if(bread(file, sizeof(Elf64_Phdr), ph+nph)<0) {
++			printf("Can't read program header %u at 0x%x!\n\r", i, hdr->e_phoff + (i * hdr->e_phentsize));
++			return 0;
+ 		}
+ 
+ 		if(ph[nph].p_type != PT_LOAD)
+@@ -170,14 +209,14 @@
+ 		nph++;
+ 		if(nph>=N_PHDR) {
+ 			printf("ELF file has too many LOAD headers (over N_PHDR).\n\r");
+-			goto close;
++			return 0;
+ 		}
+ 	}
+ 
+ 	/* Was a LOAD header found? */
+ 	if(!nph) {
+ 		printf("ELF file contains no LOAD header.\n\r");
+-		goto close;
++		return 0;
+ 	}
+ 
+ 	/* Realize LOAD headers */
+@@ -185,34 +224,96 @@
+ 		/* Check the Memory Map */
+ 		if(checkmemmap(vtophys(ph[i].p_vaddr), ph[i].p_memsz)) {
+ 			printf("File can't be loaded into current memory map.\n\r");
+-			goto close;
++			return 0;
+ 		}
+ 
+ 		/* Load the ELF into memory */
+ 		printf("Reading %u bytes... ", (ULONG)ph[i].p_filesz);
+ 		left = ph[i].p_filesz;
+ 		pos = 0;
++#ifdef M32
++		ptr = (UCHAR *)(Elf32_Addr)ph[i].p_vaddr;
++#else
+ 		ptr = (UCHAR *)ph[i].p_vaddr;
+-		bseek(&file, ph[i].p_offset);
++#endif
++		bseek(file, ph[i].p_offset);
+ 		while(left > 0) {
+ 			j = ((left > READBLOCK) ? READBLOCK : left);
+-			if(bread(&file, j, ptr)<0) {
++			if(bread(file, j, ptr)<0) {
+ 				printf("failed at %u!\n\r", (ULONG)pos);
+-				goto close;
++				return 0;
+ 			}
+ 			left -= j;
+ 			ptr += j;
+ 			pos += j;
+ 		}
+ 		printf("OK.\n\r");
++#ifdef M32
++		ptr = (UCHAR *)(Elf32_Addr)(ph[i].p_vaddr + ph[i].p_filesz);
++#else
+ 		ptr = (UCHAR *)(ph[i].p_vaddr + ph[i].p_filesz);
++#endif
+ 		for(pos = ph[i].p_filesz; pos < ph[i].p_memsz; pos++)
+ 			*(ptr++) = 0;
+ 	}
+ 
++	return hdr->e_entry;
++}
++
++Elf64_Addr load_elf(CHAR *fname)
++{
++	BDEV file;
++	Elf_Ehdr hdr;
++	Elf64_Addr kentry;
++
++	/* Open */
++	if(bopen(&file, fname)) {
++		printf("Opening %s failed.\n\r", fname);
++		return 0;
++	}
++
++	printf("Loading %s...\n\r", fname);
++
++	/* Read ELF Header */
++	if(bread(&file, sizeof(hdr), &hdr)<0) {
++		printf("Error reading ELF header.\n\r");
++		goto close;
++	}
++
++	/* Is is an ELF binary? */
++	if((hdr.e_ident[0] != 0x7f) || 
++	   (hdr.e_ident[1] != 'E')  || 
++	   (hdr.e_ident[2] != 'L')  ||
++	   (hdr.e_ident[3] != 'F'))
++	{
++		printf("ELF magic invalid.\n\r");
++		goto close;
++	}
++
++	/* Big Endian? */
++	if(hdr.e_ident[EI_DATA] != ELFDATA2MSB) {
++		printf("ELF file is not big-endian.\n\r");
++		goto close;
++	}
++
++	/* 32 or 64 bit? */
++	if(hdr.e_ident[EI_CLASS] == ELFCLASS64) {
++		kentry = load_elf64(&hdr.e64, &file);
++	}
++#ifdef M32
++	else if(hdr.e_ident[EI_CLASS] == ELFCLASS32) {
++		is_elf64 = 0;
++		kentry = load_elf32(&hdr.e32, &file);
++	}
++#endif
++	else {
++		printf("ELF file cannot be loaded.\n\r");
++		goto close;
++	}
++
+ 	bclose(&file);
+ 
+-	return hdr.e_entry;
++	return kentry;
+ 
+ /* Failed to do something, close and return */
+ close:
+@@ -220,6 +321,7 @@
+ 	return 0;
+ }
+ 
++
+ #ifdef M64
+ unsigned fixup_trampolines_data[]={
+ 	0x03e00821, 0x04110001, 0x00000000, 0xdfe30014,
+@@ -248,12 +350,31 @@
+ 		       "Patched %u occurrences of the wrong trampoline.\n"
+ 		       "-- WARNING --\n", stat);
+ }
+-#endif
++#endif /* M64 */
++
++#ifdef M32
++void _start64(LONG argc, CHAR * argv[], CHAR * envp[],
++	      unsigned long long *addr)
++{
++	__asm__ __volatile__(
++		".set push\n"
++		"\t.set mips3\n"
++		"\t.set noreorder\n"
++		"\t.set noat\n"
++		"\tld $1, 0($7)\n"
++		"\tjr $1\n"
++		"\t nop\n"
++		"\t.set pop");
++}
++#endif /* M32 */
+ 
+ void __start(void);
+ LONG main(INT argc, CHAR **argv, CHAR **envp)
+ {
+-	ULONG entry;
++	Elf64_Addr entry;
++#ifdef M32
++	Elf32_Addr entry32 = (Elf32_Addr)entry;
++#endif
+ 	VOID (*kernel_entry)(INT argc, CHAR **argv, CHAR **envp);
+ 
+ 	char *system;
+@@ -318,10 +439,25 @@
+ 	if(!entry)
+ 		return 1;
+ 
++#ifdef M32
++	if(!is_elf64) {
++		kernel_entry = (VOID(*)(INT, CHAR **, CHAR **))entry32;
++
++		printf("Entering 32bit kernel.\n\r");
++		ArcFlushAllCaches();
++		kernel_entry(append_count, append, envp);
++	} else {
++		printf("Entering 64bit kernel.\n\r");
++		ArcFlushAllCaches();
++		_start64(append_count, append, envp, &entry);
++	}
++#else
+ 	kernel_entry = (VOID(*)(INT, CHAR **, CHAR **))entry;
+ 
+ 	printf("Entering kernel.\n\r");
++	ArcFlushAllCaches();
+ 	kernel_entry(append_count, append, envp);
++#endif
+ 	return 0;
+ }
+ 
