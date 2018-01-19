@@ -1,0 +1,652 @@
+#! /bin/sh /usr/share/dpatch/dpatch-run
+## 13_initrd_support.dpatch by  <jblache@debian.org>
+##
+## All lines beginning with `## DP:' are a description of the patch.
+## DP: Add initrd support to arcload.
+
+@DPATCH@
+diff -urNad arcload-0.5~/loader/block.c arcload-0.5/loader/block.c
+--- arcload-0.5~/loader/block.c	2006-01-20 05:06:27.000000000 +0000
++++ arcload-0.5/loader/block.c	2007-09-26 16:49:18.000000000 +0000
+@@ -89,6 +89,7 @@
+ 			return -1;
+ 	}
+ 	dev->pos = 0;
++	dev->size = i->file.size;
+ 	dev->file = i;
+ 	i->refcnt++;
+ 
+diff -urNad arcload-0.5~/loader/block.h arcload-0.5/loader/block.h
+--- arcload-0.5~/loader/block.h	2006-01-18 03:46:45.000000000 +0000
++++ arcload-0.5/loader/block.h	2007-09-26 16:49:18.000000000 +0000
+@@ -10,6 +10,7 @@
+ typedef struct {
+ 	void *file;
+ 	ULONG pos;
++	ULONG size;
+ } BDEV;
+ 
+ INT bopen(BDEV *dev, CHAR *path);
+diff -urNad arcload-0.5~/loader/config.c arcload-0.5/loader/config.c
+--- arcload-0.5~/loader/config.c	2006-01-20 05:06:50.000000000 +0000
++++ arcload-0.5/loader/config.c	2007-09-26 16:49:18.000000000 +0000
+@@ -37,6 +37,8 @@
+ #define S_SYSIMG	7
+ #define S_DESCR		8
+ #define S_COMMENT	9
++#define S_INITRD	10
++#define S_SYSINITRD	11
+ 
+ static char *token_names[] = {
+ 	"NONE", 
+@@ -59,7 +61,9 @@
+ 	"TERM", 
+ 	"SYSIMG",
+ 	"DESCR",
+-	"COMMENT"
++	"COMMENT",
++	"INITRD",
++	"SYSINITRD"
+ };
+ 
+ static int is_space(char ch)
+@@ -98,8 +102,8 @@
+ static int rx_token(int token, char *text, int *s_state, char **label, int n_label, int *label_count,
+ 		    char *image, int n_image, char **append, int n_append, 
+ 		    char *append_space, int *append_space_ptr, int n_append_space, 
+-		    int *append_count, char *descr, char *lastl, int *s_level, int *s_ignore,
+-		    char *system)
++		    int *append_count, char *initrd, int n_initrd, char *descr, char *lastl,
++		    int *s_level, int *s_ignore, char *system)
+ {
+ 	int len;
+ 	switch(*s_state) {
+@@ -160,6 +164,11 @@
+ 			break;
+ 		}
+ 
++		if(!strcmp(text, "initrd")) {
++			*s_state = S_INITRD;
++			break;
++		}
++
+ 		if(!*label_count) {
+ 			strcpy(lastl,text);
+ 			descr[0] = 0;
+@@ -299,6 +308,32 @@
+ 
+ 		*s_state = S_TERM;
+ 		break;
++
++	case S_INITRD:
++	case S_SYSINITRD:
++		if(token != T_STRING)
++			return token_bomb(token, text, *s_state, image, "STRING");
++
++		if((*s_state == S_INITRD) && !strcmp(text, "system")) {
++			strcpy(initrd, system);
++			*s_state = S_SYSINITRD;
++			break;
++		}
++
++		if((*s_state == S_INITRD) && !strcmp(text, "absolute")) {
++			*s_state = S_SYSINITRD;
++			break;
++		}
++
++		if(strlen(text) >= (n_initrd - strlen(initrd))) {
++			printf("Error: N_INITRD exceeded.\n\r");
++			initrd[0] = 0;
++			return 1;
++		}
++
++		strcat(initrd, text);
++		*s_state = S_TERM;
++		break;
+ 	}
+ 	return 0;
+ }
+@@ -308,6 +343,7 @@
+ 		if(rx_token(a, b, &s_state, label, n_label, label_count, image,	\
+ 			    n_image, append, n_append, append_space,		\
+ 			    &append_space_ptr, n_append_space, append_count,	\
++			    initrd, n_initrd,                                   \
+ 			    descr, lastl, &s_level, &s_ignore, system)) {	\
+ 			bclose(&file);						\
+ 			return;							\
+@@ -317,7 +353,8 @@
+ 
+ void parseconfig(char **label, int n_label, int *label_count, char *image,
+ 		 int n_image, char **append, int n_append, char *append_space,
+-		 int n_append_space, int *append_count, char *system)
++		 int n_append_space, int *append_count, char *initrd, int n_initrd,
++		 char *system)
+ {
+ 	BDEV file;
+ 	char str[STRING_LEN], descr[STRING_LEN], lastl[STRING_LEN];
+diff -urNad arcload-0.5~/loader/config.h arcload-0.5/loader/config.h
+--- arcload-0.5~/loader/config.h	2005-09-02 13:56:02.000000000 +0000
++++ arcload-0.5/loader/config.h	2007-09-26 16:49:18.000000000 +0000
+@@ -16,6 +16,8 @@
+  *  append_space - in-out parameter, will contain append as linear string
+  *  n_append_space - input parameter, size of append_space
+  *  append_count - output parameter, count of kernel arguments
++ *  initrd - output parameter, will contain path to initrd image
++ *  n_initrd - input parameter, contains maximum length of initrd
+  *
+  * if image[0] == 0 on output, we failed
+  */
+@@ -23,7 +25,8 @@
+ 		 char *image, int n_image, 
+ 		 char **append, int n_append,
+ 		 char *append_space, int n_append_space,
+-		 int *append_count, char *system);
++		 int *append_count, char *initrd, int n_initrd,
++		 char *system);
+ 
+ /* this function parses text label format into an array
+  * I'm pretty sure that by know you can guess the meanings */
+diff -urNad arcload-0.5~/loader/main.c arcload-0.5/loader/main.c
+--- arcload-0.5~/loader/main.c	2007-09-26 16:48:57.000000000 +0000
++++ arcload-0.5/loader/main.c	2007-09-26 16:49:40.000000000 +0000
+@@ -1,5 +1,6 @@
+ /*
+  * ARCload (c) 2005 Stanislaw Skowronek
++ * Copyright (C) 2007 Julien BLACHE
+  */
+ 
+ #include <arclib/arc.h>
+@@ -21,6 +22,7 @@
+ #define N_IMAGE		256
+ #define N_APPEND	32
+ #define N_APPEND_SPACE	2048
++#define N_INITRD	256
+ 
+ #define PAGESHIFT	12
+ #define READBLOCK	16384
+@@ -30,6 +32,12 @@
+ // malloc pool size
+ #define ARENA		1048576
+ 
++/* See load_initrd() */
++#define STACK_PAGES     4
++
++#define KSEG0ADDR(addr) (((addr) & 0x1fffffff) | 0x80000000)
++
++/* #define RD_DEBUG */
+ 
+ typedef union {
+ 	unsigned char e_ident[EI_NIDENT];
+@@ -41,6 +49,13 @@
+ INT is_elf64 = 1;
+ #endif
+ 
++/* End address of kernel image */
++ULONG kernel_end = 0;
++
++/* Maximum page size supported by the machine */
++unsigned long max_page_size = 0;
++
++
+ INT checkmemmap(ULONG elf_start, ULONG elf_size)
+ {
+ 	MEMORYDESCRIPTOR *md;
+@@ -70,10 +85,10 @@
+ 	return -1;
+ }
+ 
+-ULONG vtophys(ULONG addr)
++ULONG vtophys(ULONG addr, int warn)
+ {
+ #ifdef M32
+-	if((addr & 0xC0000000) != 0x80000000)
++	if(warn && ((addr & 0xC0000000) != 0x80000000))
+ 		printf("Warning: kernel is in a mapped area!\n\r");
+ 
+ 	return (addr & 0x1FFFFFFF);
+@@ -82,28 +97,53 @@
+ 	if((addr >> 62) == 2)
+ 		return (addr & ((1UL << 40) - 1));
+ 
+-	/* ckseg */
++	/* xkseg */
+ 	if((addr >> 60) == 15) {
+-		if((addr & 0xC0000000UL) != 0x80000000UL)
++		if(warn && ((addr & 0xC0000000UL) != 0x80000000UL))
+ 			printf("Warning: kernel is in a mapped area!\n\r");
+ 
+ 		return (addr & 0x1FFFFFFF);
+ 	}
+ 
+-	printf("Warning: kernel is in a mapped area!\n\r");
++	if(warn)
++		printf("Warning: kernel is in a mapped area!\n\r");
++
+ 	return (addr & ((1UL << 40) - 1));
+ #endif
+ }
+ 
++static int load_file(BDEV *file, UCHAR *ptr, ULONG size)
++{
++	INT i;
++	ULONG pos;
++
++	pos = 0;
++
++	while(size > 0) {
++		i = ((size > READBLOCK) ? READBLOCK : size);
++		if(bread(file, i, ptr) < 0) {
++			printf("failed at %u!\n\r", pos);
++			return 1;
++		}
++		size -= i;
++		ptr += i;
++		pos += i;
++	}
++	printf("OK.\n\r");
++
++	return 0;
++}
+ 
+ #ifdef M32
+ Elf64_Addr load_elf32(Elf32_Ehdr *hdr, BDEV *file)
+ {
+ 	Elf32_Phdr ph[N_PHDR];
+-	INT i, j, nph = 0;
+-	ULONG left, pos;
++	INT i, nph = 0;
++	ULONG pos;
+ 	UCHAR *ptr;
+ 
++	int ret;
++
+ 	/* Not Relocatable? */
+ 	if(hdr->e_type != ET_EXEC) {
+ 		printf("ELF file is not executable.\n\r");
+@@ -125,6 +165,14 @@
+ 			return 0;
+ 		}
+ 
++		/*
++		 * The offset of the first segment should be equal to the
++		 * maximal page size supported by the machine.
++		 */
++		if(max_page_size == 0) {
++			max_page_size = ph[nph].p_offset;
++		}
++
+ 		if(ph[nph].p_type != PT_LOAD)
+ 			continue;
+ 
+@@ -144,31 +192,29 @@
+ 	/* Realize LOAD headers */
+ 	for(i = 0; i < nph; i++) {
+ 		/* Check the Memory Map */
+-		if(checkmemmap(vtophys(ph[i].p_vaddr), ph[i].p_memsz)) {
++		if(checkmemmap(vtophys(ph[i].p_vaddr, 1), ph[i].p_memsz)) {
+ 			printf("File can't be loaded into current memory map.\n\r");
+ 			return 0;
+ 		}
+ 
+ 		/* Load the ELF into memory */
+-		printf("Reading %u bytes... ", (ULONG)ph[i].p_filesz);
+-		left = ph[i].p_filesz;
+-		pos = 0;
+ 		ptr = (UCHAR *)ph[i].p_vaddr;
++
++		printf("Loading kernel at 0x%p; reading %u bytes... ", ptr, (ULONG)ph[i].p_filesz);
++
+ 		bseek(file, ph[i].p_offset);
+-		while(left > 0) {
+-			j = ((left > READBLOCK) ? READBLOCK : left);
+-			if(bread(file, j, ptr)<0) {
+-				printf("failed at %u!\n\r", (ULONG)pos);
+-				return 0;
+-			}
+-			left -= j;
+-			ptr += j;
+-			pos += j;
+-		}
+-		printf("OK.\n\r");
+-		ptr = (UCHAR *)(ph[i].p_vaddr + ph[i].p_filesz);
++		ret = load_file(file, ptr, ph[i].p_filesz);
++
++		if(ret != 0)
++			return 0;
++
++		ptr += ph[i].p_filesz;
+ 		for(pos = ph[i].p_filesz; pos < ph[i].p_memsz; pos++)
+ 			*(ptr++) = 0;
++
++		/* Save the end of the kernel image, needed to load the initrd */
++		if((ULONG)ptr > kernel_end)
++			kernel_end = (ULONG)ptr;
+ 	}
+ 
+ 	return (Elf64_Addr) hdr->e_entry;
+@@ -178,10 +224,12 @@
+ Elf64_Addr load_elf64(Elf64_Ehdr *hdr, BDEV *file)
+ {
+ 	Elf64_Phdr ph[N_PHDR];
+-	INT i, j, nph = 0;
+-	ULONG left, pos;
++	INT i, nph = 0;
++	ULONG pos;
+ 	UCHAR *ptr;
+ 
++	int ret;
++
+ 	/* Not Relocatable? */
+ 	if(hdr->e_type != ET_EXEC) {
+ 		printf("ELF file is not executable.\n\r");
+@@ -203,6 +251,14 @@
+ 			return 0;
+ 		}
+ 
++		/*
++		 * The offset of the first segment should be equal to the
++		 * maximal page size supported by the machine.
++		 */
++		if(max_page_size == 0) {
++			max_page_size = ph[nph].p_offset;
++		}
++
+ 		if(ph[nph].p_type != PT_LOAD)
+ 			continue;
+ 
+@@ -222,39 +278,33 @@
+ 	/* Realize LOAD headers */
+ 	for(i = 0; i < nph; i++) {
+ 		/* Check the Memory Map */
+-		if(checkmemmap(vtophys(ph[i].p_vaddr), ph[i].p_memsz)) {
++		if(checkmemmap(vtophys(ph[i].p_vaddr, 1), ph[i].p_memsz)) {
+ 			printf("File can't be loaded into current memory map.\n\r");
+ 			return 0;
+ 		}
+ 
+ 		/* Load the ELF into memory */
+-		printf("Reading %u bytes... ", (ULONG)ph[i].p_filesz);
+-		left = ph[i].p_filesz;
+-		pos = 0;
+ #ifdef M32
+ 		ptr = (UCHAR *)(Elf32_Addr)ph[i].p_vaddr;
+ #else
+ 		ptr = (UCHAR *)ph[i].p_vaddr;
+ #endif
++
++		printf("Loading kernel at 0x%p; reading %u bytes... ", ptr, (ULONG)ph[i].p_filesz);
++
+ 		bseek(file, ph[i].p_offset);
+-		while(left > 0) {
+-			j = ((left > READBLOCK) ? READBLOCK : left);
+-			if(bread(file, j, ptr)<0) {
+-				printf("failed at %u!\n\r", (ULONG)pos);
+-				return 0;
+-			}
+-			left -= j;
+-			ptr += j;
+-			pos += j;
+-		}
+-		printf("OK.\n\r");
+-#ifdef M32
+-		ptr = (UCHAR *)(Elf32_Addr)(ph[i].p_vaddr + ph[i].p_filesz);
+-#else
+-		ptr = (UCHAR *)(ph[i].p_vaddr + ph[i].p_filesz);
+-#endif
++		ret = load_file(file, ptr, ph[i].p_filesz);
++
++		if(ret != 0)
++			return 0;
++
++		ptr += ph[i].p_filesz;
+ 		for(pos = ph[i].p_filesz; pos < ph[i].p_memsz; pos++)
+ 			*(ptr++) = 0;
++
++		/* Save the end of the kernel image, needed to load the initrd */
++		if((ULONG)ptr > kernel_end)
++			kernel_end = (ULONG)ptr;
+ 	}
+ 
+ 	return hdr->e_entry;
+@@ -280,7 +330,7 @@
+ 		goto close;
+ 	}
+ 
+-	/* Is is an ELF binary? */
++	/* Is it an ELF binary? */
+ 	if((hdr.e_ident[0] != 0x7f) || 
+ 	   (hdr.e_ident[1] != 'E')  || 
+ 	   (hdr.e_ident[2] != 'L')  ||
+@@ -322,6 +372,183 @@
+ }
+ 
+ 
++int load_initrd(char *fname, char **append, int n_append,
++		char *append_space, int n_append_space, int *append_count)
++{
++	BDEV file;
++
++	ULONG initrd_addr;
++
++	char buf[64];
++	char *append_ptr;
++	int len, ret;
++
++	MEMORYDESCRIPTOR *current = NULL;
++	ULONG start = 0;
++	ULONG end;
++
++	ULONG stack = vtophys((ULONG) &end, 0);
++
++	kernel_end = vtophys(kernel_end, 0);
++
++	printf("Loading initrd %s ...\n\r", fname);
++
++#ifdef RD_DEBUG
++	printf("RD: Max page size seems to be 0x%x\n\r", max_page_size);
++#endif
++
++	/* Open */
++	if(bopen(&file, fname)) {
++		printf("Opening %s failed.\n\r", fname);
++		return 1;
++	}
++
++	/* Find a free memory region big enough to hold the initrd image */
++	current = ArcGetMemoryDescriptor(current);
++        if(!current) {
++                printf("Can't find any valid memory descriptors!\n\r");
++		goto rd_close;
++        }
++
++#ifdef RD_DEBUG
++	printf("RD: stack at 0x%p, kernel ends at 0x%p\n\r", stack, kernel_end);
++#endif
++
++        while ((current = ArcGetMemoryDescriptor(current)) != NULL) {
++                if(current->Type == FreeMemory) {
++			start = current->BasePage << PAGESHIFT;
++                        end = start + (current->PageCount << PAGESHIFT);
++#ifdef RD_DEBUG
++			printf("RD: considering area 0x%p - 0x%p, %u pages\n\r", start, end, current->PageCount);
++#endif
++                        /* Leave some more room for our stack - at that point we don't need that much */
++                        if((stack >= start) && (stack < end)) {
++#ifdef RD_DEBUG
++				printf("RD: area includes stack\n\r");
++#endif
++				end = (stack - (STACK_PAGES << PAGESHIFT)) & ~((1 << PAGESHIFT) - 1);
++			}
++
++			/* Did we load the kernel there already ? */
++			if((kernel_end > start) && (kernel_end < end)) {
++#ifdef RD_DEBUG
++				printf("RD: area includes kernel\n\r");
++#endif
++				start = (kernel_end + (1 << PAGESHIFT)) & ~((1 << PAGESHIFT) - 1);
++			}
++
++			if((end < start) || (end - start) < (file.size + max_page_size)) {
++#ifdef RD_DEBUG
++				printf("RD: area too small: %u needs %u\n\r", (end - start), (file.size + max_page_size));
++#endif
++				start = 0;
++				end = 0;
++
++				continue;
++			}
++#ifdef RD_DEBUG
++			printf("RD: area 0x%p - 0x%p OK for initrd\n\r", start, end);
++#endif
++			break;
++                }
++        }
++
++	if(start == 0) {
++		printf("initrd can't be loaded into current memory map\n\r");
++		goto rd_close;
++	}
++
++#ifdef M32
++	/* Turn the physical start address into a KSEG0 address */
++	start = KSEG0ADDR(start);
++#else
++	/*
++	 * Turn the physical address into an uncached XKPHYS address
++	 * This should probably be flagged as FIXME.
++	 */
++	start = start | 0xa800000000000000;
++#endif
++
++	/*
++	 * Compute initrd address: must be page-aligned; as we don't know
++	 * what page size the kernel uses, we'll use the max page size we
++	 * determined from the ELF file structure when loading the kernel.
++	 */
++	initrd_addr = (start + max_page_size) & ~(max_page_size - 1);
++
++	/* Load the initrd image into memory */
++	printf("Loading initrd at 0x%p; reading %u bytes... ", initrd_addr, file.size);
++
++	ret = load_file(&file, (UCHAR *)initrd_addr, file.size);
++	if(ret != 0)
++		goto rd_close;
++
++	/* Add rd_start= and rd_size= to the kernel arguments */
++
++	if(*append_count + 2 >= n_append) {
++		printf("Error: N_APPEND exceeded.\n\r");
++		goto rd_close;
++	}
++
++	/* Get the tail of the append_space currently used */
++	if(*append_count == 0) {
++		append_ptr = append_space;
++	} else {
++		append_ptr = append[(*append_count) - 1];
++		append_ptr += strlen(append_ptr) + 1;
++	}
++
++#ifdef M64
++	/* The kernel wants a KSEG0 address and takes care of the sign extension */
++	initrd_addr = KSEG0ADDR(initrd_addr);
++#endif
++
++	/* rd_start= */
++	len = sprintf(buf, "rd_start=0x%x", initrd_addr);
++
++#ifdef RD_DEBUG
++	printf("APPEND: .%s.\n\r", buf);
++#endif
++
++	if((append_ptr - append_space + len + 1) > n_append_space) {
++		printf("Error: N_APPEND_SPACE exceeded.\n\r");
++		goto rd_close;
++	}
++
++	strcpy(append_ptr, buf);
++	append[*append_count] = append_ptr;
++	(*append_count)++;
++
++	append_ptr += len + 1;
++
++	/* rd_size= */
++	len = sprintf(buf, "rd_size=0x%x", file.size);
++
++#ifdef RD_DEBUG
++	printf("APPEND: .%s.\n\r", buf);
++#endif
++
++	if((append_ptr - append_space + len + 1) > n_append_space) {
++		printf("Error: N_APPEND_SPACE exceeded.\n\r");
++		goto rd_close;
++	}
++
++	strcpy(append_ptr, buf);
++	append[*append_count] = append_ptr;
++	(*append_count)++;
++
++	bclose(&file);
++
++	return 0;
++
++/* Failed to do something, close and return */
++rd_close:
++	bclose(&file);
++	return 1;
++}
++
++
++
+ #ifdef M64
+ unsigned fixup_trampolines_data[]={
+ 	0x03e00821, 0x04110001, 0x00000000, 0xdfe30014,
+@@ -389,8 +616,12 @@
+ 	char append_space[N_APPEND_SPACE];
+ 	int append_count;
+ 
++	char initrd[N_INITRD];
++
+ 	unsigned long arena_start;
+ 
++	int ret;
++
+ 	printf("ARCLoad version " VERSION " (Debian " DEBVER ") (c) 2004-5 Stanislaw Skowronek\n\r");
+ 
+ #ifdef M64
+@@ -398,9 +629,9 @@
+ #endif
+ 
+ 	arena_start = (((ULONG)__start) - ARENA)&~((1UL<<PAGESHIFT)-1);
+-	if(checkmemmap(vtophys(arena_start), ARENA)) {
++	if(checkmemmap(vtophys(arena_start, 1), ARENA)) {
+ 		printf("Internal error: dynamic memory arena allocation failed.\n\r");
+-		printf("Attempted: 0x%p bytes at 0x%p.\n\r", ARENA, vtophys(((ULONG)__start) - ARENA));
++		printf("Attempted: 0x%p bytes at 0x%p.\n\r", ARENA, vtophys(((ULONG)__start) - ARENA, 1));
+ 		return 1;
+ 	}
+ 	arclib_malloc_add(arena_start, ARENA);
+@@ -427,7 +658,9 @@
+ 		printf("Loading configuration for '%s'...\n\r", text_label);
+ 	parselabel(text_label, label, N_LABEL, &label_count, label_space, N_LABEL_SPACE);
+ 
+-	parseconfig(label, N_LABEL, &label_count, image, N_IMAGE, append, N_APPEND, append_space, N_APPEND_SPACE, &append_count, system);
++	*initrd = 0;
++
++	parseconfig(label, N_LABEL, &label_count, image, N_IMAGE, append, N_APPEND, append_space, N_APPEND_SPACE, &append_count, initrd, N_INITRD, system);
+ 	if(!*label)
+ 		return 0;
+ 	if(!*image) {
+@@ -439,6 +672,12 @@
+ 	if(!entry)
+ 		return 1;
+ 
++	if(*initrd) {
++		ret = load_initrd(initrd, append, N_APPEND, append_space, N_APPEND_SPACE, &append_count);
++		if (ret != 0)
++			return 1;
++	}
++
+ #ifdef M32
+ 	if(!is_elf64) {
+ 		kernel_entry = (VOID(*)(INT, CHAR **, CHAR **))entry32;
