@@ -1,9 +1,8 @@
-
 T2 SDE - System Development Environment
 
-  http://t2-project.org/
+  https://t2sde.org/
 
-T2 on Apple, PReP and IBM RS/6k PowerPC and PowerPC64 hardware was
+T2 on PowerPC -Apple, IBM RS/6k, PReP- PowerPC64 hardware was
 primarily developed by René Rebe - ExactCODE GmbH; Germany.
 
 If you don't know what to do now, just press enter and start
