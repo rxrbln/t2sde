@@ -141,6 +141,7 @@ dnl for 2.5/6 we do want the ALSA OSS emulation ...
 dnl
 CONFIG_SND_OSSEMUL=m
 CONFIG_SND_DYNAMIC_MINORS=y
+CONFIG_SND_HDA_HWDEP=y
 
 dnl Basic Input devices
 dnl Good old standard ports, classic serial, PS/2, should just work.
