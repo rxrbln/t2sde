@@ -43,16 +43,16 @@ ifelse(initstyle, `sysv_nice', `
 	local x w="`$'(stty size 2>/dev/null </dev/tty | cut -d" " -f2)"
 	[ -z "`$'w" ] && w="`$'(stty size </dev/console | cut -d" " -f2)"
 	printf "%0$((w-1))s"| tr \  .
-	echo -e "\e[255G\e[3D v \r\e[36m`$'* \e[0m"
+	echo -e "\e[255G\e[4D v  \r\e[36m`$'* \e[0m"
 	error=0
 }
 
 status() {
 	if [ `$'error -eq 0 ]
 	then
-		echo -e "\e[1A\e[255G\e[4D\e[32m :-)\e[0m"
+		echo -e "\e[1A\e[255G\e[7D\e[32m [ OK ]\e[0m"
 	else
-		echo -e "\e[1A\e[255G\e[4D\a\e[1;31m :-(\e[0m"
+		echo -e "\e[1A\e[255G\e[7D\a\e[1;31m [FAIL]\e[0m"
 	fi
 }
 
