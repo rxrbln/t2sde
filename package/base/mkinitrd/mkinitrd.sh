@@ -109,7 +109,7 @@ echo "Copying kernel modules ..."
   grep -v -e /wireless/ -e netfilter |
   grep  -e reiserfs -e reiser4 -e ext2 -e ext3 -e ext4 -e btrfs -e /jfs -e /xfs \
 	-e isofs -e udf -e /unionfs -e ntfs -e fat -e dm-mod \
-	-e /ide/ -e /ata/ -e /scsi/ -e /message/ -e /sdhci/ \
+	-e /ide/ -e /ata/ -e /scsi/ -e /message/ -e /sdhci/ -e nvme \
 	-e cciss -e ips -e virtio -e floppy -e crypto \
 	-e hci -e usb-common -e usb-storage -e sbp2 -e uas \
 	-e /net/ -e drivers/md/ -e '/ipv6\.' \
