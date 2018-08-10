@@ -26,11 +26,11 @@ zlib
 parted             mac-fdisk          pdisk              cryptsetup
 xfsprogs           mkdosfs            jfsutils           btrfs-progs
 e2fsprogs          reiserfsprogs      reiser4progs       genromfs
-popt               raidtools          mdadm
-lvm                lvm2               device-mapper
+popt               raidtools          mdadm              pcre
+lvm                lvm2               device-mapper      libaio
 dump               eject              disktype
 hdparm             memtest86          cpuburn            bonnie++
-ncurses            readline
+ncurses            readline           libgpg-error       libgcrypt
 bash               attr               acl                findutils
 mktemp             coreutils          pciutils
 grep               sed                gzip               bzip2
