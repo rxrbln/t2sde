@@ -15,9 +15,8 @@
 
 set -e
 
-usage()
-{
-	echo "Usage iso2stick [ -fs file-system ] iso-image stick-device [ files ]"
+usage() {
+	echo "Usage iso2stick [ -fs file-system | -n ] iso-image usb-device [ files ]"
 	exit
 }
 
@@ -26,6 +25,7 @@ fs="vfat -F 32"
 while [ "$1" ]; do
 	case "$1" in 
 		-fs) fs="$2" ; shift ;;
+		-n) fs="" ;;
 		-*) usage ;;
 		*) break ;;
 	esac
@@ -39,7 +39,7 @@ fi
 file="$1" ; shift
 dev="$1" ; shift
 
-# # ceate fresh image
+# # create fresh image
 # size=`du --block-size=1000000 $1 | cut -f 1`
 # size=$(( size + 20 )) # just to be sure
 # 
@@ -53,13 +53,15 @@ case "$fs" in
 	*) ptype=83 ;;
 esac
 
-sfdisk $dev << EOT
+if [ "$fs" ]; then
+	sfdisk $dev << EOT
 ,,$ptype
 EOT
 
-# losetup -d $loop
+	# losetup -d $loop
 
-mkfs.$fs ${dev}1
+	mkfs.$fs ${dev}1
+fi
 
 # losetup /dev/loop0 -o 512 hd.img
 
