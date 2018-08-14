@@ -12,7 +12,13 @@ dnl the Free Software Foundation; version 2 of the License. A copy of the
 dnl GNU General Public License can be found in the file COPYING.
 dnl --- T2-COPYRIGHT-NOTE-END ---
 
-# TO BE DONE
+CONFIG_PA8X00=y
+
+CONFIG_HPPB=y
+CONFIG_GSC_LASI=y
+CONFIG_EISA=y
+CONFIG_GSC_WAX=y
+CONFIG_PCCARD=m
 
 include(`linux-common.conf.m4')
 include(`linux-block.conf.m4')
