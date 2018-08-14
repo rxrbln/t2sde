@@ -17,6 +17,6 @@ cat > etc/issue.net << EOT
 
 %d  --  line [%t].
 
-Welcome to %h ($rocktxt).
+Welcome to %h ($sdetxt).
 
 EOT
