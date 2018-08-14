@@ -14,34 +14,13 @@
 # --- T2-COPYRIGHT-NOTE-END ---
 
 cat > etc/issue << EOT
-
-
-
-
-
-
-
-
-
-
-
-
-                                                                #####
-                                                               #######
-                  #                                            ##O#O##
- ######          ###                                           #VVVVV#
-   ##             #                                          ##  VVV  ##
-   ##         ###   ### ####   ###    ###  ##### ######     #          ##
-   ##        #  ##   ###    ##  ##     ##    ###  ##       #            ##
-   ##       #   ##   ##     ##  ##     ##      ###         #            ###
-   ##          ###   ##     ##  ##     ##      ###        QQ#           ##Q
-   ##       # ###    ##     ##  ##     ##     ## ##     QQQQQQ#       #QQQQQQ
-   ##      ## ### #  ##     ##  ###   ###    ##   ##    QQQQQQQ#     #QQQQQQQ
- ############  ###  ####   ####   #### ### ##### ######   QQQQQ#######QQQQQ
-
+ _____  ___
+|_   _||__ |
+  | |  | __|
+  |_|  |___| SDE
 
 \t \d  --  \U online  --  line [\l].
 
-Welcome to \n ($rocktxt, Kernel \r).
+Welcome to \n ($sdetxt, Kernel \r).
 
 EOT
