@@ -50,9 +50,9 @@ ifelse(initstyle, `sysv_nice', `
 status() {
 	if [ `$'error -eq 0 ]
 	then
-		echo -e "\e[1A\e[255G\e[7D\e[32m [ OK ]\e[0m"
+		echo -e "\e[1A\e[255G\e[6D|\e[32m OK \e[0m|"
 	else
-		echo -e "\e[1A\e[255G\e[7D\a\e[1;31m [FAIL]\e[0m"
+		echo -e "\e[1A\e[255G\e[6D\a|\e[1;31mFAIL\e[0m|"
 	fi
 }
 
