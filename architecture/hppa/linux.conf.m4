@@ -12,6 +12,9 @@ dnl the Free Software Foundation; version 2 of the License. A copy of the
 dnl GNU General Public License can be found in the file COPYING.
 dnl --- T2-COPYRIGHT-NOTE-END ---
 
+# CONFIG_SMP is not set
+
+dnl CONFIG_PA7000=y
 CONFIG_PA8X00=y
 
 CONFIG_HPPB=y
@@ -24,3 +27,6 @@ include(`linux-common.conf.m4')
 include(`linux-block.conf.m4')
 include(`linux-net.conf.m4')
 include(`linux-fs.conf.m4')
+
+CONFIG_PDC_CONSOLE=y
+CONFIG_FB_STI=y
