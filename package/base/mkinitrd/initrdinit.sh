@@ -49,33 +49,33 @@ sed 's/[^ ]* *[^ t]* *[^ ]* *[^ ]* *\([0-9]*\), *\([0-9]*\) .*/\1:\2/'`
 	echo "$resume" > /sys/power/resume
 fi
 
-mkdir /rootfs
+mkdir /root
 if [ "$root" ]; then
-  echo "Mounting rootfs ..."
+  echo "Mounting root ..."
 
   i=0
   while [ $i -le 9 ]; do
     if [ -e $root ]; then
 	type -p cryptsetup && cryptsetup isLuks $root &&
-		cryptsetup luksOpen $root rootfs && root=/dev/mapper/rootfs
+		cryptsetup luksOpen $root root && root=/dev/mapper/root
 
-	# try best match / detected rootfs first, all the others thereafter
+	# try best match / detected root first, all the others thereafter
 	filesystems=`disktype $root 2>/dev/null |
 	    sed -e '/file system/!d' -e 's/file system.*//' -e 's/ //g' \
 		-e 'y/ABCDEFGHIJKLMNOPQRSTUVWXYZ/abcdefghijklmnopqrstuvwxyz/' \
 		-e 's/fat32/vfat/'
 	    sed '/^nodev/d' /proc/filesystems | sed '1!G; $p; h; d'`
 	for fs in $filesystems; do
-	  if mount -t $fs -o ro $root /rootfs 2> /dev/null; then
-		echo "Successfully mounted rootfs as $fs."
+	  if mount -t $fs -o ro $root /root 2> /dev/null; then
+		echo "Successfully mounted root as $fs."
 		# TODO: later on search other places if we want 100% backward compat.
 		init=${init:-/sbin/init} 
-		if [ -f /rootfs/$init ]; then
+		if [ -f /root/$init ]; then
 			kill %1
-			mount -t none -o move {,/rootfs}/dev
-			mount -t none -o move {,/rootfs}/proc
-			mount -t none -o move {,/rootfs}/sys
-			exec switch_root /rootfs $init $*
+			mount -t none -o move {,/root}/dev
+			mount -t none -o move {,/root}/proc
+			mount -t none -o move {,/root}/sys
+			exec switch_root /root $init $*
 		else
 			echo "Specified init ($init) does not exist!"
 		fi
