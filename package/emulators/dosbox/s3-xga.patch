@@ -1,0 +1,58 @@
+From 9f1c72eabc77b7fc630f1216998677b0238d3ae7 Mon Sep 17 00:00:00 2001
+From: Jonathan Campbell <jonathan@castus.tv>
+Date: Fri, 26 Feb 2016 15:20:58 -0800
+Subject: [PATCH] S3 Trio XGA bugfix: The XGA Bresenham line drawing routine
+ sign-extended the parameters in a way that was perfectly fine for 32-bit
+ builds, but causes the XGA emulation to hang on 64-bit builds. 13-bit sign
+ extension has been corrected for both 32-bit and 64-bit builds. This fixes
+ two known scenarios where the incorrect sign extension caused hangs: 1)
+ Windows 95 with S3 emulation and an application that draws lines on the
+ screen (the Mystify screen saver is a good test case) and 2) RealTech's 1995
+ demo "Countdown" when S3 acceleration is enabled (at the wireframe hourglass
+ part of the demo).
+
+---
+ src/hardware/vga_xga.cpp | 11 ++++++-----
+ 1 file changed, 6 insertions(+), 5 deletions(-)
+
+diff --git a/src/hardware/vga_xga.cpp b/src/hardware/vga_xga.cpp
+index 9cae40847..f67eb4e2f 100644
+--- a/src/hardware/vga_xga.cpp
++++ b/src/hardware/vga_xga.cpp
+@@ -355,14 +355,14 @@ void XGA_DrawLineBresenham(Bitu val) {
+ 	// Probably a lot easier way to do this, but this works.
+ 
+ 	dminor = (Bits)((Bit16s)xga.desty);
+-	if(xga.desty&0x2000) dminor |= 0xffffe000;
++	if(xga.desty&0x2000) dminor |= ~((Bits)0x1fff);
+ 	dminor >>= 1;
+ 
+ 	destxtmp=(Bits)((Bit16s)xga.destx);
+-	if(xga.destx&0x2000) destxtmp |= 0xffffe000;
++	if(xga.destx&0x2000) destxtmp |= ~((Bits)0x1fff);
+ 
+ 
+-	dmajor = -(destxtmp - (dminor << 1)) >> 1;
++	dmajor = -(destxtmp - (dminor << (Bits)1)) >> (Bits)1;
+ 	
+ 	dx = dmajor;
+ 	if((val >> 5) & 0x1) {
+@@ -377,7 +377,7 @@ void XGA_DrawLineBresenham(Bitu val) {
+ 		sy = -1;
+ 	}
+ 	e = (Bits)((Bit16s)xga.ErrTerm);
+-	if(xga.ErrTerm&0x2000) e |= 0xffffe000;
++	if(xga.ErrTerm&0x2000) e |= ~((Bits)0x1fff); /* sign extend 13-bit error term */
+ 	xat = xga.curx;
+ 	yat = xga.cury;
+ 
+@@ -389,7 +389,8 @@ void XGA_DrawLineBresenham(Bitu val) {
+ 		steep = true;
+ 	}
+     
+-	//LOG_MSG("XGA: Bresenham: ASC %d, LPDSC %d, sx %d, sy %d, err %d, steep %d, length %d, dmajor %d, dminor %d, xstart %d, ystart %d", dx, dy, sx, sy, e, steep, xga.MAPcount, dmajor, dminor,xat,yat);
++//	LOG_MSG("XGA: Bresenham: ASC %ld, LPDSC %ld, sx %ld, sy %ld, err %ld, steep %ld, length %ld, dmajor %ld, dminor %ld, xstart %ld, ystart %ld",
++//		dx, dy, sx, sy, e, (unsigned long)steep, (unsigned long)xga.MAPcount, dmajor, dminor, xat, yat);
+ 
+ 	for (i=0;i<=xga.MAPcount;i++) { 
+ 			Bitu mixmode = (xga.pix_cntl >> 6) & 0x3;
