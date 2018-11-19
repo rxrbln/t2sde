@@ -106,7 +106,7 @@ echo '$STONE install' > etc/stone.d/default.sh
 echo_status "Creating 2nd_stage archive."
 tar -c * | bzip2 > $isofsdir/2nd_stage.tar.bz2
 
-cd ..
+cd $disksdir/
 
 echo_header "Creating 2nd_stage_small filesystem:"
 mkdir -p 2nd_stage_small; cd 2nd_stage_small
