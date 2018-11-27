@@ -56,7 +56,7 @@ doboot()
 		mkdir -p /mnt_root/lib/modules
 		cp -ar /lib/modules/* /mnt_root/lib/modules/
 
-		# TODO: inject more first stage stuff if it was a small image
+		# TODO: inject more first stage stuff if it was a small image?
 		exec switch_root /mnt_root /sbin/init
 	else
 		umount /mnt_root
@@ -66,7 +66,13 @@ doboot()
 
 trymount()
 {
-	for fs in iso9660 `sed '/^nodev/d' /proc/filesystems | sed '1!G; $p; h; d'`; do
+	# try best match / detected rootfs first, all the others thereafter
+	local filesystems=`disktype $1 2>/dev/null |
+             sed -e '/file system/!d' -e 's/file system.*//' -e 's/ //g' \
+                 -e 'y/ABCDEFGHIJKLMNOPQRSTUVWXYZ/abcdefghijklmnopqrstuvwxyz/' \
+                 -e 's/fat32/vfat/'
+             sed '1!G ; $p ; h ; d' /proc/filesystems | sed /^nodev/d`
+	for fs in $filesystems; do
 		mount -t $fs -o ro $1 $2 && return
 	done
 }
@@ -75,7 +81,8 @@ filter_for()
 {
 	case "$1" in
 		*.bz2)	echo bunzip2 ;;
-		*.gz)	echo gunzip ;;
+		*.zst)	echo unzstd ;;
+                *.gz)	echo gunzip ;;
 		*) echo cat ;;
 	esac
 }
@@ -86,7 +93,7 @@ select_stage2()
 	case $1 in
 	  http://*|ftp://*)
 		# the last sed is a uniq
-		images=`fget $1/ | sed 's/[<>"]/\n/g' | sed -n '/2nd_stage/p' |
+		images=`fget $1/ | sed 's/[<>"]/\n/g' | sed -n '/stage2/p' |
 sed 'h;:b
 $b
 N; /^\(.*\)\n\1$/ {g; bb
@@ -97,7 +104,7 @@ P; D'`
 	  *)
 		mkdir /mnt_source
 		trymount $1 /mnt_source
-		images=`cd /mnt_source ; ls 2nd_stage*.tar*`
+		images=`cd /mnt_source; ls stage2*.tar*`
 		umount /mnt_source; rmdir /mnt_source
 		;;
 	esac
@@ -108,10 +115,10 @@ P; D'`
 	mem=`sed -n '/MemTotal/{s/.* \([[:digit:]]*\) .*/\1/p}' /proc/meminfo`
 	i=1; default=$i
 	for x in $images; do
-		if [[ "$x" = *small* ]]; then
-			[ $mem -lt 128000 ] && default=$i
-		else
+		if [[ "$x" = *ext* ]]; then
 			[ $mem -ge 128000 ] && default=$i
+		else
+			[ $mem -lt 128000 ] && default=$i
 		fi
 		echo "     $(( i++ )). $x"
 	done
@@ -128,6 +135,7 @@ P; D'`
 			return
 		fi
 	done
+	eval $2=$in
 }
 
 httpload() 
