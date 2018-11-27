@@ -111,9 +111,9 @@ cd $disksdir/
 echo_header "Creating 2nd_stage_small filesystem:"
 mkdir -p 2nd_stage_small; cd 2nd_stage_small
 
-mkdir -p dev proc tmp bin etc share
-mkdir -p mnt/source mnt/target
-ln -s bin sbin ; ln -s . usr
+mkdir -p dev proc sys tmp bin etc share bin sbin usr/{bin,sbin}
+mkdir -p mnt/{source,target}
+#ln -s bin sbin ; ln -s . usr
 
 progs="agetty bash cat cp date dd df dmesg ifconfig ln ls $packager mkdir mke2fs \
        mkswap mount mv rm reboot route sleep swapoff swapon sync umount \
@@ -132,10 +132,11 @@ fi
 
 for x in $progs ; do
 	fn=""
-	[ -f ../2nd_stage/bin/$x ] && fn="bin/$x"
-	[ -f ../2nd_stage/sbin/$x ] && fn="sbin/$x"
-	[ -f ../2nd_stage/usr/bin/$x ] && fn="usr/bin/$x"
-	[ -f ../2nd_stage/usr/sbin/$x ] && fn="usr/sbin/$x"
+	if   [ -f ../2nd_stage/bin/$x ]; then fn="bin/$x"
+	elif [ -f ../2nd_stage/sbin/$x ]; then fn="sbin/$x"
+	elif [ -f ../2nd_stage/usr/bin/$x ]; then fn="usr/bin/$x"
+	elif [ -f ../2nd_stage/usr/sbin/$x ]; then fn="usr/sbin/$x"
+	fi
 
 	if [ "$fn" ] ; then
 		cp ../2nd_stage/$fn $fn
