@@ -115,14 +115,15 @@ mkdir -p dev proc sys tmp bin etc share bin sbin usr/{bin,sbin}
 mkdir -p mnt/{source,target}
 #ln -s bin sbin ; ln -s . usr
 
-progs="agetty bash cat cp date dd df dmesg ifconfig ln ls $packager mkdir mke2fs \
+progs="agetty bash cat cp date dd df dmesg ifconfig ln ls $packager mkdir \
        mkswap mount mv rm reboot route sleep swapoff swapon sync umount \
        eject chmod chroot grep halt rmdir sh shutdown uname killall5 \
-       stone mktemp sort fold sed mkreiserfs cut head tail disktype bzip2 gzip"
+       stone mktemp sort fold sed mkreiserfs cut head tail disktype bzip2 gzip \
+       mkfs.ext3"
 
 progs="$progs parted fdisk sfdisk"
 
-if [ $arch = powerpc ] ; then
+if [ $arch = powerpc* ] ; then
 	progs="$progs mac-fdisk pdisk"
 fi
 
