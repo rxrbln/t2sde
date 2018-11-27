@@ -23,7 +23,7 @@ mkdir -p $disksdir/2nd_stage; cd $disksdir/2nd_stage
 #
 package_map="00-dirtree               $SDECFG_LIBC
 zlib
-parted             mac-fdisk          pdisk              cryptsetup
+parted             cryptsetup
 xfsprogs           mkdosfs            jfsutils           btrfs-progs
 e2fsprogs          reiserfsprogs      reiser4progs       genromfs
 popt               raidtools          mdadm              pcre
@@ -122,7 +122,7 @@ progs="agetty bash cat cp date dd df dmesg ifconfig ln ls $packager mkdir mke2fs
 
 progs="$progs parted fdisk sfdisk"
 
-if [ $arch = ppc ] ; then
+if [ $arch = powerpc ] ; then
 	progs="$progs mac-fdisk pdisk"
 fi
 
