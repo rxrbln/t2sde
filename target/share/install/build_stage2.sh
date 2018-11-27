@@ -153,7 +153,7 @@ while [ $found = 1 ]; do
 		for y in $( cd $x 2>/dev/null && ls *.so.* 2>/dev/null ); do
 			dir=${x#../2nd_stage/}
 			if [ ! -f $dir/$y ] &&
-			   grep -q $y bin/* lib{64,}/* 2> /dev/null
+			   grep -q $y {s,}bin/* usr/{s,}bin lib{64,}/* 2> /dev/null
 			then
 				echo_status "\`- Found $dir/$y."
 				mkdir -p $dir ; cp $x/$y $dir/$y
@@ -170,6 +170,9 @@ mkdir -p etc/stone.d
 for i in gui_text mod_install mod_packages mod_gas default ; do
 	cp ../2nd_stage/etc/stone.d/$i.sh etc/stone.d
 done
+echo_status "copy additional files."
+mkdir -p usr/share/terminfo/l/
+cp ../2nd_stage/usr/share/terminfo/l/linux usr/share/terminfo/l/linux
 
 copy_and_parse_from_source $base/target/share/install/rootfs $PWD
 
