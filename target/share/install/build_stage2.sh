@@ -118,8 +118,8 @@ mkdir -p mnt/{source,target}
 progs="agetty bash cat cp date dd df dmesg ifconfig ln ls $packager mkdir \
        mkswap mount mv rm reboot route sleep swapoff swapon sync umount \
        eject chmod chroot grep halt rmdir sh shutdown uname killall5 \
-       stone mktemp sort fold sed mkreiserfs cut head tail disktype bzip2 gzip \
-       mkfs.ext3"
+       stone mktemp sort fold sed mkreiserfs cut head tail disktype \
+       zstd bzip2 gzip mkfs.ext3 gasgui dialog stty wc fmt"
 
 progs="$progs parted fdisk sfdisk"
 
@@ -154,7 +154,7 @@ while [ $found = 1 ]; do
 		for y in $( cd $x 2>/dev/null && ls *.so.* 2>/dev/null ); do
 			dir=${x#../2nd_stage/}
 			if [ ! -f $dir/$y ] &&
-			   grep -q $y {s,}bin/* usr/{s,}bin lib{64,}/* 2> /dev/null
+			   grep -q $y {s,}bin/* usr/{s,}bin/* lib{64,}/* 2> /dev/null
 			then
 				echo_status "\`- Found $dir/$y."
 				mkdir -p $dir ; cp $x/$y $dir/$y
@@ -168,7 +168,7 @@ echo_status "Copy /etc/fstab."
 cp ../2nd_stage/etc/fstab etc
 echo_status "Copy stone.d."
 mkdir -p etc/stone.d
-for i in gui_text mod_install mod_packages mod_gas default ; do
+for i in gui_text gui_dialog mod_install mod_packages mod_gas default ; do
 	cp ../2nd_stage/etc/stone.d/$i.sh etc/stone.d
 done
 echo_status "copy additional files."
