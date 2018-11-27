@@ -100,11 +100,7 @@ echo_status "Creating usability sym-links."
 
 [ "$SDECFG_CROSSBUILD" != 1 ] && (chroot . /sbin/ldconfig || true)
 
-mkdir -p mnt/source mnt/target
 echo '$STONE install' > etc/stone.d/default.sh
-
-echo_status "Creating 2nd_stage archive."
-tar -c * | bzip2 > $isofsdir/2nd_stage.tar.bz2
 
 cd $disksdir/
 
@@ -113,13 +109,13 @@ mkdir -p 2nd_stage_small; cd 2nd_stage_small
 
 mkdir -p dev proc sys tmp bin etc share bin sbin usr/{bin,sbin}
 mkdir -p mnt/{source,target}
-#ln -s bin sbin ; ln -s . usr
 
-progs="agetty bash cat cp date dd df dmesg ifconfig ln ls $packager mkdir \
+# TODO: theoretically we can re-use some of the initrd files, too!
+progs="agetty sh bash cat cp date dd df dmesg ifconfig ln ls $packager mkdir \
        mkswap mount mv rm reboot route sleep swapoff swapon sync umount \
-       eject chmod chroot grep halt rmdir sh shutdown uname killall5 \
+       eject chmod chroot grep halt rmdir shutdown uname killall5 \
        stone mktemp sort fold sed mkreiserfs cut head tail disktype \
-       zstd bzip2 gzip mkfs.ext3 gasgui dialog stty wc fmt"
+       udevd udevadm zstd bzip2 gzip mkfs.ext3 gasgui dialog stty wc fmt"
 
 progs="$progs parted fdisk sfdisk"
 
@@ -140,13 +136,13 @@ for x in $progs ; do
 	fi
 
 	if [ "$fn" ] ; then
-		cp ../2nd_stage/$fn $fn
+		mv ../2nd_stage/$fn $fn
 	else
 		echo_error "\`- Program not found: $x"
 	fi
 done
 
-echo_status "Copy the required libraries ..."
+echo_status "Moving the required libraries ..."
 found=1
 while [ $found = 1 ]; do
 	found=0
@@ -157,7 +153,13 @@ while [ $found = 1 ]; do
 			   grep -q $y {s,}bin/* usr/{s,}bin/* lib{64,}/* 2> /dev/null
 			then
 				echo_status "\`- Found $dir/$y."
-				mkdir -p $dir ; cp $x/$y $dir/$y
+				mkdir -p $dir
+				while z=`readlink $x/$y`; [ "$z" ]; do
+					echo "	$dir/$y SYMLINKS to $z"
+					mv $x/$y $dir/
+					y=$z
+				done
+				mv $x/$y $dir/
 				found=1
 			fi
 		done
@@ -180,7 +182,10 @@ copy_and_parse_from_source $base/target/share/install/rootfs $PWD
 echo_status "Creating links for identical files."
 link_identical_files
 
-echo_status "Creating 2nd_stage_small archive."
-tar -c * | bzip2 -4 > $isofsdir/2nd_stage_small.tar.bz2
+cd $disksdir/
+                           
+echo_status "Creating stage2 archive."
+(cd 2nd_stage_small; tar -c *) | bzip2 -4 > $isofsdir/stage2.tar.bz2
 
-cd ..
+echo_status "Creating stage2ext archive."
+(cd 2nd_stage; tar -c *) | bzip2 > $isofsdir/stage2ext.tar.bz2

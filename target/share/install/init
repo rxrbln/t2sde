@@ -123,19 +123,23 @@ P; D'`
 		echo "     $(( i++ )). $x"
 	done
 	[ $mem -le 64000 ] && autoload=0
-	echo -n "Enter number or image file name (default=$default): "
+	echo -n "Enter number or image file names (default=$default): "
 
 	in=; [ $autoload = 0 ] && read in || echo
 	[ "$in" ] || in=$default
 
 	i=1
 	for x in $images; do
-		if [ "$(( i++ ))" = $in ]; then
-			eval $2=$x
+		if [ "$(( i++ ))" = "$in" ]; then
+			i=${x%.tar.*} # add base "stage2.tar.*"?
+			if [ "$i" != "stage2" ]; then
+				x="stage2.${x#stage2*.} $x"
+			fi
+			eval $2=\"$x\"
 			return
 		fi
 	done
-	eval $2=$in
+	eval $2=\"$in\"
 }
 
 httpload() 
@@ -156,17 +160,17 @@ httpload()
 	fi
 
 	exit_init=1
-	url=$baseurl/$filename
-
-	echo -e "[ $url ]\n"
 	export ROCK_INSTALL_SOURCE_URL=$baseurl
-
 	exit_linuxrc=1
-	mkdir /mnt_root || exit_linuxrc=0
 
+	mkdir /mnt_root || exit_linuxrc=0
 	mount -t tmpfs none /mnt_root || exit_linuxrc=0
-	filter=`filter_for "$url"`
-	fget $url | $filter | ( cd /mnt_root; tar x )
+
+	for f in $filename; do
+		url=$baseurl/$f
+		filter=`filter_for "$url"`
+		fget $url | $filter | ( cd /mnt_root; tar x )
+	done
 	
 	echo "finished ... continuing execution of second stage"
 	doboot
@@ -285,11 +289,13 @@ load_ramdisk_file()
 	mount -t tmpfs none /mnt_root || exit_linuxrc=0
 
 	echo "Extracting second stage filesystem ..."
-	filter=`filter_for "$filename"`
-	if ! $filter < /mnt_source/$filename | ( cd /mnt_root; tar x ); then
-		echo "Error extracting $filename."
-		exit_linuxrc=0
-	fi
+	for f in $filename; do
+		filter=`filter_for "$f"`
+		if ! $filter < /mnt_source/$f | (cd /mnt_root; tar x); then
+			echo "Error extracting $f."
+			exit_linuxrc=0
+		fi
+	done
 	
 	umount /mnt_source || exit_linuxrc=0
 	rmdir /mnt_source || exit_linuxrc=0
