@@ -114,7 +114,7 @@ mkdir -p mnt/{source,target}
 progs="agetty sh bash cat cp date dd df dmesg ifconfig ln ls $packager mkdir \
        mkswap mount mv rm reboot route sleep swapoff swapon sync umount \
        eject chmod chroot grep halt rmdir shutdown uname killall5 \
-       stone mktemp sort fold sed mkreiserfs cut head tail disktype \
+       stone tar mktemp sort fold sed mkreiserfs cut head tail disktype \
        udevd udevadm zstd bzip2 gzip mkfs.ext3 gasgui dialog stty wc fmt"
 
 progs="$progs parted fdisk sfdisk"
@@ -166,16 +166,18 @@ while [ $found = 1 ]; do
 	done
 done
 #
-echo_status "Copy /etc/fstab."
-cp ../2nd_stage/etc/fstab etc
-echo_status "Copy stone.d."
+echo_status "Move /etc/fstab, SDE-CONFIG."
+mv ../2nd_stage/etc/fstab etc/
+mkdir -p etc/SDE-CONFIG
+mv ../2nd_stage/etc/SDE-CONFIG/config etc/SDE-CONFIG/
+echo_status "Move stone.d."
 mkdir -p etc/stone.d
 for i in gui_text gui_dialog mod_install mod_packages mod_gas default ; do
-	cp ../2nd_stage/etc/stone.d/$i.sh etc/stone.d
+	mv ../2nd_stage/etc/stone.d/$i.sh etc/stone.d
 done
 echo_status "copy additional files."
 mkdir -p usr/share/terminfo/l/
-cp ../2nd_stage/usr/share/terminfo/l/linux usr/share/terminfo/l/linux
+mv ../2nd_stage/usr/share/terminfo/l/linux usr/share/terminfo/l/linux
 
 copy_and_parse_from_source $base/target/share/install/rootfs $PWD
 
