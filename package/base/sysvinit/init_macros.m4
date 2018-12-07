@@ -42,7 +42,7 @@ ifelse(initstyle, `sysv_nice', `
 	define(`main_begin', `title() {
 	local x w="`$'(stty size 2>/dev/null </dev/tty | cut -d" " -f2)"
 	[ -z "`$'w" ] && w="`$'(stty size </dev/console | cut -d" " -f2)"
-	printf "%0$((w/2-1))s" | sed "s/ / ./g"
+	printf "%0$((w/2-1))s" | sed "s/ /. /g"
 	echo -e "\e[255G\e[5D v  \r\e[36m`$'* \e[0m"
 	error=0
 }
@@ -50,9 +50,9 @@ ifelse(initstyle, `sysv_nice', `
 status() {
 	if [ `$'error -eq 0 ]
 	then
-		echo -e "\e[1A\e[255G\e[6D|\e[32m OK \e[0m|"
+		echo -e "\e[1A\e[255G\e[5D|\e[32m OK \e[0m|"
 	else
-		echo -e "\e[1A\e[255G\e[6D\a|\e[1;31mFAIL\e[0m|"
+		echo -e "\e[1A\e[255G\e[5D\a|\e[1;31mFAIL\e[0m|"
 	fi
 }
 
