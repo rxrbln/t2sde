@@ -1,7 +1,7 @@
 #!/bin/sh
 
-# partly based on linuxrc.c, Copyright (C) 2003, 2004 Cliford Wolf and Rene Rebe
-# converted from C to shell code and heavily cleaned and improved for the T2 SDE
+# Partially based on linuxrc.c, Copyright (C) 2003, 2004 Cliford Wolf and Rene Rebe
+# Converted from C to shell and heavily cleaned and improved for the T2 SDE
 
 echo "T2 SDE early (install) userspace (C) 2005-2018 Rene Rebe, ExactCODE GmbH"
 
@@ -11,6 +11,7 @@ echo "Mounting /dev, /proc and /sys ..."
 mount -t devtmpfs none -o mode=755 /dev
 mount -t proc none /proc
 mount -t sysfs none /sys
+mkdir -p /tmp
 ln -s /proc/self/fd /dev/fd
 
 echo "Populating u/dev ..."
@@ -30,8 +31,8 @@ for x in sbp2 ide-generic ide-disk ide-cd sd_mod sr_mod sg; do
 done
 
 # the modular filesystems ...
-for x in /lib/modules/*/kernel/fs/{*/,}*.*o ; do
-	x=${x##*/} ; x=${x%.*o}
+for x in /lib/modules/*/kernel/fs/{*/,}*.*o; do
+	x=${x##*/}; x=${x%.*o}
 	modprobe $x 2> /dev/null
 done
 
@@ -40,27 +41,15 @@ done
 
 doboot()
 {
-	if [ ! -e /mnt_root/sbin/init ]; then
-	 	echo "Can't find /mnt_root/sbin/init."
+	if [ ! -e /sbin/init ]; then
+	 	echo "Can't find /sbin/init."
 		exit_linuxrc=0
 	fi
 
 	if [ $exit_linuxrc = 1 ]; then
-		kill %1
-
-		mount -t none -o move /dev /mnt_root/dev
-		mount -t none -o move /proc /mnt_root/proc
-		mount -t none -o move /sys /mnt_root/sys
-
-		# copy stuff only in the 1st_stage image
-		mkdir -p /mnt_root/lib/modules
-		cp -ar /lib/modules/* /mnt_root/lib/modules/
-
-		# TODO: inject more first stage stuff if it was a small image?
-		exec switch_root /mnt_root /sbin/init
-	else
-		umount /mnt_root
-		rmdir /mnt_root
+		echo "finished ... continuing execution of second stage"
+		# we re-use all stage1 stuff, mounts, udev, you name it!
+		exec /sbin/init
 	fi
 }
 
@@ -163,16 +152,15 @@ httpload()
 	export ROCK_INSTALL_SOURCE_URL=$baseurl
 	exit_linuxrc=1
 
-	mkdir /mnt_root || exit_linuxrc=0
-	mount -t tmpfs none /mnt_root || exit_linuxrc=0
-
+	echo "Extracting second stage filesystem ..."
+	filter=`filter_for "$filename"`
+	cp -f /bin/tar /bin/$filter /tmp/
+	rm /bin/sh # hack needs overwrite
 	for f in $filename; do
 		url=$baseurl/$f
-		filter=`filter_for "$url"`
-		fget $url | $filter | ( cd /mnt_root; tar x )
+		fget $url | /tmp/$filter | (cd /; /tmp/tar x)
 	done
 	
-	echo "finished ... continuing execution of second stage"
 	doboot
 }
 
@@ -285,13 +273,12 @@ load_ramdisk_file()
 	mkdir /mnt_source || exit_linuxrc=0
 	trymount $devicefile /mnt_source || exit_linuxrc=0
 
-	mkdir /mnt_root || exit_linuxrc=0
-	mount -t tmpfs none /mnt_root || exit_linuxrc=0
-
 	echo "Extracting second stage filesystem ..."
+	filter=`filter_for "$filename"`
+	cp -f /bin/tar /bin/$filter /tmp/
+	rm /bin/sh # hack needs overwrite
 	for f in $filename; do
-		filter=`filter_for "$f"`
-		if ! $filter < /mnt_source/$f | (cd /mnt_root; tar x); then
+		if ! /tmp/$filter < /mnt_source/$f | (cd /; /tmp/tar x); then
 			echo "Error extracting $f."
 			exit_linuxrc=0
 		fi
@@ -318,7 +305,7 @@ net_config()
 	echo -n "Interfaces: "; ls -A /sys/class/net/
 
 	echo -n "Enter interface name (eth0): "
-	read dev ; [ "$dev" ] || dev="eth0"
+	read dev; [ "$dev" ] || dev="eth0"
 
 	echo -n "Enter IP address (auto): "
 	read ip
