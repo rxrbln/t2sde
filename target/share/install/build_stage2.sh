@@ -20,7 +20,7 @@ echo_header "Creating 2nd stage filesystem:"
 rm -rf $disksdir/2nd_stage*
 mkdir -p $disksdir/2nd_stage; cd $disksdir/2nd_stage
 
-#
+# package map to include
 package_map="00-dirtree               $SDECFG_LIBC
 zlib
 parted             cryptsetup
@@ -46,10 +46,8 @@ modutils           pciutils           portmap
 sysklogd           setserial          iproute2
 netkit-base        netkit-ftp         netkit-telnet      netkit-tftp
 sysfiles           libpcap            iptables           tcp_wrappers
-stone              mkinitrd           rocknet
-kbd		   ntfsprogs
-libol              hotplug++          memtester
-serpnp             udev
+stone              rocknet
+kbd		   ntfsprogs          libol              memtester
 openssl            openssh            iproute2"
 
 # TODO: a global multilib package multiplexer that allows distrinct control
@@ -92,6 +90,26 @@ grep -e 'usr/share/terminfo/.*/\(ansi\|linux\|.*xterm.*\|vt.*\|screen\)' \
  >> ../files-wanted
 
 copy_with_list_from_file $build_root $PWD $PWD/../files-wanted
+
+# remove libs already in the regular initrd
+# For each available kernel:
+for x in `egrep 'X .* KERNEL .*' $base/config/$config/packages |
+          cut -d ' ' -f 5`; do
+  kernel=${x/_*/}
+  for moduledir in `grep lib/modules $build_root/var/adm/flists/$kernel |
+                   cut -d ' ' -f 2 | cut -d / -f 1-3 | uniq`; do
+    kernelver=${moduledir/*\/}   
+    initrd="initrd-$kernelver.img"
+    kernelimg=`ls $build_root/boot/vmlinu?_$kernelver`
+    kernelimg=${kernelimg##*/}
+
+    zstd -d <  $isofsdir/boot/$initrd | cpio -it | grep "lib.*\.so" |
+    while read lib; do
+      [ -e "$lib" ] && rm -vf "$lib"
+    done
+  done
+done
+
 copy_and_parse_from_source $base/target/share/install/rootfs $PWD
 
 echo_status "Creating usability sym-links."
@@ -107,15 +125,14 @@ cd $disksdir/
 echo_header "Creating 2nd_stage_small filesystem:"
 mkdir -p 2nd_stage_small; cd 2nd_stage_small
 
-mkdir -p dev proc sys tmp bin etc share bin sbin usr/{bin,sbin}
-mkdir -p mnt/{source,target}
+mkdir -p share {,usr/}{,s}bin
 
-# TODO: theoretically we can re-use some of the initrd files, too!
+# we re-use some of the initrd files, too!
 progs="agetty sh bash cat cp date dd df dmesg ifconfig ln ls $packager mkdir \
        mkswap mount mv rm reboot route sleep swapoff swapon sync umount \
-       eject chmod chroot grep halt rmdir shutdown uname killall5 \
+       eject chmod chroot grep halt rmdir init shutdown uname killall5 \
        stone tar mktemp sort fold sed mkreiserfs cut head tail disktype \
-       udevd udevadm zstd bzip2 gzip mkfs.ext3 gasgui dialog stty wc fmt"
+       zstd bzip2 gzip mkfs.ext3 gasgui dialog stty wc fmt"
 
 progs="$progs parted fdisk sfdisk"
 
@@ -166,8 +183,7 @@ while [ $found = 1 ]; do
 	done
 done
 #
-echo_status "Move /etc/fstab, SDE-CONFIG."
-mv ../2nd_stage/etc/fstab etc/
+echo_status "Move SDE-CONFIG."
 mkdir -p etc/SDE-CONFIG
 mv ../2nd_stage/etc/SDE-CONFIG/config etc/SDE-CONFIG/
 echo_status "Move stone.d."
@@ -176,18 +192,19 @@ for i in gui_text gui_dialog mod_install mod_packages mod_gas default ; do
 	mv ../2nd_stage/etc/stone.d/$i.sh etc/stone.d
 done
 echo_status "copy additional files."
-mkdir -p usr/share/terminfo/l/
-mv ../2nd_stage/usr/share/terminfo/l/linux usr/share/terminfo/l/linux
-
-copy_and_parse_from_source $base/target/share/install/rootfs $PWD
+mkdir -p usr/share/terminfo/{v,l}/
+mv ../2nd_stage/usr/share/terminfo/l/linux usr/share/terminfo/l/
+mv ../2nd_stage/usr/share/terminfo/v/vt102 usr/share/terminfo/v/
 
 echo_status "Creating links for identical files."
 link_identical_files
 
 cd $disksdir/
-                           
+
 echo_status "Creating stage2 archive."
-(cd 2nd_stage_small; tar -c *) | bzip2 -4 > $isofsdir/stage2.tar.bz2
+(cd 2nd_stage_small; find ! -type d |
+	tar -cf- --no-recursion --files-from=-) | bzip2 -4 > $isofsdir/stage2.tar.bz2
 
 echo_status "Creating stage2ext archive."
-(cd 2nd_stage; tar -c *) | bzip2 > $isofsdir/stage2ext.tar.bz2
+(cd 2nd_stage; find ! -type d |
+	tar -cf- --no-recursion --files-from=-) | bzip2 > $isofsdir/stage2ext.tar.bz2
