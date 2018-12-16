@@ -52,7 +52,7 @@ openssl            openssh            iproute2"
 
 # TODO: a global multilib package multiplexer that allows distrinct control
 #       and avoids such hacks ...
-if [ "$SDECFG_SPARC64_32BIT" = "1" ]; then
+if [ "$SDECFG_POWERPC64_32" = 1 -o "$SDECFG_SPARC64_32BIT" = 1 ]; then
 	package_map="$package_map ${SDECFG_LIBC}32"
 fi
 
@@ -90,25 +90,6 @@ grep -e 'usr/share/terminfo/.*/\(ansi\|linux\|.*xterm.*\|vt.*\|screen\)' \
  >> ../files-wanted
 
 copy_with_list_from_file $build_root $PWD $PWD/../files-wanted
-
-# remove libs already in the regular initrd
-# For each available kernel:
-for x in `egrep 'X .* KERNEL .*' $base/config/$config/packages |
-          cut -d ' ' -f 5`; do
-  kernel=${x/_*/}
-  for moduledir in `grep lib/modules $build_root/var/adm/flists/$kernel |
-                   cut -d ' ' -f 2 | cut -d / -f 1-3 | uniq`; do
-    kernelver=${moduledir/*\/}   
-    initrd="initrd-$kernelver.img"
-    kernelimg=`ls $build_root/boot/vmlinu?_$kernelver`
-    kernelimg=${kernelimg##*/}
-
-    zstd -d <  $isofsdir/boot/$initrd | cpio -it | grep "lib.*\.so" |
-    while read lib; do
-      [ -e "$lib" ] && rm -vf "$lib"
-    done
-  done
-done
 
 copy_and_parse_from_source $base/target/share/install/rootfs $PWD
 
@@ -191,10 +172,32 @@ mkdir -p etc/stone.d
 for i in gui_text gui_dialog mod_install mod_packages mod_gas default ; do
 	mv ../2nd_stage/etc/stone.d/$i.sh etc/stone.d
 done
-echo_status "copy additional files."
+echo_status "Copy additional files."
 mkdir -p usr/share/terminfo/{v,l}/
 mv ../2nd_stage/usr/share/terminfo/l/linux usr/share/terminfo/l/
 mv ../2nd_stage/usr/share/terminfo/v/vt102 usr/share/terminfo/v/
+
+echo_status "Removing shared libraries already in initrd."
+
+# remove libs already in the regular initrd, for each available kernel:
+for x in `egrep 'X .* KERNEL .*' $base/config/$config/packages |
+          cut -d ' ' -f 5`; do
+  kernel=${x/_*/}
+  for moduledir in `grep lib/modules $build_root/var/adm/flists/$kernel |
+                   cut -d ' ' -f 2 | cut -d / -f 1-3 | uniq`; do
+    kernelver=${moduledir/*\/}
+    initrd="initrd-$kernelver.img"
+    kernelimg=`ls $build_root/boot/vmlinu?_$kernelver`
+    kernelimg=${kernelimg##*/}
+
+    zstd -d <  $isofsdir/boot/$initrd | cpio -it | grep "lib.*\.so" |
+    while read lib; do
+      [ -e "../2nd_stage/$lib" ] && rm -vf "../2nd_stage/$lib"
+      [ -e "../2nd_stage_small/$lib" ] && rm -vf "../2nd_stage_small/$lib"
+    done
+  done
+done
+
 
 echo_status "Creating links for identical files."
 link_identical_files
