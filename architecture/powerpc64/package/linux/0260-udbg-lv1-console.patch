@@ -1,0 +1,123 @@
+--- a/arch/powerpc/platforms/ps3/Kconfig	2013-02-21 13:59:28.585037559 +0100
++++ b/arch/powerpc/platforms/ps3/Kconfig	2013-02-21 14:01:19.724894506 +0100
+@@ -246,4 +246,12 @@
+ 
+ 	  If in doubt, say N here.
+ 
++config PS3_LV1_CONS_UDBG
++	bool "PS3 udbg output via LV1 console"
++	depends on PPC_PS3
++	help
++	  Enables udbg early debugging output to LV1 console.
++
++	  If in doubt, say N here.
++
+ endmenu
+--- a/arch/powerpc/platforms/ps3/Makefile	2013-02-21 14:02:49.992787219 +0100
++++ b/arch/powerpc/platforms/ps3/Makefile	2013-02-21 14:03:33.870050887 +0100
+@@ -3,6 +3,7 @@
+ obj-y += system-bus.o
+ 
+ obj-$(CONFIG_PS3GELIC_UDBG) += gelic_udbg.o
++obj-$(CONFIG_PS3_LV1_CONS_UDBG) += lv1_cons_udbg.o
+ obj-$(CONFIG_SMP) += smp.o
+ obj-$(CONFIG_SPU_BASE) += spu.o
+ obj-y += device-init.o
+--- /dev/null	2012-11-28 15:48:49.557690341 +0100
++++ b/arch/powerpc/platforms/ps3/lv1_cons_udbg.c	2013-02-21 14:23:49.250083391 +0100
+@@ -0,0 +1,57 @@
++/*
++ * PS3 LV1 Debug Console
++ *
++ * Copyright (C) 2013 glevand <geoffrey.levand@mail.ru>
++ * All rights reserved.
++ *
++ * This program is free software; you can redistribute it and/or modify it
++ * under the terms of the GNU General Public License as published
++ * by the Free Software Foundation; version 2 of the License.
++ *
++ * This program is distributed in the hope that it will be useful, but
++ * WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
++ * General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License along
++ * with this program; if not, write to the Free Software Foundation, Inc.,
++ * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
++ */
++
++#include <asm/io.h>
++#include <asm/udbg.h>
++#include <asm/lv1call.h>
++
++#define LV1_CONS_ID		1
++#define LV1_CONS_LENGTH		0xff0
++
++static int initialized = 0;
++
++static void lv1_cons_udbg_putc(char ch)
++{
++	u64 data, written;
++	int ret;
++
++	if (!initialized) {
++		ret = lv1_undocumented_function_105(LV1_CONS_ID, 0, 0,
++			LV1_CONS_LENGTH, LV1_CONS_LENGTH, 0, 0);
++		if ((ret != 0) && (ret != -7))
++			return;
++
++		initialized = 1;
++	}
++
++	data = ch;
++	data <<= 56;
++
++	lv1_undocumented_function_107(LV1_CONS_ID, 1, data, 0, 0, 0, &written);
++
++	/* flush to console buffer in LV1 */
++
++	lv1_undocumented_function_109(LV1_CONS_ID);
++}
++
++void __init udbg_init_ps3_lv1_cons(void)
++{
++	udbg_putc = lv1_cons_udbg_putc;
++}
+--- a/arch/powerpc/Kconfig.debug	2013-02-21 14:31:39.023621546 +0100
++++ b/arch/powerpc/Kconfig.debug	2013-02-21 14:32:47.370765998 +0100
+@@ -248,6 +248,14 @@
+ 	  Select this to enable early debugging for the PlayStation3 via
+ 	  UDP broadcasts sent out through the Ethernet port.
+ 
++config PPC_EARLY_DEBUG_PS3_LV1_CONS
++	bool "Early debugging through the PS3 LV1 console"
++	depends on PPC_PS3
++	select PS3_LV1_CONS_UDBG
++	help
++	  Select this to enable early debugging for the PlayStation3 via
++	  LV1 debug console.
++
+ config PPC_EARLY_DEBUG_OPAL_RAW
+ 	bool "OPAL raw console"
+ 	depends on HVC_OPAL
+--- a/arch/powerpc/include/asm/udbg.h	2013-02-21 14:15:53.855871374 +0100
++++ b/arch/powerpc/include/asm/udbg.h	2013-02-21 14:16:16.107616876 +0100
+@@ -54,6 +54,7 @@
+ extern void __init udbg_init_wsp(void);
+ extern void __init udbg_init_ehv_bc(void);
+ extern void __init udbg_init_ps3gelic(void);
++extern void __init udbg_init_ps3_lv1_cons(void);
+ extern void __init udbg_init_debug_opal_raw(void);
+ extern void __init udbg_init_debug_opal_hvsi(void);
+ 
+--- a/arch/powerpc/kernel/udbg.c	2013-02-21 14:14:28.283621378 +0100
++++ b/arch/powerpc/kernel/udbg.c	2013-02-21 14:15:16.431624882 +0100
+@@ -68,6 +68,8 @@
+ 	udbg_init_ehv_bc();
+ #elif defined(CONFIG_PPC_EARLY_DEBUG_PS3GELIC)
+ 	udbg_init_ps3gelic();
++#elif defined(CONFIG_PPC_EARLY_DEBUG_PS3_LV1_CONS)
++	udbg_init_ps3_lv1_cons();
+ #elif defined(CONFIG_PPC_EARLY_DEBUG_OPAL_RAW)
+ 	udbg_init_debug_opal_raw();
+ #elif defined(CONFIG_PPC_EARLY_DEBUG_OPAL_HVSI)

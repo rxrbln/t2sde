@@ -1,0 +1,502 @@
+--- a/arch/powerpc/include/asm/ps3.h	2012-08-02 23:17:17.126972935 +0200
++++ b/arch/powerpc/include/asm/ps3.h	2012-08-06 19:41:56.754901977 +0200
+@@ -328,6 +328,7 @@
+ 	PS3_MATCH_ID_LPM		= 11,
+ 	PS3_MATCH_ID_STOR_NOR_FLASH	= 12,
+ 	PS3_MATCH_ID_DISP_MANAGER	= 13,
++	PS3_MATCH_ID_STOR_ENCDEC	= 14,
+ };
+ 
+ enum ps3_match_sub_id {
+@@ -349,6 +350,7 @@
+ #define PS3_MODULE_ALIAS_LPM		"ps3:11:0"
+ #define PS3_MODULE_ALIAS_STOR_NOR_FLASH	"ps3:12:0"
+ #define PS3_MODULE_ALIAS_DISP_MANAGER	"ps3:13:0"
++#define PS3_MODULE_ALIAS_STOR_ENCDEC	"ps3:14:0"
+ 
+ enum ps3_system_bus_device_type {
+ 	PS3_DEVICE_TYPE_IOC0 = 1,
+--- a/arch/powerpc/platforms/ps3/platform.h	2012-08-02 23:17:17.110306267 +0200
++++ b/arch/powerpc/platforms/ps3/platform.h	2012-08-06 19:42:30.948237298 +0200
+@@ -89,6 +89,7 @@
+ 	PS3_DEV_TYPE_SB_GPIO = 6,
+ 	PS3_DEV_TYPE_STOR_FLASH = TYPE_RBC,	/* 14 */
+ 	PS3_DEV_TYPE_STOR_NOR_FLASH = 254,
++	PS3_DEV_TYPE_STOR_ENCDEC = 255,
+ };
+ 
+ int ps3_repository_read_bus_str(unsigned int bus_index, const char *bus_str,
+--- a/arch/powerpc/platforms/ps3/device-init.c	2012-08-02 23:17:17.130306269 +0200
++++ b/arch/powerpc/platforms/ps3/device-init.c	2012-08-06 19:43:12.538239719 +0200
+@@ -621,6 +621,13 @@
+ 				 __func__, __LINE__);
+ 		break;
+ 
++	case PS3_DEV_TYPE_STOR_ENCDEC:
++		result = ps3_setup_storage_dev(repo, PS3_MATCH_ID_STOR_ENCDEC);
++		if (result)
++			pr_debug("%s:%u ps3_setup_storage_dev failed\n",
++				 __func__, __LINE__);
++		break;
++
+ 	default:
+ 		result = 0;
+ 		pr_debug("%s:%u: unsupported dev_type %u\n", __func__, __LINE__,
+--- a/arch/powerpc/platforms/ps3/system-bus.c	2012-08-02 23:17:17.126972935 +0200
++++ b/arch/powerpc/platforms/ps3/system-bus.c	2012-08-06 19:44:03.851576042 +0200
+@@ -175,6 +175,7 @@
+ 	case PS3_MATCH_ID_STOR_ROM:
+ 	case PS3_MATCH_ID_STOR_FLASH:
+ 	case PS3_MATCH_ID_STOR_NOR_FLASH:
++	case PS3_MATCH_ID_STOR_ENCDEC:
+ 		return ps3_open_hv_device_sb(dev);
+ 
+ 	case PS3_MATCH_ID_SOUND:
+@@ -215,6 +216,7 @@
+ 	case PS3_MATCH_ID_STOR_ROM:
+ 	case PS3_MATCH_ID_STOR_FLASH:
+ 	case PS3_MATCH_ID_STOR_NOR_FLASH:
++	case PS3_MATCH_ID_STOR_ENCDEC:
+ 		return ps3_close_hv_device_sb(dev);
+ 
+ 	case PS3_MATCH_ID_SOUND:
+--- a/drivers/ps3/ps3stor_lib.c	2012-08-02 23:17:17.100306267 +0200
++++ b/drivers/ps3/ps3stor_lib.c	2012-08-06 20:43:55.981785017 +0200
+@@ -90,8 +90,9 @@
+ 	unsigned int i;
+ 	unsigned long n;
+ 
+-	if (dev->sbd.match_id == PS3_MATCH_ID_STOR_ROM) {
+-		/* special case: CD-ROM is assumed always accessible */
++	if ((dev->sbd.match_id == PS3_MATCH_ID_STOR_ROM) ||
++	    (dev->sbd.match_id == PS3_MATCH_ID_STOR_ENCDEC)) {
++		/* special case: CD-ROM and ENCDEC are assumed always accessible */
+ 		dev->accessible_regions = 1;
+ 		return 0;
+ 	}
+--- a/arch/powerpc/platforms/ps3/Kconfig	2012-08-02 23:17:17.153639603 +0200
++++ b/arch/powerpc/platforms/ps3/Kconfig	2012-08-06 19:46:13.304916903 +0200
+@@ -192,6 +192,16 @@
+ 	  This driver allows you to create/delete/modify regions
+ 	  on PS3 storage devices.
+ 
++config PS3_ENCDEC
++	tristate "PS3 ENCDEC Driver"
++	depends on PPC_PS3
++	select PS3_STORAGE
++	help
++	  Include support for the PS3 ENCDEC device.
++
++	  This support is required to access the PS3 ENCDEC device.
++	  In general, all users will say Y or M.
++
+ config PS3GELIC_UDBG
+ 	bool "PS3 udbg output via UDP broadcasts on Ethernet"
+ 	depends on PPC_PS3
+--- linux-4.19/drivers/char/Makefile.vanilla	2018-11-15 22:50:09.094948261 +0000
++++ linux-4.19/drivers/char/Makefile	2018-11-15 22:50:21.190948079 +0000
+@@ -52,6 +52,7 @@
+ 
+ obj-$(CONFIG_PS3_FLASH)		+= ps3flash.o
+ obj-$(CONFIG_PS3_STRGMNGR)	+= ps3strgmngr.o
++obj-$(CONFIG_PS3_ENCDEC)	+= ps3encdec.o
+ 
+ obj-$(CONFIG_JS_RTC)		+= js-rtc.o
+ js-rtc-y = rtc.o
+--- /dev/null	2012-08-07 02:54:53.492474007 +0200
++++ b/drivers/char/ps3encdec.c	2012-08-07 02:56:38.822480157 +0200
+@@ -0,0 +1,394 @@
++/*
++ * PS3 ENCDEC Driver
++ *
++ * Copyright (C) 2011 graf_chokolo <grafchokolo@gmail.com>
++ * Copyright (C) 2011, 2012 glevand <geoffrey.levand@mail.ru>
++ * All rights reserved.
++ *
++ * This program is free software; you can redistribute it and/or modify it
++ * under the terms of the GNU General Public License as published
++ * by the Free Software Foundation; version 2 of the License.
++ *
++ * This program is distributed in the hope that it will be useful, but
++ * WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
++ * General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License along
++ * with this program; if not, write to the Free Software Foundation, Inc.,
++ * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
++ */
++
++#include <linux/module.h>
++#include <linux/kernel.h>
++#include <linux/init.h>
++#include <linux/slab.h>
++#include <linux/fs.h>
++#include <linux/sched.h>
++#include <linux/mutex.h>
++#include <linux/poll.h>
++#include <linux/uaccess.h>
++#include <linux/compat.h>
++#include <linux/miscdevice.h>
++
++#include <asm/ps3.h>
++#include <asm/lv1call.h>
++#include <asm/ps3stor.h>
++#include <asm/firmware.h>
++
++#define DEVICE_NAME		"ps3encdec"
++
++#define BOUNCE_SIZE		(4 * 1024)
++
++struct ps3encdec_private
++{
++	struct ps3_storage_device *dev;
++	struct miscdevice misc;
++	char *bounce_wbuf;
++	u64 bounce_wlpar;
++	char *bounce_rbuf;
++	u64 bounce_rlpar;
++	struct mutex mtx;
++	wait_queue_head_t read_wq;
++	wait_queue_head_t write_wq;
++	int cmd_done;
++	int cmd_failed;
++	int cmd_data_avail;
++};
++
++static struct ps3encdec_private *ps3encdec_priv;
++
++static ssize_t ps3encdec_read(struct file *file, char __user *usrbuf,
++	size_t count, loff_t *pos)
++{
++	struct ps3encdec_private *priv = ps3encdec_priv;
++	int res = 0;
++
++	if (mutex_lock_interruptible(&priv->mtx))
++		return (-ERESTARTSYS);
++
++	if (file->f_flags & O_NONBLOCK) {
++		if (!priv->cmd_done || priv->cmd_failed)
++			res = -EAGAIN;
++	} else {
++		DEFINE_WAIT(__wait);
++
++		while (1) {
++			prepare_to_wait(&priv->read_wq, &__wait, TASK_INTERRUPTIBLE);
++
++			if (priv->cmd_data_avail)
++				break;
++	
++			mutex_unlock(&priv->mtx);
++
++			if (signal_pending(current)) {
++				finish_wait(&priv->read_wq, &__wait);
++				return (-ERESTARTSYS);
++			}
++
++			schedule();
++
++			res = mutex_lock_interruptible(&priv->mtx);
++			if (res) {
++				finish_wait(&priv->read_wq, &__wait);
++				return (res);
++			}
++		}
++
++		finish_wait(&priv->read_wq, &__wait);
++	}
++
++	if (res)
++		goto done;
++
++	if (count > BOUNCE_SIZE)
++		count = BOUNCE_SIZE;
++
++	if (!count || (priv->cmd_done && priv->cmd_failed))
++		goto done;
++
++	if (copy_to_user(usrbuf, priv->bounce_rbuf + *pos, count)) {
++		res = -EFAULT;
++		goto done;
++	}
++
++	priv->cmd_data_avail = 0;
++
++	res = count;
++
++done:
++
++	mutex_unlock(&priv->mtx);
++
++	return (res);
++}
++
++static ssize_t ps3encdec_write(struct file *file, const char __user *usrbuf,
++	size_t count, loff_t *pos)
++{
++	struct ps3encdec_private *priv = ps3encdec_priv;
++	struct ps3_storage_device *dev = priv->dev;
++	u32 cmd;
++	int res = 0;
++
++	if (mutex_lock_interruptible(&priv->mtx))
++		return (-ERESTARTSYS);
++
++	if (file->f_flags & O_NONBLOCK) {
++		if (!priv->cmd_done)
++			res = -EAGAIN;
++	} else {
++		DEFINE_WAIT(__wait);
++
++		while (1) {
++			prepare_to_wait(&priv->write_wq, &__wait, TASK_INTERRUPTIBLE);
++
++			if (priv->cmd_done)
++				break;
++	
++			mutex_unlock(&priv->mtx);
++
++			if (signal_pending(current)) {
++				finish_wait(&priv->write_wq, &__wait);
++				return (-ERESTARTSYS);
++			}
++
++			schedule();
++
++			res = mutex_lock_interruptible(&priv->mtx);
++			if (res) {
++				finish_wait(&priv->write_wq, &__wait);
++				return (res);
++			}
++		}
++
++		finish_wait(&priv->write_wq, &__wait);
++	}
++
++	if (res)
++		goto done;
++
++	if (count > BOUNCE_SIZE + sizeof(cmd))
++		count = BOUNCE_SIZE + sizeof(cmd);
++
++	if (!count)
++		goto done;
++
++	if (count < sizeof(cmd)) {
++		res = -EINVAL;
++		goto done;
++	}
++
++	if (copy_from_user(&cmd, usrbuf, sizeof(cmd))) {
++		res = -EFAULT;
++		goto done;
++	}
++
++	if (copy_from_user(priv->bounce_wbuf, usrbuf + sizeof(cmd), count - sizeof(cmd))) {
++		res = -EFAULT;
++		goto done;
++	}
++
++	priv->cmd_done = 0;
++	priv->cmd_failed = 1;
++	priv->cmd_data_avail = 0;
++
++	res = lv1_storage_send_device_command(dev->sbd.dev_id, cmd,
++		priv->bounce_wlpar, count - sizeof(cmd),
++		priv->bounce_rlpar, BOUNCE_SIZE, &dev->tag);
++	if (res) {
++		dev_err(&dev->sbd.core, "%s:%u: res=%d\n",
++			__func__, __LINE__, res);
++		priv->cmd_done = 1;
++		res = -EIO;
++		goto done;
++	}
++
++	res = count;
++
++done:
++
++	mutex_unlock(&priv->mtx);
++
++	return (res);
++}
++
++static unsigned int ps3encdec_poll(struct file *file, poll_table *wait)
++{
++	struct ps3encdec_private *priv = ps3encdec_priv;
++	unsigned int mask = 0;
++
++	mutex_lock(&priv->mtx);
++
++	poll_wait(file, &priv->read_wq, wait);
++	poll_wait(file, &priv->write_wq, wait);
++
++	if (priv->cmd_data_avail)
++		mask |= POLLIN | POLLRDNORM;
++
++	if (priv->cmd_done)
++		mask |= POLLOUT | POLLWRNORM;
++
++	mutex_unlock(&priv->mtx);
++
++	return (mask);
++}
++
++static irqreturn_t ps3encdec_interrupt(int irq, void *data)
++{
++	struct ps3_storage_device *dev = data;
++	struct ps3encdec_private *priv;
++	u64 tag, status;
++	int res;
++
++	res = lv1_storage_get_async_status(dev->sbd.dev_id, &tag, &status);
++
++	pr_info("%s:%d: res=%d status=%llx\n", __func__, __LINE__, res, status);
++
++	if (tag != dev->tag) {
++		dev_err(&dev->sbd.core,
++			"%s:%u: tag mismatch, got %llx, expected %llx\n",
++			__func__, __LINE__, tag, dev->tag);
++	}
++
++	if (res) {
++		dev_err(&dev->sbd.core, "%s:%u: res=%d status=0x%llx\n",
++			__func__, __LINE__, res, status);
++		return (IRQ_HANDLED);
++	}
++
++	priv = ps3_system_bus_get_drvdata(&dev->sbd);
++
++	priv->cmd_done = 1;
++	priv->cmd_failed = (status != 0);
++	priv->cmd_data_avail = !priv->cmd_failed;
++
++	wake_up_interruptible(&priv->read_wq);
++	wake_up_interruptible(&priv->write_wq);
++
++	return (IRQ_HANDLED);
++}
++
++static const struct file_operations ps3encdec_fops = {
++	.owner = THIS_MODULE,
++	.open = nonseekable_open,
++	.read = ps3encdec_read,
++	.write = ps3encdec_write,
++	.poll = ps3encdec_poll,
++};
++
++static int ps3encdec_probe(struct ps3_system_bus_device *_dev)
++{
++	struct ps3_storage_device *dev = to_ps3_storage_device(&_dev->core);
++	struct ps3encdec_private *priv;
++	int res;
++
++	priv = kzalloc(sizeof(*priv), GFP_KERNEL);
++	if (!priv)
++		return (-ENOMEM);
++
++	ps3_system_bus_set_drvdata(_dev, priv);
++
++	dev->bounce_size = BOUNCE_SIZE * 2;
++	dev->bounce_buf = kmalloc(dev->bounce_size, GFP_DMA);
++	if (!dev->bounce_buf) {
++		res = -ENOMEM;
++		goto fail_free_priv;
++	}
++
++	res = ps3stor_setup(dev, ps3encdec_interrupt);
++	if (res)
++		goto fail_free_bounce;
++
++	mutex_init(&priv->mtx);
++
++	init_waitqueue_head(&priv->read_wq);
++	init_waitqueue_head(&priv->write_wq);
++
++	priv->cmd_done = 1;
++	priv->cmd_failed = 0;
++	priv->cmd_data_avail = 0;
++
++	priv->misc.minor = MISC_DYNAMIC_MINOR,
++	priv->misc.name	= DEVICE_NAME,
++	priv->misc.fops	= &ps3encdec_fops,
++
++	res = misc_register(&priv->misc);
++	if (res)
++		goto fail_teardown;
++
++	priv->dev = dev;
++	priv->bounce_wbuf = dev->bounce_buf;
++	priv->bounce_wlpar = dev->bounce_lpar;
++	priv->bounce_rbuf = dev->bounce_buf + BOUNCE_SIZE;
++	priv->bounce_rlpar = dev->bounce_lpar + BOUNCE_SIZE;
++
++	ps3encdec_priv = priv;
++
++	return (0);
++
++fail_teardown:
++
++	ps3stor_teardown(dev);
++
++fail_free_bounce:
++
++	kfree(dev->bounce_buf);
++
++fail_free_priv:
++
++	kfree(priv);
++	ps3_system_bus_set_drvdata(_dev, NULL);
++
++	return (res);
++}
++
++static int ps3encdec_remove(struct ps3_system_bus_device *_dev)
++{
++	struct ps3_storage_device *dev = to_ps3_storage_device(&_dev->core);
++	struct ps3encdec_private *priv = ps3_system_bus_get_drvdata(&dev->sbd);
++
++	ps3encdec_priv = NULL;
++
++	misc_deregister(&priv->misc);
++	ps3stor_teardown(dev);
++	kfree(dev->bounce_buf);
++	kfree(priv);
++	ps3_system_bus_set_drvdata(_dev, NULL);
++
++	return (0);
++}
++
++static struct ps3_system_bus_driver ps3encdec = {
++	.match_id	= PS3_MATCH_ID_STOR_ENCDEC,
++	.core.name	= DEVICE_NAME,
++	.core.owner	= THIS_MODULE,
++	.probe		= ps3encdec_probe,
++	.remove		= ps3encdec_remove,
++	.shutdown	= ps3encdec_remove,
++};
++
++static int __init ps3encdec_init(void)
++{
++	int res;
++
++	if (!firmware_has_feature(FW_FEATURE_PS3_LV1))
++		return (-ENODEV);
++
++	res = ps3_system_bus_driver_register(&ps3encdec);
++
++	return (res);
++}
++
++static void __exit ps3encdec_exit(void)
++{
++	ps3_system_bus_driver_unregister(&ps3encdec);
++}
++
++module_init(ps3encdec_init);
++module_exit(ps3encdec_exit);
++
++MODULE_AUTHOR("glevand");
++MODULE_DESCRIPTION("PS3 ENCDEC Driver");
++MODULE_LICENSE("GPL");
++MODULE_ALIAS(PS3_MODULE_ALIAS_STOR_ENCDEC);

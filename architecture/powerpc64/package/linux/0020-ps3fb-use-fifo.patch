@@ -1,0 +1,537 @@
+--- a/arch/powerpc/include/asm/ps3gpu.h	2012-01-03 19:41:27.000000000 +0100
++++ b/arch/powerpc/include/asm/ps3gpu.h	2012-01-05 23:17:51.200679863 +0100
+@@ -25,6 +25,10 @@
+ #include <asm/lv1call.h>
+ 
+ 
++#define L1GPU_CONTEXT_ATTRIBUTE_FIFO_SETUP	0x1
++#define L1GPU_CONTEXT_ATTRIBUTE_FIFO_PAUSE	0x2
++#define L1GPU_CONTEXT_ATTRIBUTE_FIFO_RESUME	0x3
++
+ #define L1GPU_CONTEXT_ATTRIBUTE_DISPLAY_SYNC	0x101
+ #define L1GPU_CONTEXT_ATTRIBUTE_DISPLAY_FLIP	0x102
+ 
+@@ -44,11 +48,11 @@
+ 
+ 
+ static inline int lv1_gpu_display_sync(u64 context_handle, u64 head,
+-				       u64 ddr_offset)
++				       u64 sync_mode)
+ {
+ 	return lv1_gpu_context_attribute(context_handle,
+ 					 L1GPU_CONTEXT_ATTRIBUTE_DISPLAY_SYNC,
+-					 head, ddr_offset, 0, 0);
++					 head, sync_mode, 0, 0);
+ }
+ 
+ static inline int lv1_gpu_display_flip(u64 context_handle, u64 head,
+--- a/drivers/video/fbdev/ps3fb.c	2012-01-03 19:41:27.000000000 +0100
++++ b/drivers/video/fbdev/ps3fb.c	2012-01-05 23:17:32.550387632 +0100
+@@ -50,6 +50,7 @@
+ 
+ #define GPU_INTR_STATUS_VSYNC_0			0	/* vsync on head A */
+ #define GPU_INTR_STATUS_VSYNC_1			1	/* vsync on head B */
++#define GPU_INTR_STATUS_GRAPH_EXCEPTION		2	/* graphics exception */
+ #define GPU_INTR_STATUS_FLIP_0			3	/* flip head A */
+ #define GPU_INTR_STATUS_FLIP_1			4	/* flip head B */
+ #define GPU_INTR_STATUS_QUEUE_0			5	/* queue head A */
+@@ -75,6 +76,22 @@
+ 	u32 reserved2;
+ };
+ 
++struct gpu_graph_exception_info {
++	u32 channel_id;
++	u32 cause;
++	u32 res1[8];
++	u32 dma_put;
++	u32 dma_get;
++	u32 call;
++	u32 jump;
++	u32 res2;
++	u32 fifo_put;
++	u32 fifo_get;
++	u32 fifo_ref;
++	u32 fifo_cache[512];
++	u32 graph_fifo[512];
++};
++
+ struct gpu_irq {
+ 	u32 irq_outlet;
+ 	u32 status;
+@@ -82,11 +99,8 @@
+ 	u32 video_cause;
+ 	u32 graph_cause;
+ 	u32 user_cause;
+-
+-	u32 res1;
+-	u64 res2;
+-
+-	u32 reserved[4];
++	u32 res[8];
++	struct gpu_graph_exception_info graph_exception_info;
+ };
+ 
+ struct gpu_driver_info {
+@@ -103,11 +117,27 @@
+ 	struct gpu_irq irq;
+ };
+ 
++struct gpu_fifo_ctrl {
++	u8 res[64];
++	u32 put;
++	u32 get;
++	u32 ref;
++};
++
++struct gpu_fifo {
++	volatile struct gpu_fifo_ctrl *ctrl;
++	u32 *start;
++	u32 *curr;
++	unsigned int len;
++	u32 ioif;
++};
++
+ struct ps3fb_priv {
+ 	unsigned int irq_no;
+ 
+ 	u64 context_handle, memory_handle;
+ 	struct gpu_driver_info *dinfo;
++	struct gpu_fifo fifo;
+ 
+ 	u64 vblank_count;	/* frame count */
+ 	wait_queue_head_t wait_vsync;
+@@ -260,8 +290,267 @@
+ static int ps3fb_mode;
+ module_param(ps3fb_mode, int, 0);
+ 
++static unsigned long ps3fb_gpu_ctx_flags = 0x820;
++module_param(ps3fb_gpu_ctx_flags, ulong, 0);
++
++static unsigned long ps3fb_gpu_mem_size[4];
++static int ps3fb_gpu_mem_size_count;
++module_param_array(ps3fb_gpu_mem_size, ulong, &ps3fb_gpu_mem_size_count, 0);
++
+ static char *mode_option;
+ 
++static int ps3fb_fb_setup(struct device *dev,
++			  u64 context_handle,
++			  struct gpu_fifo *fifo)
++{
++	/* FIFO program for L1GPU_CONTEXT_ATTRIBUTE_FB_SETUP from LV1 */
++	const static u32 fifo_setup_program[] = {
++		0x00042000,
++		0x31337303,
++
++		0x00042180,
++		0x66604200,
++
++		0x00082184,
++		0xFEED0001,
++		0xFEED0000,
++
++		0x00044000,
++		0x3137C0DE,
++
++		0x00044180,
++		0x66604200,
++
++		0x00084184,
++		0xFEED0000,
++		0xFEED0001,
++
++		0x00046000,
++		0x313371C3,
++
++		0x00046180,
++		0x66604200,
++
++		0x00046184,
++		0xFEED0000,
++
++		0x00046188,
++		0xFEED0000,
++
++		0x0004A000,
++		0x31337808,
++
++		0x0020A180,
++		0x66604200,
++		0x00000000,
++		0x00000000,
++		0x00000000,
++		0x00000000,
++		0x00000000,
++		0x00000000,
++		0x313371C3,
++
++		0x0008A2FC,
++		0x00000003,
++		0x00000004,
++
++		0x00048000,
++		0x31337A73,
++
++		0x00048180,
++		0x66604200,
++
++		0x00048184,
++		0xFEED0000,
++
++		0x0004C000,
++		0x3137AF00,
++
++		0x0004C180,
++		0x66604200,
++
++		0x00000000,
++	};
++	int retval = 0;
++	int status;
++	volatile struct gpu_fifo_ctrl *fifo_ctrl = fifo->ctrl;
++	u32 *fifo_prev = fifo->curr;
++	unsigned int timeout;
++
++	pr_debug("%s: enter\n", __func__);
++
++	/* copy setup program to FIFO */
++	memcpy(fifo->curr, fifo_setup_program, sizeof(fifo_setup_program));
++	fifo->curr += sizeof(fifo_setup_program) / sizeof(u32);
++
++	/* set PUT and GET registers */
++	status = lv1_gpu_context_attribute(context_handle,
++					   L1GPU_CONTEXT_ATTRIBUTE_FIFO_SETUP,
++					   fifo->ioif,		/* PUT */
++					   fifo->ioif,		/* GET */
++					   0,			/* REF */
++					   0);
++	if (status) {
++		dev_err(dev, "%s: lv1_gpu_context_attribute failed (%d)\n",
++			__func__, status);
++		retval = -ENXIO;
++		goto done;
++	}
++
++	/* kick FIFO */
++	fifo_ctrl->put += (fifo->curr - fifo_prev) * sizeof(u32);
++
++	/* wait until FIFO is done */
++	timeout = 100000;
++	while (timeout--) {
++		if (fifo_ctrl->put == fifo_ctrl->get)
++			break;
++	}
++
++	if (fifo_ctrl->put != fifo_ctrl->get)
++		retval = -ETIMEDOUT;
++
++done:
++
++	pr_debug("%s: leave (%d)\n", __func__, retval);
++
++	return (retval);
++}
++
++static int ps3fb_fb_blit(struct gpu_fifo *fifo,
++			 u64 dst_offset, u64 src_offset,
++			 u32 width, u32 height,
++			 u32 dst_pitch, u32 src_pitch,
++			 u64 flags)
++{
++#define BLEN	0x400UL
++
++	int retval = 0;
++	volatile struct gpu_fifo_ctrl *fifo_ctrl = fifo->ctrl;
++	u32 *fifo_prev = fifo->curr;
++	unsigned int timeout;
++	u32 h, w, x, y, dx, dy;
++
++	pr_debug("%s: enter\n", __func__);
++
++	/* check if there is enough free space in FIFO */
++	if ((fifo->len - ((fifo->curr - fifo->start) * sizeof(u32))) < 0x1000) {
++		/* no, jump back to FIFO start */
++
++		pr_debug("%s: not enough free space left in FIFO put (0x%08x) get (0x%08x)\n",
++			__func__, fifo_ctrl->put, fifo_ctrl->get);
++
++		*fifo->curr++ = 0x20000000 /* JMP */ | fifo->ioif;
++
++		/* kick FIFO */
++		fifo_ctrl->put = fifo->ioif;
++
++		/* wait until FIFO is done */
++		timeout = 100000;
++		while (timeout--) {
++			if (fifo_ctrl->put == fifo_ctrl->get)
++				break;
++		}
++
++		if (fifo_ctrl->put != fifo_ctrl->get) {
++			retval = -ETIMEDOUT;
++			goto done;
++		}
++
++		fifo->curr = fifo->start;
++		fifo_prev = fifo->curr;
++	}
++
++	/* FIFO program for L1GPU_CONTEXT_ATTRIBUTE_FB_BLIT from LV1 (transfer image) */
++
++	/* set source location */
++	*fifo->curr++ = 0x0004C184;
++	*fifo->curr++ = 0xFEED0001; /* GART memory */
++
++	*fifo->curr++ = 0x0004C198;
++	*fifo->curr++ = 0x313371C3;
++
++	*fifo->curr++ = 0x00046300;
++	*fifo->curr++ = 0x0000000A; /* 4 bytes per pixel */
++
++	/*
++	 * Transfer data in a block-wise fashion with block size 1024x1024x4 bytes
++	 * by using RSX DMA controller. Go from top to bottom and from left to right.
++	 */
++
++	h = height;
++	y = 0;
++
++	while (h) {
++		dy = (h <= BLEN) ? h : BLEN;
++
++		w = width;
++		x = 0;
++
++		while (w) {
++			dx = (w <= BLEN) ? w : BLEN;
++
++			*fifo->curr++ = 0x0004630C;
++			*fifo->curr++ = dst_offset + (y & ~(BLEN - 1)) * dst_pitch + (x & ~(BLEN - 1)) * BPP; /* destination */
++
++			*fifo->curr++ = 0x00046304;
++			*fifo->curr++ = (dst_pitch << 16) | dst_pitch;
++
++			*fifo->curr++ = 0x0024C2FC;
++			*fifo->curr++ = 0x00000001;
++			*fifo->curr++ = 0x00000003; /* 4 bytes per pixel */
++			*fifo->curr++ = 0x00000003;
++			*fifo->curr++ = ((x & (BLEN - 1)) << 16) | (y & (BLEN - 1));
++			*fifo->curr++ = (dy << 16) | dx;
++			*fifo->curr++ = ((x & (BLEN - 1)) << 16) | (y & (BLEN - 1));
++			*fifo->curr++ = (dy << 16) | dx;
++			*fifo->curr++ = 0x00100000;
++			*fifo->curr++ = 0x00100000;
++
++			*fifo->curr++ = 0x0010C400;
++			*fifo->curr++ = (dy << 16) | ((dx < 0x10) ? 0x10 : (dx + 1) & ~0x1);
++			*fifo->curr++ = 0x00020000 | src_pitch;
++			*fifo->curr++ = src_offset + y * src_pitch + x * BPP; /* source */
++			*fifo->curr++ = 0x00000000;
++
++			w -= dx;
++			x += dx;
++		}
++
++		h -= dy;
++		y += dy;
++	}
++
++#if 0
++	/* wait for idle  */
++	*fifo->curr++ = 0x00040110;
++	*fifo->curr++ = 0x00000000;
++#endif
++
++	/* kick FIFO */
++	fifo_ctrl->put += (fifo->curr - fifo_prev) * sizeof(u32);
++
++	/* wait until FIFO is done */
++	if (flags & L1GPU_FB_BLIT_WAIT_FOR_COMPLETION) {
++		timeout = 100000;
++		while (timeout--) {
++			if (fifo_ctrl->put == fifo_ctrl->get)
++				break;
++		}
++
++		if (fifo_ctrl->put != fifo_ctrl->get)
++			retval = -ETIMEDOUT;
++	}
++
++done:
++
++	pr_debug("%s: leave (%d)\n", __func__, retval);
++
++	return (retval);
++
++#undef BLEN
++}
++
+ static int ps3fb_cmp_mode(const struct fb_videomode *vmode,
+ 			  const struct fb_var_screeninfo *var)
+ {
+@@ -444,24 +733,20 @@
+ 			     u32 src_line_length)
+ {
+ 	int status;
+-	u64 line_length;
+-
+-	line_length = dst_line_length;
+-	if (src_line_length != dst_line_length)
+-		line_length |= (u64)src_line_length << 32;
+ 
+ 	src_offset += GPU_FB_START;
+ 
+ 	mutex_lock(&ps3_gpu_mutex);
+-	status = lv1_gpu_fb_blit(ps3fb.context_handle, dst_offset,
+-				 GPU_IOIF + src_offset,
+-				 L1GPU_FB_BLIT_WAIT_FOR_COMPLETION |
+-				 (width << 16) | height,
+-				 line_length);
++	status = ps3fb_fb_blit(&ps3fb.fifo,
++			       dst_offset,
++			       GPU_IOIF + src_offset,
++			       width, height,
++			       dst_line_length, src_line_length,
++			       L1GPU_FB_BLIT_WAIT_FOR_COMPLETION);
+ 	mutex_unlock(&ps3_gpu_mutex);
+ 
+ 	if (status)
+-		dev_err(dev, "%s: lv1_gpu_fb_blit failed: %d\n", __func__,
++		dev_err(dev, "%s: ps3fb_fb_blit failed: %d\n", __func__,
+ 			status);
+ #ifdef HEAD_A
+ 	status = lv1_gpu_display_flip(ps3fb.context_handle, 0, frame_offset);
+@@ -912,6 +1197,34 @@
+ 	return 0;
+ }
+ 
++static void ps3fb_print_graph_exception_info(struct device *dev,
++					     struct gpu_graph_exception_info *info)
++{
++	int i;
++
++	dev_err(dev, "channel id 0x%08x cause 0x%08x\n", info->channel_id, info->cause);
++
++	/* print FIFO info */
++
++	dev_err(dev, "fifo:\n");
++	dev_err(dev, "\tdma get 0x%08x dma put 0x%08x\n",
++		info->dma_get, info->dma_put);
++	dev_err(dev, "\tcall 0x%08x jump 0x%08x\n", info->call, info->jump);
++	dev_err(dev, "\tget 0x%08x put 0x%08x ref 0x%08x\n",
++		info->fifo_get, info->fifo_put, info->fifo_ref);
++
++	for (i = 0; i < 512; i += 4) {
++		dev_err(dev, "\t%s %s [%03x] %08x:%08x %08x:%08x %08x:%08x %08x:%08x\n",
++			(((info->fifo_put & ~0x3) == i) ? "P" : " "),
++			(((info->fifo_get & ~0x3) == i) ? "G" : " "),
++			i,
++			info->fifo_cache[i * 4 + 0], info->graph_fifo[i * 4 + 0],
++			info->fifo_cache[i * 4 + 1], info->graph_fifo[i * 4 + 1],
++			info->fifo_cache[i * 4 + 2], info->graph_fifo[i * 4 + 2],
++			info->fifo_cache[i * 4 + 3], info->graph_fifo[i * 4 + 3]);
++	}
++}
++
+ static irqreturn_t ps3fb_vsync_interrupt(int irq, void *ptr)
+ {
+ 	struct device *dev = ptr;
+@@ -926,6 +1239,11 @@
+ 		return IRQ_NONE;
+ 	}
+ 
++	if (v1 & (1 << GPU_INTR_STATUS_GRAPH_EXCEPTION)) {
++		dev_err(dev, "%s: graphics exception\n", __func__);
++		ps3fb_print_graph_exception_info(dev, &ps3fb.dinfo->irq.graph_exception_info);
++	}
++
+ 	if (v1 & (1 << GPU_INTR_STATUS_VSYNC_1)) {
+ 		/* VSYNC */
+ 		ps3fb.vblank_count = head->vblank_count;
+@@ -1030,8 +1348,9 @@
+ 	}
+ 
+ 	/* get gpu context handle */
+-	status = lv1_gpu_memory_allocate(ps3fb_videomemory.size, 0, 0, 0, 0,
+-					 &ps3fb.memory_handle, &ddr_lpar);
++	status = lv1_gpu_memory_allocate(ps3fb_videomemory.size, ps3fb_gpu_mem_size[0],
++		ps3fb_gpu_mem_size[1], ps3fb_gpu_mem_size[2], ps3fb_gpu_mem_size[3],
++		&ps3fb.memory_handle, &ddr_lpar);
+ 	if (status) {
+ 		dev_err(&dev->core, "%s: lv1_gpu_memory_allocate failed: %d\n",
+ 			__func__, status);
+@@ -1039,7 +1358,7 @@
+ 	}
+ 	dev_dbg(&dev->core, "ddr:lpar:0x%llx\n", ddr_lpar);
+ 
+-	status = lv1_gpu_context_allocate(ps3fb.memory_handle, 0,
++	status = lv1_gpu_context_allocate(ps3fb.memory_handle, ps3fb_gpu_ctx_flags,
+ 					  &ps3fb.context_handle,
+ 					  &lpar_dma_control, &lpar_driver_info,
+ 					  &lpar_reports, &lpar_reports_size);
+@@ -1089,7 +1408,8 @@
+ 		goto err_destroy_plug;
+ 	}
+ 
+-	dinfo->irq.mask = (1 << GPU_INTR_STATUS_VSYNC_1) |
++	dinfo->irq.mask = (1 << GPU_INTR_STATUS_GRAPH_EXCEPTION) |
++			  (1 << GPU_INTR_STATUS_VSYNC_1) |
+ 			  (1 << GPU_INTR_STATUS_FLIP_1);
+ 
+ 	/* Clear memory to prevent kernel info leakage into userspace */
+@@ -1434,19 +1434,30 @@
+ 		ps3fb_videomemory.address, GPU_IOIF, xdr_lpar,
+ 		ps3fb_videomemory.size);
+ 
+-	status = lv1_gpu_fb_setup(ps3fb.context_handle, xdr_lpar,
+-				  GPU_CMD_BUF_SIZE, GPU_IOIF);
++	/* FIFO control */
++	ps3fb.fifo.ctrl = (void __force *)ioremap_nocache(lpar_dma_control, PAGE_SIZE);
++	if (!ps3fb.fifo.ctrl) {
++		dev_err(&dev->core, "%s: ioremap_nocache failed\n", __func__);
++		goto err_context_unmap;
++	}
++
++	ps3fb.fifo.start = ps3fb_videomemory.address;
++	ps3fb.fifo.curr = ps3fb.fifo.start;
++	ps3fb.fifo.len = GPU_FB_START;
++	ps3fb.fifo.ioif = GPU_IOIF;
++
++	status = ps3fb_fb_setup(&dev->core, ps3fb.context_handle, &ps3fb.fifo);
+ 	if (status) {
+-		dev_err(&dev->core, "%s: lv1_gpu_fb_setup failed: %d\n",
++		dev_err(&dev->core, "%s: ps3fb_fb_setup failed: %d\n",
+ 			__func__, status);
+-		retval = -ENXIO;
+-		goto err_context_unmap;
++		retval = status;
++		goto err_iounmap_fifo_ctrl;
+ 	}
+ 
+ 	info = framebuffer_alloc(sizeof(struct ps3fb_par), &dev->core);
+ 	if (!info) {
+ 		retval = -ENOMEM;
+-		goto err_context_fb_close;
++		goto err_iounmap_fifo_ctrl;
+ 	}
+ 
+ 	par = info->par;
+@@ -1188,8 +1519,8 @@
+ 	fb_dealloc_cmap(&info->cmap);
+ err_framebuffer_release:
+ 	framebuffer_release(info);
+-err_context_fb_close:
+-	lv1_gpu_fb_close(ps3fb.context_handle);
++err_iounmap_fifo_ctrl:
++	iounmap((u8 __force __iomem *)ps3fb.fifo.ctrl);
+ err_context_unmap:
+ 	lv1_gpu_context_iomap(ps3fb.context_handle, GPU_IOIF, xdr_lpar,
+ 			      ps3fb_videomemory.size, CBE_IOPTE_M);
+@@ -1235,7 +1566,7 @@
+ 		ps3_system_bus_set_drvdata(dev, NULL);
+ 	}
+ 	iounmap((u8 __force __iomem *)ps3fb.dinfo);
+-	lv1_gpu_fb_close(ps3fb.context_handle);
++	iounmap((u8 __force __iomem *)ps3fb.fifo.ctrl);
+ 	lv1_gpu_context_iomap(ps3fb.context_handle, GPU_IOIF, xdr_lpar,
+ 			      ps3fb_videomemory.size, CBE_IOPTE_M);
+ 	lv1_gpu_context_free(ps3fb.context_handle);

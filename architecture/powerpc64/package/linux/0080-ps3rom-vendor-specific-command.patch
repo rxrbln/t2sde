@@ -1,0 +1,63 @@
+--- a/drivers/scsi/ps3rom.c	2012-02-13 18:45:43.735156562 +0100
++++ b/drivers/scsi/ps3rom.c	2012-02-13 18:45:54.835348606 +0100
+@@ -40,6 +40,8 @@
+ 
+ #define PS3ROM_MAX_SECTORS		(BOUNCE_SIZE >> 9)
+ 
++#define PS3ROM_VENDOR_SPECIFIC_OPCODE	0xfd
++
+ 
+ struct ps3rom_private {
+ 	struct ps3_storage_device *dev;
+@@ -165,6 +167,40 @@
+ 	return 0;
+ }
+ 
++static int ps3rom_vendor_specific_request(struct ps3_storage_device *dev,
++					  struct scsi_cmnd *cmd)
++{
++	unsigned char opcode = cmd->cmnd[1];
++	int res;
++
++	dev_dbg(&dev->sbd.core, "%s:%u: send vendor-specific command 0x%02x\n", __func__,
++		__LINE__, opcode);
++
++	if (cmd->sc_data_direction == DMA_TO_DEVICE)
++		scsi_sg_copy_to_buffer(cmd, dev->bounce_buf, dev->bounce_size);
++
++	res = lv1_storage_send_device_command(dev->sbd.dev_id,
++					      opcode,
++					      dev->bounce_lpar, scsi_bufflen(cmd),
++					      dev->bounce_lpar, dev->bounce_size,
++					      &dev->tag);
++	if (res == LV1_DENIED_BY_POLICY) {
++		dev_dbg(&dev->sbd.core,
++			"%s:%u: vendor-specific command 0x%02x denied by policy\n",
++			__func__, __LINE__, opcode);
++		return DID_ERROR << 16;
++	}
++
++	if (res) {
++		dev_err(&dev->sbd.core,
++			"%s:%u: vendor-specific command 0x%02x failed %d\n", __func__,
++			__LINE__, opcode, res);
++		return DID_ERROR << 16;
++	}
++
++	return 0;
++}
++
+ static inline unsigned int srb10_lba(const struct scsi_cmnd *cmd)
+ {
+ 	return cmd->cmnd[2] << 24 | cmd->cmnd[3] << 16 | cmd->cmnd[4] << 8 |
+@@ -254,6 +290,10 @@
+ 					   srb10_len(cmd));
+ 		break;
+ 
++	case PS3ROM_VENDOR_SPECIFIC_OPCODE:
++		res = ps3rom_vendor_specific_request(dev, cmd);
++		break;
++
+ 	default:
+ 		res = ps3rom_atapi_request(dev, cmd);
+ 		break;

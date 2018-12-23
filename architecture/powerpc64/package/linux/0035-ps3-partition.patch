@@ -1,0 +1,151 @@
+--- a/block/partitions/Kconfig	2013-10-01 14:29:39.166124545 +0200
++++ b/block/partitions/Kconfig	2013-10-01 14:30:10.646126376 +0200
+@@ -261,6 +261,12 @@
+ 	  sysv68).
+ 	  Otherwise, say N.
+ 
++config PS3_PARTITION
++	bool "PS3 Partition support"
++	depends on PARTITION_ADVANCED
++	help
++	  Say Y here if you would like to use PS3 hard disks under Linux.
++
+ config CMDLINE_PARTITION
+ 	bool "Command line partition support" if PARTITION_ADVANCED
+ 	select CMDLINE_PARSER
+--- a/block/partitions/Makefile	2012-09-06 18:41:11.858905657 +0200
++++ b/block/partitions/Makefile	2012-09-06 18:56:12.622291395 +0200
+@@ -18,3 +18,4 @@
+ obj-$(CONFIG_EFI_PARTITION) += efi.o
+ obj-$(CONFIG_KARMA_PARTITION) += karma.o
+ obj-$(CONFIG_SYSV68_PARTITION) += sysv68.o
++obj-$(CONFIG_PS3_PARTITION) += ps3.o
+--- a/block/partitions/check.c	2013-10-01 14:33:08.996136753 +0200
++++ b/block/partitions/check.c	2013-10-01 14:32:17.909467114 +0200
+@@ -34,6 +34,7 @@
+ #include "efi.h"
+ #include "karma.h"
+ #include "sysv68.h"
++#include "ps3.h"
+ #include "cmdline.h"
+ 
+ int warn_no_part = 1; /*This is ugly: should make genhd removable media aware*/
+@@ -108,6 +109,9 @@
+ #ifdef CONFIG_SYSV68_PARTITION
+ 	sysv68_partition,
+ #endif
++#ifdef CONFIG_PS3_PARTITION
++	ps3_partition,
++#endif
+ 	NULL
+ };
+ 
+--- /dev/null	2012-09-06 18:32:42.202209340 +0200
++++ b/block/partitions/ps3.h	2012-09-06 18:41:52.025574661 +0200
+@@ -0,0 +1,5 @@
++/*
++ *  fs/partitions/ps3.h
++ */
++
++int ps3_partition(struct parsed_partitions *state);
+--- /dev/null	2012-09-06 18:32:42.202209340 +0200
++++ b/block/partitions/ps3.c	2012-09-06 20:56:28.612711200 +0200
+@@ -0,0 +1,98 @@
++/*
++ *  fs/partitions/ps3.c
++ *
++ *  Copyright (C) 2012 glevand <geoffrey.levand@mail.ru>
++ */
++
++#include "check.h"
++#include "ps3.h"
++
++#define SECTOR_SIZE		512
++#define MAX_ACL_ENTRIES		8
++#define MAX_PARTITIONS		8
++
++#define MAGIC1			0x0FACE0FFULL
++#define MAGIC2			0xDEADFACEULL
++
++struct p_acl_entry {
++	__be64 laid;
++	__be64 rights;
++};
++
++struct d_partition {
++	__be64 p_start;
++	__be64 p_size;
++	struct p_acl_entry p_acl[MAX_ACL_ENTRIES];
++};
++
++struct disklabel {
++	u8 d_res1[16];
++	__be64 d_magic1;
++	__be64 d_magic2;
++	__be64 d_res2;
++	__be64 d_res3;
++	struct d_partition d_partitions[MAX_PARTITIONS];
++	u8 d_pad[0x600 - MAX_PARTITIONS * sizeof(struct d_partition)- 0x30];
++};
++
++static bool ps3_read_disklabel(struct parsed_partitions *state, struct disklabel *label)
++{
++	Sector sect;
++	unsigned char *data;
++	int i;
++
++	for (i = 0; i < sizeof(struct disklabel) / SECTOR_SIZE; i++) {
++		data = read_part_sector(state, i, &sect);
++		if (!data)
++			return (false);
++
++		memcpy((unsigned char *) label + i * SECTOR_SIZE, data, SECTOR_SIZE);
++
++		put_dev_sector(sect);
++	}
++
++	return (true);
++}
++
++int ps3_partition(struct parsed_partitions *state)
++{
++	struct disklabel *label = NULL;
++	int slot = 1;
++	int result = -1;
++	int i;
++
++	label = kmalloc(sizeof(struct disklabel), GFP_KERNEL);
++	if (!label)
++		goto out;
++
++	if (!ps3_read_disklabel(state, label))
++		goto out;
++
++	result = 0;
++
++	if ((be64_to_cpu(label->d_magic1) != MAGIC1) ||
++	    (be64_to_cpu(label->d_magic2) != MAGIC2))
++		goto out;
++
++	for (i = 0; i < MAX_PARTITIONS; i++) {
++		if (label->d_partitions[i].p_start && label->d_partitions[i].p_size) {
++			put_partition(state, slot,
++				be64_to_cpu(label->d_partitions[i].p_start),
++				be64_to_cpu(label->d_partitions[i].p_size));
++			slot++;
++		}
++	}
++
++	strlcat(state->pp_buf, "\n", PAGE_SIZE);
++
++	kfree(label);
++
++	return (1);
++
++out:
++
++	if (label)
++		kfree(label);
++
++	return (result);
++}

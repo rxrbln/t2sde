@@ -1,0 +1,328 @@
+--- a/drivers/ps3/ps3-vuart.c	2012-01-12 20:42:45.000000000 +0100
++++ b/drivers/ps3/ps3-vuart.c	2012-01-26 18:13:18.981200186 +0100
+@@ -39,6 +39,7 @@
+  * vuart - An inter-partition data link service.
+  *  port 0: PS3 AV Settings.
+  *  port 2: PS3 System Manager.
++ *  port 10: PS3 Dispatcher Manager.
+  *
+  * The vuart provides a bi-directional byte stream data link between logical
+  * partitions.  Its primary role is as a communications link between the guest
+@@ -46,7 +47,7 @@
+  * connections other than those listed.
+  */
+ 
+-enum {PORT_COUNT = 3,};
++enum {PORT_COUNT = 11,};
+ 
+ enum vuart_param {
+ 	PARAM_TX_TRIGGER = 0,
+@@ -926,7 +927,7 @@
+ 
+ 	vuart_bus_priv.use_count++;
+ 
+-	BUG_ON(vuart_bus_priv.use_count > 2);
++	BUG_ON(vuart_bus_priv.use_count > 3);
+ 
+ 	if (vuart_bus_priv.use_count != 1)
+ 		return 0;
+--- a/arch/powerpc/include/asm/ps3.h	2012-01-26 14:09:41.132438036 +0100
++++ b/arch/powerpc/include/asm/ps3.h	2012-01-26 14:11:27.368200391 +0100
+@@ -327,6 +327,7 @@
+ 	PS3_MATCH_ID_GPU		= 10,
+ 	PS3_MATCH_ID_LPM		= 11,
+ 	PS3_MATCH_ID_STOR_NOR_FLASH	= 12,
++	PS3_MATCH_ID_DISP_MANAGER	= 13,
+ };
+ 
+ enum ps3_match_sub_id {
+@@ -347,6 +348,7 @@
+ #define PS3_MODULE_ALIAS_GPU_RAMDISK	"ps3:10:2"
+ #define PS3_MODULE_ALIAS_LPM		"ps3:11:0"
+ #define PS3_MODULE_ALIAS_STOR_NOR_FLASH	"ps3:12:0"
++#define PS3_MODULE_ALIAS_DISP_MANAGER	"ps3:13:0"
+ 
+ enum ps3_system_bus_device_type {
+ 	PS3_DEVICE_TYPE_IOC0 = 1,
+--- a/arch/powerpc/platforms/ps3/system-bus.c	2012-01-26 14:09:41.144403930 +0100
++++ b/arch/powerpc/platforms/ps3/system-bus.c	2012-01-26 14:17:05.896702636 +0100
+@@ -183,6 +183,7 @@
+ 
+ 	case PS3_MATCH_ID_AV_SETTINGS:
+ 	case PS3_MATCH_ID_SYSTEM_MANAGER:
++	case PS3_MATCH_ID_DISP_MANAGER:
+ 		pr_debug("%s:%d: unsupported match_id: %u\n", __func__,
+ 			__LINE__, dev->match_id);
+ 		pr_debug("%s:%d: bus_id: %llu\n", __func__, __LINE__,
+@@ -222,6 +223,7 @@
+ 
+ 	case PS3_MATCH_ID_AV_SETTINGS:
+ 	case PS3_MATCH_ID_SYSTEM_MANAGER:
++	case PS3_MATCH_ID_DISP_MANAGER:
+ 		pr_debug("%s:%d: unsupported match_id: %u\n", __func__,
+ 			__LINE__, dev->match_id);
+ 		pr_debug("%s:%d: bus_id: %llu\n", __func__, __LINE__,
+--- a/arch/powerpc/platforms/ps3/device-init.c	2012-01-26 14:09:41.144403930 +0100
++++ b/arch/powerpc/platforms/ps3/device-init.c	2012-01-26 14:25:10.440202587 +0100
+@@ -426,6 +426,7 @@
+ {
+ 	int result;
+ 	unsigned int port_number;
++	u64 lpar_id, laid, junk;
+ 
+ 	pr_debug(" -> %s:%d\n", __func__, __LINE__);
+ 
+@@ -444,6 +445,27 @@
+ 		port_number);
+ 	WARN_ON(result);
+ 
++	result = lv1_get_logical_partition_id(&lpar_id);
++	if (result)
++		goto out;
++
++	result = lv1_read_repository_node(1, 0x0000000073730000ul /* ss */,
++					     0x6c61696400000000ul /* laid */,
++					     lpar_id,
++					     0, &laid, &junk);
++	if (result)
++		goto out;
++
++	if (laid == 0x1070000002000001ul) {
++		port_number = 10;
++		result = ps3_setup_vuart_device(PS3_MATCH_ID_DISP_MANAGER,
++			port_number);
++	}
++
++out:
++
++	WARN_ON(result);
++
+ 	pr_debug(" <- %s:%d\n", __func__, __LINE__);
+ 	return result;
+ }
+--- a/drivers/ps3/Makefile	2012-01-12 20:42:45.000000000 +0100
++++ b/drivers/ps3/Makefile	2012-01-26 17:40:36.400861141 +0100
+@@ -5,3 +5,4 @@
+ obj-$(CONFIG_PS3_SYS_MANAGER) += ps3-sys-manager.o
+ obj-$(CONFIG_PS3_STORAGE) += ps3stor_lib.o
+ obj-$(CONFIG_PS3_LPM) += ps3-lpm.o
++obj-$(CONFIG_PS3_DISP_MANAGER) += ps3-disp-manager.o
+--- a/arch/powerpc/platforms/ps3/Kconfig	2012-01-26 17:37:55.331589081 +0100
++++ b/arch/powerpc/platforms/ps3/Kconfig	2012-01-26 17:42:48.049593001 +0100
+@@ -88,6 +88,17 @@
+ 	  This support is required for system control.  In
+ 	  general, all users will say Y or M.
+ 
++config PS3_DISP_MANAGER
++	depends on PPC_PS3
++	tristate "PS3 Dispatcher Manager driver" if PS3_ADVANCED
++	select PS3_VUART
++	default y
++	help
++	  Include support for the PS3 Dispatcher Manager.
++
++	  This support is required to access the PS3 SS services.
++	  In general, all users will say Y or M.
++
+ config PS3_STORAGE
+ 	depends on PPC_PS3
+ 	tristate
+--- /dev/null	2011-11-07 10:16:29.227396409 +0100
++++ b/drivers/ps3/ps3-disp-manager.c	2012-01-26 15:08:35.100453068 +0100
+@@ -0,0 +1,196 @@
++/*
++ *  PS3 Dispatcher Manager.
++ *
++ *  Copyright (C) 2011 graf_chokolo <grafchokolo@gmail.com>.
++ *  Copyright (C) 2011, 2012 glevand <geoffrey.levand@mail.ru>.
++ *
++ *  This program is free software; you can redistribute it and/or modify
++ *  it under the terms of the GNU General Public License as published by
++ *  the Free Software Foundation; version 2 of the License.
++ *
++ *  This program is distributed in the hope that it will be useful,
++ *  but WITHOUT ANY WARRANTY; without even the implied warranty of
++ *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ *  GNU General Public License for more details.
++ *
++ *  You should have received a copy of the GNU General Public License
++ *  along with this program; if not, write to the Free Software
++ *  Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
++ */
++
++#include <linux/kernel.h>
++#include <linux/module.h>
++#include <linux/slab.h>
++#include <linux/uaccess.h>
++#include <linux/fs.h>
++#include <linux/miscdevice.h>
++
++#include <asm/firmware.h>
++#include <asm/lv1call.h>
++#include <asm/ps3.h>
++
++#include "vuart.h"
++
++#define DEVICE_NAME		"ps3dispmngr"
++
++static struct ps3dm {
++	struct ps3_system_bus_device *dev;
++	struct miscdevice misc;
++} *ps3dm;
++
++static ssize_t ps3_disp_manager_read(struct file *file, char __user *usrbuf,
++				     size_t count, loff_t *pos)
++{
++	char *buf;
++	int result;
++
++	buf = kmalloc(count, GFP_KERNEL);
++	if (!buf)
++		return -ENOMEM;
++
++	result = ps3_vuart_read(ps3dm->dev, buf, count);
++	if (result)
++		goto out;
++
++	if (copy_to_user(usrbuf, buf, count)) {
++		result = -EFAULT;
++		goto out;
++	}
++
++	result = count;
++
++out:
++
++	kfree(buf);
++
++	return result;
++}
++
++static ssize_t ps3_disp_manager_write(struct file *file, const char __user *usrbuf,
++				      size_t count, loff_t *pos)
++{
++	char *buf;
++	int result;
++
++	buf = kmalloc(count, GFP_KERNEL);
++	if (!buf)
++		return -ENOMEM;
++
++	if (copy_from_user(buf, usrbuf, count)) {
++		result = -EFAULT;
++		goto out;
++	}
++
++	result = ps3_vuart_write(ps3dm->dev, buf, count);
++	if (result)
++		goto out;
++
++	result = count;
++
++out:
++
++	kfree(buf);
++
++	return result;
++}
++
++static const struct file_operations ps3_disp_manager_fops = {
++	.owner	= THIS_MODULE,
++	.read	= ps3_disp_manager_read,
++	.write	= ps3_disp_manager_write,
++};
++
++static int ps3_disp_manager_probe(struct ps3_system_bus_device *dev)
++{
++	int result;
++
++	dev_dbg(&dev->core, "%s:%d\n", __func__, __LINE__);
++
++	if (ps3dm) {
++		dev_err(&dev->core, "Only one Dispatcher Manager is supported\n");
++		return -EBUSY;
++	}
++
++	ps3dm = kzalloc(sizeof(*ps3dm), GFP_KERNEL);
++	if (!ps3dm)
++		return -ENOMEM;
++
++	ps3dm->dev = dev;
++
++	ps3dm->misc.parent = &dev->core;
++	ps3dm->misc.minor = MISC_DYNAMIC_MINOR,
++	ps3dm->misc.name = DEVICE_NAME,
++	ps3dm->misc.fops = &ps3_disp_manager_fops,
++
++	result = misc_register(&ps3dm->misc);
++	if (result) {
++		dev_err(&dev->core, "%s:%u: misc_register failed %d\n",
++			__func__, __LINE__, result);
++		goto fail;
++	}
++
++	dev_info(&dev->core, "%s:%u: registered misc device %d\n",
++		             __func__, __LINE__, ps3dm->misc.minor);
++
++	dev_dbg(&dev->core, "%s:%d\n", __func__, __LINE__);
++
++	return 0;
++
++fail:
++
++	kfree(ps3dm);
++	ps3dm = NULL;
++
++	return result;
++}
++
++static int ps3_disp_manager_remove(struct ps3_system_bus_device *dev)
++{
++	dev_dbg(&dev->core, "%s:%d\n", __func__, __LINE__);
++
++	if (ps3dm) {
++		misc_deregister(&ps3dm->misc);
++		kfree(ps3dm);
++		ps3dm = NULL;
++	}
++
++	return 0;
++}
++
++static void ps3_disp_manager_shutdown(struct ps3_system_bus_device *dev)
++{
++	dev_dbg(&dev->core, "%s:%d\n", __func__, __LINE__);
++}
++
++static struct ps3_vuart_port_driver ps3_disp_manager = {
++	.core.match_id = PS3_MATCH_ID_DISP_MANAGER,
++	.core.core.name = "ps3_disp_manager",
++	.probe = ps3_disp_manager_probe,
++	.remove = ps3_disp_manager_remove,
++	.shutdown = ps3_disp_manager_shutdown,
++};
++
++static int __init ps3_disp_manager_init(void)
++{
++	if (!firmware_has_feature(FW_FEATURE_PS3_LV1))
++		return -ENODEV;
++
++	return ps3_vuart_port_driver_register(&ps3_disp_manager);
++}
++
++static void __exit ps3_disp_manager_exit(void)
++{
++	pr_debug(" -> %s:%d\n", __func__, __LINE__);
++
++	ps3_vuart_port_driver_unregister(&ps3_disp_manager);
++
++	pr_debug(" <- %s:%d\n", __func__, __LINE__);
++}
++
++module_init(ps3_disp_manager_init);
++module_exit(ps3_disp_manager_exit);
++
++MODULE_AUTHOR("glevand");
++MODULE_LICENSE("GPL v2");
++MODULE_DESCRIPTION("PS3 Dispatcher Manager");
++MODULE_ALIAS(PS3_MODULE_ALIAS_DISP_MANAGER);
