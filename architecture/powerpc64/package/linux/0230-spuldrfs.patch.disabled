@@ -1,0 +1,1109 @@
+--- a/arch/powerpc/platforms/ps3/Kconfig	2012-08-16 21:28:29.947236099 +0200
++++ b/arch/powerpc/platforms/ps3/Kconfig	2012-08-16 21:30:29.967243082 +0200
+@@ -209,6 +209,13 @@
+ 	help
+ 	  The isolated SPU file system is used to execute isolated SPU modules.
+ 
++config SPULDR_FS
++	tristate "PS3 isolated SPU loader file system"
++	default m
++	depends on PPC_PS3
++	help
++	  The isolated SPU loader file system is used to execute isolated SPU loaders.
++
+ config PS3GELIC_UDBG
+ 	bool "PS3 udbg output via UDP broadcasts on Ethernet"
+ 	depends on PPC_PS3
+--- a/arch/powerpc/platforms/ps3/Makefile	2012-08-16 21:28:29.947236099 +0200
++++ b/arch/powerpc/platforms/ps3/Makefile	2012-08-16 21:30:54.793911193 +0200
+@@ -8,3 +8,4 @@
+ obj-y += device-init.o
+ 
+ obj-$(CONFIG_SPUISO_FS) += spuisofs.o
++obj-$(CONFIG_SPULDR_FS) += spuldrfs.o
+--- /dev/null	2013-10-07 20:20:12.741358433 +0200
++++ b/arch/powerpc/platforms/ps3/spuldrfs.c	2013-10-07 22:16:03.015096113 +0200
+@@ -0,0 +1,1083 @@
++
++/*
++ * PS3 spuldrfs
++ *
++ * Copyright (C) 2012 glevand <geoffrey.levand@mail.ru>
++ * All rights reserved.
++ *
++ * This program is free software; you can redistribute it and/or modify it
++ * under the terms of the GNU General Public License as published
++ * by the Free Software Foundation; version 2 of the License.
++ *
++ * This program is distributed in the hope that it will be useful, but
++ * WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
++ * General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License along
++ * with this program; if not, write to the Free Software Foundation, Inc.,
++ * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
++ */
++
++#include <linux/module.h>
++#include <linux/kernel.h>
++#include <linux/version.h>
++#include <linux/init.h>
++#include <linux/fs.h>
++#include <linux/fsnotify.h>
++#include <linux/file.h>
++#include <linux/slab.h>
++#include <linux/vmalloc.h>
++#include <linux/pagemap.h>
++#include <linux/io.h>
++#include <linux/interrupt.h>
++
++#include <asm/uaccess.h>
++#include <asm/ps3.h>
++#include <asm/spu.h>
++#include <asm/spu_priv1.h>
++#include <asm/lv1call.h>
++
++#define SPULDRFS_MAGIC		0x7370756c
++
++struct spe_shadow {
++	u8 padding_0140[0x0140];
++	u64 int_status_class0_RW;       /* 0x0140 */
++	u64 int_status_class1_RW;       /* 0x0148 */
++	u64 int_status_class2_RW;       /* 0x0150 */
++	u8 padding_0158[0x0610-0x0158];
++	u64 mfc_dsisr_RW;               /* 0x0610 */
++	u8 padding_0618[0x0620-0x0618];
++	u64 mfc_dar_RW;                 /* 0x0620 */
++	u8 padding_0628[0x0800-0x0628];
++	u64 mfc_dsipr_R;                /* 0x0800 */
++	u8 padding_0808[0x0810-0x0808];
++	u64 mfc_lscrr_R;                /* 0x0810 */
++	u8 padding_0818[0x0c00-0x0818];
++	u64 mfc_cer_R;                  /* 0x0c00 */
++	u8 padding_0c08[0x0f00-0x0c08];
++	u64 spe_execution_status;       /* 0x0f00 */
++	u8 padding_0f08[0x1000-0x0f08];
++};
++
++struct spuldrfs_inode_info {
++	struct inode vfs_inode;
++	unsigned long io_addr;
++	void *virt_addr;
++};
++
++struct spuldrfs_tree_descr {
++	const char *name;
++	const struct file_operations *ops;
++	umode_t mode;
++	size_t size;
++	unsigned long io_addr;
++	void *virt_addr;
++};
++
++#define SPULDRFS_I(inode)	container_of(inode, struct spuldrfs_inode_info, vfs_inode)
++
++static struct kmem_cache *spuldrfs_inode_cache;
++
++static u64 spuldrfs_spe_priv2_addr;
++static u64 spuldrfs_spe_problem_addr;
++static u64 spuldrfs_spe_ls_addr;
++static u64 spuldrfs_spe_shadow_addr;
++
++static struct spu_priv2 *spuldrfs_spe_priv2;
++static struct spu_problem *spuldrfs_spe_problem;
++static void *spuldrfs_spe_ls;
++static struct spe_shadow *spuldrfs_spe_shadow;
++static u64 spuldrfs_spe_id;
++static unsigned int spuldrfs_spe_virq[4];
++
++static void *spuldrfs_spe_metldr;
++static void *spuldrfs_spe_ldr;
++static void *spuldrfs_spe_buf1;
++static void *spuldrfs_spe_buf2;
++static void *spuldrfs_spe_buf3;
++
++static unsigned int spuldrfs_spe_slb_index;
++
++static unsigned long spuldrfs_spe_metldr_size = 1024 * 1024;
++module_param(spuldrfs_spe_metldr_size, ulong, 0);
++
++static unsigned long spuldrfs_spe_ldr_size = 1024 * 1024;
++module_param(spuldrfs_spe_ldr_size, ulong, 0);
++
++static unsigned long spuldrfs_spe_buf1_size = 1024 * 1024;
++module_param(spuldrfs_spe_buf1_size, ulong, 0);
++
++static unsigned long spuldrfs_spe_buf2_size = 1024 * 1024;
++module_param(spuldrfs_spe_buf2_size, ulong, 0);
++
++static unsigned long spuldrfs_spe_buf3_size = 1024 * 1024;
++module_param(spuldrfs_spe_buf3_size, ulong, 0);
++
++static unsigned long spuldrfs_spe_trans_notify_mask = 0x7;
++module_param(spuldrfs_spe_trans_notify_mask, ulong, 0);
++
++static unsigned long spuldrfs_spe_resource_id = 6;
++module_param(spuldrfs_spe_resource_id, ulong, 0);
++
++static int spuldrfs_spe_buf_addr_32bit = 0;
++module_param(spuldrfs_spe_buf_addr_32bit, int, 0);
++
++/*
++ * spuldrfs_spe_regs_read
++ */
++static ssize_t spuldrfs_spe_regs_read(struct file *file, char __user *buffer,
++	size_t size, loff_t *pos)
++{
++	struct inode *inode = file->f_dentry->d_inode;
++	struct spuldrfs_inode_info *si = SPULDRFS_I(inode);
++
++	if (*pos >= inode->i_size)
++		return (0);
++
++	return simple_read_from_buffer(buffer, size, pos,
++		si->virt_addr, inode->i_size);
++}
++
++/*
++ * spuldrfs_spe_regs_write
++ */
++static ssize_t spuldrfs_spe_regs_write(struct file *file, const char __user *buffer,
++	size_t size, loff_t *pos)
++{
++	struct inode *inode = file->f_dentry->d_inode;
++	struct spuldrfs_inode_info *si = SPULDRFS_I(inode);
++
++	if (*pos >= inode->i_size)
++		return (-EFBIG);
++
++	return simple_write_to_buffer(si->virt_addr, inode->i_size,
++		pos, buffer, size);
++}
++
++/*
++ * spuldrfs_spe_regs_mmap
++ */
++static int spuldrfs_spe_regs_mmap(struct file *file, struct vm_area_struct *vma)
++{
++	struct inode *inode = file->f_dentry->d_inode;
++	struct spuldrfs_inode_info *si = SPULDRFS_I(inode);
++	unsigned long size, pfn;
++
++	size = vma->vm_end - vma->vm_start;
++	pfn = (si->io_addr >> PAGE_SHIFT) + vma->vm_pgoff;
++
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(3,7,0)
++	vma->vm_flags |= VM_DONTEXPAND | VM_DONTDUMP | VM_IO;
++#else
++	vma->vm_flags |= VM_RESERVED | VM_IO;
++#endif
++	vma->vm_page_prot = pgprot_noncached(vma->vm_page_prot);
++
++	return io_remap_pfn_range(vma, vma->vm_start, pfn, size, vma->vm_page_prot);
++}
++
++static const struct file_operations spuldrfs_spe_regs_fops = {
++	.read	= spuldrfs_spe_regs_read,
++	.write	= spuldrfs_spe_regs_write,
++	.mmap	= spuldrfs_spe_regs_mmap,
++};
++
++/*
++ * spuldrfs_spe_mem_read
++ */
++static ssize_t spuldrfs_spe_mem_read(struct file *file, char __user *buffer,
++	size_t size, loff_t *pos)
++{
++	struct inode *inode = file->f_dentry->d_inode;
++	struct spuldrfs_inode_info *si = SPULDRFS_I(inode);
++
++	if (*pos >= inode->i_size)
++		return (0);
++
++	return simple_read_from_buffer(buffer, size, pos,
++		si->virt_addr, inode->i_size);
++}
++
++/*
++ * spuldrfs_spe_mem_write
++ */
++static ssize_t spuldrfs_spe_mem_write(struct file *file, const char __user *buffer,
++	size_t size, loff_t *pos)
++{
++	struct inode *inode = file->f_dentry->d_inode;
++	struct spuldrfs_inode_info *si = SPULDRFS_I(inode);
++
++	if (*pos >= inode->i_size)
++		return (-EFBIG);
++
++	return simple_write_to_buffer(si->virt_addr, inode->i_size,
++		pos, buffer, size);
++}
++
++/*
++ * spuldrfs_spe_mem_mmap
++ */
++static int spuldrfs_spe_mem_mmap(struct file *file, struct vm_area_struct *vma)
++{
++	struct inode *inode = file->f_dentry->d_inode;
++	struct spuldrfs_inode_info *si = SPULDRFS_I(inode);
++	unsigned long size, pfn;
++
++	size = vma->vm_end - vma->vm_start;
++	pfn = (si->io_addr >> PAGE_SHIFT) + vma->vm_pgoff;
++
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(3,7,0)
++	vma->vm_flags |= VM_DONTEXPAND | VM_DONTDUMP | VM_IO;
++#else
++	vma->vm_flags |= VM_RESERVED | VM_IO;
++#endif
++	vma->vm_page_prot = pgprot_noncached(vma->vm_page_prot);
++
++	return io_remap_pfn_range(vma, vma->vm_start, pfn, size, vma->vm_page_prot);
++}
++
++static const struct file_operations spuldrfs_spe_mem_fops = {
++	.read	= spuldrfs_spe_mem_read,
++	.write	= spuldrfs_spe_mem_write,
++	.mmap	= spuldrfs_spe_mem_mmap,
++};
++
++/*
++ * spuldrfs_mem_read
++ */
++static ssize_t spuldrfs_mem_read(struct file *file, char __user *buffer,
++	size_t size, loff_t *pos)
++{
++	struct inode *inode = file->f_dentry->d_inode;
++	struct spuldrfs_inode_info *si = SPULDRFS_I(inode);
++
++	if (*pos >= inode->i_size)
++		return (0);
++
++	return simple_read_from_buffer(buffer, size, pos,
++		si->virt_addr, inode->i_size);
++}
++
++/*
++ * spuldrfs_mem_write
++ */
++static ssize_t spuldrfs_mem_write(struct file *file, const char __user *buffer,
++	size_t size, loff_t *pos)
++{
++	struct inode *inode = file->f_dentry->d_inode;
++	struct spuldrfs_inode_info *si = SPULDRFS_I(inode);
++
++	if (*pos >= inode->i_size)
++		return (-EFBIG);
++
++	return simple_write_to_buffer(si->virt_addr, inode->i_size,
++		pos, buffer, size);
++}
++
++/*
++ * spuldrfs_mem_mmap
++ */
++static int spuldrfs_mem_mmap(struct file *file, struct vm_area_struct *vma)
++{
++	struct inode *inode = file->f_dentry->d_inode;
++	struct spuldrfs_inode_info *si = SPULDRFS_I(inode);
++
++	return remap_vmalloc_range(vma, si->virt_addr, 0);
++}
++
++static const struct file_operations spuldrfs_mem_fops = {
++	.read	= spuldrfs_mem_read,
++	.write	= spuldrfs_mem_write,
++	.mmap	= spuldrfs_mem_mmap,
++};
++
++/*
++ * spuldrfs_info_read
++ */
++static ssize_t spuldrfs_info_read(struct file *file, char __user *buffer,
++	size_t size, loff_t *pos)
++{
++	char buf[256];
++	size_t len;
++	unsigned long spe_buf1_addr, spe_buf2_addr, spe_buf3_addr;
++
++	spe_buf1_addr = (unsigned long) spuldrfs_spe_buf1;
++	spe_buf2_addr = (unsigned long) spuldrfs_spe_buf2;
++	spe_buf3_addr = (unsigned long) spuldrfs_spe_buf3;
++
++	if (spuldrfs_spe_buf_addr_32bit) {
++		spe_buf1_addr &= 0xfffffffful;
++		spe_buf2_addr &= 0xfffffffful;
++		spe_buf3_addr &= 0xfffffffful;
++	}
++
++	len = sprintf(buf, "buf1 %lx\nbuf2 %lx\nbuf3 %lx",
++		spe_buf1_addr, spe_buf2_addr, spe_buf3_addr);
++
++	return simple_read_from_buffer(buffer, size, pos, buf, len);
++}
++
++static const struct file_operations spuldrfs_info_fops = {
++	.read	= spuldrfs_info_read,
++};
++
++/*
++ * spuldrfs_run_write
++ */
++static ssize_t spuldrfs_run_write(struct file *file, const char __user *buffer,
++	size_t size, loff_t *pos)
++{
++	int i, err;
++
++	if (*pos)
++		return (-EINVAL);
++
++	err = lv1_disable_logical_spe(spuldrfs_spe_id, 0);
++	if (err)
++		printk(KERN_INFO"spuldrfs: lv1_disable_logical_spe failed with %d\n", err);
++
++	err = lv1_enable_logical_spe(spuldrfs_spe_id, spuldrfs_spe_resource_id);
++	if (err) {
++		printk(KERN_INFO"spuldrfs: lv1_enable_logical_spe failed with %d\n", err);
++		return (-ENXIO);
++	}
++
++	out_be32(&spuldrfs_spe_problem->spu_runcntl_RW, SPU_RUNCNTL_ISOLATE | SPU_RUNCNTL_STOP);
++
++	/* enable interrupts */
++
++	err = lv1_set_spe_interrupt_mask(spuldrfs_spe_id, 0, 0x7);
++	if (err) {
++		printk(KERN_INFO"spuldrfs: lv1_set_spe_interrupt_mask failed with %d\n", err);
++		return (-ENXIO);
++	}
++
++	err = lv1_set_spe_interrupt_mask(spuldrfs_spe_id, 1, 0xf);
++	if (err) {
++		printk(KERN_INFO"spuldrfs: lv1_set_spe_interrupt_mask failed with %d\n", err);
++		return (-ENXIO);
++	}
++
++	err = lv1_set_spe_interrupt_mask(spuldrfs_spe_id, 2, 0xf);
++	if (err) {
++		printk(KERN_INFO"spuldrfs: lv1_set_spe_interrupt_mask failed with %d\n", err);
++		return (-ENXIO);
++	}
++
++	err = lv1_set_spe_privilege_state_area_1_register(spuldrfs_spe_id, offsetof(struct spu_priv1, mfc_sr1_RW),
++		MFC_STATE1_RELOCATE_MASK);
++	if (err) {
++		printk(KERN_INFO"spuldrfs: lv1_set_spe_privilege_state_area_1_register failed with %d\n", err);
++		return (-ENXIO);
++	}
++
++	/* invalidate all SLB entries */
++
++	out_be64(&spuldrfs_spe_priv2->slb_invalidate_all_W, 0);
++
++	for (i = 0; i <= SLB_INDEX_MASK; i++) {
++		out_be64(&spuldrfs_spe_priv2->slb_index_W, i);
++		out_be64(&spuldrfs_spe_priv2->slb_vsid_RW, 0);
++		out_be64(&spuldrfs_spe_priv2->slb_esid_RW, 0);
++	}
++
++	out_be64(&spuldrfs_spe_priv2->spu_cfg_RW, 0);
++
++	out_be32(&spuldrfs_spe_problem->spu_mb_W, (unsigned long) spuldrfs_spe_ldr >> 32);
++	out_be32(&spuldrfs_spe_problem->spu_mb_W, (unsigned long) spuldrfs_spe_ldr);
++
++	out_be32(&spuldrfs_spe_problem->signal_notify1, (unsigned long) spuldrfs_spe_metldr >> 32);
++	out_be32(&spuldrfs_spe_problem->signal_notify2, (unsigned long) spuldrfs_spe_metldr);
++
++	out_be64(&spuldrfs_spe_priv2->spu_privcntl_RW, SPU_PRIVCNT_LOAD_REQUEST_ENABLE_MASK);
++
++	out_be32(&spuldrfs_spe_problem->spu_runcntl_RW, SPU_RUNCNTL_ISOLATE | SPU_RUNCNTL_RUNNABLE);
++
++	return (size);
++}
++
++static const struct file_operations spuldrfs_run_fops = {
++	.write	= spuldrfs_run_write,
++};
++
++/*
++ * spuldrfs_alloc_inode
++ */
++static struct inode *spuldrfs_alloc_inode(struct super_block *sb)
++{
++	struct spuldrfs_inode_info *si;
++
++	si = kmem_cache_alloc(spuldrfs_inode_cache, GFP_KERNEL);
++	if (!si)
++		return (NULL);
++
++	return (&si->vfs_inode);
++}
++ 
++/*
++ * spuldrfs_i_callback
++ */
++static void spuldrfs_i_callback(struct rcu_head *head)
++{
++	struct inode *inode = container_of(head, struct inode, i_rcu);
++
++	kmem_cache_free(spuldrfs_inode_cache, SPULDRFS_I(inode));
++}
++
++/*
++ * spuldrfs_destroy_inode
++ */
++static void spuldrfs_destroy_inode(struct inode *inode)
++{
++	call_rcu(&inode->i_rcu, spuldrfs_i_callback);
++}
++
++/*
++ * spuldrfs_init_once
++ */
++static void spuldrfs_init_once(void *p)
++{
++	struct spuldrfs_inode_info *si = p;
++
++	inode_init_once(&si->vfs_inode);
++}
++
++/*
++ * spuldrfs_new_inode
++ */
++static struct inode *spuldrfs_new_inode(struct super_block *sb, umode_t mode)
++{
++	struct inode *inode;
++	
++	inode = new_inode(sb);
++	if (!inode)
++		return (NULL);
++	
++	inode->i_ino = get_next_ino();
++	inode->i_mode = mode;
++	inode->i_uid = current_fsuid();
++	inode->i_gid = current_fsgid();
++	inode->i_atime = inode->i_mtime = inode->i_ctime = CURRENT_TIME;
++
++	return (inode);
++}
++
++/*
++ * spuldrfs_setattr
++ */
++static int spuldrfs_setattr(struct dentry *dentry, struct iattr *attr)
++{
++	struct inode *inode = dentry->d_inode;
++
++	setattr_copy(inode, attr);
++	mark_inode_dirty(inode);
++
++	return (0);
++}
++
++static const struct inode_operations spuldrfs_inode_ops = {
++	.setattr = spuldrfs_setattr,
++};
++
++/*
++ * spuldrfs_new_file
++ */
++static int spuldrfs_new_file(struct super_block *sb, struct dentry *dentry,
++	const struct file_operations *fops, umode_t mode, size_t size,
++	unsigned long io_addr, void *virt_addr)
++{
++	struct inode *inode;
++	struct spuldrfs_inode_info *si;
++
++	inode = spuldrfs_new_inode(sb, S_IFREG | mode);
++	if (!inode)
++		return (-ENOMEM);
++
++	inode->i_op = &spuldrfs_inode_ops;
++	inode->i_fop = fops;
++	inode->i_size = size;
++	inode->i_private = NULL;
++
++	si = SPULDRFS_I(inode);
++	si->io_addr = io_addr;
++	si->virt_addr = virt_addr;
++
++	d_add(dentry, inode);
++
++	return (0);
++}
++
++/*
++ * spuldrfs_fill_dir
++ */
++static int spuldrfs_fill_dir(struct dentry *dir,
++	const struct spuldrfs_tree_descr *files)
++{
++	struct dentry *dentry, *tmp;
++	int err;
++
++	while (files->name && files->name[0]) {
++		dentry = d_alloc_name(dir, files->name);
++		if (!dentry) {
++			err = -ENOMEM;
++			goto fail;
++		}
++
++		err = spuldrfs_new_file(dir->d_sb, dentry, files->ops,
++			files->mode, files->size, files->io_addr, files->virt_addr);
++		if (err)
++			goto fail;
++
++		files++;
++	}
++
++	return (0);
++
++fail:
++
++	list_for_each_entry_safe(dentry, tmp, &dir->d_subdirs, d_u.d_child)
++		dput(dentry);
++
++	shrink_dcache_parent(dir);
++
++	return (err);
++}
++
++static const struct super_operations spuldrfs_super_ops = {
++	.alloc_inode	= spuldrfs_alloc_inode,
++	.destroy_inode	= spuldrfs_destroy_inode,
++	.statfs		= simple_statfs,
++};
++
++/*
++ * spuldrfs_fill_super
++ */
++static int spuldrfs_fill_super(struct super_block *sb, void *data, int silent)
++{
++	const struct spuldrfs_tree_descr root_dir_contents[] = {
++		{ "priv2", &spuldrfs_spe_regs_fops, 0666, sizeof(struct spu_priv2), spuldrfs_spe_priv2_addr, spuldrfs_spe_priv2, },
++		{ "problem", &spuldrfs_spe_regs_fops, 0666, sizeof(struct spu_problem), spuldrfs_spe_problem_addr, spuldrfs_spe_problem, },
++		{ "ls", &spuldrfs_spe_mem_fops, 0666, LS_SIZE, spuldrfs_spe_ls_addr, spuldrfs_spe_ls, },
++		{ "shadow", &spuldrfs_spe_mem_fops, 0444, sizeof(struct spe_shadow), spuldrfs_spe_shadow_addr, spuldrfs_spe_shadow, },
++		{ "metldr", &spuldrfs_mem_fops, 0666, spuldrfs_spe_metldr_size, 0, spuldrfs_spe_metldr, },
++		{ "ldr", &spuldrfs_mem_fops, 0666, spuldrfs_spe_ldr_size, 0, spuldrfs_spe_ldr, },
++		{ "buf1", &spuldrfs_mem_fops, 0666, spuldrfs_spe_buf1_size, 0, spuldrfs_spe_buf1, },
++		{ "buf2", &spuldrfs_mem_fops, 0666, spuldrfs_spe_buf2_size, 0, spuldrfs_spe_buf2, },
++		{ "buf3", &spuldrfs_mem_fops, 0666, spuldrfs_spe_buf3_size, 0, spuldrfs_spe_buf3, },
++		{ "info", &spuldrfs_info_fops, 0444, 0, 0, NULL, },
++		{ "run", &spuldrfs_run_fops, 0222, 0, 0, NULL, },
++		{ },
++	};
++	struct inode *root_inode;
++	int err;
++ 
++	sb->s_maxbytes = MAX_LFS_FILESIZE;
++	sb->s_blocksize = PAGE_CACHE_SIZE;
++	sb->s_blocksize_bits = PAGE_CACHE_SHIFT;
++	sb->s_magic = SPULDRFS_MAGIC;
++	sb->s_op = &spuldrfs_super_ops;
++	sb->s_time_gran = 1;
++ 
++	root_inode = spuldrfs_new_inode(sb, S_IFDIR | 0755);
++	if (!root_inode)
++		return (-ENOMEM);
++
++	root_inode->i_op = &simple_dir_inode_operations;
++	root_inode->i_fop = &simple_dir_operations;
++
++	/* directory inodes start off with i_nlink == 2 (for "." entry) */
++	inc_nlink(root_inode);
++
++	sb->s_root = d_make_root(root_inode);
++	if (!sb->s_root)
++		return (-ENOMEM);
++
++	err = spuldrfs_fill_dir(sb->s_root, root_dir_contents);
++	if (err)
++		return (err);
++	
++	return (0);
++}
++
++/*
++ * spuldrfs_spe_ea_to_kernel_ea
++ */
++static unsigned long spuldrfs_spe_ea_to_kernel_ea(unsigned long spe_ea)
++{
++	unsigned long kernel_ea, spe_buf1_addr, spe_buf2_addr, spe_buf3_addr;
++
++	kernel_ea = spe_ea;
++
++	if (!spuldrfs_spe_buf_addr_32bit)
++		return (kernel_ea);
++
++	spe_buf1_addr = (unsigned long) spuldrfs_spe_buf1 & 0xfffffffful;
++	spe_buf2_addr = (unsigned long) spuldrfs_spe_buf2 & 0xfffffffful;
++	spe_buf3_addr = (unsigned long) spuldrfs_spe_buf3 & 0xfffffffful;
++
++	if ((spe_ea >= spe_buf1_addr) && (spe_ea < (spe_buf1_addr + spuldrfs_spe_buf1_size)))
++		kernel_ea = (unsigned long) spuldrfs_spe_buf1 + (spe_buf1_addr - spe_ea);
++	else if ((spe_ea >= spe_buf2_addr) && (spe_ea < (spe_buf2_addr + spuldrfs_spe_buf2_size)))
++		kernel_ea = (unsigned long) spuldrfs_spe_buf2 + (spe_buf2_addr - spe_ea);
++	else if ((spe_ea >= spe_buf3_addr) && (spe_ea < (spe_buf3_addr + spuldrfs_spe_buf3_size)))
++		kernel_ea = (unsigned long) spuldrfs_spe_buf3 + (spe_buf3_addr - spe_ea);
++
++	return (kernel_ea);
++}
++
++/*
++ * spuldrfs_spe_interrupt
++ */
++static irqreturn_t spuldrfs_spe_interrupt(int irq, void *data)
++{
++	u64 status;
++	u64 ea, kernel_ea, dsisr, esid, vsid;
++	u64 puint_mb_R;
++	u32 spu_status_R;
++	u64 spe_execution_status;
++	int err;
++
++	if (irq == spuldrfs_spe_virq[0]) {
++		printk(KERN_INFO"spuldrfs: got class 0 irq\n");
++
++		err = lv1_get_spe_interrupt_status(spuldrfs_spe_id, 0, &status);
++		if (err) {
++			printk(KERN_INFO"spuldrfs: lv1_get_spe_interrupt_status failed with %d\n", err);
++			goto out;
++		}
++
++		printk(KERN_INFO"spuldrfs: status %llx\n", status);
++
++		err = lv1_clear_spe_interrupt_status(spuldrfs_spe_id, 0, status, 0);
++		if (err) {
++			printk(KERN_INFO"spuldrfs: lv1_clear_spe_interrupt_status failed with %d\n", err);
++			goto out;
++		}
++	} else if (irq == spuldrfs_spe_virq[1]) {
++		printk(KERN_INFO"spuldrfs: got class 1 irq\n");
++
++		err = lv1_get_spe_interrupt_status(spuldrfs_spe_id, 1, &status);
++		if (err) {
++			printk(KERN_INFO"spuldrfs: lv1_get_spe_interrupt_status failed with %d\n", err);
++			goto out;
++		}
++
++		printk(KERN_INFO"spuldrfs: status %llx\n", status);
++
++		if (status & CLASS1_SEGMENT_FAULT_INTR) {
++			ea = in_be64(&spuldrfs_spe_shadow->mfc_dar_RW);
++			kernel_ea = spuldrfs_spe_ea_to_kernel_ea(ea);
++
++			esid = (ea & ESID_MASK) | SLB_ESID_V;
++			vsid = (get_kernel_vsid(kernel_ea, MMU_SEGSIZE_256M) << SLB_VSID_SHIFT) | SLB_VSID_KERNEL | MMU_PAGE_4K;
++
++			printk(KERN_INFO"spuldrfs: data segment fault at %llx (%llx)\n", ea, kernel_ea);
++
++			out_be64(&spuldrfs_spe_priv2->slb_index_W, spuldrfs_spe_slb_index);
++			out_be64(&spuldrfs_spe_priv2->slb_vsid_RW, vsid);
++			out_be64(&spuldrfs_spe_priv2->slb_esid_RW, esid);
++
++			spuldrfs_spe_slb_index++;
++			if (spuldrfs_spe_slb_index > SLB_INDEX_MASK)
++				spuldrfs_spe_slb_index = 0;
++		}
++
++		if (status & CLASS1_STORAGE_FAULT_INTR) {
++			ea = in_be64(&spuldrfs_spe_shadow->mfc_dar_RW);
++			kernel_ea = spuldrfs_spe_ea_to_kernel_ea(ea);
++			dsisr = in_be64(&spuldrfs_spe_shadow->mfc_dsisr_RW);
++
++			printk(KERN_INFO"spuldrfs: data storage fault at %llx (%llx)\n", ea, kernel_ea);
++
++			if (dsisr & MFC_DSISR_PTE_NOT_FOUND) {
++				err = hash_page(kernel_ea, _PAGE_PRESENT, 0x300);
++				if (err) {
++					printk(KERN_INFO"spuldrfs: hash_page failed with %d\n", err);
++					goto out;
++				}
++			}
++		}
++
++		err = lv1_clear_spe_interrupt_status(spuldrfs_spe_id, 1, status, 0);
++		if (err) {
++			printk(KERN_INFO"spuldrfs: lv1_clear_spe_interrupt_status failed with %d\n", err);
++			goto out;
++		}
++
++		/* restart DMA */
++
++		out_be64(&spuldrfs_spe_priv2->mfc_control_RW, MFC_CNTL_RESTART_DMA_COMMAND);
++	} else if (irq == spuldrfs_spe_virq[2]) {
++		printk(KERN_INFO"spuldrfs: got class 2 irq\n");
++
++		err = lv1_get_spe_interrupt_status(spuldrfs_spe_id, 2, &status);
++		if (err) {
++			printk(KERN_INFO"spuldrfs: lv1_get_spe_interrupt_status failed with %d\n", err);
++			goto out;
++		}
++
++		printk(KERN_INFO"spuldrfs: status %llx\n", status);
++
++		if (status & CLASS2_MAILBOX_INTR) {
++			puint_mb_R = in_be64(&spuldrfs_spe_priv2->puint_mb_R);
++
++			printk(KERN_INFO"spuldrfs: puint_mb_R %llx\n", puint_mb_R);
++		}
++
++		if (status & CLASS2_SPU_STOP_INTR) {
++			spu_status_R = in_be32(&spuldrfs_spe_problem->spu_status_R);
++
++			printk(KERN_INFO"spuldrfs: spu_status_R %x\n", spu_status_R);
++		}
++
++		err = lv1_clear_spe_interrupt_status(spuldrfs_spe_id, 2, status, 0);
++		if (err) {
++			printk(KERN_INFO"spuldrfs: lv1_clear_spe_interrupt_status failed with %d\n", err);
++			goto out;
++		}
++	} else if (irq == spuldrfs_spe_virq[3]) {
++		spe_execution_status = spuldrfs_spe_shadow->spe_execution_status;
++
++		printk(KERN_INFO"spuldrfs: transition notification: shadow spe_execution_status %llx\n",
++			spe_execution_status);
++	} else {
++		printk(KERN_INFO"spuldrfs: got unknown irq %d\n", irq);
++	}
++
++out:
++
++	return (IRQ_HANDLED);
++}
++
++/*
++ * spuldrfs_create_spe
++ */
++static int spuldrfs_create_spe(void)
++{
++	u64 vas_id, junk;
++	int err;
++
++	err = lv1_get_virtual_address_space_id_of_ppe(&vas_id);
++	if (err)
++		return (-ENXIO);
++
++	printk(KERN_INFO"spuldrfs: vas id %llu\n", vas_id);
++
++	err = lv1_construct_logical_spe(PAGE_SHIFT, PAGE_SHIFT,
++		PAGE_SHIFT, PAGE_SHIFT, PAGE_SHIFT, vas_id, 0,
++		&spuldrfs_spe_priv2_addr, &spuldrfs_spe_problem_addr, &spuldrfs_spe_ls_addr,
++		&junk, &spuldrfs_spe_shadow_addr, &spuldrfs_spe_id);
++	if (err)
++		return (-ENXIO);
++
++	printk(KERN_INFO"spuldrfs: spe id %llu\n", spuldrfs_spe_id);
++
++	spuldrfs_spe_priv2 = ioremap(spuldrfs_spe_priv2_addr, sizeof(struct spu_priv2));
++	if (!spuldrfs_spe_priv2) {
++		err = -ENOMEM;
++		goto fail_destruct_spe;
++	}
++
++	spuldrfs_spe_problem = ioremap(spuldrfs_spe_problem_addr, sizeof(struct spu_problem));
++	if (!spuldrfs_spe_problem) {
++		err = -ENOMEM;
++		goto fail_unmap_priv2;
++	}
++
++	spuldrfs_spe_ls = ioremap_prot(spuldrfs_spe_ls_addr, LS_SIZE, _PAGE_NO_CACHE);
++	if (!spuldrfs_spe_ls) {
++		err = -ENOMEM;
++		goto fail_unmap_problem;
++	}
++
++	spuldrfs_spe_shadow = __ioremap(spuldrfs_spe_shadow_addr, sizeof(struct spe_shadow),
++		_PAGE_NO_CACHE | 3);
++	if (!spuldrfs_spe_shadow) {
++		err = -ENOMEM;
++		goto fail_unmap_ls;
++	}
++
++	err =  ps3_spe_irq_setup(PS3_BINDING_CPU_ANY, spuldrfs_spe_id, 0, &spuldrfs_spe_virq[0]);
++	if (err) {
++		err = -ENXIO;
++		goto fail_unmap_shadow;
++	}
++
++	err = request_irq(spuldrfs_spe_virq[0], spuldrfs_spe_interrupt, 0,
++		"spuldrfs_spe_irq0", &spuldrfs_spe_virq[0]);
++	if (err)
++		goto fail_destroy_spe_irq_0;
++
++	err =  ps3_spe_irq_setup(PS3_BINDING_CPU_ANY, spuldrfs_spe_id, 1, &spuldrfs_spe_virq[1]);
++	if (err) {
++		err = -ENXIO;
++		goto fail_free_spe_irq_0;
++	}
++
++	err = request_irq(spuldrfs_spe_virq[1], spuldrfs_spe_interrupt, 0,
++		"spuldrfs_spe_irq1", &spuldrfs_spe_virq[1]);
++	if (err)
++		goto fail_destroy_spe_irq_1;
++
++	err =  ps3_spe_irq_setup(PS3_BINDING_CPU_ANY, spuldrfs_spe_id, 2, &spuldrfs_spe_virq[2]);
++	if (err) {
++		err = -ENXIO;
++		goto fail_free_spe_irq_1;
++	}
++
++	err = request_irq(spuldrfs_spe_virq[2], spuldrfs_spe_interrupt, 0,
++		"spuldrfs_spe_irq2", &spuldrfs_spe_virq[2]);
++	if (err)
++		goto fail_destroy_spe_irq_2;
++
++	err = ps3_event_receive_port_setup(PS3_BINDING_CPU_ANY, &spuldrfs_spe_virq[3]);
++	if (err) {
++		err = -ENXIO;
++		goto fail_free_spe_irq_2;
++	}
++
++	err = lv1_set_spe_transition_notifier(spuldrfs_spe_id, spuldrfs_spe_trans_notify_mask,
++		virq_to_hw(spuldrfs_spe_virq[3]));
++	if (err) {
++		printk(KERN_INFO"spuldrfs: lv1_set_spe_transition_notifier failed with %d\n", err);
++		err = -ENXIO;
++		goto fail_destroy_event_recv_port;
++	}
++
++	err = request_irq(spuldrfs_spe_virq[3], spuldrfs_spe_interrupt, 0,
++		"spuldrfs_spe_irq3", &spuldrfs_spe_virq[3]);
++	if (err)
++		goto fail_destroy_event_recv_port;
++
++	return (0);
++
++fail_destroy_event_recv_port:
++
++	ps3_event_receive_port_destroy(spuldrfs_spe_virq[3]);
++
++fail_free_spe_irq_2:
++
++	free_irq(spuldrfs_spe_virq[2], &spuldrfs_spe_virq[2]);
++
++fail_destroy_spe_irq_2:
++
++	ps3_spe_irq_destroy(spuldrfs_spe_virq[2]);
++
++fail_free_spe_irq_1:
++
++	free_irq(spuldrfs_spe_virq[1], &spuldrfs_spe_virq[1]);
++
++fail_destroy_spe_irq_1:
++
++	ps3_spe_irq_destroy(spuldrfs_spe_virq[1]);
++
++fail_free_spe_irq_0:
++
++	free_irq(spuldrfs_spe_virq[0], &spuldrfs_spe_virq[0]);
++
++fail_destroy_spe_irq_0:
++
++	ps3_spe_irq_destroy(spuldrfs_spe_virq[0]);
++
++fail_unmap_shadow:
++
++	iounmap(spuldrfs_spe_shadow);
++
++fail_unmap_ls:
++
++	iounmap(spuldrfs_spe_ls);
++
++fail_unmap_problem:
++
++	iounmap(spuldrfs_spe_problem);
++
++fail_unmap_priv2:
++
++	iounmap(spuldrfs_spe_priv2);
++
++fail_destruct_spe:
++
++	lv1_destruct_logical_spe(spuldrfs_spe_id);
++
++	return (err);
++}
++
++/*
++ * spuldrfs_destruct_spe
++ */
++static void spuldrfs_destruct_spe(void)
++{
++	lv1_disable_logical_spe(spuldrfs_spe_id, 0);
++
++	free_irq(spuldrfs_spe_virq[0], &spuldrfs_spe_virq[0]);
++	ps3_spe_irq_destroy(spuldrfs_spe_virq[0]);
++
++	free_irq(spuldrfs_spe_virq[1], &spuldrfs_spe_virq[1]);
++	ps3_spe_irq_destroy(spuldrfs_spe_virq[1]);
++
++	free_irq(spuldrfs_spe_virq[2], &spuldrfs_spe_virq[2]);
++	ps3_spe_irq_destroy(spuldrfs_spe_virq[2]);
++
++	free_irq(spuldrfs_spe_virq[3], &spuldrfs_spe_virq[3]);
++	ps3_event_receive_port_destroy(spuldrfs_spe_virq[3]);
++
++	iounmap(spuldrfs_spe_shadow);
++	iounmap(spuldrfs_spe_ls);
++	iounmap(spuldrfs_spe_problem);
++	iounmap(spuldrfs_spe_priv2);
++
++	lv1_destruct_logical_spe(spuldrfs_spe_id);
++}
++
++/*
++ * spuldrfs_mount
++ */
++static struct dentry *spuldrfs_mount(struct file_system_type *fs_type,
++	int flags, const char *dev_name, void *data)
++{
++	struct dentry *root;
++	int err;
++
++	err = spuldrfs_create_spe();
++	if (err)
++		return ERR_PTR(err);
++
++	spuldrfs_spe_metldr = vmalloc_user(spuldrfs_spe_metldr_size);
++	if (!spuldrfs_spe_metldr) {
++		err = -ENOMEM;
++		goto fail_destruct_spe;
++	}
++
++	memset(spuldrfs_spe_metldr, 0, spuldrfs_spe_metldr_size);
++
++	spuldrfs_spe_ldr = vmalloc_user(spuldrfs_spe_ldr_size);
++	if (!spuldrfs_spe_ldr) {
++		err = -ENOMEM;
++		goto fail_free_spe_metldr;
++	}
++
++	memset(spuldrfs_spe_ldr, 0, spuldrfs_spe_ldr_size);
++
++	spuldrfs_spe_buf1 = vmalloc_user(spuldrfs_spe_buf1_size);
++	if (!spuldrfs_spe_buf1) {
++		err = -ENOMEM;
++		goto fail_free_spe_ldr;
++	}
++
++	memset(spuldrfs_spe_buf1, 0, spuldrfs_spe_buf1_size);
++
++	spuldrfs_spe_buf2 = vmalloc_user(spuldrfs_spe_buf2_size);
++	if (!spuldrfs_spe_buf2) {
++		err = -ENOMEM;
++		goto fail_free_spe_buf1;
++	}
++
++	memset(spuldrfs_spe_buf2, 0, spuldrfs_spe_buf2_size);
++
++	spuldrfs_spe_buf3 = vmalloc_user(spuldrfs_spe_buf3_size);
++	if (!spuldrfs_spe_buf3) {
++		err = -ENOMEM;
++		goto fail_free_spe_buf2;
++	}
++
++	memset(spuldrfs_spe_buf3, 0, spuldrfs_spe_buf3_size);
++
++	root = mount_single(fs_type, flags, data, spuldrfs_fill_super);
++	if (IS_ERR(root)) {
++		err = PTR_ERR(root);
++		goto fail_free_spe_buf3;
++	}
++
++	return (root);
++
++fail_free_spe_buf3:
++
++	vfree(spuldrfs_spe_buf3);
++
++fail_free_spe_buf2:
++
++	vfree(spuldrfs_spe_buf2);
++
++fail_free_spe_buf1:
++
++	vfree(spuldrfs_spe_buf1);
++
++fail_free_spe_ldr:
++
++	vfree(spuldrfs_spe_ldr);
++
++fail_free_spe_metldr:
++
++	vfree(spuldrfs_spe_metldr);
++
++fail_destruct_spe:
++
++	spuldrfs_destruct_spe();
++
++	return ERR_PTR(err);
++}
++
++/*
++ * spuldrfs_kill_sb
++ */
++static void spuldrfs_kill_sb(struct super_block *sb)
++{
++	kill_litter_super(sb);
++
++	vfree(spuldrfs_spe_metldr);
++	vfree(spuldrfs_spe_ldr);
++	vfree(spuldrfs_spe_buf1);
++	vfree(spuldrfs_spe_buf2);
++	vfree(spuldrfs_spe_buf3);
++	spuldrfs_destruct_spe();
++}
++
++static struct file_system_type spuldrfs_type = {
++	.owner		= THIS_MODULE,
++	.name		= "spuldrfs",
++	.mount		= spuldrfs_mount,
++	.kill_sb	= spuldrfs_kill_sb,
++};
++
++/*
++ * spuldrfs_init
++ */
++static int __init spuldrfs_init(void)
++{
++	int err;
++
++	spuldrfs_inode_cache = kmem_cache_create("spuldrfs_inode_cache",
++		sizeof(struct spuldrfs_inode_info), 0, SLAB_HWCACHE_ALIGN,
++		spuldrfs_init_once);
++	if (!spuldrfs_inode_cache)
++		return (-ENOMEM);
++
++	err = register_filesystem(&spuldrfs_type);
++	if (err)
++		goto fail_destroy_inode_cache;
++
++	return (0);
++
++fail_destroy_inode_cache:
++
++	kmem_cache_destroy(spuldrfs_inode_cache);
++
++	return (err);
++}
++
++/*
++ * spuldrfs_exit
++ */
++static void __exit spuldrfs_exit(void)
++{
++	unregister_filesystem(&spuldrfs_type);
++	kmem_cache_destroy(spuldrfs_inode_cache);
++}
++
++module_init(spuldrfs_init);
++module_exit(spuldrfs_exit);
++
++MODULE_DESCRIPTION("PS3 spuldrfs");
++MODULE_AUTHOR("glevand");
++MODULE_LICENSE("GPL");

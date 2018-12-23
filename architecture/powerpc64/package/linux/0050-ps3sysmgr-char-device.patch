@@ -1,0 +1,174 @@
+--- a/drivers/ps3/ps3-sys-manager.c	2012-01-26 20:35:02.242768746 +0100
++++ b/drivers/ps3/ps3-sys-manager.c	2012-01-26 20:38:07.325547265 +0100
+@@ -3,6 +3,8 @@
+  *
+  *  Copyright (C) 2007 Sony Computer Entertainment Inc.
+  *  Copyright 2007 Sony Corp.
++ *  Copyright (C) 2011 graf_chokolo <grafchokolo@gmail.com>.
++ *  Copyright (C) 2011, 2012 glevand <geoffrey.levand@mail.ru>.
+  *
+  *  This program is free software; you can redistribute it and/or modify
+  *  it under the terms of the GNU General Public License as published by
+@@ -25,7 +25,12 @@
+ #include <linux/workqueue.h>
+ #include <linux/reboot.h>
+ #include <linux/sched/signal.h>
++#include <linux/slab.h>
++#include <linux/uaccess.h>
++#include <linux/fs.h>
++#include <linux/miscdevice.h>
+ 
++#include <asm/atomic.h>
+ #include <asm/firmware.h>
+ #include <asm/lv1call.h>
+ #include <asm/ps3.h>
+@@ -43,6 +50,14 @@
+  * specific payload.
+  */
+ 
++#define DEVICE_NAME		"ps3sysmngr"
++
++static struct ps3sm {
++	struct ps3_system_bus_device *dev;
++	struct miscdevice misc;
++	atomic_t misc_in_use;
++} *ps3sm;
++
+ /**
+  * struct ps3_sys_manager_header - System manager message header.
+  * @version: Header version, currently 1.
+@@ -706,6 +721,86 @@
+ 	ps3_vuart_read_async(dev, PS3_SM_RX_MSG_LEN_MIN);
+ }
+ 
++static int ps3_sys_manager_misc_open(struct inode *inode, struct file *file)
++{
++	if (atomic_inc_return(&ps3sm->misc_in_use) == 1)
++		ps3_vuart_cancel_async(ps3sm->dev);
++
++	return 0;
++}
++
++static int ps3_sys_manager_misc_release(struct inode *inode, struct file *file)
++{
++	if (atomic_dec_and_test(&ps3sm->misc_in_use))
++		ps3_vuart_read_async(ps3sm->dev, PS3_SM_RX_MSG_LEN_MIN);
++
++	return 0;
++}
++
++static ssize_t ps3_sys_manager_misc_read(struct file *file, char __user *usrbuf,
++					 size_t count, loff_t *pos)
++{
++	char *buf;
++	int result;
++
++	buf = kmalloc(count, GFP_KERNEL);
++	if (!buf)
++		return -ENOMEM;
++
++	result = ps3_vuart_read(ps3sm->dev, buf, count);
++	if (result)
++		goto out;
++
++	if (copy_to_user(usrbuf, buf, count)) {
++		result = -EFAULT;
++		goto out;
++	}
++
++	result = count;
++
++out:
++
++	kfree(buf);
++
++	return result;
++}
++
++static ssize_t ps3_sys_manager_misc_write(struct file *file, const char __user *usrbuf,
++					  size_t count, loff_t *pos)
++{
++	char *buf;
++	int result;
++
++	buf = kmalloc(count, GFP_KERNEL);
++	if (!buf)
++		return -ENOMEM;
++
++	if (copy_from_user(buf, usrbuf, count)) {
++		result = -EFAULT;
++		goto out;
++	}
++
++	result = ps3_vuart_write(ps3sm->dev, buf, count);
++	if (result)
++		goto out;
++
++	result = count;
++
++out:
++
++	kfree(buf);
++
++	return result;
++}
++
++static const struct file_operations ps3_sys_manager_misc_fops = {
++	.owner		= THIS_MODULE,
++	.open		= ps3_sys_manager_misc_open,
++	.release	= ps3_sys_manager_misc_release,
++	.read		= ps3_sys_manager_misc_read,
++	.write		= ps3_sys_manager_misc_write,
++};
++
+ static int ps3_sys_manager_probe(struct ps3_system_bus_device *dev)
+ {
+ 	int result;
+@@ -727,12 +822,47 @@
+ 	result = ps3_vuart_read_async(dev, PS3_SM_RX_MSG_LEN_MIN);
+ 	BUG_ON(result);
+ 
++	ps3sm = kzalloc(sizeof(*ps3sm), GFP_KERNEL);
++	if (!ps3sm)
++		goto skip_misc;
++
++	ps3sm->dev = dev;
++
++	ps3sm->misc.parent = &dev->core;
++	ps3sm->misc.minor = MISC_DYNAMIC_MINOR,
++	ps3sm->misc.name = DEVICE_NAME,
++	ps3sm->misc.fops = &ps3_sys_manager_misc_fops,
++	atomic_set(&ps3sm->misc_in_use, 0);
++
++	result = misc_register(&ps3sm->misc);
++	if (result) {
++		dev_err(&dev->core, "%s:%u: misc_register failed %d\n",
++				    __func__, __LINE__, result);
++		kfree(ps3sm);
++		ps3sm = NULL;
++		goto skip_misc;
++	}
++
++	dev_info(&dev->core, "%s:%u: registered misc device %d\n",
++		             __func__, __LINE__, ps3sm->misc.minor);
++
++skip_misc:
++
++	result = 0;
++
+ 	return result;
+ }
+ 
+ static int ps3_sys_manager_remove(struct ps3_system_bus_device *dev)
+ {
+ 	dev_dbg(&dev->core, "%s:%d\n", __func__, __LINE__);
++
++	if (ps3sm) {
++		misc_deregister(&ps3sm->misc);
++		kfree(ps3sm);
++		ps3sm = NULL;
++	}
++
+ 	return 0;
+ }
+ 

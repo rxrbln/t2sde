@@ -1,0 +1,143 @@
+--- a/drivers/ps3/ps3av.c	2013-03-07 22:13:51.309374686 +0100
++++ b/drivers/ps3/ps3av.c	2013-03-07 22:14:15.449376092 +0100
+@@ -25,6 +25,8 @@
+ #include <linux/ioctl.h>
+ #include <linux/fb.h>
+ #include <linux/slab.h>
++#include <linux/uaccess.h>
++#include <linux/miscdevice.h>
+ 
+ #include <asm/firmware.h>
+ #include <asm/ps3av.h>
+@@ -35,6 +37,8 @@
+ #define BUFSIZE          4096	/* vuart buf size */
+ #define PS3AV_BUF_SIZE   512	/* max packet size */
+ 
++#define DEVICE_NAME	"ps3avmngr"
++
+ static int safe_mode;
+ 
+ static int timeout = 5000;	/* in msec ( 5 sec ) */
+@@ -60,6 +64,8 @@
+ 		struct ps3av_reply_hdr reply_hdr;
+ 		u8 raw[PS3AV_BUF_SIZE];
+ 	} recv_buf;
++	struct miscdevice misc;
++	int misc_ok;
+ } *ps3av;
+ 
+ /* color space */
+@@ -932,6 +938,68 @@
+ }
+ EXPORT_SYMBOL_GPL(ps3av_audio_mute);
+ 
++static ssize_t ps3av_misc_read(struct file *file, char __user *usrbuf,
++			       size_t count, loff_t *pos)
++{
++	char *buf;
++	int result;
++
++	buf = kmalloc(count, GFP_KERNEL);
++	if (!buf)
++		return -ENOMEM;
++
++	result = ps3_vuart_read(ps3av->dev, buf, count);
++	if (result)
++		goto out;
++
++	if (copy_to_user(usrbuf, buf, count)) {
++		result = -EFAULT;
++		goto out;
++	}
++
++	result = count;
++
++out:
++
++	kfree(buf);
++
++	return result;
++}
++
++static ssize_t ps3av_misc_write(struct file *file, const char __user *usrbuf,
++				size_t count, loff_t *pos)
++{
++	char *buf;
++	int result;
++
++	buf = kmalloc(count, GFP_KERNEL);
++	if (!buf)
++		return -ENOMEM;
++
++	if (copy_from_user(buf, usrbuf, count)) {
++		result = -EFAULT;
++		goto out;
++	}
++
++	result = ps3_vuart_write(ps3av->dev, buf, count);
++	if (result)
++		goto out;
++
++	result = count;
++
++out:
++
++	kfree(buf);
++
++	return result;
++}
++
++static const struct file_operations ps3av_misc_fops = {
++	.owner		= THIS_MODULE,
++	.read	= ps3av_misc_read,
++	.write	= ps3av_misc_write,
++};
++
+ static int ps3av_probe(struct ps3_system_bus_device *dev)
+ {
+ 	int res;
+@@ -1003,11 +1071,34 @@
+ 	ps3av->ps3av_mode = id;
+ 	mutex_unlock(&ps3av->mutex);
+ 
++	ps3av->misc.parent = &dev->core;
++	ps3av->misc.minor = MISC_DYNAMIC_MINOR,
++	ps3av->misc.name = DEVICE_NAME,
++	ps3av->misc.fops = &ps3av_misc_fops,
++
++	res = misc_register(&ps3av->misc);
++	if (res) {
++		dev_err(&dev->core, "%s:%u: misc_register failed %d\n",
++				    __func__, __LINE__, res);
++		goto skip_misc;
++	}
++
++	ps3av->misc_ok = 1;
++
++	dev_info(&dev->core, "%s:%u: registered misc device %d\n",
++		             __func__, __LINE__, ps3av->misc.minor);
++
++skip_misc:
++
+ 	dev_dbg(&dev->core, " <- %s:%d\n", __func__, __LINE__);
+ 
+ 	return 0;
+ 
+ fail:
++
++	if (ps3av->misc_ok)
++		misc_deregister(&ps3av->misc);
++
+ 	kfree(ps3av);
+ 	ps3av = NULL;
+ 	return res;
+@@ -1017,6 +1108,9 @@
+ {
+ 	dev_dbg(&dev->core, " -> %s:%d\n", __func__, __LINE__);
+ 	if (ps3av) {
++		if (ps3av->misc_ok)
++			misc_deregister(&ps3av->misc);
++
+ 		ps3av_cmd_fin();
+ 		if (ps3av->wq)
+ 			destroy_workqueue(ps3av->wq);

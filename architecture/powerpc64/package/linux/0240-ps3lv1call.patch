@@ -1,0 +1,249 @@
+--- linux-4.19/drivers/char/Makefile.vanilla	2018-11-15 23:03:11.806936490 +0000
++++ linux-4.19/drivers/char/Makefile	2018-11-15 23:04:25.450935383 +0000
+@@ -52,5 +53,6 @@
+ obj-$(CONFIG_PS3_FLASH)		+= ps3flash.o
+ obj-$(CONFIG_PS3_STRGMNGR)	+= ps3strgmngr.o
++obj-$(CONFIG_PS3_LV1CALL)	+= ps3lv1call/
+ 
+ obj-$(CONFIG_JS_RTC)		+= js-rtc.o
+ js-rtc-y = rtc.o
+--- a/arch/powerpc/platforms/ps3/Kconfig	2012-10-27 02:11:58.000000000 -0800
++++ b/arch/powerpc/platforms/ps3/Kconfig	2012-10-27 02:13:08.000000000 -0800
+@@ -228,6 +228,12 @@
+ 	help
+ 	  The isolated SPU loader file system is used to execute isolated SPU loaders.
+ 
++config PS3_LV1CALL
++	tristate "PS3 LV1 Call Driver"
++	depends on PPC_PS3
++	help
++	  This driver allows you to execute LV1 calls.
++
+ config PS3GELIC_UDBG
+ 	bool "PS3 udbg output via UDP broadcasts on Ethernet"
+ 	depends on PPC_PS3
+--- /dev/null	2012-10-27 01:55:30.097760558 -0800
++++ b/drivers/char/ps3lv1call/Makefile	2012-10-27 02:10:35.000000000 -0800
+@@ -0,0 +1,4 @@
++
++ps3lv1call-y := ps3lv1call_misc.o generic_lv1call.o
++
++obj-$(CONFIG_PS3_LV1CALL) += ps3lv1call.o
+--- /dev/null	2012-10-27 01:55:30.097760558 -0800
++++ b/drivers/char/ps3lv1call/generic_lv1call.S	2012-10-27 02:08:57.000000000 -0800
+@@ -0,0 +1,54 @@
++/*
++ * PS3 Generic LV1 Call
++ *
++ * Copyright (C) 2012 glevand <geoffrey.levand@mail.ru>
++ * All rights reserved.
++ *
++ * This program is free software; you can redistribute it and/or modify it
++ * under the terms of the GNU General Public License as published
++ * by the Free Software Foundation; version 2 of the License.
++ *
++ * This program is distributed in the hope that it will be useful, but
++ * WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
++ * General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License along
++ * with this program; if not, write to the Free Software Foundation, Inc.,
++ * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
++ */
++
++#include <asm/processor.h>
++#include <asm/ppc_asm.h>
++
++#define lv1call		.long 0x44000022; extsw r3, r3
++
++_GLOBAL(generic_lv1call)
++	mflr r0
++	std r0, 16(r1)
++	std r3, -8(r1)
++	std r4, -16(r1)
++	stdu r5, -24(r1)
++	mr r11, r4
++	ld r3, 0(r11)
++	ld r4, 8(r11)
++	ld r5, 16(r11)
++	ld r6, 24(r11)
++	ld r7, 32(r11)
++	ld r8, 40(r11)
++	ld r9, 48(r11)
++	ld r10, 56(r11)
++	ld r11, 16(r1)
++	lv1call
++	addi r1, r1, 24
++	ld r11, -24(r1)
++	std r4, 0(r11)
++	std r5, 8(r11)
++	std r6, 16(r11)
++	std r7, 24(r11)
++	std r8, 32(r11)
++	std r9, 40(r11)
++	std r10, 48(r11)
++	ld r0, 16(r1)
++	mtlr r0
++	blr
+--- /dev/null	2013-02-13 19:35:09.393146190 +0100
++++ b/drivers/char/ps3lv1call/ps3lv1call_misc.c	2013-02-12 20:22:36.473200805 +0100
+@@ -0,0 +1,158 @@
++/*
++ * PS3 LV1 Call
++ *
++ * Copyright (C) 2012, 2013 glevand <geoffrey.levand@mail.ru>
++ * All rights reserved.
++ *
++ * This program is free software; you can redistribute it and/or modify it
++ * under the terms of the GNU General Public License as published
++ * by the Free Software Foundation; version 2 of the License.
++ *
++ * This program is distributed in the hope that it will be useful, but
++ * WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
++ * General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License along
++ * with this program; if not, write to the Free Software Foundation, Inc.,
++ * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
++ */
++
++#include <linux/module.h>
++#include <linux/kernel.h>
++#include <linux/init.h>
++#include <linux/mm.h>
++#include <linux/fs.h>
++#include <linux/uaccess.h>
++#include <linux/miscdevice.h>
++
++static struct
++{
++	int num_in_args;
++	int num_out_args;
++} ps3lv1call_args[256] = {
++	[8]	= { 0, 1 },		/* lv1_undocumented_function_8 */
++	[44]	= { 1, 0 },		/* lv1_shutdown_logical_partition */
++	[91]	= { 5, 2 },		/* lv1_read_repository_node */
++	[102]	= { 0, 1 },		/* lv1_undocumented_function_102 */
++	[105]	= { 7, 0 },		/* lv1_undocumented_function_105 */
++	[106]	= { 1, 0 },		/* lv1_undocumented_function_106 */
++	[107]	= { 6, 1 },		/* lv1_undocumented_function_107 */
++	[108]	= { 1, 5 },		/* lv1_undocumented_function_108 */
++	[109]	= { 1, 0 },		/* lv1_undocumented_function_109 */
++	[127]	= { 0, 2 },		/* lv1_get_version_info */
++	[194]	= { 6, 2 },		/* lv1_net_control */
++	[231]	= { 1, 0 },		/* lv1_undocumented_function_231 */
++	[232]	= { 0, 2 },		/* lv1_get_rtc */
++	[255]	= { 1, 0 },		/* lv1_panic */
++};
++
++extern int generic_lv1call(int num_lv1call, u64 *in_args, u64 *out_args);
++
++static ssize_t ps3lv1call_do_call(char *buf, size_t size)
++{
++	u64 num_lv1call;
++	u64 args[8];
++	s64 err;
++	int num_args, i, rv;
++
++	if (size < sizeof(u64))
++		return (-EINVAL);
++
++	if (size % sizeof(u64))
++		return (-EINVAL);
++
++	num_lv1call = *(u64 *) buf;
++	if (num_lv1call > 255)
++		return (-EINVAL);
++
++	num_args = (size - sizeof(u64)) / sizeof(u64);
++	if (num_args > 8)
++		return (-EINVAL);
++
++	memset(args, 0, sizeof(args));
++
++	for (i = 0; i < num_args; i++)
++		args[i] = *(u64 *) (buf + (i + 1) * sizeof(u64));
++
++	err = generic_lv1call(num_lv1call, args, args);
++
++	rv = sizeof(err);
++	memcpy(buf, &err, sizeof(err));
++
++	if (!err) {
++		rv += ps3lv1call_args[num_lv1call].num_out_args * sizeof(u64);
++		memcpy(buf + sizeof(err), args,
++			ps3lv1call_args[num_lv1call].num_out_args * sizeof(u64));
++	}
++
++	return (rv);
++}
++
++static ssize_t ps3lv1call_write(struct file *file, const char __user *buf,
++    size_t size, loff_t *pos)
++{
++	char *data;
++	ssize_t rv;
++ 
++	data = simple_transaction_get(file, buf, size);
++	if (IS_ERR(data))
++		return PTR_ERR(data);
++
++	rv = ps3lv1call_do_call(data, size);
++	if (rv >= 0) {
++		simple_transaction_set(file, rv);
++		rv = size;
++	}
++
++	return (rv);
++}
++
++static ssize_t ps3lv1call_read(struct file *file, char __user *buf,
++    size_t size, loff_t *pos)
++{
++	ssize_t rv;
++
++	if (!file->private_data) {
++		rv = ps3lv1call_write(file, buf, 0, pos);
++		if (rv < 0)
++			return (rv);
++	}
++
++	return simple_transaction_read(file, buf, size, pos);
++}
++
++static const struct file_operations ps3lv1call_fops = {
++	.owner		= THIS_MODULE,
++	.write		= ps3lv1call_write,
++	.read		= ps3lv1call_read,
++	.release	= simple_transaction_release,
++	.llseek		= default_llseek,
++};
++
++static struct miscdevice ps3lv1call_misc = {
++	.minor	= MISC_DYNAMIC_MINOR,
++	.name	= "ps3lv1call",
++	.fops	= &ps3lv1call_fops,
++};
++
++static int __init ps3lv1call_init(void)
++{
++	int err;
++
++	err = misc_register(&ps3lv1call_misc);
++
++	return (err);
++}
++
++static void __exit ps3lv1call_exit(void)
++{
++	misc_deregister(&ps3lv1call_misc);
++}
++
++module_init(ps3lv1call_init);
++module_exit(ps3lv1call_exit);
++
++MODULE_AUTHOR("glevand");
++MODULE_DESCRIPTION("PS3 LV1 Call");
++MODULE_LICENSE("GPL");
