@@ -1,0 +1,405 @@
+--- ./arch/powerpc/include/uapi/asm/ps3fb.h	2012-07-21 22:58:29.000000000 +0200
++++ ./arch/powerpc/include/uapi/asm/ps3fb.h	2018-01-27 14:10:55.546169979 +0100
+@@ -29,6 +29,9 @@
+ #define PS3FB_IOCTL_ON            _IO('r', 4)        /* use IOCTL_FSEL */
+ #define PS3FB_IOCTL_OFF           _IO('r', 5)        /* return to normal-flip */
+ #define PS3FB_IOCTL_FSEL          _IOW('r', 6, int)  /* blit and flip request */
++#define PS3FB_IOCTL_GPU_SETUP     _IO('r', 7)         /* enable FIFO access */
++#define PS3FB_IOCTL_GPU_INFO      _IOR('r', 8, int)   /* get GPU info */
++#define PS3FB_IOCTL_GPU_ATTR      _IOW('r', 9, int)   /* set attribute */
+ 
+ #ifndef FBIO_WAITFORVSYNC
+ #define FBIO_WAITFORVSYNC         _IOW('F', 0x20, __u32) /* wait for vsync */
+@@ -42,4 +45,22 @@
+ 	__u32 num_frames; /* num of frame buffers */
+ };
+ 
++struct ps3fb_ioctl_gpu_info {
++	__u32 vram_size;      /* size of available video memory */
++	__u32 fifo_size;      /* size of command buffer */
++	__u32 ctrl_size;      /* size of dma control registers */
++	__u32 dinfo_size;     /* size of driver info */
++	__u32 reports_size;   /* size of reports */
++	__u32 device_size[8]; /* size of gpu devices */
++};
++
++struct ps3fb_ioctl_gpu_attr {
++	__u64 attr;           /* attribute */
++	__u64 p0;             /* 1st parameter */
++	__u64 p1;             /* 2nd parameter */
++	__u64 p2;             /* 3rd parameter */
++	__u64 p3;             /* 4th parameter */
++};
++
++
+ #endif /* _ASM_POWERPC_PS3FB_H_ */
+ 
+--- linux-4.19/drivers/video/fbdev/ps3fb.c.vanilla	2019-01-20 16:56:42.125880993 +0000
++++ linux-4.19/drivers/video/fbdev/ps3fb.c	2019-01-20 17:28:08.129859492 +0000
+@@ -3,6 +3,7 @@
+  *
+  *	Copyright (C) 2006 Sony Computer Entertainment Inc.
+  *	Copyright 2006, 2007 Sony Corporation
++ *	Copyright 2018, 2019 René Rebe
+  *
+  *  This file is based on :
+  *
+@@ -17,6 +18,19 @@
+  *  more details.
+  */
+ 
++/*
++ * Based on NV47 (Nvidia GeForce 7800 architecture)
++ * 256 MB GDDR3 RAM at 650 MHz
++ * 256 MB XDR DRAM is system memory!
++ * we have 3 memory ranges
++ * 1: FB
++ * 2: dma/fifo ctrl
++ * 3: fifo cmd ring buffer
++ * DMA object handles: 0xfeed0000 RSX DDR, 0xfeed0001 targets system XDR memory
++ */
++
++#define DEBUG 1
++
+ #include <linux/module.h>
+ #include <linux/kernel.h>
+ #include <linux/errno.h>
+@@ -38,12 +52,13 @@
+ #include <asm/ps3.h>
+ #include <asm/ps3gpu.h>
+ 
+-
+ #define DEVICE_NAME		"ps3fb"
+ 
++#define DDR_SIZE                               (0x0fc00000UL)
+ #define GPU_CMD_BUF_SIZE			(2 * 1024 * 1024)
+ #define GPU_FB_START				(64 * 1024)
+ #define GPU_IOIF				(0x0d000000UL)
++#define GPU_CTRL_SIZE                           (4096)
+ #define GPU_ALIGN_UP(x)				_ALIGN_UP((x), 64)
+ #define GPU_MAX_LINE_LENGTH			(65536 - 64)
+ 
+@@ -138,9 +153,16 @@
+ 	struct gpu_driver_info *dinfo;
+ 	struct gpu_fifo fifo;
+ 
++  	u64 vram_lpar;
++	u64 vram_size;
++  	//u64 fifo_lpar;
++	//u64 fifo_size;
++  	u64 ctrl_lpar;
++	u64 ctrl_size;
++  
+ 	u64 vblank_count;	/* frame count */
+ 	wait_queue_head_t wait_vsync;
+-
++  
+ 	atomic_t ext_flip;	/* on/off flip with vsync */
+ 	atomic_t f_count;	/* fb_open count */
+ 	int is_blanked;
+@@ -148,6 +170,7 @@
+ 	struct task_struct *task;
+ };
+ static struct ps3fb_priv ps3fb;
++static int ps3fb_gpu_major;
+ 
+ struct ps3fb_par {
+ 	u32 pseudo_palette[16];
+@@ -379,6 +402,8 @@
+ 	pr_debug("%s: enter\n", __func__);
+ 
+ 	/* copy setup program to FIFO */
++
++	pr_debug("fifo start: %p len: %x curr: %p\n", fifo->start, fifo->len, fifo->curr);
+ 	memcpy(fifo->curr, fifo_setup_program, sizeof(fifo_setup_program));
+ 	fifo->curr += sizeof(fifo_setup_program) / sizeof(u32);
+ 
+@@ -543,7 +568,7 @@
+ 
+ done:
+ 
+-	pr_debug("%s: leave (%d)\n", __func__, retval);
++	//pr_debug("%s: leave (%d)\n", __func__, retval);
+ 
+ 	return (retval);
+ 
+@@ -1143,15 +1168,24 @@
+ 		}
+ 
+ 	case PS3FB_IOCTL_ON:
+-		dev_dbg(info->device, "PS3FB_IOCTL_ON:\n");
++		{
++	        volatile struct gpu_fifo_ctrl *fifo_ctrl = ps3fb.fifo.ctrl;
++		dev_dbg(info->device, "PS3FB_IOCTL_ON: %x %x\n", fifo_ctrl->put, fifo_ctrl->get);
+ 		atomic_inc(&ps3fb.ext_flip);
+ 		retval = 0;
++		}
+ 		break;
+ 
+ 	case PS3FB_IOCTL_OFF:
+-		dev_dbg(info->device, "PS3FB_IOCTL_OFF:\n");
++		{
++		volatile struct gpu_fifo_ctrl *fifo_ctrl = ps3fb.fifo.ctrl;
++		dev_dbg(info->device, "PS3FB_IOCTL_OFF: %x %x\n", fifo_ctrl->put, fifo_ctrl->get);
+ 		atomic_dec_if_positive(&ps3fb.ext_flip);
++		// ReneR: re-read & sync FIFO PUT/GET here? we coudl also memset all ot NOPs?
++		ps3fb.fifo.curr = ps3fb.fifo.start + (fifo_ctrl->put - ps3fb.fifo.ioif) / 4;
++		dev_dbg(info->device, "PS3FB_IOCTL_OFF: synced to %x\n", ps3fb.fifo.curr);
+ 		retval = 0;
++		}
+ 		break;
+ 
+ 	case PS3FB_IOCTL_FSEL:
+@@ -1164,6 +1198,59 @@
+ 		console_unlock();
+ 		break;
+ 
++	case PS3FB_IOCTL_GPU_SETUP:
++		dev_dbg(info->device, " PS3FB_IOCTL_GPU_SETUP\n");
++		//ReneR: I hope we do not need this anymore?
++		//retval = ps3fb_fifo_setup(info->device);
++		retval = 0;
++		break;
++
++	case PS3FB_IOCTL_GPU_INFO:
++		{
++			int i;
++			struct ps3fb_ioctl_gpu_info res;
++
++			dev_dbg(info->device, " PS3FB_IOCTL_GPU_INFO\n");
++
++			
++			res.vram_size = ps3fb.vram_size;
++			res.fifo_size = ps3fb.fifo.len;
++			res.ctrl_size = ps3fb.ctrl_size;
++			res.dinfo_size = 0; //ps3fb.dinfo_size;
++			
++			// this looks unused
++			res.reports_size = 0; //ps3fb.reports_size;
++			for (i = 0; i < 8; i++)
++			  res.device_size[i] = 0; //ps3fb.device_size[i];
++
++			if (!copy_to_user(argp, &res, sizeof(res)))
++				retval = 0;
++			break;
++		}
++
++	case PS3FB_IOCTL_GPU_ATTR:
++		{
++			struct ps3fb_ioctl_gpu_attr arg;
++
++			if (copy_from_user(&arg, argp, sizeof(arg)))
++				break;
++
++			dev_dbg(info->device,
++				" PS3FB_IOCTL_GPU_ATTR(0x%lx,0x%lx,0x%lx,0x%lx,0x%lx)\n",
++				arg.attr, arg.p0, arg.p1, arg.p2, arg.p3);
++
++			retval = lv1_gpu_context_attribute(
++				     ps3fb.context_handle,
++				     arg.attr, arg.p0, arg.p1, arg.p2, arg.p3);
++			if (retval < 0) {
++				dev_err(info->device,
++					"lv1_gpu_context_attribute failed (%d)\n",
++					retval);
++				retval = -EIO;
++			}
++		}
++		break;
++
+ 	default:
+ 		retval = -ENOIOCTLCMD;
+ 		break;
+@@ -1276,14 +1363,89 @@
+ 	.visual =	FB_VISUAL_TRUECOLOR,
+ 	.accel =	FB_ACCEL_NONE,
+ };
++ 
++static int ps3fb_gpu_open(struct inode *inode, struct file *filp)
++{
++	return 0;
++}
++
++static int ps3fb_gpu_release(struct inode *inode, struct file *filp)
++{
++	return 0;
++}
++
++static int ps3fb_gpu_mmap(struct file *filp, struct vm_area_struct *vma)
++{
++	unsigned int minor = iminor(filp->f_path.dentry->d_inode);
++	unsigned long off = vma->vm_pgoff << PAGE_SHIFT;
++	unsigned long vsize = vma->vm_end - vma->vm_start;
++	unsigned long physical;
++	unsigned long psize;
++
++	printk("ps3fb_mmap: %llx %p %llx\n", ps3fb.vram_lpar, ps3fb.fifo.start, ps3fb.ctrl_lpar);
++
++	switch (minor) {
++	case 0: /* DDR */
++		physical = ps3fb.vram_lpar + off;
++		psize    = ps3fb.vram_size - off;
++		break;
++	case 1: /* FIFO */
++		physical = ps3fb.fifo.start + off;
++		psize    = ps3fb.fifo.len - off;
++		break;
++	case 2: /* FIFO registers */
++		physical = ps3fb.ctrl_lpar + off;
++		psize    = ps3fb.ctrl_size - off;
++		break;
++#if 0
++	case 3: /* driver info */
++		physical = ps3fb.dinfo_lpar + off;
++		psize    = ps3fb.dinfo_size - off;
++		break;
++	case 4: /* reports */
++		physical = ps3fb.reports_lpar + off;
++		psize    = ps3fb.reports_size - off;
++		break;
++
++	case 8 ... 15:
++		if (ps3fb.device_lpar[minor - 8]) {
++			physical = ps3fb.device_lpar[minor - 8] + off;
++			psize    = ps3fb.device_size[minor - 8] - off;
++		} else
++			return -ENODEV;
++		break;
++#endif
++
++	default:
++		return -ENODEV;
++	}
++
++	printk("ps3fb_mmap: %d %lx %lx\n", minor, physical, psize);
++
++	if (vsize > psize)
++		return -EINVAL; /* spans too high */
++
++	if (remap_pfn_range(vma, vma->vm_start,
++			    physical >> PAGE_SHIFT,
++			    vsize, vma->vm_page_prot))
++		return -EAGAIN;
++
++	return 0;
++}
++
++struct file_operations ps3fb_gpu_fops = {
++	.mmap    = ps3fb_gpu_mmap,
++	.open    = ps3fb_gpu_open,
++	.release = ps3fb_gpu_release,
++};
+ 
+ static int ps3fb_probe(struct ps3_system_bus_device *dev)
+ {
+ 	struct fb_info *info;
+ 	struct ps3fb_par *par;
+ 	int retval;
+-	u64 ddr_lpar = 0;
+-	u64 lpar_dma_control = 0;
++	//u64 ddr_lpar = 0;
++	//u64 lpar_dma_control = 0;
+ 	u64 lpar_driver_info = 0;
+ 	u64 lpar_reports = 0;
+ 	u64 lpar_reports_size = 0;
+@@ -1340,21 +1502,31 @@
+ 		ps3fb_videomemory.size = max_ps3fb_size;
+ 	}
+ 
+-	/* get gpu context handle */
+-	status = lv1_gpu_memory_allocate(ps3fb_videomemory.size, ps3fb_gpu_mem_size[0],
+-		ps3fb_gpu_mem_size[1], ps3fb_gpu_mem_size[2], ps3fb_gpu_mem_size[3],
+-		&ps3fb.memory_handle, &ddr_lpar);
+-	if (status) {
+-		dev_err(&dev->core, "%s: lv1_gpu_memory_allocate failed: %d\n",
+-			__func__, status);
+-		retval = -ENOMEM;
+-		goto err_close_device;
++ 	/* get gpu context handle */
++	ps3fb.vram_size = DDR_SIZE; // ps3fb_videomemory.size;
++	status = lv1_gpu_memory_allocate(ps3fb.vram_size, ps3fb_gpu_mem_size[0],
++ 		ps3fb_gpu_mem_size[1], ps3fb_gpu_mem_size[2], ps3fb_gpu_mem_size[3],
++		&ps3fb.memory_handle, &ps3fb.vram_lpar);
++ 	if (status) {
++ 		dev_err(&dev->core, "%s: lv1_gpu_memory_allocate failed: %d\n",
++ 			__func__, status);
++ 		goto err_close_device;
++ 	}
++	dev_dbg(&dev->core, "ddr:lpar:0x%llx\n", ps3fb.vram_lpar);
++ 
++	if (request_mem_region(ps3fb.vram_lpar, ps3fb.vram_size,
++	                       "GPU DDR memory") == NULL) {
++		dev_err(&dev->core,
++		        "%s: failed to reserve DDR video memory region: %d\n",
++		        __func__, status);
++		goto err_gpu_memory_free;
+ 	}
+-	dev_dbg(&dev->core, "ddr:lpar:0x%llx\n", ddr_lpar);
+ 
+-	status = lv1_gpu_context_allocate(ps3fb.memory_handle, ps3fb_gpu_ctx_flags,
+-					  &ps3fb.context_handle,
+-					  &lpar_dma_control, &lpar_driver_info,
++	ps3fb.ctrl_size = GPU_CTRL_SIZE;
++
++ 	status = lv1_gpu_context_allocate(ps3fb.memory_handle, ps3fb_gpu_ctx_flags,
++ 					  &ps3fb.context_handle,
++					  &ps3fb.ctrl_lpar, &lpar_driver_info,
+ 					  &lpar_reports, &lpar_reports_size);
+ 	if (status) {
+ 		dev_err(&dev->core,
+@@ -1424,19 +1596,21 @@
+ 		goto err_free_irq;
+ 	}
+ 
++	//ps3fb.fifo_lpar = xdr_lpar + ps3fb_videomemory.size;
++	//ps3fb.fifo_size = GPU_CMD_BUF_SIZE;
++
+ 	dev_dbg(&dev->core, "video:%p ioif:%lx lpar:%llx size:%lx\n",
+ 		ps3fb_videomemory.address, GPU_IOIF, xdr_lpar,
+ 		ps3fb_videomemory.size);
+ 
+ 	/* FIFO control */
+-	ps3fb.fifo.ctrl = (void __force *)ioremap_nocache(lpar_dma_control, PAGE_SIZE);
++	ps3fb.fifo.ctrl = (void __force *)ioremap_nocache(ps3fb.ctrl_lpar, ps3fb.ctrl_size);
+ 	if (!ps3fb.fifo.ctrl) {
+ 		dev_err(&dev->core, "%s: ioremap_nocache failed\n", __func__);
+ 		goto err_context_unmap;
+ 	}
+ 
+-	ps3fb.fifo.start = ps3fb_videomemory.address;
+-	ps3fb.fifo.curr = ps3fb.fifo.start;
++	ps3fb.fifo.start = ps3fb.fifo.curr = ps3fb_videomemory.address;
+ 	ps3fb.fifo.len = GPU_FB_START;
+ 	ps3fb.fifo.ioif = GPU_IOIF;
+ 
+@@ -1509,6 +1683,21 @@
+ 
+ 	ps3fb.task = task;
+ 
++	/* FIFO access */
++	status = register_chrdev(ps3fb_gpu_major, DEVICE_NAME, &ps3fb_gpu_fops);
++	if (status < 0) {
++	  dev_err(&dev->core,
++			"%s: failed to register GPU device with major %d (%d)\n",
++			__func__, ps3fb_gpu_major, status);
++	  /* ReneR: if this fails continue anway, ...
++	     goto err_unregister_framebuffer; */
++	}
++	if (ps3fb_gpu_major == 0)
++		ps3fb_gpu_major = status;
++	
++	dev_info(&dev->core, "%s: using major %d for direct GPU access\n",
++		 __func__, ps3fb_gpu_major);
++	
+ 	return 0;
+ 
+ err_unregister_framebuffer:
+@@ -1545,6 +1734,8 @@
+ 
+ 	dev_dbg(&dev->core, " -> %s:%d\n", __func__, __LINE__);
+ 
++	unregister_chrdev(ps3fb_gpu_major, DEVICE_NAME);
++
+ 	atomic_inc(&ps3fb.ext_flip);	/* flip off */
+ 	ps3fb.dinfo->irq.mask = 0;
+ 
