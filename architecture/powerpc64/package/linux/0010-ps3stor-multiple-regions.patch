@@ -1,21 +1,21 @@
---- a/arch/powerpc/include/asm/ps3stor.h	2012-01-03 19:41:27.000000000 +0100
-+++ b/arch/powerpc/include/asm/ps3stor.h	2012-01-05 16:38:31.006804326 +0100
+--- linux-4.20/arch/powerpc/include/asm/ps3stor.h.vanilla	2019-01-21 18:16:59.636841094 +0000
++++ linux-4.20/arch/powerpc/include/asm/ps3stor.h	2019-01-21 18:18:15.436840230 +0000
 @@ -30,6 +30,7 @@
  	unsigned int id;
  	u64 start;
  	u64 size;
 +	u64 flags;
  };
-
+ 
  struct ps3_storage_device {
 @@ -50,7 +51,6 @@
-
+ 
  	unsigned int num_regions;
  	unsigned long accessible_regions;
 -	unsigned int region_idx;		/* first accessible region */
  	struct ps3_storage_region regions[0];	/* Must be last */
  };
-
+ 
 @@ -62,8 +62,8 @@
  extern int ps3stor_setup(struct ps3_storage_device *dev,
  			 irq_handler_t handler);
@@ -27,101 +27,41 @@
  				      int write);
  extern u64 ps3stor_send_command(struct ps3_storage_device *dev, u64 cmd,
  				u64 arg1, u64 arg2, u64 arg3, u64 arg4);
---- a/drivers/ps3/ps3stor_lib.c	2012-01-05 16:42:51.670823329 +0100
-+++ b/drivers/ps3/ps3stor_lib.c	2012-01-05 16:44:22.208906179 +0100
-@@ -101,9 +101,8 @@
- 			"%s:%u: checking accessibility of region %u\n",
- 			__func__, __LINE__, i);
-
--		dev->region_idx = i;
--		res = ps3stor_read_write_sectors(dev, dev->bounce_lpar, 0, 1,
--						 0);
-+		res = ps3stor_read_write_sectors(dev, dev->bounce_lpar, i, 0, 1,
-+						 dev->regions[i].flags, 0);
- 		if (res) {
- 			dev_dbg(&dev->sbd.core, "%s:%u: read failed, "
- 				"region %u is not accessible\n", __func__,
-@@ -115,6 +114,10 @@
- 			__func__, __LINE__, i);
- 		set_bit(i, &dev->accessible_regions);
-
-+		dev_info(&dev->sbd.core,
-+			 "accessible region %u start %llu size %llu\n",
-+			 i, dev->regions[i].start, dev->regions[i].size);
-+
- 		/* We can access at least one region */
- 		error = 0;
- 	}
-@@ -124,14 +127,8 @@
- 	n = hweight_long(dev->accessible_regions);
- 	if (n > 1)
- 		dev_info(&dev->sbd.core,
--			 "%s:%u: %lu accessible regions found. Only the first "
--			 "one will be used\n",
-+			 "%s:%u: %lu accessible regions found\n",
- 			 __func__, __LINE__, n);
--	dev->region_idx = __ffs(dev->accessible_regions);
--	dev_info(&dev->sbd.core,
--		 "First accessible region has index %u start %llu size %llu\n",
--		 dev->region_idx, dev->regions[dev->region_idx].start,
--		 dev->regions[dev->region_idx].size);
-
- 	return 0;
- }
-@@ -265,17 +262,19 @@
-  *	ps3stor_read_write_sectors - read/write from/to a storage device
-  *	@dev: Pointer to a struct ps3_storage_device
-  *	@lpar: HV logical partition address
-+ *	@region_idx: Region index
-  *	@start_sector: First sector to read/write
-  *	@sectors: Number of sectors to read/write
-+ *	@flags: Flags
-  *	@write: Flag indicating write (non-zero) or read (zero)
+--- linux-4.20/drivers/block/ps3disk.c.vanilla	2019-01-21 18:17:06.660841014 +0000
++++ linux-4.20/drivers/block/ps3disk.c	2019-01-21 18:18:15.436840230 +0000
+@@ -3,6 +3,7 @@
   *
-  *	Returns 0 for success, -1 in case of failure to submit the command, or
-  *	an LV1 status value in case of other errors
+  * Copyright (C) 2007 Sony Computer Entertainment Inc.
+  * Copyright 2007 Sony Corp.
++ * Copyright (C) 2018, 2019 René Rebe
+  *
+  * This program is free software; you can redistribute it and/or modify it
+  * under the terms of the GNU General Public License as published
+@@ -19,7 +20,7 @@
   */
--u64 ps3stor_read_write_sectors(struct ps3_storage_device *dev, u64 lpar,
--			       u64 start_sector, u64 sectors, int write)
-+u64 ps3stor_read_write_sectors(struct ps3_storage_device *dev, u64 lpar, unsigned int region_idx,
-+			       u64 start_sector, u64 sectors, u64 flags, int write)
- {
--	unsigned int region_id = dev->regions[dev->region_idx].id;
-+	unsigned int region_id = dev->regions[region_idx].id;
- 	const char *op = write ? "write" : "read";
- 	int res;
-
-@@ -284,10 +283,10 @@
-
- 	init_completion(&dev->done);
- 	res = write ? lv1_storage_write(dev->sbd.dev_id, region_id,
--					start_sector, sectors, 0, lpar,
-+					start_sector, sectors, flags, lpar,
- 					&dev->tag)
- 		    : lv1_storage_read(dev->sbd.dev_id, region_id,
--				       start_sector, sectors, 0, lpar,
-+				       start_sector, sectors, flags, lpar,
- 				       &dev->tag);
- 	if (res) {
- 		dev_dbg(&dev->sbd.core, "%s:%u: %s failed %d\n", __func__,
---- a/drivers/block/ps3disk.c	2013-02-14 11:22:05.716017676 +0100
-+++ b/drivers/block/ps3disk.c	2013-02-14 11:19:47.200033102 +0100
-@@ -32,7 +32,8 @@
-
+ 
+ #include <linux/ata.h>
+-#include <linux/blk-mq.h>
++#include <linux/blkdev.h>
+ #include <linux/slab.h>
+ #include <linux/module.h>
+ 
+@@ -32,7 +33,8 @@
+ 
  #define BOUNCE_SIZE		(64*1024)
-
+ 
 -#define PS3DISK_MAX_DISKS	16
 +#define PS3DISK_MAX_NUM_REGS	8
 +
  #define PS3DISK_MINORS		16
-
-
-@@ -41,13 +42,14 @@
+ 
+ 
+@@ -41,13 +43,13 @@
  
  struct ps3disk_private {
  	spinlock_t lock;		/* Request queue spinlock */
 -	struct request_queue *queue;
- 	struct blk_mq_tag_set tag_set;
+-	struct blk_mq_tag_set tag_set;
 -	struct gendisk *gendisk;
  	unsigned int blocking_factor;
  	struct request *req;
@@ -133,10 +73,10 @@
  };
  
  
-@@ -88,6 +90,13 @@
+@@ -89,6 +91,13 @@
  	.owner		= THIS_MODULE,
  };
-
+ 
 +static unsigned int region_flags[] =
 +{
 +	0x2, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0,
@@ -144,10 +84,19 @@
 +module_param_array(region_flags, uint, NULL, S_IRUGO);
 +MODULE_PARM_DESC(region_flags, "Region flags");
 +
-
+ 
  static void ps3disk_scatter_gather(struct ps3_storage_device *dev,
  				   struct request *req, int gather)
-@@ -126,7 +135,9 @@
+@@ -119,14 +128,16 @@
+ 	}
+ }
+ 
+-static blk_status_t ps3disk_submit_request_sg(struct ps3_storage_device *dev,
+-					      struct request *req)
++static int ps3disk_submit_request_sg(struct ps3_storage_device *dev,
++				     struct request *req)
+ {
+ 	struct ps3disk_private *priv = ps3_system_bus_get_drvdata(&dev->sbd);
  	int write = rq_data_dir(req), res;
  	const char *op = write ? "write" : "read";
  	u64 start_sector, sectors;
@@ -155,12 +104,12 @@
 +	unsigned int region_idx = MINOR(disk_devt(req->rq_disk)) / PS3DISK_MINORS;
 +	unsigned int region_id = dev->regions[region_idx].id;
 +	unsigned int region_flags = dev->regions[region_idx].flags;
-
+ 
  #ifdef DEBUG
  	unsigned int n = 0;
-@@ -149,11 +160,11 @@
+@@ -149,25 +160,26 @@
  		ps3disk_scatter_gather(dev, req, 1);
-
+ 
  		res = lv1_storage_write(dev->sbd.dev_id, region_id,
 -					start_sector, sectors, 0,
 +					start_sector, sectors, region_flags,
@@ -172,19 +121,115 @@
  				       dev->bounce_lpar, &dev->tag);
  	}
  	if (res) {
-@@ -232,6 +243,8 @@
- 	int res, read, error;
+ 		dev_err(&dev->sbd.core, "%s:%u: %s failed %d\n", __func__,
+ 			__LINE__, op, res);
+-		return BLK_STS_IOERR;
++		__blk_end_request_all(req, BLK_STS_IOERR);
++		return 0;
+ 	}
+ 
+ 	priv->req = req;
+-	return BLK_STS_OK;
++	return 1;
+ }
+ 
+-static blk_status_t ps3disk_submit_flush_request(struct ps3_storage_device *dev,
+-						 struct request *req)
++static int ps3disk_submit_flush_request(struct ps3_storage_device *dev,
++					struct request *req)
+ {
+ 	struct ps3disk_private *priv = ps3_system_bus_get_drvdata(&dev->sbd);
+ 	u64 res;
+@@ -180,45 +192,50 @@
+ 	if (res) {
+ 		dev_err(&dev->sbd.core, "%s:%u: sync cache failed 0x%llx\n",
+ 			__func__, __LINE__, res);
+-		return BLK_STS_IOERR;
++		__blk_end_request_all(req, BLK_STS_IOERR);
++		return 0;
+ 	}
+ 
+ 	priv->req = req;
+-	return BLK_STS_OK;
++	return 1;
+ }
+ 
+-static blk_status_t ps3disk_do_request(struct ps3_storage_device *dev,
+-				       struct request *req)
++static void ps3disk_do_request(struct ps3_storage_device *dev,
++			       struct request_queue *q)
+ {
++	struct request *req;
++
+ 	dev_dbg(&dev->sbd.core, "%s:%u\n", __func__, __LINE__);
+ 
+-	switch (req_op(req)) {
+-	case REQ_OP_FLUSH:
+-		return ps3disk_submit_flush_request(dev, req);
+-	case REQ_OP_READ:
+-	case REQ_OP_WRITE:
+-		return ps3disk_submit_request_sg(dev, req);
+-	default:
+-		blk_dump_rq_flags(req, DEVICE_NAME " bad request");
+-		return BLK_STS_IOERR;
++	while ((req = blk_fetch_request(q))) {
++		switch (req_op(req)) {
++		case REQ_OP_FLUSH:
++			if (ps3disk_submit_flush_request(dev, req))
++				return;
++			break;
++		case REQ_OP_READ:
++		case REQ_OP_WRITE:
++			if (ps3disk_submit_request_sg(dev, req))
++				return;
++			break;
++		default:
++			blk_dump_rq_flags(req, DEVICE_NAME " bad request");
++			__blk_end_request_all(req, BLK_STS_IOERR);
++		}
+ 	}
+ }
+ 
+-static blk_status_t ps3disk_queue_rq(struct blk_mq_hw_ctx *hctx,
+-				     const struct blk_mq_queue_data *bd)
++static void ps3disk_request(struct request_queue *q)
+ {
+-	struct request_queue *q = hctx->queue;
+ 	struct ps3_storage_device *dev = q->queuedata;
+ 	struct ps3disk_private *priv = ps3_system_bus_get_drvdata(&dev->sbd);
+-	blk_status_t ret;
+ 
+-	blk_mq_start_request(bd->rq);
+-
+-	spin_lock_irq(&priv->lock);
+-	ret = ps3disk_do_request(dev, bd->rq);
+-	spin_unlock_irq(&priv->lock);
++	if (priv->req) {
++		dev_dbg(&dev->sbd.core, "%s:%u busy\n", __func__, __LINE__);
++		return;
++	}
+ 
+-	return ret;
++	ps3disk_do_request(dev, q);
+ }
+ 
+ static irqreturn_t ps3disk_interrupt(int irq, void *data)
+@@ -230,6 +247,8 @@
+ 	blk_status_t error;
  	u64 tag, status;
  	const char *op;
 +	struct request_queue *q;
 +	int old_queue;
-
+ 
  	res = lv1_storage_get_async_status(dev->sbd.dev_id, &tag, &status);
-
-@@ -279,7 +292,20 @@
+ 
+@@ -275,11 +294,24 @@
+ 	}
+ 
  	spin_lock(&priv->lock);
++	__blk_end_request_all(req, error);
  	priv->req = NULL;
- 	blk_mq_end_request(req, error);
+-	blk_mq_end_request(req, error);
 +	old_queue = priv->next_queue;
 +	do {
 +		q = priv->queue[priv->next_queue];
@@ -194,27 +239,29 @@
 +			priv->next_queue = 0;
 +
 +		if (q) {
-+			ps3disk_do_request(dev, blk_fetch_request(q));
++			ps3disk_do_request(dev, q);
 +			if (priv->req)
 +				break;
 +		}
 +	} while (old_queue != priv->next_queue);
  	spin_unlock(&priv->lock);
-
+ 
 -	blk_mq_run_hw_queues(priv->queue, true);
  	return IRQ_HANDLED;
-@@ -397,23 +423,21 @@
+ }
+ 
+@@ -395,23 +427,17 @@
  	return 0;
  }
-
+ 
 -static unsigned long ps3disk_mask;
 -
 -static DEFINE_MUTEX(ps3disk_mask_mutex);
 -
- static const struct blk_mq_ops ps3disk_mq_ops = {
- 	.queue_rq	= ps3disk_queue_rq,
- };
- 
+-static const struct blk_mq_ops ps3disk_mq_ops = {
+-	.queue_rq	= ps3disk_queue_rq,
+-};
+-
  static int ps3disk_probe(struct ps3_system_bus_device *_dev)
  {
  	struct ps3_storage_device *dev = to_ps3_storage_device(&_dev->core);
@@ -224,16 +271,16 @@
 +	unsigned int regidx, devidx;
  	struct request_queue *queue;
  	struct gendisk *gendisk;
-
+ 
 +	BUG_ON(dev->num_regions > PS3DISK_MAX_NUM_REGS);
 +
  	if (dev->blk_size < 512) {
  		dev_err(&dev->sbd.core,
  			"%s:%u: cannot handle block size %llu\n", __func__,
-@@ -417,18 +441,6 @@
+@@ -419,18 +445,6 @@
  		return -EINVAL;
  	}
-
+ 
 -	BUILD_BUG_ON(PS3DISK_MAX_DISKS > BITS_PER_LONG);
 -	mutex_lock(&ps3disk_mask_mutex);
 -	devidx = find_first_zero_bit(&ps3disk_mask, PS3DISK_MAX_DISKS);
@@ -249,32 +296,52 @@
  	priv = kzalloc(sizeof(*priv), GFP_KERNEL);
  	if (!priv) {
  		error = -ENOMEM;
-@@ -446,6 +446,9 @@
- 		error = -ENOMEM;
+@@ -447,65 +461,75 @@
  		goto fail_free_priv;
  	}
-+	
+ 
 +	for (regidx = 0; regidx < dev->num_regions; regidx++)
 +		dev->regions[regidx].flags = region_flags[regidx];
- 
++
  	error = ps3stor_setup(dev, ps3disk_interrupt);
  	if (error)
-@@ -453,60 +456,68 @@
+ 		goto fail_free_bounce;
  
  	ps3disk_identify(dev);
  
 -	queue = blk_mq_init_sq_queue(&priv->tag_set, &ps3disk_mq_ops, 1,
-+	for (devidx = 0; devidx < dev->num_regions; devidx++)
-+	{
-+		if (test_bit(devidx, &dev->accessible_regions) == 0)
-+			continue;
-+		queue = blk_mq_init_sq_queue(&priv->tag_set, &ps3disk_mq_ops, 1,
- 					BLK_MQ_F_SHOULD_MERGE);
+-					BLK_MQ_F_SHOULD_MERGE);
 -	if (IS_ERR(queue)) {
 -		dev_err(&dev->sbd.core, "%s:%u: blk_mq_init_queue failed\n",
 -			__func__, __LINE__);
 -		error = PTR_ERR(queue);
 -		goto fail_teardown;
+-	}
+-
+-	priv->queue = queue;
+-	queue->queuedata = dev;
+-
+-	blk_queue_max_hw_sectors(queue, dev->bounce_size >> 9);
+-	blk_queue_segment_boundary(queue, -1UL);
+-	blk_queue_dma_alignment(queue, dev->blk_size-1);
+-	blk_queue_logical_block_size(queue, dev->blk_size);
+-
+-	blk_queue_write_cache(queue, true, false);
+-
+-	blk_queue_max_segments(queue, -1);
+-	blk_queue_max_segment_size(queue, dev->bounce_size);
+-
+-	gendisk = alloc_disk(PS3DISK_MINORS);
+-	if (!gendisk) {
+-		dev_err(&dev->sbd.core, "%s:%u: alloc_disk failed\n", __func__,
+-			__LINE__);
+-		error = -ENOMEM;
+-		goto fail_cleanup_queue;
++	for (devidx = 0; devidx < dev->num_regions; devidx++)
++	{
++		if (test_bit(devidx, &dev->accessible_regions) == 0)
++			continue;
++		queue = blk_init_queue(ps3disk_request, &priv->lock);
 +		if (!queue) {
 +			dev_err(&dev->sbd.core, "%s:%u: blk_init_queue failed\n",
 +				__func__, __LINE__);
@@ -319,27 +386,6 @@
 +		device_add_disk(&dev->sbd.core, gendisk, NULL);
  	}
 -
--	priv->queue = queue;
--	queue->queuedata = dev;
--
--	blk_queue_max_hw_sectors(queue, dev->bounce_size >> 9);
--	blk_queue_segment_boundary(queue, -1UL);
--	blk_queue_dma_alignment(queue, dev->blk_size-1);
--	blk_queue_logical_block_size(queue, dev->blk_size);
--
--	blk_queue_write_cache(queue, true, false);
--
--	blk_queue_max_segments(queue, -1);
--	blk_queue_max_segment_size(queue, dev->bounce_size);
--
--	gendisk = alloc_disk(PS3DISK_MINORS);
--	if (!gendisk) {
--		dev_err(&dev->sbd.core, "%s:%u: alloc_disk failed\n", __func__,
--			__LINE__);
--		error = -ENOMEM;
--		goto fail_cleanup_queue;
--	}
--
 -	priv->gendisk = gendisk;
 -	gendisk->major = ps3disk_major;
 -	gendisk->first_minor = devidx * PS3DISK_MINORS;
@@ -359,11 +405,6 @@
 -
 -	device_add_disk(&dev->sbd.core, gendisk, NULL);
  	return 0;
--
--fail_cleanup_queue:
--	blk_cleanup_queue(queue);
--	blk_mq_free_tag_set(&priv->tag_set);
--fail_teardown:
 +fail_cleanup:
 +	for (devidx = 0; devidx < dev->num_regions; devidx++)
 +	{
@@ -371,15 +412,17 @@
 +			del_gendisk(priv->gendisk[devidx]);
 +			put_disk(priv->gendisk[devidx]);
 +		}
-+		if (priv->queue[devidx]) {
+ 
+-fail_cleanup_queue:
+-	blk_cleanup_queue(queue);
+-	blk_mq_free_tag_set(&priv->tag_set);
++		if (priv->queue[devidx])
 +			blk_cleanup_queue(priv->queue[devidx]);
-+			blk_mq_free_tag_set(&priv->tag_set);
-+		}
 +	}
+ fail_teardown:
  	ps3stor_teardown(dev);
  fail_free_bounce:
- 	kfree(dev->bounce_buf);
-@@ -513,9 +543,6 @@
+@@ -514,9 +538,6 @@
  	kfree(priv);
  	ps3_system_bus_set_drvdata(_dev, NULL);
  fail:
@@ -388,8 +431,8 @@
 -	mutex_unlock(&ps3disk_mask_mutex);
  	return error;
  }
-
-@@ -523,15 +550,21 @@
+ 
+@@ -524,15 +545,19 @@
  {
  	struct ps3_storage_device *dev = to_ps3_storage_device(&_dev->core);
  	struct ps3disk_private *priv = ps3_system_bus_get_drvdata(&dev->sbd);
@@ -402,12 +445,10 @@
 +			put_disk(priv->gendisk[devidx]);
 +		}
 +
-+		if (priv->queue[devidx]) {
++		if (priv->queue[devidx])
 +			blk_cleanup_queue(priv->queue[devidx]);
-+			blk_mq_free_tag_set(&priv->tag_set);
-+		}
 +	}
-
+ 
 -	mutex_lock(&ps3disk_mask_mutex);
 -	__clear_bit(MINOR(disk_devt(priv->gendisk)) / PS3DISK_MINORS,
 -		    &ps3disk_mask);
@@ -419,12 +460,89 @@
  	dev_notice(&dev->sbd.core, "Synchronizing disk cache\n");
  	ps3disk_sync_cache(dev);
  	ps3stor_teardown(dev);
---- a/drivers/scsi/ps3rom.c	2012-01-03 19:41:27.000000000 +0100
-+++ b/drivers/scsi/ps3rom.c	2012-01-05 16:38:58.103891705 +0100
-@@ -72,6 +72,14 @@
+--- linux-4.20/drivers/ps3/ps3stor_lib.c.vanilla	2019-01-21 18:17:15.352840915 +0000
++++ linux-4.20/drivers/ps3/ps3stor_lib.c	2019-01-21 18:18:15.440840230 +0000
+@@ -102,9 +102,8 @@
+ 			"%s:%u: checking accessibility of region %u\n",
+ 			__func__, __LINE__, i);
+ 
+-		dev->region_idx = i;
+-		res = ps3stor_read_write_sectors(dev, dev->bounce_lpar, 0, 1,
+-						 0);
++		res = ps3stor_read_write_sectors(dev, dev->bounce_lpar, i, 0, 1,
++						 dev->regions[i].flags, 0);
+ 		if (res) {
+ 			dev_dbg(&dev->sbd.core, "%s:%u: read failed, "
+ 				"region %u is not accessible\n", __func__,
+@@ -116,6 +115,10 @@
+ 			__func__, __LINE__, i);
+ 		set_bit(i, &dev->accessible_regions);
+ 
++		dev_info(&dev->sbd.core,
++			 "accessible region %u start %llu size %llu\n",
++			 i, dev->regions[i].start, dev->regions[i].size);
++
+ 		/* We can access at least one region */
+ 		error = 0;
+ 	}
+@@ -125,14 +128,8 @@
+ 	n = hweight_long(dev->accessible_regions);
+ 	if (n > 1)
+ 		dev_info(&dev->sbd.core,
+-			 "%s:%u: %lu accessible regions found. Only the first "
+-			 "one will be used\n",
++			 "%s:%u: %lu accessible regions found\n",
+ 			 __func__, __LINE__, n);
+-	dev->region_idx = __ffs(dev->accessible_regions);
+-	dev_info(&dev->sbd.core,
+-		 "First accessible region has index %u start %llu size %llu\n",
+-		 dev->region_idx, dev->regions[dev->region_idx].start,
+-		 dev->regions[dev->region_idx].size);
+ 
+ 	return 0;
+ }
+@@ -266,17 +263,19 @@
+  *	ps3stor_read_write_sectors - read/write from/to a storage device
+  *	@dev: Pointer to a struct ps3_storage_device
+  *	@lpar: HV logical partition address
++ *	@region_idx: Region index
+  *	@start_sector: First sector to read/write
+  *	@sectors: Number of sectors to read/write
++ *	@flags: Flags
+  *	@write: Flag indicating write (non-zero) or read (zero)
+  *
+  *	Returns 0 for success, -1 in case of failure to submit the command, or
+  *	an LV1 status value in case of other errors
+  */
+-u64 ps3stor_read_write_sectors(struct ps3_storage_device *dev, u64 lpar,
+-			       u64 start_sector, u64 sectors, int write)
++u64 ps3stor_read_write_sectors(struct ps3_storage_device *dev, u64 lpar, unsigned int region_idx,
++			       u64 start_sector, u64 sectors, u64 flags, int write)
+ {
+-	unsigned int region_id = dev->regions[dev->region_idx].id;
++	unsigned int region_id = dev->regions[region_idx].id;
+ 	const char *op = write ? "write" : "read";
+ 	int res;
+ 
+@@ -285,10 +284,10 @@
+ 
+ 	init_completion(&dev->done);
+ 	res = write ? lv1_storage_write(dev->sbd.dev_id, region_id,
+-					start_sector, sectors, 0, lpar,
++					start_sector, sectors, flags, lpar,
+ 					&dev->tag)
+ 		    : lv1_storage_read(dev->sbd.dev_id, region_id,
+-				       start_sector, sectors, 0, lpar,
++				       start_sector, sectors, flags, lpar,
+ 				       &dev->tag);
+ 	if (res) {
+ 		dev_dbg(&dev->sbd.core, "%s:%u: %s failed %d\n", __func__,
+--- linux-4.20/drivers/scsi/ps3rom.c.vanilla	2019-01-21 18:17:47.104840553 +0000
++++ linux-4.20/drivers/scsi/ps3rom.c	2019-01-21 18:18:15.440840230 +0000
+@@ -73,6 +73,14 @@
  };
-
-
+ 
+ 
 +static unsigned int region_flags[] =
 +{
 +	0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0,
@@ -436,50 +554,50 @@
  static int ps3rom_slave_configure(struct scsi_device *scsi_dev)
  {
  	struct ps3rom_private *priv = shost_priv(scsi_dev->host);
-@@ -172,12 +180,13 @@
+@@ -173,12 +181,13 @@
  			       u32 sectors)
  {
  	int res;
 +	unsigned int region_idx = 0;
-
+ 
  	dev_dbg(&dev->sbd.core, "%s:%u: read %u sectors starting at %u\n",
  		__func__, __LINE__, sectors, start_sector);
-
+ 
  	res = lv1_storage_read(dev->sbd.dev_id,
 -			       dev->regions[dev->region_idx].id, start_sector,
 +			       dev->regions[region_idx].id, start_sector,
  			       sectors, 0, dev->bounce_lpar, &dev->tag);
  	if (res) {
  		dev_err(&dev->sbd.core, "%s:%u: read failed %d\n", __func__,
-@@ -193,6 +202,7 @@
+@@ -194,6 +203,7 @@
  				u32 sectors)
  {
  	int res;
 +	unsigned int region_idx = 0;
-
+ 
  	dev_dbg(&dev->sbd.core, "%s:%u: write %u sectors starting at %u\n",
  		__func__, __LINE__, sectors, start_sector);
-@@ -200,7 +210,7 @@
+@@ -201,7 +211,7 @@
  	scsi_sg_copy_to_buffer(cmd, dev->bounce_buf, dev->bounce_size);
-
+ 
  	res = lv1_storage_write(dev->sbd.dev_id,
 -				dev->regions[dev->region_idx].id, start_sector,
 +				dev->regions[region_idx].id, start_sector,
  				sectors, 0, dev->bounce_lpar, &dev->tag);
  	if (res) {
  		dev_err(&dev->sbd.core, "%s:%u: write failed %d\n", __func__,
-@@ -362,6 +372,7 @@
+@@ -358,6 +368,7 @@
  {
  	struct ps3_storage_device *dev = to_ps3_storage_device(&_dev->core);
  	int error;
 +	unsigned int regidx;
  	struct Scsi_Host *host;
  	struct ps3rom_private *priv;
-
-@@ -377,6 +388,9 @@
+ 
+@@ -373,6 +384,9 @@
  	if (!dev->bounce_buf)
  		return -ENOMEM;
-
+ 
 +	for (regidx = 0; regidx < dev->num_regions; regidx++)
 +		dev->regions[regidx].flags = region_flags[regidx];
 +
