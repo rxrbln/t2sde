@@ -31,13 +31,13 @@ for x in /lib/modules/*/kernel/fs/{*/,}*.*o ; do
 	modprobe $x 2> /dev/null
 done
 
-echo "Assembling MD/LVM arrays"
-[ -e /sbin/mdadm ] && mdadm --assemble --scan
-[ -e /sbin/vgchange ] && vgchange -ay
-
 # get the root device and init
 root="root= `cat /proc/cmdline`" ; root=${root##*root=} ; root=${root%% *}
 init="init= `cat /proc/cmdline`" ; init=${init##*init=} ; init=${init%% *}
+
+echo "Assembling MD/LVM arrays"
+[ -e /sbin/mdadm ] && mdadm --assemble --scan
+[ -e /sbin/lvchange ] && lvchange -a y ${root#/dev/}
 
 # maybe resume from disk?
 resume="`cat /proc/cmdline`"

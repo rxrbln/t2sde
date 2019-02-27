@@ -181,14 +181,13 @@ done
 
 # setup optional programs
 #
-for x in ${root}/sbin/{vgchange,insmod.old,mdadm} \
+for x in ${root}/sbin/{vgchange,lvchange,lvm,mdadm} \
 	 $(root)/usr/sbin/cryptsetup
 do
   if [ ! -e $x ]; then
 	echo "Warning: Skipped optional file ${x#$root}!"
   else
-	cp $x $tmpdir/sbin/
-	ln -sf insmod.old $tmpdir/sbin/modprobe.old
+	cp -a $x $tmpdir/sbin/
 	copy_dyn_libs $x
   fi
 done
