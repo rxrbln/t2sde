@@ -1,6 +1,6 @@
 #!/bin/sh
 
-echo "T2 SDE early userspace (C) 2005 - 2018 Rene Rebe, ExactCODE"
+echo "T2 SDE early userspace (C) 2005 - 2019 Rene Rebe, ExactCODE"
 
 PATH=/sbin:/bin:/usr/bin:/usr/sbin
 
@@ -37,7 +37,7 @@ init="init= `cat /proc/cmdline`" ; init=${init##*init=} ; init=${init%% *}
 
 echo "Assembling MD/LVM arrays"
 [ -e /sbin/mdadm ] && mdadm --assemble --scan
-[ -e /sbin/lvchange ] && lvchange -a y ${root#/dev/}
+[ -e /sbin/lvchange ] && lvchange -a ay ${root#/dev/}
 
 # maybe resume from disk?
 resume="`cat /proc/cmdline`"
