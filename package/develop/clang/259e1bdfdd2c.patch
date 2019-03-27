@@ -1,0 +1,85 @@
+commit 259e1bdfdd2cb1c9bbcb6e0ce9014ad66535d27f
+Author: Richard Smith <richard-llvm@metafoo.co.uk>
+Date:   Fri Feb 1 21:58:17 2019 +0000
+
+    Factor out duplication between ExprIterator and ConstExprIterator.
+    
+    This also exposes a more general iterator cast mechanism suitable for
+    use in http://reviews.llvm.org/D56571.
+    
+    llvm-svn: 352925
+
+diff --git a/clang/include/clang/AST/Stmt.h b/clang/include/clang/AST/Stmt.h
+index 27d4f506a42..66b53c08816 100644
+--- clang/include/clang/AST/Stmt.h
++++ clang/include/clang/AST/Stmt.h
+@@ -986,38 +986,31 @@ public:
+   struct EmptyShell {};
+ 
+ protected:
+-  /// Iterator for iterating over Stmt * arrays that contain only Expr *
++  /// Iterator for iterating over Stmt * arrays that contain only T *.
+   ///
+   /// This is needed because AST nodes use Stmt* arrays to store
+   /// references to children (to be compatible with StmtIterator).
+-  struct ExprIterator
+-      : llvm::iterator_adaptor_base<ExprIterator, Stmt **,
+-                                    std::random_access_iterator_tag, Expr *> {
+-    ExprIterator() : iterator_adaptor_base(nullptr) {}
+-    ExprIterator(Stmt **I) : iterator_adaptor_base(I) {}
+-
+-    reference operator*() const {
+-      assert((*I)->getStmtClass() >= firstExprConstant &&
+-             (*I)->getStmtClass() <= lastExprConstant);
+-      return *reinterpret_cast<Expr **>(I);
+-    }
+-  };
++  template<typename T, typename TPtr = T *, typename StmtPtr = Stmt *>
++  struct CastIterator
++      : llvm::iterator_adaptor_base<CastIterator<T, TPtr, StmtPtr>, StmtPtr *,
++                                    std::random_access_iterator_tag, TPtr> {
++    using Base = typename CastIterator::iterator_adaptor_base;
++
++    CastIterator() : Base(nullptr) {}
++    CastIterator(StmtPtr *I) : Base(I) {}
+ 
+-  /// Const iterator for iterating over Stmt * arrays that contain only Expr *
+-  struct ConstExprIterator
+-      : llvm::iterator_adaptor_base<ConstExprIterator, const Stmt *const *,
+-                                    std::random_access_iterator_tag,
+-                                    const Expr *const> {
+-    ConstExprIterator() : iterator_adaptor_base(nullptr) {}
+-    ConstExprIterator(const Stmt *const *I) : iterator_adaptor_base(I) {}
+-
+-    reference operator*() const {
+-      assert((*I)->getStmtClass() >= firstExprConstant &&
+-             (*I)->getStmtClass() <= lastExprConstant);
+-      return *reinterpret_cast<const Expr *const *>(I);
++    typename Base::value_type operator*() const {
++      return cast<T>(*this->I);
+     }
+   };
+ 
++  /// Const iterator for iterating over Stmt * arrays that contain only T *.
++  template <typename T>
++  using ConstCastIterator = CastIterator<T, const T *const, const Stmt *const>;
++
++  using ExprIterator = CastIterator<Expr>;
++  using ConstExprIterator = ConstCastIterator<Expr>;
++
+ private:
+   /// Whether statistic collection is enabled.
+   static bool StatisticsEnabled;
+diff --git a/clang/lib/CodeGen/CGCoroutine.cpp b/clang/lib/CodeGen/CGCoroutine.cpp
+index a0668ea4ace..8ac9b5b534e 100644
+--- clang/lib/CodeGen/CGCoroutine.cpp
++++ clang/lib/CodeGen/CGCoroutine.cpp
+@@ -732,7 +732,7 @@ RValue CodeGenFunction::EmitCoroutineIntrinsic(const CallExpr *E,
+     Args.push_back(llvm::ConstantTokenNone::get(getLLVMContext()));
+     break;
+   }
+-  for (auto &Arg : E->arguments())
++  for (const Expr *Arg : E->arguments())
+     Args.push_back(EmitScalarExpr(Arg));
+ 
+   llvm::Value *F = CGM.getIntrinsic(IID);
