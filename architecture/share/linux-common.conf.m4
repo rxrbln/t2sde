@@ -14,6 +14,7 @@ dnl --- T2-COPYRIGHT-NOTE-END ---
 
 dnl Default console loglevel, new since 4.10, before we patched it
 CONFIG_CONSOLE_LOGLEVEL_DEFAULT=4
+CONFIG_SECURITY_DMESG_RESTRICT=y
 
 dnl Enable experimental features, and stagging drivers
 dnl
@@ -288,7 +289,7 @@ CONFIG_NLS=y
 CONFIG_NLS_CODEPAGE_437=y
 CONFIG_NLS_ISO8859_1=y
 
-dnl Some commonly useful  debugging
+dnl Some commonly useful debugging
 dnl
 CONFIG_DEBUG_KERNEL=y
 CONFIG_TIMER_STATS=y
