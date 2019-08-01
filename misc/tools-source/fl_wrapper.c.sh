@@ -512,7 +512,7 @@ static void handle_file_access_after(const char * func, const char * file,
 #ifdef __USE_LARGEFILE
 	fd=open64(logfile,O_APPEND|O_WRONLY|O_LARGEFILE,0);
 #else
-#warning "The wrapper library will not work properly for large logs!"
+#warning "The wrapper library may not work properly for large logs!"
 	fd=open(logfile,O_APPEND|O_WRONLY,0);
 #endif
 	if (fd == -1) return;
