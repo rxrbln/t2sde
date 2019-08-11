@@ -21,6 +21,7 @@ dnl
 CONFIG_EXPERIMENTAL=y
 CONFIG_STAGING=y
 # CONFIG_STAGING_EXCLUDE_BUILD is not set
+# CONFIG_IKHEADERS is not set
 
 dnl On default we build SMP kernels and mods
 dnl
