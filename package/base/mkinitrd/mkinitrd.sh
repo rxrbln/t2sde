@@ -34,7 +34,7 @@ done
 
 [ "$root" ] || root=""
 [ "$kernelver" ] || kernelver=`uname -r`
-[ "$moddir" ] || moddir="${root}/lib/modules/$kernelver"
+[ "$moddir" ] || moddir="$root/lib/modules/$kernelver"
 
 echo "Kernel: $kernelver, module dir: $moddir"
 
@@ -44,7 +44,7 @@ if [ ! -d $moddir ]; then
 fi
 
 sysmap=""
-[ -f "${root}/boot/System.map_$kernelver" ] && sysmap="${root}/boot/System.map_$kernelver"
+[ -f "$root/boot/System.map_$kernelver" ] && sysmap="$root/boot/System.map_$kernelver"
 
 if [ -z "$sysmap" ]; then
 	echo "System.map_$kernelver not found!"
@@ -127,13 +127,13 @@ echo "Injecting programs and configuration ..."
 
 # copying config
 #
-cp -ar ${root}/etc/group $tmpdir/etc/
-cp -ar ${root}/etc/udev $tmpdir/etc/
-[ -e ${root}/lib/udev/rules.d ] && cp -ar ${root}/lib/udev/rules.d $tmpdir/lib/udev/
-[ -e ${root}/etc/mdadm.conf ] && cp -ar ${root}/etc/mdadm.conf $tmpdir/etc/
-cp -ar ${root}/etc/modprobe.* $tmpdir/etc/ 2>/dev/null || true
+cp -ar $root/etc/group $tmpdir/etc/
+cp -ar $root/etc/udev $tmpdir/etc/
+[ -e $root/lib/udev/rules.d ] && cp -ar $root/lib/udev/rules.d $tmpdir/lib/udev/
+[ -e $root/etc/mdadm.conf ] && cp -ar $root/etc/mdadm.conf $tmpdir/etc/
+cp -ar $root/etc/modprobe.* $tmpdir/etc/ 2>/dev/null || true
 # in theory all, but fat and currently only cdrom_id is needed ...
-#cp -a ${root}/lib/udev/cdrom_id $tmpdir/lib/udev/
+#cp -a $root/lib/udev/cdrom_id $tmpdir/lib/udev/
 
 # copy dynamic libraries, if any.
 #
@@ -172,8 +172,8 @@ copy_dyn_libs () {
 
 # setup programs
 #
-for x in ${root}/sbin/{udevd,udevadm,modprobe,insmod,blkid} \
-         ${root}/usr/sbin/disktype
+for x in $root/sbin/{udevd,udevadm,modprobe,insmod,blkid} \
+         $root/usr/sbin/disktype
 do
 	cp $x $tmpdir/sbin/
 	copy_dyn_libs $x
@@ -181,8 +181,8 @@ done
 
 # setup optional programs
 #
-for x in ${root}/sbin/{vgchange,lvchange,lvm,mdadm} \
-	 $(root)/usr/sbin/cryptsetup
+for x in $root/sbin/{vgchange,lvchange,lvm,mdadm} \
+	 $root/usr/sbin/cryptsetup
 do
   if [ ! -e $x ]; then
 	echo "Warning: Skipped optional file ${x#$root}!"
@@ -193,26 +193,26 @@ do
 done
 
 ln -s /sbin/udev $tmpdir/etc/hotplug.d/default/10-udev.hotplug
-cp ${root}/bin/pdksh $tmpdir/bin/sh
+cp $root/bin/pdksh $tmpdir/bin/sh
 
 # static, tiny embutils and friends
 #
-cp ${root}/usr/embutils/{mount,umount,rm,mv,mkdir,ln,ls,switch_root,chroot,sleep,losetup,chmod,cat,sed,mknod,dmesg} \
+cp $root/usr/embutils/{mount,umount,rm,mv,mkdir,ln,ls,switch_root,chroot,sleep,losetup,chmod,cat,sed,mknod,dmesg} \
    $tmpdir/bin/
 ln -s mv $tmpdir/bin/cp
 
-cp ${root}/sbin/initrdinit $tmpdir/init
+cp $root/sbin/initrdinit $tmpdir/init
 
 # Custom ACPI DSDT table
-if test -f "${root}/boot/DSDT.aml"; then
+if test -f "$root/boot/DSDT.aml"; then
 	echo "Adding local DSDT file: $dsdt"
-	cp ${root}/boot/DSDT.aml $tmpdir/DSDT.aml
+	cp $root/boot/DSDT.aml $tmpdir/DSDT.aml
 fi
 
 # create the cpio image
 #
 echo "Archiving ..."
 ( cd $tmpdir
-  find . | cpio -o -H newc | zstd -19 -T0 > ${root}/boot/initrd-$kernelver.img
+  find . | cpio -o -H newc | zstd -19 -T0 > $root/boot/initrd-$kernelver.img
 )
 rm -rf $tmpdir $map
