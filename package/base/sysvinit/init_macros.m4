@@ -43,7 +43,7 @@ ifelse(initstyle, `sysv_nice', `
 	local x w="`$'(stty size 2>/dev/null </dev/tty | cut -d" " -f2)"
 	[ -z "`$'w" ] && w="`$'(stty size </dev/console | cut -d" " -f2)"
 	printf "%0$((w/2-1))s" | sed "s/ /. /g"
-	echo -e "\e[255G\e[5D  v \r\e[36m`$'* \e[0m"
+	echo -e "\e[255G\e[4D  v \r\e[36m`$'* \e[0m"
 	error=0
 }
 
