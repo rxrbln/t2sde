@@ -135,18 +135,27 @@ cp -ar $root/etc/modprobe.* $tmpdir/etc/ 2>/dev/null || true
 # in theory all, but fat and currently only cdrom_id is needed ...
 #cp -a $root/lib/udev/cdrom_id $tmpdir/lib/udev/
 
+elf_magic () {
+	readelf -h "$1" | grep Machine
+}
+
 # copy dynamic libraries, if any.
 #
 declare -A added
 copy_dyn_libs () {
+	local magic
 	# we can not use ldd(1) as it loads the object, which does not work on cross builds
-	for lib in `readelf -a $1 |
+	for lib in `readelf -d $1 |
 		sed -n -e 's/.*Shared library.*\[\([^]\]*\)\]/\1/p' \
 		       -e 's/.*Requesting program interpreter: \([^]]*\)\]/\1/p'`
 	do
-		[[ $1 = *bin/* ]] && echo "Warning: $1 is dynamically linked!"
+		if [ -z "$magic" ]; then
+			magic="$(elf_magic $1)"
+			[[ $1 = *bin/* ]] && echo "Warning: $1 is dynamically linked!"
+		fi
 		for libdir in $root/lib{64,}/ $root/usr/lib{64,}/ "$root"; do
 			if [ -e $libdir$lib ]; then
+			    [ "$magic" != "$(elf_magic $libdir$lib)" ] && continue
 			    xlibdir=${libdir#$root}
 			    echo "	${1#$root} NEEDS $xlibdir$lib"
 
@@ -156,12 +165,18 @@ copy_dyn_libs () {
 				mkdir -p $tmpdir$xlibdir
 				while local x=`readlink $libdir$lib`; [ "$x" ]; do
 					echo "	$xlibdir$lib SYMLINKS to $x"
+					local y=$tmpdir$xlibdir$lib
+					mkdir -p ${y%/*}
 					ln -sfv $x $tmpdir$xlibdir$lib
-					lib=$x
+					if [ "${x#/}" == "$x" ]; then # relative?
+						# directory to prepend?
+						[ ${lib%/*} != "$lib" ] && x="${lib%/*}/$x"
+					fi
+					lib="$x"
 				done
-				local x=$tmpdir$xlibdir$lib
-				mkdir -p ${x%/*}
-				cp -fv $libdir$lib $x
+				local y=$tmpdir$xlibdir$lib
+				mkdir -p ${y%/*}
+				cp -fv $libdir$lib $tmpdir$xlibdir$lib
 
 				copy_dyn_libs $libdir$lib
 			    fi
