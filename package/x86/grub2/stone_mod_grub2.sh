@@ -22,7 +22,7 @@ create_kernel_list() {
 	first=1
 	for x in `(cd /boot/ ; ls vmlinux_* ) | sort -r` ; do
 		ver=${x/vmlinux_/}
-		[[ $arch = *x86* ]] && x=${x/vmlinux/vmlinuz}
+		[[ $arch = *86* ]] && x=${x/vmlinux/vmlinuz}
 		if [ $first = 1 ] ; then
 			label=linux ; first=0
 		else
