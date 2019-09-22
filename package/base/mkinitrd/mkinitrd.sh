@@ -149,7 +149,6 @@ copy_dyn_libs () {
 		sed -n -e 's/.*Shared library.*\[\([^]\]*\)\]/\1/p' \
 		       -e 's/.*Requesting program interpreter: \([^]]*\)\]/\1/p'`
 	do
-set -x
 		if [ -z "$magic" ]; then
 			magic="$(elf_magic $1)"
 			[[ $1 = *bin/* ]] && echo "Warning: $1 is dynamically linked!"
