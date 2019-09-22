@@ -131,7 +131,7 @@ cp -ar $root/etc/group $tmpdir/etc/
 cp -ar $root/etc/udev $tmpdir/etc/
 [ -e $root/lib/udev/rules.d ] && cp -ar $root/lib/udev/rules.d $tmpdir/lib/udev/
 [ -e $root/etc/mdadm.conf ] && cp -ar $root/etc/mdadm.conf $tmpdir/etc/
-cp -ar $root/etc/modprobe.* $tmpdir/etc/ 2>/dev/null || true
+cp -ar $root/etc/modprobe.* $root/etc/ld-* $tmpdir/etc/ 2>/dev/null || true
 # in theory all, but fat and currently only cdrom_id is needed ...
 #cp -a $root/lib/udev/cdrom_id $tmpdir/lib/udev/
 
@@ -145,10 +145,11 @@ declare -A added
 copy_dyn_libs () {
 	local magic
 	# we can not use ldd(1) as it loads the object, which does not work on cross builds
-	for lib in `readelf -d $1 |
+	for lib in `readelf -de $1 |
 		sed -n -e 's/.*Shared library.*\[\([^]\]*\)\]/\1/p' \
 		       -e 's/.*Requesting program interpreter: \([^]]*\)\]/\1/p'`
 	do
+set -x
 		if [ -z "$magic" ]; then
 			magic="$(elf_magic $1)"
 			[[ $1 = *bin/* ]] && echo "Warning: $1 is dynamically linked!"
