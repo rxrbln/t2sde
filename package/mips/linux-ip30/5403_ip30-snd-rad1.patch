@@ -1,15 +1,32 @@
 diff --git a/include/linux/pci_ids.h b/include/linux/pci_ids.h
-index 5f6b71d15393..5c64643012cd 100644
+index 29502238e510..a84dc2c07d48 100644
 --- a/include/linux/pci_ids.h
 +++ b/include/linux/pci_ids.h
-@@ -1057,6 +1057,7 @@
+@@ -1063,6 +1063,7 @@
  #define PCI_VENDOR_ID_SGI		0x10a9
  #define PCI_DEVICE_ID_SGI_IOC3		0x0003
  #define PCI_DEVICE_ID_SGI_LITHIUM	0x1002
 +#define PCI_DEVICE_ID_SGI_RAD1		0x0005
  #define PCI_DEVICE_ID_SGI_IOC4		0x100a
- 
+
  #define PCI_VENDOR_ID_WINBOND		0x10ad
+diff --git a/sound/pci/Kconfig b/sound/pci/Kconfig
+index 4105d9f653d9..f2ddbdb2d4dc 100644
+--- a/sound/pci/Kconfig
++++ b/sound/pci/Kconfig
+@@ -907,6 +907,12 @@ config SND_YMFPCI
+ 	  To compile this driver as a module, choose M here: the module
+ 	  will be called snd-ymfpci.
+ 
++config SND_RAD1
++	tristate "SGI RAD1"
++	depends on SND && SGI_IP30
++	help
++	  Say 'Y' or 'M' to include support for SGI RAD1 Pro Audio in Octane.
++
+ endif	# SND_PCI
+ 
+ source "sound/pci/hda/Kconfig"
 diff --git a/arch/mips/pci/pci-bridge.c b/arch/mips/pci/pci-bridge.c
 index 28b0eb5b844e..9df13ce313b5 100644
 --- a/arch/mips/pci/pci-bridge.c
@@ -24,6 +41,26 @@ index 28b0eb5b844e..9df13ce313b5 100644
  static int __init
  bridge_init(struct platform_device *pdev)
  {
+diff --git a/sound/pci/Makefile b/sound/pci/Makefile
+index 04cac7469139..9186ff609192 100644
+--- a/sound/pci/Makefile
++++ b/sound/pci/Makefile
+@@ -22,6 +22,7 @@ snd-fm801-objs := fm801.o
+ snd-intel8x0-objs := intel8x0.o
+ snd-intel8x0m-objs := intel8x0m.o
+ snd-maestro3-objs := maestro3.o
++snd-rad1-objs := rad1.o
+ snd-rme32-objs := rme32.o
+ snd-rme96-objs := rme96.o
+ snd-sis7019-objs := sis7019.o
+@@ -48,6 +49,7 @@ obj-$(CONFIG_SND_FM801) += snd-fm801.o
+ obj-$(CONFIG_SND_INTEL8X0) += snd-intel8x0.o
+ obj-$(CONFIG_SND_INTEL8X0M) += snd-intel8x0m.o
+ obj-$(CONFIG_SND_MAESTRO3) += snd-maestro3.o
++obj-$(CONFIG_SND_RAD1) += snd-rad1.o
+ obj-$(CONFIG_SND_RME32) += snd-rme32.o
+ obj-$(CONFIG_SND_RME96) += snd-rme96.o
+ obj-$(CONFIG_SND_SIS7019) += snd-sis7019.o
 diff --git a/include/sound/rad1.h b/include/sound/rad1.h
 new file mode 100644
 index 000000000000..3acbb6cd36f2
@@ -150,53 +187,16 @@ index 000000000000..3acbb6cd36f2
 +};
 +
 +#endif /* _SOUND_RAD1_H */
-diff --git a/sound/pci/Kconfig b/sound/pci/Kconfig
-index 32151d8c6bb8..bb4a452b5ea8 100644
---- a/sound/pci/Kconfig
-+++ b/sound/pci/Kconfig
-@@ -899,6 +899,12 @@ config SND_YMFPCI
- 	  To compile this driver as a module, choose M here: the module
- 	  will be called snd-ymfpci.
- 
-+config SND_RAD1
-+	tristate "SGI RAD1"
-+	depends on SND && SGI_IP30
-+	help
-+	  Say 'Y' or 'M' to include support for SGI RAD1 Pro Audio in Octane.
-+
- endif	# SND_PCI
- 
- source "sound/pci/hda/Kconfig"
-diff --git a/sound/pci/Makefile b/sound/pci/Makefile
-index 54fe325e3aa5..e5fb57bec305 100644
---- a/sound/pci/Makefile
-+++ b/sound/pci/Makefile
-@@ -21,6 +21,7 @@ snd-fm801-objs := fm801.o
- snd-intel8x0-objs := intel8x0.o
- snd-intel8x0m-objs := intel8x0m.o
- snd-maestro3-objs := maestro3.o
-+snd-rad1-objs := rad1.o
- snd-rme32-objs := rme32.o
- snd-rme96-objs := rme96.o
- snd-sis7019-objs := sis7019.o
-@@ -47,6 +48,7 @@ obj-$(CONFIG_SND_FM801) += snd-fm801.o
- obj-$(CONFIG_SND_INTEL8X0) += snd-intel8x0.o
- obj-$(CONFIG_SND_INTEL8X0M) += snd-intel8x0m.o
- obj-$(CONFIG_SND_MAESTRO3) += snd-maestro3.o
-+obj-$(CONFIG_SND_RAD1) += snd-rad1.o
- obj-$(CONFIG_SND_RME32) += snd-rme32.o
- obj-$(CONFIG_SND_RME96) += snd-rme96.o
- obj-$(CONFIG_SND_SIS7019) += snd-sis7019.o
 diff --git a/sound/pci/rad1.c b/sound/pci/rad1.c
 new file mode 100644
-index 000000000000..9536df300865
+index 000000000000..24318b1c9187
 --- /dev/null
 +++ b/sound/pci/rad1.c
 @@ -0,0 +1,1527 @@
 +/*
 + * rad1.c - ALSA driver for SGI RAD1 (as found in Octane and Octane2)
 + * Copyright (C) 2004-2007 by Stanislaw Skowronek <skylark@unaligned.org>
-+ * Copyright (C) 2018 Ren\xc3\xa9 Rebe <rene@exactcode.de>
++ * Copyright (C) 2018 René Rebe <rene@exactcode.de>
 + *
 + * This program is free software; you can redistribute it and/or modify
 + * it under the terms of the GNU General Public License as published by
@@ -255,7 +255,7 @@ index 000000000000..9536df300865
 +
 +	/* card controls */
 +	unsigned int attctrl;		/* Attenuation control */
-+	unsigned int rt_adc;		/* AtoD routing */
++	unsigned int rt_adc;		/* ADC routing */
 +	unsigned int rt_aesr;		/* AES Rx routing */
 +	unsigned int rt_adat;		/* ADAT Rx routing */
 +	unsigned int rt_opto;		/* Optical Out routing */
@@ -440,9 +440,9 @@ index 000000000000..9536df300865
 +}
 +
 +static void
-+snd_rad1_poll_timer(unsigned long chip_virt)
++snd_rad1_poll_timer(struct timer_list *chip_virt)
 +{
-+	struct snd_rad1 *chip = (struct snd_rad1 *)chip_virt;
++	struct snd_rad1 *chip = from_timer(chip, chip_virt, timer);
 +	int adma = 0;
 +
 +	if (chip->pipes[RAD1_ADC].adma) {
@@ -510,7 +510,8 @@ index 000000000000..9536df300865
 +snd_rad1_red_frac(long *n, long *d, long max)
 +{
 +	long gcd = snd_rad1_gcd(*n, *d);
-+	if (!gcd)
++
++	if (unlikely(!gcd))
 +		return;
 +
 +	*n /= gcd;
@@ -849,7 +850,7 @@ index 000000000000..9536df300865
 +	int err;
 +
 +	err = snd_pcm_new(chip->card, "RAD1 ADC", dev, 0, 1, &pcm);
-+	if (err < 0)
++	if (unlikely(err < 0))
 +		return err;
 +
 +	pcm->private_data = chip;
@@ -968,7 +969,7 @@ index 000000000000..9536df300865
 +	int err;
 +
 +	err = snd_pcm_new(chip->card, "RAD1 DAC", dev, 1, 0, &pcm);
-+	if (err < 0)
++	if (unlikely(err < 0))
 +		return err;
 +
 +	pcm->private_data = chip;
@@ -1088,7 +1089,7 @@ index 000000000000..9536df300865
 +	int err;
 +
 +	err = snd_pcm_new(chip->card, "RAD1 AES Rx", dev, 0, 1, &pcm);
-+	if (err < 0)
++	if (unlikely(err < 0))
 +		return err;
 +
 +	pcm->private_data = chip;
@@ -1207,7 +1208,7 @@ index 000000000000..9536df300865
 +	int err;
 +
 +	err = snd_pcm_new(chip->card, "RAD1 AES Tx", dev, 1, 0, &pcm);
-+	if (err < 0)
++	if (unlikely(err < 0))
 +		return err;
 +
 +	pcm->private_data = chip;
@@ -1411,7 +1412,7 @@ index 000000000000..9536df300865
 +
 +
 +/* ----------------------------------------------------------------------- */
-+/* AtoD route control */
++/* ADC route control */
 +static int
 +snd_rad1_control_ar_info(struct snd_kcontrol *kcontrol,
 +                         struct snd_ctl_elem_info *uinfo)
@@ -1531,7 +1532,7 @@ index 000000000000..9536df300865
 +	for (idx = 0; idx < 5; idx++) {
 +		err = snd_ctl_add(chip->card,
 +		                  snd_ctl_new1(&snd_rad1_controls[idx], chip));
-+		if (err < 0)
++		if (unlikely(err < 0))
 +			return err;
 +	}
 +
@@ -1576,24 +1577,22 @@ index 000000000000..9536df300865
 +
 +	*rchip = NULL;
 +
-+	if (pci_enable_device(pci))
++	if (unlikely(pci_enable_device(pci)))
 +		goto out;
 +
-+	if (pci_request_regions(pci, "rad1"))
++	if (unlikely(pci_request_regions(pci, "rad1")))
 +		goto out_disable_dev;
 +
 +	pci_write_config_byte(pci, PCI_LATENCY_TIMER, 64);
 +	pci_set_master(pci);
 +
 +	chip = kzalloc(sizeof(struct snd_rad1), GFP_KERNEL);
-+	if (!chip) {
++	if (unlikely(!chip)) {
 +		error = -ENOMEM;
 +		goto out_rel_region;
 +	}
 +
-+	init_timer(&chip->timer);
-+	chip->timer.function = snd_rad1_poll_timer;
-+	chip->timer.data = (unsigned long)chip;
++	timer_setup(&chip->timer, snd_rad1_poll_timer, 0);
 +
 +	chip->card = card;
 +	chip->pci = pci;
@@ -1609,6 +1608,7 @@ index 000000000000..9536df300865
 +	if (snd_device_new(card, SNDRV_DEV_LOWLEVEL, chip, &ops))
 +		goto out_rad1_free;
 +
++	snd_card_set_dev(card, &pci->dev);
 +	*rchip = chip;
 +
 +	return 0;
@@ -1641,20 +1641,20 @@ index 000000000000..9536df300865
 +	struct snd_rad1 *chip;
 +	int err;
 +
-+	if (ndev >= SNDRV_CARDS)
++	if (unlikely(ndev >= SNDRV_CARDS))
 +		return -ENODEV;
 +
-+	if (!enable[ndev]) {
++	if (unlikely(!enable[ndev])) {
 +		ndev++;
 +		return -ENOENT;
 +	}
 +
 +	err = snd_card_new(&pci->dev, index[ndev], id[ndev], THIS_MODULE, 0, &card);
-+	if (err < 0)
++	if (unlikely(err < 0))
 +		return err;
 +
 +	err = snd_rad1_create(card, pci, &chip);
-+	if (err < 0) {
++	if (unlikely(err < 0)) {
 +		snd_card_free(card);
 +		return err;
 +	}
@@ -1672,7 +1672,7 @@ index 000000000000..9536df300865
 +	snd_rad1_add_controls(chip);
 +
 +	err = snd_card_register(card);
-+	if (err < 0) {
++	if (unlikely(err < 0)) {
 +		snd_card_free(card);
 +		return err;
 +	}
