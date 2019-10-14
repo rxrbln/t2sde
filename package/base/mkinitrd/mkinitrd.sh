@@ -197,7 +197,7 @@ done
 # setup optional programs
 #
 for x in $root/sbin/{vgchange,lvchange,lvm,mdadm} \
-	 $root/usr/sbin/cryptsetup
+	 $root/usr/sbin/cryptsetup $root/usr/embutils/dmesg
 do
   if [ ! -e $x ]; then
 	echo "Warning: Skipped optional file ${x#$root}!"
@@ -212,7 +212,7 @@ cp $root/bin/pdksh $tmpdir/bin/sh
 
 # static, tiny embutils and friends
 #
-cp $root/usr/embutils/{mount,umount,rm,mv,mkdir,ln,ls,switch_root,chroot,sleep,losetup,chmod,cat,sed,mknod,dmesg} \
+cp $root/usr/embutils/{mount,umount,rm,mv,mkdir,ln,ls,switch_root,chroot,sleep,losetup,chmod,cat,sed,mknod} \
    $tmpdir/bin/
 ln -s mv $tmpdir/bin/cp
 
