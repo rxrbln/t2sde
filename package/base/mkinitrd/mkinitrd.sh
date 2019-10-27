@@ -4,6 +4,7 @@
 # 
 # T2 SDE: package/.../mkinitrd/mkinitrd.sh
 # Copyright (C) 2005 - 2019 The T2 SDE Project
+# Copyright (C) 2005 - 2019 René Rebe <rene@exactcode.de>
 # 
 # More information can be found in the files COPYING and README.
 # 
@@ -16,6 +17,7 @@
 set -e
 
 map=`mktemp`
+firmware=1
 
 if [ $UID != 0 ]; then
 	echo "Non root - exiting ..."
@@ -26,15 +28,16 @@ while [ "$1" ]; do
   case $1 in
 	[0-9]*) kernelver="$1" ;;
 	-R) root="$2" ; shift ;;
-	*) echo "Usage: mkinitrd [ -R root ] [ kernelver ]"
+	--firmware) firmware= ;;
+	*) echo "Usage: mkinitrd [ -firmware ] [ -R root ] [ kernelver ]"
 	   exit 1 ;;
   esac
   shift
 done
 
-[ "$root" ] || root=""
 [ "$kernelver" ] || kernelver=`uname -r`
 [ "$moddir" ] || moddir="$root/lib/modules/$kernelver"
+
 
 echo "Kernel: $kernelver, module dir: $moddir"
 
@@ -79,6 +82,7 @@ echo "Copying kernel modules ..."
 (
   declare -A added
   add_depend() {
+     local skipped=
      local x="$1"
      if [ "${added["$x"]}" != 1 ]; then
 	added["$x"]=1
@@ -91,13 +95,38 @@ echo "Copying kernel modules ..."
 	# strip $root prefix
 	xt=${x##$root}
 
-	mkdir -p `dirname $tmpdir/$xt`
-	cp $x $tmpdir/$xt 2>/dev/null
-	
-	# add it's deps, too
-	for fn in `modinfo -F depends $x | sed 's/,/ /g'`; do
-	     add_depend "$fn"
-	done
+	# does it need firmware?
+	fw="`modinfo -F firmware $x`"
+	if [ "$fw" ]; then
+	     if [ "$firmware" ]; then
+		echo "Warning: $x needs firmware"
+		for fn in $fw; do
+		    local fn="/lib/firmware/$fn"
+		    local dir="$tmpdir/${fn%/*}"
+		    if [ ! -e "$root$fn" ]; then
+			echo "Warning: firmware $fn, not found, skipped"
+			skipped=1
+		    else
+			mkdir -p "$dir"
+			echo "Adding firmware: $fn"
+			cp -af "$root$fn" "$dir"
+		    fi
+		done
+	     else
+		echo "Warning: $x needs firmware, skipped"
+		skipped=1
+	     fi
+	fi
+
+	if [ -z "$skipped" ]; then
+	    mkdir -p `dirname $tmpdir/$xt`
+	    cp -af $x $tmpdir/$xt
+
+	    # add it's deps, too
+	    for fn in `modinfo -F depends $x | sed 's/,/ /g'`; do
+		add_depend "$fn"
+	    done
+	fi
      else
         #echo "already there"
 	:
