@@ -165,7 +165,7 @@ cp -ar $root/etc/modprobe.* $root/etc/ld-* $tmpdir/etc/ 2>/dev/null || true
 #cp -a $root/lib/udev/cdrom_id $tmpdir/lib/udev/
 
 elf_magic () {
-	readelf -h "$1" | grep Machine
+	readelf -h "$1" | grep 'Machine\|Flags'
 }
 
 # copy dynamic libraries, if any.
@@ -182,7 +182,7 @@ copy_dyn_libs () {
 			magic="$(elf_magic $1)"
 			[[ $1 = *bin/* ]] && echo "Warning: $1 is dynamically linked!"
 		fi
-		for libdir in $root/lib{64,}/ $root/usr/lib{64,}/ "$root"; do
+		for libdir in $root/lib*/ $root/usr/lib*/ "$root"; do
 			if [ -e $libdir$lib ]; then
 			    [ "$magic" != "$(elf_magic $libdir$lib)" ] && continue
 			    xlibdir=${libdir#$root}
