@@ -205,7 +205,7 @@ copy_dyn_libs () {
 				done
 				local y=$tmpdir$xlibdir$lib
 				mkdir -p ${y%/*}
-				cp -fv $libdir$lib $tmpdir$xlibdir$lib
+				cp -af $libdir$lib $tmpdir$xlibdir$lib
 
 				copy_dyn_libs $libdir$lib
 			    fi
