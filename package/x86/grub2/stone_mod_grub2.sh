@@ -64,8 +64,12 @@ convert_device() {
         fi
     done
 
-    drive=`echo $root_drive | sed "s:)$:,$root_part):"`
-    echo "(hd0,msdos1)" # $drive
+    drive=$(echo "$device" | sed "s/[^0-9]//g")
+    if disktype /dev/sda | grep -q GPT; then
+    	echo "(hd0,gpt$drive)"
+    else
+	echo "(hd0,msdos$drive)"
+    fi
 }
 
 create_boot_menu() {
