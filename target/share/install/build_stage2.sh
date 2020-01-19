@@ -24,7 +24,7 @@ mkdir -p $disksdir/2nd_stage; cd $disksdir/2nd_stage
 package_map="00-dirtree               $SDECFG_LIBC
 zlib
 parted             cryptsetup
-xfsprogs           mkdosfs            jfsutils           btrfs-progs
+xfsprogs           dosfstools         jfsutils           btrfs-progs
 e2fsprogs          reiserfsprogs      reiser4progs       genromfs
 popt               raidtools          mdadm              pcre
 lvm                lvm2               device-mapper      libaio
@@ -113,7 +113,7 @@ progs="agetty sh bash cat cp date dd df dmesg ifconfig ln ls $packager mkdir \
        mkswap mount mv rm reboot route sleep swapoff swapon sync umount \
        eject chmod chroot grep halt rmdir init shutdown uname killall5 \
        stone tar mktemp sort fold sed mkreiserfs cut head tail disktype \
-       zstd bzip2 gzip mkfs.ext3 gasgui dialog stty wc fmt"
+       zstd bzip2 gzip mkfs.ext3 mkfs.fat gasgui dialog stty wc fmt"
 
 progs="$progs parted fdisk sfdisk"
 
@@ -215,4 +215,4 @@ echo_status "Creating stage2 archive."
 
 echo_status "Creating stage2ext archive."
 (cd 2nd_stage; find ! -type d |
-	tar -cf- --no-recursion --files-from=-) | bzip2 > $isofsdir/stage2ext.tar.bz2
+	tar -cf- --no-recursion --files-from=-) | bzip2 -9 > $isofsdir/stage2ext.tar.bz2
