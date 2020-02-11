@@ -34,6 +34,126 @@ const bool debug = false;
 
 std::vector <std::string> suffixes;
 
+class subversion {
+public:
+  std::string::size_type next_part (const std::string& s,
+				    std::string::size_type i)
+  {
+    val.clear();
+    std::locale loc;
+    const std::ctype<char>& ct = std::use_facet<std::ctype<char> >(loc);
+	
+    // catch range exceptions
+    try {
+      // type to search for transition
+      int type_mask = std::ctype<char>::alpha;
+      if (isdigit(s[i]))
+	type_mask = std::ctype<char>::digit;
+	  
+      for (; i < s.size() && ct.is(type_mask, s[i]); ++i) {
+	val += s[i];
+      }
+	  
+      if (!(ct.is((std::ctype<char>::alpha | std::ctype<char>::digit),
+		  s[i])))
+	++i;
+    }
+    catch (...) {}
+	
+    if (debug)
+      std::cout << "extracted part: " << val << std::endl;
+    return i;
+  }
+
+  std::string::size_type size() const {
+    return val.size();
+  }
+      
+  char operator[] (std::string::size_type i) const {
+    return val[i];
+  }
+      
+  bool empty() const {
+    return val.empty();
+  }
+      
+  const std::string& str () const {
+    return val;
+  }
+      
+  bool same_cclass (char a, char b) const {
+    // I'm sure this could be done more elegant
+    return ( (isalpha(a) && isalpha(b)) ||
+	     (isdigit(a) && isdigit(b)) );
+  }
+      
+  bool operator< (const subversion& other) const {
+    // special case for char < number
+    try { // catch range exceptions ;-)
+      if (!same_cclass(val[0], other.val[0]))
+	return (isalpha(val[0]));
+
+      // special case for numbers only, so real values are compared
+      if (isdigit(val[0]) && isdigit(other.val[0])) {
+	int int_val, other_int_val;
+	int_val = atoi(val.c_str());
+	other_int_val = atoi(other.val.c_str());
+	if (debug)
+	  std::cout << "Intergers only: " << int_val << " "
+		    << other_int_val << std::endl;
+
+	// do not compare overly large versions - they are most probably
+	// a data (e.g. 3-... vs 2004-...)
+	if (std::abs(int_val - other_int_val) > 100) {
+	  if (debug)
+	    std::cout << "Version differ too much - skipped ..."
+		      << std::endl;
+	  return true; // always lower ,-)
+	}
+
+	return int_val < other_int_val;
+      }
+    }
+    catch (...) {}
+    return val < other.val;
+  }
+
+  bool operator> (const subversion& other) const {
+    // special case for char < number
+    try { // catch range exceptions ;-)
+      if (!same_cclass(val[0], other.val[0]))
+	return (isalpha(other.val[0]));
+
+      // special case for numbers only, so real values are compared
+      if (isdigit(val[0]) && isdigit(other.val[0])) {
+	int int_val, other_int_val;
+	int_val = atoi(val.c_str());
+	other_int_val = atoi(other.val.c_str());
+	if (debug)
+	  std::cout << "Intergers only: " << int_val << " "
+		    << other_int_val << std::endl;
+
+	// do not compare overly large versions - they are most probably
+	// a data (e.g. 3-... vs 2004-...)
+	if (std::abs(int_val - other_int_val) > 100) {
+	  if (debug)
+	    std::cout << "Version differ too much - skipped ..." 
+		      << std::endl;
+	  return false;
+	}
+
+	return int_val > other_int_val;
+      }
+    }
+    catch (...) {
+    }
+    return val > other.val;
+  }
+
+private:
+  std::string val;
+};
+
 // maybe inherit std::string? -ReneR
 class Version
 {
@@ -79,127 +199,6 @@ public:
   
   int compare (const Version& a, const Version& b) const
   {
-    class subversion {
-    public:
-      
-      std::string::size_type next_part (const std::string& s,
-					std::string::size_type i)
-      {
-	val.clear();
-	std::locale loc;
-	const std::ctype<char>& ct = std::use_facet<std::ctype<char> >(loc);
-	
-	// catch range exceptions
-	try {
-	  // type to search for transition
-	  int type_mask = std::ctype<char>::alpha;
-	  if (isdigit(s[i]))
-	    type_mask = std::ctype<char>::digit;
-	  
-	  for (; i < s.size() && ct.is(type_mask, s[i]); ++i) {
-	    val += s[i];
-	  }
-	  
-	  if (!(ct.is((std::ctype<char>::alpha | std::ctype<char>::digit),
-		      s[i])))
-	    ++i;
-	}
-	catch (...) {}
-	
-	if (debug)
-	  std::cout << "extracted part: " << val << std::endl;
-	return i;
-      }
-
-      std::string::size_type size() const {
-	return val.size();
-      }
-      
-      char operator[] (std::string::size_type i) const {
-	return val[i];
-      }
-      
-      bool empty() const {
-	return val.empty();
-      }
-      
-      const std::string& str () const {
-	return val;
-      }
-      
-      bool same_cclass (char a, char b) const {
-	// I'm sure this could be done more elegant
-	return ( (isalpha(a) && isalpha(b)) ||
-		 (isdigit(a) && isdigit(b)) );
-      }
-      
-      bool operator< (const subversion& other) const {
-	// special case for char < number
-	try { // catch range exceptions ;-)
-	  if (!same_cclass(val[0], other.val[0]))
-	    return (isalpha(val[0]));
-
-	  // special case for numbers only, so real values are compared
-	  if (isdigit(val[0]) && isdigit(other.val[0])) {
-	    int int_val, other_int_val;
-	    int_val = atoi(val.c_str());
-	    other_int_val = atoi(other.val.c_str());
-	    if (debug)
-	      std::cout << "Intergers only: " << int_val << " "
-			<< other_int_val << std::endl;
-
-            // do not compare overly large versions - they are most probably
-            // a data (e.g. 3-... vs 2004-...)
-            if (std::abs(int_val - other_int_val) > 100) {
-              if (debug)
-                std::cout << "Version differ too much - skipped ..."
-                          << std::endl;
-              return true; // always lower ,-)
-            }
-
-	    return int_val < other_int_val;
-	  }
-	}
-	catch (...) {}
-	return val < other.val;
-      }
-
-      bool operator> (const subversion& other) const {
-	// special case for char < number
-	try { // catch range exceptions ;-)
-	  if (!same_cclass(val[0], other.val[0]))
-	    return (isalpha(other.val[0]));
-
-	  // special case for numbers only, so real values are compared
-	  if (isdigit(val[0]) && isdigit(other.val[0])) {
-	    int int_val, other_int_val;
-	    int_val = atoi(val.c_str());
-	    other_int_val = atoi(other.val.c_str());
-	    if (debug)
-	      std::cout << "Intergers only: " << int_val << " "
-			<< other_int_val << std::endl;
-
-            // do not compare overly large versions - they are most probably
-            // a data (e.g. 3-... vs 2004-...)
-            if (std::abs(int_val - other_int_val) > 100) {
-              if (debug)
-                std::cout << "Version differ too much - skipped ..." 
-                          << std::endl;
-              return false;
-            }
-
-	    return int_val > other_int_val;
-	  }
-	}
-	catch (...) {
-	}
-	return val > other.val;
-      }
-
-    private:
-      std::string val;
-    };
-  
     if (debug)
       std::cout << "Comparing: " << a.str() << " with " << b.str()
 		<< std::endl;
@@ -321,7 +320,7 @@ void ParseList (std::string file, std::istream& s,
   if (idx == std::string::npos)
     prefix = templ;
   else
-    prefix = templ.substr(0,idx);
+    prefix = templ.substr(0, idx);
   
   std::cout << file << "(" << version.str()
 	    << ") ---> " << prefix << "???" << suffix << std::endl;
@@ -353,6 +352,7 @@ void ParseList (std::string file, std::istream& s,
 	if (v.size() > 0) {
           if (std::find (versions.begin(), versions.end(), v) == versions.end()) {
 	    const std::string& s = v.str();
+	    // TODO: tolower, ..!
 	    if (!beta) {
 	      if (s.find("alpha") != std::string::npos ||
 		  s.find("beta") != std::string::npos ||
@@ -361,6 +361,19 @@ void ParseList (std::string file, std::istream& s,
 		continue;
 	    }
 	    
+	    if (!odd) {
+	      subversion subv;
+	      std::string::size_type i;
+	      i = subv.next_part(v.str(), 0);
+	      if (!subv.empty()) {
+		i = subv.next_part(v.str(), i);
+		int intv = atoi(subv.str().c_str());
+		//std::cerr << "subv> " << v.str() << " " << subv.str() << " " << intv << std::endl;
+		if (intv & 1)
+		  continue;
+	      }
+	    }
+
 	    versions.push_back(v);
 	  }
 	}
@@ -369,7 +382,7 @@ void ParseList (std::string file, std::istream& s,
   }
   
   for (unsigned int i = 0; i < versions.size(); ++i) {
-    int sign = version.compare(versions[i],version);
+    int sign = version.compare(versions[i], version);
     
     std::cout << "[MATCH] (" << versions[i].str() << ")";
     
@@ -515,8 +528,15 @@ int main (int argc, char* argv[])
   std::cout << "-----------------------" << std::endl;
 #endif
 
-  const bool odd = false;
-  const bool beta = false;  
+  bool odd = false, beta = false;  
+  if (argc > 0) {
+    std::string opt("--odd");
+    if (opt == argv[1]) {
+      odd = true;
+      --argc; // shift
+      ++argv;
+    }
+  }
 
   for (int i = 1; i < argc; ++i)
     {
