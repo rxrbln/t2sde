@@ -157,7 +157,7 @@ while [ $found = 1 ]; do
 				echo_status "\`- Found $dir/$y."
 				mkdir -p $dir
 				xx=$x # save for update in symlink loop
-				while z=`readlink $x/$z`; [ "$z" ]; do
+				while z=`readlink $x/$y`; [ "$z" ]; do
 					echo "	$dir/$y SYMLINKS to $z"
 					mv $x/$y $dir/
 					[[ $z = /* ]] && x=../2nd_stage/
