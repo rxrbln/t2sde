@@ -73,7 +73,7 @@ public:
     return version.size();
   }
 
-  char operator[](std::string::size_type i) const {
+  char operator[] (std::string::size_type i) const {
     return version[i];
   }
   
@@ -104,17 +104,18 @@ public:
 		      s[i])))
 	    ++i;
 	}
-	catch (...){}
-	return i;
+	catch (...) {}
+	
 	if (debug)
 	  std::cout << "extracted part: " << val << std::endl;
+	return i;
       }
 
       std::string::size_type size() const {
 	return val.size();
       }
       
-      char operator[](std::string::size_type i) const {
+      char operator[] (std::string::size_type i) const {
 	return val[i];
       }
       
@@ -149,7 +150,7 @@ public:
 
             // do not compare overly large versions - they are most probably
             // a data (e.g. 3-... vs 2004-...)
-            if ( std::abs(int_val - other_int_val) > 100) {
+            if (std::abs(int_val - other_int_val) > 100) {
               if (debug)
                 std::cout << "Version differ too much - skipped ..."
                           << std::endl;
@@ -180,7 +181,7 @@ public:
 
             // do not compare overly large versions - they are most probably
             // a data (e.g. 3-... vs 2004-...)
-            if ( std::abs(int_val - other_int_val) > 100) {
+            if (std::abs(int_val - other_int_val) > 100) {
               if (debug)
                 std::cout << "Version differ too much - skipped ..." 
                           << std::endl;
@@ -292,7 +293,8 @@ private:
   
 };
 
-void ParseList (std::string file, std::istream& s) {
+void ParseList (std::string file, std::istream& s,
+		const bool odd = true, const bool beta = true) {
   // search for a matching extension
   std::string templ = file;
   std::string suffix = "";
@@ -326,7 +328,6 @@ void ParseList (std::string file, std::istream& s) {
 
   std::string token;
   while (!s.eof()) {
-    
     // read a line and search for the prefix
     s >> token;
     idx = token.find(prefix);
@@ -351,11 +352,19 @@ void ParseList (std::string file, std::istream& s) {
 	v.ExtractFromFilename (matched);
 	if (v.size() > 0) {
           if (std::find (versions.begin(), versions.end(), v) == versions.end()) {
+	    const std::string& s = v.str();
+	    if (!beta) {
+	      if (s.find("alpha") != std::string::npos ||
+		  s.find("beta") != std::string::npos ||
+		  // TODO: rc[0-9]!
+		  s.find("rc") != std::string::npos)
+		continue;
+	    }
+	    
 	    versions.push_back(v);
 	  }
 	}
       }
-
     }
   }
   
@@ -363,6 +372,8 @@ void ParseList (std::string file, std::istream& s) {
     int sign = version.compare(versions[i],version);
     
     std::cout << "[MATCH] (" << versions[i].str() << ")";
+    
+    // TODO: insert here
     
     switch (sign) {
     case 0:
@@ -388,7 +399,7 @@ void ParseList (std::string file, std::istream& s) {
   std::cout << "-----------------------" << std::endl;
 }
 
-void GenList (const DownloadInfo& info)
+void GenList (const DownloadInfo& info, const bool odd, const bool beta)
 {
   CurlWrapper dl;
   dl.SetConnectTimeout(15);
@@ -397,7 +408,7 @@ void GenList (const DownloadInfo& info)
   try {
     dl.Download(info.url); //, 0, 200000); // 416 Range Not Satisfiable (RFC 7233)
     std::auto_ptr<std::ifstream> s = dl.OpenFile();
-    ParseList(info.file, *s);
+    ParseList(info.file, *s, odd, beta);
     s->close();
   }
   
@@ -428,7 +439,7 @@ void GenList (const DownloadInfo& info)
   dl.RemoveFile();
 }
 
-void Check4Updates (const Package& package)
+void Check4Updates (const Package& package, const bool odd, const bool beta)
 {
   unsigned int no_downloads = package.download.download_infos.size();
   for (unsigned int dln = 0; dln < no_downloads; ++dln) {
@@ -456,7 +467,7 @@ void Check4Updates (const Package& package)
 
     std::cout << "Checking updates for " << info.url << std::endl;
     
-    GenList(info);
+    GenList(info, odd, beta);
   }
 }
 
@@ -504,6 +515,9 @@ int main (int argc, char* argv[])
   std::cout << "-----------------------" << std::endl;
 #endif
 
+  const bool odd = false;
+  const bool beta = false;  
+
   for (int i = 1; i < argc; ++i)
     {
       package.Clear();
@@ -516,7 +530,7 @@ int main (int argc, char* argv[])
 	// std::cout << "Checking " << fname << std::endl;
 
 	Glob x(fname);
-	if (x.begin() != x.end ()) {
+	if (x.begin() != x.end()) {
 	  fname = *x.begin();
 	  // std::cout << "Found " << fname << std::endl;
 	}
@@ -524,6 +538,6 @@ int main (int argc, char* argv[])
 
       // parse package ...
       package.ParsePackage (fname);
-      Check4Updates (package);
+      Check4Updates (package, odd, beta);
     }
 }
