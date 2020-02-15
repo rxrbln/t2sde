@@ -351,8 +351,8 @@ void ParseList (std::string file, std::istream& s,
 	v.ExtractFromFilename (matched);
 	if (v.size() > 0) {
           if (std::find (versions.begin(), versions.end(), v) == versions.end()) {
-	    const std::string& s = v.str();
-	    // TODO: tolower, ..!
+	    std::string s = v.str();
+	    std::transform(s.begin(), s.end(), s.begin(), ::tolower);
 	    if (!beta) {
 	      if (s.find("alpha") != std::string::npos ||
 		  s.find("beta") != std::string::npos ||
@@ -366,10 +366,16 @@ void ParseList (std::string file, std::istream& s,
 	      std::string::size_type i;
 	      i = subv.next_part(v.str(), 0);
 	      if (!subv.empty()) {
+		// minor version
 		i = subv.next_part(v.str(), i);
 		int intv = atoi(subv.str().c_str());
-		//std::cerr << "subv> " << v.str() << " " << subv.str() << " " << intv << std::endl;
-		if (intv & 1)
+		
+		// only if it has patch level (e.g. 1.2.3, not 1.3)
+		i = subv.next_part(v.str(), i);
+		int intv2 = i != subv.empty() ? -1 : atoi(subv.str().c_str());
+		
+		//std::cerr << "subv> " << v.str() << " " << subv.str() << " " << intv << " " << intv2 << " (" << i << std::endl;
+		if (!subv.empty() && intv & 1)
 		  continue;
 	      }
 	    }
