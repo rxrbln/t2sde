@@ -92,6 +92,7 @@ public:
       
       download (),
       cv_url("","","CV-URL"),
+      cv_flags("","","CV-FLAGS"),
       
       sourcepackage("SRC","","SRCPACKAGE"),
       conf("O","","CONF")
@@ -116,6 +117,7 @@ public:
     
     tags.push_back(&download);
     tags.push_back(&cv_url);
+    tags.push_back(&cv_flags);
     tags.push_back(&sourcepackage);
     tags.push_back(&conf);
   }
@@ -149,6 +151,7 @@ public:
   
   DownloadTag download;
   Tag cv_url;
+  Tag cv_flags;
   
   Tag sourcepackage;
   Tag conf;
