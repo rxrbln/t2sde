@@ -53,7 +53,7 @@ while (1) {
 
 	open(Q, "scripts/Create-PkgQueue -cfg $config " .
 	        "-logdir $logdir/logs_$id | sort -r -n -k2 |") || die $!;
-	while ($_=<Q> and $freejobs > 0) { 
+	while ($_=<Q> and $freejobs > 0) {
 		@_ = split /\s+/; $qid="$_[0]-$_[5]";
 		s/^.*\s(\S+)\s*$/$1/; $_++;
 		printf LOG "%10d: Creating new job $qid " .
