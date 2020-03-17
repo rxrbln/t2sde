@@ -30,7 +30,7 @@ dump               eject              disktype
 hdparm             memtest86          cpuburn            bonnie++
 ncurses            readline           libgpg-error       libgcrypt
 bash               attr               acl                findutils
-mktemp             coreutils          pciutils
+mktemp             coreutils          pciutils           libcap
 grep               sed                gzip               bzip2
 tar                gawk               lzo                lzop
 less               nvi                bc                 cpio
