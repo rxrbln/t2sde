@@ -115,7 +115,7 @@ mkdir -p share {,usr/}{,s}bin
 progs="agetty sh bash cat cp date dd df dmesg ifconfig ln ls $packager mkdir \
        mkswap mount mv rm reboot route sleep swapoff swapon sync umount \
        eject chmod chroot grep halt rmdir init shutdown uname killall5 \
-       stone install tar mktemp sort fold sed mkreiserfs cut head tail disktype \
+       install stone tar mktemp sort fold sed mkreiserfs cut head tail disktype \
        zstd bzip2 gzip mkfs.ext3 mkfs.fat gasgui dialog stty wc fmt"
 
 progs="$progs parted fdisk sfdisk"
@@ -130,10 +130,10 @@ fi
 
 for x in $progs ; do
 	fn=""
-	if   [ -f ../2nd_stage/bin/$x ]; then fn="bin/$x"
-	elif [ -f ../2nd_stage/sbin/$x ]; then fn="sbin/$x"
-	elif [ -f ../2nd_stage/usr/bin/$x ]; then fn="usr/bin/$x"
-	elif [ -f ../2nd_stage/usr/sbin/$x ]; then fn="usr/sbin/$x"
+	if   [ -e ../2nd_stage/bin/$x ]; then fn="bin/$x"
+	elif [ -e ../2nd_stage/sbin/$x ]; then fn="sbin/$x"
+	elif [ -e ../2nd_stage/usr/bin/$x ]; then fn="usr/bin/$x"
+	elif [ -e ../2nd_stage/usr/sbin/$x ]; then fn="usr/sbin/$x"
 	fi
 
 	if [ "$fn" ] ; then
