@@ -251,6 +251,7 @@ add_wrapper 'int,   renameat2, int olddirfd, const char* s, int newdirfd, const 
 
 add_wrapper 'int,   utime,   const char* f, const struct utimbuf* t'
 add_wrapper 'int,   utimes,  const char* f, struct timeval* t'
+add_wrapper 'int,   utimensat, int dirfd, const char* f, const struct timespec* t, int flags'
 
 add_wrapper 'int,   execv,   const char* f, char* const a[]'
 add_wrapper 'int,   execve,  const char* f, char* const a[], char* const e[]'
