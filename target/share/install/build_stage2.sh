@@ -200,8 +200,8 @@ for x in `egrep 'X .* KERNEL .*' $base/config/$config/packages |
 
     zstd -d < $isofsdir/boot/$initrd | cpio -it | grep "lib.*\.so" |
     while read lib; do
-      if [ -e "../2nd_stage/$lib" ]; then rm -vf "../2nd_stage/$lib"; fi
-      if [ -e "../2nd_stage_small/$lib" ]; then rm -vf "../2nd_stage_small/$lib"; fi
+      if [ -e "../2nd_stage/$lib" -o -L "../2nd_stage/$lib" ]; then rm -vf "../2nd_stage/$lib"; fi
+      if [ -e "../2nd_stage_small/$lib" -o -L "../2nd_stage_small/$lib" ]; then rm -vf "../2nd_stage_small/$lib"; fi
     done
   done
 done
