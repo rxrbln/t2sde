@@ -180,10 +180,11 @@ mkdir -p etc/stone.d
 for i in gui_text gui_dialog mod_install mod_packages mod_gas default ; do
 	mv ../2nd_stage/etc/stone.d/$i.sh etc/stone.d
 done
-echo_status "Copy additional files."
+echo_status "Moving additional files."
 mkdir -p usr/share/terminfo/{v,l}/
 mv ../2nd_stage/usr/share/terminfo/l/linux usr/share/terminfo/l/
 mv ../2nd_stage/usr/share/terminfo/v/vt102 usr/share/terminfo/v/
+mv ../2nd_stage/root root
 
 echo_status "Removing shared libraries already in initrd."
 
