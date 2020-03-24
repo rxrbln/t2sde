@@ -11,8 +11,8 @@ mount -t sysfs none /sys
 ln -s /proc/self/fd /dev/fd
 
 echo "Populating u/dev ..."
-mknod /dev/null c 1 3
-mknod /dev/zero c 1 5
+[ -e /dev/null ] || mknod /dev/null c 1 3
+[ -e /dev/zero ] || mknod /dev/zero c 1 5
 udevd &
 udevadm trigger
 udevadm settle
@@ -32,15 +32,15 @@ for x in /lib/modules/*/kernel/fs/{*/,}*.*o ; do
 done
 
 # get the root device and init
-root="root= `cat /proc/cmdline`" ; root=${root##*root=} ; root=${root%% *}
-init="init= `cat /proc/cmdline`" ; init=${init##*init=} ; init=${init%% *}
+root="root= $(< /proc/cmdline)" ; root=${root##*root=} ; root=${root%% *}
+init="init= $(< /proc/cmdline)" ; init=${init##*init=} ; init=${init%% *}
 
 echo "Assembling MD/LVM arrays"
 [ -e /sbin/mdadm ] && mdadm --assemble --scan
 [ -e /sbin/lvchange ] && lvchange -a ay ${root#/dev/}
 
 # maybe resume from disk?
-resume="`cat /proc/cmdline`"
+resume="$(< /proc/cmdline)"
 if [[ "$resume" = *resume* ]] && [[ "$resume" != *noresume* ]]; then
 	resume=${resume##*resume=} ; resume=${resume%% *}
 	resume=`ls -l $resume |
