@@ -29,7 +29,7 @@ while [ "$1" ]; do
 	[0-9]*) kernelver="$1" ;;
 	-R) root="$2" ; shift ;;
 	--firmware) firmware= ;;
-	*) echo "Usage: mkinitrd [ -firmware ] [ -R root ] [ kernelver ]"
+	*) echo "Usage: mkinitrd [ --firmware ] [ -R root ] [ kernelver ]"
 	   exit 1 ;;
   esac
   shift
@@ -88,7 +88,7 @@ echo "Copying kernel modules ..."
 	added["$x"]=1
 
 	# expand to full name if it was a depend
-	[ $x = ${x##*/} ] && x=`sed -n "/\/$x\..*o$/{p; q}" $map`
+	[ $x = ${x##*/} ] && x=`sed -n "/\/$x\.ko.*/{p; q}" $map`
 
 	echo -n "${x##*/} "
 
