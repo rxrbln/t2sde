@@ -103,13 +103,13 @@ echo "Copying kernel modules ..."
 		for fn in $fw; do
 		    local fn="/lib/firmware/$fn"
 		    local dir="$tmpdir/${fn%/*}"
-		    if [ ! -e "$root$fn" ]; then
+		    if [ ! -e "$root$fn" -a ! -e "$root$fn".*z* ]; then
 			echo "Warning: firmware $fn, not found, skipped"
 			skipped=1
 		    else
 			mkdir -p "$dir"
 			echo "Adding firmware: $fn"
-			cp -af "$root$fn" "$dir"
+			cp -af "$root$fn"* "$dir"
 		    fi
 		done
 	     else
