@@ -57,8 +57,8 @@ fi
 echo "System.map: $sysmap"
 
 # check needed tools
-for x in cpio gzip ; do
-	if ! type -p $x >/dev/null ; then
+for x in cpio gzip; do
+	if ! type -p $x >/dev/null; then
 		echo "$x not found!"
 		exit 2
 	fi
@@ -103,13 +103,15 @@ echo "Copying kernel modules ..."
 		for fn in $fw; do
 		    local fn="/lib/firmware/$fn"
 		    local dir="$tmpdir/${fn%/*}"
-		    if [ ! -e "$root$fn" -a ! -e "$root$fn".*z* ]; then
+		    if [ ! -e "$root$fn" ]; then # -a ! -e "$root$fn".*z* ]; then
 			echo "Warning: firmware $fn, not found, skipped"
 			skipped=1
 		    else
 			mkdir -p "$dir"
 			echo "Adding firmware: $fn"
-			cp -af "$root$fn"* "$dir"
+			cp -af "$root$fn" "$dir/"
+			# TODO: copy source if symlink
+			[ -f "$tmpdir/$fn" ] && xz -f "$tmpdir/$fn"
 		    fi
 		done
 	     else
@@ -121,6 +123,7 @@ echo "Copying kernel modules ..."
 	if [ -z "$skipped" ]; then
 	    mkdir -p `dirname $tmpdir/$xt`
 	    cp -af $x $tmpdir/$xt
+	    zstd -18 -f --rm $tmpdir/$xt
 
 	    # add it's deps, too
 	    for fn in `modinfo -F depends $x | sed 's/,/ /g'`; do
@@ -146,7 +149,7 @@ echo "Copying kernel modules ..."
   while read fn; do
 	add_depend "$fn"
   done
-) | fold -s ; echo
+) | fold -s; echo
 
 # generate map files
 #
