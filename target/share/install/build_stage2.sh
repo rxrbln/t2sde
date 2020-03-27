@@ -56,7 +56,7 @@ else
 	package_map="$package_map ${SDECFG_LIBC}"
 fi
 
-if pkginstalled mine ; then
+if pkginstalled mine; then
 	packager=mine
 else
 	packager=bize
@@ -116,19 +116,19 @@ progs="agetty sh bash cat cp date dd df dmesg ifconfig ln ls $packager mkdir \
        mkswap mount mv rm reboot route sleep swapoff swapon sync umount \
        eject chmod chroot grep halt rmdir init shutdown uname killall5 \
        install stone tar mktemp sort fold sed mkreiserfs cut head tail disktype \
-       zstd bzip2 gzip mkfs.ext3 mkfs.fat gasgui dialog stty wc fmt"
+       gzip mkfs.ext3 mkfs.fat gasgui dialog stty wc fmt"
 
 progs="$progs parted fdisk sfdisk"
 
-if [ $arch = powerpc* ] ; then
+if [ $arch = powerpc* ]; then
 	progs="$progs mac-fdisk pdisk"
 fi
 
-if [ $packager = bize ] ; then
+if [ $packager = bize ]; then
 	progs="$progs md5sum"
 fi
 
-for x in $progs ; do
+for x in $progs; do
 	fn=""
 	if   [ -e ../2nd_stage/bin/$x ]; then fn="bin/$x"
 	elif [ -e ../2nd_stage/sbin/$x ]; then fn="sbin/$x"
@@ -136,7 +136,7 @@ for x in $progs ; do
 	elif [ -e ../2nd_stage/usr/sbin/$x ]; then fn="usr/sbin/$x"
 	fi
 
-	if [ "$fn" ] ; then
+	if [ "$fn" ]; then
 		mv ../2nd_stage/$fn $fn
 	else
 		echo_error "\`- Program not found: $x"
@@ -177,7 +177,7 @@ mkdir -p etc/SDE-CONFIG
 mv ../2nd_stage/etc/SDE-CONFIG/config etc/SDE-CONFIG/
 echo_status "Move stone.d."
 mkdir -p etc/stone.d
-for i in gui_text gui_dialog mod_install mod_packages mod_gas default ; do
+for i in gui_text gui_dialog mod_install mod_packages mod_gas default; do
 	mv ../2nd_stage/etc/stone.d/$i.sh etc/stone.d
 done
 echo_status "Moving additional files."
@@ -215,8 +215,8 @@ cd $disksdir/
 
 echo_status "Creating stage2 archive."
 (cd 2nd_stage_small; find ! -type d |
-	tar -cf- --no-recursion --files-from=-) | bzip2 -4 > $isofsdir/stage2.tar.bz2
+	tar -cf- --no-recursion --files-from=-) | zstd -14 -T0 > $isofsdir/stage2.tar.zst
 
 echo_status "Creating stage2ext archive."
 (cd 2nd_stage; find ! -type d |
-	tar -cf- --no-recursion --files-from=-) | bzip2 -9 > $isofsdir/stage2ext.tar.bz2
+	tar -cf- --no-recursion --files-from=-) | zstd -18 -T0 > $isofsdir/stage2ext.tar.zst
