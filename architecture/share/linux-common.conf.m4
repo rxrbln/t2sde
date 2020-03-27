@@ -92,6 +92,7 @@ CONFIG_KMOD=y
 dnl Firmware loader can always be useful
 dnl
 CONFIG_FW_LOADER=y
+CONFIG_FW_LOADER_COMPRESS=y
 
 dnl Plug and play
 dnl
