@@ -301,10 +301,10 @@ static pid_t pid2ppid(pid_t pid)
 	int fd, rc;
 	pid_t ppid = 0;
 
-	sprintf(buffer, "/proc/%d/stat", pid);
+	snprintf(buffer, sizeof(buffer), "/proc/%d/stat", pid);
 	if ( (fd = open(buffer, O_RDONLY, 0)) < 0 ) return 0;
-	if ( (rc = read(fd, buffer, 99)) > 0) {
-		buffer[rc] = 0;
+	if ( (rc = read(fd, buffer, sizeof(buffer))) > 0) {
+		buffer[--rc] = 0;
 		/* format: 27910 (bash) S 27315 ... */
 		sscanf(buffer, "%*[^ ] %*[^ ] %*[^ ] %d", &ppid);
 	}
@@ -318,14 +318,14 @@ static pid_t pid2ppid(pid_t pid)
 static char *getpname(int pid)
 {
 	static char p[512];
-	char buffer[100]="";
+	char buffer[100];
 	char *arg=0, *b;
 	int i, fd, rc;
 
-	sprintf(buffer, "/proc/%d/cmdline", pid);
+	snprintf(buffer, sizeof(buffer), "/proc/%d/cmdline", pid);
 	if ( (fd = open(buffer, O_RDONLY, 0)) < 0 ) return "unkown";
-	if ( (rc = read(fd, buffer, 99)) > 0) {
-		buffer[rc--] = 0;
+	if ( (rc = read(fd, buffer, sizeof(buffer))) > 0) {
+		buffer[rc - 1] = 0;
 		for (i=0; i<rc; i++)
 			if (!buffer[i]) { arg = buffer+i+1; break; }
 	}
@@ -432,7 +432,7 @@ static void handle_file_access_before(const char * func, const char * file,
 }
 
 /* sort of, private realpath, mostly not readlink() */
-static void sort_of_realpath (const char *file, char *absfile)
+static void sort_of_realpath (const char *file, char absfile[PATH_MAX])
 {
 	/* make sure the filename is absolute */
 	if (file[0] != '/') {
@@ -520,7 +520,7 @@ static void handle_file_access_after(const char * func, const char * file,
 #endif
 	if (fd == -1) return;
 
-	sprintf(buf,"%s.%s:\t%s\n", cmdname, func, absfile);
+	snprintf(buf,sizeof(buf), "%s.%s:\t%s\n", cmdname, func, absfile);
 	write(fd,buf,strlen(buf));
 
 	close(fd);
