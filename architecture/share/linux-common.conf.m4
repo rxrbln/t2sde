@@ -30,6 +30,11 @@ CONFIG_SCHED_SMT=y
 CONFIG_IRQ_ALL_CPUS=y
 CONFIG_JUMP_LABEL=y
 
+dnl Default kernel and initrd compression (if available)
+dnl
+CONFIG_KERNEL_ZSTD=y
+CONFIG_RD_ZSTD=y
+
 dnl Memory
 dnl
 CONFIG_MEMORY_HOTPLUG=y
@@ -310,4 +315,6 @@ dnl RTC time keeping
 dnl
 CONFIG_RTC_CLASS=y
 
+dnl Other nice to have
+dnl
 CONFIG_MAGIC_SYSRQ=y
