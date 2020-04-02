@@ -4,7 +4,7 @@
 # 
 # T2 SDE: package/.../xorg-server/xcfgt2.sh
 # Copyright (C) 2005 - 2017 The T2 SDE Project
-# Copyright (C) 2005 - 2008 Rene Rebe - ExactCODE
+# Copyright (C) 2005 - 2020 Rene Rebe - ExactCODE
 # 
 # More information can be found in the files COPYING and README.
 # 
@@ -24,7 +24,7 @@ var_append() {
 
 tmp=`mktemp`
 
-echo "XcfgT2 (C) 2005 - 2008 Rene Rebe, ExactCODE"
+echo "XcfgT2 (C) 2005 - 2020 Rene Rebe, ExactCODE"
 
 sysid=
 if type -p dmidecode >/dev/null; then
@@ -64,7 +64,7 @@ case `echo "$card" | tr A-Z a-z` in
 	*savage*)	xdrv=savage ;;
 	*unichrome*|*castlerock*)	xdrv=via ;;
 	*virge*)	xdrv=s3virge ;;
-	"ps3 fb")	xdrv=fbdev ;;
+	ps3*fb)		xdrv=fbdev ;;
 	*s3*)		xdrv=s3 ;;
 
 	*intel*8*|*intel*9*|*intel*mobile*)	xdrv=intel ;;
@@ -140,8 +140,8 @@ modes=
 ddc=1
 
 # manual, boot command line overrides
-xmodes="xmodes= `cat /proc/cmdline`"; xmodes=${xmodes##*xmodes=}; xmodes=${xmodes%% *}
-xddc="xddc= `cat /proc/cmdline`"; xddc=${xddc##*xddc=}; xddc=${xddc%% *}
+xmodes="xmodes= $(< /proc/cmdline)"; xmodes=${xmodes##*xmodes=}; xmodes=${xmodes%% *}
+xddc="xddc= $(< /proc/cmdline)"; xddc=${xddc##*xddc=}; xddc=${xddc%% *}
 
 [ "$xmodes" ] && modes="$(echo $xmodes | sed 's/,/ /g; s/[^ ]\+/"&"/g')"
 [ "$xddc" ] && ddc="$xddc"
