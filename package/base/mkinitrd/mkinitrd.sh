@@ -38,6 +38,7 @@ done
 [ "$kernelver" ] || kernelver=`uname -r`
 [ "$moddir" ] || moddir="$root/lib/modules/$kernelver"
 
+modinfo="modinfo -b $moddir -k $kernelver"
 
 echo "Kernel: $kernelver, module dir: $moddir"
 
@@ -96,7 +97,7 @@ echo "Copying kernel modules ..."
 	xt=${x##$root}
 
 	# does it need firmware?
-	fw="`modinfo -F firmware $x`"
+	fw="`$modinfo -F firmware $x`"
 	if [ "$fw" ]; then
 	     if [ "$firmware" ]; then
 		echo "Warning: $x needs firmware"
@@ -126,7 +127,7 @@ echo "Copying kernel modules ..."
 	    zstd -18 -f --rm $tmpdir/$xt
 
 	    # add it's deps, too
-	    for fn in `modinfo -F depends $x | sed 's/,/ /g'`; do
+	    for fn in `$modinfo -F depends $x | sed 's/,/ /g'`; do
 		add_depend "$fn"
 	    done
 	fi
