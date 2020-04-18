@@ -17,7 +17,7 @@
 set -e
 
 map=`mktemp`
-firmware=1
+firmware=
 
 if [ $UID != 0 ]; then
 	echo "Non root - exiting ..."
@@ -28,7 +28,7 @@ while [ "$1" ]; do
   case $1 in
 	[0-9]*) kernelver="$1" ;;
 	-R) root="$2" ; shift ;;
-	--firmware) firmware= ;;
+	--firmware) firmware=1 ;;
 	*) echo "Usage: mkinitrd [ --firmware ] [ -R root ] [ kernelver ]"
 	   exit 1 ;;
   esac
