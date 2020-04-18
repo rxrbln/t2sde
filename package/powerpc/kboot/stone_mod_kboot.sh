@@ -31,6 +31,7 @@ EOT
 }
 
 create_kboot_conf() {
+	mkdir -p $etcpath/etc/
 	create_kernel_list > $etcpath/etc/kboot.conf
 
 	gui_message "This is the new $etcpath/etc/kboot.conf file:
