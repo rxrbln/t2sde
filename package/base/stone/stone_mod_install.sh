@@ -44,7 +44,8 @@ part_mkfs() {
 	cmd="gui_menu part_mkfs 'Create filesystem on $dev'"
 
 	maybe_add () {
-	  if grep -q $1 /proc/filesystems && type -p $3 > /dev/null; then
+	  if #grep -q $1 /proc/filesystems &&
+	     type -p $3 > /dev/null; then
 		cmd="$cmd '$1 ($2 filesystem)' \
 		'type wipefs 2>/dev/null && wipefs -a /dev/$dev; $3 $4 /dev/$dev'"
 	  fi
