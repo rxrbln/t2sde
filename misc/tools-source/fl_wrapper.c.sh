@@ -45,7 +45,6 @@ cat << EOT
 
 #define open   xxx_open
 #define open64 xxx_open64
-/* TODO: really implement *at and check for AT_FDCWD! */
 #define openat xxx_openat
 #define openat64 xxx_openat64
 #define mkfifo xxx_mkfifo
@@ -108,7 +107,28 @@ static void check_write_access(const char * , const char * );
 static void handle_file_access_before(const char *, const char *, struct status_t *);
 static void handle_file_access_after(const char *, const char *, struct status_t *);
 
-char filterdir[PATH_MAX], wlog[PATH_MAX], rlog[PATH_MAX], *cmdname = "unkown";
+char *cmdname = "unkown";
+char wlog[PATH_MAX], rlog[PATH_MAX], filterdir[PATH_MAX], atpath[PATH_MAX];
+
+const char* getatpath(int dirfd, const char* pathname) {
+  int ret;
+  char selffd[64];
+
+  ret = snprintf(selffd, sizeof(selffd), "/proc/self/fd/%d", dirfd);
+  /* TODO: short buffer handling */
+  ret = readlink(selffd, atpath, sizeof(atpath) - 1);
+  if (ret < 0) {
+    fprintf(stderr, "Failed to get atpath: %d, %s\n", dirfd, pathname);
+    return pathname;
+  }
+  atpath[ret] = 0;
+
+  strncat(atpath, "/", sizeof(atpath) - 1);
+  strncat(atpath, pathname, sizeof(atpath) - 1);
+  /* TODO: short buffer handling */
+
+  return atpath;
+}
 
 /* Wrapper Functions */
 EOT
@@ -128,9 +148,10 @@ add_wrapper()
 
 	# sanity check all new-style *at dirfd
 	atcheck=""
+
 	for x; do
-	    if [[ "$x" = *atfd* ]]; then
-		atcheck="${atcheck}if (${x##* } != AT_FDCWD) {fprintf(stderr, \"dirfd != AT_FDCWD: %d\n\", ${x##* }); };" # exit(1);
+	    if [[ "$x" = *atfd ]]; then
+		atcheck="${atcheck}if (${x##* } != AT_FDCWD) {f2 = getatpath(${x##* }, f);}"
 	    fi
 	done
 
@@ -145,16 +166,19 @@ $ret_type (*orig_$function)($p1) = 0;
 $ret_type $function($p1)
 {
 	struct status_t status;
+	const char* f2 = f;
 	int old_errno=errno;
 	$ret_type rc;
 	mode_t b = 0;
 
+	$atcheck
+
 #ifdef FLWRAPPER_BASEDIR
 	if (a & (O_WRONLY|O_CREAT|O_APPEND))
-		check_write_access("$function", f);
+		check_write_access("$function", f2);
 #endif
 
-	handle_file_access_before("$function", f, &status);
+	handle_file_access_before("$function", f2, &status);
 	if (!orig_$function) orig_$function = get_dl_symbol("$function");
 	errno=old_errno;
 
@@ -162,7 +186,6 @@ $ret_type $function($p1)
 	fprintf(stderr, "fl_wrapper.so debug [%d]: going to run original $function() at %p (wrapper at %p).\n",
 		getpid(), orig_$function, $function);
 #endif
-	//$atcheck
 
 	if (a & O_CREAT) {
 	  va_list ap;
@@ -177,7 +200,7 @@ $ret_type $function($p1)
 	  rc = orig_$function($p2);
 
 	old_errno=errno;
-	handle_file_access_after("$function", f, &status);
+	handle_file_access_after("$function", f2, &status);
 	errno=old_errno;
 
 	return rc;
@@ -209,10 +232,13 @@ $ret_type (*orig_$function)($p1) = 0;
 $ret_type $function($p1)
 {
 	struct status_t status;
+	const char* f2 = f;
 	int old_errno=errno;
 	$ret_type rc;
 
-	handle_file_access_before("$function", f, &status);
+	$atcheck
+
+	handle_file_access_before("$function", f2, &status);
 	if (!orig_$function) orig_$function = get_dl_symbol("$function");
 	errno=old_errno;
 
@@ -220,12 +246,11 @@ $ret_type $function($p1)
 	fprintf(stderr, "fl_wrapper.so debug [%d]: going to run original $function() at %p (wrapper at %p).\n",
 		getpid(), orig_$function, $function);
 #endif
-	//$atcheck
 
 	rc = orig_$function($p2);
 
 	old_errno=errno;
-	handle_file_access_after("$function", f, &status);
+	handle_file_access_after("$function", f2, &status);
 	errno=old_errno;
 
 	return rc;
@@ -257,8 +282,8 @@ add_wrapper 'int,   linkat,  int atfd, const char* s, int atfd2, const char* f, 
 add_wrapper 'int,   symlink, const char* s, const char* f'
 add_wrapper 'int,   symlinkat, const char* s, int atfd, const char* f'
 add_wrapper 'int,   rename,  const char* s, const char* f'
-add_wrapper 'int,   renameat,  int atfd, const char* s, int atfd2, const char* f'
-add_wrapper 'int,   renameat2, int atfd, const char* s, int atfd2, const char* f, unsigned int flags'
+add_wrapper 'int,   renameat,  int atfds, const char* s, int atfd, const char* f'
+add_wrapper 'int,   renameat2, int atfds, const char* s, int atfd, const char* f, unsigned int flags'
 
 add_wrapper 'int,   utime,   const char* f, const struct utimbuf* t'
 add_wrapper 'int,   utimes,  const char* f, struct timeval* t'
