@@ -126,6 +126,14 @@ add_wrapper()
 	for x ; do x="${x%%\[\]}" ; p2="$p2${x##* }, " ; done
 	p1="${p1%, }" ; p2="${p2%, }"
 
+	# sanity check all new-style *at dirfd
+	atcheck=""
+	for x; do
+	    if [[ "$x" = *atfd* ]]; then
+		atcheck="${atcheck}if (${x##* } != AT_FDCWD) {fprintf(stderr, \"dirfd != AT_FDCWD: %d\n\", ${x##* }); };" # exit(1);
+	    fi
+	done
+
 	case ${function} in
 	open*)
 		# remove varg from $p2
@@ -154,6 +162,7 @@ $ret_type $function($p1)
 	fprintf(stderr, "fl_wrapper.so debug [%d]: going to run original $function() at %p (wrapper at %p).\n",
 		getpid(), orig_$function, $function);
 #endif
+	//$atcheck
 
 	if (a & O_CREAT) {
 	  va_list ap;
@@ -211,6 +220,8 @@ $ret_type $function($p1)
 	fprintf(stderr, "fl_wrapper.so debug [%d]: going to run original $function() at %p (wrapper at %p).\n",
 		getpid(), orig_$function, $function);
 #endif
+	//$atcheck
+
 	rc = orig_$function($p2);
 
 	old_errno=errno;
@@ -226,8 +237,8 @@ EOT
 
 add_wrapper 'int,   open,    const char* f, int a, ...'
 add_wrapper 'int,   open64,  const char* f, int a, ...'
-add_wrapper 'int,   openat,  int dirfd, const char* f, int a, ...'
-add_wrapper 'int,   openat64,int dirfd, const char* f, int a, ...'
+add_wrapper 'int,   openat,  int atfd, const char* f, int a, ...'
+add_wrapper 'int,   openat64,int atfd, const char* f, int a, ...'
 
 add_wrapper 'FILE*, fopen,   const char* f, const char* g'
 add_wrapper 'FILE*, fopen64, const char* f, const char* g'
@@ -241,17 +252,17 @@ add_wrapper 'int,   mknod,   const char* f, mode_t m, dev_t d'
 add_wrapper 'int,   __xmknod, int ver, const char* f, mode_t m, dev_t* d'
 
 add_wrapper 'int,   link,    const char* s, const char* f'
-add_wrapper 'int,   linkat,  int sfd, const char* s, int ffd, const char* f, int flags'
+add_wrapper 'int,   linkat,  int atfd, const char* s, int atfd2, const char* f, int flags'
 
 add_wrapper 'int,   symlink, const char* s, const char* f'
-add_wrapper 'int,   symlinkat, const char* s, int dirfd, const char* f'
+add_wrapper 'int,   symlinkat, const char* s, int atfd, const char* f'
 add_wrapper 'int,   rename,  const char* s, const char* f'
-add_wrapper 'int,   renameat,  int olddirfd, const char* s, int newdirfd, const char* f'
-add_wrapper 'int,   renameat2, int olddirfd, const char* s, int newdirfd, const char* f, unsigned int flags'
+add_wrapper 'int,   renameat,  int atfd, const char* s, int atfd2, const char* f'
+add_wrapper 'int,   renameat2, int atfd, const char* s, int atfd2, const char* f, unsigned int flags'
 
 add_wrapper 'int,   utime,   const char* f, const struct utimbuf* t'
 add_wrapper 'int,   utimes,  const char* f, struct timeval* t'
-add_wrapper 'int,   utimensat, int dirfd, const char* f, const struct timespec* t, int flags'
+add_wrapper 'int,   utimensat, int atfd, const char* f, const struct timespec* t, int flags'
 
 add_wrapper 'int,   execv,   const char* f, char* const a[]'
 add_wrapper 'int,   execve,  const char* f, char* const a[], char* const e[]'
