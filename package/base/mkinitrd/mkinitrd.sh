@@ -163,8 +163,8 @@ echo "Injecting programs and configuration ..."
 
 # copying config
 #
-cp -ar $root/etc/group $tmpdir/etc/
-cp -ar $root/etc/udev $tmpdir/etc/
+cp -ar $root/etc/{group,udev} $tmpdir/etc/
+
 [ -e $root/lib/udev/rules.d ] && cp -ar $root/lib/udev/rules.d $tmpdir/lib/udev/
 [ -e $root/etc/mdadm.conf ] && cp -ar $root/etc/mdadm.conf $tmpdir/etc/
 cp -ar $root/etc/modprobe.* $root/etc/ld-* $tmpdir/etc/ 2>/dev/null || true
@@ -175,13 +175,16 @@ elf_magic () {
 	readelf -h "$1" | grep 'Machine\|Class'
 }
 
-# copy dynamic libraries, if any.
+# copy dynamic libraries, and optional plugins, if any.
 #
 declare -A added
+extralibs="`ls $root/lib*/libnss_files.so* 2> /dev/null`"
+extralibs="${extralibs##*/}"
+
 copy_dyn_libs () {
 	local magic
 	# we can not use ldd(1) as it loads the object, which does not work on cross builds
-	for lib in `readelf -de $1 |
+	for lib in $extralibs `readelf -de $1 |
 		sed -n -e 's/.*Shared library.*\[\([^]\]*\)\]/\1/p' \
 		       -e 's/.*Requesting program interpreter: \([^]]*\)\]/\1/p'`
 	do
