@@ -168,8 +168,9 @@ cp -ar $root/etc/{group,udev} $tmpdir/etc/
 [ -e $root/lib/udev/rules.d ] && cp -ar $root/lib/udev/rules.d $tmpdir/lib/udev/
 [ -e $root/etc/mdadm.conf ] && cp -ar $root/etc/mdadm.conf $tmpdir/etc/
 cp -ar $root/etc/modprobe.* $root/etc/ld-* $tmpdir/etc/ 2>/dev/null || true
-# in theory all, but fat and currently only cdrom_id is needed ...
-#cp -a $root/lib/udev/cdrom_id $tmpdir/lib/udev/
+
+# in theory all, but fat and not all always needed ...
+cp -a $root/lib/udev/{ata,scsi,cdrom}_id $tmpdir/lib/udev/
 
 elf_magic () {
 	readelf -h "$1" | grep 'Machine\|Class'
