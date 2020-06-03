@@ -35,10 +35,6 @@ done
 root="root= $(< /proc/cmdline)" ; root=${root##*root=} ; root=${root%% *}
 init="init= $(< /proc/cmdline)" ; init=${init##*init=} ; init=${init%% *}
 
-echo "Assembling MD/LVM arrays"
-[ -e /sbin/mdadm ] && mdadm --assemble --scan
-[ -e /sbin/lvchange ] && lvchange -a ay ${root#/dev/}
-
 # maybe resume from disk?
 resume="$(< /proc/cmdline)"
 if [[ "$resume" = *resume* ]] && [[ "$resume" != *noresume* ]]; then
@@ -47,6 +43,12 @@ if [[ "$resume" = *resume* ]] && [[ "$resume" != *noresume* ]]; then
 sed 's/[^ ]* *[^ t]* *[^ ]* *[^ ]* *\([0-9]*\), *\([0-9]*\) .*/\1:\2/'`
 	echo "Attempting to resume from disk $resume."
 	echo "$resume" > /sys/power/resume
+fi
+
+if [ ! -e "$root" ]; then
+	echo "Assembling MD/LVM arrays"
+	[ -e /sbin/mdadm ] && mdadm --assemble --scan
+	[ -e /sbin/lvchange ] && lvchange -a ay ${root#/dev/}
 fi
 
 mkdir /root
@@ -90,4 +92,4 @@ fi
 
 echo "Ouhm - some boot problem, but I do not scream. Debug shell:"
 kill %1
-exec /bin/sh
+exec $0
