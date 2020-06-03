@@ -92,4 +92,4 @@ fi
 
 echo "Ouhm - some boot problem, but I do not scream. Debug shell:"
 kill %1
-exec $0
+exec /bin/sh
