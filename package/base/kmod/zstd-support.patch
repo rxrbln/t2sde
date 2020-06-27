@@ -27,6 +27,46 @@ index 47505c1..155456f 100644
  
  noinst_LTLIBRARIES += libkmod/libkmod-internal.la
  libkmod_libkmod_internal_la_SOURCES = $(libkmod_libkmod_la_SOURCES)
+--- ./Makefile.in.backup	2020-06-27 17:51:38.168648853 +0200
++++ ./Makefile.in	2020-06-27 17:51:39.855648975 +0200
+@@ -902,6 +903,8 @@
+ libexecdir = @libexecdir@
+ liblzma_CFLAGS = @liblzma_CFLAGS@
+ liblzma_LIBS = @liblzma_LIBS@
++libzstd_CFLAGS = @libzstd_CFLAGS@
++libzstd_LIBS = @libzstd_LIBS@
+ localedir = @localedir@
+ localstatedir = @localstatedir@
+ mandir = @mandir@
+@@ -1037,7 +1040,7 @@
+ 
+ libkmod_libkmod_la_LIBADD = \
+ 	shared/libshared.la \
+-	${liblzma_LIBS} ${zlib_LIBS} ${libcrypto_LIBS}
++	${libzstd_LIBS} ${liblzma_LIBS} ${zlib_LIBS} ${libcrypto_LIBS}
+ 
+ libkmod_libkmod_internal_la_SOURCES = $(libkmod_libkmod_la_SOURCES)
+ libkmod_libkmod_internal_la_LDFLAGS = $(AM_LDFLAGS) \
+@@ -2633,6 +2631,10 @@
+ 	tardir=$(distdir) && $(am__tar) | XZ_OPT=$${XZ_OPT--e} xz -c >$(distdir).tar.xz
+ 	$(am__post_remove_distdir)
+ 
++dist-zstd: distdir
++	tardir=$(distdir) && $(am__tar) | zstd -c $${ZSTD_CLEVEL-$${ZSTD_OPT--19}} >$(distdir).tar.zst
++	$(am__post_remove_distdir)
++
+ dist-tarZ: distdir
+ 	@echo WARNING: "Support for distribution archives compressed with" \
+ 		       "legacy program 'compress' is deprecated." >&2
+@@ -2675,6 +2677,8 @@
+ 	  eval GZIP= gzip $(GZIP_ENV) -dc $(distdir).shar.gz | unshar ;;\
+ 	*.zip*) \
+ 	  unzip $(distdir).zip ;;\
++	*.tar.zst*) \
++	  zstd -dc $(distdir).tar.zst | $(am__untar) ;;\
+ 	esac
+ 	chmod -R a-w $(distdir)
+ 	chmod u+w $(distdir)
 diff --git a/configure.ac b/configure.ac
 index e885d79..a286159 100644
 --- a/configure.ac
@@ -50,6 +90,214 @@ index e885d79..a286159 100644
  	AS_HELP_STRING([--with-xz], [handle Xz-compressed modules @<:@default=disabled@:>@]),
  	[], [with_xz=no])
 @@ -307,7 +318,7 @@ AC_MSG_RESULT([
+ 	tools:			${enable_tools}
+ 	python bindings:	${enable_python}
+ 	logging:		${enable_logging}
+-	compression:		xz=${with_xz}  zlib=${with_zlib}
++	compression:		zstd=${with_zstd}  xz=${with_xz}  zlib=${with_zlib}
+ 	debug:			${enable_debug}
+ 	coverage:		${enable_coverage}
+ 	doc:			${enable_gtk_doc}
+--- ./configure.backup	2020-06-27 17:45:44.029623386 +0200
++++ ./configure	2020-06-27 17:45:45.894623520 +0200
+@@ -675,6 +675,8 @@
+ zlib_CFLAGS
+ liblzma_LIBS
+ liblzma_CFLAGS
++libzstd_LIBS
++libzstd_CFLAGS
+ rootlibdir
+ MKOSI
+ XSLTPROC
+@@ -813,6 +815,7 @@
+ with_sysroot
+ enable_libtool_lock
+ with_rootlibdir
++with_zstd
+ with_xz
+ with_zlib
+ with_openssl
+@@ -839,6 +842,8 @@
+ PKG_CONFIG
+ PKG_CONFIG_PATH
+ PKG_CONFIG_LIBDIR
++libzstd_CFLAGS
++libzstd_LIBS
+ liblzma_CFLAGS
+ liblzma_LIBS
+ zlib_CFLAGS
+@@ -1506,6 +1511,7 @@
+   --with-sysroot[=DIR]    Search for dependent libraries within DIR (or the
+                           compiler's sysroot if not specified).
+   --with-rootlibdir=DIR   rootfs directory to install shared libraries
++  --with-zstd             handle Zstd-compressed modules [default=disabled]
+   --with-xz               handle Xz-compressed modules [default=disabled]
+   --with-zlib             handle gzipped modules [default=disabled]
+   --with-openssl          handle PKCS7 signatures [default=disabled]
+@@ -1528,6 +1534,10 @@
+               directories to add to pkg-config's search path
+   PKG_CONFIG_LIBDIR
+               path overriding pkg-config's built-in search path
++  libzstd_CFLAGS
++              C compiler flags for libzstd, overriding pkg-config
++  libzstd_LIBS
++              linker flags for libzstd, overriding pkg-config
+   liblzma_CFLAGS
+               C compiler flags for liblzma, overriding pkg-config
+   liblzma_LIBS
+@@ -13375,6 +13382,142 @@
+ 
+ 
+ 
++# Check whether --with-zstd was given.
++if test "${with_zstd+set}" = set; then :
++  withval=$with_zstd;
++else
++  with_zstd=no
++fi
++
++if test "x$with_zstd" != "xno"; then :
++
++
++pkg_failed=no
++{ $as_echo "$as_me:${as_lineno-$LINENO}: checking for libzstd >= 1.4.4" >&5
++$as_echo_n "checking for libzstd >= 1.4.4... " >&6; }
++
++if test -n "$libzstd_CFLAGS"; then
++    pkg_cv_libzstd_CFLAGS="$libzstd_CFLAGS"
++ elif test -n "$PKG_CONFIG"; then
++    if test -n "$PKG_CONFIG" && \
++    { { $as_echo "$as_me:${as_lineno-$LINENO}: \$PKG_CONFIG --exists --print-errors \"libzstd >= 1.4.4\""; } >&5
++  ($PKG_CONFIG --exists --print-errors "libzstd >= 1.4.4") 2>&5
++  ac_status=$?
++  $as_echo "$as_me:${as_lineno-$LINENO}: \$? = $ac_status" >&5
++  test $ac_status = 0; }; then
++  pkg_cv_libzstd_CFLAGS=`$PKG_CONFIG --cflags "libzstd >= 1.4.4" 2>/dev/null`
++		      test "x$?" != "x0" && pkg_failed=yes
++else
++  pkg_failed=yes
++fi
++ else
++    pkg_failed=untried
++fi
++if test -n "$libzstd_LIBS"; then
++    pkg_cv_libzstd_LIBS="$libzstd_LIBS"
++ elif test -n "$PKG_CONFIG"; then
++    if test -n "$PKG_CONFIG" && \
++    { { $as_echo "$as_me:${as_lineno-$LINENO}: \$PKG_CONFIG --exists --print-errors \"libzstd >= 1.4.4\""; } >&5
++  ($PKG_CONFIG --exists --print-errors "libzstd >= 1.4.4") 2>&5
++  ac_status=$?
++  $as_echo "$as_me:${as_lineno-$LINENO}: \$? = $ac_status" >&5
++  test $ac_status = 0; }; then
++  pkg_cv_libzstd_LIBS=`$PKG_CONFIG --libs "libzstd >= 1.4.4" 2>/dev/null`
++		      test "x$?" != "x0" && pkg_failed=yes
++else
++  pkg_failed=yes
++fi
++ else
++    pkg_failed=untried
++fi
++
++
++
++if test $pkg_failed = yes; then
++        { $as_echo "$as_me:${as_lineno-$LINENO}: result: no" >&5
++$as_echo "no" >&6; }
++
++if $PKG_CONFIG --atleast-pkgconfig-version 0.20; then
++        _pkg_short_errors_supported=yes
++else
++        _pkg_short_errors_supported=no
++fi
++        if test $_pkg_short_errors_supported = yes; then
++	        libzstd_PKG_ERRORS=`$PKG_CONFIG --short-errors --print-errors --cflags --libs "libzstd >= 1.4.4" 2>&1`
++        else
++	        libzstd_PKG_ERRORS=`$PKG_CONFIG --print-errors --cflags --libs "libzstd >= 1.4.4" 2>&1`
++        fi
++	# Put the nasty error message in config.log where it belongs
++	echo "$libzstd_PKG_ERRORS" >&5
++
++	as_fn_error $? "Package requirements (libzstd >= 1.4.4) were not met:
++
++$libzstd_PKG_ERRORS
++
++Consider adjusting the PKG_CONFIG_PATH environment variable if you
++installed software in a non-standard prefix.
++
++Alternatively, you may set the environment variables libzstd_CFLAGS
++and libzstd_LIBS to avoid the need to call pkg-config.
++See the pkg-config man page for more details." "$LINENO" 5
++elif test $pkg_failed = untried; then
++        { $as_echo "$as_me:${as_lineno-$LINENO}: result: no" >&5
++$as_echo "no" >&6; }
++	{ { $as_echo "$as_me:${as_lineno-$LINENO}: error: in \`$ac_pwd':" >&5
++$as_echo "$as_me: error: in \`$ac_pwd':" >&2;}
++as_fn_error $? "The pkg-config script could not be found or is too old.  Make sure it
++is in your PATH or set the PKG_CONFIG environment variable to the full
++path to pkg-config.
++
++Alternatively, you may set the environment variables libzstd_CFLAGS
++and libzstd_LIBS to avoid the need to call pkg-config.
++See the pkg-config man page for more details.
++
++To get pkg-config, see <http://pkg-config.freedesktop.org/>.
++See \`config.log' for more details" "$LINENO" 5; }
++else
++	libzstd_CFLAGS=$pkg_cv_libzstd_CFLAGS
++	libzstd_LIBS=$pkg_cv_libzstd_LIBS
++        { $as_echo "$as_me:${as_lineno-$LINENO}: result: yes" >&5
++$as_echo "yes" >&6; }
++
++fi
++
++$as_echo "#define ENABLE_ZSTD 1" >>confdefs.h
++
++
++else
++
++	{ $as_echo "$as_me:${as_lineno-$LINENO}: Zstd support not requested" >&5
++$as_echo "$as_me: Zstd support not requested" >&6;}
++
++fi
++
++
++  case " $with_features "  in #(
++  *" ZSTD "*) :
++    { { $as_echo "$as_me:${as_lineno-$LINENO}: : with_features already contains ZSTD"; } >&5
++  (: with_features already contains ZSTD) 2>&5
++  ac_status=$?
++  $as_echo "$as_me:${as_lineno-$LINENO}: \$? = $ac_status" >&5
++  test $ac_status = 0; } ;; #(
++  *) :
++
++	    if test "x$with_features" != "x"; then :
++  as_fn_append with_features " "
++fi
++            if test "x$with_zstd" = "xyes"; then :
++  as_fn_append with_features "+ZSTD"
++else
++  as_fn_append with_features "-ZSTD"
++fi
++
++   ;;
++esac
++
++
++
++
+ # Check whether --with-xz was given.
+ if test "${with_xz+set}" = set; then :
+   withval=$with_xz;
+@@ -17013,7 +17158,7 @@
+ 	tools:			${enable_tools}
+ 	python bindings:	${enable_python}
+ 	logging:		${enable_logging}
+-	compression:		xz=${with_xz}  zlib=${with_zlib}
++	compression:		zstd=${with_zstd}  xz=${with_xz}  zlib=${with_zlib}
+ 	debug:			${enable_debug}
+ 	coverage:		${enable_coverage}
+ 	doc:			${enable_gtk_doc}
+@@ -17042,7 +17187,7 @@
  	tools:			${enable_tools}
  	python bindings:	${enable_python}
  	logging:		${enable_logging}
