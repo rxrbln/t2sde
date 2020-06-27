@@ -24,9 +24,13 @@ part_swap_action() {
 }
 
 part_mount() {
-	local dir
+	local dir="/ /boot /home /srv /var"
+	local d
+	for d in $dir; do
+		grep -q " /mnt/target${d%/} " /proc/mounts || break
+	done
 	gui_input "Mount device $1 on directory
-(for example /, /home, /var, ...)" '/' dir
+(for example ${dir// /, }, ...)" "${d:-/}" dir
 	if [ "$dir" ]; then
 		dir="$( echo $dir | sed 's,^/*,,; s,/*$,,' )"
 		if [ -z "$dir" ] || grep -q " /mnt/target " /proc/mounts
