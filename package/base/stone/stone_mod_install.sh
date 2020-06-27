@@ -25,6 +25,7 @@ part_swap_action() {
 
 part_mount() {
 	local dir="/ /boot /home /srv /var"
+	[ -d /sys/firmware/efi ] && dir="${dir/boot/boot/efi}"
 	local d
 	for d in $dir; do
 		grep -q " /mnt/target${d%/} " /proc/mounts || break
