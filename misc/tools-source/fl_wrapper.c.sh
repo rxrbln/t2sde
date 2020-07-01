@@ -171,7 +171,9 @@ $ret_type $function($p1)
 	$ret_type rc;
 	mode_t b = 0;
 
+#ifdef AT_FDCWD
 	$atcheck
+#endif
 
 #ifdef FLWRAPPER_BASEDIR
 	if (a & (O_WRONLY|O_CREAT|O_APPEND))
@@ -236,7 +238,9 @@ $ret_type $function($p1)
 	int old_errno=errno;
 	$ret_type rc;
 
+#ifdef AT_FDCWD
 	$atcheck
+#endif
 
 	handle_file_access_before("$function", f2, &status);
 	if (!orig_$function) orig_$function = get_dl_symbol("$function");
