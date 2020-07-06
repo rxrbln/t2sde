@@ -12,7 +12,7 @@
 # GNU General Public License can be found in the file COPYING.
 # --- T2-COPYRIGHT-NOTE-END ---
 #
-# [MAIN] 70 kmoot kBoot Loader Setup
+# [MAIN] 70 kboot kBoot Loader Setup
 # [SETUP] 90 kboot
 
 create_kernel_list() {
@@ -84,7 +84,7 @@ Automatically configure kboot now?"; then
 		"(Re-)Create default $etcpath/etc/kboot.conf" 'create_kboot_conf' \
 		'' '' \
 		"Edit $etcpath/etc/kboot.conf (Config file)" \
-		"gui_edit 'kBoot Configurationp' $etcpath/etc/kboot.conf"
+		"gui_edit 'kBoot Configuration' $etcpath/etc/kboot.conf"
     do : ; done
 }
 
