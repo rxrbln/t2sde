@@ -167,7 +167,7 @@ Automatically install yaboot now?"; then
 		'(Re-)Install the yaboot boot chrp script and binary' 'yaboot_install' \
 		'' '' \
 		"Edit /etc/yaboot.conf (Config file)" \
-			"gui_edit 'Yaboot Configurationp' /etc/yaboot.conf"
+			"gui_edit 'Yaboot Configuration' /etc/yaboot.conf"
     do : ; done
 }
 
