@@ -255,7 +255,7 @@ CONFIG_SERIAL_8250_CONSOLE=y
 dnl Printer (Parallel) Options
 dnl
 CONFIG_PRINTER=y
-CONFIG_PARPORT=y
+CONFIG_PARPORT=m
 CONFIG_PARPORT_PC=y
 CONFIG_PARPORT_1284=y
 
@@ -300,7 +300,7 @@ CONFIG_SYSCTL=y
 
 dnl Language stuff, code pages, ... (needed for vfat mounts)
 dnl
-CONFIG_NLS=y
+CONFIG_NLS=m
 CONFIG_NLS_CODEPAGE_437=y
 CONFIG_NLS_ISO8859_1=y
 
