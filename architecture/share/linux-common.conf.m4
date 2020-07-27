@@ -30,6 +30,8 @@ CONFIG_SCHED_SMT=y
 CONFIG_IRQ_ALL_CPUS=y
 CONFIG_JUMP_LABEL=y
 
+CONFIG_MMIOTRACE=y
+
 dnl Default kernel and initrd compression (if available)
 dnl
 CONFIG_KERNEL_ZSTD=y
@@ -132,7 +134,7 @@ dnl Enable PCMCIA (PC-Card) as modules
 dnl
 CONFIG_PCMCIA=m
 CONFIG_CARDBUS=y
-CONFIG_PCCARD=y
+CONFIG_PCCARD=m
 CONFIG_TCIC=y
 CONFIG_I82092=y
 CONFIG_I82365=y
@@ -273,7 +275,7 @@ CONFIG_FB_OF=y
 
 dnl The AGP support can be modular
 dnl
-CONFIG_AGP=y
+CONFIG_AGP=m
 
 dnl DRM drivers for hardware 3D
 dnl
