@@ -36,6 +36,12 @@ dnl Default kernel and initrd compression (if available)
 dnl
 CONFIG_KERNEL_ZSTD=y
 CONFIG_RD_ZSTD=y
+# CONFIG_RD_BZIP2 is not set
+# CONFIG_RD_LZMA is not set
+# CONFIG_RD_XZ is not set
+# CONFIG_RD_LZO is not set
+# CONFIG_RD_LZ4 is not set
+
 
 dnl Memory
 dnl
@@ -99,7 +105,8 @@ CONFIG_KMOD=y
 dnl Firmware loader can always be useful
 dnl
 CONFIG_FW_LOADER=y
-CONFIG_FW_LOADER_COMPRESS=y
+CONFIG_FW_LOADER_COMPRESS_ZSTD=y
+# CONFIG_FW_CACHE is not set
 
 dnl Plug and play
 dnl
