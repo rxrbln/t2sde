@@ -115,7 +115,7 @@ echo "Copying kernel modules ..."
 			echo "Adding firmware: $fn"
 			cp -af "$root$fn" "$dir/"
 			# TODO: copy source if symlink
-			[ -f "$tmpdir/$fn" ] && xz -f "$tmpdir/$fn"
+			[ -f "$tmpdir/$fn" ] && zstd -19 --rm "$tmpdir/$fn"
 		    fi
 		done
 	     else
