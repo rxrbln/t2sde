@@ -32,6 +32,11 @@ CONFIG_JUMP_LABEL=y
 
 CONFIG_MMIOTRACE=y
 
+dnl For sandboxing, e.g. Chrome
+dnl
+CONFIG_NAMESPACES=y
+CONFIG_USER_NS=y
+
 dnl Default kernel and initrd compression (if available)
 dnl
 CONFIG_KERNEL_ZSTD=y
