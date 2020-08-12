@@ -106,7 +106,7 @@ echo "Copying kernel modules ..."
 		echo "Warning: $x needs firmware"
 		for fn in $fw; do
 		    local fn="/lib/firmware/$fn"
-		    local dir="$tmpdir/${fn%/*}"
+		    local dir="$tmpdir${fn%/*}"
 		    if [ ! -e "$root$fn" ]; then # -a ! -e "$root$fn".*z* ]; then
 			echo "Warning: firmware $fn, not found, skipped"
 			skipped=1
@@ -115,7 +115,7 @@ echo "Copying kernel modules ..."
 			echo "Adding firmware: $fn"
 			cp -af "$root$fn" "$dir/"
 			# TODO: copy source if symlink
-			[ -f "$tmpdir/$fn" ] && zstd -19 --rm "$tmpdir/$fn"
+			[ -f "$tmpdir$fn" ] && zstd -19 --rm -f "$tmpdir$fn"
 		    fi
 		done
 	     else
@@ -125,9 +125,9 @@ echo "Copying kernel modules ..."
 	fi
 
 	if [ -z "$skipped" ]; then
-	    mkdir -p `dirname $tmpdir/$xt`
-	    cp -af $x $tmpdir/$xt
-	    zstd -18 -f --rm $tmpdir/$xt
+	    mkdir -p `dirname $tmpdir$xt`
+	    cp -af $x $tmpdir$xt
+	    zstd -19 --rm -f $tmpdir$xt
 
 	    # add it's deps, too
 	    for fn in `$modinfo -F depends $x | sed 's/,/ /g'`; do
@@ -144,11 +144,11 @@ echo "Copying kernel modules ..."
   cat $map |
   grep -v -e /wireless/ -e netfilter |
   grep  -e reiserfs -e reiser4 -e ext2 -e ext3 -e ext4 -e btrfs -e /jfs -e /xfs \
-	-e isofs -e udf -e /unionfs -e ntfs -e fat -e dm-mod \
+	-e isofs -e udf -e /unionfs -e ntfs -e fat -e dm-mod -e dm-crypt \
 	-e /ide/ -e /ata/ -e /scsi/ -e /message/ -e /sdhci/ -e nvme \
 	-e cciss -e ips -e virtio -e floppy -e crypto \
 	-e hci -e usb-common -e usb-storage -e sbp2 -e uas \
-	-e /net/ -e drivers/md/ -e '/ipv6\.' \
+	-e /net/ -e md/raid -e '/ipv6\.' \
 	-e usbhid -e hid-generic -e hid-multitouch -e hid-apple -e hid-microsoft |
   while read fn; do
 	add_depend "$fn"
@@ -158,6 +158,8 @@ echo "Copying kernel modules ..."
 # generate map files
 #
 $depmod -ae -b $tmpdir -F $sysmap $kernelver
+# only keep the .bin-ary files
+rm $tmpdir/lib/modules/$kernelver/{modules.alias,modules.dep,modules.symbols}
 
 echo "Injecting programs and configuration ..."
 
