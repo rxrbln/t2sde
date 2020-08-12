@@ -48,6 +48,7 @@ CONFIG_XFS_FS=m
 CONFIG_XFS_POSIX_ACL=y
 CONFIG_ISO9660_FS=m
 CONFIG_FAT_FS=m
+CONFIG_SQUASHFS=m
 
 dnl Network FS settings
 dnl Version 3 has several advantages ...
@@ -69,10 +70,6 @@ CONFIG_RAMFS=m
 CONFIG_CRAMFS=m
 CONFIG_TMPFS=y
 CONFIG_DEVTMPFS=y
-
-dnl Squashfs (if patched in)
-dnl
-CONFIG_SQUASHFS=y
 
 dnl Enable Large Block Device support for ext4
 dnl
