@@ -1,6 +1,6 @@
 #!/bin/sh
 
-echo "T2 SDE early userspace (C) 2005 - 2019 Rene Rebe, ExactCODE"
+echo "T2 SDE early userspace (C) 2005 - 2020 Rene Rebe, ExactCODE"
 
 PATH=/sbin:/bin:/usr/bin:/usr/sbin
 
@@ -18,18 +18,6 @@ udevadm trigger
 udevadm settle
 [ -e /dev/console ] || mknod /dev/console c 5 1
 [ -e /dev/tty ] || mknod /dev/tty c 5 0
-
-echo "Loading additional subsystem and filesystem driver ..."
-# well some hardcoded help for now ...
-for x in sbp2 ide-generic ide-disk ide-cd sd_mod sr_mod sg raid1; do
-	modprobe $x 2> /dev/null
-done
-
-# the modular filesystems ...
-for x in /lib/modules/*/kernel/fs/{*/,}*.*o ; do
-	x=${x##*/} ; x=${x%.*o}
-	modprobe $x 2> /dev/null
-done
 
 # get the root device and init
 root="root= $(< /proc/cmdline)" ; root=${root##*root=} ; root=${root%% *}
