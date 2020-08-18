@@ -20,6 +20,11 @@ map=`mktemp`
 firmware=
 archprefix=
 
+declare -A vitalmods
+vitalmods[qla1280.ko]=1 # Sgi Octane
+vitalmods[qla2xxx.ko]=1 # Sun Blade
+
+
 if [ $UID != 0 ]; then
 	echo "Non root - exiting ..."
 	exit 1
@@ -85,6 +90,7 @@ echo "Copying kernel modules ..."
 
 (
   declare -A added
+
   add_depend() {
      local skipped=
      local x="$1"
@@ -93,8 +99,8 @@ echo "Copying kernel modules ..."
 
 	# expand to full name if it was a depend
 	[ $x = ${x##*/} ] && x=`sed -n "/\/$x\.ko.*/{p; q}" $map`
-
-	echo -n "${x##*/} "
+	local module=${x##*/}
+	echo -n "$module "
 
 	# strip $root prefix
 	xt=${x##$root}
@@ -102,24 +108,25 @@ echo "Copying kernel modules ..."
 	# does it need firmware?
 	fw="`$modinfo -F firmware $x`"
 	if [ "$fw" ]; then
-	     if [ "$firmware" ]; then
-		echo "Warning: $x needs firmware"
+	     echo -e -n "\nWarning: $module needs firmware"
+	     if [ "$firmware" -o "${vitalmods[$module]}" ]; then
 		for fn in $fw; do
 		    local fn="/lib/firmware/$fn"
 		    local dir="$tmpdir${fn%/*}"
 		    if [ ! -e "$root$fn" ]; then # -a ! -e "$root$fn".*z* ]; then
-			echo "Warning: firmware $fn, not found, skipped"
+			echo ", not found, skipped"
 			skipped=1
 		    else
 			mkdir -p "$dir"
-			echo "Adding firmware: $fn"
+			echo -n ", $fn"
 			cp -af "$root$fn" "$dir/"
 			# TODO: copy source if symlink
-			[ -f "$tmpdir$fn" ] && zstd -19 --rm -f "$tmpdir$fn"
+			[ -f "$tmpdir$fn" ] && zstd -19 --rm -f --quiet "$tmpdir$fn"
 		    fi
 		done
+		echo
 	     else
-		echo "Warning: $x needs firmware, skipped"
+		echo ", skipped"
 		skipped=1
 	     fi
 	fi
@@ -127,7 +134,7 @@ echo "Copying kernel modules ..."
 	if [ -z "$skipped" ]; then
 	    mkdir -p `dirname $tmpdir$xt`
 	    cp -af $x $tmpdir$xt
-	    zstd -19 --rm -f $tmpdir$xt
+	    zstd -19 --rm -f --quiet $tmpdir$xt
 
 	    # add it's deps, too
 	    for fn in `$modinfo -F depends $x | sed 's/,/ /g'`; do
