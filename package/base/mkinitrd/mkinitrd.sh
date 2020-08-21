@@ -24,6 +24,7 @@ declare -A vitalmods
 vitalmods[qla1280.ko]=1 # Sgi Octane
 vitalmods[qla2xxx.ko]=1 # Sun Blade
 
+declare -A added
 
 if [ $UID != 0 ]; then
 	echo "Non root - exiting ..."
@@ -89,16 +90,16 @@ mknod $tmpdir/dev/console c 5 1
 echo "Copying kernel modules ..."
 
 (
-  declare -A added
-
   add_depend() {
      local skipped=
      local x="$1"
+
+     # expand to full name if it was a depend
+     [ $x = ${x##*/} ] && x=`sed -n "/\/$x\.ko.*/{p; q}" $map`
+
      if [ "${added["$x"]}" != 1 ]; then
 	added["$x"]=1
 
-	# expand to full name if it was a depend
-	[ $x = ${x##*/} ] && x=`sed -n "/\/$x\.ko.*/{p; q}" $map`
 	local module=${x##*/}
 	echo -n "$module "
 
@@ -187,7 +188,6 @@ elf_magic () {
 
 # copy dynamic libraries, and optional plugins, if any.
 #
-declare -A added
 extralibs="`ls $root/lib*/libnss_files.so* 2> /dev/null`"
 extralibs="${extralibs##*/}"
 
