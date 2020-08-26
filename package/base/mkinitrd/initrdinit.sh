@@ -39,7 +39,7 @@ if [ ! -e "$root" ]; then
 	[ -e /sbin/lvchange ] && lvchange -a ay ${root#/dev/}
 fi
 
-mkdir /root
+mkdir -p /root
 if [ "$root" ]; then
   echo "Mounting root ..."
 
