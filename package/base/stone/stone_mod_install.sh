@@ -24,20 +24,22 @@ part_swap_action() {
 }
 
 part_mount() {
+	local dev=$1
 	local dir="/ /boot /home /srv /var"
 	[ -d /sys/firmware/efi ] && dir="${dir/boot/boot/efi}"
 	local d
 	for d in $dir; do
 		grep -q " /mnt/target${d%/} " /proc/mounts || break
 	done
-	gui_input "Mount device $1 on directory
+	gui_input "Mount device $dev on directory
 (for example ${dir// /, }, ...)" "${d:-/}" dir
 	if [ "$dir" ]; then
 		dir="$( echo $dir | sed 's,^/*,,; s,/*$,,' )"
+		# check if at least a rootfs / is already mounted
 		if [ -z "$dir" ] || grep -q " /mnt/target " /proc/mounts
 		then
 			mkdir -p /mnt/target/$dir
-			mount /dev/$1 /mnt/target/$dir
+			mount /dev/$dev /mnt/target/$dir
 		else
 			gui_message "Please mount a root filesystem first."
 		fi
@@ -45,7 +47,7 @@ part_mount() {
 }
 
 part_mkfs() {
-	dev=$1
+	local dev=$1
 	cmd="gui_menu part_mkfs 'Create filesystem on $dev'"
 
 	maybe_add () {
@@ -217,8 +219,21 @@ umount -v /proc
 umount -v /sys
 EOT
 		chmod +x /mnt/target/tmp/stone_postinst.sh
-		grep ' /mnt/target[/ ]' /proc/mounts | \
-			sed 's,/mnt/target/\?,/,' > /mnt/target/etc/mtab
+		echo -n "" > /mnt/target/etc/mtab
+		grep ' /mnt/target[/ ]' /proc/mounts |
+		sed 's,/mnt/target/\?,/,' |
+		while read dev mnt args; do
+		    # look up uuid
+		    for _dev in /dev/disk/by-uuid/*; do
+			local d=$(readlink $_dev)
+			d="/dev/${d##*/}"
+			if [ "$d" = $dev ]; then
+			    dev=$_dev
+			    break
+			fi
+		    done
+		    echo "$dev $mnt $args" >> /mnt/target/etc/mtab
+		done
 		cd /mnt/target; chroot . ./tmp/stone_postinst.sh
 		rm -fv ./tmp/stone_postinst.sh
 		if gui_yesno "Do you want to un-mount the filesystems and reboot now?"
