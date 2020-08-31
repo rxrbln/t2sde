@@ -103,6 +103,20 @@ public_restrict() {
 	iptables_init_if
 }
 
+public_iptables() {
+	[ "$1" == "-4" -o "$1" == "-6" ] && ipv="$1" && shift
+	local level=6
+	ipt_addcode up 1 $level "iptables $*"
+	iptables_init_if
+}
+
+public_iptables_down() {
+	[ "$1" == "-4" -o "$1" == "-6" ] && ipv="$1" && shift
+	local level=6
+	ipt_addcode down 1 $level "iptables $*"
+	iptables_init_if
+}
+
 public_conduit() {
 	# conduit (tcp|udp) port targetip[:targetport]
 	#
