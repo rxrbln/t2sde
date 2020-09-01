@@ -80,29 +80,29 @@ iptables_parse_conditions() {
 
 public_accept() {
 	iptables_parse_conditions "$@"
-	local level=6; [ "$ip" ] && level=5
-	ipt_addcode up 1 $level "iptables -A firewall_$if ${ip:+-d $ip} $iptables_cond -j ACCEPT"
+	local level=6
+	ipt_addcode up 1 $level "iptables -A firewall_$if $iptables_cond -j ACCEPT"
 	iptables_init_if
 }
 
 public_reject() {
 	iptables_parse_conditions "$@"
-	local level=6; [ "$ip" ] && level=5
-	ipt_addcode up 1 $level "iptables -A firewall_$if ${ip:+-d $ip} $iptables_cond -j REJECT"
+	local level=6
+	ipt_addcode up 1 $level "iptables -A firewall_$if $iptables_cond -j REJECT"
 	iptables_init_if
 }
 
 public_drop() {
 	iptables_parse_conditions "$@"
-	local level=6; [ "$ip" ] && level=5
-	ipt_addcode up 1 $level "iptables -A firewall_$if ${ip:+-d $ip} $iptables_cond -j DROP"
+	local level=6
+	ipt_addcode up 1 $level "iptables -A firewall_$if $iptables_cond -j DROP"
 	iptables_init_if
 }
 
 public_restrict() {
 	iptables_parse_conditions "$@"
-	local level=6; [ "$ip" ] && level=5
-	ipt_addcode up 1 $level "iptables -A forward_$if ${ip:+-d $ip} $iptables_cond -j DROP"
+	local level=6
+	ipt_addcode up 1 $level "iptables -A forward_$if $iptables_cond -j DROP"
 	iptables_init_if
 }
 
@@ -131,7 +131,7 @@ public_conduit() {
 		targetip=${targetip%:*}
 	fi
 
-	addcode up 1 4 "iptables -t nat -A PREROUTING -i $if ${ip:+-d $ip} -p $proto --dport $port -j DNAT --to $targetip:$targetport"
+	addcode up 1 4 "iptables -t nat -A PREROUTING -i $if -p $proto --dport $port -j DNAT --to $targetip:$targetport"
 	addcode up 1 4 "iptables -A forward_$if  -p $proto -d $targetip --dport $targetport -j ACCEPT"
 
 	iptables_init_if
