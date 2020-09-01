@@ -12,11 +12,13 @@
 # GNU General Public License can be found in the file COPYING.
 # --- T2-COPYRIGHT-NOTE-END ---
 
-ipv=""
+ipv=
 
 function ipt_addcode() {
 	code="$4"
 	ipv6code="${code/iptables/ip6tables}"
+	ipv6code="${ipv6code//icmp/icmpv6}"
+	ipv6code="${ipv6code/--icmpv6-type any/}"
 	[ "$ipv" != "-6" ] && addcode $1 $2 $3 "$code"
 	[ "$ipv" != "-4" ] && addcode $1 $2 $3 "$ipv6code"
 }
@@ -50,6 +52,7 @@ iptables_init_if() {
 
 iptables_parse_conditions() {
 	iptables_cond=""
+	ipv=
 	[ "$1" == "-4" -o "$1" == "-6" ] && ipv="$1" && shift
 	while [ -n "$1" ]; do
 		case "$1" in
