@@ -52,7 +52,7 @@ iptables_init_if() {
 
 iptables_parse_conditions() {
 	iptables_cond=""
-	ipv=
+	ipv=""
 	[ "$1" == "-4" -o "$1" == "-6" ] && ipv="$1" && shift
 	while [ -n "$1" ]; do
 		case "$1" in
@@ -80,43 +80,39 @@ iptables_parse_conditions() {
 
 public_accept() {
 	iptables_parse_conditions "$@"
-	local level=6
-	ipt_addcode up 1 $level "iptables -A firewall_$if $iptables_cond -j ACCEPT"
+	ipt_addcode up 1 6 "iptables -A firewall_$if $iptables_cond -j ACCEPT"
 	iptables_init_if
 }
 
 public_reject() {
 	iptables_parse_conditions "$@"
-	local level=6
-	ipt_addcode up 1 $level "iptables -A firewall_$if $iptables_cond -j REJECT"
+	ipt_addcode up 1 6 "iptables -A firewall_$if $iptables_cond -j REJECT"
 	iptables_init_if
 }
 
 public_drop() {
 	iptables_parse_conditions "$@"
-	local level=6
-	ipt_addcode up 1 $level "iptables -A firewall_$if $iptables_cond -j DROP"
+	ipt_addcode up 1 6 "iptables -A firewall_$if $iptables_cond -j DROP"
 	iptables_init_if
 }
 
 public_restrict() {
 	iptables_parse_conditions "$@"
-	local level=6
-	ipt_addcode up 1 $level "iptables -A forward_$if $iptables_cond -j DROP"
+	ipt_addcode up 1 6 "iptables -A forward_$if $iptables_cond -j DROP"
 	iptables_init_if
 }
 
 public_iptables() {
+	ipv=""
 	[ "$1" == "-4" -o "$1" == "-6" ] && ipv="$1" && shift
-	local level=6
-	ipt_addcode up 1 $level "iptables $*"
+	ipt_addcode up 1 6 "iptables $*"
 	iptables_init_if
 }
 
 public_iptables_down() {
+	ipv=""
 	[ "$1" == "-4" -o "$1" == "-6" ] && ipv="$1" && shift
-	local level=6
-	ipt_addcode down 1 $level "iptables $*"
+	ipt_addcode down 1 6 "iptables $*"
 	iptables_init_if
 }
 
