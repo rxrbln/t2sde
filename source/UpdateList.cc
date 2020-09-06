@@ -375,9 +375,9 @@ void ParseList (std::string file, std::istream& s,
 		// only if it has patch level (e.g. 1.2.3, not 1.3)
 		i = subv.next_part(v.str(), i);
 		int intv2 = i != subv.empty() ? -1 : atoi(subv.str().c_str());
-		
-		//std::cerr << "subv> " << v.str() << " " << subv.str() << " " << intv << " " << intv2 << " (" << i << std::endl;
-		if (!subv.empty() && intv & 1)
+		if (debug)
+		  std::cout << "subv> " << v.str() << " " << subv.str() << " " << intv << " " << intv2 << " = " << i << std::endl;
+		if (!subv.empty() && (intv & 1))
 		  continue;
 	      }
 	    }
@@ -496,6 +496,7 @@ int main (int argc, char* argv[])
 {
   Package package;
 
+  suffixes.push_back(".tar.zst");
   suffixes.push_back(".tar.bz2");
   suffixes.push_back(".tar.xz");
   suffixes.push_back(".tar.gz");
