@@ -293,7 +293,7 @@ private:
 };
 
 void ParseList (std::string file, std::istream& s,
-		const bool odd = true, const bool beta = true) {
+		const bool odd = true, const bool noprefix = false, const bool beta = true) {
   // search for a matching extension
   std::string templ = file;
   std::string suffix = "";
@@ -321,18 +321,18 @@ void ParseList (std::string file, std::istream& s,
     prefix = templ;
   else
     prefix = templ.substr(0, idx);
-  
-  std::cout << file << "(" << version.str()
-	    << ") ---> " << prefix << "???" << suffix << std::endl;
 
-  std::string token;
+  if (noprefix) prefix = "";
+
+  std::cout << file << "(" << version.str() << ") ---> " << prefix << "???" << suffix << std::endl;
+  
   while (!s.eof()) {
     // read a line and search for the prefix
+    std::string token;
     s >> token;
     idx = token.find(prefix);
     
     if (idx != std::string::npos) {
-
       std::string::size_type idx2;
       if (suffix.length() > 0)
 	idx2 = token.find(suffix, idx+1);
@@ -388,7 +388,7 @@ void ParseList (std::string file, std::istream& s,
       }
     }
   }
-  
+
   for (unsigned int i = 0; i < versions.size(); ++i) {
     int sign = version.compare(versions[i], version);
     
@@ -420,7 +420,7 @@ void ParseList (std::string file, std::istream& s,
   std::cout << "-----------------------" << std::endl;
 }
 
-void GenList (const DownloadInfo& info, const bool odd, const bool beta)
+void GenList (const DownloadInfo& info, const bool odd, const bool noprefix, const bool beta)
 {
   CurlWrapper dl;
   dl.SetConnectTimeout(15);
@@ -429,7 +429,7 @@ void GenList (const DownloadInfo& info, const bool odd, const bool beta)
   try {
     dl.Download(info.url); //, 0, 200000); // 416 Range Not Satisfiable (RFC 7233)
     std::auto_ptr<std::ifstream> s = dl.OpenFile();
-    ParseList(info.file, *s, odd, beta);
+    ParseList(info.file, *s, odd, noprefix, beta);
     s->close();
   }
   
@@ -460,7 +460,7 @@ void GenList (const DownloadInfo& info, const bool odd, const bool beta)
   dl.RemoveFile();
 }
 
-void Check4Updates (const Package& package, const bool odd, const bool beta)
+void Check4Updates (const Package& package, const bool odd, const bool noprefix, const bool beta)
 {
   unsigned int no_downloads = package.download.download_infos.size();
   for (unsigned int dln = 0; dln < no_downloads; ++dln) {
@@ -488,7 +488,7 @@ void Check4Updates (const Package& package, const bool odd, const bool beta)
 
     std::cout << "Checking updates for " << info.url << std::endl;
     
-    GenList(info, odd, beta);
+    GenList(info, odd, noprefix, beta);
   }
 }
 
@@ -540,13 +540,19 @@ int main (int argc, char* argv[])
   std::cout << "-----------------------" << std::endl;
 #endif
 
-  bool odd = false, beta = false;  
-  if (argc > 0) {
-    std::string opt("--odd");
-    if (opt == argv[1]) {
+  bool odd = false, noprefix = false, beta = false;  
+  while (argc > 0) {
+    const std::string opt(argv[1]);
+    if (opt == "--odd") {
       odd = true;
       --argc; // shift
       ++argv;
+    } else if (opt == "--no-prefix") {
+      noprefix = true;
+      --argc; // shift
+      ++argv;
+    } else {
+      break;
     }
   }
 
@@ -570,6 +576,6 @@ int main (int argc, char* argv[])
 
       // parse package ...
       package.ParsePackage (fname);
-      Check4Updates (package, odd, beta);
+      Check4Updates (package, odd, noprefix, beta);
     }
 }
