@@ -12,7 +12,7 @@
 # GNU General Public License can be found in the file COPYING.
 # --- T2-COPYRIGHT-NOTE-END ---
 
-case "$SDECFG_POWERPC_ENDIANESS" in
+case "$SDECFG_POWERPC64_ENDIANESS" in
     le)
 	arch_bigendian=no
 	arch_machine="${arch_machine/powerpc64/powerpc64le}"
