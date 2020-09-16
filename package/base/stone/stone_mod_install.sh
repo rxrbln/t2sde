@@ -209,7 +209,7 @@ This dialog allows you to modify your storage layout and to create filesystems a
 		$STONE packages
 		mount -v /dev /mnt/target/dev --bind
 		cat > /mnt/target/tmp/stone_postinst.sh << EOT
-#!/bin/sh
+#!/bin/bash
 mount -v /proc
 mount -v /sys
 . /etc/profile
