@@ -192,7 +192,7 @@ int main(int argc, char ** argv) {
 	while (*argv) /* copy args */
 		i += snprintf(command+i, sizeof(command)-i, " %s", *argv++);
 	i+=snprintf(command+i, sizeof(command)-i, " </dev/null 2>&1%s",
-	         use_btee ? "; /bini/echo -ne '\004'" : "");
+	         use_btee ? "; /bin/echo -ne '\004'" : "");
 	execle("/bin/bash", "-bash", "-l", "-c", command, NULL, clean_env);
 
 	/* Oups! Can't exec the shell. */
