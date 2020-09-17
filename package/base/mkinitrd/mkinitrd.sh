@@ -256,8 +256,14 @@ do
   fi
 done
 
-ln -s /sbin/udev $tmpdir/etc/hotplug.d/default/10-udev.hotplug
-cp $root/bin/pdksh $tmpdir/bin/sh
+# copy a small shell
+for sh in $root/bin/{pdksh,bash}; do
+    if [ -e "$sh" ]; then
+	cp $sh $tmpdir/bin/${sh##*/}
+	ln -sf ${sh##*/} $tmpdir/bin/sh
+	break
+    fi
+done
 
 # static, tiny embutils and friends
 #
