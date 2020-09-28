@@ -18,6 +18,8 @@ export PYTHON=python2
 # default prefix for mozilla derivatives
 mozilla_prefix=opt/mozilla.org
 
+atstage cross && var_append makeopt ' ' "TOOLCHAIN_PREFIX=$arch_target-"
+
 # set default homepage and distribution
 mozilla_branding() {
 	local distro="T2 $sdever"
@@ -42,19 +44,30 @@ hook_add preconf 2 "mozilla_branding"
 # default configuration for mozilla's derivatives
 mozilla_configure() {
 	cat > .mozconfig <<-EOF
-# sh
-# Build configuration script
 # Options for client.mk.
 mk_add_options MOZ_MAKE_FLAGS=-j${SDECFG_PARALLEL_MAX:-1}
 
 # Options for 'configure' (same as command-line options).
-ac_add_options --prefix=$root/$prefix
-ac_add_options --libdir=$root$libdir
-#ac_add_options --sysconfdir=$root/etc/$pkg
-#ac_add_options --localstatedir=$root/var
+EOF
+
+	if atstage cross; then cat <<-EOF >> .mozconfig
+CROSS_COMPILE=1
+TOOLCHAIN_PREFIX=$arch_target
+ac_add_options --target=$arch_target
+ac_add_options --host=$arch_build
+EOF
+	else cat <<-EOF >> .mozconfig
+ac_add_options --host=$arch_target # needed?
+EOF
+	fi
+
+	cat <<-EOF >> .mozconfig
+ac_add_options --prefix=/$prefix
+ac_add_options --libdir=$libdir
+#ac_add_options --sysconfdir=/etc/$pkg
+#ac_add_options --localstatedir=/var
 #ac_add_options --enable-default-mozilla-five-home
-#ac_add_options --with-default-mozilla-five-home=$root$libdir/$pkg-$ver
-ac_add_options --host=$arch_target
+#ac_add_options --with-default-mozilla-five-home=$libdir/$pkg-$ver
 ac_add_options --disable-debug
 ac_add_options --enable-optimize
 #ac_add_options --disable-dtd-debug
@@ -80,15 +93,6 @@ EOF
 	2.3*) echo "ac_add_options --disable-jemalloc" >> .mozconfig ;;
 	esac
 
-	# this is needed due to a bug gcc 4.x
-	# (see http://benjamin.smedbergs.us/blog/2005-10-27/gcc-40-workaround/)
-if false; then
-	case $arch in
-	x86-64|powerpc|powerpc64) # maybe more
-		echo ac_cv_visibility_pragma=no >> .mozconfig
-		;;
-	esac
-fi
 	[ $arch = powerpc64 ] && var_append GCC_WRAPPER_APPEND ' ' -mminimal-toc
 	true
 }
@@ -111,10 +115,7 @@ var_append makeopt " " "-f client.mk build"
 
 # generic configuration
 hook_add preconf 1 'mozilla_configure'
-
 hook_add premake 5 'mozilla_ver'
-
-# register components
 hook_add postmake 5 'mozilla_register'
 
 # cleanups in this fat directory are a bit expensive
