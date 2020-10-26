@@ -39,8 +39,9 @@ if [ ! -e "$root" ]; then
 	[ -e /sbin/lvchange ] && lvchange -a ay ${root#/dev/}
 fi
 
-mkdir -p /root
 if [ "$root" ]; then
+  mkdir -p /root
+
   echo "Mounting root ..."
 
   i=0
@@ -77,6 +78,8 @@ if [ "$root" ]; then
   sleep 1
   done
 fi
+
+# PANICMARK
 
 echo "Ouhm - some boot problem, but I do not scream. Debug shell:"
 kill %1
