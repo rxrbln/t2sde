@@ -13,26 +13,36 @@
 # GNU General Public License can be found in the file COPYING.
 # --- T2-COPYRIGHT-NOTE-END ---
 
-if [ -z "$1" ] ; then
+force=
+svnopt=
+
+locations=
+while [ "$1" ]; do
+	case "$1" in
+	-f)	force=1 ;;
+	-svn-opt)
+		svnopt="$2"; shift ;;
+	*)
+		[ ! -e "$1" -a -e `echo package/*/$1` ] &&
+			x=`echo package/*/$1` || x="$1"
+		locations="$locations $x"
+		;;
+	esac
+	shift
+done
+
+if [ -z "$locations" ]; then
 	echo "Usage $0 package/files"
 	exit
 fi
 
-trap 'echo "Got SIGINT (Ctrl-C)." ; rm $$.log $$.diff ; exit 1' INT
-
-locations=
-for x; do
-	[ ! -e "$x" -a -e `echo package/*/$x` ] &&
-		x=`echo package/*/$x`
-	locations="$locations $x"
-done
-
+trap 'echo "Got SIGINT (Ctrl-C)."; rm $$.log $$.diff; exit 1' INT
 
 
 # CopyPatch and Checksum and CkSumPatch
 #
 svn st $locations | grep '^\(A\|M\)' | cut -c8- | while read f; do
-	if [ -f $f ]; then
+	if [ -f "$f" ]; then
 		scripts/Create-CopyPatch $f | patch -p0
 		if [[ $f = *.desc ]] && grep '\[D\] \+0 \+' $f; then
 			pkg=${f%.desc} pkg=${pkg##*/}
@@ -67,7 +77,7 @@ grep -v === $$.diff | awk "
 		else {
 		  print \"\t* added \" pkg \" (\" newver \")\" info
 		}
-		oldver=\"\" ; newver=\"\" ; info=\"\"
+		oldver=\"\"; newver=\"\"; info=\"\"
 	}
 
 	/^\-\[P\] / { oldprio=\$4 }
@@ -75,10 +85,14 @@ grep -v === $$.diff | awk "
 		newprio=\$4
 		if ( oldprio )
 		  print \"\t* changed \" pkg \" build priority (\" oldprio \" -> \" newprio \")\"
-		oldprio=\"\" ; newprior=\"\"
+		oldprio=\"\"; newprior=\"\"
 	}
 
 " > $$.log
+
+function commit() {
+	svn commit $svnopt $locations --file $$.log
+}
 
 if [ -s $$.diff ]; then
 	quit=0
@@ -94,11 +108,11 @@ if [ -s $$.diff ]; then
 		fi
 		
 		echo -en "\nLog ok (q=quit,e=edit,d=diff,s=status$commit)? "
-		read in
+		[ ! "$force" ] && read in || in="commit"
 
 		case "$in" in
 		  c*)	if [ -n "$commit" ]; then
-		  		svn commit $locations --file $$.log ; quit=1
+		  		commit; quit=1
 			fi ;;
 		  d*)	cat $$.diff | visualize_warnings | less -R ;;
 		  s*)	svn st $locations ;;
