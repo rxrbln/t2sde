@@ -16,11 +16,10 @@
 # --- T2-COPYRIGHT-NOTE-END ---
 
 main() {
-	renice $newpriority -p $1 | sed "s,^,$2,"
-	# for y in `ps -e -o ppid,pid | grep "^ *$1 " | sed "s,^ *$1 ,,"`
-	#for y in `cut -f1,4 -d' ' /proc/[0-9]*/stat | grep " $1\$" | cut -f1 -d' '`
-	#do main $y "$2  " ; done
-	ls /proc/$1/task | xargs renice $newpriority
+	renice $newpriority -p $1
+	ls /proc/$1/task | xargs renice $newpriority -p
+	for y in `cut -f1,4 -d' ' /proc/[0-9]*/stat | grep " $1\$" | cut -f1 -d' '`
+	do main $y "$2  " ; done
 }
 
 newpriority=$1
