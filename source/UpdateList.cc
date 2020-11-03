@@ -293,7 +293,7 @@ private:
 };
 
 void ParseList (std::string file, std::istream& s,
-		const bool odd = true, const bool noprefix = false, const bool beta = true) {
+		const bool odd = true, const bool noprefix = false, const bool beta = true, const bool nineties = false) {
   // search for a matching extension
   std::string templ = file;
   std::string suffix = "";
@@ -356,28 +356,33 @@ void ParseList (std::string file, std::istream& s,
 	    if (!beta) {
 	      if (s.find("alpha") != std::string::npos ||
 		  s.find("beta") != std::string::npos ||
-		  // TODO: pre[0-9], rc[0-9]!
+		  // TODO: pre[0-9], rc[0-9], r987
 		  // TODO: very high last version, like 1.2.99
 		  s.find("pre") != std::string::npos ||
 		  s.find("rc") != std::string::npos)
 		continue;
 	    }
 	    
-	    if (!odd) {
+	    {
 	      subversion subv;
 	      std::string::size_type i;
 	      i = subv.next_part(v.str(), 0);
 	      if (!subv.empty()) {
 		// minor version
 		i = subv.next_part(v.str(), i);
-		int intv = atoi(subv.str().c_str());
+		int minorv = atoi(subv.str().c_str());
 		
 		// only if it has patch level (e.g. 1.2.3, not 1.3)
 		i = subv.next_part(v.str(), i);
-		int intv2 = i != subv.empty() ? -1 : atoi(subv.str().c_str());
+		int patchv = subv.empty() ? -1 : atoi(subv.str().c_str());
 		if (debug)
-		  std::cout << "subv> " << v.str() << " " << subv.str() << " " << intv << " " << intv2 << " = " << i << std::endl;
-		if (!subv.empty() && (intv & 1))
+		  std::cout << "subv> " << v.str() << " " << subv.str() << " minor: " << minorv << " patch: " << patchv << " = " << i << std::endl;
+		
+		if (!odd && !subv.empty() && (minorv & 1))
+		  continue;
+		
+		// TODO: based on prev version context
+		if (!nineties && patchv >= 90)
 		  continue;
 	      }
 	    }
