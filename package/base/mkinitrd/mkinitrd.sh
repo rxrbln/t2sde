@@ -154,7 +154,7 @@ echo "Copying kernel modules ..."
   grep  -e reiserfs -e reiser4 -e ext2 -e ext3 -e ext4 -e btrfs -e /jfs -e /xfs \
 	-e isofs -e udf -e /unionfs -e ntfs -e fat -e dm-mod -e dm-crypt \
 	-e /ide/ -e /ata/ -e /scsi/ -e /message/ -e /sdhci/ -e nvme \
-	-e cciss -e ips -e virtio -e floppy -e crypto \
+	-e cciss -e ips -e virtio -e floppy -e crypto -e nls_cp437 -e nls_iso8859-1 -e nls_utf8 \
 	-e hci -e usb-common -e usb-storage -e sbp2 -e uas \
 	-e /net/ -e md/raid -e '/ipv6\.' \
 	-e usbhid -e hid-generic -e hid-multitouch -e hid-apple -e hid-microsoft |
@@ -188,7 +188,7 @@ elf_magic () {
 
 # copy dynamic libraries, and optional plugins, if any.
 #
-extralibs="`ls $root/{lib*/libnss_files,usr/lib*/libgcc_s}.so* 2> /dev/null`"
+extralibs="`ls $root/lib*/libnss_files.so* 2> /dev/null`"
 extralibs="${extralibs##*/}"
 
 copy_dyn_libs () {
