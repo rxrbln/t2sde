@@ -27,7 +27,7 @@ cd $build_toolchain
 rm -rf initramfs
 mkdir -p initramfs/{bin,sbin}
 
-sed '/PANICMARK/q' $build_root/sbin/initrdinit > initramfs/init
+sed '/PANICMARK/Q' $build_root/sbin/initrdinit > initramfs/init
 cat $base/target/share/install/init >> initramfs/init
 cp $base/target/share/livecd/init2 initramfs/
 chmod +x initramfs/{init,init2}
