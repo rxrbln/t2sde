@@ -8,6 +8,7 @@ echo "Mounting /dev, /proc and /sys ..."
 mount -t devtmpfs -o mode=755 none /dev
 mount -t proc none /proc
 mount -t sysfs none /sys
+mkdir -p /tmp
 ln -s /proc/self/fd /dev/fd
 
 echo "Populating u/dev ..."
