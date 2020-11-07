@@ -32,7 +32,7 @@ cp -a $build_root/usr/bin/{,un}zstd initramfs/usr/bin/
 cp $build_root/usr/bin/fget initramfs/bin/
 cp $build_root/usr/sbin/ipconfig initramfs/bin/
 
-sed '/PANICMARK/q' $build_root/sbin/initrdinit > initramfs/init
+sed '/PANICMARK/Q' $build_root/sbin/initrdinit > initramfs/init
 cat $base/target/share/install/init >> initramfs/init
 chmod +x initramfs/init
 
