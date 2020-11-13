@@ -188,7 +188,7 @@ elf_magic () {
 
 # copy dynamic libraries, and optional plugins, if any.
 #
-extralibs="`ls $root/lib*/libnss_files.so* 2> /dev/null`"
+extralibs="`ls $root/{lib*/libnss_files,usr/lib*/libgcc_s}.so* 2> /dev/null`"
 extralibs="${extralibs##*/}"
 
 copy_dyn_libs () {
