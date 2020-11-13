@@ -58,13 +58,12 @@ part_mkfs() {
 	  fi
 	}
 
+	maybe_add btrfs	'Better, b-tree, CoW journaling' 'mkfs.btrfs' '-f'
 	maybe_add ext4	'journaling, extents'	'mkfs.ext4'
 	maybe_add ext3	'journaling'		'mkfs.ext3'
 	maybe_add ext2	'non-journaling'	'mkfs.ext2'
-	maybe_add reiserfs 'journaling'		'mkfs.reiserfs'
-	maybe_add reiser4 'high-performance journaling' 'mkfs.reiser4'
-	maybe_add btrfs 'Better journaling, extents' 'mkfs.btrfs' '-f'
 	maybe_add jfs	'IBM journaling'	'mkfs.jfs'
+	maybe_add reiserfs 'journaling'		'mkfs.reiserfs'
 	maybe_add xfs	'Sgi journaling'	'mkfs.xfs' '-f'
 	maybe_add fat	'File Allocation Table'	'mkfs.fat'
 
@@ -185,7 +184,15 @@ This dialog allows you to modify your storage layout and to create filesystems a
 			[ ! -e $x/device -a ! -e $x/dm ] && continue
 			x=${x#/sys/block/}
 			grep -q cdrom /proc/ide/$x/media 2>/dev/null && continue
-			disk_add $x
+
+			# find user defined alias name
+			local devnode=$(stat -c "%t:%T" /dev/$x)
+			for d in /dev/mapper/*; do
+				[ "$(stat -c "%t:%T" $d)" = "$devnode" ] &&
+					x=${d#/dev/} && break
+			done
+			
+			[[ $x = mapper/* ]] && part_add $x || disk_add $x
 			found=1
 		done
 		for x in $( cat /etc/lvmtab 2> /dev/null ); do
