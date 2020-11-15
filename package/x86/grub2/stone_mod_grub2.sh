@@ -85,15 +85,17 @@ set timeout=30
 set default=0
 set fallback=1
 
-set debug=video
-insmod efi_gop
-insmod efi_uga
-insmod font
-if loadfont ${prefix}/unicode.pf2 then
+if [ "\$grub_platform" = "efi" ]; then
+    set debug=video
+    insmod efi_gop
+    insmod efi_uga
+    insmod font
+    if loadfont \${prefix}/unicode.pf2; then
 	insmod gfxterm
 	set gfxmode=auto
 	set gfxpayload=keep
 	terminal_output gfxterm
+    fi
 fi
 
 EOT
@@ -105,6 +107,11 @@ EOT
 $( cat /boot/grub/grub.cfg )"
 	unset bootpath
 }
+
+grubmods="part_gpt part_msdos ntfs ntfscomp hfsplus fat ext2 iso9660 hfs \
+          boot configfile linux btrfs all_video reiserfs xfs jfs lvm \
+          normal crypto cryptodisk luks part_apple suspend sleep reboot \
+          search_fs_file search_label search_fs_uuid" # gcry_sha256 gcry_rijndael
 
 grub_inst() {
     if [[ $arch != ppc* ]]; then
@@ -118,10 +125,7 @@ grub_inst() {
 	echo "configfile (ieee1275/hd,apple2)/grub.cfg" > /tmp/grub.cfg
 	grub-mkimage -O powerpc-ieee1275 -p /mnt -o /mnt/grub.elf \
 		-c /tmp/grub.cfg -d /usr/lib64/grub/powerpc-ieee1275/ \
-		part_gpt part_msdos ntfs ntfscomp hfsplus fat ext2 iso9660 \
-		boot configfile linux btrfs all_video reiserfs xfs jfs lvm \
-		normal crypto cryptodisk luks part_apple suspend sleep reboot \
-		search_fs_file search_label search_fs_uuid hfs gcry_sha256 gcry_rijndael
+		$grubmods
 	rm /tmp/grub.cfg
 
 	cat > /mnt/ofboot.b <<-EOT
