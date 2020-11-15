@@ -70,6 +70,29 @@ part_mkfs() {
 	eval "$cmd" && part_mount $dev
 }
 
+part_decrypt() {
+	local dev=$1
+
+	local dir="root home swap"
+	local d
+	for d in $dir; do
+		[ -e /dev/mapper/$dir ] || break
+	done
+	gui_input "Mount device $dev on directory
+(for example ${dir// /, }, ...)" "${d:-/}" dir
+	if [ "$dir" ]; then
+		dir="$( echo $dir | sed 's,^/*,,; s,/*$,,' )"
+		cryptsetup luksOpen --disable-locks /dev/$dev $dir
+	fi
+}
+
+part_crypt() {
+	local dev=$1
+	cryptsetup luksFormat --disable-locks --type luks1 /dev/$dev || return
+
+	part_decrypt $dev
+}
+
 part_unmounted_action() {
 	gui_menu part "$1" \
 		"Mount an existing filesystem from the partition" \
@@ -79,7 +102,11 @@ part_unmounted_action() {
 		"Activate an existing swap space on the partition" \
 				"swapon /dev/$1" \
 		"Create a swap space on the partition" \
-				"mkswap /dev/$1; swapon /dev/$1"
+				"mkswap /dev/$1; swapon /dev/$1" \
+		"Decrypt LUKS encrypted partition" \
+				"part_decrypt $1" \
+		"Encrypt partition using LUKS cryptsetup" \
+				"part_crypt $1"
 }
 
 part_add() {
