@@ -122,13 +122,22 @@ EOT
 	fi
     else
 	# Apple PowerPC - install into FW read-able HFS partition
+	hformat /dev/sda2
 	mount /dev/sda2 /mnt
-	cp -vf /boot/grub/grub.cfg /mnt
-	echo "configfile (ieee1275/hd,apple2)/grub.cfg" > /tmp/grub.cfg
-	grub-mkimage -O powerpc-ieee1275 -p /mnt -o /mnt/grub.elf \
-		-c /tmp/grub.cfg -d /usr/lib64/grub/powerpc-ieee1275/ \
-		$grubmods suspend
-	rm /tmp/grub.cfg
+	
+	if [ -z "$cryptdev" ]; then
+		echo "configfile (ieee1275/hd,apple3)/boot/grub/grub.cfg" > /mnt/grub.cfg
+	else
+		cat << EOT > /mnt/grub.cfg
+set uuid=$grubdev
+cryptomount -u \$uuid
+configfile (crypto0)/boot/grub/grub.cfg
+EOT
+	fi
+
+	grub-mkimage -O powerpc-ieee1275 -p / -o /mnt/grub.elf \
+		-d /usr/lib64/grub/powerpc-ieee1275 \
+		$grubmods suspend # -c /tmp/grub.cfg 
 
 	cat > /mnt/ofboot.b <<-EOT
 <CHRP-BOOT>
