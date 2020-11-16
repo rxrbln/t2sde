@@ -126,7 +126,11 @@ EOT
 	mount /dev/sda2 /mnt
 	
 	if [ -z "$cryptdev" ]; then
-		echo "configfile (ieee1275/hd,apple3)/boot/grub/grub.cfg" > /mnt/grub.cfg
+		cat << EOT > /mnt/grub.cfg
+set uuid=$grubdev
+search --set=root --no-floppy --fs-uuid \$uuid
+configfile (\$root)/boot/grub/grub.cfg
+EOT
 	else
 		cat << EOT > /mnt/grub.cfg
 set uuid=$grubdev
