@@ -108,7 +108,7 @@ grub_inst() {
 
 		cat << EOT > /boot/efi/EFI/grub/grub.cfg
 set uuid=$grubdev
-cryptomount -u $uuid
+cryptomount -u \$uuid
 configfile (crypto0)/boot/grub/grub.cfg
 EOT
 
