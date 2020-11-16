@@ -16,7 +16,13 @@
 # [MAIN] 70 grub2 GRUB2 Boot Loader Setup
 # [SETUP] 90 grub2
 
+# TODO:
+# void efibootmgr duplicates :-/
+# impl. & test sparc, mips, riscv, ...
+# unify non-crypt, and direct non-EFI BIOS install
+
 arch=$(uname -m)
+arch=${arch/i?86/i386}
 
 create_kernel_list() {
 	first=1
@@ -32,7 +38,6 @@ create_kernel_list() {
 		cat << EOT
 
 menuentry "T2/Linux $label" {
-	set root=$bootdrive
 	linux $bootpath/$x root=$rootdev ro
 	initrd $bootpath/initrd-${ver}.img
 }
@@ -40,37 +45,6 @@ EOT
 	done
 }
 
-
-convert_device() {
-    local device="$1"
-    local root_part=
-
-    # extract device type (block) and major number for root drive
-    local major_minor=`ls -Ll $device |
-    awk '{if ($6 < 64) printf("%c%d0", $1, $5); else printf("%c%d1", $1, $5)}'`
-
-    # find the matching BIOS device
-    for bios_drive in `grep -v '^#' /boot/grub/device.map | awk '{print $2}'`
-    do
-        bios_major_minor=`ls -Ll $bios_drive 2>/dev/null |
-        awk '{if ($6 < 64) printf("%c%d0", $1, $5); else printf("%c%d1", $1, $5)}'`
-
-        if [ "$major_minor" = "$bios_major_minor" ]; then
-	    # we found it
-	    root_drive=`grep $bios_drive /boot/grub/device.map | awk '{print $1}'`
-	    root_part=`ls -Ll $device | awk '{print $6}'`
-            root_part=$(( $root_part % 16 - 1 ))
-	    break
-        fi
-    done
-
-    drive=$(echo "$device" | sed "s/[^0-9]//g")
-    if disktype /dev/sda | grep -q GPT; then
-    	echo "(hd0,gpt$drive)"
-    else
-	echo "(hd0,msdos$drive)"
-    fi
-}
 
 create_boot_menu() {
 	# determine /boot path, relative to the boot device
@@ -99,6 +73,18 @@ if [ "\$grub_platform" = "efi" ]; then
 fi
 
 EOT
+	if [ -z "$cryptdev" ]; then
+		cat << EOT >> /boot/grub/grub.cfg
+set uuid=$grubdev
+search --set=root --no-floppy --fs-uuid \$uuid
+
+EOT
+	else
+		cat << EOT >> /boot/grub/grub.cfg
+set root=$cryptdev
+
+EOT
+	fi
 
 	create_kernel_list >> /boot/grub/grub.cfg
 
@@ -108,24 +94,40 @@ $( cat /boot/grub/grub.cfg )"
 	unset bootpath
 }
 
-grubmods="part_gpt part_msdos ntfs ntfscomp hfsplus fat ext2 iso9660 hfs \
+grubmods="part_gpt part_msdos ntfs ntfscomp hfsplus fat ext2 iso9660 \
           boot configfile linux btrfs all_video reiserfs xfs jfs lvm \
-          normal crypto cryptodisk luks part_apple suspend sleep reboot \
-          search_fs_file search_label search_fs_uuid" # gcry_sha256 gcry_rijndael
+          normal crypto cryptodisk luks part_apple sleep reboot \
+          search_fs_file search_label search_fs_uuid hfs" # gcry_sha256 gcry_rijndael
 
 grub_inst() {
     if [[ $arch != ppc* ]]; then
-	# TODO: do we want more control over this?
-	# TODO: add full disk encryption glue
-	# TODO: test on sparc
-	grub2-install ${rootdev%[0-9]*}
-    else # Apple PowerPC - install into FW read-able HFS partition
+	if [ -z "$cryptdev" ]; then
+		grub2-install $instdev
+	else
+		mkdir -p /boot/efi/EFI/grub
+
+		cat << EOT > /boot/efi/EFI/grub/grub.cfg
+set uuid=$grubdev
+cryptomount -u $uuid
+configfile (crypto0)/boot/grub/grub.cfg
+EOT
+
+		local exe=grubx.efi
+		[ $arch = x86_64 ] && exe=${exe/.efi/64.efi}
+		
+		grub-mkimage -O $arch-efi -o /boot/efi/EFI/grub/$exe \
+			-p /efi/grub -d /usr/lib*/grub/$arch-efi/ \
+			$grubmods
+		efibootmgr -c -L t2sde -l "\\EFI\\grub\\$exe"
+	fi
+    else
+	# Apple PowerPC - install into FW read-able HFS partition
 	mount /dev/sda2 /mnt
 	cp -vf /boot/grub/grub.cfg /mnt
 	echo "configfile (ieee1275/hd,apple2)/grub.cfg" > /tmp/grub.cfg
 	grub-mkimage -O powerpc-ieee1275 -p /mnt -o /mnt/grub.elf \
 		-c /tmp/grub.cfg -d /usr/lib64/grub/powerpc-ieee1275/ \
-		$grubmods
+		$grubmods suspend
 	rm /tmp/grub.cfg
 
 	cat > /mnt/ofboot.b <<-EOT
@@ -208,35 +210,70 @@ grub_install() {
 	gui_cmd 'Installing GRUB2' "grub_inst"
 }
 
+get_dm_dev() {
+	local dev="$1"
+	local devnode=$(stat -c "%t:%T" $dev)
+	for d in /dev/dm-*; do
+		[ "$(stat -c "%t:%T" "$d")" = "$devnode" ] && echo $d && return
+	done
+}
+
+get_dm_type() {
+	local dev="$1"
+	dev="${dev##*/}"
+	[ -e /sys/block/$dev/dm/uuid ] && cat /sys/block/$dev/dm/uuid
+}
+
+get_uuid() {
+	local dev="$1"
+
+	# look up uuid
+	for _dev in /dev/disk/by-uuid/*; do
+		local d=$(readlink $_dev)
+		d="/dev/${d##*/}"
+		if [ "$d" = $dev ]; then
+			echo $_dev
+                        return
+		fi
+	done
+}
+
+get_realdev() {
+	local dev="$1"
+	dev=$(readlink $dev)
+	dev=/dev/${dev##*/}
+	[ "$dev" ] && echo $dev || echo $1
+}
+
 main() {
 	rootdev="`grep ' / ' /proc/mounts | tail -n 1 | sed 's, .*,,'`"
 	bootdev="`grep ' /boot ' /proc/mounts | tail -n 1 | sed 's, .*,,'`"
+
+	# if device-mapper, get backing device
+	[[ "$rootdev" = *mapper* ]] && rootdev=$(get_dm_dev $rootdev)
+
+	# encrypted?
+	if [[ "$(get_dm_type $rootdev)" = CRYPT* ]]; then
+		realroot=$(cd /sys/block/${rootdev##*/}/slaves/; ls -d [a-z]*)
+		if [ "$realroot" ]; then
+			rootdev="/dev/$realroot"
+			cryptdev="(crypto0)"
+		fi
+	fi
+
+	# get uuid
+	uuid=$(get_uuid $rootdev)
+	if [ "$uuid" ]; then
+		rootdev=$uuid
+	fi
+
 	[ "$bootdev" ] || bootdev="$rootdev"
-
-	i=0
-	rootdev="$( cd `dirname $rootdev` ; pwd -P )/$( basename $rootdev )"
-	while [ -L $rootdev ] ; do
-		directory="$( cd `dirname $rootdev` ; pwd -P )"
-		rootdev="$( ls -l $rootdev | sed 's,.* -> ,,' )"
-		[ "${rootdev##/*}" ] && rootdev="$directory/$rootdev"
-		i=$(( $i + 1 )) ; [ $i -gt 20 ] && rootdev="Not found!"
-	done
-
-	i=0
-	bootdev="$( cd `dirname $bootdev` ; pwd -P )/$( basename $bootdev )"
-	while [ -L $bootdev ] ; do
-		directory="$( cd `dirname $bootdev` ; pwd -P )"
-		bootdev="$( ls -l $bootdev | sed 's,.* -> ,,' )"
-		[ "${bootdev##/*}" ] && bootdev="$directory/$bootdev"
-		i=$(( $i + 1 )) ; [ $i -gt 20 ] && bootdev="Not found!"
-	done
-
+	instdev=$(get_realdev $bootdev); instdev="${instdev%%[0-9*]}"
+	[ "$grubdev" ] || grubdev="${bootdev##*/}"
 
 	if [ ! -f /boot/grub/grub.cfg ] ; then
 	  if gui_yesno "GRUB2 does not appear to be configured.
 Automatically install GRUB2 now?"; then
-	    rootdrive=`convert_device $rootdev`
-	    bootdrive=`convert_device $bootdev`
 	    create_boot_menu
 	    if ! grub_install; then
 	      gui_message "There was an error while installing GRUB2."
@@ -246,15 +283,15 @@ Automatically install GRUB2 now?"; then
 
 	while
 
-	rootdrive=`convert_device $rootdev`
-	bootdrive=`convert_device $bootdev`
-
         gui_menu grub 'GRUB2 Boot Loader Setup' \
-		"Root Device ... $rootdev" "" \
-		"Boot Drive .... $bootdev" "" \
+		"Root device ... $rootdev" "" \
+		"Boot device ... $bootdev" "" \
+		"Crypt device .. $cryptdev" "" \
+		"Grub device ... $grubdev" "" \
+		"Inst device ... $instdev" "" \
 		'' '' \
 		'(Re-)Create boot menu with installed kernels' 'create_boot_menu' \
-		'(Re-)Install GRUB2 in MBR of (hd0)' 'grub_install' \
+		"(Re-)Install GRUB2 in boot record ($instdev)" 'grub_install' \
 		'' '' \
 		"Edit /boot/grub/grub.cfg (Boot Menu)" \
 			"gui_edit 'GRUB2 Boot Menu' /boot/grub/grub.cfg"
