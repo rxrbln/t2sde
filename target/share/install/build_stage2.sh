@@ -26,7 +26,7 @@ xfsprogs           dosfstools         jfsutils           btrfs-progs
 e2fsprogs          reiserfsprogs      reiser4progs       genromfs
 popt               raidtools          mdadm              pcre
 lvm                lvm2               device-mapper      libaio
-dump               eject              disktype
+dump               eject              disktype           mac-fdisk
 hdparm             memtest86          cpuburn            bonnie++
 ncurses            readline           libgpg-error       libgcrypt
 bash               attr               acl                findutils
@@ -120,7 +120,7 @@ progs="agetty sh bash cat cp date dd df dmesg ifconfig ln ls $packager mkdir \
 
 progs="$progs parted fdisk sfdisk"
 
-if [ $arch = powerpc* ]; then
+if [[ $arch = powerpc* ]]; then
 	progs="$progs mac-fdisk pdisk"
 fi
 
@@ -130,11 +130,9 @@ fi
 
 for x in $progs; do
 	fn=""
-	if   [ -e ../2nd_stage/bin/$x ]; then fn="bin/$x"
-	elif [ -e ../2nd_stage/sbin/$x ]; then fn="sbin/$x"
-	elif [ -e ../2nd_stage/usr/bin/$x ]; then fn="usr/bin/$x"
-	elif [ -e ../2nd_stage/usr/sbin/$x ]; then fn="usr/sbin/$x"
-	fi
+	for f in ../2nd_stage/{,usr/}{s,}bin/$x; do
+		[ -e $f ] && fn=${f#../2nd_stage/} && break
+	done
 
 	if [ "$fn" ]; then
 		mv ../2nd_stage/$fn $fn
@@ -199,10 +197,19 @@ for x in `egrep 'X .* KERNEL .*' $base/config/$config/packages |
     kernelimg=`ls $build_root/boot/vmlinu?_$kernelver`
     kernelimg=${kernelimg##*/}
 
-    zstd -d < $isofsdir/boot/$initrd | cpio -it | grep "lib.*\.so" |
-    while read lib; do
-      if [ -e "../2nd_stage/$lib" -o -L "../2nd_stage/$lib" ]; then rm -vf "../2nd_stage/$lib"; fi
-      if [ -e "../2nd_stage_small/$lib" -o -L "../2nd_stage_small/$lib" ]; then rm -vf "../2nd_stage_small/$lib"; fi
+    zstd -d < $isofsdir/boot/$initrd | cpio -tv | grep -e "lib.*\.so" -e bin/ |
+    while read _ _ _ _ size _ _ _ exe _; do
+      for fn in ../2nd_stage{,_small}/$exe; do
+        if [ -e $fn -o -L $fn ]; then
+          if [[ $fn = *bin* ]]; then
+	    size2=$(stat -c "%s" $fn)	# or du
+	    # only delete bin/* if diff. size, e.g. embutils replacement
+	    [ -L $fn -o $size = $size2 ] && rm -vf $fn
+	  else
+	    rm -vf $fn
+	  fi
+	fi
+      done
     done
   done
 done
