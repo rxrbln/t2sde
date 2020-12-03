@@ -152,7 +152,7 @@ echo "Copying kernel modules ..."
   cat $map |
   grep -v -e /wireless/ -e netfilter |
   grep  -e reiserfs -e reiser4 -e ext2 -e ext3 -e ext4 -e btrfs -e /jfs -e /xfs \
-	-e isofs -e udf -e /unionfs -e ntfs -e fat -e dm-mod -e dm-crypt \
+	-e isofs -e udf -e /unionfs -e ntfs -e fat -e /hfs -e dm-mod -e dm-crypt \
 	-e /ide/ -e /ata/ -e /scsi/ -e /message/ -e /sdhci/ -e nvme \
 	-e cciss -e ips -e virtio -e floppy -e crypto -e nls_cp437 -e nls_iso8859-1 -e nls_utf8 \
 	-e hci -e usb-common -e usb-storage -e sbp2 -e uas \
@@ -189,7 +189,6 @@ elf_magic () {
 # copy dynamic libraries, and optional plugins, if any.
 #
 extralibs="`ls $root/{lib*/libnss_files,usr/lib*/libgcc_s}.so* 2> /dev/null`"
-extralibs="${extralibs##*/}"
 
 copy_dyn_libs () {
 	local magic
@@ -198,6 +197,9 @@ copy_dyn_libs () {
 		sed -n -e 's/.*Shared library.*\[\([^]\]*\)\]/\1/p' \
 		       -e 's/.*Requesting program interpreter: \([^]]*\)\]/\1/p'`
 	do
+		# remove $root prefix from extra libs
+		[ "$lib" != "${lib#$root/}" ] && lib="${lib##*/}"
+
 		if [ -z "$magic" ]; then
 			magic="$(elf_magic $1)"
 			[[ $1 = *bin/* ]] && echo "Warning: $1 is dynamically linked!"
