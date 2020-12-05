@@ -116,7 +116,8 @@ progs="agetty sh bash cat cp date dd df dmesg ifconfig ln ls $packager mkdir \
        mkswap mount mv rm reboot route sleep swapoff swapon sync umount cut \
        setsid eject chmod chroot grep halt rmdir init shutdown uname killall5 \
        install stone tar mktemp sort fold sed mkreiserfs head tail disktype \
-       gzip mkfs.ext3 mkfs.fat mkfs.xfs gasgui dialog stty wc fmt"
+       login-shell stat gzip mkfs.ext3 mkfs.fat mkfs.xfs gasgui dialog stty  \
+       wc fmt"
 
 progs="$progs parted fdisk sfdisk"
 
