@@ -34,16 +34,15 @@ sed 's/[^ ]* *[^ t]* *[^ ]* *[^ ]* *\([0-9]*\), *\([0-9]*\) .*/\1:\2/'`
 	echo "$resume" > /sys/power/resume
 fi
 
-if [ ! -e "$root" ]; then
-	echo "Assembling MD/LVM arrays"
+if [ "$root" ]; then
+  if [ ! -e "$root" ]; then
+	echo "Activating RAID & LVM"
 	[ -e /sbin/mdadm ] && mdadm --assemble --scan
 	[ -e /sbin/lvchange ] && lvchange -a ay ${root#/dev/}
-fi
-
-if [ "$root" ]; then
-  mkdir -p /root
+  fi
 
   echo "Mounting root ..."
+  mkdir -p /root
 
   i=0
   while [ $i -le 9 ]; do
