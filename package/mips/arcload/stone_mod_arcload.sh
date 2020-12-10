@@ -32,7 +32,7 @@ create_kernel_list() {
 $label {
 	image system "$bootpath/$x";
 	#initrd system "$bootpath/initrd-${ver}.img";
-	append root="$rootdev";
+	append "root=$rootdev";
 }
 EOT
 	done
