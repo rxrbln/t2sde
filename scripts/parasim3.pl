@@ -87,4 +87,3 @@ foreach $file (reverse @ARGV) {
 printf "   Jobs | 00:00                       Time  " .
        "                           %02d:%02d |\n\n",
        $max_x / 100, ($max_x * 0.6 ) % 60;
-
