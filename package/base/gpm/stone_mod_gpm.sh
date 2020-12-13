@@ -92,4 +92,3 @@ Select an item to change the value:' \
 			'$STONE runlevel restart gpm'
     do : ; done
 }
-

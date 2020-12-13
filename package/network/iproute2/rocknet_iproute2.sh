@@ -59,4 +59,3 @@ public_mac() {
 	addcode up 4 3 "ip link set $if address $1"
 	iproute2_init_if
 }
-

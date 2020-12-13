@@ -58,4 +58,3 @@ Select an item to change the value:\n(Example keys: F10:68, F11: 87, Apple: 125,
 			'$STONE runlevel restart mac_hid'
     do : ; done
 }
-

@@ -128,4 +128,3 @@ a simple frontend for the \"mine\" program.'"
 		fi
 	done
 }
-

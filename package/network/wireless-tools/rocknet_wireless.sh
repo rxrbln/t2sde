@@ -149,4 +149,3 @@ public_retry() {
 public_commit() {
         addcode up 4 9 "iwconfig $if commit"
 }
-

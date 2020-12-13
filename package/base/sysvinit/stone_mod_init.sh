@@ -44,4 +44,3 @@ Select an item to change the value:' \
 			"gui_edit 'The inittab file' /etc/inittab"
     do : ; done
 }
-

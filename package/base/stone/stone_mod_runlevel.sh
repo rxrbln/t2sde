@@ -120,4 +120,3 @@ main() {
 		rm -f $x ; eval "$cmd"
 	do : ; done
 }
-

@@ -78,4 +78,3 @@ echo "# IPv4 Route Configuration"
 ip route | grep -v ' scope link ' | sed 's,^,ip route add ,'
 
 echo
-

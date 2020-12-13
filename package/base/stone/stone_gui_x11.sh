@@ -46,4 +46,3 @@ gui_cmd() {
 	xterm -T "STONE - $title" -n "STONE" -e bash -c "$@
 			read -p 'Press ENTER to continue'"
 }
-

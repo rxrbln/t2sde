@@ -31,4 +31,3 @@ if [ "$pfile" ] ; then
 else
 	echo "No stack-protector available for $pkg ..."
 fi
-

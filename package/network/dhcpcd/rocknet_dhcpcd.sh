@@ -21,4 +21,3 @@ public_dhcpcd() {
 	addcode up   5 5 "/sbin/dhcpcd -h $( hostname ) $if"
 	addcode down 5 5 "[ -f $pidfile ] && kill -15 \$( cat $pidfile )"
 }
-

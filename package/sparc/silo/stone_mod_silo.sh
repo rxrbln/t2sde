@@ -114,4 +114,3 @@ Automatically install SILO now?"; then
 			"gui_edit 'STONE Configuration' /boot/silo.conf"
     do : ; done
 }
-

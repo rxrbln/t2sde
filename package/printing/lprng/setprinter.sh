@@ -24,4 +24,3 @@ for x in lpc; do
 	chmod +x /usr/sbin/$x
 done
 exit 0
-

@@ -58,4 +58,3 @@ else
 	echo "Usage: $0 [ -text | -dialog | -x11 ] [ module [ command ] ]"
 	echo
 fi
-

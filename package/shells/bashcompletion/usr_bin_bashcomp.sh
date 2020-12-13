@@ -40,4 +40,3 @@ else
 	"$@" # run the completion function
 	for x in "${COMPREPLY[@]}"; do echo "$x"; done
 fi
-

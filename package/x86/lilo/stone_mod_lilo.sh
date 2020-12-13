@@ -96,4 +96,3 @@ Automatically install LILO now?"; then
                         "gui_edit 'LILO Config File' /etc/lilo.conf"
     do : ; done
 }
-

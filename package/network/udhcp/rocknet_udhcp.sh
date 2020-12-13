@@ -46,4 +46,3 @@ $cmdline"
 		addcode down 5 5 "sleep 2 ; ip link set $if down"
 	fi
 }
-
