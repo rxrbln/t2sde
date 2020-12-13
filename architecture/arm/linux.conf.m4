@@ -21,4 +21,3 @@ include(`linux-net.conf.m4')
 include(`linux-fs.conf.m4')
 
 # CONFIG_AGP is not set
-
