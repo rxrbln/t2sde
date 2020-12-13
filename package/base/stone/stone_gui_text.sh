@@ -105,4 +105,3 @@ gui_cmd() {
 	read -p "Press ENTER to continue."
 }
 
-

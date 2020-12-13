@@ -21,4 +21,3 @@ for x ; do
 		else echo "XXX" > "${x#*=}" ; fi
 	fi
 done
-

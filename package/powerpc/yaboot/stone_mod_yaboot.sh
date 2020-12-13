@@ -170,4 +170,3 @@ Automatically install yaboot now?"; then
 			"gui_edit 'Yaboot Configuration' /etc/yaboot.conf"
     do : ; done
 }
-

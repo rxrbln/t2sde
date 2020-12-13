@@ -33,4 +33,3 @@ then
 fi
 
 unset completion_mode
-
