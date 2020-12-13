@@ -60,4 +60,3 @@ echo "Package Name and Version: $pkg 0000 mkpkg" > var/adm/packages/$pkg
 echo "[ Created package $pkg with" $( wc -l < $flog ) "files. ]"
 
 rm -f $wlog $slog $flog
-

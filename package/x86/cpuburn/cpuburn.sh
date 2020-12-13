@@ -128,4 +128,3 @@ do
 	     `uptime | sed "s,.*average: ,,"`, "" `wc -l < $errors` Errors.
 	sleep 5
 done
-
