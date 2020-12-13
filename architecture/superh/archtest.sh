@@ -17,4 +17,3 @@ case "$SDECFG_SH_OPT" in
 esac
 
 arch_target="${arch_machine}-t2-linux-gnu"
-
