@@ -30,4 +30,3 @@ int main(int argc, char ** argv, char ** env) {
 	/* Test PATH evaluation */
 	execlp("ls", "ls", NULL);
 }
-
