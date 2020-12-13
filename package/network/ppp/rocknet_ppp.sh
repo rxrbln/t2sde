@@ -166,4 +166,3 @@ public_chat_dial() {
 	addcode up 4 5 "echo -e 'TIMEOUT 60
 OK \"$opts\"\nCONNECT' >> \$ppp_${if}_chat"
 }
-

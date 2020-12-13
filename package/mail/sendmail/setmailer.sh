@@ -24,4 +24,3 @@ done
 ln -sf ../bin/sendmail $prefix/sbin/sendmail
 
 exit 0
-

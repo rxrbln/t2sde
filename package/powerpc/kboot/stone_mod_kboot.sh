@@ -87,4 +87,3 @@ Automatically configure kboot now?"; then
 		"gui_edit 'kBoot Configuration' $etcpath/etc/kboot.conf"
     do : ; done
 }
-

@@ -35,4 +35,3 @@ main() {
 			'$STONE runlevel restart sshd'
     do : ; done
 }
-
