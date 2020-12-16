@@ -48,7 +48,7 @@ if [ "$root" ]; then
   while [ $i -le 9 ]; do
     if [ -e $root ]; then
 	type -p cryptsetup && cryptsetup isLuks $root &&
-		cryptsetup luksOpen $root root && root=/dev/mapper/root
+		cryptsetup luksOpen $root root --disable-locks && root=/dev/mapper/root
 
 	# try best match / detected root first, all the others thereafter
 	filesystems=`disktype $root 2>/dev/null |
