@@ -23,6 +23,7 @@ archprefix=
 declare -A vitalmods
 vitalmods[qla1280.ko]=1 # Sgi Octane
 vitalmods[qla2xxx.ko]=1 # Sun Blade
+vitalmods[xhci-pci.ko]=1 # probably evey modern machine
 
 declare -A added
 
@@ -114,9 +115,13 @@ echo "Copying kernel modules ..."
 		for fn in $fw; do
 		    local fn="/lib/firmware/$fn"
 		    local dir="$tmpdir${fn%/*}"
-		    if [ ! -e "$root$fn" ]; then # -a ! -e "$root$fn".*z* ]; then
-			echo ", not found, skipped"
-			skipped=1
+		    if [ ! -e "$root$fn" ]; then
+			if [ "${vitalmods[$module]}" ]; then
+			    echo ", not found, vital, including anyway"
+			else
+			    echo ", not found, skipped"
+			    skipped=1
+			fi
 		    else
 			mkdir -p "$dir"
 			echo -n ", $fn"
