@@ -34,7 +34,7 @@ part_mount() {
 	gui_input "Mount device $dev on directory
 (for example ${dir// /, }, ...)" "${d:-/}" dir
 	if [ "$dir" ]; then
-		dir="$( echo $dir | sed 's,^/*,,; s,/*$,,' )"
+		dir="$(echo $dir | sed 's,^/*,,; s,/*$,,')"
 		# check if at least a rootfs / is already mounted
 		if [ -z "$dir" ] || grep -q " /mnt/target " /proc/mounts
 		then
@@ -81,7 +81,7 @@ part_decrypt() {
 	gui_input "Mount device $dev on directory
 (for example ${dir// /, }, ...)" "${d:-/}" dir
 	if [ "$dir" ]; then
-		dir="$( echo $dir | sed 's,^/*,,; s,/*$,,' )"
+		dir="$(echo $dir | sed 's,^/*,,; s,/*$,,')"
 		cryptsetup luksOpen --disable-locks /dev/$dev $dir
 	fi
 }
@@ -103,7 +103,7 @@ part_unmounted_action() {
 				"swapon /dev/$1" \
 		"Create a swap space on the partition" \
 				"mkswap /dev/$1; swapon /dev/$1" \
-		"Decrypt LUKS encrypted partition" \
+		"Activate a LUKS encrypted partition" \
 				"part_decrypt $1" \
 		"Encrypt partition using LUKS cryptsetup" \
 				"part_crypt $1"
@@ -123,9 +123,9 @@ part_add() {
 	# save partition information
 	disktype /dev/$1 > /tmp/stone-install
 	type="`grep /tmp/stone-install -v -e '^  ' -e '^Block device' \
-	       -e '^Partition' -e '^---' | \
+	       -e '^Partition' -e '^---' |
 	       sed -e 's/[,(].*//' -e '/^$/d' -e 's/ $//' | tail -n 1`"
-	size="`grep 'Block device, size' /tmp/stone-install | \
+	size="`grep 'Block device, size' /tmp/stone-install |
 	       sed 's/.* size \(.*\) (.*/\1/'`"
 
 	[ "$type" ] || type="undetected"
@@ -172,7 +172,7 @@ de-activate it.\" ''"
 disk_add() {
 	local x y=0
 	cmd="$cmd 'Edit partition table of $1:' 'disk_action $1'"
-	for x in $( cd /dev/; ls $1[0-9]* 2> /dev/null )
+	for x in $(cd /dev; ls $1[0-9]* 2> /dev/null)
 	do
 		part_add $x; y=1
 	done
@@ -184,7 +184,7 @@ vg_add() {
 	local x= y=0
 	cmd="$cmd 'Logical volumes of $1:' 'vg_action $1'"
 	if [ -d /dev/$1 ]; then
-		for x in $( cd /dev/; ls -1 $1/* ); do
+		for x in $(cd /dev; ls -1 $1/*); do
 			part_add $x; y=1
 		done
 		if [ $y = 0 ]; then
@@ -207,6 +207,7 @@ This dialog allows you to modify your storage layout and to create filesystems a
 
 		# protect for the case no disks are present ...
 		found=0
+		local volumes=
 		for x in /sys/block/*; do
 			[ ! -e $x/device -a ! -e $x/dm ] && continue
 			x=${x#/sys/block/}
@@ -219,14 +220,17 @@ This dialog allows you to modify your storage layout and to create filesystems a
 					x=${d#/dev/} && break
 			done
 			
-			[[ $x = mapper/* ]] && part_add $x || disk_add $x
+			[[ $x = mapper/* ]] && volumes="$volumes $x" || disk_add $x
 			found=1
 		done
-		for x in $( cat /etc/lvmtab 2> /dev/null ); do
+		for x in $volumes; do
+			part_add $x
+		done
+		for x in $(cat /etc/lvmtab 2> /dev/null); do
 			vg_add "$x"
 			found=1
 		done
-		[ -x /sbin/vgs ] && for x in $( vgs --noheadings -o name 2> /dev/null ); do
+		[ -x /sbin/vgs ] && for x in $(vgs --noheadings -o name 2> /dev/null); do
 			vg_add "$x"
 			found=1
 		done
