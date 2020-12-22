@@ -162,7 +162,7 @@ echo "Copying kernel modules ..."
 	-e cciss -e ips -e virtio -e floppy -e crypto -e nls_cp437 -e nls_iso8859-1 -e nls_utf8 \
 	-e hci -e usb-common -e usb-storage -e sbp2 -e uas \
 	-e /net/ -e md/raid -e '/ipv6\.' \
-	-e usbhid -e hid-generic -e hid-multitouch -e hid-apple -e hid-microsoft |
+	-e usbhid -e i2c-hid -e hid-generic -e hid-multitouch -e hid-apple -e hid-microsoft |
   while read fn; do
 	add_depend "$fn"
   done
