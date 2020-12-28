@@ -46,7 +46,7 @@ while (1) {
 	foreach $qid (keys %jobs) {
 		next if $jobs{$qid} > $now;
 		printf LOG "%10d: Finished job $qid.\n", $now;
-		system("rm -f $logdir/logs_$id/$qid.* ; " .
+		system("rm -f $logdir/logs_$id/$qid.*; " .
 		       "touch $logdir/logs_$id/$qid.log");
 		$freejobs++; $runningjobs--; delete $jobs{$qid};
 	}
@@ -58,7 +58,7 @@ while (1) {
 		s/^.*\s(\S+)\s*$/$1/; $_++;
 		printf LOG "%10d: Creating new job $qid " .
 		           "(pri $_[1], tm $_).\n", $now;
-		system("rm -f $logdir/logs_$id/$qid.* ; " .
+		system("rm -f $logdir/logs_$id/$qid.*; " .
 		       "touch $logdir/logs_$id/$qid.out");
 		$jobs{$qid} = $now + $_;
 		$freejobs--; $runningjobs++;
