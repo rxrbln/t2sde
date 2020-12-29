@@ -50,8 +50,7 @@ create_boot_menu() {
 	# determine /boot path, relative to the boot device
 	# (non local as used by create_kernel_list() ...)
 	#
-	if [ "$rootdrive" = "$bootdrive" ]
-        then bootpath="/boot"; else bootpath=""; fi
+	[ "$rootdev" = "$bootdev" ] && bootpath="/boot" || bootpath=""
 
 	mkdir -p /boot/grub/
 	cat << EOT > /boot/grub/grub.cfg
@@ -254,8 +253,7 @@ get_uuid() {
 get_realdev() {
 	local dev="$1"
 	dev=$(readlink $dev)
-	dev=/dev/${dev##*/}
-	[ "$dev" ] && echo $dev || echo $1
+	[ "$dev" ] && echo /dev/${dev##*/} || echo $1
 }
 
 main() {
@@ -276,8 +274,10 @@ main() {
 
 	# get uuid
 	uuid=$(get_uuid $rootdev)
-	if [ "$uuid" ]; then
-		rootdev=$uuid
+	[ "$uuid" ] && rootdev=$uuid
+	if [ "$bootdev" ]; then
+		uuid=$(get_uuid $bootdev)
+		[ "$uuid" ] && bootdev=$uuid
 	fi
 
 	[ "$bootdev" ] || bootdev="$rootdev"
