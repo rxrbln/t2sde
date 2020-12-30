@@ -54,13 +54,14 @@ EOT
 	cut -f2 -d' ' < $tmp2 | sort -u | while read dn; do
 		grep " $dn " $tmp2 | tail -n 1 |
 		while read dev point type residual; do
+			dev=$(get_uuid $dev)
 			case $type in
 			  *tmpfs|swap)
-				echo $(get_uuid $dev) $point $type $residual && continue ;;
+				echo $dev $point $type $residual && continue ;;
 			esac
 			case $point in
 			  /dev*|/proc*|/sys)
-				echo $(get_uuid $dev) $point $type $residual ;;
+				echo $dev $point $type $residual ;;
 			  /)
 				echo $dev $point $type ${residual%0 0} 0 1 ;;
 			  *)
