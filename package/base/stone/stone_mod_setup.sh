@@ -15,6 +15,21 @@
 #
 # This module should only be executed once directly after the installation
 
+get_uuid() {
+	local dev="$1"
+
+	# look up uuid
+	for _dev in /dev/disk/by-uuid/*; do
+		local d=$(readlink $_dev)
+		d="/dev/${d##*/}"
+		if [ "$d" = $dev ]; then
+			echo $_dev
+			return
+		fi
+	done
+	echo $dev
+}
+
 make_fstab() {
 	tmp1=`mktemp` ; tmp2=`mktemp`
 
@@ -32,7 +47,7 @@ EOT
 	sed -e "s/ nfs [^ ]\+/ nfs rw/" < /etc/mtab |
 		sed "s/ rw,/ /; s/ rw / defaults /" >> $tmp2
 	# currently active swaps
-	sed -e 1d -e 's/ .*//' -e 's,.*$,& & swap defaults 0 0,' \
+	sed -e 1d -e 's/ .*//' -e 's,.*$,& none swap defaults 0 0,' \
 	    /proc/swaps >> $tmp2
 
 	# sort resulting entries and grab the last (e.g. non-default) one
@@ -41,11 +56,11 @@ EOT
 		while read dev point type residual; do
 			case $type in
 			  *tmpfs|swap)
-				echo $dev $point $type $residual && continue ;;
+				echo $(get_uuid $dev) $point $type $residual && continue ;;
 			esac
 			case $point in
 			  /dev*|/proc*|/sys)
-				echo $dev $point $type $residual ;;
+				echo $(get_uuid $dev) $point $type $residual ;;
 			  /)
 				echo $dev $point $type ${residual%0 0} 0 1 ;;
 			  *)
