@@ -257,21 +257,8 @@ umount -v /proc
 umount -v /sys
 EOT
 		chmod +x /mnt/target/tmp/stone_postinst.sh
-		echo -n "" > /mnt/target/etc/mtab
 		grep ' /mnt/target[/ ]' /proc/mounts |
-		sed 's,/mnt/target/\?,/,' |
-		while read dev mnt args; do
-		    # look up uuid
-		    for _dev in /dev/disk/by-uuid/*; do
-			local d=$(readlink $_dev)
-			d="/dev/${d##*/}"
-			if [ "$d" = $dev ]; then
-			    dev=$_dev
-			    break
-			fi
-		    done
-		    echo "$dev $mnt $args" >> /mnt/target/etc/mtab
-		done
+			sed 's,/mnt/target/\?,/,' > /mnt/target/etc/mtab
 		cd /mnt/target; chroot . ./tmp/stone_postinst.sh
 		rm -fv ./tmp/stone_postinst.sh
 		if gui_yesno "Do you want to un-mount the filesystems and reboot now?"
