@@ -1,0 +1,82 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Arjan van de Ven <arjan@linux.intel.com>
+Date: Wed, 21 Nov 2018 21:21:44 +0000
+Subject: [PATCH] add scheduler turbo3 patch
+
+Small scheduler tweak to make the scheduler more turbo3 aware
+---
+ arch/x86/kernel/itmt.c | 14 ++++++++++++++
+ kernel/sched/fair.c    | 19 +++++++++++++++++++
+ 2 files changed, 33 insertions(+)
+
+diff --git a/arch/x86/kernel/itmt.c b/arch/x86/kernel/itmt.c
+index 1afbdd1dd777..d828ecf6bce7 100644
+--- a/arch/x86/kernel/itmt.c
++++ b/arch/x86/kernel/itmt.c
+@@ -172,6 +172,11 @@ int arch_asym_cpu_priority(int cpu)
+ 	return per_cpu(sched_core_priority, cpu);
+ }
+ 
++extern int best_core;
++extern int second_best_core;
++static int best_core_score;
++static int second_best_core_score;
++
+ /**
+  * sched_set_itmt_core_prio() - Set CPU priority based on ITMT
+  * @prio:	Priority of cpu core
+@@ -201,5 +206,14 @@ void sched_set_itmt_core_prio(int prio, int core_cpu)
+ 		smt_prio = prio * smp_num_siblings / i;
+ 		per_cpu(sched_core_priority, cpu) = smt_prio;
+ 		i++;
++
++		if (smt_prio > best_core_score) {
++			best_core = cpu;
++			best_core_score = smt_prio;
++		} else
++		if (smt_prio > second_best_core_score) {
++			second_best_core = cpu;
++			second_best_core_score = smt_prio;
++		}
+ 	}
+ }
+diff --git a/kernel/sched/fair.c b/kernel/sched/fair.c
+index 1c39dda88136..1fedbb062bf5 100644
+--- a/kernel/sched/fair.c
++++ b/kernel/sched/fair.c
+@@ -6670,6 +6670,10 @@ static int find_energy_efficient_cpu(struct task_struct *p, int prev_cpu)
+  *
+  * preempt must be disabled.
+  */
++
++int best_core = -1;
++int second_best_core = -1;
++
+ static int
+ select_task_rq_fair(struct task_struct *p, int prev_cpu, int sd_flag, int wake_flags)
+ {
+@@ -6692,6 +6696,21 @@ select_task_rq_fair(struct task_struct *p, int prev_cpu, int sd_flag, int wake_f
+ 		want_affine = !wake_wide(p) && cpumask_test_cpu(cpu, p->cpus_ptr);
+ 	}
+ 
++	if (prev_cpu != best_core && prev_cpu != second_best_core &&
++		       cpu_rq(prev_cpu)->nr_running != 0) {
++		if (second_best_core != -1 && cpu_rq(second_best_core)->nr_running == 0 &&
++			       nr_iowait_cpu(second_best_core) < 2 && cpu_to_node(prev_cpu) == cpu_to_node(second_best_core))
++			prev_cpu = second_best_core;
++		if (best_core != -1 && cpu_rq(best_core)->nr_running == 0 &&
++			       nr_iowait_cpu(best_core) < 2  && cpu_to_node(prev_cpu) == cpu_to_node(best_core))
++			prev_cpu = best_core;
++	}
++/*
++	if (prev_cpu > 0 && cpu_rq(prev_cpu)->nr_running != 0 && cpu_rq(prev_cpu - 1)->nr_running == 0)
++		prev_cpu = prev_cpu - 1;
++*/
++
++
+ 	rcu_read_lock();
+ 	for_each_domain(cpu, tmp) {
+ 		/*
+-- 
+https://clearlinux.org
+
