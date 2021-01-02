@@ -84,17 +84,6 @@ CONFIG_BT_L2CAP=m
 CONFIG_BT_RFCOMM=m
 CONFIG_BT_RFCOMM_TTY=y
 
-dnl Enable ISDN drivers as modules
-dnl
-CONFIG_ISDN=y
-CONFIG_IPPP_FILTER=y
-CONFIG_ISDN_DRV_HISAX=m
-CONFIG_ISDN_HISAX=y
-CONFIG_ISDN_MPP=y
-CONFIG_ISDN_PPP=y
-CONFIG_ISDN_PPP_VJ=y
-CONFIG_ISDN_X25=y
-
 dnl Enable fibre channel support
 CONFIG_NET_FC=y
 
@@ -107,5 +96,6 @@ CONFIG_BRCMFMAC_USB=y
 CONFIG_BRCMFMAC_PCIE=y
 
 dnl rare / obsolete stuff
+# CONFIG_ISDN is not set
 # CONFIG_WIMAX is not set
 # CONFIG_DECNET is not set
