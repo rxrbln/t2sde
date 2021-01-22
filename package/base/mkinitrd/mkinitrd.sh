@@ -291,6 +291,6 @@ fi
 #
 echo "Archiving ..."
 ( cd $tmpdir
-  find . | cpio -o -H newc | zstd -19 -T0 > $root/boot/initrd-$kernelver.img
+  find . | cpio -o -H newc | zstd -19 -T0 > $root/boot/initrd-$kernelver
 )
 rm -rf $tmpdir $map
