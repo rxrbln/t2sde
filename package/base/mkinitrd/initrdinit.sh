@@ -1,6 +1,6 @@
 #!/bin/sh
 
-echo "T2 SDE early userspace (C) 2005 - 2020 Rene Rebe, ExactCODE"
+echo "T2 SDE early userspace (C) 2005 - 2021 Rene Rebe, ExactCODE"
 
 PATH=/sbin:/bin:/usr/bin:/usr/sbin
 
@@ -23,6 +23,7 @@ udevadm settle
 # get the root device and init
 root="root= $(< /proc/cmdline)" ; root=${root##*root=} ; root=${root%% *}
 init="init= $(< /proc/cmdline)" ; init=${init##*init=} ; init=${init%% *}
+[ "${root#UUID=}" != "$root" ] && root="/dev/disk/by-uuid/${root#UUID=}"
 
 # maybe resume from disk?
 resume="$(< /proc/cmdline)"
