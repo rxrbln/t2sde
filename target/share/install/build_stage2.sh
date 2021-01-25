@@ -194,7 +194,7 @@ for x in `egrep 'X .* KERNEL .*' $base/config/$config/packages |
   for moduledir in `grep lib/modules $build_root/var/adm/flists/$kernel |
                    cut -d ' ' -f 2 | cut -d / -f 1-3 | uniq`; do
     kernelver=${moduledir/*\/}
-    initrd="initrd-$kernelver.img"
+    initrd="initrd-$kernelver"
     kernelimg=`ls $build_root/boot/vmlinu?-$kernelver`
     kernelimg=${kernelimg##*/}
 
