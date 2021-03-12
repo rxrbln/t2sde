@@ -103,9 +103,10 @@ grub_inst() {
 	if [ -z "$cryptdev" ]; then
 		grub2-install $instdev
 	else
-		mkdir -p /boot/efi/EFI/grub
+	    for efi in /boot/efi*; do
+		mkdir -p $efi/EFI/grub
 
-		cat << EOT > /boot/efi/EFI/grub/grub.cfg
+		cat << EOT > $efi/EFI/grub/grub.cfg
 set uuid=$grubdev
 cryptomount -u \$uuid
 configfile (crypto0)/boot/grub/grub.cfg
@@ -114,10 +115,11 @@ EOT
 		local exe=grubx.efi
 		[ $arch = x86_64 ] && exe=${exe/.efi/64.efi}
 		
-		grub-mkimage -O $arch-efi -o /boot/efi/EFI/grub/$exe \
+		grub-mkimage -O $arch-efi -o $efi/EFI/grub/$exe \
 			-p /efi/grub -d /usr/lib*/grub/$arch-efi/ \
 			$grubmods
-		efibootmgr -c -L t2sde -l "\\EFI\\grub\\$exe"
+	    done
+	    efibootmgr -c -L t2sde -l "\\EFI\\grub\\$exe"
 	fi
     else
 	# Apple PowerPC - install into FW read-able HFS partition
@@ -261,15 +263,20 @@ main() {
 	bootdev="`grep ' /boot ' /proc/mounts | tail -n 1 | sed 's, .*,,'`"
 
 	# if device-mapper, get backing device
-	[[ "$rootdev" = *mapper* ]] && rootdev=$(get_dm_dev $rootdev)
-
-	# encrypted?
-	if [[ "$(get_dm_type $rootdev)" = CRYPT* ]]; then
+	if [[ "$rootdev" = *mapper* ]]; then
+	    rootdev2=$(get_dm_dev $rootdev)
+	    # encrypted?
+	    if [[ "$(get_dm_type $rootdev2)" = CRYPT* ]]; then
+		rootdev=$rootdev2
 		realroot=$(cd /sys/block/${rootdev##*/}/slaves/; ls -d [a-z]*)
 		if [ "$realroot" ]; then
 			rootdev="/dev/$realroot"
 			cryptdev="(crypto0)"
 		fi
+	    else
+		cryptdev="${rootdev#/dev/mapper/}"
+		cryptdev="${cryptdev/-/\/}"
+	    fi
 	fi
 
 	# get uuid
