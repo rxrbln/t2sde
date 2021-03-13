@@ -274,8 +274,7 @@ main() {
 			cryptdev="(crypto0)"
 		fi
 	    else
-		cryptdev="${rootdev#/dev/mapper/}"
-		cryptdev="${cryptdev/-/\/}"
+		cryptdev="lvm/${rootdev#/dev/mapper/}"
 	    fi
 	fi
 
