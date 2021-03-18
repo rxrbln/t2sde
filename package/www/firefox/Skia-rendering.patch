@@ -1,0 +1,179 @@
+https://bugzilla.mozilla.org/show_bug.cgi?id=1626236
+
+Plus SVG gradient-issues.
+
+Fixes by Martin Sirringhaus.
+
+--- a/gfx/2d/DrawTargetSkia.cpp
++++ b/gfx/2d/DrawTargetSkia.cpp
+@@ -68,15 +68,28 @@
+     mColors.resize(mCount);
+     mPositions.resize(mCount);
+     if (aStops[0].offset != 0) {
++// reddit.com yellow graddient
++#if MOZ_BIG_ENDIAN()
++      mColors[0] = mozilla::detail::Swapper<SkColor>::swap(ColorToSkColor(aStops[0].color, 1.0));
++#else
+       mColors[0] = ColorToSkColor(aStops[0].color, 1.0);
++#endif
+       mPositions[0] = 0;
+     }
+     for (uint32_t i = 0; i < aNumStops; i++) {
++#if MOZ_BIG_ENDIAN()
++      mColors[i + shift] = mozilla::detail::Swapper<SkColor>::swap(ColorToSkColor(aStops[i].color, 1.0));
++#else
+       mColors[i + shift] = ColorToSkColor(aStops[i].color, 1.0);
++#endif
+       mPositions[i + shift] = SkFloatToScalar(aStops[i].offset);
+     }
+     if (aStops[aNumStops - 1].offset != 1) {
++#if MOZ_BIG_ENDIAN()
++      mColors[mCount - 1] = mozilla::detail::Swapper<SkColor>::swap(ColorToSkColor(aStops[aNumStops - 1].color, 1.0));
++#else
+       mColors[mCount - 1] = ColorToSkColor(aStops[aNumStops - 1].color, 1.0);
++#endif
+       mPositions[mCount - 1] = SK_Scalar1;
+     }
+   }
+@@ -155,7 +168,7 @@
+   for (int row = 0; row < height; ++row) {
+     for (int column = 0; column < width; column += 4) {
+       if (aData[column + kARGBAlphaOffset] != 0xFF) {
+-        gfxCriticalError() << "RGBX pixel at (" << column << "," << row
++        gfxWarning() << "RGBX pixel at (" << column << "," << row
+                            << ") in " << width << "x" << height
+                            << " surface is not opaque: " << int(aData[column])
+                            << "," << int(aData[column + 1]) << ","
+@@ -205,7 +218,7 @@
+     if (aData[offset + kARGBAlphaOffset] != 0xFF) {
+       int row = offset / aStride;
+       int column = (offset % aStride) / pixelSize;
+-      gfxCriticalError() << "RGBX corner pixel at (" << column << "," << row
++      gfxWarning() << "RGBX corner pixel at (" << column << "," << row
+                          << ") in " << aSize.width << "x" << aSize.height
+                          << " surface, bounded by "
+                          << "(" << bounds.X() << "," << bounds.Y() << ","
+diff -r 49ddb3c45fbc -r 13bdca7081de gfx/2d/FilterProcessing.h
+--- a/gfx/2d/FilterProcessing.h	Wed Jun 17 11:32:00 2020 +0200
++++ b/gfx/2d/FilterProcessing.h	Fri Jun 19 15:20:16 2020 +0200
+@@ -13,10 +13,17 @@
+ namespace mozilla {
+ namespace gfx {
+ 
++#if defined WORDS_BIGENDIAN || defined IS_BIG_ENDIAN || defined __BIG_ENDIAN__
++const ptrdiff_t B8G8R8A8_COMPONENT_BYTEOFFSET_B = 3;
++const ptrdiff_t B8G8R8A8_COMPONENT_BYTEOFFSET_G = 2;
++const ptrdiff_t B8G8R8A8_COMPONENT_BYTEOFFSET_R = 1;
++const ptrdiff_t B8G8R8A8_COMPONENT_BYTEOFFSET_A = 0;
++#else
+ const ptrdiff_t B8G8R8A8_COMPONENT_BYTEOFFSET_B = 0;
+ const ptrdiff_t B8G8R8A8_COMPONENT_BYTEOFFSET_G = 1;
+ const ptrdiff_t B8G8R8A8_COMPONENT_BYTEOFFSET_R = 2;
+ const ptrdiff_t B8G8R8A8_COMPONENT_BYTEOFFSET_A = 3;
++#endif
+ 
+ class FilterProcessing {
+  public:
+diff -r 49ddb3c45fbc -r 13bdca7081de gfx/layers/composite/CompositableHost.cpp
+--- a/gfx/layers/composite/CompositableHost.cpp	Wed Jun 17 11:32:00 2020 +0200
++++ b/gfx/layers/composite/CompositableHost.cpp	Fri Jun 19 15:20:16 2020 +0200
+@@ -92,9 +92,11 @@
+   }
+   MOZ_ASSERT(source);
+ 
+-  RefPtr<EffectMask> effect =
+-      new EffectMask(source, source->GetSize(), aTransform);
+-  aEffects.mSecondaryEffects[EffectTypes::MASK] = effect;
++  // Setting an alpha-mask here breaks the URL-bar on big endian (s390x)
++  // if the typed URL is too long for the textbox (automatic scrolling needed)
++  //RefPtr<EffectMask> effect =
++  //    new EffectMask(source, source->GetSize(), aTransform);
++  //aEffects.mSecondaryEffects[EffectTypes::MASK] = effect;
+   return true;
+ }
+ 
+diff -r 49ddb3c45fbc -r 13bdca7081de gfx/skia/skia/src/shaders/gradients/Sk4fLinearGradient.cpp
+--- a/gfx/skia/skia/src/shaders/gradients/Sk4fLinearGradient.cpp	Wed Jun 17 11:32:00 2020 +0200
++++ b/gfx/skia/skia/src/shaders/gradients/Sk4fLinearGradient.cpp	Fri Jun 19 15:20:16 2020 +0200
+@@ -7,7 +7,7 @@
+ 
+ #include "include/core/SkPaint.h"
+ #include "src/shaders/gradients/Sk4fLinearGradient.h"
+-
++#include "src/core/SkEndian.h"
+ #include <cmath>
+ #include <utility>
+ 
+@@ -28,6 +28,9 @@
+ 
+     while (n >= 4) {
+         DstTraits<premul>::store4x(c0, c1, c2, c3, dst, bias0, bias1);
++#ifdef SK_CPU_BENDIAN
++        SkEndianSwap32s(dst, 4);
++#endif
+         dst += 4;
+ 
+         c0 = c0 + dc4;
+@@ -37,12 +40,23 @@
+         n -= 4;
+     }
+     if (n & 2) {
+-        DstTraits<premul>::store(c0, dst++, bias0);
+-        DstTraits<premul>::store(c1, dst++, bias1);
++        DstTraits<premul>::store(c0, dst, bias0);
++#ifdef SK_CPU_BENDIAN
++        *dst = SkEndianSwap32(*dst);
++#endif
++        ++dst;
++        DstTraits<premul>::store(c1, dst, bias1);
++#ifdef SK_CPU_BENDIAN
++        *dst = SkEndianSwap32(*dst);
++#endif
++        ++dst;
+         c0 = c0 + dc2;
+     }
+     if (n & 1) {
+         DstTraits<premul>::store(c0, dst, bias0);
++#ifdef SK_CPU_BENDIAN
++        *dst = SkEndianSwap32(*dst);
++#endif
+     }
+ }
+ 
+diff -r 49ddb3c45fbc -r 13bdca7081de image/decoders/nsJPEGDecoder.cpp
+--- a/image/decoders/nsJPEGDecoder.cpp	Wed Jun 17 11:32:00 2020 +0200
++++ b/image/decoders/nsJPEGDecoder.cpp	Fri Jun 19 15:20:16 2020 +0200
+@@ -256,6 +256,9 @@
+         case JCS_YCbCr:
+           // By default, we will output directly to BGRA. If we need to apply
+           // special color transforms, this may change.
++#if MOZ_BIG_ENDIAN()
++          mInfo.out_color_space = MOZ_JCS_EXT_NATIVE_ENDIAN_XRGB;
++#else
+           switch (SurfaceFormat::OS_RGBX) {
+             case SurfaceFormat::B8G8R8X8:
+               mInfo.out_color_space = JCS_EXT_BGRX;
+@@ -270,6 +273,7 @@
+               mState = JPEG_ERROR;
+               return Transition::TerminateFailure();
+           }
++#endif
+           break;
+         case JCS_CMYK:
+         case JCS_YCCK:
+diff -r 49ddb3c45fbc -r 13bdca7081de image/decoders/nsWebPDecoder.cpp
+--- a/image/decoders/nsWebPDecoder.cpp	Wed Jun 17 11:32:00 2020 +0200
++++ b/image/decoders/nsWebPDecoder.cpp	Fri Jun 19 15:20:16 2020 +0200
+@@ -245,7 +245,12 @@
+   // WebP doesn't guarantee that the alpha generated matches the hint in the
+   // header, so we always need to claim the input is BGRA. If the output is
+   // BGRX, swizzling will mask off the alpha channel.
++#if MOZ_BIG_ENDIAN()
++  mBuffer.colorspace = MODE_ARGB;
++  SurfaceFormat inFormat = mFormat;
++#else
+   SurfaceFormat inFormat = SurfaceFormat::OS_RGBA;
++#endif
+ 
+   SurfacePipeFlags pipeFlags = SurfacePipeFlags();
+   if (mFormat == SurfaceFormat::OS_RGBA &&
