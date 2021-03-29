@@ -93,8 +93,11 @@
 
 		# CONFIG_NAMESPACES is not set
 		# CONFIG_SMP is not set
+		# CONFIG_PARAVIRT is not set
 		# CONFIG_IOMMU_SUPPORT is not set
 		# CONFIG_SFI is not set
+		# CONFIG_ACPI_APEI is not set
+		# CONFIG_FAULT_INJECTION is not set
 
 		CONFIG_RTC_DRV_CMOS=y
 	EOT
