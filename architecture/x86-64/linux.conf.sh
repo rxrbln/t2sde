@@ -80,5 +80,13 @@
 		CONFIG_IOMMU_DEFAULT_PASSTHROUGH=y
 
 		CONFIG_RTC_DRV_CMOS=y
+
+		dnl Support for latest low level clocks, gpio, and i2c glue
+		dnl
+		CONFIG_X86_AMD_PLATFORM_DEVICE=y
+		CONFIG_X86_INTEL_LPSS=m
+		CONFIG_I2C_DESIGNWARE_BAYTRAIL=y
+		CONFIG_PMIC_OPREGION=y
+		CONFIG_INTEL_SOC_PMIC=y
 	EOT
 } | m4 -I $base/architecture/$arch -I $base/architecture/x86 -I $base/architecture/share
