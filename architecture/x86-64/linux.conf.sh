@@ -73,6 +73,12 @@
 		# CONFIG_NUMA_BALANCING=y
 		CONFIG_PREEMPT_VOLUNTARY=y
 
+		CONFIG_AMD_IOMMU=y
+		CONFIG_INTEL_IOMMU=y
+		CONFIG_INTEL_IOMMU_SVM=y
+		CONFIG_HYPERV_IOMMU_SVM=y
+		CONFIG_IOMMU_DEFAULT_PASSTHROUGH=y
+
 		CONFIG_RTC_DRV_CMOS=y
 	EOT
 } | m4 -I $base/architecture/$arch -I $base/architecture/x86 -I $base/architecture/share
