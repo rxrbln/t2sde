@@ -18,6 +18,8 @@ set -e
 
 map=`mktemp`
 firmware=
+minimal=
+network=1
 archprefix=
 
 declare -A vitalmods
@@ -25,6 +27,8 @@ vitalmods[qla1280.ko]=1 # Sgi Octane
 vitalmods[qla2xxx.ko]=1 # Sun Blade
 vitalmods[tg3.ko]=1 # Sun Fire
 vitalmods[xhci-pci.ko]=1 # probably every modern machine
+
+filter="-e isofs -e ext4 -e ata_piix -e pata_legacy -e pata_acpi -e floppy"
 
 declare -A added
 
@@ -39,11 +43,26 @@ while [ "$1" ]; do
 	-R) root="$2" ; shift ;;
 	-a) archprefix="$2" ; shift ;;
 	--firmware) firmware=1 ;;
+	--minimal) minimal=1 ;;
+	--network) network=0 ;;
+	-e) filter="$filter $2" ; shift ;;
 	*) echo "Usage: mkinitrd [ --firmware ] [ -R root ] [ kernelver ]"
 	   exit 1 ;;
   esac
   shift
 done
+
+[ "$minimal" != 1 ] && filter="$filter -e reiserfs -e btrfs -e /jfs -e /xfs
+-e /udf -e /unionfs -e ntfs -e /fat -e /hfs
+-e /ata/ -e /scsi/ -e /fusion/ -e /sdhci/ -e nvme
+-e dm-mod -e dm-raid -e md/raid -e dm/mirror -e dm/linear -e dm-crypt -e dm-cache
+-e /aes -e /sha -e /blake -e /cbc
+-e cciss -e ips -e virtio -e nls_cp437 -e nls_iso8859-1 -e nls_utf8
+-e /.hci -e usb-common -e usb-storage -e sbp2 -e uas
+-e usbhid -e i2c-hid -e hid-generic -e hid-multitouch -e hid-apple -e hid-microsoft"
+
+[ "$network" = 1 ] && filter="$filter -e /ipv4/ -e '/ipv6\.' -e ethernet"
+
 
 [ "$kernelver" ] || kernelver=`uname -r`
 [ "$moddir" ] || moddir="$root/lib/modules/$kernelver"
@@ -155,17 +174,7 @@ echo "Copying kernel modules ..."
   }
 
   find $moddir/kernel -type f > $map
-  cat $map |
-  grep -v -e /wireless/ -e netfilter |
-  grep  -e reiserfs-e ext2 -e ext3 -e ext4 -e btrfs -e /jfs -e /xfs \
-	-e isofs -e /udf -e /unionfs -e ntfs -e /fat -e /hfs \
-	-e /ata/ -e /scsi/ -e /message/ -e /sdhci/ -e nvme \
-	-e dm-mod -e dm-raid -e md/raid -e dm/mirror -e dm/linear -e dm-crypt -e dm-cache \
-	-e /aes -e /sha -e /blake -e /cbc \
-	-e cciss -e ips -e virtio -e floppy -e nls_cp437 -e nls_iso8859-1 -e nls_utf8 \
-	-e /.hci -e usb-common -e usb-storage -e sbp2 -e uas \
-	-e usbhid -e i2c-hid -e hid-generic -e hid-multitouch -e hid-apple -e hid-microsoft \
-	-e /ipv4/ -e '/ipv6\.' -e ethernet |
+  grep -v -e /wireless/ -e netfilter $map | grep $filter |
   while read fn; do
 	add_depend "$fn"
   done
@@ -255,6 +264,7 @@ done
 
 # setup optional programs
 #
+[ "$minimal" != 1 ] &&
 for x in $root/sbin/{vgchange,lvchange,lvm,mdadm} \
 	 $root/usr/sbin/cryptsetup $root/usr/embutils/dmesg
 do
