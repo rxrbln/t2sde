@@ -157,11 +157,12 @@ echo "Copying kernel modules ..."
   find $moddir/kernel -type f > $map
   cat $map |
   grep -v -e /wireless/ -e netfilter |
-  grep  -e reiserfs -e reiser4 -e ext2 -e ext3 -e ext4 -e btrfs -e /jfs -e /xfs \
+  grep  -e reiserfs-e ext2 -e ext3 -e ext4 -e btrfs -e /jfs -e /xfs \
 	-e isofs -e /udf -e /unionfs -e ntfs -e /fat -e /hfs \
 	-e /ata/ -e /scsi/ -e /message/ -e /sdhci/ -e nvme \
 	-e dm-mod -e dm-raid -e md/raid -e dm/mirror -e dm/linear -e dm-crypt -e dm-cache \
-	-e cciss -e ips -e virtio -e floppy -e crypto -e nls_cp437 -e nls_iso8859-1 -e nls_utf8 \
+	-e /aes -e /sha -e /blake -e /cbc \
+	-e cciss -e ips -e virtio -e floppy -e nls_cp437 -e nls_iso8859-1 -e nls_utf8 \
 	-e /.hci -e usb-common -e usb-storage -e sbp2 -e uas \
 	-e usbhid -e i2c-hid -e hid-generic -e hid-multitouch -e hid-apple -e hid-microsoft \
 	-e /ipv4/ -e '/ipv6\.' -e ethernet |
