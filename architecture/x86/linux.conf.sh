@@ -93,7 +93,7 @@
 
 		# CONFIG_NAMESPACES is not set
 		# CONFIG_SMP is not set
-		# CONFIG_PARAVIRT is not set
+		# CONFIG_HYPERVISOR_GUEST is not set
 		# CONFIG_IOMMU_SUPPORT is not set
 		# CONFIG_SFI is not set
 		# CONFIG_ACPI_APEI is not set
