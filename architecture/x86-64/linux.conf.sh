@@ -79,8 +79,6 @@
 		CONFIG_HYPERV_IOMMU_SVM=y
 		CONFIG_IOMMU_DEFAULT_PASSTHROUGH=y
 
-		CONFIG_RTC_DRV_CMOS=y
-
 		dnl Support for latest low level clocks, gpio, and i2c glue
 		dnl
 		CONFIG_X86_AMD_PLATFORM_DEVICE=y

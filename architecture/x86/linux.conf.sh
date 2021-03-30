@@ -91,6 +91,7 @@
 		include(`linux-net.conf.m4')
 		include(`linux-fs.conf.m4')
 
+		CONFIG_X86_ANCIENT_MCE=y
 		# CONFIG_NAMESPACES is not set
 		# CONFIG_SMP is not set
 		# CONFIG_HYPERVISOR_GUEST is not set
@@ -98,7 +99,11 @@
 		# CONFIG_SFI is not set
 		# CONFIG_ACPI_APEI is not set
 		# CONFIG_FAULT_INJECTION is not set
-
-		CONFIG_RTC_DRV_CMOS=y
+		# CONFIG_ATA_VERBOSE_ERROR is not set
+		# CONFIG_FS_ENCRYPTION is not set
+		# CONFIG_MICROCODE
+		# CONFIG_COMPACTION is not set
+		# CONFIG_FTRACE is not set
+		# CONFIG_DEBUG_KERNEL is not set
 	EOT
 } | m4 -I $base/architecture/$arch -I $base/architecture/share
