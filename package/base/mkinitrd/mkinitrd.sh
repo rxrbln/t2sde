@@ -28,7 +28,7 @@ vitalmods[qla2xxx.ko]=1 # Sun Blade
 vitalmods[tg3.ko]=1 # Sun Fire
 vitalmods[xhci-pci.ko]=1 # probably every modern machine
 
-filter="-e isofs -e ext4 -e ata_piix -e pata_legacy -e pata_acpi -e floppy"
+filter="-e isofs -e ext4 -e pata_legacy -e pata_acpi -e sd_mod -e sr_mod"
 
 declare -A added
 
@@ -53,7 +53,7 @@ while [ "$1" ]; do
 done
 
 [ "$minimal" != 1 ] && filter="$filter -e reiserfs -e btrfs -e /jfs -e /xfs
--e /udf -e /unionfs -e ntfs -e /fat -e /hfs
+-e /udf -e /unionfs -e ntfs -e /fat -e /hfs -e floppy
 -e /ata/ -e /scsi/ -e /fusion/ -e /sdhci/ -e nvme
 -e dm-mod -e dm-raid -e md/raid -e dm/mirror -e dm/linear -e dm-crypt -e dm-cache
 -e /aes -e /sha -e /blake -e /cbc
@@ -205,6 +205,7 @@ elf_magic () {
 
 # copy dynamic libraries, and optional plugins, if any.
 #
+[ "$minimal" != 1 ] &&
 extralibs="`ls $root/{lib*/libnss_files,usr/lib*/libgcc_s}.so* 2> /dev/null`"
 
 copy_dyn_libs () {

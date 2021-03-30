@@ -20,6 +20,8 @@ udevadm settle
 [ -e /dev/console ] || mknod /dev/console c 5 1
 [ -e /dev/tty ] || mknod /dev/tty c 5 0
 
+modprobe pata_legacy
+
 # get the root device and init
 root="root= $(< /proc/cmdline)" ; root=${root##*root=} ; root=${root%% *}
 init="init= $(< /proc/cmdline)" ; init=${init##*init=} ; init=${init%% *}
