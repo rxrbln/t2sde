@@ -32,6 +32,8 @@ dnl PC Speaker for 2.5/6 kernel
 CONFIG_INPUT_PCSPKR=m
 CONFIG_USB_HIDINPUT_POWERBOOK=y
 
+CONFIG_RTC_DRV_CMOS=y
+
 dnl Power management and ACPI options
 dnl
 CONFIG_ACPI=y
@@ -67,7 +69,6 @@ dnl
 CONFIG_ISA=y
 CONFIG_ISAPNP=y
 CONFIG_PNPBIOS=y
-
 CONFIG_PNP=y
 
 dnl The default x86 frame-buffer fallback

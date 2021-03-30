@@ -59,6 +59,7 @@ CONFIG_SCSI_SATA=y
 dnl Make sure the drivers are modular ...
 dnl
 CONFIG_SCSI_ATA_PIIX=m
+# CONFIG_PATA_WINBOND_VLB is not set
 
 CONFIG_SCSI_QLA2XXX=m
 CONFIG_SCSI_SYM53C8XX_2=m
@@ -90,9 +91,10 @@ dnl Enable software-raid
 dnl
 CONFIG_MD=y
 
-dnl Zone aware
+dnl Zone aware and fault testing
 dnl
 CONFIG_BLK_DEV_ZONED=y
+CONFIG_FAULT_INJECTION=y
 
 dnl some more USB storage quirks
 dnl
