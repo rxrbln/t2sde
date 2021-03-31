@@ -288,7 +288,7 @@ done
 
 # static, tiny embutils and friends
 #
-cp $root/usr/embutils/{mount,umount,rm,mv,mkdir,ln,ls,switch_root,chroot,sleep,losetup,chmod,cat,sed,mknod} \
+cp $root/usr/embutils/{mount,umount,rm,mv,mkdir,ln,ls,switch_root,chroot,sleep,losetup,chmod,cat,sed,mknod,swapon} \
    $tmpdir/bin/
 ln -s mv $tmpdir/bin/cp
 
