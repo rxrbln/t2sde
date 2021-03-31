@@ -25,6 +25,8 @@ modprobe pata_legacy
 # get the root device and init
 root="root= $(< /proc/cmdline)" ; root=${root##*root=} ; root=${root%% *}
 init="init= $(< /proc/cmdline)" ; init=${init##*init=} ; init=${init%% *}
+swap="swap= $(< /proc/cmdline)" ; swap=${swap##*swap=} ; swap=${swap%% *}
+
 [ "${root#UUID=}" != "$root" ] && root="/dev/disk/by-uuid/${root#UUID=}"
 
 # maybe resume from disk?
@@ -35,6 +37,11 @@ if [[ "$resume" = *resume* ]] && [[ "$resume" != *noresume* ]]; then
 sed 's/[^ ]* *[^ t]* *[^ ]* *[^ ]* *\([0-9]*\), *\([0-9]*\) .*/\1:\2/'`
 	echo "Attempting to resume from disk $resume."
 	echo "$resume" > /sys/power/resume
+fi
+
+if [ "$swap" ]; then
+	echo "Activating swap"
+	swapon $swap
 fi
 
 if [ "$root" ]; then
