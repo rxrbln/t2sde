@@ -28,6 +28,7 @@ init="init= $(< /proc/cmdline)" ; init=${init##*init=} ; init=${init%% *}
 swap="swap= $(< /proc/cmdline)" ; swap=${swap##*swap=} ; swap=${swap%% *}
 
 [ "${root#UUID=}" != "$root" ] && root="/dev/disk/by-uuid/${root#UUID=}"
+[ "${swap#UUID=}" != "$swap" ] && swap="/dev/disk/by-uuid/${swap#UUID=}"
 
 # maybe resume from disk?
 resume="$(< /proc/cmdline)"
