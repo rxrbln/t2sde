@@ -21,6 +21,7 @@ firmware=
 minimal=
 network=1
 archprefix=
+outfile=
 
 declare -A vitalmods
 vitalmods[qla1280.ko]=1 # Sgi Octane
@@ -46,6 +47,7 @@ while [ "$1" ]; do
 	--minimal) minimal=1 ;;
 	--network) network=0 ;;
 	-e) filter="$filter $2" ; shift ;;
+	-o) outfile="$2" ; shift ;;
 	*) echo "Usage: mkinitrd [ --firmware ] [ -R root ] [ kernelver ]"
 	   exit 1 ;;
   esac
@@ -304,6 +306,6 @@ fi
 #
 echo "Archiving ..."
 ( cd $tmpdir
-  find . | cpio -o -H newc | zstd -19 -T0 > $root/boot/initrd-$kernelver
+  find . | cpio -o -H newc | zstd -19 -T0 > "${outfile:-$root/boot/initrd-$kernelver}"
 )
 rm -rf $tmpdir $map
