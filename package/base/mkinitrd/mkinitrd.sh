@@ -29,7 +29,7 @@ vitalmods[qla2xxx.ko]=1 # Sun Blade
 vitalmods[tg3.ko]=1 # Sun Fire
 vitalmods[xhci-pci.ko]=1 # probably every modern machine
 
-filter="-e isofs -e ext4 -e pata_legacy -e pata_acpi -e sd_mod -e sr_mod"
+filter="-e ext4 -e isofs -e pata_legacy -e sym53c8xx -e s[rd]_mod"
 
 declare -A added
 
