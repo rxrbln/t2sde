@@ -69,8 +69,14 @@
 	done
 
 	case "$linux_arch" in
-		386|486)  echo "CONFIG_MATH_EMULATION=y" ;;
-		*) echo "# CONFIG_MATH_EMULATION is not set" ;;
+		386|486)
+			echo "CONFIG_MATH_EMULATION=y"
+			echo "# CONFIG_SMP is not set"
+			echo "# CONFIG_NAMESPACES is not set"
+			;;
+		*)
+			echo "# CONFIG_MATH_EMULATION is not set"
+			;;
 	esac
 
 	[ "$pae" ] && cat <<- 'EOT'
@@ -92,8 +98,6 @@
 		include(`linux-fs.conf.m4')
 
 		CONFIG_X86_ANCIENT_MCE=y
-		# CONFIG_NAMESPACES is not set
-		# CONFIG_SMP is not set
 		# CONFIG_HYPERVISOR_GUEST is not set
 		# CONFIG_IOMMU_SUPPORT is not set
 		# CONFIG_SFI is not set
