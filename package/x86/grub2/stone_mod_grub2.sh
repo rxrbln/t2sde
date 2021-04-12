@@ -112,14 +112,14 @@ cryptomount -u \$uuid
 configfile (crypto0)/boot/grub/grub.cfg
 EOT
 
-		local exe=grubx.efi
-		[ $arch = x86_64 ] && exe=${exe/.efi/64.efi}
+		local exe=bootx64.efi
+		[ $arch = i386 ] && exe=${exe/x64/ia32}
 		
-		grub-mkimage -O $arch-efi -o $efi/EFI/grub/$exe \
-			-p /efi/grub -d /usr/lib*/grub/$arch-efi/ \
+		grub-mkimage -O $arch-efi -o $efi/EFI/boot/$exe \
+			-p /efi/boot -d /usr/lib*/grub/$arch-efi/ \
 			$grubmods
 	    done
-	    efibootmgr -c -L t2sde -l "\\EFI\\grub\\$exe"
+	    efibootmgr -c -L "T2 Linux" -l "\\EFI\\boot\\$exe"
 	fi
     else
 	# Apple PowerPC - install into FW read-able HFS partition
