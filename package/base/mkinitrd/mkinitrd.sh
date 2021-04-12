@@ -184,6 +184,7 @@ echo "Copying kernel modules ..."
 
 # generate map files
 #
+mkdir -p $tmpdir/lib/modules/$kernelver
 $depmod -ae -b $tmpdir -F $sysmap $kernelver
 # only keep the .bin-ary files
 rm $tmpdir/lib/modules/$kernelver/{modules.alias,modules.dep,modules.symbols}
