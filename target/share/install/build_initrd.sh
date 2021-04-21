@@ -52,9 +52,15 @@ for x in `egrep 'X .* KERNEL .*' $base/config/$config/packages |
   cp $build_root/boot/vmlinu?-$kernelver $isofsdir/boot/
   cp $build_root/boot/$initrd $isofsdir/boot/
   extend_initrd $isofsdir/boot/$initrd $build_toolchain/initramfs
-
   arch_boot_cd_add $isofsdir $kernelver "$boot_title" \
                    /boot/$kernelimg /boot/$initrd
+  initrd=${initrd/initrd/minird}
+  if [ -e $build_root/boot/$initrd ]; then
+    cp $build_root/boot/$initrd $isofsdir/boot/
+    extend_initrd $isofsdir/boot/$initrd $build_toolchain/initramfs
+    arch_boot_cd_add $isofsdir $kernelver "$boot_title (minird)" \
+                     /boot/$kernelimg /boot/$initrd
+  fi
  done
 done
 
