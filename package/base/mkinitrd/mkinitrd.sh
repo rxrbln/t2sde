@@ -48,7 +48,7 @@ while [ "$1" ]; do
 	--network) network=0 ;;
 	-e) filter="$filter $2" ; shift ;;
 	-o) outfile="$2" ; shift ;;
-	*) echo "Usage: mkinitrd [ --firmware ] [ -R root ] [ kernelver ]"
+	*) echo "Usage: mkinitrd [ --firmware ] [ --minimal ] [ --network ] [ -R root ] [ -e filter ] [ -o filename ] [ kernelver ]"
 	   exit 1 ;;
   esac
   shift
@@ -208,7 +208,8 @@ elf_magic () {
 
 # copy dynamic libraries, and optional plugins, if any.
 #
-[ "$minimal" != 1 ] &&
+[ "$minimal" = 1 ] &&
+extralibs="`ls $root/lib*/{libdl,libncurses.so}* 2> /dev/null`" ||
 extralibs="`ls $root/{lib*/libnss_files,usr/lib*/libgcc_s}.so* 2> /dev/null`"
 
 copy_dyn_libs () {
