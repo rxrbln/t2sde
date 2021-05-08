@@ -53,7 +53,7 @@ if [ "$root" ]; then
   fi
 
   echo "Mounting root ..."
-  mkdir -p /root
+  mkdir -p /mnt
 
   i=0
   while [ $i -le 9 ]; do
@@ -68,16 +68,16 @@ if [ "$root" ]; then
 		-e 's/fat32/vfat/'
 	    sed '/^nodev/d' /proc/filesystems | sed '1!G; $p; h; d'`
 	for fs in $filesystems; do
-	  if mount -t $fs -o ro $root /root 2> /dev/null; then
+	  if mount -t $fs -o ro $root /mnt 2> /dev/null; then
 		echo "Successfully mounted root as $fs."
 		# TODO: later on search other places if we want 100% backward compat.
-		init=${init:-/sbin/init} 
-		if [ -f /root/$init ]; then
+		init=${init:-/sbin/init}
+		if [ -f /mnt$init ]; then
 			kill %1
-			mount -t none -o move {,/root}/dev
-			mount -t none -o move {,/root}/proc
-			mount -t none -o move {,/root}/sys
-			exec switch_root /root $init $*
+			mount -t none -o move {,/mnt}/dev
+			mount -t none -o move {,/mnt}/proc
+			mount -t none -o move {,/mnt}/sys
+			exec switch_root /mnt $init $*
 		else
 			echo "Specified init ($init) does not exist!"
 		fi
