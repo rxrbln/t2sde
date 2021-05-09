@@ -15,7 +15,7 @@
 
 set -e
 
-[ "$boot_title" ] || boot_title="T2 SDE Installation"
+[ "$boot_title" ] || boot_title="T2 Installation"
 
 . $base/misc/target/initrd.in
 . $base/misc/target/boot.in
@@ -58,7 +58,7 @@ for x in `egrep 'X .* KERNEL .*' $base/config/$config/packages |
   if [ -e $build_root/boot/$initrd ]; then
     cp $build_root/boot/$initrd $isofsdir/boot/
     extend_initrd $isofsdir/boot/$initrd $build_toolchain/initramfs
-    arch_boot_cd_add $isofsdir $kernelver "$boot_title (minird)" \
+    arch_boot_cd_add $isofsdir $kernelver-minird "$boot_title (minird)" \
                      /boot/$kernelimg /boot/$initrd
   fi
  done
