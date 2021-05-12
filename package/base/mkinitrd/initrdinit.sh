@@ -1,6 +1,6 @@
 #!/bin/sh
 
-echo "T2 SDE early userspace (C) 2005 - 2021 Rene Rebe, ExactCODE"
+echo "T2 SDE early userspace (C)2005-2021 Rene Rebe, ExactCODE GmbH; Germany."
 
 PATH=/sbin:/bin:/usr/bin:/usr/sbin
 
@@ -19,8 +19,6 @@ udevadm trigger
 udevadm settle
 [ -e /dev/console ] || mknod /dev/console c 5 1
 [ -e /dev/tty ] || mknod /dev/tty c 5 0
-
-modprobe pata_legacy
 
 # get the root device and init
 root="root= $(< /proc/cmdline)" ; root=${root##*root=} ; root=${root%% *}
@@ -50,6 +48,9 @@ if [ "$root" ]; then
 	echo "Activating RAID & LVM"
 	[ -e /sbin/mdadm ] && mdadm --assemble --scan
 	[ -e /sbin/lvchange ] && lvchange -a ay ${root#/dev/}
+  fi
+  if [ ! -e "$root" ]; then
+	modprobe pata_legacy
   fi
 
   echo "Mounting root ..."
