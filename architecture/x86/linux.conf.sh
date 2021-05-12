@@ -97,6 +97,7 @@
 		include(`linux-net.conf.m4')
 		include(`linux-fs.conf.m4')
 
+		CONFIG_PATA_LEGACY=m
 		CONFIG_X86_ANCIENT_MCE=y
 		# CONFIG_HYPERVISOR_GUEST is not set
 		# CONFIG_IOMMU_SUPPORT is not set

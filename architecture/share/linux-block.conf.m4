@@ -58,6 +58,7 @@ CONFIG_BLK_DEV_PDC202XX_NEW=m
 CONFIG_SCSI_SATA=y
 dnl Make sure the drivers are modular ...
 dnl
+# CONFIG_PATA_LEGACY is not set
 CONFIG_SCSI_ATA_PIIX=m
 # CONFIG_PATA_WINBOND_VLB is not set
 
