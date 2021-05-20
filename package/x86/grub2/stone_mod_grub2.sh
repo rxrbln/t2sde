@@ -95,8 +95,8 @@ $( cat /boot/grub/grub.cfg )"
 
 grubmods="part_gpt part_msdos ntfs ntfscomp hfsplus fat ext2 iso9660 \
           boot configfile linux btrfs all_video reiserfs xfs jfs lvm \
-          normal crypto cryptodisk luks part_apple sleep reboot \
-          search_fs_file search_label search_fs_uuid hfs" # gcry_sha256 gcry_rijndael
+          normal crypto cryptodisk luks sleep reboot \
+          search search_fs_file search_label search_fs_uuid"
 
 grub_inst() {
     if [[ $arch != ppc* ]]; then
@@ -123,28 +123,37 @@ EOT
 	fi
     else
 	# Apple PowerPC - install into FW read-able HFS partition
-	hformat /dev/sda2
-	mount /dev/sda2 /mnt
+	local bootstrap=$instdev$(disktype $instdev | grep Apple_Bootstrap -B 1 |
+		sed -n 's/Partition \(.*\):.*/\1/p')
+	if [ "$bootstrap" = "$instdev" ]; then
+		echo "No HFS bootstrap partition found!"
+		return
+	fi
 	
-	if [ -z "$cryptdev" ]; then
-		cat << EOT > /mnt/grub.cfg
+	umount /mnt 2>/dev/null
+	hformat -l bootstrap $bootstrap
+	if ! mount $bootstrap /mnt; then
+	    echo "Error mounting HFS bootstrap partition"
+	else
+	    mkdir -p /mnt/boot/grub
+	    if [ -z "$cryptdev" ]; then
+		cat << EOT > /mnt/boot/grub/grub.cfg
 set uuid=$grubdev
 search --set=root --no-floppy --fs-uuid \$uuid
 configfile (\$root)/boot/grub/grub.cfg
 EOT
-	else
-		cat << EOT > /mnt/grub.cfg
+	    else
+		cat << EOT > /mnt/boot/grub/grub.cfg
 set uuid=$grubdev
 cryptomount -u \$uuid
 configfile (crypto0)/boot/grub/grub.cfg
 EOT
-	fi
+	    fi
+	    grub-mkimage -O powerpc-ieee1275 -p /boot/grub \
+		-o /mnt/boot/grub.elf -d /usr/lib*/grub/powerpc-ieee1275 \
+		$grubmods part_apple hfs suspend
 
-	grub-mkimage -O powerpc-ieee1275 -p / -o /mnt/grub.elf \
-		-d /usr/lib*/grub/powerpc-ieee1275 \
-		$grubmods suspend # -c /tmp/grub.cfg
-
-	cat > /mnt/ofboot.b <<-EOT
+	    cat > /mnt/ofboot.b <<-EOT
 <CHRP-BOOT>
 <COMPATIBLE>
 MacRISC MacRISC3 MacRISC4
@@ -155,7 +164,7 @@ T2 SDE
 <BOOT-SCRIPT>
 " screen" output
 load-base release-load-area
-boot hd:2,\grub.elf
+boot hd:2,\\boot\\grub.elf
 </BOOT-SCRIPT>
 <OS-BADGE-ICONS>
 1010
@@ -211,11 +220,12 @@ boot hd:2,\grub.elf
 </CHRP-BOOT>
 EOT
 
-	umount /mnt
-	hmount /dev/sda2
-	hattrib -b Untitled:
-	hattrib -c UNIX -t tbxi Untitled:ofboot.b
-	humount
+	    umount /mnt
+	    hmount $bootstrap
+	    hattrib -b bootstrap:
+	    hattrib -c UNIX -t tbxi bootstrap:ofboot.b
+	    humount
+	fi
     fi
 }
 
