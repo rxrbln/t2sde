@@ -141,8 +141,8 @@ EOT
 	fi
 
 	grub-mkimage -O powerpc-ieee1275 -p / -o /mnt/grub.elf \
-		-d /usr/lib64/grub/powerpc-ieee1275 \
-		$grubmods suspend # -c /tmp/grub.cfg 
+		-d /usr/lib*/grub/powerpc-ieee1275 \
+		$grubmods suspend # -c /tmp/grub.cfg
 
 	cat > /mnt/ofboot.b <<-EOT
 <CHRP-BOOT>
