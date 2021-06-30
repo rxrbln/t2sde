@@ -48,3 +48,7 @@ include(`linux-common.conf.m4')
 include(`linux-block.conf.m4')
 include(`linux-net.conf.m4')
 include(`linux-fs.conf.m4')
+
+# CONFIG_NO_HZ_FULL is not set
+CONFIG_NO_HZ_IDLE=y
+CONFIG_PREEMPT_NONE=y
