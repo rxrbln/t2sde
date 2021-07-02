@@ -20,13 +20,13 @@ BEGIN {
 	ishot = 0;
 }
 
-# argument 1, read in smart profile db
-ARGIND == 1 {
+# argument 1, read in smart profile db, 2nd form for POSIXLY_CORRECT
+ARGIND == 1 || (!ARGIND && FILENAME != "-") {
 	hotlist[$2] = 1;
 }
 
-# argument 2, read command list from stdin
-ARGIND == 2 {
+# argument 2, read command list from stdin, 2nd form for POSIXLY_CORRECT
+ARGIND == 2 || (!ARGIND && FILENAME == "-") {
 	if (gsub("^-HOT", "") == 1)
 		speedarg[speedargidx++] = $0;
 	else {
