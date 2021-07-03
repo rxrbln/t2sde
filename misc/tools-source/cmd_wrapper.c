@@ -369,6 +369,7 @@ int main(int argc, char ** argv) {
 		char infn[] = "/tmp/gccfilter_in.XXXXXX";
 		int outfd = mkstemp(outfn);
 		int infd = mkstemp(infn);
+		int pid, status;
 	
 		/* Create content of input file */
 		for (c3=0; c3<c1; c3++) {
@@ -381,14 +382,21 @@ int main(int argc, char ** argv) {
 #if VERBOSE_DEBUG
 		if (debug) fprintf(stderr, "Run Filter: %s\n", delim);
 #endif
-		if (!fork()) {
+		pid = fork();
+		if (!pid) {
 			dup2(infd,  0);  close(infd);
 			dup2(outfd, 1);  close(outfd);
 			execlp("sh", "sh", "-c", delim, NULL);
 			return 1;
+		} else if (pid == -1) {
+			fprintf(stderr, "Fork failed: %d: %s\n", errno, strerror(errno));
+		} else {
+			/* We don't expect any signals and have no other child processes. */
+			wait(&status);
+			if (WEXITSTATUS(status) != 0) {
+				fprintf(stderr, "Filter failed: %d\n", WEXITSTATUS(status));
+			}
 		}
-		wait(NULL);  /* We don't expect any signals and have no
-		                other child processes. */
 	
 		/* Re-read parameter list. */
 		{
@@ -396,6 +404,11 @@ int main(int argc, char ** argv) {
 		  char* argvmem = malloc (argvsize + 1); /* might not have trailing \n */
 		  lseek(outfd, 0, SEEK_SET);
 		  read(outfd, argvmem, argvsize);
+
+		  if (argvsize == 0) {
+			  fprintf(stderr, "Filter produced no output!\n");
+			  return 248;
+		  }
 
 		  for (c1 = c2 = 0; c2 < argvsize; ++c2) {
 			newargv = realloc_if_needed(c1, &newargc, newargv);
@@ -421,8 +434,7 @@ int main(int argc, char ** argv) {
 
 #if VERBOSE_DEBUG
 		if (debug) {
-		  fprintf(stderr,
-			  "Running external wrapper: %s\n", newargv[0]);
+		  fprintf(stderr, "Running external wrapper: %s\n", newargv[0]);
 		  for (c3=0; c3<c1; c3++)
 		    fprintf(stderr, " %s", newargv[c3]);
 		  fprintf(stderr, "\n");
