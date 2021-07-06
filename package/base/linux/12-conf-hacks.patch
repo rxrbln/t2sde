@@ -19,59 +19,81 @@ Set all unset options to module. Needed by the T2 SDE Linux kernel
 auto configuration.
 
 Initally written by Clifford Wolf <clifford@clifford.at> and adapted
-for various new 2.5/2.6 kernels by Rene Rebe <rene@exactcode.de>.
+for various new 2.5, 2.6, 3.x, 4.x and 5.x kernels
+by Rene Rebe <rene@exactcode.de>.
 
---- linux-2.6.36/scripts/kconfig/conf.c.vanilla	2010-11-29 11:39:16.000000000 +0100
-+++ linux-2.6.36/scripts/kconfig/conf.c	2010-11-29 11:34:27.000000000 +0100
-@@ -24,6 +24,7 @@
+--- ./scripts/kconfig/conf.c.orig	2021-06-28 00:21:11.000000000 +0200
++++ ./scripts/kconfig/conf.c	2021-06-29 18:16:43.215860970 +0200
+@@ -23,6 +23,7 @@
  	oldaskconfig,
- 	silentoldconfig,
+ 	syncconfig,
  	oldconfig,
-+	setno2mod,
++	no2modconfig,
  	allnoconfig,
  	allyesconfig,
  	allmodconfig,
-@@ -446,6 +447,7 @@
- 	{"silentoldconfig", no_argument,       NULL, silentoldconfig},
- 	{"defconfig",       optional_argument, NULL, defconfig},
- 	{"savedefconfig",   required_argument, NULL, savedefconfig},
-+	{"no2modconfig",    no_argument,       NULL, setno2mod},
- 	{"allnoconfig",     no_argument,       NULL, allnoconfig},
- 	{"allyesconfig",    no_argument,       NULL, allyesconfig},
- 	{"allmodconfig",    no_argument,       NULL, allmodconfig},
-@@ -562,6 +564,9 @@
- 		else if (!stat("all.config", &tmpstat))
- 			conf_read_simple("all.config", S_DEF_USER);
- 		break;
-+	case setno2mod:
-+		conf_read_simple(".config", S_DEF_USER);
-+		break;
- 	default:
- 		break;
+@@ -166,6 +167,7 @@
+ 	def_y2m,
+ 	def_m2y,
+ 	def_no,
++	def_no2m,
+ 	def_random
+ };
+ 
+@@ -228,8 +230,23 @@
  	}
-@@ -579,6 +584,9 @@
+ 
+ 	for_all_symbols(i, sym) {
+-		if (sym_has_value(sym) || sym->flags & SYMBOL_VALID)
++		if (sym_has_value(sym)) /* user defined? */
+ 			continue;
++
++                if ((mode == def_no2m) && (sym->type == S_TRISTATE)) {
++		       fprintf(stderr, "%s %d\n", sym->name, sym_get_tristate_value(sym));
++                      if (sym_get_tristate_value(sym) != mod)
++                              fprintf(stderr, "Setting %s to 'm'.\n", sym->name);
++                      if (sym_get_tristate_value(sym) != mod) {
++                              sym->def[S_DEF_USER].tri = mod;
++                              sym->flags |= SYMBOL_DEF_USER;
++		       }
++                      continue;
++                }
++
++		if (sym->flags & SYMBOL_VALID)
++			continue;
++
+ 		switch (sym_get_type(sym)) {
+ 		case S_BOOLEAN:
+ 		case S_TRISTATE:
+@@ -690,6 +705,7 @@
+ 	{"allyesconfig",  no_argument,       &input_mode_opt, allyesconfig},
+ 	{"allmodconfig",  no_argument,       &input_mode_opt, allmodconfig},
+ 	{"alldefconfig",  no_argument,       &input_mode_opt, alldefconfig},
++	{"no2modconfig",  no_argument,       &input_mode_opt, no2modconfig},
+ 	{"randconfig",    no_argument,       &input_mode_opt, randconfig},
+ 	{"listnewconfig", no_argument,       &input_mode_opt, listnewconfig},
+ 	{"helpnewconfig", no_argument,       &input_mode_opt, helpnewconfig},
+@@ -799,6 +815,7 @@
+ 	case olddefconfig:
+ 	case yes2modconfig:
+ 	case mod2yesconfig:
++	case no2modconfig:
+ 		conf_read(NULL);
+ 		break;
+ 	case allnoconfig:
+@@ -851,6 +867,9 @@
  	}
  
  	switch (input_mode) {
-+	case setno2mod:
-+		conf_set_all_new_symbols(def_no2mod);
++	case no2modconfig:
++		conf_set_all_new_symbols(def_no2m);
 +		break;
  	case allnoconfig:
  		conf_set_all_new_symbols(def_no);
  		break;
---- linux-5.6/scripts/kconfig/lkc.h.vanilla	2020-04-02 08:16:08.105555318 +0000
-+++ linux-5.6/scripts/kconfig/lkc.h	2020-04-02 08:16:53.957555318 +0000
-@@ -37,6 +37,7 @@
- 	def_y2m,
- 	def_m2y,
- 	def_no,
-+	def_no2mod,
- 	def_random
- };
- 
---- linux-5.12/./scripts/kconfig/Makefile.orig	2021-04-25 22:49:08.000000000 +0200
-+++ linux-5.12/./scripts/kconfig/Makefile	2021-04-26 18:19:45.783238986 +0200
-@@ -55,7 +55,7 @@
+--- linux-5.13/scripts/kconfig/Makefile.orig	2021-06-28 00:21:11.000000000 +0200
++++ linux-5.13/scripts/kconfig/Makefile	2021-06-29 17:15:30.664703774 +0200
+@@ -69,7 +69,7 @@
  #  deprecated for external use
  simple-targets := oldconfig allnoconfig allyesconfig allmodconfig \
  	alldefconfig randconfig listnewconfig olddefconfig syncconfig \
@@ -80,7 +102,7 @@ for various new 2.5/2.6 kernels by Rene Rebe <rene@exactcode.de>.
  
  PHONY += $(simple-targets)
  
-@@ -112,6 +115,7 @@
+@@ -127,6 +127,7 @@
  	@echo  '                    except those preserved by LMC_KEEP environment variable'
  	@echo  '  defconfig	  - New config with default from ARCH supplied defconfig'
  	@echo  '  savedefconfig   - Save current config as ./defconfig (minimal config)'
@@ -88,23 +110,3 @@ for various new 2.5/2.6 kernels by Rene Rebe <rene@exactcode.de>.
  	@echo  '  allnoconfig	  - New config where all options are answered with no'
  	@echo  '  allyesconfig	  - New config where all options are accepted with yes'
  	@echo  '  allmodconfig	  - New config selecting modules when possible'
---- linux-2.6.27.vanilla/scripts/kconfig/confdata.c	2008-10-10 00:13:53.000000000 +0200
-+++ linux-2.6.27/scripts/kconfig/confdata.c	2008-10-20 12:45:07.000000000 +0200
-@@ -824,6 +824,17 @@
- 	for_all_symbols(i, sym) {
- 		if (sym_has_value(sym))
- 			continue;
-+		if ((mode == def_no2mod) && (sym->type == S_TRISTATE)) {
-+			if (sym_get_tristate_value(sym) == no)
-+				fprintf(stderr, "Setting %s to 'm'.\n", sym->name);
-+			if (sym_get_tristate_value(sym) == mod)
-+				fprintf(stderr, "Keep %s as 'm'.\n", sym->name);
-+			if (sym_get_tristate_value(sym) != yes)
-+				sym->def[S_DEF_USER].tri = mod;
-+			if (!sym_is_choice(sym))
-+				sym->flags |= SYMBOL_DEF_USER;
-+			continue;
-+		}
- 		switch (sym_get_type(sym)) {
- 		case S_BOOLEAN:
- 		case S_TRISTATE:
