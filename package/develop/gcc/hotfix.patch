@@ -1,0 +1,71 @@
+From 6384e940a6db379b0524465cf6cbbd0996b48485 Mon Sep 17 00:00:00 2001
+From: Jason Merrill <jason@redhat.com>
+Date: Tue, 18 May 2021 12:06:36 -0400
+Subject: [PATCH] c++: "perfect" implicitly deleted move [PR100644]
+
+Here we were ignoring the template constructor because the implicit move
+constructor had all perfect conversions.  But CWG1402 says that an
+implicitly deleted move constructor is ignored by overload resolution; we
+implement that instead by preferring any other candidate in joust, to get
+better diagnostics, but that means we need to handle that case here as well.
+
+gcc/cp/ChangeLog:
+
+	PR c++/100644
+	* call.c (perfect_candidate_p): An implicitly deleted move
+	is not perfect.
+
+gcc/testsuite/ChangeLog:
+
+	* g++.dg/cpp0x/implicit-delete1.C: New test.
+---
+ gcc/cp/call.c                                 |  5 +++++
+ gcc/testsuite/g++.dg/cpp0x/implicit-delete1.C | 20 +++++++++++++++++++
+ 2 files changed, 25 insertions(+)
+ create mode 100644 gcc/testsuite/g++.dg/cpp0x/implicit-delete1.C
+
+diff --git a/gcc/cp/call.c b/gcc/cp/call.c
+index 678e120a165..d0d55fcbb0b 100644
+--- a/gcc/cp/call.c
++++ b/gcc/cp/call.c
+@@ -5892,6 +5892,11 @@ perfect_candidate_p (z_candidate *cand)
+ {
+   if (cand->viable < 1)
+     return false;
++  /* CWG1402 makes an implicitly deleted move op worse than other
++     candidates.  */
++  if (DECL_DELETED_FN (cand->fn) && DECL_DEFAULTED_FN (cand->fn)
++      && move_fn_p (cand->fn))
++    return false;
+   int len = cand->num_convs;
+   for (int i = 0; i < len; ++i)
+     if (!perfect_conversion_p (cand->convs[i]))
+diff --git a/gcc/testsuite/g++.dg/cpp0x/implicit-delete1.C b/gcc/testsuite/g++.dg/cpp0x/implicit-delete1.C
+new file mode 100644
+index 00000000000..6dcced4fb2d
+--- /dev/null
++++ b/gcc/testsuite/g++.dg/cpp0x/implicit-delete1.C
+@@ -0,0 +1,20 @@
++// PR c++/100644
++// { dg-do compile { target c++11 } }
++
++struct NonMovable {
++  NonMovable(NonMovable&&) = delete;
++};
++
++template <class T>
++struct Maybe {
++  NonMovable mMember;
++
++  template <typename U>
++  Maybe(Maybe<U>&&);
++};
++
++void foo(Maybe<int>);
++
++void unlucky(Maybe<int>&& x) {
++  Maybe<int> var{(Maybe<int>&&)x};
++}
+-- 
+2.27.0
+
