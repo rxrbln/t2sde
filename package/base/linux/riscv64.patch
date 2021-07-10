@@ -1,0 +1,2242 @@
+diff --git a/arch/riscv/Kconfig b/arch/riscv/Kconfig
+index a8ad8eb76120..3590eb76000e 100644
+--- a/arch/riscv/Kconfig
++++ b/arch/riscv/Kconfig
+@@ -65,11 +65,13 @@ config RISCV
+ 	select HAVE_ARCH_JUMP_LABEL_RELATIVE if !XIP_KERNEL
+ 	select HAVE_ARCH_KASAN if MMU && 64BIT
+ 	select HAVE_ARCH_KASAN_VMALLOC if MMU && 64BIT
++	select HAVE_ARCH_KFENCE if MMU && 64BIT
+ 	select HAVE_ARCH_KGDB if !XIP_KERNEL
+ 	select HAVE_ARCH_KGDB_QXFER_PKT
+ 	select HAVE_ARCH_MMAP_RND_BITS if MMU
+ 	select HAVE_ARCH_SECCOMP_FILTER
+ 	select HAVE_ARCH_TRACEHOOK
++	select HAVE_ARCH_VMAP_STACK if MMU && 64BIT
+ 	select HAVE_ASM_MODVERSIONS
+ 	select HAVE_CONTEXT_TRACKING
+ 	select HAVE_DEBUG_KMEMLEAK
+@@ -83,11 +85,14 @@
+ 	select HAVE_KPROBES if !XIP_KERNEL
+ 	select HAVE_KPROBES_ON_FTRACE if !XIP_KERNEL
+ 	select HAVE_KRETPROBES if !XIP_KERNEL
++	select HAVE_MOVE_PMD
++	select HAVE_MOVE_PUD
+ 	select HAVE_PCI
+ 	select HAVE_PERF_EVENTS
+ 	select HAVE_PERF_REGS
+ 	select HAVE_PERF_USER_STACK_DUMP
+ 	select HAVE_REGS_AND_STACK_ACCESS_API
++	select HAVE_FUNCTION_ARG_ACCESS_API
+ 	select HAVE_STACKPROTECTOR
+ 	select HAVE_SYSCALL_TRACEPOINTS
+ 	select IRQ_DOMAIN
+@@ -104,6 +109,7 @@
+ 	select SYSCTL_EXCEPTION_TRACE
+ 	select THREAD_INFO_IN_TASK
+ 	select UACCESS_MEMCPY if !MMU
++	select HAVE_ARCH_TRANSPARENT_HUGEPAGE if 64BIT && MMU
+ 
+ config ARCH_MMAP_RND_BITS_MIN
+ 	default 18 if 64BIT
+@@ -491,13 +497,8 @@
+ 	def_bool y
+ 	depends on STACKPROTECTOR && CC_HAVE_STACKPROTECTOR_TLS
+ 
+-config PHYS_RAM_BASE_FIXED
+-	bool "Explicitly specified physical RAM address"
+-	default n
+-
+ config PHYS_RAM_BASE
+ 	hex "Platform Physical RAM address"
+-	depends on PHYS_RAM_BASE_FIXED
+ 	default "0x80000000"
+ 	help
+ 	  This is the physical address of RAM in the system. It has to be
+@@ -510,7 +511,6 @@
+ 	# This prevents XIP from being enabled by all{yes,mod}config, which
+ 	# fail to build since XIP doesn't support large kernels.
+ 	depends on !COMPILE_TEST
+-	select PHYS_RAM_BASE_FIXED
+ 	help
+ 	  Execute-In-Place allows the kernel to run from non-volatile storage
+ 	  directly addressable by the CPU, such as NOR flash. This saves RAM
+diff --git a/arch/riscv/include/asm/asm-prototypes.h b/arch/riscv/include/asm/asm-prototypes.h
+index 2a652b0c987d..ef386fcf3939 100644
+--- a/arch/riscv/include/asm/asm-prototypes.h
++++ b/arch/riscv/include/asm/asm-prototypes.h
+@@ -25,4 +25,7 @@ DECLARE_DO_ERROR_INFO(do_trap_ecall_s);
+ DECLARE_DO_ERROR_INFO(do_trap_ecall_m);
+ DECLARE_DO_ERROR_INFO(do_trap_break);
+ 
++asmlinkage unsigned long get_overflow_stack(void);
++asmlinkage void handle_bad_stack(struct pt_regs *regs);
++
+ #endif /* _ASM_RISCV_PROTOTYPES_H */
+diff --git a/arch/riscv/include/asm/io.h b/arch/riscv/include/asm/io.h
+index c025a746a148..69605a474270 100644
+--- a/arch/riscv/include/asm/io.h
++++ b/arch/riscv/include/asm/io.h
+@@ -52,19 +52,6 @@
+ #define __io_pbw()	__asm__ __volatile__ ("fence iow,o" : : : "memory");
+ #define __io_paw()	__asm__ __volatile__ ("fence o,io"  : : : "memory");
+ 
+-#define inb(c)		({ u8  __v; __io_pbr(); __v = readb_cpu((void*)(PCI_IOBASE + (c))); __io_par(__v); __v; })
+-#define inw(c)		({ u16 __v; __io_pbr(); __v = readw_cpu((void*)(PCI_IOBASE + (c))); __io_par(__v); __v; })
+-#define inl(c)		({ u32 __v; __io_pbr(); __v = readl_cpu((void*)(PCI_IOBASE + (c))); __io_par(__v); __v; })
+-
+-#define outb(v,c)	({ __io_pbw(); writeb_cpu((v),(void*)(PCI_IOBASE + (c))); __io_paw(); })
+-#define outw(v,c)	({ __io_pbw(); writew_cpu((v),(void*)(PCI_IOBASE + (c))); __io_paw(); })
+-#define outl(v,c)	({ __io_pbw(); writel_cpu((v),(void*)(PCI_IOBASE + (c))); __io_paw(); })
+-
+-#ifdef CONFIG_64BIT
+-#define inq(c)		({ u64 __v; __io_pbr(); __v = readq_cpu((void*)(c)); __io_par(__v); __v; })
+-#define outq(v,c)	({ __io_pbw(); writeq_cpu((v),(void*)(c)); __io_paw(); })
+-#endif
+-
+ /*
+  * Accesses from a single hart to a single I/O address must be ordered.  This
+  * allows us to use the raw read macros, but we still need to fence before and
+diff --git a/arch/riscv/include/asm/kfence.h b/arch/riscv/include/asm/kfence.h
+new file mode 100644
+index 000000000000..d887a54042aa
+--- /dev/null
++++ b/arch/riscv/include/asm/kfence.h
+@@ -0,0 +1,63 @@
++/* SPDX-License-Identifier: GPL-2.0 */
++
++#ifndef _ASM_RISCV_KFENCE_H
++#define _ASM_RISCV_KFENCE_H
++
++#include <linux/kfence.h>
++#include <linux/pfn.h>
++#include <asm-generic/pgalloc.h>
++#include <asm/pgtable.h>
++
++static inline int split_pmd_page(unsigned long addr)
++{
++	int i;
++	unsigned long pfn = PFN_DOWN(__pa((addr & PMD_MASK)));
++	pmd_t *pmd = pmd_off_k(addr);
++	pte_t *pte = pte_alloc_one_kernel(&init_mm);
++
++	if (!pte)
++		return -ENOMEM;
++
++	for (i = 0; i < PTRS_PER_PTE; i++)
++		set_pte(pte + i, pfn_pte(pfn + i, PAGE_KERNEL));
++	set_pmd(pmd, pfn_pmd(PFN_DOWN(__pa(pte)), PAGE_TABLE));
++
++	flush_tlb_kernel_range(addr, addr + PMD_SIZE);
++	return 0;
++}
++
++static inline bool arch_kfence_init_pool(void)
++{
++	int ret;
++	unsigned long addr;
++	pmd_t *pmd;
++
++	for (addr = (unsigned long)__kfence_pool; is_kfence_address((void *)addr);
++	     addr += PAGE_SIZE) {
++		pmd = pmd_off_k(addr);
++
++		if (pmd_leaf(*pmd)) {
++			ret = split_pmd_page(addr);
++			if (ret)
++				return false;
++		}
++	}
++
++	return true;
++}
++
++static inline bool kfence_protect_page(unsigned long addr, bool protect)
++{
++	pte_t *pte = virt_to_kpte(addr);
++
++	if (protect)
++		set_pte(pte, __pte(pte_val(*pte) & ~_PAGE_PRESENT));
++	else
++		set_pte(pte, __pte(pte_val(*pte) | _PAGE_PRESENT));
++
++	flush_tlb_kernel_range(addr, addr + PAGE_SIZE);
++
++	return true;
++}
++
++#endif /* _ASM_RISCV_KFENCE_H */
+diff --git a/arch/riscv/include/asm/kprobes.h b/arch/riscv/include/asm/kprobes.h
+index 4647d38018f6..9ea9b5ec3113 100644
+--- a/arch/riscv/include/asm/kprobes.h
++++ b/arch/riscv/include/asm/kprobes.h
+@@ -29,18 +29,11 @@ struct prev_kprobe {
+ 	unsigned int status;
+ };
+ 
+-/* Single step context for kprobe */
+-struct kprobe_step_ctx {
+-	unsigned long ss_pending;
+-	unsigned long match_addr;
+-};
+-
+ /* per-cpu kprobe control block */
+ struct kprobe_ctlblk {
+ 	unsigned int kprobe_status;
+ 	unsigned long saved_status;
+ 	struct prev_kprobe prev_kprobe;
+-	struct kprobe_step_ctx ss_ctx;
+ };
+ 
+ void arch_remove_kprobe(struct kprobe *p);
+diff --git a/arch/riscv/include/asm/mmu_context.h b/arch/riscv/include/asm/mmu_context.h
+index b0659413a080..7030837adc1a 100644
+--- a/arch/riscv/include/asm/mmu_context.h
++++ b/arch/riscv/include/asm/mmu_context.h
+@@ -33,6 +33,8 @@ static inline int init_new_context(struct task_struct *tsk,
+ 	return 0;
+ }
+ 
++DECLARE_STATIC_KEY_FALSE(use_asid_allocator);
++
+ #include <asm-generic/mmu_context.h>
+ 
+ #endif /* _ASM_RISCV_MMU_CONTEXT_H */
+diff --git a/arch/riscv/include/asm/page.h b/arch/riscv/include/asm/page.h
+index 6a7761c86ec2..cca8764aed83 100644
+--- a/arch/riscv/include/asm/page.h
++++ b/arch/riscv/include/asm/page.h
+@@ -37,16 +37,6 @@
+ 
+ #ifndef __ASSEMBLY__
+ 
+-#define PAGE_UP(addr)	(((addr)+((PAGE_SIZE)-1))&(~((PAGE_SIZE)-1)))
+-#define PAGE_DOWN(addr)	((addr)&(~((PAGE_SIZE)-1)))
+-
+-/* align addr on a size boundary - adjust address up/down if needed */
+-#define _ALIGN_UP(addr, size)	(((addr)+((size)-1))&(~((size)-1)))
+-#define _ALIGN_DOWN(addr, size)	((addr)&(~((size)-1)))
+-
+-/* align addr on a size boundary - adjust address up if needed */
+-#define _ALIGN(addr, size)	_ALIGN_UP(addr, size)
+-
+ #define clear_page(pgaddr)			memset((pgaddr), 0, PAGE_SIZE)
+ #define copy_page(to, from)			memcpy((to), (from), PAGE_SIZE)
+ 
+@@ -89,59 +79,68 @@ typedef struct page *pgtable_t;
+ #endif
+ 
+ #ifdef CONFIG_MMU
+-extern unsigned long va_pa_offset;
+-#ifdef CONFIG_64BIT
+-extern unsigned long va_kernel_pa_offset;
+-#endif
+-#ifdef CONFIG_XIP_KERNEL
+-extern unsigned long va_kernel_xip_pa_offset;
+-#endif
+ extern unsigned long pfn_base;
+ #define ARCH_PFN_OFFSET		(pfn_base)
+ #else
+-#define va_pa_offset		0
+-#ifdef CONFIG_64BIT
+-#define va_kernel_pa_offset	0
+-#endif
+ #define ARCH_PFN_OFFSET		(PAGE_OFFSET >> PAGE_SHIFT)
+ #endif /* CONFIG_MMU */
+ 
+-extern unsigned long kernel_virt_addr;
+-
++struct kernel_mapping {
++	unsigned long virt_addr;
++	uintptr_t phys_addr;
++	uintptr_t size;
++	/* Offset between linear mapping virtual address and kernel load address */
++	unsigned long va_pa_offset;
+ #ifdef CONFIG_64BIT
+-#define linear_mapping_pa_to_va(x)	((void *)((unsigned long)(x) + va_pa_offset))
++	/* Offset between kernel mapping virtual address and kernel load address */
++	unsigned long va_kernel_pa_offset;
++#endif
++	unsigned long va_kernel_xip_pa_offset;
+ #ifdef CONFIG_XIP_KERNEL
++	uintptr_t xiprom;
++	uintptr_t xiprom_sz;
++#endif
++};
++
++extern struct kernel_mapping kernel_map;
++
++#ifdef CONFIG_64BIT
++#define is_kernel_mapping(x)	\
++	((x) >= kernel_map.virt_addr && (x) < (kernel_map.virt_addr + kernel_map.size))
++#define is_linear_mapping(x)	\
++	((x) >= PAGE_OFFSET && (x) < kernel_map.virt_addr)
++
++#define linear_mapping_pa_to_va(x)	((void *)((unsigned long)(x) + kernel_map.va_pa_offset))
+ #define kernel_mapping_pa_to_va(y)	({						\
+ 	unsigned long _y = y;								\
+ 	(_y >= CONFIG_PHYS_RAM_BASE) ?							\
+-		(void *)((unsigned long)(_y) + va_kernel_pa_offset + XIP_OFFSET) :	\
+-		(void *)((unsigned long)(_y) + va_kernel_xip_pa_offset);		\
++		(void *)((unsigned long)(_y) + kernel_map.va_kernel_pa_offset + XIP_OFFSET) :	\
++		(void *)((unsigned long)(_y) + kernel_map.va_kernel_xip_pa_offset);		\
+ 	})
+-#else
+-#define kernel_mapping_pa_to_va(x)	((void *)((unsigned long)(x) + va_kernel_pa_offset))
+-#endif
+ #define __pa_to_va_nodebug(x)		linear_mapping_pa_to_va(x)
+ 
+-#define linear_mapping_va_to_pa(x)	((unsigned long)(x) - va_pa_offset)
+-#ifdef CONFIG_XIP_KERNEL
++#define linear_mapping_va_to_pa(x)	((unsigned long)(x) - kernel_map.va_pa_offset)
+ #define kernel_mapping_va_to_pa(y) ({						\
+ 	unsigned long _y = y;							\
+-	(_y < kernel_virt_addr + XIP_OFFSET) ?					\
+-		((unsigned long)(_y) - va_kernel_xip_pa_offset) :		\
+-		((unsigned long)(_y) - va_kernel_pa_offset - XIP_OFFSET);	\
++	(_y < kernel_map.virt_addr + XIP_OFFSET) ?					\
++		((unsigned long)(_y) - kernel_map.va_kernel_xip_pa_offset) :		\
++		((unsigned long)(_y) - kernel_map.va_kernel_pa_offset - XIP_OFFSET);	\
+ 	})
+-#else
+-#define kernel_mapping_va_to_pa(x)	((unsigned long)(x) - va_kernel_pa_offset)
+-#endif
++
+ #define __va_to_pa_nodebug(x)	({						\
+ 	unsigned long _x = x;							\
+-	(_x < kernel_virt_addr) ?						\
++	is_linear_mapping(_x) ?							\
+ 		linear_mapping_va_to_pa(_x) : kernel_mapping_va_to_pa(_x);	\
+ 	})
+ #else
+-#define __pa_to_va_nodebug(x)  ((void *)((unsigned long) (x) + va_pa_offset))
+-#define __va_to_pa_nodebug(x)  ((unsigned long)(x) - va_pa_offset)
+-#endif
++#define is_kernel_mapping(x)	\
++	((x) >= kernel_map.virt_addr && (x) < (kernel_map.virt_addr + kernel_map.size))
++#define is_linear_mapping(x)	\
++	((x) >= PAGE_OFFSET)
++
++#define __pa_to_va_nodebug(x)  ((void *)((unsigned long) (x) + kernel_map.va_pa_offset))
++#define __va_to_pa_nodebug(x)  ((unsigned long)(x) - kernel_map.va_pa_offset)
++#endif /* CONFIG_64BIT */
+ 
+ #ifdef CONFIG_DEBUG_VIRTUAL
+ extern phys_addr_t __virt_to_phys(unsigned long x);
+diff --git a/arch/riscv/include/asm/pci.h b/arch/riscv/include/asm/pci.h
+index 658e112c3ce7..7fd52a30e605 100644
+--- a/arch/riscv/include/asm/pci.h
++++ b/arch/riscv/include/asm/pci.h
+@@ -18,6 +18,8 @@
+ /* RISC-V shim does not initialize PCI bus */
+ #define pcibios_assign_all_busses() 1
+ 
++#define ARCH_GENERIC_PCI_MMAP_RESOURCE 1
++
+ extern int isa_dma_bridge_buggy;
+ 
+ #ifdef CONFIG_PCI
+diff --git a/arch/riscv/include/asm/pgtable-64.h b/arch/riscv/include/asm/pgtable-64.h
+index f3b0da64c6c8..de16dd1f0961 100644
+--- a/arch/riscv/include/asm/pgtable-64.h
++++ b/arch/riscv/include/asm/pgtable-64.h
+@@ -46,8 +46,7 @@ static inline int pud_bad(pud_t pud)
+ #define pud_leaf	pud_leaf
+ static inline int pud_leaf(pud_t pud)
+ {
+-	return pud_present(pud) &&
+-	       (pud_val(pud) & (_PAGE_READ | _PAGE_WRITE | _PAGE_EXEC));
++	return pud_present(pud) && (pud_val(pud) & _PAGE_LEAF);
+ }
+ 
+ static inline void set_pud(pud_t *pudp, pud_t pud)
+@@ -80,6 +79,8 @@ static inline unsigned long _pmd_pfn(pmd_t pmd)
+ 	return pmd_val(pmd) >> _PAGE_PFN_SHIFT;
+ }
+ 
++#define mk_pmd(page, prot)    pfn_pmd(page_to_pfn(page), prot)
++
+ #define pmd_ERROR(e) \
+ 	pr_err("%s:%d: bad pmd %016lx.\n", __FILE__, __LINE__, pmd_val(e))
+ 
+diff --git a/arch/riscv/include/asm/pgtable-bits.h b/arch/riscv/include/asm/pgtable-bits.h
+index bbaeb5d35842..2ee413912926 100644
+--- a/arch/riscv/include/asm/pgtable-bits.h
++++ b/arch/riscv/include/asm/pgtable-bits.h
+@@ -39,5 +39,10 @@
+ #define _PAGE_CHG_MASK  (~(unsigned long)(_PAGE_PRESENT | _PAGE_READ |	\
+ 					  _PAGE_WRITE | _PAGE_EXEC |	\
+ 					  _PAGE_USER | _PAGE_GLOBAL))
++/*
++ * when all of R/W/X are zero, the PTE is a pointer to the next level
++ * of the page table; otherwise, it is a leaf PTE.
++ */
++#define _PAGE_LEAF (_PAGE_READ | _PAGE_WRITE | _PAGE_EXEC)
+ 
+ #endif /* _ASM_RISCV_PGTABLE_BITS_H */
+diff --git a/arch/riscv/include/asm/pgtable.h b/arch/riscv/include/asm/pgtable.h
+index 9469f464e71a..559ca4186b5c 100644
+--- a/arch/riscv/include/asm/pgtable.h
++++ b/arch/riscv/include/asm/pgtable.h
+@@ -77,6 +77,8 @@
+ 
+ #ifdef CONFIG_XIP_KERNEL
+ #define XIP_OFFSET		SZ_8M
++#else
++#define XIP_OFFSET		0
+ #endif
+ 
+ #ifndef __ASSEMBLY__
+@@ -134,7 +136,8 @@
+ 				| _PAGE_WRITE \
+ 				| _PAGE_PRESENT \
+ 				| _PAGE_ACCESSED \
+-				| _PAGE_DIRTY)
++				| _PAGE_DIRTY \
++				| _PAGE_GLOBAL)
+ 
+ #define PAGE_KERNEL		__pgprot(_PAGE_KERNEL)
+ #define PAGE_KERNEL_READ	__pgprot(_PAGE_KERNEL & ~_PAGE_WRITE)
+@@ -172,10 +175,23 @@ extern pgd_t swapper_pg_dir[];
+ #define __S110	PAGE_SHARED_EXEC
+ #define __S111	PAGE_SHARED_EXEC
+ 
++#ifdef CONFIG_TRANSPARENT_HUGEPAGE
++static inline int pmd_present(pmd_t pmd)
++{
++	/*
++	 * Checking for _PAGE_LEAF is needed too because:
++	 * When splitting a THP, split_huge_page() will temporarily clear
++	 * the present bit, in this situation, pmd_present() and
++	 * pmd_trans_huge() still needs to return true.
++	 */
++	return (pmd_val(pmd) & (_PAGE_PRESENT | _PAGE_PROT_NONE | _PAGE_LEAF));
++}
++#else
+ static inline int pmd_present(pmd_t pmd)
+ {
+ 	return (pmd_val(pmd) & (_PAGE_PRESENT | _PAGE_PROT_NONE));
+ }
++#endif
+ 
+ static inline int pmd_none(pmd_t pmd)
+ {
+@@ -184,14 +200,13 @@ static inline int pmd_none(pmd_t pmd)
+ 
+ static inline int pmd_bad(pmd_t pmd)
+ {
+-	return !pmd_present(pmd);
++	return !pmd_present(pmd) || (pmd_val(pmd) & _PAGE_LEAF);
+ }
+ 
+ #define pmd_leaf	pmd_leaf
+ static inline int pmd_leaf(pmd_t pmd)
+ {
+-	return pmd_present(pmd) &&
+-	       (pmd_val(pmd) & (_PAGE_READ | _PAGE_WRITE | _PAGE_EXEC));
++	return pmd_present(pmd) && (pmd_val(pmd) & _PAGE_LEAF);
+ }
+ 
+ static inline void set_pmd(pmd_t *pmdp, pmd_t pmd)
+@@ -229,6 +244,11 @@ static inline pte_t pmd_pte(pmd_t pmd)
+ 	return __pte(pmd_val(pmd));
+ }
+ 
++static inline pte_t pud_pte(pud_t pud)
++{
++	return __pte(pud_val(pud));
++}
++
+ /* Yields the page frame number (PFN) of a page table entry */
+ static inline unsigned long pte_pfn(pte_t pte)
+ {
+@@ -267,8 +287,7 @@ static inline int pte_exec(pte_t pte)
+ 
+ static inline int pte_huge(pte_t pte)
+ {
+-	return pte_present(pte)
+-		&& (pte_val(pte) & (_PAGE_READ | _PAGE_WRITE | _PAGE_EXEC));
++	return pte_present(pte) && (pte_val(pte) & _PAGE_LEAF);
+ }
+ 
+ static inline int pte_dirty(pte_t pte)
+@@ -371,6 +390,14 @@ static inline void update_mmu_cache(struct vm_area_struct *vma,
+ 	local_flush_tlb_page(address);
+ }
+ 
++static inline void update_mmu_cache_pmd(struct vm_area_struct *vma,
++		unsigned long address, pmd_t *pmdp)
++{
++	pte_t *ptep = (pte_t *)pmdp;
++
++	update_mmu_cache(vma, address, ptep);
++}
++
+ #define __HAVE_ARCH_PTE_SAME
+ static inline int pte_same(pte_t pte_a, pte_t pte_b)
+ {
+@@ -464,6 +491,137 @@ static inline int ptep_clear_flush_young(struct vm_area_struct *vma,
+ 	return ptep_test_and_clear_young(vma, address, ptep);
+ }
+ 
++/*
++ * THP functions
++ */
++static inline pmd_t pte_pmd(pte_t pte)
++{
++	return __pmd(pte_val(pte));
++}
++
++static inline pmd_t pmd_mkhuge(pmd_t pmd)
++{
++	return pmd;
++}
++
++static inline pmd_t pmd_mkinvalid(pmd_t pmd)
++{
++	return __pmd(pmd_val(pmd) & ~(_PAGE_PRESENT|_PAGE_PROT_NONE));
++}
++
++#define __pmd_to_phys(pmd)  (pmd_val(pmd) >> _PAGE_PFN_SHIFT << PAGE_SHIFT)
++
++static inline unsigned long pmd_pfn(pmd_t pmd)
++{
++	return ((__pmd_to_phys(pmd) & PMD_MASK) >> PAGE_SHIFT);
++}
++
++static inline pmd_t pmd_modify(pmd_t pmd, pgprot_t newprot)
++{
++	return pte_pmd(pte_modify(pmd_pte(pmd), newprot));
++}
++
++#define pmd_write pmd_write
++static inline int pmd_write(pmd_t pmd)
++{
++	return pte_write(pmd_pte(pmd));
++}
++
++static inline int pmd_dirty(pmd_t pmd)
++{
++	return pte_dirty(pmd_pte(pmd));
++}
++
++static inline int pmd_young(pmd_t pmd)
++{
++	return pte_young(pmd_pte(pmd));
++}
++
++static inline pmd_t pmd_mkold(pmd_t pmd)
++{
++	return pte_pmd(pte_mkold(pmd_pte(pmd)));
++}
++
++static inline pmd_t pmd_mkyoung(pmd_t pmd)
++{
++	return pte_pmd(pte_mkyoung(pmd_pte(pmd)));
++}
++
++static inline pmd_t pmd_mkwrite(pmd_t pmd)
++{
++	return pte_pmd(pte_mkwrite(pmd_pte(pmd)));
++}
++
++static inline pmd_t pmd_wrprotect(pmd_t pmd)
++{
++	return pte_pmd(pte_wrprotect(pmd_pte(pmd)));
++}
++
++static inline pmd_t pmd_mkclean(pmd_t pmd)
++{
++	return pte_pmd(pte_mkclean(pmd_pte(pmd)));
++}
++
++static inline pmd_t pmd_mkdirty(pmd_t pmd)
++{
++	return pte_pmd(pte_mkdirty(pmd_pte(pmd)));
++}
++
++static inline void set_pmd_at(struct mm_struct *mm, unsigned long addr,
++				pmd_t *pmdp, pmd_t pmd)
++{
++	return set_pte_at(mm, addr, (pte_t *)pmdp, pmd_pte(pmd));
++}
++
++static inline void set_pud_at(struct mm_struct *mm, unsigned long addr,
++				pud_t *pudp, pud_t pud)
++{
++	return set_pte_at(mm, addr, (pte_t *)pudp, pud_pte(pud));
++}
++
++#ifdef CONFIG_TRANSPARENT_HUGEPAGE
++static inline int pmd_trans_huge(pmd_t pmd)
++{
++	return pmd_leaf(pmd);
++}
++
++#define __HAVE_ARCH_PMDP_SET_ACCESS_FLAGS
++static inline int pmdp_set_access_flags(struct vm_area_struct *vma,
++					unsigned long address, pmd_t *pmdp,
++					pmd_t entry, int dirty)
++{
++	return ptep_set_access_flags(vma, address, (pte_t *)pmdp, pmd_pte(entry), dirty);
++}
++
++#define __HAVE_ARCH_PMDP_TEST_AND_CLEAR_YOUNG
++static inline int pmdp_test_and_clear_young(struct vm_area_struct *vma,
++					unsigned long address, pmd_t *pmdp)
++{
++	return ptep_test_and_clear_young(vma, address, (pte_t *)pmdp);
++}
++
++#define __HAVE_ARCH_PMDP_HUGE_GET_AND_CLEAR
++static inline pmd_t pmdp_huge_get_and_clear(struct mm_struct *mm,
++					unsigned long address, pmd_t *pmdp)
++{
++	return pte_pmd(ptep_get_and_clear(mm, address, (pte_t *)pmdp));
++}
++
++#define __HAVE_ARCH_PMDP_SET_WRPROTECT
++static inline void pmdp_set_wrprotect(struct mm_struct *mm,
++					unsigned long address, pmd_t *pmdp)
++{
++	ptep_set_wrprotect(mm, address, (pte_t *)pmdp);
++}
++
++#define pmdp_establish pmdp_establish
++static inline pmd_t pmdp_establish(struct vm_area_struct *vma,
++				unsigned long address, pmd_t *pmdp, pmd_t pmd)
++{
++	return __pmd(atomic_long_xchg((atomic_long_t *)pmdp, pmd_val(pmd)));
++}
++#endif /* CONFIG_TRANSPARENT_HUGEPAGE */
++
+ /*
+  * Encode and decode a swap entry
+  *
+@@ -533,7 +691,6 @@ extern uintptr_t _dtb_early_pa;
+ #define dtb_early_pa	_dtb_early_pa
+ #endif /* CONFIG_XIP_KERNEL */
+ 
+-void setup_bootmem(void);
+ void paging_init(void);
+ void misc_mem_init(void);
+ 
+diff --git a/arch/riscv/include/asm/ptrace.h b/arch/riscv/include/asm/ptrace.h
+index 09ad4e923510..6ecd461129d2 100644
+--- a/arch/riscv/include/asm/ptrace.h
++++ b/arch/riscv/include/asm/ptrace.h
+@@ -141,6 +141,37 @@ static inline unsigned long regs_get_register(struct pt_regs *regs,
+ 
+ 	return *(unsigned long *)((unsigned long)regs + offset);
+ }
++
++/**
++ * regs_get_kernel_argument() - get Nth function argument in kernel
++ * @regs:       pt_regs of that context
++ * @n:          function argument number (start from 0)
++ *
++ * regs_get_argument() returns @n th argument of the function call.
++ *
++ * Note you can get the parameter correctly if the function has no
++ * more than eight arguments.
++ */
++static inline unsigned long regs_get_kernel_argument(struct pt_regs *regs,
++						unsigned int n)
++{
++	static const int nr_reg_arguments = 8;
++	static const unsigned int argument_offs[] = {
++		offsetof(struct pt_regs, a0),
++		offsetof(struct pt_regs, a1),
++		offsetof(struct pt_regs, a2),
++		offsetof(struct pt_regs, a3),
++		offsetof(struct pt_regs, a4),
++		offsetof(struct pt_regs, a5),
++		offsetof(struct pt_regs, a6),
++		offsetof(struct pt_regs, a7),
++	};
++
++	if (n < nr_reg_arguments)
++		return regs_get_register(regs, argument_offs[n]);
++	return 0;
++}
++
+ #endif /* __ASSEMBLY__ */
+ 
+ #endif /* _ASM_RISCV_PTRACE_H */
+diff --git a/arch/riscv/include/asm/sections.h b/arch/riscv/include/asm/sections.h
+index 8a303fb1ee3b..32336e8a17cb 100644
+--- a/arch/riscv/include/asm/sections.h
++++ b/arch/riscv/include/asm/sections.h
+@@ -6,6 +6,7 @@
+ #define __ASM_SECTIONS_H
+ 
+ #include <asm-generic/sections.h>
++#include <linux/mm.h>
+ 
+ extern char _start[];
+ extern char _start_kernel[];
+@@ -13,4 +14,20 @@ extern char __init_data_begin[], __init_data_end[];
+ extern char __init_text_begin[], __init_text_end[];
+ extern char __alt_start[], __alt_end[];
+ 
++static inline bool is_va_kernel_text(uintptr_t va)
++{
++	uintptr_t start = (uintptr_t)_start;
++	uintptr_t end = (uintptr_t)__init_data_begin;
++
++	return va >= start && va < end;
++}
++
++static inline bool is_va_kernel_lm_alias_text(uintptr_t va)
++{
++	uintptr_t start = (uintptr_t)lm_alias(_start);
++	uintptr_t end = (uintptr_t)lm_alias(__init_data_begin);
++
++	return va >= start && va < end;
++}
++
+ #endif /* __ASM_SECTIONS_H */
+diff --git a/arch/riscv/include/asm/set_memory.h b/arch/riscv/include/asm/set_memory.h
+index 086f757e8ba3..a2c14d4b3993 100644
+--- a/arch/riscv/include/asm/set_memory.h
++++ b/arch/riscv/include/asm/set_memory.h
+@@ -16,20 +16,28 @@ int set_memory_rw(unsigned long addr, int numpages);
+ int set_memory_x(unsigned long addr, int numpages);
+ int set_memory_nx(unsigned long addr, int numpages);
+ int set_memory_rw_nx(unsigned long addr, int numpages);
+-void protect_kernel_text_data(void);
++static __always_inline int set_kernel_memory(char *startp, char *endp,
++					     int (*set_memory)(unsigned long start,
++							       int num_pages))
++{
++	unsigned long start = (unsigned long)startp;
++	unsigned long end = (unsigned long)endp;
++	int num_pages = PAGE_ALIGN(end - start) >> PAGE_SHIFT;
++
++	return set_memory(start, num_pages);
++}
+ #else
+ static inline int set_memory_ro(unsigned long addr, int numpages) { return 0; }
+ static inline int set_memory_rw(unsigned long addr, int numpages) { return 0; }
+ static inline int set_memory_x(unsigned long addr, int numpages) { return 0; }
+ static inline int set_memory_nx(unsigned long addr, int numpages) { return 0; }
+-static inline void protect_kernel_text_data(void) {}
+ static inline int set_memory_rw_nx(unsigned long addr, int numpages) { return 0; }
+-#endif
+-
+-#if defined(CONFIG_64BIT) && defined(CONFIG_STRICT_KERNEL_RWX)
+-void protect_kernel_linear_mapping_text_rodata(void);
+-#else
+-static inline void protect_kernel_linear_mapping_text_rodata(void) {}
++static inline int set_kernel_memory(char *startp, char *endp,
++				    int (*set_memory)(unsigned long start,
++						      int num_pages))
++{
++	return 0;
++}
+ #endif
+ 
+ int set_direct_map_invalid_noflush(struct page *page);
+diff --git a/arch/riscv/include/asm/switch_to.h b/arch/riscv/include/asm/switch_to.h
+index 407bcc96a710..0a3f4f95c555 100644
+--- a/arch/riscv/include/asm/switch_to.h
++++ b/arch/riscv/include/asm/switch_to.h
+@@ -6,6 +6,7 @@
+ #ifndef _ASM_RISCV_SWITCH_TO_H
+ #define _ASM_RISCV_SWITCH_TO_H
+ 
++#include <linux/jump_label.h>
+ #include <linux/sched/task_stack.h>
+ #include <asm/processor.h>
+ #include <asm/ptrace.h>
+@@ -55,9 +56,13 @@ static inline void __switch_to_aux(struct task_struct *prev,
+ 	fstate_restore(next, task_pt_regs(next));
+ }
+ 
+-extern bool has_fpu;
++extern struct static_key_false cpu_hwcap_fpu;
++static __always_inline bool has_fpu(void)
++{
++	return static_branch_likely(&cpu_hwcap_fpu);
++}
+ #else
+-#define has_fpu false
++static __always_inline bool has_fpu(void) { return false; }
+ #define fstate_save(task, regs) do { } while (0)
+ #define fstate_restore(task, regs) do { } while (0)
+ #define __switch_to_aux(__prev, __next) do { } while (0)
+@@ -70,7 +75,7 @@ extern struct task_struct *__switch_to(struct task_struct *,
+ do {							\
+ 	struct task_struct *__prev = (prev);		\
+ 	struct task_struct *__next = (next);		\
+-	if (has_fpu)					\
++	if (has_fpu())					\
+ 		__switch_to_aux(__prev, __next);	\
+ 	((last) = __switch_to(__prev, __next));		\
+ } while (0)
+diff --git a/arch/riscv/include/asm/thread_info.h b/arch/riscv/include/asm/thread_info.h
+index 0e549a3089b3..60da0dcacf14 100644
+--- a/arch/riscv/include/asm/thread_info.h
++++ b/arch/riscv/include/asm/thread_info.h
+@@ -19,6 +19,21 @@
+ #endif
+ #define THREAD_SIZE		(PAGE_SIZE << THREAD_SIZE_ORDER)
+ 
++/*
++ * By aligning VMAP'd stacks to 2 * THREAD_SIZE, we can detect overflow by
++ * checking sp & (1 << THREAD_SHIFT), which we can do cheaply in the entry
++ * assembly.
++ */
++#ifdef CONFIG_VMAP_STACK
++#define THREAD_ALIGN            (2 * THREAD_SIZE)
++#else
++#define THREAD_ALIGN            THREAD_SIZE
++#endif
++
++#define THREAD_SHIFT            (PAGE_SHIFT + THREAD_SIZE_ORDER)
++#define OVERFLOW_STACK_SIZE     SZ_4K
++#define SHADOW_OVERFLOW_STACK_SIZE (1024)
++
+ #ifndef __ASSEMBLY__
+ 
+ #include <asm/processor.h>
+diff --git a/arch/riscv/include/asm/tlbflush.h b/arch/riscv/include/asm/tlbflush.h
+index c84218ad7afc..801019381dea 100644
+--- a/arch/riscv/include/asm/tlbflush.h
++++ b/arch/riscv/include/asm/tlbflush.h
+@@ -33,6 +33,11 @@ void flush_tlb_mm(struct mm_struct *mm);
+ void flush_tlb_page(struct vm_area_struct *vma, unsigned long addr);
+ void flush_tlb_range(struct vm_area_struct *vma, unsigned long start,
+ 		     unsigned long end);
++#ifdef CONFIG_TRANSPARENT_HUGEPAGE
++#define __HAVE_ARCH_FLUSH_PMD_TLB_RANGE
++void flush_pmd_tlb_range(struct vm_area_struct *vma, unsigned long start,
++			unsigned long end);
++#endif
+ #else /* CONFIG_SMP && CONFIG_MMU */
+ 
+ #define flush_tlb_all() local_flush_tlb_all()
+diff --git a/arch/riscv/kernel/asm-offsets.c b/arch/riscv/kernel/asm-offsets.c
+index 9ef33346853c..90f8ce64fa6f 100644
+--- a/arch/riscv/kernel/asm-offsets.c
++++ b/arch/riscv/kernel/asm-offsets.c
+@@ -311,4 +311,6 @@ void asm_offsets(void)
+ 	 * ensures the alignment is sane.
+ 	 */
+ 	DEFINE(PT_SIZE_ON_STACK, ALIGN(sizeof(struct pt_regs), STACK_ALIGN));
++
++	OFFSET(KERNEL_MAP_VIRT_ADDR, kernel_mapping, virt_addr);
+ }
+diff --git a/arch/riscv/kernel/cpufeature.c b/arch/riscv/kernel/cpufeature.c
+index ac202f44a670..d959d207a40d 100644
+--- a/arch/riscv/kernel/cpufeature.c
++++ b/arch/riscv/kernel/cpufeature.c
+@@ -19,7 +19,7 @@ unsigned long elf_hwcap __read_mostly;
+ static DECLARE_BITMAP(riscv_isa, RISCV_ISA_EXT_MAX) __read_mostly;
+ 
+ #ifdef CONFIG_FPU
+-bool has_fpu __read_mostly;
++__ro_after_init DEFINE_STATIC_KEY_FALSE(cpu_hwcap_fpu);
+ #endif
+ 
+ /**
+@@ -59,7 +59,7 @@ bool __riscv_isa_extension_available(const unsigned long *isa_bitmap, int bit)
+ }
+ EXPORT_SYMBOL_GPL(__riscv_isa_extension_available);
+ 
+-void riscv_fill_hwcap(void)
++void __init riscv_fill_hwcap(void)
+ {
+ 	struct device_node *node;
+ 	const char *isa;
+@@ -146,6 +146,6 @@ void riscv_fill_hwcap(void)
+ 
+ #ifdef CONFIG_FPU
+ 	if (elf_hwcap & (COMPAT_HWCAP_ISA_F | COMPAT_HWCAP_ISA_D))
+-		has_fpu = true;
++		static_branch_enable(&cpu_hwcap_fpu);
+ #endif
+ }
+diff --git a/arch/riscv/kernel/entry.S b/arch/riscv/kernel/entry.S
+index 80d5a9e017b0..98f502654edd 100644
+--- a/arch/riscv/kernel/entry.S
++++ b/arch/riscv/kernel/entry.S
+@@ -30,6 +30,15 @@ ENTRY(handle_exception)
+ _restore_kernel_tpsp:
+ 	csrr tp, CSR_SCRATCH
+ 	REG_S sp, TASK_TI_KERNEL_SP(tp)
++
++#ifdef CONFIG_VMAP_STACK
++	addi sp, sp, -(PT_SIZE_ON_STACK)
++	srli sp, sp, THREAD_SHIFT
++	andi sp, sp, 0x1
++	bnez sp, handle_kernel_stack_overflow
++	REG_L sp, TASK_TI_KERNEL_SP(tp)
++#endif
++
+ _save_context:
+ 	REG_S sp, TASK_TI_USER_SP(tp)
+ 	REG_L sp, TASK_TI_KERNEL_SP(tp)
+@@ -376,6 +385,105 @@ handle_syscall_trace_exit:
+ 	call do_syscall_trace_exit
+ 	j ret_from_exception
+ 
++#ifdef CONFIG_VMAP_STACK
++handle_kernel_stack_overflow:
++	la sp, shadow_stack
++	addi sp, sp, SHADOW_OVERFLOW_STACK_SIZE
++
++	//save caller register to shadow stack
++	addi sp, sp, -(PT_SIZE_ON_STACK)
++	REG_S x1,  PT_RA(sp)
++	REG_S x5,  PT_T0(sp)
++	REG_S x6,  PT_T1(sp)
++	REG_S x7,  PT_T2(sp)
++	REG_S x10, PT_A0(sp)
++	REG_S x11, PT_A1(sp)
++	REG_S x12, PT_A2(sp)
++	REG_S x13, PT_A3(sp)
++	REG_S x14, PT_A4(sp)
++	REG_S x15, PT_A5(sp)
++	REG_S x16, PT_A6(sp)
++	REG_S x17, PT_A7(sp)
++	REG_S x28, PT_T3(sp)
++	REG_S x29, PT_T4(sp)
++	REG_S x30, PT_T5(sp)
++	REG_S x31, PT_T6(sp)
++
++	la ra, restore_caller_reg
++	tail get_overflow_stack
++
++restore_caller_reg:
++	//save per-cpu overflow stack
++	REG_S a0, -8(sp)
++	//restore caller register from shadow_stack
++	REG_L x1,  PT_RA(sp)
++	REG_L x5,  PT_T0(sp)
++	REG_L x6,  PT_T1(sp)
++	REG_L x7,  PT_T2(sp)
++	REG_L x10, PT_A0(sp)
++	REG_L x11, PT_A1(sp)
++	REG_L x12, PT_A2(sp)
++	REG_L x13, PT_A3(sp)
++	REG_L x14, PT_A4(sp)
++	REG_L x15, PT_A5(sp)
++	REG_L x16, PT_A6(sp)
++	REG_L x17, PT_A7(sp)
++	REG_L x28, PT_T3(sp)
++	REG_L x29, PT_T4(sp)
++	REG_L x30, PT_T5(sp)
++	REG_L x31, PT_T6(sp)
++
++	//load per-cpu overflow stack
++	REG_L sp, -8(sp)
++	addi sp, sp, -(PT_SIZE_ON_STACK)
++
++	//save context to overflow stack
++	REG_S x1,  PT_RA(sp)
++	REG_S x3,  PT_GP(sp)
++	REG_S x5,  PT_T0(sp)
++	REG_S x6,  PT_T1(sp)
++	REG_S x7,  PT_T2(sp)
++	REG_S x8,  PT_S0(sp)
++	REG_S x9,  PT_S1(sp)
++	REG_S x10, PT_A0(sp)
++	REG_S x11, PT_A1(sp)
++	REG_S x12, PT_A2(sp)
++	REG_S x13, PT_A3(sp)
++	REG_S x14, PT_A4(sp)
++	REG_S x15, PT_A5(sp)
++	REG_S x16, PT_A6(sp)
++	REG_S x17, PT_A7(sp)
++	REG_S x18, PT_S2(sp)
++	REG_S x19, PT_S3(sp)
++	REG_S x20, PT_S4(sp)
++	REG_S x21, PT_S5(sp)
++	REG_S x22, PT_S6(sp)
++	REG_S x23, PT_S7(sp)
++	REG_S x24, PT_S8(sp)
++	REG_S x25, PT_S9(sp)
++	REG_S x26, PT_S10(sp)
++	REG_S x27, PT_S11(sp)
++	REG_S x28, PT_T3(sp)
++	REG_S x29, PT_T4(sp)
++	REG_S x30, PT_T5(sp)
++	REG_S x31, PT_T6(sp)
++
++	REG_L s0, TASK_TI_KERNEL_SP(tp)
++	csrr s1, CSR_STATUS
++	csrr s2, CSR_EPC
++	csrr s3, CSR_TVAL
++	csrr s4, CSR_CAUSE
++	csrr s5, CSR_SCRATCH
++	REG_S s0, PT_SP(sp)
++	REG_S s1, PT_STATUS(sp)
++	REG_S s2, PT_EPC(sp)
++	REG_S s3, PT_BADADDR(sp)
++	REG_S s4, PT_CAUSE(sp)
++	REG_S s5, PT_TP(sp)
++	move a0, sp
++	tail handle_bad_stack
++#endif
++
+ END(handle_exception)
+ 
+ ENTRY(ret_from_fork)
+diff --git a/arch/riscv/kernel/head.S b/arch/riscv/kernel/head.S
+index 89cc58ab52b4..fce5184b22c3 100644
+--- a/arch/riscv/kernel/head.S
++++ b/arch/riscv/kernel/head.S
+@@ -81,9 +81,9 @@ pe_head_start:
+ #ifdef CONFIG_MMU
+ relocate:
+ 	/* Relocate return address */
+-	la a1, kernel_virt_addr
++	la a1, kernel_map
+ 	XIP_FIXUP_OFFSET a1
+-	REG_L a1, 0(a1)
++	REG_L a1, KERNEL_MAP_VIRT_ADDR(a1)
+ 	la a2, _start
+ 	sub a1, a1, a2
+ 	add ra, ra, a1
+diff --git a/arch/riscv/kernel/kexec_relocate.S b/arch/riscv/kernel/kexec_relocate.S
+index 88c3beabe9b4..a80b52a74f58 100644
+--- a/arch/riscv/kernel/kexec_relocate.S
++++ b/arch/riscv/kernel/kexec_relocate.S
+@@ -20,7 +20,7 @@ SYM_CODE_START(riscv_kexec_relocate)
+ 	 * s4: Pointer to the destination address for the relocation
+ 	 * s5: (const) Number of words per page
+ 	 * s6: (const) 1, used for subtraction
+-	 * s7: (const) va_pa_offset, used when switching MMU off
++	 * s7: (const) kernel_map.va_pa_offset, used when switching MMU off
+ 	 * s8: (const) Physical address of the main loop
+ 	 * s9: (debug) indirection page counter
+ 	 * s10: (debug) entry counter
+@@ -159,7 +159,7 @@ SYM_CODE_START(riscv_kexec_norelocate)
+ 	 * s0: (const) Phys address to jump to
+ 	 * s1: (const) Phys address of the FDT image
+ 	 * s2: (const) The hartid of the current hart
+-	 * s3: (const) va_pa_offset, used when switching MMU off
++	 * s3: (const) kernel_map.va_pa_offset, used when switching MMU off
+ 	 */
+ 	mv	s0, a1
+ 	mv	s1, a2
+diff --git a/arch/riscv/kernel/machine_kexec.c b/arch/riscv/kernel/machine_kexec.c
+index cc048143fba5..3e39fd95e02b 100644
+--- a/arch/riscv/kernel/machine_kexec.c
++++ b/arch/riscv/kernel/machine_kexec.c
+@@ -188,6 +188,6 @@ machine_kexec(struct kimage *image)
+ 	/* Jump to the relocation code */
+ 	pr_notice("Bye...\n");
+ 	kexec_method(first_ind_entry, jump_addr, fdt_addr,
+-		     this_hart_id, va_pa_offset);
++		     this_hart_id, kernel_map.va_pa_offset);
+ 	unreachable();
+ }
+diff --git a/arch/riscv/kernel/probes/kprobes.c b/arch/riscv/kernel/probes/kprobes.c
+index 10b965c34536..fbd127d5dc04 100644
+--- a/arch/riscv/kernel/probes/kprobes.c
++++ b/arch/riscv/kernel/probes/kprobes.c
+@@ -17,7 +17,7 @@ DEFINE_PER_CPU(struct kprobe *, current_kprobe) = NULL;
+ DEFINE_PER_CPU(struct kprobe_ctlblk, kprobe_ctlblk);
+ 
+ static void __kprobes
+-post_kprobe_handler(struct kprobe_ctlblk *, struct pt_regs *);
++post_kprobe_handler(struct kprobe *, struct kprobe_ctlblk *, struct pt_regs *);
+ 
+ static void __kprobes arch_prepare_ss_slot(struct kprobe *p)
+ {
+@@ -43,7 +43,7 @@ static void __kprobes arch_simulate_insn(struct kprobe *p, struct pt_regs *regs)
+ 		p->ainsn.api.handler((u32)p->opcode,
+ 					(unsigned long)p->addr, regs);
+ 
+-	post_kprobe_handler(kcb, regs);
++	post_kprobe_handler(p, kcb, regs);
+ }
+ 
+ int __kprobes arch_prepare_kprobe(struct kprobe *p)
+@@ -149,21 +149,6 @@ static void __kprobes kprobes_restore_local_irqflag(struct kprobe_ctlblk *kcb,
+ 	regs->status = kcb->saved_status;
+ }
+ 
+-static void __kprobes
+-set_ss_context(struct kprobe_ctlblk *kcb, unsigned long addr, struct kprobe *p)
+-{
+-	unsigned long offset = GET_INSN_LENGTH(p->opcode);
+-
+-	kcb->ss_ctx.ss_pending = true;
+-	kcb->ss_ctx.match_addr = addr + offset;
+-}
+-
+-static void __kprobes clear_ss_context(struct kprobe_ctlblk *kcb)
+-{
+-	kcb->ss_ctx.ss_pending = false;
+-	kcb->ss_ctx.match_addr = 0;
+-}
+-
+ static void __kprobes setup_singlestep(struct kprobe *p,
+ 				       struct pt_regs *regs,
+ 				       struct kprobe_ctlblk *kcb, int reenter)
+@@ -182,8 +167,6 @@ static void __kprobes setup_singlestep(struct kprobe *p,
+ 		/* prepare for single stepping */
+ 		slot = (unsigned long)p->ainsn.api.insn;
+ 
+-		set_ss_context(kcb, slot, p);	/* mark pending ss */
+-
+ 		/* IRQs and single stepping do not mix well. */
+ 		kprobes_save_local_irqflag(kcb, regs);
+ 
+@@ -219,13 +202,8 @@ static int __kprobes reenter_kprobe(struct kprobe *p,
+ }
+ 
+ static void __kprobes
+-post_kprobe_handler(struct kprobe_ctlblk *kcb, struct pt_regs *regs)
++post_kprobe_handler(struct kprobe *cur, struct kprobe_ctlblk *kcb, struct pt_regs *regs)
+ {
+-	struct kprobe *cur = kprobe_running();
+-
+-	if (!cur)
+-		return;
+-
+ 	/* return addr restore if non-branching insn */
+ 	if (cur->ainsn.api.restore != 0)
+ 		regs->epc = cur->ainsn.api.restore;
+@@ -357,16 +335,16 @@ bool __kprobes
+ kprobe_single_step_handler(struct pt_regs *regs)
+ {
+ 	struct kprobe_ctlblk *kcb = get_kprobe_ctlblk();
++	unsigned long addr = instruction_pointer(regs);
++	struct kprobe *cur = kprobe_running();
+ 
+-	if ((kcb->ss_ctx.ss_pending)
+-	    && (kcb->ss_ctx.match_addr == instruction_pointer(regs))) {
+-		clear_ss_context(kcb);	/* clear pending ss */
+-
++	if (cur && (kcb->kprobe_status & (KPROBE_HIT_SS | KPROBE_REENTER)) &&
++	    ((unsigned long)&cur->ainsn.api.insn[0] + GET_INSN_LENGTH(cur->opcode) == addr)) {
+ 		kprobes_restore_local_irqflag(kcb, regs);
+-
+-		post_kprobe_handler(kcb, regs);
++		post_kprobe_handler(cur, kcb, regs);
+ 		return true;
+ 	}
++	/* not ours, kprobes should ignore it */
+ 	return false;
+ }
+ 
+diff --git a/arch/riscv/kernel/process.c b/arch/riscv/kernel/process.c
+index f9cd57c9c67d..03ac3aa611f5 100644
+--- a/arch/riscv/kernel/process.c
++++ b/arch/riscv/kernel/process.c
+@@ -87,7 +87,7 @@ void start_thread(struct pt_regs *regs, unsigned long pc,
+ 	unsigned long sp)
+ {
+ 	regs->status = SR_PIE;
+-	if (has_fpu) {
++	if (has_fpu()) {
+ 		regs->status |= SR_FS_INITIAL;
+ 		/*
+ 		 * Restore the initial value to the FP register
+diff --git a/arch/riscv/kernel/setup.c b/arch/riscv/kernel/setup.c
+index 03901d3a8b02..b0c6f372a9ec 100644
+--- a/arch/riscv/kernel/setup.c
++++ b/arch/riscv/kernel/setup.c
+@@ -17,7 +17,6 @@
+ #include <linux/of_fdt.h>
+ #include <linux/of_platform.h>
+ #include <linux/sched/task.h>
+-#include <linux/swiotlb.h>
+ #include <linux/smp.h>
+ #include <linux/efi.h>
+ #include <linux/crash_dump.h>
+@@ -276,7 +275,6 @@ void __init setup_arch(char **cmdline_p)
+ 	parse_early_param();
+ 
+ 	efi_init();
+-	setup_bootmem();
+ 	paging_init();
+ #if IS_ENABLED(CONFIG_BUILTIN_DTB)
+ 	unflatten_and_copy_device_tree();
+@@ -291,15 +289,6 @@ void __init setup_arch(char **cmdline_p)
+ 	init_resources();
+ 	sbi_init();
+ 
+-	if (IS_ENABLED(CONFIG_STRICT_KERNEL_RWX)) {
+-		protect_kernel_text_data();
+-		protect_kernel_linear_mapping_text_rodata();
+-	}
+-
+-#ifdef CONFIG_SWIOTLB
+-	swiotlb_init(1);
+-#endif
+-
+ #ifdef CONFIG_KASAN
+ 	kasan_init();
+ #endif
+@@ -334,11 +323,10 @@ subsys_initcall(topology_init);
+ 
+ void free_initmem(void)
+ {
+-	unsigned long init_begin = (unsigned long)__init_begin;
+-	unsigned long init_end = (unsigned long)__init_end;
+-
+ 	if (IS_ENABLED(CONFIG_STRICT_KERNEL_RWX))
+-		set_memory_rw_nx(init_begin, (init_end - init_begin) >> PAGE_SHIFT);
++		set_kernel_memory(lm_alias(__init_begin), lm_alias(__init_end),
++				  IS_ENABLED(CONFIG_64BIT) ?
++					set_memory_rw : set_memory_rw_nx);
+ 
+ 	free_initmem_default(POISON_FREE_INITMEM);
+ }
+diff --git a/arch/riscv/kernel/signal.c b/arch/riscv/kernel/signal.c
+index 65942b3748b4..c2d5ecbe5526 100644
+--- a/arch/riscv/kernel/signal.c
++++ b/arch/riscv/kernel/signal.c
+@@ -90,7 +90,7 @@ static long restore_sigcontext(struct pt_regs *regs,
+ 	/* sc_regs is structured the same as the start of pt_regs */
+ 	err = __copy_from_user(regs, &sc->sc_regs, sizeof(sc->sc_regs));
+ 	/* Restore the floating-point state. */
+-	if (has_fpu)
++	if (has_fpu())
+ 		err |= restore_fp_state(regs, &sc->sc_fpregs);
+ 	return err;
+ }
+@@ -143,7 +143,7 @@ static long setup_sigcontext(struct rt_sigframe __user *frame,
+ 	/* sc_regs is structured the same as the start of pt_regs */
+ 	err = __copy_to_user(&sc->sc_regs, regs, sizeof(sc->sc_regs));
+ 	/* Save the floating-point state. */
+-	if (has_fpu)
++	if (has_fpu())
+ 		err |= save_fp_state(regs, &sc->sc_fpregs);
+ 	return err;
+ }
+diff --git a/arch/riscv/kernel/traps.c b/arch/riscv/kernel/traps.c
+index 0721b9798595..bb6a450f0ecc 100644
+--- a/arch/riscv/kernel/traps.c
++++ b/arch/riscv/kernel/traps.c
+@@ -198,3 +198,38 @@ int is_valid_bugaddr(unsigned long pc)
+ void __init trap_init(void)
+ {
+ }
++
++#ifdef CONFIG_VMAP_STACK
++static DEFINE_PER_CPU(unsigned long [OVERFLOW_STACK_SIZE/sizeof(long)],
++		overflow_stack)__aligned(16);
++/*
++ * shadow stack, handled_ kernel_ stack_ overflow(in kernel/entry.S) is used
++ * to get per-cpu overflow stack(get_overflow_stack).
++ */
++long shadow_stack[SHADOW_OVERFLOW_STACK_SIZE/sizeof(long)];
++asmlinkage unsigned long get_overflow_stack(void)
++{
++	return (unsigned long)this_cpu_ptr(overflow_stack) +
++		OVERFLOW_STACK_SIZE;
++}
++
++asmlinkage void handle_bad_stack(struct pt_regs *regs)
++{
++	unsigned long tsk_stk = (unsigned long)current->stack;
++	unsigned long ovf_stk = (unsigned long)this_cpu_ptr(overflow_stack);
++
++	console_verbose();
++
++	pr_emerg("Insufficient stack space to handle exception!\n");
++	pr_emerg("Task stack:     [0x%016lx..0x%016lx]\n",
++			tsk_stk, tsk_stk + THREAD_SIZE);
++	pr_emerg("Overflow stack: [0x%016lx..0x%016lx]\n",
++			ovf_stk, ovf_stk + OVERFLOW_STACK_SIZE);
++
++	__show_regs(regs);
++	panic("Kernel stack overflow");
++
++	for (;;)
++		wait_for_interrupt();
++}
++#endif
+diff --git a/arch/riscv/kernel/vmlinux-xip.lds.S b/arch/riscv/kernel/vmlinux-xip.lds.S
+index 4b29b9917f99..b0a813faa264 100644
+--- a/arch/riscv/kernel/vmlinux-xip.lds.S
++++ b/arch/riscv/kernel/vmlinux-xip.lds.S
+@@ -12,7 +12,6 @@
+ 
+ #include <asm/vmlinux.lds.h>
+ #include <asm/page.h>
+-#include <asm/pgtable.h>
+ #include <asm/cache.h>
+ #include <asm/thread_info.h>
+ 
+diff --git a/arch/riscv/kernel/vmlinux.lds.S b/arch/riscv/kernel/vmlinux.lds.S
+index 891742ff75a7..502d0826ecb1 100644
+--- a/arch/riscv/kernel/vmlinux.lds.S
++++ b/arch/riscv/kernel/vmlinux.lds.S
+@@ -117,7 +117,7 @@ SECTIONS
+ 	. = ALIGN(SECTION_ALIGN);
+ 	_data = .;
+ 
+-	RW_DATA(L1_CACHE_BYTES, PAGE_SIZE, THREAD_SIZE)
++	RW_DATA(L1_CACHE_BYTES, PAGE_SIZE, THREAD_ALIGN)
+ 	.sdata : {
+ 		__global_pointer$ = . + 0x800;
+ 		*(.sdata*)
+diff --git a/arch/riscv/lib/uaccess.S b/arch/riscv/lib/uaccess.S
+index fceaeb18cc64..bceb0629e440 100644
+--- a/arch/riscv/lib/uaccess.S
++++ b/arch/riscv/lib/uaccess.S
+@@ -19,50 +19,161 @@ ENTRY(__asm_copy_from_user)
+ 	li t6, SR_SUM
+ 	csrs CSR_STATUS, t6
+ 
+-	add a3, a1, a2
+-	/* Use word-oriented copy only if low-order bits match */
+-	andi t0, a0, SZREG-1
+-	andi t1, a1, SZREG-1
+-	bne t0, t1, 2f
++	/* Save for return value */
++	mv	t5, a2
+ 
+-	addi t0, a1, SZREG-1
+-	andi t1, a3, ~(SZREG-1)
+-	andi t0, t0, ~(SZREG-1)
+ 	/*
+-	 * a3: terminal address of source region
+-	 * t0: lowest XLEN-aligned address in source
+-	 * t1: highest XLEN-aligned address in source
++	 * Register allocation for code below:
++	 * a0 - start of uncopied dst
++	 * a1 - start of uncopied src
++	 * a2 - size
++	 * t0 - end of uncopied dst
+ 	 */
+-	bgeu t0, t1, 2f
+-	bltu a1, t0, 4f
++	add	t0, a0, a2
++	bgtu	a0, t0, 5f
++
++	/*
++	 * Use byte copy only if too small.
++	 */
++	li	a3, 8*SZREG /* size must be larger than size in word_copy */
++	bltu	a2, a3, .Lbyte_copy_tail
++
++	/*
++	 * Copy first bytes until dst is align to word boundary.
++	 * a0 - start of dst
++	 * t1 - start of aligned dst
++	 */
++	addi	t1, a0, SZREG-1
++	andi	t1, t1, ~(SZREG-1)
++	/* dst is already aligned, skip */
++	beq	a0, t1, .Lskip_first_bytes
+ 1:
+-	fixup REG_L, t2, (a1), 10f
+-	fixup REG_S, t2, (a0), 10f
+-	addi a1, a1, SZREG
+-	addi a0, a0, SZREG
+-	bltu a1, t1, 1b
++	/* a5 - one byte for copying data */
++	fixup lb      a5, 0(a1), 10f
++	addi	a1, a1, 1	/* src */
++	fixup sb      a5, 0(a0), 10f
++	addi	a0, a0, 1	/* dst */
++	bltu	a0, t1, 1b	/* t1 - start of aligned dst */
++
++.Lskip_first_bytes:
++	/*
++	 * Now dst is aligned.
++	 * Use shift-copy if src is misaligned.
++	 * Use word-copy if both src and dst are aligned because
++	 * can not use shift-copy which do not require shifting
++	 */
++	/* a1 - start of src */
++	andi	a3, a1, SZREG-1
++	bnez	a3, .Lshift_copy
++
++.Lword_copy:
++        /*
++	 * Both src and dst are aligned, unrolled word copy
++	 *
++	 * a0 - start of aligned dst
++	 * a1 - start of aligned src
++	 * a3 - a1 & mask:(SZREG-1)
++	 * t0 - end of aligned dst
++	 */
++	addi	t0, t0, -(8*SZREG-1) /* not to over run */
+ 2:
+-	bltu a1, a3, 5f
++	fixup REG_L   a4,        0(a1), 10f
++	fixup REG_L   a5,    SZREG(a1), 10f
++	fixup REG_L   a6,  2*SZREG(a1), 10f
++	fixup REG_L   a7,  3*SZREG(a1), 10f
++	fixup REG_L   t1,  4*SZREG(a1), 10f
++	fixup REG_L   t2,  5*SZREG(a1), 10f
++	fixup REG_L   t3,  6*SZREG(a1), 10f
++	fixup REG_L   t4,  7*SZREG(a1), 10f
++	fixup REG_S   a4,        0(a0), 10f
++	fixup REG_S   a5,    SZREG(a0), 10f
++	fixup REG_S   a6,  2*SZREG(a0), 10f
++	fixup REG_S   a7,  3*SZREG(a0), 10f
++	fixup REG_S   t1,  4*SZREG(a0), 10f
++	fixup REG_S   t2,  5*SZREG(a0), 10f
++	fixup REG_S   t3,  6*SZREG(a0), 10f
++	fixup REG_S   t4,  7*SZREG(a0), 10f
++	addi	a0, a0, 8*SZREG
++	addi	a1, a1, 8*SZREG
++	bltu	a0, t0, 2b
++
++	addi	t0, t0, 8*SZREG-1 /* revert to original value */
++	j	.Lbyte_copy_tail
++
++.Lshift_copy:
++
++	/*
++	 * Word copy with shifting.
++	 * For misaligned copy we still perform aligned word copy, but
++	 * we need to use the value fetched from the previous iteration and
++	 * do some shifts.
++	 * This is safe because reading less than a word size.
++	 *
++	 * a0 - start of aligned dst
++	 * a1 - start of src
++	 * a3 - a1 & mask:(SZREG-1)
++	 * t0 - end of uncopied dst
++	 * t1 - end of aligned dst
++	 */
++	/* calculating aligned word boundary for dst */
++	andi	t1, t0, ~(SZREG-1)
++	/* Converting unaligned src to aligned arc */
++	andi	a1, a1, ~(SZREG-1)
++
++	/*
++	 * Calculate shifts
++	 * t3 - prev shift
++	 * t4 - current shift
++	 */
++	slli	t3, a3, LGREG
++	li	a5, SZREG*8
++	sub	t4, a5, t3
++
++	/* Load the first word to combine with seceond word */
++	fixup REG_L   a5, 0(a1), 10f
+ 
+ 3:
++	/* Main shifting copy
++	 *
++	 * a0 - start of aligned dst
++	 * a1 - start of aligned src
++	 * t1 - end of aligned dst
++	 */
++
++	/* At least one iteration will be executed */
++	srl	a4, a5, t3
++	fixup REG_L   a5, SZREG(a1), 10f
++	addi	a1, a1, SZREG
++	sll	a2, a5, t4
++	or	a2, a2, a4
++	fixup REG_S   a2, 0(a0), 10f
++	addi	a0, a0, SZREG
++	bltu	a0, t1, 3b
++
++	/* Revert src to original unaligned value  */
++	add	a1, a1, a3
++
++.Lbyte_copy_tail:
++	/*
++	 * Byte copy anything left.
++	 *
++	 * a0 - start of remaining dst
++	 * a1 - start of remaining src
++	 * t0 - end of remaining dst
++	 */
++	bgeu	a0, t0, 5f
++4:
++	fixup lb      a5, 0(a1), 10f
++	addi	a1, a1, 1	/* src */
++	fixup sb      a5, 0(a0), 10f
++	addi	a0, a0, 1	/* dst */
++	bltu	a0, t0, 4b	/* t0 - end of dst */
++
++5:
+ 	/* Disable access to user memory */
+ 	csrc CSR_STATUS, t6
+-	li a0, 0
++	li	a0, 0
+ 	ret
+-4: /* Edge case: unalignment */
+-	fixup lbu, t2, (a1), 10f
+-	fixup sb, t2, (a0), 10f
+-	addi a1, a1, 1
+-	addi a0, a0, 1
+-	bltu a1, t0, 4b
+-	j 1b
+-5: /* Edge case: remainder */
+-	fixup lbu, t2, (a1), 10f
+-	fixup sb, t2, (a0), 10f
+-	addi a1, a1, 1
+-	addi a0, a0, 1
+-	bltu a1, a3, 5b
+-	j 3b
+ ENDPROC(__asm_copy_to_user)
+ ENDPROC(__asm_copy_from_user)
+ EXPORT_SYMBOL(__asm_copy_to_user)
+@@ -117,7 +228,7 @@ EXPORT_SYMBOL(__clear_user)
+ 10:
+ 	/* Disable access to user memory */
+ 	csrs CSR_STATUS, t6
+-	mv a0, a2
++	mv a0, t5
+ 	ret
+ 11:
+ 	csrs CSR_STATUS, t6
+diff --git a/arch/riscv/mm/context.c b/arch/riscv/mm/context.c
+index 68aa312fc352..ee3459cb6750 100644
+--- a/arch/riscv/mm/context.c
++++ b/arch/riscv/mm/context.c
+@@ -18,7 +18,7 @@
+ 
+ #ifdef CONFIG_MMU
+ 
+-static DEFINE_STATIC_KEY_FALSE(use_asid_allocator);
++DEFINE_STATIC_KEY_FALSE(use_asid_allocator);
+ 
+ static unsigned long asid_bits;
+ static unsigned long num_asids;
+@@ -213,7 +213,7 @@ static inline void set_mm(struct mm_struct *mm, unsigned int cpu)
+ 		set_mm_noasid(mm);
+ }
+ 
+-static int asids_init(void)
++static int __init asids_init(void)
+ {
+ 	unsigned long old;
+ 
+@@ -243,8 +243,7 @@ static int asids_init(void)
+ 	if (num_asids > (2 * num_possible_cpus())) {
+ 		atomic_long_set(&current_version, num_asids);
+ 
+-		context_asid_map = kcalloc(BITS_TO_LONGS(num_asids),
+-				   sizeof(*context_asid_map), GFP_KERNEL);
++		context_asid_map = bitmap_zalloc(num_asids, GFP_KERNEL);
+ 		if (!context_asid_map)
+ 			panic("Failed to allocate bitmap for %lu ASIDs\n",
+ 			      num_asids);
+@@ -280,11 +279,12 @@ static inline void set_mm(struct mm_struct *mm, unsigned int cpu)
+  * cache flush to be performed before execution resumes on each hart.  This
+  * actually performs that local instruction cache flush, which implicitly only
+  * refers to the current hart.
++ *
++ * The "cpu" argument must be the current local CPU number.
+  */
+-static inline void flush_icache_deferred(struct mm_struct *mm)
++static inline void flush_icache_deferred(struct mm_struct *mm, unsigned int cpu)
+ {
+ #ifdef CONFIG_SMP
+-	unsigned int cpu = smp_processor_id();
+ 	cpumask_t *mask = &mm->context.icache_stale_mask;
+ 
+ 	if (cpumask_test_cpu(cpu, mask)) {
+@@ -320,5 +320,5 @@ void switch_mm(struct mm_struct *prev, struct mm_struct *next,
+ 
+ 	set_mm(next, cpu);
+ 
+-	flush_icache_deferred(next);
++	flush_icache_deferred(next, cpu);
+ }
+diff --git a/arch/riscv/mm/fault.c b/arch/riscv/mm/fault.c
+index 096463cc6fff..aa08dd2f8fae 100644
+--- a/arch/riscv/mm/fault.c
++++ b/arch/riscv/mm/fault.c
+@@ -14,6 +14,7 @@
+ #include <linux/signal.h>
+ #include <linux/uaccess.h>
+ #include <linux/kprobes.h>
++#include <linux/kfence.h>
+ 
+ #include <asm/ptrace.h>
+ #include <asm/tlbflush.h>
+@@ -45,7 +46,15 @@ static inline void no_context(struct pt_regs *regs, unsigned long addr)
+ 	 * Oops. The kernel tried to access some bad page. We'll have to
+ 	 * terminate things with extreme prejudice.
+ 	 */
+-	msg = (addr < PAGE_SIZE) ? "NULL pointer dereference" : "paging request";
++	if (addr < PAGE_SIZE)
++		msg = "NULL pointer dereference";
++	else {
++		if (kfence_handle_page_fault(addr, regs->cause == EXC_STORE_PAGE_FAULT, regs))
++			return;
++
++		msg = "paging request";
++	}
++
+ 	die_kernel_fault(msg, addr, regs);
+ }
+ 
+diff --git a/arch/riscv/mm/init.c b/arch/riscv/mm/init.c
+index 4c4c92ce0bb8..269fc648ef3d 100644
+--- a/arch/riscv/mm/init.c
++++ b/arch/riscv/mm/init.c
+@@ -11,6 +11,7 @@
+ #include <linux/memblock.h>
+ #include <linux/initrd.h>
+ #include <linux/swap.h>
++#include <linux/swiotlb.h>
+ #include <linux/sizes.h>
+ #include <linux/of_fdt.h>
+ #include <linux/of_reserved_mem.h>
+@@ -29,10 +30,14 @@
+ 
+ #include "../kernel/head.h"
+ 
+-unsigned long kernel_virt_addr = KERNEL_LINK_ADDR;
+-EXPORT_SYMBOL(kernel_virt_addr);
++struct kernel_mapping kernel_map __ro_after_init;
++EXPORT_SYMBOL(kernel_map);
+ #ifdef CONFIG_XIP_KERNEL
+-#define kernel_virt_addr       (*((unsigned long *)XIP_FIXUP(&kernel_virt_addr)))
++#define kernel_map	(*(struct kernel_mapping *)XIP_FIXUP(&kernel_map))
++#endif
++
++#ifdef CONFIG_XIP_KERNEL
++extern char _xiprom[], _exiprom[];
+ #endif
+ 
+ unsigned long empty_zero_page[PAGE_SIZE / sizeof(unsigned long)]
+@@ -53,7 +58,7 @@ struct pt_alloc_ops {
+ #endif
+ };
+ 
+-static phys_addr_t dma32_phys_limit __ro_after_init;
++static phys_addr_t dma32_phys_limit __initdata;
+ 
+ static void __init zone_sizes_init(void)
+ {
+@@ -67,11 +72,6 @@ static void __init zone_sizes_init(void)
+ 	free_area_init(max_zone_pfns);
+ }
+ 
+-static void __init setup_zero_page(void)
+-{
+-	memset((void *)empty_zero_page, 0, PAGE_SIZE);
+-}
+-
+ #if defined(CONFIG_MMU) && defined(CONFIG_DEBUG_VM)
+ static inline void print_mlk(char *name, unsigned long b, unsigned long t)
+ {
+@@ -113,25 +113,53 @@ void __init mem_init(void)
+ 	BUG_ON(!mem_map);
+ #endif /* CONFIG_FLATMEM */
+ 
++#ifdef CONFIG_SWIOTLB
++	if (swiotlb_force == SWIOTLB_FORCE ||
++	    max_pfn > PFN_DOWN(dma32_phys_limit))
++		swiotlb_init(1);
++	else
++		swiotlb_force = SWIOTLB_NO_FORCE;
++#endif
+ 	high_memory = (void *)(__va(PFN_PHYS(max_low_pfn)));
+ 	memblock_free_all();
+ 
+ 	print_vm_layout();
+ }
+ 
+-void __init setup_bootmem(void)
++/*
++ * The default maximal physical memory size is -PAGE_OFFSET,
++ * limit the memory size via mem.
++ */
++static phys_addr_t memory_limit = -PAGE_OFFSET;
++
++static int __init early_mem(char *p)
++{
++	u64 size;
++
++	if (!p)
++		return 1;
++
++	size = memparse(p, &p) & PAGE_MASK;
++	memory_limit = min_t(u64, size, memory_limit);
++
++	pr_notice("Memory limited to %lldMB\n", (u64)memory_limit >> 20);
++
++	return 0;
++}
++early_param("mem", early_mem);
++
++static void __init setup_bootmem(void)
+ {
+ 	phys_addr_t vmlinux_end = __pa_symbol(&_end);
+ 	phys_addr_t vmlinux_start = __pa_symbol(&_start);
+-	phys_addr_t dram_end = memblock_end_of_DRAM();
+ 	phys_addr_t max_mapped_addr = __pa(~(ulong)0);
++	phys_addr_t dram_end;
+ 
+ #ifdef CONFIG_XIP_KERNEL
+ 	vmlinux_start = __pa_symbol(&_sdata);
+ #endif
+ 
+-	/* The maximal physical memory size is -PAGE_OFFSET. */
+-	memblock_enforce_memory_limit(-PAGE_OFFSET);
++	memblock_enforce_memory_limit(memory_limit);
+ 
+ 	/*
+ 	 * Reserve from the start of the kernel to the end of the kernel
+@@ -146,6 +174,7 @@ void __init setup_bootmem(void)
+ #endif
+ 	memblock_reserve(vmlinux_start, vmlinux_end - vmlinux_start);
+ 
++	dram_end = memblock_end_of_DRAM();
+ 	/*
+ 	 * memblock allocator is not aware of the fact that last 4K bytes of
+ 	 * the addressable memory can not be mapped because of IS_ERR_VALUE
+@@ -176,15 +205,8 @@ void __init setup_bootmem(void)
+ 	memblock_allow_resize();
+ }
+ 
+-#ifdef CONFIG_XIP_KERNEL
+-
+-extern char _xiprom[], _exiprom[];
+-extern char _sdata[], _edata[];
+-
+-#endif /* CONFIG_XIP_KERNEL */
+-
+ #ifdef CONFIG_MMU
+-static struct pt_alloc_ops _pt_ops __ro_after_init;
++static struct pt_alloc_ops _pt_ops __initdata;
+ 
+ #ifdef CONFIG_XIP_KERNEL
+ #define pt_ops (*(struct pt_alloc_ops *)XIP_FIXUP(&_pt_ops))
+@@ -192,31 +214,12 @@ static struct pt_alloc_ops _pt_ops __ro_after_init;
+ #define pt_ops _pt_ops
+ #endif
+ 
+-/* Offset between linear mapping virtual address and kernel load address */
+-unsigned long va_pa_offset __ro_after_init;
+-EXPORT_SYMBOL(va_pa_offset);
+-#ifdef CONFIG_XIP_KERNEL
+-#define va_pa_offset   (*((unsigned long *)XIP_FIXUP(&va_pa_offset)))
+-#endif
+-/* Offset between kernel mapping virtual address and kernel load address */
+-#ifdef CONFIG_64BIT
+-unsigned long va_kernel_pa_offset;
+-EXPORT_SYMBOL(va_kernel_pa_offset);
+-#endif
+-#ifdef CONFIG_XIP_KERNEL
+-#define va_kernel_pa_offset    (*((unsigned long *)XIP_FIXUP(&va_kernel_pa_offset)))
+-#endif
+-unsigned long va_kernel_xip_pa_offset;
+-EXPORT_SYMBOL(va_kernel_xip_pa_offset);
+-#ifdef CONFIG_XIP_KERNEL
+-#define va_kernel_xip_pa_offset        (*((unsigned long *)XIP_FIXUP(&va_kernel_xip_pa_offset)))
+-#endif
+ unsigned long pfn_base __ro_after_init;
+ EXPORT_SYMBOL(pfn_base);
+ 
+ pgd_t swapper_pg_dir[PTRS_PER_PGD] __page_aligned_bss;
+ pgd_t trampoline_pg_dir[PTRS_PER_PGD] __page_aligned_bss;
+-pte_t fixmap_pte[PTRS_PER_PTE] __page_aligned_bss;
++static pte_t fixmap_pte[PTRS_PER_PTE] __page_aligned_bss;
+ 
+ pgd_t early_pg_dir[PTRS_PER_PGD] __initdata __aligned(PAGE_SIZE);
+ 
+@@ -253,7 +256,7 @@ static inline pte_t *__init get_pte_virt_fixmap(phys_addr_t pa)
+ 	return (pte_t *)set_fixmap_offset(FIX_PTE, pa);
+ }
+ 
+-static inline pte_t *get_pte_virt_late(phys_addr_t pa)
++static inline pte_t *__init get_pte_virt_late(phys_addr_t pa)
+ {
+ 	return (pte_t *) __va(pa);
+ }
+@@ -272,7 +275,7 @@ static inline phys_addr_t __init alloc_pte_fixmap(uintptr_t va)
+ 	return memblock_phys_alloc(PAGE_SIZE, PAGE_SIZE);
+ }
+ 
+-static phys_addr_t alloc_pte_late(uintptr_t va)
++static phys_addr_t __init alloc_pte_late(uintptr_t va)
+ {
+ 	unsigned long vaddr;
+ 
+@@ -296,10 +299,10 @@ static void __init create_pte_mapping(pte_t *ptep,
+ 
+ #ifndef __PAGETABLE_PMD_FOLDED
+ 
+-pmd_t trampoline_pmd[PTRS_PER_PMD] __page_aligned_bss;
+-pmd_t fixmap_pmd[PTRS_PER_PMD] __page_aligned_bss;
+-pmd_t early_pmd[PTRS_PER_PMD] __initdata __aligned(PAGE_SIZE);
+-pmd_t early_dtb_pmd[PTRS_PER_PMD] __initdata __aligned(PAGE_SIZE);
++static pmd_t trampoline_pmd[PTRS_PER_PMD] __page_aligned_bss;
++static pmd_t fixmap_pmd[PTRS_PER_PMD] __page_aligned_bss;
++static pmd_t early_pmd[PTRS_PER_PMD] __initdata __aligned(PAGE_SIZE);
++static pmd_t early_dtb_pmd[PTRS_PER_PMD] __initdata __aligned(PAGE_SIZE);
+ 
+ #ifdef CONFIG_XIP_KERNEL
+ #define trampoline_pmd ((pmd_t *)XIP_FIXUP(trampoline_pmd))
+@@ -319,14 +322,14 @@ static pmd_t *__init get_pmd_virt_fixmap(phys_addr_t pa)
+ 	return (pmd_t *)set_fixmap_offset(FIX_PMD, pa);
+ }
+ 
+-static pmd_t *get_pmd_virt_late(phys_addr_t pa)
++static pmd_t *__init get_pmd_virt_late(phys_addr_t pa)
+ {
+ 	return (pmd_t *) __va(pa);
+ }
+ 
+ static phys_addr_t __init alloc_pmd_early(uintptr_t va)
+ {
+-	BUG_ON((va - kernel_virt_addr) >> PGDIR_SHIFT);
++	BUG_ON((va - kernel_map.virt_addr) >> PGDIR_SHIFT);
+ 
+ 	return (uintptr_t)early_pmd;
+ }
+@@ -336,7 +339,7 @@ static phys_addr_t __init alloc_pmd_fixmap(uintptr_t va)
+ 	return memblock_phys_alloc(PAGE_SIZE, PAGE_SIZE);
+ }
+ 
+-static phys_addr_t alloc_pmd_late(uintptr_t va)
++static phys_addr_t __init alloc_pmd_late(uintptr_t va)
+ {
+ 	unsigned long vaddr;
+ 
+@@ -436,6 +439,43 @@ asmlinkage void __init __copy_data(void)
+ }
+ #endif
+ 
++#ifdef CONFIG_STRICT_KERNEL_RWX
++static __init pgprot_t pgprot_from_va(uintptr_t va)
++{
++	if (is_va_kernel_text(va))
++		return PAGE_KERNEL_READ_EXEC;
++
++	/*
++	 * In 64-bit kernel, the kernel mapping is outside the linear mapping so
++	 * we must protect its linear mapping alias from being executed and
++	 * written.
++	 * And rodata section is marked readonly in mark_rodata_ro.
++	 */
++	if (IS_ENABLED(CONFIG_64BIT) && is_va_kernel_lm_alias_text(va))
++		return PAGE_KERNEL_READ;
++
++	return PAGE_KERNEL;
++}
++
++void mark_rodata_ro(void)
++{
++	set_kernel_memory(__start_rodata, _data, set_memory_ro);
++	if (IS_ENABLED(CONFIG_64BIT))
++		set_kernel_memory(lm_alias(__start_rodata), lm_alias(_data),
++				  set_memory_ro);
++
++	debug_checkwx();
++}
++#else
++static __init pgprot_t pgprot_from_va(uintptr_t va)
++{
++	if (IS_ENABLED(CONFIG_64BIT) && !is_kernel_mapping(va))
++		return PAGE_KERNEL;
++
++	return PAGE_KERNEL_EXEC;
++}
++#endif /* CONFIG_STRICT_KERNEL_RWX */
++
+ /*
+  * setup_vm() is called from head.S with MMU-off.
+  *
+@@ -454,45 +494,39 @@ asmlinkage void __init __copy_data(void)
+ #error "setup_vm() is called from head.S before relocate so it should not use absolute addressing."
+ #endif
+ 
+-uintptr_t load_pa, load_sz;
+ #ifdef CONFIG_XIP_KERNEL
+-#define load_pa        (*((uintptr_t *)XIP_FIXUP(&load_pa)))
+-#define load_sz        (*((uintptr_t *)XIP_FIXUP(&load_sz)))
+-#endif
+-
+-#ifdef CONFIG_XIP_KERNEL
+-uintptr_t xiprom, xiprom_sz;
+-#define xiprom_sz      (*((uintptr_t *)XIP_FIXUP(&xiprom_sz)))
+-#define xiprom         (*((uintptr_t *)XIP_FIXUP(&xiprom)))
+-
+-static void __init create_kernel_page_table(pgd_t *pgdir, uintptr_t map_size)
++static void __init create_kernel_page_table(pgd_t *pgdir, uintptr_t map_size,
++					    __always_unused bool early)
+ {
+ 	uintptr_t va, end_va;
+ 
+ 	/* Map the flash resident part */
+-	end_va = kernel_virt_addr + xiprom_sz;
+-	for (va = kernel_virt_addr; va < end_va; va += map_size)
++	end_va = kernel_map.virt_addr + kernel_map.xiprom_sz;
++	for (va = kernel_map.virt_addr; va < end_va; va += map_size)
+ 		create_pgd_mapping(pgdir, va,
+-				   xiprom + (va - kernel_virt_addr),
++				   kernel_map.xiprom + (va - kernel_map.virt_addr),
+ 				   map_size, PAGE_KERNEL_EXEC);
+ 
+ 	/* Map the data in RAM */
+-	end_va = kernel_virt_addr + XIP_OFFSET + load_sz;
+-	for (va = kernel_virt_addr + XIP_OFFSET; va < end_va; va += map_size)
++	end_va = kernel_map.virt_addr + XIP_OFFSET + kernel_map.size;
++	for (va = kernel_map.virt_addr + XIP_OFFSET; va < end_va; va += map_size)
+ 		create_pgd_mapping(pgdir, va,
+-				   load_pa + (va - (kernel_virt_addr + XIP_OFFSET)),
++				   kernel_map.phys_addr + (va - (kernel_map.virt_addr + XIP_OFFSET)),
+ 				   map_size, PAGE_KERNEL);
+ }
+ #else
+-static void __init create_kernel_page_table(pgd_t *pgdir, uintptr_t map_size)
++static void __init create_kernel_page_table(pgd_t *pgdir, uintptr_t map_size,
++					    bool early)
+ {
+ 	uintptr_t va, end_va;
+ 
+-	end_va = kernel_virt_addr + load_sz;
+-	for (va = kernel_virt_addr; va < end_va; va += map_size)
++	end_va = kernel_map.virt_addr + kernel_map.size;
++	for (va = kernel_map.virt_addr; va < end_va; va += map_size)
+ 		create_pgd_mapping(pgdir, va,
+-				   load_pa + (va - kernel_virt_addr),
+-				   map_size, PAGE_KERNEL_EXEC);
++				   kernel_map.phys_addr + (va - kernel_map.virt_addr),
++				   map_size,
++				   early ?
++					PAGE_KERNEL_EXEC : pgprot_from_va(va));
+ }
+ #endif
+ 
+@@ -504,25 +538,27 @@ asmlinkage void __init setup_vm(uintptr_t dtb_pa)
+ 	pmd_t fix_bmap_spmd, fix_bmap_epmd;
+ #endif
+ 
++	kernel_map.virt_addr = KERNEL_LINK_ADDR;
++
+ #ifdef CONFIG_XIP_KERNEL
+-	xiprom = (uintptr_t)CONFIG_XIP_PHYS_ADDR;
+-	xiprom_sz = (uintptr_t)(&_exiprom) - (uintptr_t)(&_xiprom);
++	kernel_map.xiprom = (uintptr_t)CONFIG_XIP_PHYS_ADDR;
++	kernel_map.xiprom_sz = (uintptr_t)(&_exiprom) - (uintptr_t)(&_xiprom);
+ 
+-	load_pa = (uintptr_t)CONFIG_PHYS_RAM_BASE;
+-	load_sz = (uintptr_t)(&_end) - (uintptr_t)(&_sdata);
++	kernel_map.phys_addr = (uintptr_t)CONFIG_PHYS_RAM_BASE;
++	kernel_map.size = (uintptr_t)(&_end) - (uintptr_t)(&_sdata);
+ 
+-	va_kernel_xip_pa_offset = kernel_virt_addr - xiprom;
++	kernel_map.va_kernel_xip_pa_offset = kernel_map.virt_addr - kernel_map.xiprom;
+ #else
+-	load_pa = (uintptr_t)(&_start);
+-	load_sz = (uintptr_t)(&_end) - load_pa;
++	kernel_map.phys_addr = (uintptr_t)(&_start);
++	kernel_map.size = (uintptr_t)(&_end) - kernel_map.phys_addr;
+ #endif
+ 
+-	va_pa_offset = PAGE_OFFSET - load_pa;
++	kernel_map.va_pa_offset = PAGE_OFFSET - kernel_map.phys_addr;
+ #ifdef CONFIG_64BIT
+-	va_kernel_pa_offset = kernel_virt_addr - load_pa;
++	kernel_map.va_kernel_pa_offset = kernel_map.virt_addr - kernel_map.phys_addr;
+ #endif
+ 
+-	pfn_base = PFN_DOWN(load_pa);
++	pfn_base = PFN_DOWN(kernel_map.phys_addr);
+ 
+ 	/*
+ 	 * Enforce boot alignment requirements of RV32 and
+@@ -532,7 +568,7 @@ asmlinkage void __init setup_vm(uintptr_t dtb_pa)
+ 
+ 	/* Sanity check alignment and size */
+ 	BUG_ON((PAGE_OFFSET % PGDIR_SIZE) != 0);
+-	BUG_ON((load_pa % map_size) != 0);
++	BUG_ON((kernel_map.phys_addr % map_size) != 0);
+ 
+ 	pt_ops.alloc_pte = alloc_pte_early;
+ 	pt_ops.get_pte_virt = get_pte_virt_early;
+@@ -549,19 +585,19 @@ asmlinkage void __init setup_vm(uintptr_t dtb_pa)
+ 	create_pmd_mapping(fixmap_pmd, FIXADDR_START,
+ 			   (uintptr_t)fixmap_pte, PMD_SIZE, PAGE_TABLE);
+ 	/* Setup trampoline PGD and PMD */
+-	create_pgd_mapping(trampoline_pg_dir, kernel_virt_addr,
++	create_pgd_mapping(trampoline_pg_dir, kernel_map.virt_addr,
+ 			   (uintptr_t)trampoline_pmd, PGDIR_SIZE, PAGE_TABLE);
+ #ifdef CONFIG_XIP_KERNEL
+-	create_pmd_mapping(trampoline_pmd, kernel_virt_addr,
+-			   xiprom, PMD_SIZE, PAGE_KERNEL_EXEC);
++	create_pmd_mapping(trampoline_pmd, kernel_map.virt_addr,
++			   kernel_map.xiprom, PMD_SIZE, PAGE_KERNEL_EXEC);
+ #else
+-	create_pmd_mapping(trampoline_pmd, kernel_virt_addr,
+-			   load_pa, PMD_SIZE, PAGE_KERNEL_EXEC);
++	create_pmd_mapping(trampoline_pmd, kernel_map.virt_addr,
++			   kernel_map.phys_addr, PMD_SIZE, PAGE_KERNEL_EXEC);
+ #endif
+ #else
+ 	/* Setup trampoline PGD */
+-	create_pgd_mapping(trampoline_pg_dir, kernel_virt_addr,
+-			   load_pa, PGDIR_SIZE, PAGE_KERNEL_EXEC);
++	create_pgd_mapping(trampoline_pg_dir, kernel_map.virt_addr,
++			   kernel_map.phys_addr, PGDIR_SIZE, PAGE_KERNEL_EXEC);
+ #endif
+ 
+ 	/*
+@@ -569,7 +605,7 @@ asmlinkage void __init setup_vm(uintptr_t dtb_pa)
+ 	 * us to reach paging_init(). We map all memory banks later
+ 	 * in setup_vm_final() below.
+ 	 */
+-	create_kernel_page_table(early_pg_dir, map_size);
++	create_kernel_page_table(early_pg_dir, map_size, true);
+ 
+ #ifndef __PAGETABLE_PMD_FOLDED
+ 	/* Setup early PMD for DTB */
+@@ -645,22 +681,6 @@ asmlinkage void __init setup_vm(uintptr_t dtb_pa)
+ #endif
+ }
+ 
+-#if defined(CONFIG_64BIT) && defined(CONFIG_STRICT_KERNEL_RWX)
+-void protect_kernel_linear_mapping_text_rodata(void)
+-{
+-	unsigned long text_start = (unsigned long)lm_alias(_start);
+-	unsigned long init_text_start = (unsigned long)lm_alias(__init_text_begin);
+-	unsigned long rodata_start = (unsigned long)lm_alias(__start_rodata);
+-	unsigned long data_start = (unsigned long)lm_alias(_data);
+-
+-	set_memory_ro(text_start, (init_text_start - text_start) >> PAGE_SHIFT);
+-	set_memory_nx(text_start, (init_text_start - text_start) >> PAGE_SHIFT);
+-
+-	set_memory_ro(rodata_start, (data_start - rodata_start) >> PAGE_SHIFT);
+-	set_memory_nx(rodata_start, (data_start - rodata_start) >> PAGE_SHIFT);
+-}
+-#endif
+-
+ static void __init setup_vm_final(void)
+ {
+ 	uintptr_t va, map_size;
+@@ -693,21 +713,15 @@ static void __init setup_vm_final(void)
+ 		map_size = best_map_size(start, end - start);
+ 		for (pa = start; pa < end; pa += map_size) {
+ 			va = (uintptr_t)__va(pa);
+-			create_pgd_mapping(swapper_pg_dir, va, pa,
+-					   map_size,
+-#ifdef CONFIG_64BIT
+-					   PAGE_KERNEL
+-#else
+-					   PAGE_KERNEL_EXEC
+-#endif
+-					);
+ 
++			create_pgd_mapping(swapper_pg_dir, va, pa, map_size,
++					   pgprot_from_va(va));
+ 		}
+ 	}
+ 
+ #ifdef CONFIG_64BIT
+ 	/* Map the kernel */
+-	create_kernel_page_table(swapper_pg_dir, PMD_SIZE);
++	create_kernel_page_table(swapper_pg_dir, PMD_SIZE, false);
+ #endif
+ 
+ 	/* Clear fixmap PTE and PMD mappings */
+@@ -738,39 +752,6 @@ static inline void setup_vm_final(void)
+ }
+ #endif /* CONFIG_MMU */
+ 
+-#ifdef CONFIG_STRICT_KERNEL_RWX
+-void __init protect_kernel_text_data(void)
+-{
+-	unsigned long text_start = (unsigned long)_start;
+-	unsigned long init_text_start = (unsigned long)__init_text_begin;
+-	unsigned long init_data_start = (unsigned long)__init_data_begin;
+-	unsigned long rodata_start = (unsigned long)__start_rodata;
+-	unsigned long data_start = (unsigned long)_data;
+-#if defined(CONFIG_64BIT) && defined(CONFIG_MMU)
+-	unsigned long end_va = kernel_virt_addr + load_sz;
+-#else
+-	unsigned long end_va = (unsigned long)(__va(PFN_PHYS(max_low_pfn)));
+-#endif
+-
+-	set_memory_ro(text_start, (init_text_start - text_start) >> PAGE_SHIFT);
+-	set_memory_ro(init_text_start, (init_data_start - init_text_start) >> PAGE_SHIFT);
+-	set_memory_nx(init_data_start, (rodata_start - init_data_start) >> PAGE_SHIFT);
+-	/* rodata section is marked readonly in mark_rodata_ro */
+-	set_memory_nx(rodata_start, (data_start - rodata_start) >> PAGE_SHIFT);
+-	set_memory_nx(data_start, (end_va - data_start) >> PAGE_SHIFT);
+-}
+-
+-void mark_rodata_ro(void)
+-{
+-	unsigned long rodata_start = (unsigned long)__start_rodata;
+-	unsigned long data_start = (unsigned long)_data;
+-
+-	set_memory_ro(rodata_start, (data_start - rodata_start) >> PAGE_SHIFT);
+-
+-	debug_checkwx();
+-}
+-#endif
+-
+ #ifdef CONFIG_KEXEC_CORE
+ /*
+  * reserve_crashkernel() - reserves memory for crash kernel
+@@ -858,7 +839,7 @@ static void __init reserve_crashkernel(void)
+  * reserved once we call early_init_fdt_scan_reserved_mem()
+  * later on.
+  */
+-static int elfcore_hdr_setup(struct reserved_mem *rmem)
++static int __init elfcore_hdr_setup(struct reserved_mem *rmem)
+ {
+ 	elfcorehdr_addr = rmem->base;
+ 	elfcorehdr_size = rmem->size;
+@@ -870,8 +851,8 @@ RESERVEDMEM_OF_DECLARE(elfcorehdr, "linux,elfcorehdr", elfcore_hdr_setup);
+ 
+ void __init paging_init(void)
+ {
++	setup_bootmem();
+ 	setup_vm_final();
+-	setup_zero_page();
+ }
+ 
+ void __init misc_mem_init(void)
+diff --git a/arch/riscv/mm/physaddr.c b/arch/riscv/mm/physaddr.c
+index 35703d5ef5fd..e7fd0c253c7b 100644
+--- a/arch/riscv/mm/physaddr.c
++++ b/arch/riscv/mm/physaddr.c
+@@ -23,7 +23,7 @@ EXPORT_SYMBOL(__virt_to_phys);
+ 
+ phys_addr_t __phys_addr_symbol(unsigned long x)
+ {
+-	unsigned long kernel_start = (unsigned long)kernel_virt_addr;
++	unsigned long kernel_start = kernel_map.virt_addr;
+ 	unsigned long kernel_end = (unsigned long)_end;
+ 
+ 	/*
+diff --git a/arch/riscv/mm/ptdump.c b/arch/riscv/mm/ptdump.c
+index 0536ac84b730..830e7de65e3a 100644
+--- a/arch/riscv/mm/ptdump.c
++++ b/arch/riscv/mm/ptdump.c
+@@ -98,8 +98,8 @@ static struct addr_marker address_markers[] = {
+ 	{0, "vmalloc() end"},
+ 	{0, "Linear mapping"},
+ #ifdef CONFIG_64BIT
+-	{0, "Modules mapping"},
+-	{0, "Kernel mapping (kernel, BPF)"},
++	{0, "Modules/BPF mapping"},
++	{0, "Kernel mapping"},
+ #endif
+ 	{-1, NULL},
+ };
+@@ -379,7 +379,7 @@ static int __init ptdump_init(void)
+ 	address_markers[PAGE_OFFSET_NR].start_address = PAGE_OFFSET;
+ #ifdef CONFIG_64BIT
+ 	address_markers[MODULES_MAPPING_NR].start_address = MODULES_VADDR;
+-	address_markers[KERNEL_MAPPING_NR].start_address = kernel_virt_addr;
++	address_markers[KERNEL_MAPPING_NR].start_address = kernel_map.virt_addr;
+ #endif
+ 
+ 	kernel_ptd_info.base_addr = KERN_VIRT_START;
+diff --git a/arch/riscv/mm/tlbflush.c b/arch/riscv/mm/tlbflush.c
+index 720b443c4528..64f8201237c2 100644
+--- a/arch/riscv/mm/tlbflush.c
++++ b/arch/riscv/mm/tlbflush.c
+@@ -4,36 +4,66 @@
+ #include <linux/smp.h>
+ #include <linux/sched.h>
+ #include <asm/sbi.h>
++#include <asm/mmu_context.h>
++
++static inline void local_flush_tlb_all_asid(unsigned long asid)
++{
++	__asm__ __volatile__ ("sfence.vma x0, %0"
++			:
++			: "r" (asid)
++			: "memory");
++}
++
++static inline void local_flush_tlb_page_asid(unsigned long addr,
++		unsigned long asid)
++{
++	__asm__ __volatile__ ("sfence.vma %0, %1"
++			:
++			: "r" (addr), "r" (asid)
++			: "memory");
++}
+ 
+ void flush_tlb_all(void)
+ {
+ 	sbi_remote_sfence_vma(NULL, 0, -1);
+ }
+ 
+-/*
+- * This function must not be called with cmask being null.
+- * Kernel may panic if cmask is NULL.
+- */
+-static void __sbi_tlb_flush_range(struct cpumask *cmask, unsigned long start,
+-				  unsigned long size)
++static void __sbi_tlb_flush_range(struct mm_struct *mm, unsigned long start,
++				  unsigned long size, unsigned long stride)
+ {
++	struct cpumask *cmask = mm_cpumask(mm);
+ 	struct cpumask hmask;
+ 	unsigned int cpuid;
++	bool broadcast;
+ 
+ 	if (cpumask_empty(cmask))
+ 		return;
+ 
+ 	cpuid = get_cpu();
++	/* check if the tlbflush needs to be sent to other CPUs */
++	broadcast = cpumask_any_but(cmask, cpuid) < nr_cpu_ids;
++	if (static_branch_unlikely(&use_asid_allocator)) {
++		unsigned long asid = atomic_long_read(&mm->context.id);
+ 
+-	if (cpumask_any_but(cmask, cpuid) >= nr_cpu_ids) {
+-		/* local cpu is the only cpu present in cpumask */
+-		if (size <= PAGE_SIZE)
++		if (broadcast) {
++			riscv_cpuid_to_hartid_mask(cmask, &hmask);
++			sbi_remote_sfence_vma_asid(cpumask_bits(&hmask),
++						   start, size, asid);
++		} else if (size <= stride) {
++			local_flush_tlb_page_asid(start, asid);
++		} else {
++			local_flush_tlb_all_asid(asid);
++		}
++	} else {
++		if (broadcast) {
++			riscv_cpuid_to_hartid_mask(cmask, &hmask);
++			sbi_remote_sfence_vma(cpumask_bits(&hmask),
++					      start, size);
++		} else if (size <= stride) {
+ 			local_flush_tlb_page(start);
+-		else
++		} else {
+ 			local_flush_tlb_all();
+-	} else {
+-		riscv_cpuid_to_hartid_mask(cmask, &hmask);
+-		sbi_remote_sfence_vma(cpumask_bits(&hmask), start, size);
++		}
+ 	}
+ 
+ 	put_cpu();
+@@ -41,16 +71,23 @@ static void __sbi_tlb_flush_range(struct cpumask *cmask, unsigned long start,
+ 
+ void flush_tlb_mm(struct mm_struct *mm)
+ {
+-	__sbi_tlb_flush_range(mm_cpumask(mm), 0, -1);
++	__sbi_tlb_flush_range(mm, 0, -1, PAGE_SIZE);
+ }
+ 
+ void flush_tlb_page(struct vm_area_struct *vma, unsigned long addr)
+ {
+-	__sbi_tlb_flush_range(mm_cpumask(vma->vm_mm), addr, PAGE_SIZE);
++	__sbi_tlb_flush_range(vma->vm_mm, addr, PAGE_SIZE, PAGE_SIZE);
+ }
+ 
+ void flush_tlb_range(struct vm_area_struct *vma, unsigned long start,
+ 		     unsigned long end)
+ {
+-	__sbi_tlb_flush_range(mm_cpumask(vma->vm_mm), start, end - start);
++	__sbi_tlb_flush_range(vma->vm_mm, start, end - start, PAGE_SIZE);
++}
++#ifdef CONFIG_TRANSPARENT_HUGEPAGE
++void flush_pmd_tlb_range(struct vm_area_struct *vma, unsigned long start,
++			unsigned long end)
++{
++	__sbi_tlb_flush_range(vma->vm_mm, start, end - start, PMD_SIZE);
+ }
++#endif
