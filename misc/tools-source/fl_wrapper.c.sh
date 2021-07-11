@@ -10,7 +10,7 @@ cat << EOT
  * 
  * T2 SDE: misc/tools-source/fl_wrapper.c.sh
  * Copyright (C) 2006 - 2020 René Rebe <rene@exactcode.de>
- * Copyright (C) 2004 - 2020 The T2 SDE Project
+ * Copyright (C) 2004 - 2021 The T2 SDE Project
  * Copyright (C) 1998 - 2003 ROCK Linux Project
  * 
  * More information can be found in the files COPYING and README.
@@ -143,7 +143,7 @@ add_wrapper()
 
 	ret_type=$1 ; shift ; function=$1 ; shift
 	p1="" ; p2="" ; for x ; do p1="$p1$x, " ; done
-	for x ; do x="${x%%\[\]}" ; p2="$p2${x##* }, " ; done
+	for x ; do x="${x%%\[*\]}" ; p2="$p2${x##* }, " ; done
 	p1="${p1%, }" ; p2="${p2%, }"
 
 	# sanity check all new-style *at dirfd
@@ -291,7 +291,7 @@ add_wrapper 'int,   renameat2, int atfds, const char* s, int atfd, const char* f
 
 add_wrapper 'int,   utime,   const char* f, const struct utimbuf* t'
 add_wrapper 'int,   utimes,  const char* f, struct timeval* t'
-add_wrapper 'int,   utimensat, int atfd, const char* f, const struct timespec* t, int flags'
+add_wrapper 'int,   utimensat, int atfd, const char* f, const struct timespec t[2], int flags'
 
 add_wrapper 'int,   execv,   const char* f, char* const a[]'
 add_wrapper 'int,   execve,  const char* f, char* const a[], char* const e[]'
