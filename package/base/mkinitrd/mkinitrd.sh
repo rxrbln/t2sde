@@ -56,7 +56,7 @@ done
 
 [ "$minimal" != 1 ] && filter="$filter -e reiserfs -e btrfs -e /jfs -e /xfs
 -e /udf -e /unionfs -e ntfs -e /fat -e /hfs -e floppy
--e /ata/ -e /scsi/ -e /fusion/ -e /sdhci/ -e nvme
+-e /ata/ -e /scsi/ -e /fusion/ -e /sdhci/ -e nvme -e /mmc/
 -e dm-mod -e dm-raid -e md/raid -e dm/mirror -e dm/linear -e dm-crypt -e dm-cache
 -e /aes -e /sha -e /blake -e /cbc
 -e cciss -e ips -e virtio -e nls_cp437 -e nls_iso8859-1 -e nls_utf8
