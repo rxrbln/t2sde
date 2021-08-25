@@ -53,6 +53,9 @@ include(`linux-block.conf.m4')
 include(`linux-net.conf.m4')
 include(`linux-fs.conf.m4')
 
+CONFIG_HVC_RTAS=y
+CONFIG_HVC_UDBG=y
+
 dnl macs need a special RTC ... (this needs to be fixed in the kernel so we
 dnl can have generic support for the rs6k and mac support at the same time)
 dnl
