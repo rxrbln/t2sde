@@ -320,6 +320,7 @@ CONFIG_DRM_I915_KMS=y
 CONFIG_DRM_I915_GVT=y
 CONFIG_DRM_AMD_DC=y
 CONFIG_DRM_AMD_DC_DCN1_0=y
+CONFIG_DRM_AMD_ACP=y
 
 dnl The 2.6 kernel has several debugging options enabled
 dnl
