@@ -8,7 +8,7 @@ echo "Mounting /dev, /proc and /sys ..."
 mount -t devtmpfs -o mode=755 none /dev
 mount -t proc none /proc
 mount -t sysfs none /sys
-mkdir -p /tmp
+mkdir -p /tmp /mnt
 ln -s /proc/self/fd /dev/fd
 
 echo "Populating u/dev ..."
@@ -44,34 +44,46 @@ if [ "$swap" ]; then
 fi
 
 if [ "$root" ]; then
-  if [ ! -e "$root" ]; then
+  mountopt="ro"
+
+  # diskless network root?
+  addr="${root%:*}"
+  if [ "$addr" != "$root" ]; then
+    mountopt="$mountopt,nolock,port=2049,mountport=32790,vers=4,addr=$addr"
+    filesystems="nfs"
+    ipconfig eth0
+  else
+    unset addr
+    if [ ! -e "$root" ]; then
 	echo "Activating RAID & LVM"
 	[ -e /sbin/mdadm ] && mdadm --assemble --scan
 	[ -e /sbin/lvchange ] && lvchange -a ay ${root#/dev/}
-  fi
-  if [ ! -e "$root" ]; then
+    fi
+    if [ ! -e "$root" ]; then
 	modprobe pata_legacy
+    fi
   fi
 
-  echo "Mounting root ..."
-  mkdir -p /mnt
+  echo "Mounting root $mountopt"
 
   i=0
   while [ $i -le 9 ]; do
-    if [ -e $root ]; then
-	type -p cryptsetup && cryptsetup isLuks $root --disable-locks &&
-		cryptsetup luksOpen $root root --disable-locks && root=/dev/mapper/root
+    if [ -e $root -o "$addr" ]; then
+	if [ -z "$addr" ]; then
+	  type -p cryptsetup && cryptsetup isLuks $root --disable-locks &&
+	          cryptsetup luksOpen $root root --disable-locks && root=/dev/mapper/root
 
-	# try best match / detected root first, all the others thereafter
-	filesystems=`disktype $root 2>/dev/null |
+	  # try best match / detected root first, all the others thereafter
+	  filesystems=`disktype $root 2>/dev/null |
 	    sed -e '/file system/!d' -e 's/file system.*//' -e 's/ //g' \
 		-e 'y/ABCDEFGHIJKLMNOPQRSTUVWXYZ/abcdefghijklmnopqrstuvwxyz/' \
 		-e 's/fat32/vfat/'
 	    sed '/^nodev/d' /proc/filesystems | sed '1!G; $p; h; d'`
+	fi
 	for fs in $filesystems; do
-	  if mount -t $fs -o ro $root /mnt 2> /dev/null; then
+	  if mount -t $fs -o $mountopt $root /mnt 2> /dev/null; then
 		echo "Successfully mounted root as $fs."
-		# TODO: later on search other places if we want 100% backward compat.
+		# TODO: later on search other places if we want 100% backward compat?
 		init=${init:-/sbin/init}
 		if [ -f /mnt$init ]; then
 			kill %1
