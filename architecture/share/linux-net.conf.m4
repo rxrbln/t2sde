@@ -55,9 +55,9 @@ CONFIG_PPP_FILTER=y
 
 dnl Enable IP autoconfiguration
 dnl
-CONFIG_IP_PNP=y
-CONFIG_IP_PNP_BOOTP=y
-CONFIG_IP_PNP_DHCP=y
+# CONFIG_IP_PNP is not set
+dnl CONFIG_IP_PNP_BOOTP=y
+dnl CONFIG_IP_PNP_DHCP=y
 
 dnl Enable some nice networking features
 dnl
