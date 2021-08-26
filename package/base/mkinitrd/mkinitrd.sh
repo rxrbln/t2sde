@@ -64,7 +64,7 @@ done
 -e usbhid -e i2c-hid -e hid-generic -e hid-multitouch
 -e hid-apple -e hid-microsoft -e hyperv-keyboard"
 
-[ "$network" = 1 ] && filter="$filter -e /ipv4/ -e '/ipv6\.' -e ethernet"
+[ "$network" = 1 ] && filter="$filter -e /ipv4/ -e '/ipv6\.' -e ethernet -e nfsv4"
 
 [ "$kernelver" ] || kernelver=`uname -r`
 [ "$moddir" ] || moddir="$root/lib/modules/$kernelver"
@@ -271,7 +271,7 @@ done
 #
 [ "$minimal" != 1 ] &&
 for x in $root/sbin/{vgchange,lvchange,lvm,mdadm} \
-	 $root/usr/sbin/cryptsetup $root/usr/embutils/dmesg
+	 $root/usr/sbin/{cryptsetup,ipconfig} $root/usr/embutils/dmesg
 do
   if [ ! -e $x ]; then
 	echo "Warning: Skipped optional file ${x#$root}!"
