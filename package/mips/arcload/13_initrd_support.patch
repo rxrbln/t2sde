@@ -15,12 +15,6 @@
 # version.
 # --- T2-COPYRIGHT-NOTE-END ---
 
-## 13_initrd_support.dpatch by  <jblache@debian.org>
-##
-## All lines beginning with `## DP:' are a description of the patch.
-## DP: Add initrd support to arcload.
-
-@DPATCH@
 diff -urNad arcload-0.5~/loader/block.c arcload-0.5/loader/block.c
 --- arcload-0.5~/loader/block.c	2006-01-20 05:06:27.000000000 +0000
 +++ arcload-0.5/loader/block.c	2007-09-26 16:49:18.000000000 +0000
@@ -220,7 +214,7 @@ diff -urNad arcload-0.5~/loader/main.c arcload-0.5/loader/main.c
  		printf("Warning: kernel is in a mapped area!\n\r");
  
  	return (addr & 0x1FFFFFFF);
-@@ -82,28 +97,53 @@
+@@ -82,28 +97,51 @@
  	if((addr >> 62) == 2)
  		return (addr & ((1UL << 40) - 1));
  
@@ -245,9 +239,7 @@ diff -urNad arcload-0.5~/loader/main.c arcload-0.5/loader/main.c
 +static int load_file(BDEV *file, UCHAR *ptr, ULONG size)
 +{
 +	INT i;
-+	ULONG pos;
-+
-+	pos = 0;
++	ULONG pos = 0;
 +
 +	while(size > 0) {
 +		i = ((size > READBLOCK) ? READBLOCK : size);
@@ -433,7 +425,7 @@ diff -urNad arcload-0.5~/loader/main.c arcload-0.5/loader/main.c
  	if((hdr.e_ident[0] != 0x7f) || 
  	   (hdr.e_ident[1] != 'E')  || 
  	   (hdr.e_ident[2] != 'L')  ||
-@@ -322,6 +372,183 @@
+@@ -322,6 +372,181 @@
  }
  
  
@@ -454,7 +446,7 @@ diff -urNad arcload-0.5~/loader/main.c arcload-0.5/loader/main.c
 +
 +	ULONG stack = vtophys((ULONG) &end, 0);
 +
-+	kernel_end = vtophys(kernel_end, 0);
++	kernel_end = vtophys(kernel_end, 0) + 8 * max_page_size;
 +
 +	printf("Loading initrd %s ...\n\r", fname);
 +
@@ -467,7 +459,7 @@ diff -urNad arcload-0.5~/loader/main.c arcload-0.5/loader/main.c
 +		printf("Opening %s failed.\n\r", fname);
 +		return 1;
 +	}
-+	/*if (!file.size) file.size = 4034110; */ /* zero for bootp(): */
++	if (!file.size) file.size = 7 * 1024 * 1024; /* zero for bootp(): */
 +	/* Find a free memory region big enough to hold the initrd image */
 +	current = ArcGetMemoryDescriptor(current);
 +	if(!current) {
@@ -506,9 +498,7 @@ diff -urNad arcload-0.5~/loader/main.c arcload-0.5/loader/main.c
 +#ifdef RD_DEBUG
 +				printf("RD: area too small: %u needs %u\n\r", (end - start), (file.size + max_page_size));
 +#endif
-+				start = 0;
-+				end = 0;
-+
++				start = end = 0;
 +				continue;
 +			}
 +#ifdef RD_DEBUG
@@ -572,7 +562,7 @@ diff -urNad arcload-0.5~/loader/main.c arcload-0.5/loader/main.c
 +	len = sprintf(buf, "rd_start=0x%x", initrd_addr);
 +
 +#ifdef RD_DEBUG
-+	printf("APPEND: .%s.\n\r", buf);
++	printf("APPEND: '%s'\n\r", buf);
 +#endif
 +
 +	if((append_ptr - append_space + len + 1) > n_append_space) {
@@ -590,7 +580,7 @@ diff -urNad arcload-0.5~/loader/main.c arcload-0.5/loader/main.c
 +	len = sprintf(buf, "rd_size=0x%x", file.size);
 +
 +#ifdef RD_DEBUG
-+	printf("APPEND: .%s.\n\r", buf);
++	printf("APPEND: '%s'\n\r", buf);
 +#endif
 +
 +	if((append_ptr - append_space + len + 1) > n_append_space) {
@@ -667,3 +657,76 @@ diff -urNad arcload-0.5~/loader/main.c arcload-0.5/loader/main.c
  #ifdef M32
  	if(!is_elf64) {
  		kernel_entry = (VOID(*)(INT, CHAR **, CHAR **))entry32;
+--- arcload-0.5/loader/main.c.vanilla	2021-08-31 17:28:51.865158898 +0200
++++ arcload-0.5/loader/main.c	2021-08-31 18:03:45.529308219 +0200
+@@ -112,20 +112,25 @@
+ #endif
+ }
+ 
+-static int load_file(BDEV *file, UCHAR *ptr, ULONG size)
++static int load_file(BDEV *file, UCHAR *ptr, LONG size)
+ {
+ 	INT i;
+ 	ULONG pos = 0;
+ 
+-	while(size > 0) {
+-		i = ((size > READBLOCK) ? READBLOCK : size);
+-		if(bread(file, i, ptr) < 0) {
++	while(size) {
++		if (size < 0) i = READBLOCK;
++		else i = ((size > READBLOCK) ? READBLOCK : size);
++		if((i = bread(file, i, ptr)) < 0) {
+ 			printf("failed at %u!\n\r", pos);
+ 			return 1;
+ 		}
+ 		size -= i;
+ 		ptr += i;
+ 		pos += i;
++		if ((size < 0) && (i < READBLOCK)) {
++			file->size = pos;
++			break;
++		}
+ 	}
+ 	printf("OK.\n\r");
+ 
+@@ -384,6 +389,7 @@
+ 	BDEV file;
+ 
+ 	ULONG initrd_addr;
++	ULONG initrd_size;
+ 
+ 	char buf[64];
+ 	char *append_ptr;
+@@ -408,7 +414,7 @@
+ 		printf("Opening %s failed.\n\r", fname);
+ 		return 1;
+ 	}
+-	if (!file.size) file.size = 7 * 1024 * 1024; /* zero for bootp(): */
++	initrd_size = file.size ? file.size : 7*1024*1024; /* zero for bootp(): */
+ 	/* Find a free memory region big enough to hold the initrd image */
+ 	current = ArcGetMemoryDescriptor(current);
+ 	if(!current) {
+@@ -444,9 +450,9 @@
+ 				start = end = 0; continue;
+ 			}
+ 
+-			if((end < start) || (end - start) < (file.size + max_page_size)) {
++			if((end < start) || (end - start) < (initrd_size + max_page_size)) {
+ #ifdef RD_DEBUG
+-				printf("RD: area too small: %u needs %u\n\r", (end - start), (file.size + max_page_size));
++				printf("RD: area too small: %u needs %u\n\r", (end - start), (initrd_size + max_page_size));
+ #endif
+ 				start = end = 0;
+ 
+@@ -483,9 +489,9 @@
+ 	initrd_addr = (start + max_page_size) & ~(max_page_size - 1);
+ 
+ 	/* Load the initrd image into memory */
+-	printf("Loading initrd at 0x%p; reading %u bytes... ", initrd_addr, file.size);
++	printf("Loading initrd at 0x%p; reading %u bytes... ", initrd_addr, initrd_size);
+ 
+-	ret = load_file(&file, (UCHAR *)initrd_addr, file.size);
++	ret = load_file(&file, (UCHAR *)initrd_addr, file.size ? file.size : -1);
+ 	if(ret != 0)
+ 		goto rd_close;
+ 
