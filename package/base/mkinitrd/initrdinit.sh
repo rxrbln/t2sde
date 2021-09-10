@@ -12,13 +12,9 @@ mkdir -p /tmp /mnt
 ln -s /proc/self/fd /dev/fd
 
 echo "Populating u/dev ..."
-[ -e /dev/null ] || mknod /dev/null c 1 3
-[ -e /dev/zero ] || mknod /dev/zero c 1 5
 udevd &
 udevadm trigger
 udevadm settle
-[ -e /dev/console ] || mknod /dev/console c 5 1
-[ -e /dev/tty ] || mknod /dev/tty c 5 0
 
 # get the root device and init
 root="root= $(< /proc/cmdline)" ; root=${root##*root=} ; root=${root%% *}
