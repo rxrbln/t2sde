@@ -56,7 +56,7 @@ done
 
 [ "$minimal" != 1 ] && filter="$filter -e reiserfs -e btrfs -e /jfs -e /xfs
 -e /udf -e /unionfs -e ntfs -e /fat -e /hfs -e floppy
--e /ata/ -e /scsi/ -e /fusion/ -e /sdhci/ -e nvme -e /mmc/
+-e /ata/ -e /scsi/ -e /fusion/ -e /sdhci/ -e nvme -e /mmc/ -e ps3fb -e ps3disk
 -e dm-mod -e dm-raid -e md/raid -e dm/mirror -e dm/linear -e dm-crypt -e dm-cache
 -e /aes -e /sha -e /blake -e /cbc
 -e cciss -e ips -e virtio -e nls_cp437 -e nls_iso8859-1 -e nls_utf8
@@ -106,6 +106,9 @@ rm -rf $tmpdir >/dev/null
 echo "Create dirtree ..."
 
 mkdir -p $tmpdir/{dev,bin,sbin,proc,sys,lib/modules,lib/udev,etc/hotplug.d/default}
+mknod $tmpdir/dev/null c 1 3
+mknod $tmpdir/dev/zero c 1 5
+mknod $tmpdir/dev/tty c 5 0
 mknod $tmpdir/dev/console c 5 1
 
 # copy the basic / rootfs kernel modules
@@ -185,9 +188,10 @@ echo "Copying kernel modules ..."
 # generate map files
 #
 mkdir -p $tmpdir/lib/modules/$kernelver
+cp -avf $moddir/modules.{order*,builtin*} $tmpdir/lib/modules/$kernelver/
 $depmod -ae -b $tmpdir -F $sysmap $kernelver
 # only keep the .bin-ary files
-rm $tmpdir/lib/modules/$kernelver/{modules.alias,modules.dep,modules.symbols}
+rm $tmpdir/lib/modules/$kernelver/modules.{alias,dep,symbols,builtin,order}
 
 echo "Injecting programs and configuration ..."
 
