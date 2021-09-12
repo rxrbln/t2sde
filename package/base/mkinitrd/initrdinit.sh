@@ -1,25 +1,27 @@
 #!/bin/sh
 
-echo "T2 SDE early userspace (C)2005-2021 Rene Rebe, ExactCODE GmbH; Germany."
-
 PATH=/sbin:/bin:/usr/bin:/usr/sbin
 
-echo "Mounting /dev, /proc and /sys ..."
+echo "T2 SDE early userspace (c)2005-2021 Rene Rebe, ExactCODE GmbH; Germany."
+
+echo "Mounting /dev, /proc and /sys"
 mount -t devtmpfs -o mode=755 none /dev
 mount -t proc none /proc
 mount -t sysfs none /sys
 mkdir -p /tmp /mnt
 ln -s /proc/self/fd /dev/fd
 
-echo "Populating u/dev ..."
+echo "$(< /proc/sys/kernel/ostype) $(< /proc/sys/kernel/osrelease)," \
+"populating u/dev"
 udevd &
 udevadm trigger
 udevadm settle
 
-# get the root device and init
-root="root= $(< /proc/cmdline)" ; root=${root##*root=} ; root=${root%% *}
-init="init= $(< /proc/cmdline)" ; init=${init##*init=} ; init=${init%% *}
-swap="swap= $(< /proc/cmdline)" ; swap=${swap##*swap=} ; swap=${swap%% *}
+# get the root device, init, early swap
+cmdline="$(< /proc/cmdline)" 
+root="root= $cmdline" ; root=${root##*root=} ; root=${root%% *}
+init="init= $cmdline" ; init=${init##*init=} ; init=${init%% *}
+swap="swap= $cmdline" ; swap=${swap##*swap=} ; swap=${swap%% *}
 
 [ "${root#UUID=}" != "$root" ] && root="/dev/disk/by-uuid/${root#UUID=}"
 [ "${swap#UUID=}" != "$swap" ] && swap="/dev/disk/by-uuid/${swap#UUID=}"
@@ -94,7 +96,7 @@ if [ "$root" ]; then
 	  fi
 	done
     fi
-  [ $(( i++ )) -eq 0 ] && echo "Waiting for root device to become ready ..."
+  [ $(( i++ )) -eq 0 ] && echo "Waiting for root device to become ready."
   sleep 1
   done
 fi
