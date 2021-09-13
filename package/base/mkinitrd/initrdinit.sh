@@ -103,6 +103,6 @@ fi
 
 # PANICMARK
 
-echo "Ouhm - some boot problem, but I do not scream. Debug shell:"
+echo "No root or init, but we do not scream, debug shell:"
 kill %1
 exec /bin/sh
