@@ -42,26 +42,27 @@
  				      int write);
  extern u64 ps3stor_send_command(struct ps3_storage_device *dev, u64 cmd,
  				u64 arg1, u64 arg2, u64 arg3, u64 arg4);
---- linux-5.14/drivers/block/ps3disk.c.vanilla	2021-08-30 00:04:50.000000000 +0200
-+++ linux-5.14/drivers/block/ps3disk.c	2021-09-09 18:11:48.557586783 +0200
-@@ -2,6 +2,8 @@
+--- linux-5.14/drivers/block/ps3disk.c.vanilla	2021-09-14 19:59:50.668758782 +0200
++++ linux-5.14/drivers/block/ps3disk.c	2021-09-14 19:59:53.650758936 +0200
+@@ -2,6 +2,7 @@
  /*
   * PS3 Disk Storage Driver
   *
-+ * Copyright (C) 2018-2021 Ren\xc3\xa9 Rebe
-+ * Copyright (C) 2019 Emmanuel Nicolet <emmanuel.nicolet@gmail.com>
++ * Copyright (C) 2018-2021 René Rebe
   * Copyright (C) 2007 Sony Computer Entertainment Inc.
   * Copyright 2007 Sony Corp.
   */
-@@ -17,24 +19,22 @@
+@@ -17,24 +20,24 @@
  
  
  #define DEVICE_NAME		"ps3disk"
--
- #define BOUNCE_SIZE		(64*1024)
++#define BOUNCE_SIZE		(64*1024) /* * PS3DISK_MAX_REQS */
  
+-#define BOUNCE_SIZE		(64*1024)
+-
 -#define PS3DISK_MAX_DISKS	16
 +#define PS3DISK_MAX_NUM_REGS	8
++#define PS3DISK_MAX_REQS	4 /* 16 */
  #define PS3DISK_MINORS		16
 -
 -
@@ -73,16 +74,18 @@
 -	struct blk_mq_tag_set tag_set;
 -	struct gendisk *gendisk;
  	unsigned int blocking_factor;
- 	struct request *req;
+-	struct request *req;
  	u64 raw_capacity;
++	struct request* req[PS3DISK_MAX_REQS];
++	unsigned req_region[PS3DISK_MAX_REQS];
++	unsigned next_queue;
  	unsigned char model[ATA_ID_PROD_LEN+1];
 +	struct blk_mq_tag_set tag_set[PS3DISK_MAX_NUM_REGS];
 +	struct gendisk *gendisk[PS3DISK_MAX_NUM_REGS];
-+	int next_queue;
  };
  
  
-@@ -76,6 +76,13 @@
+@@ -76,6 +79,13 @@
  	.owner		= THIS_MODULE,
  };
  
@@ -96,62 +99,176 @@
  
  static void ps3disk_scatter_gather(struct ps3_storage_device *dev,
  				   struct request *req, int gather)
-@@ -113,7 +120,9 @@
+@@ -112,8 +122,10 @@
+ 	struct ps3disk_private *priv = ps3_system_bus_get_drvdata(&dev->sbd);
  	int write = rq_data_dir(req), res;
  	const char *op = write ? "write" : "read";
- 	u64 start_sector, sectors;
+-	u64 start_sector, sectors;
 -	unsigned int region_id = dev->regions[dev->region_idx].id;
++	u64 start_sector, sectors, tag;
 +	unsigned int region_idx = MINOR(disk_devt(req->rq_disk)) / PS3DISK_MINORS;
 +	unsigned int region_id = dev->regions[region_idx].id;
 +	unsigned int region_flags = dev->regions[region_idx].flags;
  
  #ifdef DEBUG
  	unsigned int n = 0;
-@@ -136,11 +145,11 @@
- 		ps3disk_scatter_gather(dev, req, 1);
+@@ -134,22 +146,27 @@
  
+ 	if (write) {
+ 		ps3disk_scatter_gather(dev, req, 1);
+-
  		res = lv1_storage_write(dev->sbd.dev_id, region_id,
 -					start_sector, sectors, 0,
+-					dev->bounce_lpar, &dev->tag);
 +					start_sector, sectors, region_flags,
- 					dev->bounce_lpar, &dev->tag);
++					dev->bounce_lpar, &tag);
  	} else {
  		res = lv1_storage_read(dev->sbd.dev_id, region_id,
 -				       start_sector, sectors, 0,
+-				       dev->bounce_lpar, &dev->tag);
 +				       start_sector, sectors, region_flags,
- 				       dev->bounce_lpar, &dev->tag);
++				       dev->bounce_lpar, &tag);
  	}
  	if (res) {
-@@ -199,9 +208,15 @@
+ 		dev_err(&dev->sbd.core, "%s:%u: %s failed %d\n", __func__,
+ 			__LINE__, op, res);
+ 		return BLK_STS_IOERR;
+ 	}
+-
+-	priv->req = req;
++	
++	//printk("tag: %lld\n", tag);
++	BUG_ON(tag >= PS3DISK_MAX_REQS);
++	BUG_ON(priv->req[tag]);
++	
++	priv->req[tag] = req;
++	priv->req_region[tag] = region_idx;
++	
+ 	return BLK_STS_OK;
+ }
+ 
+@@ -157,20 +174,25 @@
+ 						 struct request *req)
+ {
  	struct ps3disk_private *priv = ps3_system_bus_get_drvdata(&dev->sbd);
+-	u64 res;
++	u64 res, tag;
+ 
+ 	dev_dbg(&dev->sbd.core, "%s:%u: flush request\n", __func__, __LINE__);
+-
++	
++	/* TODO: actual region? */
+ 	res = lv1_storage_send_device_command(dev->sbd.dev_id,
+ 					      LV1_STORAGE_ATA_HDDOUT, 0, 0, 0,
+-					      0, &dev->tag);
++					      0, &tag);
+ 	if (res) {
+ 		dev_err(&dev->sbd.core, "%s:%u: sync cache failed 0x%llx\n",
+ 			__func__, __LINE__, res);
+ 		return BLK_STS_IOERR;
+ 	}
+-
+-	priv->req = req;
++	
++	//printk("tag: %lld\n", tag);
++	BUG_ON(tag >= PS3DISK_MAX_REQS);
++	priv->req[tag] = req;
++	priv->req_region[tag] = 0;
++	
+ 	return BLK_STS_OK;
+ }
+ 
+@@ -197,14 +219,30 @@
+ 	struct request_queue *q = hctx->queue;
+ 	struct ps3_storage_device *dev = q->queuedata;
+ 	struct ps3disk_private *priv = ps3_system_bus_get_drvdata(&dev->sbd);
++	unsigned i;
  	blk_status_t ret;
  
-+	spin_lock_irq(&priv->lock);
-+	if (priv->req) {
+-	blk_mq_start_request(bd->rq);
++	dev_dbg(&dev->sbd.core, "%s:%u\n", __func__, __LINE__);
+ 
++	blk_mq_start_request(bd->rq);
++	
+ 	spin_lock_irq(&priv->lock);
++	
++	/* find free request tag slot */
++	for (i = 0; i < PS3DISK_MAX_REQS; ++i) {
++		if (priv->req[i] == NULL)
++			break;
++	}
++	/* TODO: re-write to always try w/ HV, as we share among devices */
++	if (i >= PS3DISK_MAX_REQS) {
 +		spin_unlock_irq(&priv->lock);
 +		blk_mq_stop_hw_queue(hctx);
 +		return BLK_STS_DEV_RESOURCE;
 +	}
-+
- 	blk_mq_start_request(bd->rq);
- 
--	spin_lock_irq(&priv->lock);
++	
  	ret = ps3disk_do_request(dev, bd->rq);
  	spin_unlock_irq(&priv->lock);
+-
++	
+ 	return ret;
+ }
  
-@@ -217,6 +232,8 @@
+@@ -217,26 +255,30 @@
  	blk_status_t error;
  	u64 tag, status;
  	const char *op;
+-
 +	struct request_queue *q;
-+	int old_queue;
- 
++	unsigned last_queue;
++	unsigned req_region;
++	
++	priv = ps3_system_bus_get_drvdata(&dev->sbd);
++	spin_lock(&priv->lock);
++	
  	res = lv1_storage_get_async_status(dev->sbd.dev_id, &tag, &status);
+-
+-	if (tag != dev->tag)
+-		dev_err(&dev->sbd.core,
+-			"%s:%u: tag mismatch, got %llx, expected %llx\n",
+-			__func__, __LINE__, tag, dev->tag);
+-
+ 	if (res) {
+ 		dev_err(&dev->sbd.core, "%s:%u: res=%d status=0x%llx\n",
+ 			__func__, __LINE__, res, status);
++		spin_unlock(&priv->lock);
+ 		return IRQ_HANDLED;
+ 	}
+-
+-	priv = ps3_system_bus_get_drvdata(&dev->sbd);
+-	req = priv->req;
++	
++	//printk("int tag: %lld\n", tag);
++	BUG_ON(tag >= PS3DISK_MAX_REQS);
++	
++	req = priv->req[tag];
+ 	if (!req) {
+ 		dev_dbg(&dev->sbd.core,
+ 			"%s:%u non-block layer request completed\n", __func__,
+ 			__LINE__);
++		spin_unlock(&priv->lock);
+ 		dev->lv1_status = status;
+ 		complete(&dev->done);
+ 		return IRQ_HANDLED;
+@@ -261,12 +303,29 @@
+ 			ps3disk_scatter_gather(dev, req, 0);
+ 	}
  
-@@ -264,9 +281,21 @@
- 	spin_lock(&priv->lock);
- 	priv->req = NULL;
+-	spin_lock(&priv->lock);
+-	priv->req = NULL;
++	req_region = priv->req_region[tag];
++	priv->req[tag] = NULL;
  	blk_mq_end_request(req, error);
-+	old_queue = priv->next_queue;
+ 	spin_unlock(&priv->lock);
+-
+-	blk_mq_run_hw_queues(priv->gendisk->queue, true);
++	
++	blk_mq_run_hw_queues(priv->gendisk[req_region]->queue, true);
++#if 0
++	/* restart other potentially stopped queues */
++	last_queue = priv->next_queue;
 +	do {
 +		q = priv->gendisk[priv->next_queue]->queue;
 +
@@ -163,14 +280,13 @@
 +			blk_mq_start_stopped_hw_queues(q, true);
 +			break;
 +		}
-+	} while (old_queue != priv->next_queue);
- 	spin_unlock(&priv->lock);
- 
--	blk_mq_run_hw_queues(priv->gendisk->queue, true);
++	} while (last_queue != priv->next_queue);
++#endif
++	
  	return IRQ_HANDLED;
  }
  
-@@ -382,10 +411,6 @@
+@@ -382,10 +441,6 @@
  	return 0;
  }
  
@@ -181,7 +297,7 @@
  static const struct blk_mq_ops ps3disk_mq_ops = {
  	.queue_rq	= ps3disk_queue_rq,
  };
-@@ -395,10 +420,12 @@
+@@ -395,10 +450,12 @@
  	struct ps3_storage_device *dev = to_ps3_storage_device(&_dev->core);
  	struct ps3disk_private *priv;
  	int error;
@@ -195,7 +311,7 @@
  	if (dev->blk_size < 512) {
  		dev_err(&dev->sbd.core,
  			"%s:%u: cannot handle block size %llu\n", __func__,
-@@ -406,18 +433,6 @@
+@@ -406,18 +463,6 @@
  		return -EINVAL;
  	}
  
@@ -214,7 +330,7 @@
  	priv = kzalloc(sizeof(*priv), GFP_KERNEL);
  	if (!priv) {
  		error = -ENOMEM;
-@@ -434,59 +449,69 @@
+@@ -434,59 +479,70 @@
  		goto fail_free_priv;
  	}
  
@@ -231,49 +347,7 @@
 -					BLK_MQ_F_SHOULD_MERGE);
 -	if (error)
 -		goto fail_teardown;
-+	for (devidx = 0; devidx < dev->num_regions; devidx++) {
-+		if (test_bit(devidx, &dev->accessible_regions) == 0)
-+			continue;
-+
-+		error = blk_mq_alloc_sq_tag_set(&priv->tag_set[devidx], &ps3disk_mq_ops, 1,
-+					     BLK_MQ_F_SHOULD_MERGE);
-+		if (error)
-+			goto fail_teardown;
-+
-+		gendisk = blk_mq_alloc_disk(&priv->tag_set[devidx], dev);
-+		if (IS_ERR(gendisk)) {
-+			dev_err(&dev->sbd.core, "%s:%u: blk_mq_alloc_disk failed\n",
-+				__func__, __LINE__);
-+			error = PTR_ERR(gendisk);
-+			goto fail_teardown;
-+		}
-+		queue = gendisk->queue;
-+		priv->gendisk[devidx] = gendisk;
-+
-+		blk_queue_max_hw_sectors(queue, dev->bounce_size >> 9);
-+		blk_queue_dma_alignment(queue, dev->blk_size-1);
-+		blk_queue_logical_block_size(queue, dev->blk_size);
-+		blk_queue_write_cache(queue, true, false);
-+		blk_queue_max_segments(queue, -1);
-+		blk_queue_max_segment_size(queue, dev->bounce_size);
-+
-+		gendisk->major = ps3disk_major;
-+		gendisk->minors = PS3DISK_MINORS;
-+		gendisk->first_minor = devidx * PS3DISK_MINORS;
-+		gendisk->fops = &ps3disk_fops;
-+		gendisk->queue = queue;
-+		gendisk->private_data = dev;
-+		snprintf(gendisk->disk_name, sizeof(gendisk->disk_name), PS3DISK_NAME,
-+			 devidx+'a');
-+		priv->blocking_factor = dev->blk_size >> 9;
-+		set_capacity(gendisk,
-+			     dev->regions[devidx].size*priv->blocking_factor);
-+
-+		dev_info(&dev->sbd.core,
-+			 "%s is a %s (%llu MiB total, %llu MiB region)\n",
-+			 gendisk->disk_name, priv->model, priv->raw_capacity >> 11,
-+			 get_capacity(gendisk) >> 11);
- 
+-
 -	gendisk = blk_mq_alloc_disk(&priv->tag_set, dev);
 -	if (IS_ERR(gendisk)) {
 -		dev_err(&dev->sbd.core, "%s:%u: blk_mq_alloc_disk failed\n",
@@ -309,7 +383,50 @@
 -		 "%s is a %s (%llu MiB total, %llu MiB for OtherOS)\n",
 -		 gendisk->disk_name, priv->model, priv->raw_capacity >> 11,
 -		 get_capacity(gendisk) >> 11);
--
++	for (devidx = 0; devidx < dev->num_regions; devidx++) {
++		if (test_bit(devidx, &dev->accessible_regions) == 0)
++			continue;
++
++		error = blk_mq_alloc_sq_tag_set(&priv->tag_set[devidx], &ps3disk_mq_ops,
++						PS3DISK_MAX_REQS,
++						BLK_MQ_F_SHOULD_MERGE);
++		if (error)
++			goto fail_teardown;
++
++		gendisk = blk_mq_alloc_disk(&priv->tag_set[devidx], dev);
++		if (IS_ERR(gendisk)) {
++			dev_err(&dev->sbd.core, "%s:%u: blk_mq_alloc_disk failed\n",
++				__func__, __LINE__);
++			error = PTR_ERR(gendisk);
++			goto fail_teardown;
++		}
++		queue = gendisk->queue;
++		priv->gendisk[devidx] = gendisk;
++
++		blk_queue_max_hw_sectors(queue, dev->bounce_size >> 9);
++		blk_queue_dma_alignment(queue, dev->blk_size-1);
++		blk_queue_logical_block_size(queue, dev->blk_size);
++		blk_queue_write_cache(queue, true, false);
++		blk_queue_max_segments(queue, -1);
++		blk_queue_max_segment_size(queue, dev->bounce_size);
++
++		gendisk->major = ps3disk_major;
++		gendisk->minors = PS3DISK_MINORS;
++		gendisk->first_minor = devidx * PS3DISK_MINORS;
++		gendisk->fops = &ps3disk_fops;
++		gendisk->queue = queue;
++		gendisk->private_data = dev;
++		snprintf(gendisk->disk_name, sizeof(gendisk->disk_name), PS3DISK_NAME,
++			 'a' + devidx);
++		priv->blocking_factor = dev->blk_size >> 9;
++		set_capacity(gendisk,
++			     dev->regions[devidx].size * priv->blocking_factor);
++
++		dev_info(&dev->sbd.core,
++			 "%s is a %s (%llu MiB total, %llu MiB region)\n",
++			 gendisk->disk_name, priv->model, priv->raw_capacity >> 11,
++			 get_capacity(gendisk) >> 11);
+ 
 -	device_add_disk(&dev->sbd.core, gendisk, NULL);
 +		device_add_disk(&dev->sbd.core, gendisk, NULL);
 +	}
@@ -327,7 +444,7 @@
  	ps3stor_teardown(dev);
  fail_free_bounce:
  	kfree(dev->bounce_buf);
-@@ -494,9 +519,6 @@
+@@ -494,9 +550,6 @@
  	kfree(priv);
  	ps3_system_bus_set_drvdata(_dev, NULL);
  fail:
@@ -337,7 +454,7 @@
  	return error;
  }
  
-@@ -504,14 +526,15 @@
+@@ -504,14 +557,15 @@
  {
  	struct ps3_storage_device *dev = to_ps3_storage_device(&_dev->core);
  	struct ps3disk_private *priv = ps3_system_bus_get_drvdata(&dev->sbd);
