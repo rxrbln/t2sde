@@ -300,6 +300,7 @@ cp $root/usr/embutils/{mount,umount,rm,mv,mkdir,ln,ls,switch_root,chroot,sleep,l
 ln -s mv $tmpdir/bin/cp
 
 cp $root/sbin/initrdinit $tmpdir/init
+chmod +x $tmpdir/init
 
 # Custom ACPI DSDT table
 if test -f "$root/boot/DSDT.aml"; then
