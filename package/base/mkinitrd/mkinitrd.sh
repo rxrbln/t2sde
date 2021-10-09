@@ -209,9 +209,12 @@ elf_magic () {
 
 # copy dynamic libraries, and optional plugins, if any.
 #
-[ "$minimal" = 1 ] &&
-extralibs="`ls $root/lib*/{libdl,libncurses.so}* 2> /dev/null`" ||
-extralibs="`ls $root/{lib*/libnss_files,usr/lib*/libgcc_s}.so* 2> /dev/null`"
+if [ "$minimal" = 1 ]; then
+	extralibs="`ls $root/lib*/{libdl,libncurses.so}* 2>/dev/null || true`"
+else
+	# glibc only
+	extralibs="`ls $root/{lib*/libnss_files,usr/lib*/libgcc_s}.so* 2>/dev/null || true`"
+fi
 
 copy_dyn_libs () {
 	local magic
