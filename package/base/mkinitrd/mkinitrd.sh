@@ -8,9 +8,7 @@
 # more information can be found in the files COPYING and README.
 # 
 # This program is free software; you can redistribute it and/or modify
-# it under the terms of the GNU General Public License as published by
-# the Free Software Foundation; version 2 of the License. A copy of the
-# GNU General Public License can be found in the file COPYING.
+# it under the terms of the GNU General Public License version 2.
 # --- T2-COPYRIGHT-NOTE-END ---
 
 set -e
@@ -274,7 +272,7 @@ done
 #
 [ "$minimal" != 1 ] &&
 for x in $root/sbin/{vgchange,lvchange,lvm,mdadm} \
-	 $root/usr/sbin/{cryptsetup,ipconfig} $root/usr/embutils/dmesg
+	 $root/usr/sbin/{cryptsetup,ipconfig} $root/usr/embutils/{dmesg,swapon}
 do
   if [ ! -e $x ]; then
 	echo "Warning: Skipped optional file ${x#$root}!"
@@ -295,7 +293,7 @@ done
 
 # static, tiny embutils and friends
 #
-cp $root/usr/embutils/{mount,umount,rm,mv,mkdir,ln,ls,switch_root,chroot,sleep,losetup,chmod,cat,sed,mknod,swapon} \
+cp $root/usr/embutils/{mount,umount,rm,mv,mkdir,ln,ls,switch_root,chroot,sleep,losetup,chmod,cat,sed,mknod} \
    $tmpdir/bin/
 ln -s mv $tmpdir/bin/cp
 
