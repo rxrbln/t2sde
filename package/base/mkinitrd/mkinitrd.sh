@@ -232,7 +232,7 @@ copy_dyn_libs () {
 		fi
 		for libdir in $root/lib*/ $root/usr/lib*/ "$root"; do
 			if [ -e $libdir$lib ]; then
-			    [ "$magic" != "$(elf_magic $libdir$lib)" ] && continue
+			    [ ! -L $libdir$lib -a "$magic" != "$(elf_magic $libdir$lib)" ] && continue
 			    xlibdir=${libdir#$root}
 			    echo "	${1#$root} NEEDS $xlibdir$lib"
 
