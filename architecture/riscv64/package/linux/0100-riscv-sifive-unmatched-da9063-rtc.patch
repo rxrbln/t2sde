@@ -1,0 +1,80 @@
+From 57446ee2589888f8c6d247e6b9db4f3c436347b4 Mon Sep 17 00:00:00 2001
+From: Nikita Shubin <nikita.shubin@maquefel.me>
+Date: Thu, 28 Oct 2021 14:12:40 +0300
+Subject: [PATCH] riscv: dts: Sifive Unmatched enable rtc,watchdog
+
+enable the da9063 RTC and Watchdog.
+
+Signed-off-by: Nikita Shubin <nikita.shubin@maquefel.me>
+---
+ arch/riscv/boot/dts/sifive/hifive-unmatched-a00.dts | 8 ++++++++
+ 1 file changed, 8 insertions(+)
+
+diff --git a/arch/riscv/boot/dts/sifive/hifive-unmatched-a00.dts b/arch/riscv/boot/dts/sifive/hifive-unmatched-a00.dts
+index 9be05644e3c02a..3e8721aad694c0 100644
+--- a/arch/riscv/boot/dts/sifive/hifive-unmatched-a00.dts
++++ b/arch/riscv/boot/dts/sifive/hifive-unmatched-a00.dts
+@@ -117,6 +117,14 @@
+ 		interrupts = <1 IRQ_TYPE_LEVEL_LOW>;
+ 		interrupt-controller;
+ 
++		rtc {
++			compatible = "dlg,da9063-rtc";
++		};
++
++		wdt {
++			compatible = "dlg,da9063-watchdog";
++		};
++
+ 		regulators {
+ 			vdd_bcore1: bcore1 {
+ 				regulator-min-microvolt = <1050000>;
+From 97fc46cdd17458dc932bc4ced355b0a3e9c99836 Mon Sep 17 00:00:00 2001
+From: Nikita Shubin <nikita.shubin@maquefel.me>
+Date: Thu, 28 Oct 2021 14:15:28 +0300
+Subject: [PATCH] irqchip/sifive-plic: fixup plic_irq_eoi
+
+This is a quickfix based on Guo Ren's work:
+
+https://patchwork.kernel.org/project/linux-riscv/patch/20211024013303.3499461-4-guoren@kernel.org/
+
+> When using "devm_request_threaded_irq(,,,,IRQF_ONESHOT,,)" in the driver,
+> only the first interrupt could be handled, and continue irq is blocked by
+> hw. Because the thead,c900-plic couldn't complete masked irq source which
+> has been disabled in enable register. Add thead_plic_chip which fix up
+> c906-plic irq source completion problem by unmask/mask wrapper.
+>
+> Here is the description of Interrupt Completion in PLIC spec [1]:
+>
+> The PLIC signals it has completed executing an interrupt handler by
+> writing the interrupt ID it received from the claim to the claim/complete
+> register. The PLIC does not check whether the completion ID is the same
+> as the last claim ID for that target. If the completion ID does not match
+> an interrupt source that is currently enabled for the target, the
+>                          ^^ ^^^^^^^^^ ^^^^^^^
+> completion is silently ignored.
+
+Signed-off-by: Nikita Shubin <nikita.shubin@maquefel.me>
+---
+ drivers/irqchip/irq-sifive-plic.c | 8 +++++++-
+ 1 file changed, 7 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/irqchip/irq-sifive-plic.c b/drivers/irqchip/irq-sifive-plic.c
+index cf74cfa8204530..259065d271ef04 100644
+--- a/drivers/irqchip/irq-sifive-plic.c
++++ b/drivers/irqchip/irq-sifive-plic.c
+@@ -163,7 +163,13 @@ static void plic_irq_eoi(struct irq_data *d)
+ {
+ 	struct plic_handler *handler = this_cpu_ptr(&plic_handlers);
+ 
+-	writel(d->hwirq, handler->hart_base + CONTEXT_CLAIM);
++	if (irqd_irq_masked(d)) {
++		plic_irq_unmask(d);
++		writel(d->hwirq, handler->hart_base + CONTEXT_CLAIM);
++		plic_irq_mask(d);
++	} else {
++		writel(d->hwirq, handler->hart_base + CONTEXT_CLAIM);
++	}
+ }
+ 
+ static struct irq_chip plic_chip = {
