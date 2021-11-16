@@ -1,0 +1,105 @@
+From 5f26d71202f37d77ecf74da2ce7e4c3a3f4d48d3 Mon Sep 17 00:00:00 2001
+From: Vincent Chen <vincent.chen@sifive.com>
+Date: Thu, 8 Jul 2021 09:08:20 +0800
+Subject: [PATCH 08/16] board: sifive: unmatched: refine GEMGXL initialized
+ function in SPL
+
+Create a new function spl_reset_device_by_gpio to reset the device
+whose reset pin is connected to the GPIO. Then, using this function
+to initialize GEMGXL.
+
+Signed-off-by: Vincent Chen <vincent.chen@sifive.com>
+---
+ board/sifive/unmatched/spl.c | 58 +++++++++++++++++++++++++++++---------------
+ 1 file changed, 39 insertions(+), 19 deletions(-)
+
+diff --git a/board/sifive/unmatched/spl.c b/board/sifive/unmatched/spl.c
+index 5e1333b..b598f9f 100644
+--- a/board/sifive/unmatched/spl.c
++++ b/board/sifive/unmatched/spl.c
+@@ -22,43 +22,63 @@
+ #define MODE_SELECT_SD		0xb
+ #define MODE_SELECT_MASK	GENMASK(3, 0)
+ 
+-int spl_board_init_f(void)
++static inline int spl_reset_device_by_gpio(const char *label, int pin, int low_width)
+ {
+ 	int ret;
+ 
+-	ret = spl_soc_init();
++	ret = gpio_request(pin, label);
+ 	if (ret) {
+-		debug("HiFive Unmatched FU740 SPL init failed: %d\n", ret);
++		debug("%s gpio request failed: %d\n", label, ret);
++		return ret;
++	}
++
++	ret = gpio_direction_output(pin, 1);
++	if (ret) {
++		debug("%s gpio direction set failed: %d\n", label, ret);
+ 		return ret;
+ 	}
+ 
++	udelay(1);
++
++	gpio_set_value(pin, 0);
++	udelay(low_width);
++	gpio_set_value(pin, 1);
++
++	return ret;
++}
++
++static inline int spl_gemgxl_init(void)
++{
++	int ret;
+ 	/*
+ 	 * GEMGXL init VSC8541 PHY reset sequence;
+ 	 * leave pull-down active for 2ms
+ 	 */
+ 	udelay(2000);
+-	ret = gpio_request(GEM_PHY_RESET, "gem_phy_reset");
++	ret = spl_reset_device_by_gpio("gem_phy_reset", GEM_PHY_RESET, 1);
++	mdelay(15);
++
++	return ret;
++}
++
++int spl_board_init_f(void)
++{
++	int ret;
++
++	ret = spl_soc_init();
+ 	if (ret) {
+-		debug("gem_phy_reset gpio request failed: %d\n", ret);
+-		return ret;
++		debug("HiFive Unmatched FU740 SPL init failed: %d\n", ret);
++		goto end;
+ 	}
+ 
+-	/* Set GPIO 12 (PHY NRESET) */
+-	ret = gpio_direction_output(GEM_PHY_RESET, 1);
++	ret = spl_gemgxl_init();
+ 	if (ret) {
+-		debug("gem_phy_reset gpio direction set failed: %d\n", ret);
+-		return ret;
++		debug("Gigabit ethernet PHY (VSC8541) init failed: %d\n", ret);
++		goto end;
+ 	}
+ 
+-	udelay(1);
+-
+-	/* Reset PHY again to enter unmanaged mode */
+-	gpio_set_value(GEM_PHY_RESET, 0);
+-	udelay(1);
+-	gpio_set_value(GEM_PHY_RESET, 1);
+-	mdelay(15);
+-
+-	return 0;
++end:
++	return ret;
+ }
+ 
+ u32 spl_boot_device(void)
+-- 
+2.7.4
+

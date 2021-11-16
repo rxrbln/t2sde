@@ -1,0 +1,128 @@
+From 6265d23e2f9fdc0e33074a28d52a894b6be2b19d Mon Sep 17 00:00:00 2001
+From: Vincent Chen <vincent.chen@sifive.com>
+Date: Mon, 17 May 2021 16:21:13 +0800
+Subject: [PATCH 13/16] board: sifive: spl: Set remote thermal of TMP451 to 85
+ deg C for the unmatched board
+
+For TMP451 on the unmatched board, the default value of the remote thermal
+threshold is 108 deg C. This commit initilizes it to 85 deg C at SPL.
+
+Signed-off-by: Vincent Chen <vincent.chen@sifive.com>
+---
+ board/sifive/unmatched/spl.c       | 29 +++++++++++++++++++++++++++++
+ drivers/misc/Kconfig               | 10 ++++++++++
+ include/configs/sifive-unmatched.h |  3 +++
+ scripts/config_whitelist.txt       |  1 +
+ 4 files changed, 43 insertions(+)
+
+diff --git a/board/sifive/unmatched/spl.c b/board/sifive/unmatched/spl.c
+index 3c3b22d..7d59ca0 100644
+--- a/board/sifive/unmatched/spl.c
++++ b/board/sifive/unmatched/spl.c
+@@ -10,6 +10,8 @@
+ #include <spl.h>
+ #include <misc.h>
+ #include <log.h>
++#include <config.h>
++#include <i2c.h>
+ #include <linux/delay.h>
+ #include <linux/io.h>
+ #include <asm/gpio.h>
+@@ -25,6 +27,27 @@
+ #define MODE_SELECT_SD		0xb
+ #define MODE_SELECT_MASK	GENMASK(3, 0)
+ 
++#define TMP451_REMOTE_THERM_LIMIT_REG_OFFSET	0x19
++#define TMP451_RETMOE_THERM_LIMIT_INIT_VALUE	0x55
++
++static inline int init_tmp451_remote_therm_limit(void)
++{
++	struct udevice *dev;
++	unsigned char r_therm_limit = TMP451_RETMOE_THERM_LIMIT_INIT_VALUE;
++	int ret;
++
++	ret = i2c_get_chip_for_busnum(CONFIG_SYS_TMP451_BUS_NUM,
++				      CONFIG_SYS_I2C_TMP451_ADDR,
++				      CONFIG_SYS_I2C_TMP451_ADDR_LEN,
++				      &dev);
++
++	if (!ret)
++		ret = dm_i2c_write(dev, TMP451_REMOTE_THERM_LIMIT_REG_OFFSET,
++				   &r_therm_limit,
++				   sizeof(unsigned char));
++	return ret;
++}
++
+ static inline int spl_reset_device_by_gpio(const char *label, int pin, int low_width)
+ {
+ 	int ret;
+@@ -91,6 +114,12 @@ int spl_board_init_f(void)
+ 
+ 	pwm_device_init();
+ 
++	ret = init_tmp451_remote_therm_limit();
++	if (ret) {
++		debug("TMP451 remote THERM limit init failed: %d\n", ret);
++		goto end;
++	}
++
+ 	ret = spl_gemgxl_init();
+ 	if (ret) {
+ 		debug("Gigabit ethernet PHY (VSC8541) init failed: %d\n", ret);
+diff --git a/drivers/misc/Kconfig b/drivers/misc/Kconfig
+index 997b713..2878313 100644
+--- a/drivers/misc/Kconfig
++++ b/drivers/misc/Kconfig
+@@ -404,6 +404,10 @@ config SYS_I2C_EEPROM_ADDR
+ 	hex "Chip address of the EEPROM device"
+ 	default 0
+ 
++config SYS_I2C_TMP451_ADDR
++	hex "Chip address of the TMP451 device"
++	default 0
++
+ config SYS_I2C_EEPROM_BUS
+ 	int "I2C bus of the EEPROM device."
+ 	default 0
+@@ -429,6 +433,12 @@ config SYS_I2C_EEPROM_ADDR_LEN
+ 	help
+ 	  Note: This is NOT the chip address length!
+ 
++config SYS_I2C_TMP451_ADDR_LEN
++	int "Length in bytes of the TMP451 memory array address"
++	default 1
++	help
++	  Note: This is NOT the chip address length!
++
+ config SYS_I2C_EEPROM_ADDR_OVERFLOW
+ 	hex "EEPROM Address Overflow"
+ 	default 0
+diff --git a/include/configs/sifive-unmatched.h b/include/configs/sifive-unmatched.h
+index fd93e89..f75cf9b 100644
+--- a/include/configs/sifive-unmatched.h
++++ b/include/configs/sifive-unmatched.h
+@@ -88,6 +88,9 @@
+ #define CONFIG_SYS_EEPROM_BUS_NUM		0
+ #define CONFIG_SYS_I2C_EEPROM_ADDR		0x54
+ #define CONFIG_SYS_I2C_EEPROM_ADDR_LEN		0x1
++#define CONFIG_SYS_TMP451_BUS_NUM		0
++#define CONFIG_SYS_I2C_TMP451_ADDR		0x4c
++#define CONFIG_SYS_I2C_TMP451_ADDR_LEN		0x1
+ 
+ #define CONFIG_ID_EEPROM
+ 
+diff --git a/scripts/config_whitelist.txt b/scripts/config_whitelist.txt
+index 3dbcc04..a0005fe 100644
+--- a/scripts/config_whitelist.txt
++++ b/scripts/config_whitelist.txt
+@@ -3550,6 +3550,7 @@ CONFIG_SYS_TIMER_COUNTER
+ CONFIG_SYS_TIMER_COUNTS_DOWN
+ CONFIG_SYS_TIMER_PRESCALER
+ CONFIG_SYS_TIMER_RATE
++CONFIG_SYS_TMP451_BUS_NUM
+ CONFIG_SYS_TMPVIRT
+ CONFIG_SYS_TMRINTR_MASK
+ CONFIG_SYS_TMRINTR_NO
+-- 
+2.7.4
+
