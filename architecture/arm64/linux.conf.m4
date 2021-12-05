@@ -38,6 +38,8 @@ include(`linux-block.conf.m4')
 include(`linux-net.conf.m4')
 include(`linux-fs.conf.m4')
 
+CONFIG_ARM64_ACPI_PARKING_PROTOCOL=y
+
 dnl DMA Contiguous Memory Allocator, e.g. for GPU VRAM,
 dnl tweakable via command line via: cma=128MB
 CONFIG_CMA_SIZE_MBYTES=256
