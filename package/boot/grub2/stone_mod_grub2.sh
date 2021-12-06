@@ -15,19 +15,22 @@
 
 # TODO:
 # void efibootmgr duplicates :-/
+# auto-mount efivars?
 # impl. & test sparc, mips, riscv, ...
 # unify non-crypt, and direct non-EFI BIOS install
 
 arch=$(uname -m)
 arch=${arch/i?86/i386}
+arch=${arch/aarch/arm}
 
 create_kernel_list() {
 	first=1
-	for x in `(cd /boot/ ; ls vmlinux-* ) | sort -r` ; do
+	for x in `(cd /boot/; ls vmlinux-* ) | sort -r`; do
 		ver=${x/vmlinux-/}
 		[[ $arch = *86* ]] && x=${x/vmlinux/vmlinuz}
-		if [ $first = 1 ] ; then
-			label=linux ; first=0
+		[[ $arch = *arm* ]] && x=${x/vmlinux/Image}.gz
+		if [ $first = 1 ]; then
+			label=linux; first=0
 		else
 			label=linux-$ver
 		fi
@@ -97,20 +100,30 @@ grubmods="part_gpt part_msdos ntfs ntfscomp hfsplus fat ext2 iso9660 \
 
 grub_inst() {
     if [[ $arch != ppc* ]]; then
-	if [ -z "$cryptdev" ]; then
+
+	if [ -z "$cryptdev" -a ! -d /sys/firmware/efi ]; then
 		grub2-install $instdev
 	else
 	    for efi in /boot/efi*; do
 		mkdir -p $efi/EFI/boot
 
-		cat << EOT > $efi/EFI/grub/grub.cfg
+		if [ -z "$cryptdev" ]; then
+		    cat << EOT > $efi/EFI/boot/grub.cfg
+set uuid=$grubdev
+search --set=root --no-floppy --fs-uuid \$uuid
+configfile (\$root)/boot/grub/grub.cfg
+EOT
+		else
+		    cat << EOT > $efi/EFI/boot/grub.cfg
 set uuid=$grubdev
 cryptomount -u \$uuid
 configfile (crypto0)/boot/grub/grub.cfg
 EOT
-
-		local exe=bootx64.efi
-		[ $arch = i386 ] && exe=${exe/x64/ia32}
+            fi
+		# TODO: case
+		local exe=BOOTX64.EFI
+		[ $arch = i386 ] && exe=${exe/X64/IA32}
+		[ $arch = arm64 ] && exe=${exe/X/AA}
 		
 		grub-mkimage -O $arch-efi -o $efi/EFI/boot/$exe \
 			-p /efi/boot -d /usr/lib*/grub/$arch-efi/ \
@@ -297,7 +310,7 @@ main() {
 	instdev=$(get_realdev $bootdev); instdev="${instdev%%[0-9*]}"
 	[ "$grubdev" ] || grubdev="${bootdev##*/}"
 
-	if [ ! -f /boot/grub/grub.cfg ] ; then
+	if [ ! -f /boot/grub/grub.cfg ]; then
 	  if gui_yesno "GRUB2 does not appear to be configured.
 Automatically install GRUB2 now?"; then
 	    create_boot_menu
