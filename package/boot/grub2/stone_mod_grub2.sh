@@ -16,7 +16,7 @@
 # TODO:
 # void efibootmgr duplicates :-/
 # auto-mount efivars?
-# impl. & test sparc, mips, ...
+# impl. & test direct sparc, direct i386-pc-mbr, mips-arc, ...
 # unify non-crypt, and direct non-EFI BIOS install
 
 arch=$(uname -m)
@@ -100,9 +100,12 @@ grubmods="part_gpt part_msdos ntfs ntfscomp hfsplus fat ext2 iso9660 \
 
 grub_inst() {
     if [[ $arch != ppc* ]]; then
-
 	if [ -z "$cryptdev" -a ! -d /sys/firmware/efi ]; then
+	    if [[ "$arch" != sparc* ]]; then
 		grub2-install $instdev
+	    else
+		grub2-install --skip-fs-probe --force $instdev
+	    fi
 	else
 	    for efi in /boot/efi*; do
 		mkdir -p $efi/EFI/boot
