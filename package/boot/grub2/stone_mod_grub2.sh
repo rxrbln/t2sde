@@ -16,7 +16,7 @@
 # TODO:
 # void efibootmgr duplicates :-/
 # auto-mount efivars?
-# impl. & test sparc, mips, riscv, ...
+# impl. & test sparc, mips, ...
 # unify non-crypt, and direct non-EFI BIOS install
 
 arch=$(uname -m)
@@ -124,6 +124,7 @@ EOT
 		local exe=BOOTX64.EFI
 		[ $arch = i386 ] && exe=${exe/X64/IA32}
 		[ $arch = arm64 ] && exe=${exe/X/AA}
+		[[ $arch = riscv* ]] && exe={exe/X64/${arch^^}}
 		
 		grub-mkimage -O $arch-efi -o $efi/EFI/boot/$exe \
 			-p /efi/boot -d /usr/lib*/grub/$arch-efi/ \
