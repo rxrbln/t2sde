@@ -189,9 +189,7 @@ echo_status "Removing shared libraries already in initrd."
 for x in `egrep 'X .* KERNEL .*' $base/config/$config/packages |
           cut -d ' ' -f 5`; do
   kernel=${x/_*/}
-  for moduledir in `grep lib/modules $build_root/var/adm/flists/$kernel |
-                   cut -d ' ' -f 2 | cut -d / -f 1-3 | uniq`; do
-    kernelver=${moduledir/*\/}
+  for kernelver in `sed -n "s,.*boot/kconfig.,,p" $build_root/var/adm/flists/$kernel`; do
     initrd="initrd-$kernelver"
     kernelimg=`ls $build_root/boot/vmlinu?-$kernelver`
     kernelimg=${kernelimg##*/}
