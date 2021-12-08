@@ -72,8 +72,8 @@ depmod=${archprefix}depmod
 echo "Kernel: $kernelver, module dir: $moddir"
 
 if [ ! -d $moddir ]; then
-	echo "Module dir $moddir does not exist!"
-	exit 2
+	echo "Warning: $moddir does not exist!"
+	moddir=""
 fi
 
 sysmap=""
@@ -111,9 +111,10 @@ mknod dev/console c 5 1
 
 # copy the basic / rootfs kernel modules
 #
-echo "Copying kernel modules ..."
 
-(
+if [ "$moddir" ]; then
+ echo "Copying kernel modules ..."
+ (
   add_depend() {
      local skipped=
      local x="$1"
@@ -181,15 +182,16 @@ echo "Copying kernel modules ..."
   while read fn; do
 	add_depend "$fn"
   done
-) | fold -s; echo
+ ) | fold -s; echo
 
-# generate map files
-#
-mkdir -p lib/modules/$kernelver
-cp -avf $moddir/modules.{order*,builtin*} lib/modules/$kernelver/
-$depmod -ae -b $tmpdir -F $sysmap $kernelver
-# only keep the .bin-ary files
-rm $tmpdir/lib/modules/$kernelver/modules.{alias,dep,symbols,builtin,order}
+ # generate map files
+ #
+ mkdir -p lib/modules/$kernelver
+ cp -avf $moddir/modules.{order*,builtin*} lib/modules/$kernelver/
+ $depmod -ae -b $tmpdir -F $sysmap $kernelver
+ # only keep the .bin-ary files
+ rm $tmpdir/lib/modules/$kernelver/modules.{alias,dep,symbols,builtin,order}
+fi
 
 echo "Injecting programs and configuration ..."
 
