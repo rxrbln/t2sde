@@ -93,10 +93,16 @@ $( cat /boot/grub/grub.cfg )"
 	unset bootpath
 }
 
-grubmods="part_gpt part_msdos ntfs ntfscomp hfsplus fat ext2 iso9660 \
-          boot configfile linux btrfs all_video reiserfs xfs jfs lvm \
-          normal crypto cryptodisk luks sleep reboot \
-          search search_fs_file search_label search_fs_uuid"
+grubmods="normal boot configfile linux part_msdos part_gpt \
+	  fat ext2 iso9660 reiserfs xfs jfs lvm \
+	  crypto cryptodisk luks all_video sleep reboot \
+	  search search_fs_file search_label search_fs_uuid"
+
+case "$arch" in
+	ppc*)	grubmods="$grubmods part_apple hfs hfsplus suspend" ;;
+	sparc*)	grubmods="$grubmods part_sun" ;;
+	x86*)	grubmods="$grubmods ntfs ntfscomp" ;;
+esac
 
 grub_inst() {
     if [[ $arch != ppc* ]]; then
@@ -165,7 +171,7 @@ EOT
 	    fi
 	    grub-mkimage -O powerpc-ieee1275 -p /boot/grub \
 		-o /mnt/boot/grub.elf -d /usr/lib*/grub/powerpc-ieee1275 \
-		$grubmods part_apple hfs suspend
+		$grubmods
 
 	    cat > /mnt/ofboot.b <<-EOT
 <CHRP-BOOT>
