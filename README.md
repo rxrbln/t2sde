@@ -14,6 +14,13 @@ alternative micro kernel systems (like a L4 variant or
 Fuchsia). Similarly building Haiku, Android, Minix, Hurd, Open (or
 Pure) Darwin, Haiku and OpenBSD could be supported, too.
 
+# Download
+
+It is usually best to start with a pre-built ISO download. More
+information, including about the latest source tree are at:
+
+https://t2sde.org/download/
+
 # Subversion and Git
 
 Historically we adapted SVN when it was state of the art. Currently
@@ -28,6 +35,8 @@ bounty-M, 40€ for bounty-L and 100€ for bounty-XL feature requests
 issues marked so by "rxrbln". The provided patch or pull request must
 be reasonable clean code and reproducible (at least mostly) build and
 work. Payout thru normal means like PayPal or wire transfer in the EU.
+
+https://github.com/rxrbln/t2sde/issues?q=is%3Aopen+is%3Aissue+author%3Arxrbln+label%3Abounty-M+
 
 # History
 
