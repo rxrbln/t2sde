@@ -104,4 +104,3 @@ gui_cmd() {
         shift ; eval "$@"
 	read -p "Press ENTER to continue."
 }
-
