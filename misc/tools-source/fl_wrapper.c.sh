@@ -400,11 +400,23 @@ static void addptree(int *txtpos, char *cmdtxt, int pid, int basepid)
 	strcpy(l, p);
 }
 
-void copy_getenv (char* var, const char* name)
+void copy_getenv (char* s, const char* name, int maxlen, int term)
 {
-	char *c = getenv(name);
-	if (c) strcpy (var, c);
-	else var[0]=0;
+	char* v = getenv(name);
+	if (v) {
+		if (term) --maxlen;
+		char* send = s + maxlen;
+
+		s = stpncpy(s, v, maxlen);
+		if (s >= send) {
+			fprintf(stderr, "fl_wrapper.so: env string too large: %s\n", v); fflush(stderr);
+			abort();
+		}
+
+		if (term) s[1] = 0;
+	} else {
+		s[0] = 0;
+	}
 }
 
 void __attribute__ ((constructor)) fl_wrapper_init()
@@ -421,12 +433,11 @@ void __attribute__ ((constructor)) fl_wrapper_init()
 
 	/* we copy the vars, so evil code can not unset them ... e.g.
 	   the perl/spamassassin build ... -ReneR */
-	copy_getenv(wlog, "FLWRAPPER_WLOG");
-	copy_getenv(rlog, "FLWRAPPER_RLOG");
-	copy_getenv(filterdir, "FLWRAPPER_FILTERDIR");
+	copy_getenv(wlog, "FLWRAPPER_WLOG", sizeof(wlog), 0);
+	copy_getenv(rlog, "FLWRAPPER_RLOG", sizeof(rlog), 0);
+	copy_getenv(filterdir, "FLWRAPPER_FILTERDIR", sizeof(filterdir), 1);
 
 	/* split filterdir strings once at startup to 0 terminated list */
-	filterdir[strlen(filterdir) + 2] = 0;
 	for (char* tfilterdir = strtok(filterdir, ":");
 	     tfilterdir; tfilterdir = strtok(NULL, ":") ) {
 	}
@@ -445,7 +456,7 @@ static void check_write_access(const char * func, const char * file)
 		else if (strncmp(file, FLWRAPPER_BASEDIR, sizeof(FLWRAPPER_BASEDIR)-1)) {
 			fprintf(stderr, "fl_wrapper.so: write outside basedir (%s): %s\n", FLWRAPPER_BASEDIR, file);
 			fflush(stderr);
-			exit(-1);
+			abort();
 		}
 	}
 }
