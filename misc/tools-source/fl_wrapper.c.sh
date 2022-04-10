@@ -421,9 +421,15 @@ void __attribute__ ((constructor)) fl_wrapper_init()
 
 	/* we copy the vars, so evil code can not unset them ... e.g.
 	   the perl/spamassassin build ... -ReneR */
-	copy_getenv(filterdir, "FLWRAPPER_FILTERDIR");
 	copy_getenv(wlog, "FLWRAPPER_WLOG");
 	copy_getenv(rlog, "FLWRAPPER_RLOG");
+	copy_getenv(filterdir, "FLWRAPPER_FILTERDIR");
+
+	/* split filterdir strings once at startup to 0 terminated list */
+	filterdir[strlen(filterdir) + 2] = 0;
+	for (char* tfilterdir = strtok(filterdir, ":");
+	     tfilterdir; tfilterdir = strtok(NULL, ":") ) {
+	}
 
 	initialized = 1;
 }
@@ -510,10 +516,9 @@ static void sort_of_realpath (const char *file, char absfile[PATH_MAX])
 static void handle_file_access_after(const char * func, const char * file,
                               struct status_t * status)
 {
-	char buf[PATH_MAX], *logfile, filterdir2 [PATH_MAX];
-	char *tfilterdir, *tfilterdir_r;
+	char buf[PATH_MAX], *logfile;
 	char absfile [PATH_MAX];
-	int fd; struct stat st;
+	int fd, len; struct stat st;
 
 	if (!initialized) return;
 #if DEBUG == 1
@@ -536,10 +541,8 @@ static void handle_file_access_after(const char * func, const char * file,
 	/* We ignore access inside the collon seperated directory list
 	   $FLWRAPPER_BASE, to keep the log smaller and reduce post
 	   processing time. -ReneR */
-	strcpy (filterdir2, filterdir); /* due to strtok - sigh */
-	tfilterdir = strtok_r(filterdir2, ":", &tfilterdir_r);
-	for ( ; tfilterdir ; tfilterdir = strtok_r(NULL, ":", &tfilterdir_r) ) {
-		if ( !strncmp(absfile, tfilterdir, strlen(tfilterdir)) ) {
+	for (char* tfilterdir = filterdir; (len = strlen(tfilterdir)) > 0; tfilterdir += len + 1) {
+		if (!strncmp(absfile, tfilterdir, len)) {
 #if DEBUG == 1
 		  fprintf(stderr,
 		          "fl_wrapper.so debug [%d]: \"%s\" dropped due to filterdir \"%s\"\n",
