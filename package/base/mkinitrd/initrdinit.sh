@@ -2,7 +2,7 @@
 
 PATH=/sbin:/bin:/usr/bin:/usr/sbin
 
-echo "T2 SDE early userspace (c)2005-2021 Rene Rebe, ExactCODE GmbH; Germany."
+echo "T2 SDE early userspace (c)2005-2022 Rene Rebe, ExactCODE GmbH; Germany."
 
 function boot {
 	mount -t none -o move {,/mnt}/dev
