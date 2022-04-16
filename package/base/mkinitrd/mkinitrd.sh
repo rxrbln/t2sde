@@ -315,21 +315,24 @@ fi
 # create / truncate
 echo -n > "${outfile:-$root/boot/initrd-$kernelver}"
 
-# include cpu microcode, if available, ...
-if [ -d $root/lib/firmware/amd-ucode ]; then
+if [ "$minimal" != 1 ]; then
+    # include cpu microcode, if available, ...
+    if [ -d $root/lib/firmware/amd-ucode ]; then
 	mkdir -p $tmpdir/kernel/x86/microcode
 	cat $root/lib/firmware/amd-ucode/microcode_amd*.bin > $tmpdir/kernel/x86/microcode/AuthenticAMD.bin
-fi
+    fi
 
-if [ -d $root/lib/firmware/intel-ucode ]; then
+    if [ -d $root/lib/firmware/intel-ucode ]; then
 	mkdir -p $tmpdir/kernel/x86/microcode
 	cat $root/lib/firmware/intel-ucode/* > $tmpdir/kernel/x86/microcode/GenuineIntel.bin
-fi
-if [ -d $tmpdir/kernel/x86/microcode ]; then
+    fi
+
+    if [ -d $tmpdir/kernel/x86/microcode ]; then
     (
 	cd $tmpdir
 	find kernel | cpio -o -H newc >> "${outfile:-$root/boot/initrd-$kernelver}"
     )
+    fi
     rm -rf $tmpdir/kernel
 fi
 
