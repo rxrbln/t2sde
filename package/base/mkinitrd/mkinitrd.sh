@@ -15,6 +15,7 @@ set -e
 
 map=`mktemp`
 firmware=
+microcode=
 minimal=
 network=1
 archprefix=
@@ -43,6 +44,7 @@ while [ "$1" ]; do
 	--firmware) firmware=1 ;;
 	--minimal) minimal=1 ;;
 	--network) network=0 ;;
+	--microcode) microcode=1 ;;
 	-e) filter="$filter $2" ; shift ;;
 	-o) outfile="$2" ; shift ;;
 	*) echo "Usage: mkinitrd [ --firmware ] [ --minimal ] [ --network ] [ -R root ] [ -e filter ] [ -o filename ] [ kernelver ]"
@@ -315,7 +317,7 @@ fi
 # create / truncate
 echo -n > "${outfile:-$root/boot/initrd-$kernelver}"
 
-if [ "$minimal" != 1 ]; then
+if [ "$microcode" ]; then
     # include cpu microcode, if available, ...
     if [ -d $root/lib/firmware/amd-ucode ]; then
 	mkdir -p $tmpdir/kernel/x86/microcode
