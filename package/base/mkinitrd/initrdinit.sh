@@ -39,7 +39,7 @@ if [[ "$resume" = *resume* ]] && [[ "$resume" != *noresume* ]]; then
 	resume=${resume##*resume=} resume=${resume%% *}
 	resume=`ls -l $resume |
 sed 's/[^ ]* *[^ t]* *[^ ]* *[^ ]* *\([0-9]*\), *\([0-9]*\) .*/\1:\2/'`
-	echo "Attempting to resume from disk $resume."
+	echo "Attempting to resume from $resume"
 	echo "$resume" > /sys/power/resume
 fi
 
@@ -69,13 +69,13 @@ if [ "$root" ]; then
     fi
   fi
 
-  echo "Mounting root $mountopt"
+  echo "Mounting $root as / $mountopt"
 
   i=0
   while [ $i -le 9 ]; do
     if [ -e $root -o "$addr" ]; then
 	if [ -z "$addr" ]; then
-	  type -p cryptsetup && cryptsetup isLuks $root --disable-locks &&
+	  type -p cryptsetup >/dev/null && cryptsetup isLuks $root --disable-locks &&
 	          cryptsetup luksOpen $root root --disable-locks && root=/dev/mapper/root
 
 	  # try best match / detected root first, all the others thereafter
@@ -87,8 +87,8 @@ if [ "$root" ]; then
 	fi
 	for fs in $filesystems; do
 	  if mount -t $fs -o $mountopt $root /mnt 2> /dev/null; then
-		echo "Successfully mounted root as $fs."
-		# TODO: later on search other places if we want 100% backward compat?
+		echo "Successfully mounted $root as $fs"
+		# TODO: search other places if we want 100% backward compat?
 		init=${init:-/sbin/init}
 		if [ -f /mnt$init ]; then
 			kill %1
@@ -100,7 +100,7 @@ if [ "$root" ]; then
 	  fi
 	done
     fi
-  [ $(( i++ )) -eq 0 ] && echo "Waiting for root device to become ready."
+  [ $(( i++ )) -eq 0 ] && echo "Waiting for $root ..."
   sleep 1
   done
 fi
