@@ -13,6 +13,8 @@
 
 set -e
 
+disksdir="$build_toolchain"
+
 echo_header "Creating 2nd stage filesystem:"
 rm -rf $disksdir/2nd_stage*
 mkdir -p $disksdir/2nd_stage; cd $disksdir/2nd_stage
@@ -61,7 +63,7 @@ fi
 
 package_map=" $( echo "$packager $package_map" | tr '\n' ' ' | tr '\t' ' ' | tr -s ' ' ) "
 
-echo_status "Copying files."
+echo_status "Copying files:"
 for pkg in `grep '^X ' $base/config/$config/packages | cut -d ' ' -f 5`; do
 	# include the package?
 	#echo maybe $pkg >&2
@@ -78,7 +80,7 @@ done | (
 	         -e 'bin/install' -e 'bin/openssl' -e 'bin/localedef' \
 	         -e '/init.d/' -e '/rc.d/'
 	# TODO: usr/lib/*/
-) > ../files-wanted
+) > ../2nd_stage.files
 
 # some more stuff
 cut -d ' ' -f 2 $build_root/var/adm/flists/{kbd,pciutils,ncurses} |
@@ -86,13 +88,13 @@ grep -e 'usr/share/terminfo/.*/\(ansi\|linux\|.*xterm.*\|vt.*\|screen\|tmux\)' \
      -e 'usr/share/kbd/keymaps/i386/\(include\|azerty\|qwertz\|qwerty\)' \
      -e 'usr/share/kbd/keymaps/include' \
      -e 'usr/share/pci.ids' \
- >> ../files-wanted
+ >> ../2nd_stage.files
 
-copy_with_list_from_file $build_root $PWD $PWD/../files-wanted
+copy_with_list_from_file $build_root $PWD $PWD/../2nd_stage.files
 
 copy_and_parse_from_source $base/target/share/install/rootfs $PWD
 
-echo_status "Creating usability sym-links."
+echo_status "Creating usability sym-links:"
 [ ! -e usr/bin/vi -a -e usr/bin/nvi ] && ln -s nvi usr/bin/vi
 [ ! -e usr/bin/emacs -a -e usr/bin/zile ] && ln -s zile usr/bin/emacs
 [ -e usr/sbin/stone ] && ln -s stone usr/sbin/install
@@ -139,7 +141,7 @@ for x in $progs; do
 	fi
 done
 
-echo_status "Moving the required libraries."
+echo_status "Moving the required libraries:"
 found=1
 while [ $found = 1 ]; do
 	found=0
@@ -169,21 +171,19 @@ while [ $found = 1 ]; do
 done
 
 #
-echo_status "Moving SDE-CONFIG."
+echo_status "Moving additional files:"
 mkdir -p etc/SDE-CONFIG
 mv ../2nd_stage/etc/SDE-CONFIG/config etc/SDE-CONFIG/
-echo_status "Moving stone.d."
 mkdir -p etc/stone.d
 for i in gui_text gui_dialog mod_install mod_packages mod_gas default; do
 	mv ../2nd_stage/etc/stone.d/$i.sh etc/stone.d
 done
-echo_status "Moving additional files."
 mkdir -p usr/share/terminfo/{v,l}/
 mv ../2nd_stage/usr/share/terminfo/l/linux usr/share/terminfo/l/
 mv ../2nd_stage/usr/share/terminfo/v/vt102 usr/share/terminfo/v/
 mv ../2nd_stage/root root
 
-echo_status "Removing shared libraries already in initrd."
+echo_status "Removing shared libraries already in initrd:"
 
 # remove libs already in the regular initrd, for each available kernel:
 for x in `egrep 'X .* KERNEL .*' $base/config/$config/packages |
@@ -215,15 +215,14 @@ for x in `egrep 'X .* KERNEL .*' $base/config/$config/packages |
 done
 
 
-echo_status "Creating links for identical files."
+echo_status "Creating links for identical files:"
 link_identical_files
 
 cd $disksdir/
 
-echo_status "Creating stage2 archive."
+echo_status "Creating stage2 archives"
 (cd 2nd_stage_small; find ! -type d |
 	tar -cf- --no-recursion --files-from=-) | zstd -14 -T0 > $isofsdir/stage2.tar.zst
 
-echo_status "Creating stage2ext archive."
 (cd 2nd_stage; find ! -type d |
 	tar -cf- --no-recursion --files-from=-) | zstd -18 -T0 > $isofsdir/stage2ext.tar.zst
