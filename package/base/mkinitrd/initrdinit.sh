@@ -33,10 +33,12 @@ swap="swap= $cmdline" swap=${swap##*swap=} swap=${swap%% *}
 [ "${root#UUID=}" != "$root" ] && root="/dev/disk/by-uuid/${root#UUID=}"
 [ "${swap#UUID=}" != "$swap" ] && swap="/dev/disk/by-uuid/${swap#UUID=}"
 
-# maybe resume from disk?
+# resume?
 resume="$(< /proc/cmdline)"
 if [[ "$resume" = *resume* ]] && [[ "$resume" != *noresume* ]]; then
 	resume=${resume##*resume=} resume=${resume%% *}
+	[ "${resume#UUID=}" != "$resume" ] && resume="/dev/disk/by-uuid/${resume#UUID=}"
+
 	resume=`ls -l $resume |
 sed 's/[^ ]* *[^ t]* *[^ ]* *[^ ]* *\([0-9]*\), *\([0-9]*\) .*/\1:\2/'`
 	echo "Attempting to resume from $resume"
