@@ -170,7 +170,7 @@ configfile (crypto0)/boot/grub/grub.cfg
 EOT
 	    fi
 	    grub-mkimage -O powerpc-ieee1275 -p /boot/grub \
-		-o /mnt/boot/grub.elf -d /usr/lib*/grub/powerpc-ieee1275 \
+		-o /mnt/grub -d /usr/lib*/grub/powerpc-ieee1275 \
 		$grubmods
 
 	    cat > /mnt/ofboot.b <<-EOT
@@ -184,7 +184,7 @@ T2 SDE
 <BOOT-SCRIPT>
 " screen" output
 load-base release-load-area
-boot hd:2,\\boot\\grub.elf
+boot &device;:,\\grub
 </BOOT-SCRIPT>
 <OS-BADGE-ICONS>
 1010
