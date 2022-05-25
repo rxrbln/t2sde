@@ -8,7 +8,7 @@ function boot {
 	mount -t none -o move {,/mnt}/dev
 	mount -t none -o move {,/mnt}/proc
 	mount -t none -o move {,/mnt}/sys
-	exec switch_root /mnt $init $*
+	exec switch_root /mnt "$@"
 }
 
 echo "Mounting /dev, /proc and /sys"
@@ -94,7 +94,7 @@ if [ "$root" ]; then
 		init=${init:-/sbin/init}
 		if [ -f /mnt$init ]; then
 			kill %1
-			boot $init $*
+			boot $init "$@"
 		else
 			echo "Specified init ($init) does not exist!"
 		fi
@@ -111,5 +111,4 @@ fi
 
 echo "No root or init, but we do not scream, debug shell:"
 kill %1
-
 exec /bin/sh
