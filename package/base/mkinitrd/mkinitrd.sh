@@ -20,6 +20,7 @@ minimal=
 network=1
 archprefix=
 outfile=
+compressor="zstd -T0 -19"
 
 declare -A vitalmods
 vitalmods[qla1280.ko]=1 # Sgi Octane
@@ -153,7 +154,7 @@ if [ "$moddir" ]; then
 			echo -n ", $fn"
 			cp -af "$root$fn" "$dir/"
 			# TODO: copy source if symlink
-			[ -f "$tmpdir$fn" ] && zstd -19 --rm -f --quiet "$tmpdir$fn"
+			[ -f "$tmpdir$fn" ] && $compressor --rm -f --quiet "$tmpdir$fn"
 		    fi
 		done
 		echo
@@ -166,7 +167,7 @@ if [ "$moddir" ]; then
 	if [ -z "$skipped" ]; then
 	    mkdir -p `dirname ./$xt` # TODO: use builtin?
 	    cp -af $x $tmpdir$xt
-	    zstd -19 --rm -f --quiet $tmpdir$xt
+	    $compressor --rm -f --quiet $tmpdir$xt
 
 	    # add it's deps, too
 	    for fn in `$modinfo -F depends $x | sed 's/,/ /g'`; do
@@ -342,6 +343,6 @@ fi
 #
 echo "Archiving ..."
 ( cd $tmpdir
-  find . | cpio -o -H newc | zstd -19 -T0 >> "${outfile:-$root/boot/initrd-$kernelver}"
+  find . | cpio -o -H newc | $compressor >> "${outfile:-$root/boot/initrd-$kernelver}"
 )
 rm -rf $tmpdir $map
