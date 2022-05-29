@@ -173,7 +173,7 @@ EOT
 		-o /mnt/grub -d /usr/lib*/grub/powerpc-ieee1275 \
 		$grubmods
 
-	    cat > /mnt/ofboot.b <<-EOT
+	    cat > /mnt/boot/ofboot.b <<-EOT
 <CHRP-BOOT>
 <COMPATIBLE>
 MacRISC MacRISC3 MacRISC4
@@ -242,8 +242,8 @@ EOT
 
 	    umount /mnt
 	    hmount $bootstrap
-	    hattrib -b bootstrap:
-	    hattrib -c UNIX -t tbxi bootstrap:ofboot.b
+	    hattrib -b bootstrap:boot
+	    hattrib -c UNIX -t tbxi bootstrap:boot:ofboot.b
 	    humount
 	fi
     fi
