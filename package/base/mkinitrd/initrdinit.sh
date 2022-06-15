@@ -35,7 +35,7 @@ swap="swap= $cmdline" swap=${swap##*swap=} swap=${swap%% *}
 
 # resume?
 resume="$(< /proc/cmdline)"
-if [[ "$resume" = *resume* ]] && [[ "$resume" != *noresume* ]]; then
+if [[ "$resume" = *resume* && "$resume" != *noresume* ]]; then
 	resume=${resume##*resume=} resume=${resume%% *}
 	[ "${resume#UUID=}" != "$resume" ] && resume="/dev/disk/by-uuid/${resume#UUID=}"
 
