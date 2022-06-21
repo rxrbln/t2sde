@@ -18,14 +18,17 @@ mount -t sysfs none /sys
 mkdir -p /tmp /mnt
 ln -s /proc/self/fd /dev/fd
 
-echo "$(< /proc/sys/kernel/ostype) $(< /proc/sys/kernel/osrelease)," \
+if [ -e /proc/cmdline ]; then
+	cmdline="$(< /proc/cmdline)"
+	echo "$(< /proc/sys/kernel/ostype) $(< /proc/sys/kernel/osrelease)," \
 "populating u/dev"
+fi
+
 udevd &
 udevadm trigger
 udevadm settle
 
 # get the root device, init, early swap
-cmdline="$(< /proc/cmdline)" 
 root="root= $cmdline" root=${root##*root=} root=${root%% *}
 init="init= $cmdline" init=${init##*init=} init=${init%% *}
 swap="swap= $cmdline" swap=${swap##*swap=} swap=${swap%% *}
@@ -33,12 +36,9 @@ swap="swap= $cmdline" swap=${swap##*swap=} swap=${swap%% *}
 [ "${root#UUID=}" != "$root" ] && root="/dev/disk/by-uuid/${root#UUID=}"
 [ "${swap#UUID=}" != "$swap" ] && swap="/dev/disk/by-uuid/${swap#UUID=}"
 
-# resume?
-resume="$(< /proc/cmdline)"
-if [[ "$resume" = *resume* && "$resume" != *noresume* ]]; then
-	resume=${resume##*resume=} resume=${resume%% *}
-	[ "${resume#UUID=}" != "$resume" ] && resume="/dev/disk/by-uuid/${resume#UUID=}"
-
+# maybe resume from disk?
+resume="resume= $cmdline" resume=${resume##*resume=} resume=${resume%% *}
+if [[ "$resume" != "" && "$cmdline" != *noresume* ]]; then
 	resume=`ls -l $resume |
 sed 's/[^ ]* *[^ t]* *[^ ]* *[^ ]* *\([0-9]*\), *\([0-9]*\) .*/\1:\2/'`
 	echo "Attempting to resume from $resume"
