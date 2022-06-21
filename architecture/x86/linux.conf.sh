@@ -70,7 +70,6 @@
 	case "$linux_arch" in
 		386|486)
 			echo "CONFIG_MATH_EMULATION=y"
-			echo "# CONFIG_SMP is not set"
 			echo "# CONFIG_NAMESPACES is not set"
 			;;
 		*)
@@ -86,7 +85,7 @@
 		CONFIG_HIGHMEM4G=y
 		CONFIG_HIGHMEM64G=y
 		CONFIG_X86_PAE=y
-	EOT
+EOT
 
 	echo
 	cat <<- 'EOT'
@@ -95,7 +94,13 @@
 		include(`linux-block.conf.m4')
 		include(`linux-net.conf.m4')
 		include(`linux-fs.conf.m4')
+EOT
 
+	[ ! "$pae" ] &&
+		echo "# CONFIG_SMP is not set" &&
+		echo CONFIG_NOHIGHMEM=y
+
+	cat <<- 'EOT'
 		CONFIG_PATA_LEGACY=m
 		CONFIG_X86_ANCIENT_MCE=y
 		# CONFIG_HYPERVISOR_GUEST is not set
