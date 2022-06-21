@@ -10,7 +10,7 @@
 # --- T2-COPYRIGHT-NOTE-END ---
 
 {
-	cat <<- 'EOT'
+	cat <<- EOT
 		define(`INTEL', `Intel X86 PCs')dnl
 		
 		dnl CPU configuration
@@ -77,7 +77,7 @@
 			;;
 	esac
 
-	[ "$pae" ] && cat <<- 'EOT'
+	[ "$pae" ] && cat <<- EOT
 		dnl Allow more than 4GB (split 3/1) of RAM by default
 		dnl (and NX (Execute Disable) protection)
 		dnl
@@ -88,7 +88,7 @@
 EOT
 
 	echo
-	cat <<- 'EOT'
+	cat <<- EOT
 		include(`linux-x86.conf.m4')
 		include(`linux-common.conf.m4')
 		include(`linux-block.conf.m4')
