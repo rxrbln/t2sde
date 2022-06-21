@@ -54,6 +54,12 @@ while [ "$1" ]; do
   shift
 done
 
+if [ ! "$outfile" ]; then
+    [ "$minimal" = 1 ] &&
+	outfile="$root/boot/minird-$kernelver" ||
+	outfile="$root/boot/initrd-$kernelver"
+fi
+
 [ "$minimal" != 1 ] && filter="$filter -e reiserfs -e btrfs -e /jfs -e /xfs -e jffs2
 -e /udf -e /unionfs -e ntfs -e /fat -e /hfs -e floppy
 -e /ata/ -e /scsi/ -e /fusion/ -e /sdhci/ -e nvme/host -e /mmc/ -e ps3fb -e ps3disk
@@ -315,7 +321,7 @@ if test -f "$root/boot/DSDT.aml"; then
 fi
 
 # create / truncate
-echo -n > "${outfile:-$root/boot/initrd-$kernelver}"
+echo -n > "$outfile"
 
 if [ "$microcode" ]; then
     # include cpu microcode, if available, ...
@@ -343,7 +349,10 @@ fi
 echo "Archiving ..."
 ( cd $tmpdir
   # sorted by priority in case of out-of-memory
-  find init proc sys dev *bin usr lib*/[a-eg-ln-z]* etc lib*/[mf]* |
-	cpio -o -H newc | $compressor >> "${outfile:-$root/boot/initrd-$kernelver}"
+  find init proc sys dev *bin usr etc lib* \( -path lib/modules -o -path lib/firmware \) -prune -o -print
+  find lib/[mf]*
+) | (
+  cd $tmpdir
+  cpio -o -H newc | $compressor >> "$outfile"
 )
 rm -rf $tmpdir $map
