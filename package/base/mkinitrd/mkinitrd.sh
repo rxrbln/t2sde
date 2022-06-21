@@ -270,8 +270,7 @@ copy_dyn_libs () {
 
 # setup programs
 #
-for x in $root/sbin/{udevd,udevadm,kmod,modprobe,insmod,blkid} \
-         $root/usr/sbin/disktype
+for x in $root/sbin/{udevd,udevadm} $root/usr/sbin/disktype
 do
 	cp -av $x $tmpdir/sbin/
 	copy_dyn_libs $x
@@ -280,7 +279,7 @@ done
 # setup optional programs
 #
 [ "$minimal" != 1 ] &&
-for x in $root/sbin/{vgchange,lvchange,lvm,mdadm} \
+for x in $root/sbin/{kmod,modprobe,insmod,blkid,vgchange,lvchange,lvm,mdadm} \
 	 $root/usr/sbin/{cryptsetup,ipconfig} $root/usr/embutils/{dmesg,swapon}
 do
   if [ ! -e $x ]; then
@@ -343,6 +342,8 @@ fi
 #
 echo "Archiving ..."
 ( cd $tmpdir
-  find . | cpio -o -H newc | $compressor >> "${outfile:-$root/boot/initrd-$kernelver}"
+  # sorted by priority in case of out-of-memory
+  find init proc sys dev *bin usr lib*/[a-eg-ln-z]* etc lib*/[mf]* |
+	cpio -o -H newc | $compressor >> "${outfile:-$root/boot/initrd-$kernelver}"
 )
 rm -rf $tmpdir $map
