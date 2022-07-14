@@ -13,7 +13,7 @@ define(`SPARC', 'SPARC')dnl
 
 # CONFIG_SUN4 is not set
 
-# dnl run on old V7
+dnl run on old V7
 # CONFIG_MATH_EMULATION=y
 
 CONFIG_FB=y
@@ -37,25 +37,14 @@ include(`linux-block.conf.m4')
 include(`linux-net.conf.m4')
 include(`linux-fs.conf.m4')
 
-CONFIG_EXPERT=y
+dnl need to make it small
 
 # CONFIG_SMP is not set
 CONFIG_PREEMPT_NONE=y
+
+include(`linux-small.conf.m4')
+
 # CONFIG_PCI is not set
-# CONFIG_HIGH_RES_TIMERS is not set
-CONFIG_LOG_BUF_SHIFT=14
-
-# CONFIG_NAMESPACES is not set
-
-# CONFIG_DEBUG_KERNEL is not set
-# RUNTIME_TESTING_MENU is not set
-# CONFIG_KALLSYMS is not set
-# CONFIG_BPF is not set
-# CONFIG_COMPACTION is not set
-# CONFIG_KSM is not set
-# CONFIG_CHECKPOINT_RESTORE is not set
-# CONFIG_DEBUG_FS is not set
-
 # CONFIG_WIRELESS is not set
 # CONFIG_MEDIA_SUPPORT is not set
 # CONFIG_VIDEO_V4L2 is not set
