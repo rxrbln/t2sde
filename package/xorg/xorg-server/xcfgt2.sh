@@ -4,7 +4,7 @@
 # 
 # T2 SDE: package/.../xorg-server/xcfgt2.sh
 # Copyright (C) 2005 - 2017 The T2 SDE Project
-# Copyright (C) 2005 - 2020 Rene Rebe - ExactCODE
+# Copyright (C) 2005 - 2022 Rene Rebe - ExactCODE
 # 
 # More information can be found in the files COPYING and README.
 # 
@@ -24,7 +24,7 @@ var_append() {
 
 tmp=`mktemp`
 
-echo "XcfgT2 (C) 2005 - 2020 Rene Rebe, ExactCODE"
+echo "XcfgT2 (C) 2005 - 2022 Rene Rebe, ExactCODE"
 
 sysid=
 if type -p dmidecode >/dev/null; then
@@ -96,8 +96,13 @@ case `echo "$card" | tr A-Z a-z` in
 	*sis*|*xgi*)	xdrv=sis ;;
 
 	creator\ 3d|elite\ 3d)	xdrv=sunffb ;;
-	tcx*) xdrv=suntcx; depth=8 ;;
-	gx* |tgx*) xdrv=suncg6; depth=8 ;;
+	bwtwo)		xdrv=sunbw2; depth=1 ;;
+	cgthree) 	xdrv=suncg3; depth=8 ;;
+	gx*|tgx*)	xdrv=suncg6; depth=8 ;;
+	cgfourteen)	xdrv=suncg6; depth=32 ;;
+	tcx8)		xdrv=suntcx; depth=8 ;;
+	tcx24)		xdrv=suntcx; depth=32 ;;
+	*leo)		xdrv=sunsun; depth=32 ;;
 
 	# must be last so *nv* does not match one of the above
 	*nv*)		xdrv=nv
