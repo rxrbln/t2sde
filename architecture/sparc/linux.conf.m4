@@ -16,6 +16,11 @@ define(`SPARC', 'SPARC')dnl
 dnl run on old V7
 # CONFIG_MATH_EMULATION=y
 
+include(`linux-common.conf.m4')
+include(`linux-block.conf.m4')
+include(`linux-net.conf.m4')
+include(`linux-fs.conf.m4')
+
 CONFIG_SERIAL_SUNZILOG=y
 CONFIG_SERIAL_SUNZILOG_CONSOLE=y
 CONFIG_SERIAL_8250=m
@@ -37,11 +42,6 @@ CONFIG_FB_LEO=y
 CONFIG_FB_P9100=y
 
 CONFIG_FONT_SUN8x16=y
-
-include(`linux-common.conf.m4')
-include(`linux-block.conf.m4')
-include(`linux-net.conf.m4')
-include(`linux-fs.conf.m4')
 
 dnl need to make it small
 
