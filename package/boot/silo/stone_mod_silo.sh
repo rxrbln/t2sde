@@ -16,7 +16,7 @@ create_kernel_list() {
 	first=1
 	for x in `(cd /boot/; ls vmlinuz-*) | sort -r` ; do
 		if [ $first = 1 ] ; then
-			label=linux ; first=0
+			label=linux first=0
 		else
 			label=linux-${x/vmlinuz-/}
 		fi

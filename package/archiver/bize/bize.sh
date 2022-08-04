@@ -124,7 +124,7 @@ bize_main()
 			-r) remove=1 ;;
 			-t) test=echo ;;
 			-f) keep="" ;;
-			-v) verbose=v ; voption=-v ;;
+			-v) verbose=v voption=-v ;;
 			-R) shift ; root="$1" ;;
 			-R*) root="${1#-R}" ;;
 			--) break ;;
