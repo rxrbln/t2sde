@@ -16,7 +16,7 @@
 create_kernel_list() {
 	first=1
 	for x in `(cd /boot/ ; ls vmlinux-*) | sort -r` ; do
-		if [ $first = 1 ] ; then
+		if [ $first = 1 ]; then
 			label=linux first=0
 		else
 			label=linux-${x/vmlinux-/}
@@ -77,12 +77,12 @@ $( cat /etc/yaboot.conf )"
 yaboot_install()
 {
 	# format the boostrap if not already done	
-	if hmount $bootstrapdev > /dev/null ; then
+	if hmount $bootstrapdev > /dev/null; then
 		humount
 	else
 		if gui_yesno "The boostrap device \
 $bootstrapdev is not yet HFS formated. \
-Format now?" ; then
+Format now?"; then
 			hformat $bootstrapdev
 		else
 			return 1
@@ -101,12 +101,12 @@ yaboot_install_doit() {
 
 device4() {
 	local dev="`sed -n "s,\([^ ]*\) $1 .*,\1,p" /proc/mounts | tail -n 1`"
-	if [ ! "$dev" ] ; then # try the higher dentry
+	if [ ! "$dev" ]; then # try the higher dentry
 		local try="`dirname $1`"
 		dev="`grep \" $try \" /proc/mounts | tail -n 1 | \
 		      cut -d ' ' -f 1`"
 	fi
-	if [ -h "$dev" ] ; then 
+	if [ -h "$dev" ]; then 
 	  echo "/dev/`readlink $dev`"
 	else
 	  echo $dev
@@ -134,13 +134,13 @@ main() {
 	[ "$macosxpart" ] && macosxdev="$dev$macosxpart"
 
 	if [ "$rootdev" = "$bootdev" ]
-	then bootpath=/boot ; else bootpath="" ; fi
+	then bootpath=/boot; else bootpath=""; fi
 
 	if [ "$rootdev" = "$yabootdev" ]
-	then yabootpath=/usr ; else yabootpath="" ; fi
+	then yabootpath=/usr; else yabootpath=""; fi
 	yabootpart="`echo $yabootdev | sed 's/[^0-9]*//'`"
 
-	if [ ! -f /etc/yaboot.conf ] ; then
+	if [ ! -f /etc/yaboot.conf ]; then
 	  if gui_yesno "Yaboot does not appear to be configured.
 Automatically install yaboot now?"; then
 	    create_yaboot_conf

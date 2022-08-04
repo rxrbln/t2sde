@@ -12,23 +12,23 @@
 # --- T2-COPYRIGHT-NOTE-END ---
 
 export SETUPD="${SETUPD:-/etc/stone.d}"
-if type -p dialog > /dev/null ; then 
+if type -p dialog > /dev/null; then 
 	export SETUPG="${SETUPG:-dialog}"
 else
 	export SETUPG="${SETUPG:-text}"
 fi
 export STONE="`type -p $0`"
 
-if [ "$1" = "-text"   ] ; then SETUPG="text"   ; shift ; fi
-if [ "$1" = "-dialog" ] ; then SETUPG="dialog" ; shift ; fi
-if [ "$1" = "-x11"    ] ; then SETUPG="x11"    ; shift ; fi
+if [ "$1" = "-text"   ]; then SETUPG="text"   ; shift; fi
+if [ "$1" = "-dialog" ]; then SETUPG="dialog" ; shift; fi
+if [ "$1" = "-x11"    ]; then SETUPG="x11"    ; shift; fi
 
 . ${SETUPD}/gui_${SETUPG}.sh
 
 if [ "$1" -a -f "${SETUPD}/mod_$1.sh" ]
 then
 	. ${SETUPD}/mod_$1.sh ; shift
-	if [ -z "$*" ] ; then
+	if [ -z "$*" ]; then
 		main
 	else
 		eval "$*"

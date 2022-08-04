@@ -17,7 +17,7 @@ create_kernel_list() {
 	first=1
 	for x in `(cd /boot/; ls vmlinuz-*) | sort -r` ; do
 		ver=${x/vmlinuz-/}
-		if [ $first = 1 ] ; then
+		if [ $first = 1 ]; then
 			label=linux first=0
 		else
 			label=linux-$ver
@@ -128,7 +128,7 @@ main() {
 		i=$(( $i + 1 )) ; [ $i -gt 20 ] && bootdev="Not found!"
 	done
 
-	if [ ! -f /boot/grub/menu.lst ] ; then
+	if [ ! -f /boot/grub/menu.lst ]; then
 	  if gui_yesno "GRUB does not appear to be configured.
 Automatically install GRUB now?"; then
 	    create_device_map
@@ -143,7 +143,7 @@ Automatically install GRUB now?"; then
 
 	while
 
-	if [ -s /boot/grub/device.map ] ; then
+	if [ -s /boot/grub/device.map ]; then
 		rootdrive=`convert_device $rootdev`
 		bootdrive=`convert_device $bootdev`
 	else    
