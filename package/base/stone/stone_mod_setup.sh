@@ -93,13 +93,13 @@ EOT
 }
 
 set_rootpw() {
-	if [ "$SETUPG" = dialog ] ; then
+	if [ "$SETUPG" = dialog ]; then
 		tmp1="`mktemp`" ; tmp2="`mktemp`" ; rc=0
 		gui_dialog --nocancel --passwordbox "Setting a root password. `
 			`Type password:" 8 70 > $tmp1
 		gui_dialog --nocancel --passwordbox "Setting a root password. `
 			`Retype password:" 8 70 > $tmp2
-		if [ -s $tmp1 ] && cmp -s $tmp1 $tmp2 ; then
+		if [ -s $tmp1 ] && cmp -s $tmp1 $tmp2; then
 			echo -n "root:" > $tmp1 ; echo >> $tmp2
 			cat $tmp1 $tmp2 | chpasswd
 		else

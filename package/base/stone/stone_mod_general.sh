@@ -38,8 +38,8 @@ set_keymap() {
 
 set_vcfont() {
 	vcfont=$(ls -l /etc/default.vcfont 2> /dev/null | sed 's,.*/,,')
-	if [ -z "$vcfont" ] ; then vcfont="none"
-	else vcfont="`echo $vcfont | sed -e "s,\.\(fnt\|psf.*\)\.gz$,,"`" ; fi
+	if [ -z "$vcfont" ]; then vcfont="none"
+	else vcfont="`echo $vcfont | sed -e "s,\.\(fnt\|psf.*\)\.gz$,,"`"; fi
 	fontdir="/usr/share/kbd/consolefonts"
 
 	cmd="gui_menu 'general_vcfont' 'Select one of the following console fonts.'"
@@ -54,7 +54,7 @@ set_vcfont() {
 }
 
 store_kbd(){
-	if [ -f /etc/conf/kbd ] ; then
+	if [ -f /etc/conf/kbd ]; then
 		sed -e "s/kbd_rate=.*/kbd_rate=$kbd_rate/" \
 		    -e "s/kbd_delay=.*/kbd_delay=$kbd_delay/" < /etc/conf/kbd \
 		  > /etc/conf/kbd.tmp
@@ -83,7 +83,7 @@ set_kbd_delay() {
 }
 
 store_con() {
-	if [ -f /etc/conf/console ] ; then
+	if [ -f /etc/conf/console ]; then
 		sed -e "s/con_term=.*/con_term=$con_term/" \
 		    -e "s/con_blank=.*/con_blank=$con_blank/" \
 		    -e "s/con_blength=.*/con_blength=$con_blength/" \
@@ -139,10 +139,10 @@ set_tmarea() {
 	tz="$( ls -l /etc/localtime | cut -f7 -d/ )"
 	cmd="gui_menu 'general_tmarea' 'Select one of the following time areas.'"
 
-	cmd="$cmd 'Current: $tz' 'if set_tmzone $tz ; then tzset=1 ; fi'"
+	cmd="$cmd 'Current: $tz' 'if set_tmzone $tz; then tzset=1; fi'"
 	cmd="$cmd $( grep '^[^#]' /usr/share/zoneinfo/zone.tab | cut -f3 | \
 		cut -f1 -d/ | sort -u | tr '\n' ' ' | sed 's,[^ ]\+,& '`
-		`'"if set_tmzone & ; then tzset=1 ; fi",g' )"
+		`'"if set_tmzone &; then tzset=1; fi",g' )"
 
 	tzset=0
 	while eval "$cmd" && [ $tzset = 0 ] ; do : ; done
@@ -156,7 +156,7 @@ set_dtime() {
 	[ "$clock_tz" != localtime ] && clock_tz=utc
 	gui_input "Set new date and time (MM-DD hh:mm YYYY, $clock_tz)" \
 	          "$dtime" "newdtime"
-	if [ "$dtime" != "$newdtime" ] ; then
+	if [ "$dtime" != "$newdtime" ]; then
 		echo "Setting new date and time ($newdtime) ..."
 		if ! date "$( echo $newdtime | sed 's,[^0-9],,g' )"; then
 			gui_message "Error setting time, invalid timespec?"
@@ -211,8 +211,8 @@ main() {
 	keymap=$(ls -l /etc/default.keymap 2> /dev/null | sed 's,.*/,,')
 	[ "$keymap" ] || keymap="none" ; keymap="${keymap%.map.gz}"
 	vcfont=$(ls -l /etc/default.vcfont 2> /dev/null | sed 's,.*/,,')
-	if [ -z "$vcfont" ] ; then vcfont="none"
-	else vcfont="`echo $vcfont | sed -e "s,\.\(fnt\|psf.*\)\.gz$,,"`" ; fi
+	if [ -z "$vcfont" ]; then vcfont="none"
+	else vcfont="`echo $vcfont | sed -e "s,\.\(fnt\|psf.*\)\.gz$,,"`"; fi
 	dtime="`date '+%m-%d %H:%M %Y'`"
 	[ -f /etc/conf/kbd ] && . /etc/conf/kbd
 	[ "$kbd_rate" ] || kbd_rate=30

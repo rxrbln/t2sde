@@ -15,7 +15,7 @@
 create_kernel_list() {
 	first=1
 	for x in `(cd /boot/; ls vmlinuz-*) | sort -r` ; do
-		if [ $first = 1 ] ; then
+		if [ $first = 1 ]; then
 			label=linux first=0
 		else
 			label=linux-${x/vmlinuz-/}
@@ -60,12 +60,12 @@ device4()
 {
 	local dev="`grep \" $1 \" /proc/mounts | tail -n 1 |
 	            cut -d ' ' -f 1`"
-	if [ ! "$dev" ] ; then # try the higher dentry
+	if [ ! "$dev" ]; then # try the higher dentry
 		local try="`dirname $1`"
 		dev="`grep \" $try \" /proc/mounts | tail -n 1 | \
 		      cut -d ' ' -f 1`"
 	fi
-	if [ -h "$dev" ] ; then
+	if [ -h "$dev" ]; then
 	  echo "/dev/`readlink $dev`"
 	else
 	  echo $dev
@@ -85,9 +85,9 @@ main() {
 	bootdev="`device4 /boot`"
 
 	if [ "$rootdev" = "$bootdev" ]
-	then bootpath=/boot ; else bootpath="" ; fi
+	then bootpath=/boot; else bootpath=""; fi
 
-	if [ ! -f /boot/silo.conf ] ; then
+	if [ ! -f /boot/silo.conf ]; then
 	  if gui_yesno "SILO does not appear to be configured.
 Automatically install SILO now?"; then
 	    create_silo_conf

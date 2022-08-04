@@ -55,7 +55,7 @@ public_interface() {
 		fi
 	fi
 
-	if [ "$ignore" = 0 ] ; then
+	if [ "$ignore" = 0 ]; then
 		imatched=1
 		status "Interface / profile matched: $if($prof)"
 		addcode up 9 9 "register $if\($prof\)"

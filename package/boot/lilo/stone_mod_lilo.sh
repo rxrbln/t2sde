@@ -17,7 +17,7 @@ create_kernel_list() {
 	local label= first=1 initrd=
         first=1
         for x in `(cd /boot/; ls vmlinuz-*) | sort -r` ; do
-                if [ $first = 1 ] ; then
+                if [ $first = 1 ]; then
                         label=linux first=0
                 else
                         label=linux-${x/vmlinuz-/}
@@ -72,11 +72,11 @@ $( cat /etc/lilo.conf )"
 
 main() {
 
-	if [ ! -f /etc/lilo.conf ] ; then
+	if [ ! -f /etc/lilo.conf ]; then
 	  if gui_yesno "LILO does not appear to be configured.
 Automatically install LILO now?"; then
 	    create_lilo_conf
-	    if ! gui_cmd "Installing LILO in MBR" "lilo -v" ; then
+	    if ! gui_cmd "Installing LILO in MBR" "lilo -v"; then
 	      gui_message "There was an error while installing LILO."
 	    fi
 	  fi

@@ -12,13 +12,13 @@
 #
 # [MAIN] 90 packages Package Management (Install, Update and Remove)
 
-if [ -n "$ROCK_INSTALL_SOURCE_DEV" ] ; then
+if [ -n "$ROCK_INSTALL_SOURCE_DEV" ]; then
 	dev="$ROCK_INSTALL_SOURCE_DEV"
 	dir="/media" root="/mnt"
 	gasguiopt="-F"
 
 	SDECFG_SHORTID="Automatically choose first"
-elif [ -n "$ROCK_INSTALL_SOURCE_URL" ] ; then
+elif [ -n "$ROCK_INSTALL_SOURCE_URL" ]; then
 	dev="NETWORK INSTALL"
 	dir="$ROCK_INSTALL_SOURCE_URL" root="/mnt"
 	gasguiopt="-F"
@@ -42,7 +42,7 @@ read_ids() {
 
 	cmd="$cmd '' ''"
 
-	if mount $opt $dev $mnt ; then
+	if mount $opt $dev $mnt; then
 		for x in `cd $mnt; ls -d */{,TOOLCHAIN/}pkgs 2> /dev/null | sed -e 's,/pkgs$,,'`
 		do
 			cmd="$cmd '$x' 'SDECFG_SHORTID=\"$x\"'"
@@ -65,7 +65,7 @@ startgas() {
 	SDECFG_PKGFILE_TYPE="$(grep '^export SDECFG_PKGFILE_TYPE=' \
                 /etc/SDE-CONFIG/config 2> /dev/null | cut -f2- -d=)"
 	SDECFG_PKGFILE_TYPE="${SDECFG_PKGFILE_TYPE//\'/}"
-	if [ $startgas = 1 ] ; then
+	if [ $startgas = 1 ]; then
 		echo
 		echo "Running: gasgui $gasguiopt \\"
 		echo "                -c '$SDECFG_SHORTID' \\"
@@ -75,7 +75,7 @@ startgas() {
 		echo "                -S '$SDECFG_PKGFILE_TYPE'"
 		echo
 		gasgui $gasguiopt -c "$SDECFG_SHORTID" -t "$root" -d "$dev" -s "$dir" -S "$SDECFG_PKGFILE_TYPE"
-	elif [ $startgas = 2 ] ; then
+	elif [ $startgas = 2 ]; then
 		echo
 		echo "Running: stone gas main \\"
 		echo "               '$SDECFG_SHORTID' \\"
@@ -115,7 +115,7 @@ a simple frontend for the \"mine\" program.'"
 			cmd="$cmd 'Start gasgui Package Manager (recommended)' 'startgas=1'"
 		cmd="$cmd 'Start gastone Package manager (minimal)'  'startgas=2'"
 
-		if eval "$cmd" ; then
+		if eval "$cmd"; then
 			if [ $startgas != 0 ]; then
 				startgas $startgas
 				break
