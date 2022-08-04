@@ -109,7 +109,7 @@ part_unmounted_action() {
 part_add() {
 	local action="unmounted" location="currently not mounted"
 	if grep -q "^/dev/$1 " /proc/swaps; then
-		action=swap; location="swap  <no mount point>"
+		action=swap location="swap  <no mount point>"
 	elif grep -q "^/dev/$1 " /proc/mounts; then
 		action=mounted
 		location="`grep "^/dev/$1 " /proc/mounts | cut -d ' ' -f 2 |

@@ -30,7 +30,7 @@ create_kernel_list() {
 		[[ $arch = *86* ]] && x=${x/vmlinux/vmlinuz}
 		[[ $arch = *arm* ]] && x=${x/vmlinux/Image}.gz
 		if [ $first = 1 ]; then
-			label=linux; first=0
+			label=linux first=0
 		else
 			label=linux-$ver
 		fi
@@ -317,7 +317,7 @@ main() {
 	fi
 
 	[ "$bootdev" ] || bootdev="$rootdev"
-	instdev=$(get_realdev $bootdev); instdev="${instdev%%[0-9*]}"
+	instdev=$(get_realdev $bootdev) instdev="${instdev%%[0-9*]}"
 	[ "$grubdev" ] || grubdev="${bootdev##*/}"
 
 	if [ ! -f /boot/grub/grub.cfg ]; then
