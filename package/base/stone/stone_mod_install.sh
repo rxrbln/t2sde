@@ -85,7 +85,7 @@ part_decrypt() {
 
 part_crypt() {
 	local dev=$1
-	cryptsetup luksFormat --disable-locks --type luks1 /dev/$dev || return
+	cryptsetup luksFormat --disable-locks --pbkdf=pbkdf2 /dev/$dev || return
 
 	part_decrypt $dev
 }
