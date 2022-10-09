@@ -37,6 +37,7 @@ part_mount() {
 		then
 			mkdir -p /mnt/$dir
 			mount /dev/$dev /mnt/$dir
+			[ "$2" ] && mount -o remount,$2 /mnt/$dir 2>/dev/null
 		else
 			gui_message "Please mount a root filesystem first."
 		fi
@@ -64,7 +65,7 @@ part_mkfs() {
 	maybe_add xfs	'Sgi journaling'	'mkfs.xfs' '-f'
 	maybe_add fat	'File Allocation Table'	'mkfs.fat'
 
-	eval "$cmd" && part_mount $dev
+	eval "$cmd" && part_mount $dev "compress=zstd"
 }
 
 part_decrypt() {
