@@ -12,8 +12,16 @@
 # [MAIN] 70 palo PALO Setup
 # [SETUP] 90 palo
 
+get_realdev() {
+	local dev="$1"
+	dev=$(readlink $dev)
+	[ "$dev" ] && echo /dev/${dev##*/} || echo $1
+}
+
 install_palo() {
-	palo -U "${bootdev%[0-9]*}"
+	local dev="$(get_realdev "$1")"
+	dev="${dev%[0-9]*}"
+	palo -U "$dev" || palo -I "$dev"
 }
 
 create_kernel_list() {
