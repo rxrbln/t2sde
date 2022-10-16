@@ -1,0 +1,2016 @@
+From 28b8e3d62cc40ce4baac2099f4bccdab26f9f561 Mon Sep 17 00:00:00 2001
+From: Tejas Joshi <TejasSanjay.Joshi@amd.com>
+Date: Tue, 28 Jun 2022 16:33:53 +0530
+Subject: [PATCH] Enable AMD znver4 support and add instruction reservations
+
+2022-09-28  Tejas Joshi <TejasSanjay.Joshi@amd.com>
+
+gcc/ChangeLog:
+
+	* common/config/i386/cpuinfo.h (get_amd_cpu): Recognize znver4.
+	* common/config/i386/i386-common.cc (processor_names): Add znver4.
+	(processor_alias_table): Add znver4 and modularize old znvers.
+	* common/config/i386/i386-cpuinfo.h (processor_subtypes):
+	AMDFAM19H_ZNVER4.
+	* config.gcc (x86_64-*-* |...): Likewise.
+	* config/i386/driver-i386.cc (host_detect_local_cpu): Let
+	-march=native recognize znver4 cpus.
+	* config/i386/i386-c.cc (ix86_target_macros_internal): Add znver4.
+	* config/i386/i386-options.cc (m_ZNVER4): New definition.
+	(m_ZNVER): Include m_ZNVER4.
+	(processor_cost_table): Add znver4.
+	* config/i386/i386.cc (ix86_reassociation_width): Likewise.
+	* gcc/config/i386/i386.h (processor_type): Add PROCESSOR_ZNVER4.
+	(PTA_ZNVER1): New definition.
+	(PTA_ZNVER2): Likewise.
+	(PTA_ZNVER3): Likewise.
+	(PTA_ZNVER4): Likewise.
+	* config/i386/i386.md (define_attr "cpu"): Add znver4.
+	* config/i386/x86-tune-costs.h (znver4_cost): New definition.
+	* config/i386/x86-tune-sched.cc (ix86_issue_rate): Add znver4.
+	(ix86_adjust_cost): Likewise.
+	* config/i386/znver1.md: Add new reservations for znver4.
+	* doc/extend.texi: Add details about znver4.
+	* doc/invoke.texi: Likewise.
+
+gcc/testsuite/ChangeLog:
+
+	* gcc.target/i386/funcspec-56.inc: Handle new march.
+	* g++.target/i386/mv29.C: Likewise.
+
+---
+ gcc/common/config/i386/cpuinfo.h              |  16 +-
+ gcc/common/config/i386/i386-common.cc         |  35 +-
+ gcc/common/config/i386/i386-cpuinfo.h         |   1 +
+ gcc/config.gcc                                |  10 +-
+ gcc/config/i386/driver-i386.cc                |   5 +
+ gcc/config/i386/i386-c.cc                     |   7 +
+ gcc/config/i386/i386-options.cc               |   6 +-
+ gcc/config/i386/i386.cc                       |   2 +-
+ gcc/config/i386/i386.h                        |  16 +
+ gcc/config/i386/i386.md                       |   2 +-
+ gcc/config/i386/x86-tune-costs.h              | 133 +++
+ gcc/config/i386/x86-tune-sched.cc             |   2 +
+ gcc/config/i386/znver1.md                     | 849 +++++++++++++++++-
+ gcc/doc/extend.texi                           |   3 +
+ gcc/doc/invoke.texi                           |   9 +
+ gcc/testsuite/g++.target/i386/mv29.C          |   5 +
+ gcc/testsuite/gcc.target/i386/funcspec-56.inc |   2 +
+ 17 files changed, 1034 insertions(+), 69 deletions(-)
+
+diff --git a/gcc/common/config/i386/cpuinfo.h b/gcc/common/config/i386/cpuinfo.h
+index bbced8a23b9..737afc7fbfe 100644
+--- a/gcc/common/config/i386/cpuinfo.h
++++ b/gcc/common/config/i386/cpuinfo.h
+@@ -253,13 +253,27 @@ get_amd_cpu (struct __processor_model *cpu_model,
+       break;
+     case 0x19:
+       cpu_model->__cpu_type = AMDFAM19H;
+-      /* AMD family 19h version 1.  */
++      /* AMD family 19h.  */
+       if (model <= 0x0f)
+ 	{
+ 	  cpu = "znver3";
+ 	  CHECK___builtin_cpu_is ("znver3");
+ 	  cpu_model->__cpu_subtype = AMDFAM19H_ZNVER3;
+ 	}
++      else if ((model >= 0x10 && model <= 0x1f)
++		|| (model >= 0x60 && model <= 0xaf))
++	{
++	  cpu = "znver4";
++	  CHECK___builtin_cpu_is ("znver4");
++	  cpu_model->__cpu_subtype = AMDFAM19H_ZNVER4;
++	}
++      else if (has_cpu_feature (cpu_model, cpu_features2,
++				FEATURE_AVX512F))
++	{
++	  cpu = "znver4";
++	  CHECK___builtin_cpu_is ("znver4");
++	  cpu_model->__cpu_subtype = AMDFAM19H_ZNVER4;
++	}
+       else if (has_cpu_feature (cpu_model, cpu_features2,
+ 				FEATURE_VAES))
+ 	{
+diff --git a/gcc/common/config/i386/i386-common.cc b/gcc/common/config/i386/i386-common.cc
+index c0c2ad74d87..1fa7546c848 100644
+--- a/gcc/common/config/i386/i386-common.cc
++++ b/gcc/common/config/i386/i386-common.cc
+@@ -1830,7 +1830,8 @@ const char *const processor_names[] =
+   "btver2",
+   "znver1",
+   "znver2",
+-  "znver3"
++  "znver3",
++  "znver4"
+ };
+ 
+ /* Guarantee that the array is aligned with enum processor_type.  */
+@@ -2062,37 +2063,17 @@ const pta processor_alias_table[] =
+       | PTA_MOVBE | PTA_MWAITX,
+     M_CPU_SUBTYPE (AMDFAM15H_BDVER4), P_PROC_AVX2},
+   {"znver1", PROCESSOR_ZNVER1, CPU_ZNVER1,
+-    PTA_64BIT | PTA_MMX | PTA_SSE | PTA_SSE2 | PTA_SSE3
+-      | PTA_SSE4A | PTA_CX16 | PTA_ABM | PTA_SSSE3 | PTA_SSE4_1
+-      | PTA_SSE4_2 | PTA_AES | PTA_PCLMUL | PTA_AVX | PTA_AVX2
+-      | PTA_BMI | PTA_BMI2 | PTA_F16C | PTA_FMA | PTA_PRFCHW
+-      | PTA_FXSR | PTA_XSAVE | PTA_XSAVEOPT | PTA_FSGSBASE
+-      | PTA_RDRND | PTA_MOVBE | PTA_MWAITX | PTA_ADX | PTA_RDSEED
+-      | PTA_CLZERO | PTA_CLFLUSHOPT | PTA_XSAVEC | PTA_XSAVES
+-      | PTA_SHA | PTA_LZCNT | PTA_POPCNT,
++    PTA_ZNVER1,
+     M_CPU_SUBTYPE (AMDFAM17H_ZNVER1), P_PROC_AVX2},
+   {"znver2", PROCESSOR_ZNVER2, CPU_ZNVER2,
+-    PTA_64BIT | PTA_MMX | PTA_SSE | PTA_SSE2 | PTA_SSE3
+-      | PTA_SSE4A | PTA_CX16 | PTA_ABM | PTA_SSSE3 | PTA_SSE4_1
+-      | PTA_SSE4_2 | PTA_AES | PTA_PCLMUL | PTA_AVX | PTA_AVX2
+-      | PTA_BMI | PTA_BMI2 | PTA_F16C | PTA_FMA | PTA_PRFCHW
+-      | PTA_FXSR | PTA_XSAVE | PTA_XSAVEOPT | PTA_FSGSBASE
+-      | PTA_RDRND | PTA_MOVBE | PTA_MWAITX | PTA_ADX | PTA_RDSEED
+-      | PTA_CLZERO | PTA_CLFLUSHOPT | PTA_XSAVEC | PTA_XSAVES
+-      | PTA_SHA | PTA_LZCNT | PTA_POPCNT | PTA_CLWB | PTA_RDPID
+-      | PTA_WBNOINVD,
++    PTA_ZNVER2,
+     M_CPU_SUBTYPE (AMDFAM17H_ZNVER2), P_PROC_AVX2},
+   {"znver3", PROCESSOR_ZNVER3, CPU_ZNVER3,
+-    PTA_64BIT | PTA_MMX | PTA_SSE | PTA_SSE2 | PTA_SSE3
+-      | PTA_SSE4A | PTA_CX16 | PTA_ABM | PTA_SSSE3 | PTA_SSE4_1
+-      | PTA_SSE4_2 | PTA_AES | PTA_PCLMUL | PTA_AVX | PTA_AVX2
+-      | PTA_BMI | PTA_BMI2 | PTA_F16C | PTA_FMA | PTA_PRFCHW
+-      | PTA_FXSR | PTA_XSAVE | PTA_XSAVEOPT | PTA_FSGSBASE
+-      | PTA_RDRND | PTA_MOVBE | PTA_MWAITX | PTA_ADX | PTA_RDSEED
+-      | PTA_CLZERO | PTA_CLFLUSHOPT | PTA_XSAVEC | PTA_XSAVES
+-      | PTA_SHA | PTA_LZCNT | PTA_POPCNT | PTA_CLWB | PTA_RDPID
+-      | PTA_WBNOINVD | PTA_VAES | PTA_VPCLMULQDQ | PTA_PKU,
++    PTA_ZNVER3,
+     M_CPU_SUBTYPE (AMDFAM19H_ZNVER3), P_PROC_AVX2},
++  {"znver4", PROCESSOR_ZNVER4, CPU_ZNVER4,
++    PTA_ZNVER4,
++    M_CPU_SUBTYPE (AMDFAM19H_ZNVER4), P_PROC_AVX512F},
+   {"btver1", PROCESSOR_BTVER1, CPU_GENERIC,
+     PTA_64BIT | PTA_MMX | PTA_SSE | PTA_SSE2 | PTA_SSE3
+       | PTA_SSSE3 | PTA_SSE4A | PTA_ABM | PTA_CX16 | PTA_PRFCHW
+diff --git a/gcc/common/config/i386/i386-cpuinfo.h b/gcc/common/config/i386/i386-cpuinfo.h
+index 643fbd97378..9a70d34224d 100644
+--- a/gcc/common/config/i386/i386-cpuinfo.h
++++ b/gcc/common/config/i386/i386-cpuinfo.h
+@@ -92,5 +92,6 @@ enum processor_subtypes
+   AMDFAM19H_ZNVER3,
+   INTEL_COREI7_ROCKETLAKE,
++  AMDFAM19H_ZNVER4,
+   CPU_SUBTYPE_MAX
+ };
+ 
+diff --git a/gcc/config.gcc b/gcc/config.gcc
+index c1b1215e98b..4396f2146ad 100644
+--- a/gcc/config.gcc
++++ b/gcc/config.gcc
+@@ -655,7 +655,7 @@ c7 esther"
+ # 64-bit x86 processors supported by --with-arch=.  Each processor
+ # MUST be separated by exactly one space.
+ x86_64_archs="amdfam10 athlon64 athlon64-sse3 barcelona bdver1 bdver2 \
+-bdver3 bdver4 znver1 znver2 znver3 btver1 btver2 k8 k8-sse3 opteron \
++bdver3 bdver4 znver1 znver2 znver3 znver4 btver1 btver2 k8 k8-sse3 opteron \
+ opteron-sse3 nocona core2 corei7 corei7-avx core-avx-i core-avx2 atom \
+ slm nehalem westmere sandybridge ivybridge haswell broadwell bonnell \
+ silvermont knl knm skylake-avx512 cannonlake icelake-client icelake-server \
+@@ -3628,6 +3628,10 @@ case ${target} in
+ 	arch=znver3
+ 	cpu=znver3
+ 	;;
++      znver4-*)
++	arch=znver4
++	cpu=znver4
++	;;
+       bdver4-*)
+         arch=bdver4
+         cpu=bdver4
+@@ -3756,6 +3760,10 @@ case ${target} in
+       znver3-*)
+ 	arch=znver3
+ 	cpu=znver3
++	;;
++	  znver4-*)
++	arch=znver4
++	cpu=znver4
+ 	;;
+       bdver4-*)
+         arch=bdver4
+diff --git a/gcc/config/i386/driver-i386.cc b/gcc/config/i386/driver-i386.cc
+index 3c702fdca33..141aee7a3df 100644
+--- a/gcc/config/i386/driver-i386.cc
++++ b/gcc/config/i386/driver-i386.cc
+@@ -465,6 +465,8 @@ const char *host_detect_local_cpu (int argc, const char **argv)
+ 	processor = PROCESSOR_GEODE;
+       else if (has_feature (FEATURE_MOVBE) && family == 22)
+ 	processor = PROCESSOR_BTVER2;
++      else if (has_feature (FEATURE_AVX512F))
++	processor = PROCESSOR_ZNVER4;
+       else if (has_feature (FEATURE_VAES))
+ 	processor = PROCESSOR_ZNVER3;
+       else if (has_feature (FEATURE_CLWB))
+@@ -782,6 +784,9 @@ const char *host_detect_local_cpu (int argc, const char **argv)
+     case PROCESSOR_ZNVER3:
+       cpu = "znver3";
+       break;
++    case PROCESSOR_ZNVER4:
++      cpu = "znver4";
++      break;
+     case PROCESSOR_BTVER1:
+       cpu = "btver1";
+       break;
+diff --git a/gcc/config/i386/i386-c.cc b/gcc/config/i386/i386-c.cc
+index eb0e3b36a76..f388c25d38a 100644
+--- a/gcc/config/i386/i386-c.cc
++++ b/gcc/config/i386/i386-c.cc
+@@ -132,6 +132,10 @@ ix86_target_macros_internal (HOST_WIDE_INT isa_flag,
+       def_or_undef (parse_in, "__znver3");
+       def_or_undef (parse_in, "__znver3__");
+       break;
++    case PROCESSOR_ZNVER4:
++      def_or_undef (parse_in, "__znver4");
++      def_or_undef (parse_in, "__znver4__");
++      break;
+     case PROCESSOR_BTVER1:
+       def_or_undef (parse_in, "__btver1");
+       def_or_undef (parse_in, "__btver1__");
+@@ -330,6 +334,9 @@ ix86_target_macros_internal (HOST_WIDE_INT isa_flag,
+     case PROCESSOR_ZNVER3:
+       def_or_undef (parse_in, "__tune_znver3__");
+       break;
++    case PROCESSOR_ZNVER4:
++      def_or_undef (parse_in, "__tune_znver4__");
++      break;
+     case PROCESSOR_BTVER1:
+       def_or_undef (parse_in, "__tune_btver1__");
+       break;
+diff --git a/gcc/config/i386/i386-options.cc b/gcc/config/i386/i386-options.cc
+index acb2291e70f..9581911a710 100644
+--- a/gcc/config/i386/i386-options.cc
++++ b/gcc/config/i386/i386-options.cc
+@@ -154,11 +154,12 @@ along with GCC; see the file COPYING3.  If not see
+ #define m_ZNVER1 (HOST_WIDE_INT_1U<<PROCESSOR_ZNVER1)
+ #define m_ZNVER2 (HOST_WIDE_INT_1U<<PROCESSOR_ZNVER2)
+ #define m_ZNVER3 (HOST_WIDE_INT_1U<<PROCESSOR_ZNVER3)
++#define m_ZNVER4 (HOST_WIDE_INT_1U<<PROCESSOR_ZNVER4)
+ #define m_BTVER1 (HOST_WIDE_INT_1U<<PROCESSOR_BTVER1)
+ #define m_BTVER2 (HOST_WIDE_INT_1U<<PROCESSOR_BTVER2)
+ #define m_BDVER	(m_BDVER1 | m_BDVER2 | m_BDVER3 | m_BDVER4)
+ #define m_BTVER (m_BTVER1 | m_BTVER2)
+-#define m_ZNVER	(m_ZNVER1 | m_ZNVER2 | m_ZNVER3)
++#define m_ZNVER	(m_ZNVER1 | m_ZNVER2 | m_ZNVER3 | m_ZNVER4)
+ #define m_AMD_MULTIPLE (m_ATHLON_K8 | m_AMDFAM10 | m_BDVER | m_BTVER \
+ 			| m_ZNVER)
+ 
+@@ -771,7 +772,8 @@ static const struct processor_costs *processor_cost_table[] =
+   &btver2_cost,
+   &znver1_cost,
+   &znver2_cost,
+-  &znver3_cost
++  &znver3_cost,
++  &znver4_cost
+ };
+ 
+ /* Guarantee that the array is aligned with enum processor_type.  */
+diff --git a/gcc/config/i386/i386.cc b/gcc/config/i386/i386.cc
+index 4386caf843e..cb8bd960420 100644
+--- a/gcc/config/i386/i386.cc
++++ b/gcc/config/i386/i386.cc
+@@ -23127,7 +23127,7 @@ ix86_reassociation_width (unsigned int op, machine_mode mode)
+       /* Integer vector instructions execute in FP unit
+ 	 and can execute 3 additions and one multiplication per cycle.  */
+       if ((ix86_tune == PROCESSOR_ZNVER1 || ix86_tune == PROCESSOR_ZNVER2
+-	   || ix86_tune == PROCESSOR_ZNVER3)
++	   || ix86_tune == PROCESSOR_ZNVER3 || ix86_tune == PROCESSOR_ZNVER4)
+    	  && INTEGRAL_MODE_P (mode) && op != PLUS && op != MINUS)
+ 	return 1;
+ 
+diff --git a/gcc/config/i386/i386.h b/gcc/config/i386/i386.h
+index 900a3bc3673..4212dc82698 100644
+--- a/gcc/config/i386/i386.h
++++ b/gcc/config/i386/i386.h
+@@ -2255,6 +2255,7 @@ enum processor_type
+   PROCESSOR_ZNVER1,
+   PROCESSOR_ZNVER2,
+   PROCESSOR_ZNVER3,
++  PROCESSOR_ZNVER4,
+   PROCESSOR_max
+ };
+ 
+@@ -2348,6 +2349,21 @@ constexpr wide_int_bitmask PTA_ALDERLAKE = PTA_TREMONT | PTA_ADX | PTA_AVX
+   | PTA_HRESET | PTA_KL | PTA_WIDEKL | PTA_AVXVNNI;
+ constexpr wide_int_bitmask PTA_KNM = PTA_KNL | PTA_AVX5124VNNIW
+   | PTA_AVX5124FMAPS | PTA_AVX512VPOPCNTDQ;
++constexpr wide_int_bitmask PTA_ZNVER1 = PTA_64BIT | PTA_MMX | PTA_SSE | PTA_SSE2
++  | PTA_SSE3 | PTA_SSE4A | PTA_CX16 | PTA_ABM | PTA_SSSE3 | PTA_SSE4_1
++  | PTA_SSE4_2 | PTA_AES | PTA_PCLMUL | PTA_AVX | PTA_AVX2 | PTA_BMI | PTA_BMI2
++  | PTA_F16C | PTA_FMA | PTA_PRFCHW | PTA_FXSR | PTA_XSAVE | PTA_XSAVEOPT
++  | PTA_FSGSBASE | PTA_RDRND | PTA_MOVBE | PTA_MWAITX | PTA_ADX | PTA_RDSEED
++  | PTA_CLZERO | PTA_CLFLUSHOPT | PTA_XSAVEC | PTA_XSAVES | PTA_SHA | PTA_LZCNT
++  | PTA_POPCNT;
++constexpr wide_int_bitmask PTA_ZNVER2 = PTA_ZNVER1 | PTA_CLWB | PTA_RDPID
++  | PTA_WBNOINVD;
++constexpr wide_int_bitmask PTA_ZNVER3 = PTA_ZNVER2 | PTA_VAES | PTA_VPCLMULQDQ
++  | PTA_PKU;
++constexpr wide_int_bitmask PTA_ZNVER4 = PTA_ZNVER3 | PTA_AVX512F | PTA_AVX512DQ
++  | PTA_AVX512IFMA | PTA_AVX512CD | PTA_AVX512BW | PTA_AVX512VL
++  | PTA_AVX512BF16 | PTA_AVX512VBMI | PTA_AVX512VBMI2 | PTA_GFNI
++  | PTA_AVX512VNNI | PTA_AVX512BITALG | PTA_AVX512VPOPCNTDQ;
+ 
+ #ifndef GENERATOR_FILE
+ 
+diff --git a/gcc/config/i386/i386.md b/gcc/config/i386/i386.md
+index 1be9b669909..cae4779309d 100644
+--- a/gcc/config/i386/i386.md
++++ b/gcc/config/i386/i386.md
+@@ -474,7 +474,7 @@
+ ;; Processor type.
+ (define_attr "cpu" "none,pentium,pentiumpro,geode,k6,athlon,k8,core2,nehalem,
+ 		    atom,slm,glm,haswell,generic,amdfam10,bdver1,bdver2,bdver3,
+-		    bdver4,btver2,znver1,znver2,znver3"
++		    bdver4,btver2,znver1,znver2,znver3,znver4"
+   (const (symbol_ref "ix86_schedule")))
+ 
+ ;; A basic instruction type.  Refinements due to arguments to be
+diff --git a/gcc/config/i386/x86-tune-costs.h b/gcc/config/i386/x86-tune-costs.h
+index 6c9066c84cc..aeaa7eb008e 100644
+--- a/gcc/config/i386/x86-tune-costs.h
++++ b/gcc/config/i386/x86-tune-costs.h
+@@ -1820,6 +1820,139 @@ struct processor_costs znver3_cost = {
+   "16",					/* Func alignment.  */
+ };
+ 
++/* This table currently replicates znver3_cost table. */
++struct processor_costs znver4_cost = {
++  {
++  /* Start of register allocator costs.  integer->integer move cost is 2. */
++
++  /* reg-reg moves are done by renaming and thus they are even cheaper than
++     1 cycle.  Because reg-reg move cost is 2 and following tables correspond
++     to doubles of latencies, we do not model this correctly.  It does not
++     seem to make practical difference to bump prices up even more.  */
++  6,					/* cost for loading QImode using
++					   movzbl.  */
++  {6, 6, 6},				/* cost of loading integer registers
++					   in QImode, HImode and SImode.
++					   Relative to reg-reg move (2).  */
++  {8, 8, 8},				/* cost of storing integer
++					   registers.  */
++  2,					/* cost of reg,reg fld/fst.  */
++  {6, 6, 16},				/* cost of loading fp registers
++					   in SFmode, DFmode and XFmode.  */
++  {8, 8, 16},				/* cost of storing fp registers
++					   in SFmode, DFmode and XFmode.  */
++  2,					/* cost of moving MMX register.  */
++  {6, 6},				/* cost of loading MMX registers
++					   in SImode and DImode.  */
++  {8, 8},				/* cost of storing MMX registers
++					   in SImode and DImode.  */
++  2, 2, 3,				/* cost of moving XMM,YMM,ZMM
++					   register.  */
++  {6, 6, 6, 6, 12},			/* cost of loading SSE registers
++					   in 32,64,128,256 and 512-bit.  */
++  {8, 8, 8, 8, 16},			/* cost of storing SSE registers
++					   in 32,64,128,256 and 512-bit.  */
++  6, 6,					/* SSE->integer and integer->SSE
++					   moves.  */
++  8, 8,				/* mask->integer and integer->mask moves */
++  {6, 6, 6},				/* cost of loading mask register
++					   in QImode, HImode, SImode.  */
++  {8, 8, 8},				/* cost if storing mask register
++					   in QImode, HImode, SImode.  */
++  2,					/* cost of moving mask register.  */
++  /* End of register allocator costs.  */
++  },
++
++  COSTS_N_INSNS (1),			/* cost of an add instruction.  */
++  COSTS_N_INSNS (1),			/* cost of a lea instruction.  */
++  COSTS_N_INSNS (1),			/* variable shift costs.  */
++  COSTS_N_INSNS (1),			/* constant shift costs.  */
++  {COSTS_N_INSNS (3),			/* cost of starting multiply for QI.  */
++   COSTS_N_INSNS (3),			/* 				 HI.  */
++   COSTS_N_INSNS (3),			/*				 SI.  */
++   COSTS_N_INSNS (3),			/*				 DI.  */
++   COSTS_N_INSNS (3)},			/*			other.  */
++  0,					/* cost of multiply per each bit
++					   set.  */
++  {COSTS_N_INSNS (9),			/* cost of a divide/mod for QI.  */
++   COSTS_N_INSNS (10),			/* 			    HI.  */
++   COSTS_N_INSNS (12),			/*			    SI.  */
++   COSTS_N_INSNS (17),			/*			    DI.  */
++   COSTS_N_INSNS (17)},			/*			    other.  */
++  COSTS_N_INSNS (1),			/* cost of movsx.  */
++  COSTS_N_INSNS (1),			/* cost of movzx.  */
++  8,					/* "large" insn.  */
++  9,					/* MOVE_RATIO.  */
++  6,					/* CLEAR_RATIO */
++  {6, 6, 6},				/* cost of loading integer registers
++					   in QImode, HImode and SImode.
++					   Relative to reg-reg move (2).  */
++  {8, 8, 8},				/* cost of storing integer
++					   registers.  */
++  {6, 6, 6, 6, 12},			/* cost of loading SSE registers
++					   in 32bit, 64bit, 128bit, 256bit and 512bit */
++  {8, 8, 8, 8, 16},			/* cost of storing SSE register
++					   in 32bit, 64bit, 128bit, 256bit and 512bit */
++  {6, 6, 6, 6, 12},			/* cost of unaligned loads.  */
++  {8, 8, 8, 8, 16},			/* cost of unaligned stores.  */
++  2, 2, 3,				/* cost of moving XMM,YMM,ZMM
++					   register.  */
++  6,					/* cost of moving SSE register to integer.  */
++  /* VGATHERDPD is 15 uops and throughput is 4, VGATHERDPS is 23 uops,
++     throughput 9.  Approx 7 uops do not depend on vector size and every load
++     is 4 uops.  */
++  14, 8,				/* Gather load static, per_elt.  */
++  14, 10,				/* Gather store static, per_elt.  */
++  32,					/* size of l1 cache.  */
++  512,					/* size of l2 cache.  */
++  64,					/* size of prefetch block.  */
++  /* New AMD processors never drop prefetches; if they cannot be performed
++     immediately, they are queued.  We set number of simultaneous prefetches
++     to a large constant to reflect this (it probably is not a good idea not
++     to limit number of prefetches at all, as their execution also takes some
++     time).  */
++  100,					/* number of parallel prefetches.  */
++  3,					/* Branch cost.  */
++  COSTS_N_INSNS (5),			/* cost of FADD and FSUB insns.  */
++  COSTS_N_INSNS (5),			/* cost of FMUL instruction.  */
++  /* Latency of fdiv is 8-15.  */
++  COSTS_N_INSNS (15),			/* cost of FDIV instruction.  */
++  COSTS_N_INSNS (1),			/* cost of FABS instruction.  */
++  COSTS_N_INSNS (1),			/* cost of FCHS instruction.  */
++  /* Latency of fsqrt is 4-10.  */
++  COSTS_N_INSNS (10),			/* cost of FSQRT instruction.  */
++
++  COSTS_N_INSNS (1),			/* cost of cheap SSE instruction.  */
++  COSTS_N_INSNS (3),			/* cost of ADDSS/SD SUBSS/SD insns.  */
++  COSTS_N_INSNS (3),			/* cost of MULSS instruction.  */
++  COSTS_N_INSNS (3),			/* cost of MULSD instruction.  */
++  COSTS_N_INSNS (5),			/* cost of FMA SS instruction.  */
++  COSTS_N_INSNS (5),			/* cost of FMA SD instruction.  */
++  COSTS_N_INSNS (10),			/* cost of DIVSS instruction.  */
++  /* 9-13.  */
++  COSTS_N_INSNS (13),			/* cost of DIVSD instruction.  */
++  COSTS_N_INSNS (10),			/* cost of SQRTSS instruction.  */
++  COSTS_N_INSNS (15),			/* cost of SQRTSD instruction.  */
++  /* Zen can execute 4 integer operations per cycle.  FP operations
++     take 3 cycles and it can execute 2 integer additions and 2
++     multiplications thus reassociation may make sense up to with of 6.
++     SPEC2k6 bencharks suggests
++     that 4 works better than 6 probably due to register pressure.
++
++     Integer vector operations are taken by FP unit and execute 3 vector
++     plus/minus operations per cycle but only one multiply.  This is adjusted
++     in ix86_reassociation_width.  */
++  4, 4, 3, 6,				/* reassoc int, fp, vec_int, vec_fp.  */
++  znver2_memcpy,
++  znver2_memset,
++  COSTS_N_INSNS (4),			/* cond_taken_branch_cost.  */
++  COSTS_N_INSNS (2),			/* cond_not_taken_branch_cost.  */
++  "16",					/* Loop alignment.  */
++  "16",					/* Jump alignment.  */
++  "0:0:8",				/* Label alignment.  */
++  "16",					/* Func alignment.  */
++};
++
+ /* skylake_cost should produce code tuned for Skylake familly of CPUs.  */
+ static stringop_algs skylake_memcpy[2] =   {
+   {libcall,
+diff --git a/gcc/config/i386/x86-tune-sched.cc b/gcc/config/i386/x86-tune-sched.cc
+index e2765f81902..96eb06a5b6d 100644
+--- a/gcc/config/i386/x86-tune-sched.cc
++++ b/gcc/config/i386/x86-tune-sched.cc
+@@ -68,6 +68,7 @@ ix86_issue_rate (void)
+     case PROCESSOR_ZNVER1:
+     case PROCESSOR_ZNVER2:
+     case PROCESSOR_ZNVER3:
++    case PROCESSOR_ZNVER4:
+     case PROCESSOR_CORE2:
+     case PROCESSOR_NEHALEM:
+     case PROCESSOR_SANDYBRIDGE:
+@@ -415,6 +416,7 @@ ix86_adjust_cost (rtx_insn *insn, int dep_type, rtx_insn *dep_insn, int cost,
+     case PROCESSOR_ZNVER1:
+     case PROCESSOR_ZNVER2:
+     case PROCESSOR_ZNVER3:
++    case PROCESSOR_ZNVER4:
+       /* Stack engine allows to execute push&pop instructions in parall.  */
+       if ((insn_type == TYPE_PUSH || insn_type == TYPE_POP)
+ 	  && (dep_insn_type == TYPE_PUSH || dep_insn_type == TYPE_POP))
+diff --git a/gcc/config/i386/znver1.md b/gcc/config/i386/znver1.md
+index 9c25b4e27c3..376a145b95e 100644
+--- a/gcc/config/i386/znver1.md
++++ b/gcc/config/i386/znver1.md
+@@ -23,8 +23,8 @@
+ 
+ ;; AMD znver1, znver2 and znver3 Scheduling
+ ;; Modeling automatons for zen decoders, integer execution pipes,
+-;; AGU pipes and floating point execution units.
+-(define_automaton "znver1, znver1_ieu, znver1_fp, znver1_agu")
++;; AGU pipes, floating point execution, branch and store units.
++(define_automaton "znver1, znver1_ieu, znver1_fp, znver1_agu, znver4_bru, znver4_fp_store")
+ 
+ ;; Decoders unit has 4 decoders and all of them can decode fast path
+ ;; and vector type instructions.
+@@ -63,6 +63,8 @@
+ ;; Load is 4 cycles. We do not model reservation of load unit.
+ ;;(define_reservation "znver1-load" "znver1-agu-reserve, nothing, nothing, nothing")
+ (define_reservation "znver1-load" "znver1-agu-reserve")
++;; According to Manual, all AGU are used for loads and stores in znver4.
++(define_reservation "znver4-load" "znver2-store-agu-reserve")
+ ;; Store operations differs between znver1, znver2 and znver3 because extra AGU
+ ;; was added.
+ (define_reservation "znver1-store" "znver1-agu-reserve")
+@@ -93,6 +95,11 @@
+ 				      +znver1-fp2+znver1-fp3
+ 				      +znver1-agu0+znver1-agu1+znver2-agu2")
+ 
++;; znver4 has one branch unit in znver1-ieu0 and a separate branch unit.
++(define_cpu_unit "znver4-bru0" "znver4_bru")
++;; znver4 also has dedicated fp-store unit.
++(define_cpu_unit "znver4-fp-store0" "znver4_fp_store")
++
+ ;; Call instruction
+ (define_insn_reservation "znver1_call" 1
+ 			 (and (eq_attr "cpu" "znver1")
+@@ -104,6 +111,11 @@
+ 			      (eq_attr "type" "call,callv"))
+ 			 "znver1-double,znver2-store,znver1-ieu0|znver1-ieu3")
+ 
++(define_insn_reservation "znver4_call" 1
++			 (and (eq_attr "cpu" "znver4")
++			      (eq_attr "type" "call,callv"))
++			 "znver1-double,znver1-ieu0|znver4-bru0,znver2-store")
++
+ ;; General instructions
+ (define_insn_reservation "znver1_push" 1
+ 			 (and (eq_attr "cpu" "znver1")
+@@ -111,7 +123,7 @@
+ 				   (eq_attr "memory" "store")))
+ 			 "znver1-direct,znver1-store")
+ (define_insn_reservation "znver2_push" 1
+-			 (and (eq_attr "cpu" "znver2,znver3")
++			 (and (eq_attr "cpu" "znver2,znver3,znver4")
+ 			      (and (eq_attr "type" "push")
+ 				   (eq_attr "memory" "store")))
+ 			 "znver1-direct,znver2-store")
+@@ -126,12 +138,22 @@
+ 			      (and (eq_attr "type" "push")
+ 				   (eq_attr "memory" "both")))
+ 			 "znver1-direct,znver1-load,znver2-store")
++(define_insn_reservation "znver4_push_load" 4
++			 (and (eq_attr "cpu" "znver4")
++			      (and (eq_attr "type" "push")
++				   (eq_attr "memory" "both")))
++			 "znver1-direct,znver4-load,znver2-store")
+ 
+ (define_insn_reservation "znver1_pop" 4
+ 			 (and (eq_attr "cpu" "znver1,znver2,znver3")
+ 			      (and (eq_attr "type" "pop")
+ 				   (eq_attr "memory" "load")))
+ 			 "znver1-direct,znver1-load")
++(define_insn_reservation "znver4_pop" 4
++			 (and (eq_attr "cpu" "znver4")
++			      (and (eq_attr "type" "pop")
++				   (eq_attr "memory" "load")))
++			 "znver1-direct,znver4-load")
+ 
+ (define_insn_reservation "znver1_pop_mem" 4
+ 			 (and (eq_attr "cpu" "znver1")
+@@ -143,6 +165,11 @@
+ 			      (and (eq_attr "type" "pop")
+ 				   (eq_attr "memory" "both")))
+ 			 "znver1-direct,znver1-load,znver2-store")
++(define_insn_reservation "znver4_pop_mem" 4
++			 (and (eq_attr "cpu" "znver4")
++			      (and (eq_attr "type" "pop")
++				   (eq_attr "memory" "both")))
++			 "znver1-direct,znver4-load,znver2-store")
+ 
+ ;; Leave
+ (define_insn_reservation "znver1_leave" 1
+@@ -150,7 +177,7 @@
+ 			      (eq_attr "type" "leave"))
+ 			 "znver1-double,znver1-ieu, znver1-store")
+ (define_insn_reservation "znver2_leave" 1
+-			 (and (eq_attr "cpu" "znver2,znver3")
++			 (and (eq_attr "cpu" "znver2,znver3,znver4")
+ 			      (eq_attr "type" "leave"))
+ 			 "znver1-double,znver1-ieu, znver2-store")
+ 
+@@ -162,12 +189,29 @@
+ 			      (and (eq_attr "type" "imul")
+ 				   (eq_attr "memory" "none")))
+ 			 "znver1-direct,znver1-ieu1")
++(define_insn_reservation "znver4_imul" 3
++			 (and (eq_attr "cpu" "znver4")
++			      (and (eq_attr "type" "imul")
++				   (and (eq_attr "mode" "SI,HI,QI")
++				   (eq_attr "memory" "none"))))
++			 "znver1-direct,znver1-ieu1")
++(define_insn_reservation "znver4_imul_DI" 4
++			 (and (eq_attr "cpu" "znver4")
++			      (and (eq_attr "type" "imul")
++				   (and (eq_attr "mode" "DI")
++				   (eq_attr "memory" "none"))))
++			 "znver1-direct,znver1-ieu1")
+ 
+ (define_insn_reservation "znver1_imul_mem" 7
+ 			 (and (eq_attr "cpu" "znver1,znver2,znver3")
+ 			      (and (eq_attr "type" "imul")
+ 				   (eq_attr "memory" "!none")))
+ 			 "znver1-direct,znver1-load, znver1-ieu1")
++(define_insn_reservation "znver4_imul_mem" 7
++			 (and (eq_attr "cpu" "znver4")
++			      (and (eq_attr "type" "imul")
++				   (eq_attr "memory" "!none")))
++			 "znver1-direct,znver4-load, znver1-ieu1")
+ 
+ ;; Divisions
+ ;; Reg operands
+@@ -261,14 +305,14 @@
+                               (and (eq_attr "type" "idiv")
+                                    (and (eq_attr "mode" "DI")
+                                         (eq_attr "memory" "load"))))
+-                         "znver1-double,znver1-load,znver1-ieu2*22")
++                         "znver1-double,znver1-load,znver1-ieu2*18")
+ 
+ (define_insn_reservation "znver3_idiv_mem_SI" 16
+                          (and (eq_attr "cpu" "znver3")
+                               (and (eq_attr "type" "idiv")
+                                    (and (eq_attr "mode" "SI")
+                                         (eq_attr "memory" "load"))))
+-                         "znver1-double,znver1-load,znver1-ieu2*16")
++                         "znver1-double,znver1-load,znver1-ieu2*12")
+ 
+ (define_insn_reservation "znver3_idiv_mem_HI" 14
+                          (and (eq_attr "cpu" "znver3")
+@@ -284,6 +328,62 @@
+                                         (eq_attr "memory" "load"))))
+                          "znver1-direct,znver1-load,znver1-ieu2*9")
+ 
++(define_insn_reservation "znver4_idiv_DI" 18
++			 (and (eq_attr "cpu" "znver4")
++			      (and (eq_attr "type" "idiv")
++				   (and (eq_attr "mode" "DI")
++					(eq_attr "memory" "none"))))
++			 "znver1-double,znver1-ieu0*18")
++
++(define_insn_reservation "znver4_idiv_SI" 12
++			 (and (eq_attr "cpu" "znver4")
++			      (and (eq_attr "type" "idiv")
++				   (and (eq_attr "mode" "SI")
++					(eq_attr "memory" "none"))))
++			 "znver1-double,znver1-ieu0*12")
++
++(define_insn_reservation "znver4_idiv_HI" 10
++			 (and (eq_attr "cpu" "znver4")
++			      (and (eq_attr "type" "idiv")
++				   (and (eq_attr "mode" "HI")
++					(eq_attr "memory" "none"))))
++			 "znver1-double,znver1-ieu0*10")
++
++(define_insn_reservation "znver4_idiv_QI" 9
++			 (and (eq_attr "cpu" "znver4")
++			      (and (eq_attr "type" "idiv")
++				   (and (eq_attr "mode" "QI")
++					(eq_attr "memory" "none"))))
++			 "znver1-direct,znver1-ieu0*9")
++
++(define_insn_reservation "znver4_idiv_mem_DI" 22
++			 (and (eq_attr "cpu" "znver4")
++			      (and (eq_attr "type" "idiv")
++				   (and (eq_attr "mode" "DI")
++					(eq_attr "memory" "load"))))
++			 "znver1-double,znver4-load,znver1-ieu0*18")
++
++(define_insn_reservation "znver4_idiv_mem_SI" 16
++			 (and (eq_attr "cpu" "znver4")
++			      (and (eq_attr "type" "idiv")
++				   (and (eq_attr "mode" "SI")
++					(eq_attr "memory" "load"))))
++			 "znver1-double,znver4-load,znver1-ieu0*12")
++
++(define_insn_reservation "znver4_idiv_mem_HI" 14
++			 (and (eq_attr "cpu" "znver4")
++			      (and (eq_attr "type" "idiv")
++				   (and (eq_attr "mode" "HI")
++					(eq_attr "memory" "load"))))
++			 "znver1-double,znver4-load,znver1-ieu0*10")
++
++(define_insn_reservation "znver4_idiv_mem_QI" 13
++			 (and (eq_attr "cpu" "znver4")
++			      (and (eq_attr "type" "idiv")
++				   (and (eq_attr "mode" "QI")
++					(eq_attr "memory" "load"))))
++			 "znver1-direct,znver4-load,znver1-ieu0*9")
++
+ ;; STR ISHIFT which are micro coded.
+ ;; Fix me: Latency need to be rechecked.
+ (define_insn_reservation "znver1_str_ishift" 6
+@@ -293,15 +393,15 @@
+ 			 "znver1-vector,znver1-ivector")
+ 
+ (define_insn_reservation "znver2_str_ishift" 3
+-			 (and (eq_attr "cpu" "znver2,znver3")
++			 (and (eq_attr "cpu" "znver2,znver3,znver4")
+ 			      (and (eq_attr "type" "ishift")
+ 				   (eq_attr "memory" "both,store")))
+-			 "znver1-vector,znver1-ivector")
++			 "znver1-vector,znver2-ivector")
+ (define_insn_reservation "znver2_str_istr" 19
+-			 (and (eq_attr "cpu" "znver2,znver3")
++			 (and (eq_attr "cpu" "znver2,znver3,znver4")
+ 			      (and (eq_attr "type" "str")
+ 				   (eq_attr "memory" "both,store")))
+-			 "znver1-vector,znver1-ivector")
++			 "znver1-vector,znver2-ivector")
+ 
+ ;; MOV - integer moves
+ (define_insn_reservation "znver1_load_imov_double" 2
+@@ -318,8 +418,15 @@
+ 					(eq_attr "memory" "none"))))
+ 			 "znver1-double,znver1-ieu|znver1-ieu")
+ 
++(define_insn_reservation "znver4_load_imov_double" 1
++			 (and (eq_attr "cpu" "znver4")
++			      (and (eq_attr "znver1_decode" "double")
++				   (and (eq_attr "type" "imovx")
++					(eq_attr "memory" "none"))))
++			 "znver1-double,znver1-ieu0|znver1-ieu3")
++
+ (define_insn_reservation "znver1_load_imov_direct" 1
+-			 (and (eq_attr "cpu" "znver1,znver2,znver3")
++			 (and (eq_attr "cpu" "znver1,znver2,znver3,znver4")
+ 			      (and (eq_attr "type" "imov,imovx")
+ 				   (eq_attr "memory" "none")))
+ 			 "znver1-direct,znver1-ieu")
+@@ -332,7 +439,7 @@
+ 			 "znver1-double,znver1-ieu|znver1-ieu,znver1-store")
+ 
+ (define_insn_reservation "znver2_load_imov_double_store" 1
+-			 (and (eq_attr "cpu" "znver2,znver3")
++			 (and (eq_attr "cpu" "znver2,znver3,znver4")
+ 			      (and (eq_attr "znver1_decode" "double")
+ 				   (and (eq_attr "type" "imovx")
+ 					(eq_attr "memory" "store"))))
+@@ -345,7 +452,7 @@
+ 				   "znver1-direct,znver1-ieu,znver1-store")
+ 
+ (define_insn_reservation "znver2_load_imov_direct_store" 1
+-			 (and (eq_attr "cpu" "znver2,znver3")
++			 (and (eq_attr "cpu" "znver2,znver3,znver4")
+ 			      (and (eq_attr "type" "imov,imovx")
+ 				   (eq_attr "memory" "store")))
+ 				   "znver1-direct,znver1-ieu,znver2-store")
+@@ -364,6 +471,13 @@
+ 					(eq_attr "memory" "load"))))
+ 			 "znver1-double,znver1-load,znver1-ieu|znver1-ieu")
+ 
++(define_insn_reservation "znver4_load_imov_double_load" 4
++			 (and (eq_attr "cpu" "znver4")
++			      (and (eq_attr "znver1_decode" "double")
++				   (and (eq_attr "type" "imovx")
++					(eq_attr "memory" "load"))))
++			 "znver1-double,znver4-load,znver1-ieu")
++
+ (define_insn_reservation "znver1_load_imov_direct_load" 4
+ 			 (and (eq_attr "cpu" "znver1,znver2,znver3")
+ 			      (and (eq_attr "type" "imov,imovx")
+@@ -378,12 +492,48 @@
+ 				   (eq_attr "memory" "none,unknown")))
+ 			 "znver1-direct,znver1-ieu")
+ 
++(define_insn_reservation "znver4_insn_1" 1
++			 (and (eq_attr "cpu" "znver4")
++			      (and (eq_attr "type" "alu,icmp,negnot,test,incdec")
++				   (eq_attr "memory" "none,unknown")))
++			 "znver1-direct,znver1-ieu")
++
++(define_insn_reservation "znver4_insn_2" 1
++			 (and (eq_attr "cpu" "znver4")
++			      (and (eq_attr "type" "rotate,rotate1,ishift,ishift1")
++				   (eq_attr "memory" "none,unknown")))
++			 "znver1-direct,znver1-ieu1|znver1-ieu2")
++
++(define_insn_reservation "znver4_insn_3" 1
++			 (and (eq_attr "cpu" "znver4")
++			      (and (eq_attr "type" "setcc,icmov")
++				   (eq_attr "memory" "none")))
++			 "znver1-direct,znver1-ieu0|znver1-ieu3")
++
+ (define_insn_reservation "znver1_insn_load" 5
+ 			 (and (eq_attr "cpu" "znver1,znver2,znver3")
+ 			      (and (eq_attr "type" "alu,icmp,negnot,rotate,rotate1,ishift,ishift1,test,setcc,incdec,icmov")
+ 				   (eq_attr "memory" "load")))
+ 			 "znver1-direct,znver1-load,znver1-ieu")
+ 
++(define_insn_reservation "znver4_insn_1_load" 5
++			 (and (eq_attr "cpu" "znver4")
++			      (and (eq_attr "type" "alu,icmp,negnot,test,incdec")
++				   (eq_attr "memory" "load")))
++			 "znver1-direct,znver4-load,znver1-ieu")
++
++(define_insn_reservation "znver4_insn_2_load" 5
++			 (and (eq_attr "cpu" "znver4")
++			      (and (eq_attr "type" "rotate,rotate1,ishift,ishift1")
++				   (eq_attr "memory" "load")))
++			 "znver1-direct,znver4-load,znver1-ieu1|znver1-ieu2")
++
++(define_insn_reservation "znver4_insn_3_load" 5
++			 (and (eq_attr "cpu" "znver4")
++			      (and (eq_attr "type" "setcc,icmov")
++				   (eq_attr "memory" "load")))
++			 "znver1-double,znver4-load,znver1-ieu0|znver1-ieu3")
++
+ (define_insn_reservation "znver1_insn_store" 1
+ 			 (and (eq_attr "cpu" "znver1")
+ 			      (and (eq_attr "type" "alu,icmp,negnot,rotate,rotate1,ishift1,test,setcc,incdec")
+@@ -396,6 +546,24 @@
+ 				   (eq_attr "memory" "store")))
+ 			 "znver1-direct,znver1-ieu,znver2-store")
+ 
++(define_insn_reservation "znver4_insn_1_store" 1
++			 (and (eq_attr "cpu" "znver4")
++			      (and (eq_attr "type" "alu,icmp,negnot,test,incdec")
++				   (eq_attr "memory" "store")))
++			 "znver1-direct,znver1-ieu,znver2-store")
++
++(define_insn_reservation "znver4_insn_2_store" 1
++			 (and (eq_attr "cpu" "znver4")
++			      (and (eq_attr "type" "rotate,rotate1,ishift,ishift1")
++				   (eq_attr "memory" "store")))
++			 "znver1-direct,znver1-ieu1|znver1-ieu2,znver2-store")
++
++(define_insn_reservation "znver4_insn_3_store" 1
++			 (and (eq_attr "cpu" "znver4")
++			      (and (eq_attr "type" "setcc,icmov")
++				   (eq_attr "memory" "store")))
++			 "znver1-double,znver1-ieu0|znver1-ieu3,znver2-store")
++
+ (define_insn_reservation "znver1_insn_both" 5
+ 			 (and (eq_attr "cpu" "znver1")
+ 			      (and (eq_attr "type" "alu,icmp,negnot,rotate,rotate1,ishift1,test,setcc,incdec")
+@@ -408,6 +576,24 @@
+ 				   (eq_attr "memory" "both")))
+ 			 "znver1-direct,znver1-load,znver1-ieu,znver2-store")
+ 
++(define_insn_reservation "znver4_insn_1_both" 5
++			 (and (eq_attr "cpu" "znver4")
++			      (and (eq_attr "type" "alu,icmp,negnot,test,incdec")
++				   (eq_attr "memory" "both")))
++			 "znver1-direct,znver4-load,znver1-ieu,znver2-store")
++
++(define_insn_reservation "znver4_insn_2_both" 5
++			 (and (eq_attr "cpu" "znver4")
++			      (and (eq_attr "type" "rotate,rotate1,ishift,ishift1")
++				   (eq_attr "memory" "both")))
++			 "znver1-direct,znver4-load,znver1-ieu1|znver1-ieu2,znver2-store")
++
++(define_insn_reservation "znver4_insn_3_both" 5
++			 (and (eq_attr "cpu" "znver4")
++			      (and (eq_attr "type" "setcc,icmov")
++				   (eq_attr "memory" "both")))
++			 "znver1-double,znver4-load,znver1-ieu0|znver1-ieu3,znver2-store")
++
+ ;; Fix me: Other vector type insns keeping latency 6 as of now.
+ (define_insn_reservation "znver1_ieu_vector" 6
+ 			 (and (eq_attr "cpu" "znver1")
+@@ -415,7 +601,7 @@
+ 			 "znver1-vector,znver1-ivector")
+ 
+ (define_insn_reservation "znver2_ieu_vector" 5
+-			 (and (eq_attr "cpu" "znver2,znver3")
++			 (and (eq_attr "cpu" "znver2,znver3,znver4")
+ 			      (eq_attr "type" "other,str,multi"))
+ 			 "znver1-vector,znver2-ivector")
+ 
+@@ -428,21 +614,21 @@
+ 			 "znver1-vector,znver1-ivector")
+ 
+ (define_insn_reservation "znver2_alu1_vector" 3
+-			 (and (eq_attr "cpu" "znver2,znver3")
++			 (and (eq_attr "cpu" "znver2,znver3,znver4")
+ 			      (and (eq_attr "znver1_decode" "vector")
+ 				   (and (eq_attr "type" "alu1")
+ 					(eq_attr "memory" "none,unknown"))))
+ 			 "znver1-vector,znver2-ivector")
+ 
+ (define_insn_reservation "znver1_alu1_double" 2
+-			 (and (eq_attr "cpu" "znver1,znver2,znver3")
++			 (and (eq_attr "cpu" "znver1,znver2,znver3,znver4")
+ 			      (and (eq_attr "znver1_decode" "double")
+ 				   (and (eq_attr "type" "alu1")
+ 					(eq_attr "memory" "none,unknown"))))
+ 			 "znver1-double,znver1-ieu")
+ 
+ (define_insn_reservation "znver1_alu1_direct" 1
+-			 (and (eq_attr "cpu" "znver1,znver2,znver3")
++			 (and (eq_attr "cpu" "znver1,znver2,znver3,znver4")
+ 			      (and (eq_attr "znver1_decode" "direct")
+ 				   (and (eq_attr "type" "alu1")
+ 					(eq_attr "memory" "none,unknown"))))
+@@ -454,6 +640,11 @@
+ 			      (and (eq_attr "type" "ibr")
+ 					(eq_attr "memory" "none")))
+ 			  "znver1-direct")
++(define_insn_reservation "znver4_branch" 1
++			 (and (eq_attr "cpu" "znver4")
++			      (and (eq_attr "type" "ibr")
++					(eq_attr "memory" "none")))
++			  "znver1-direct,znver1-ieu0|znver4-bru0")
+ 
+ ;; Indirect branches check latencies.
+ (define_insn_reservation "znver1_indirect_branch_mem" 6
+@@ -468,25 +659,36 @@
+ 					(eq_attr "memory" "load")))
+ 			 "znver1-vector,znver2-ivector")
+ 
++(define_insn_reservation "znver4_indirect_branch_mem" 6
++			 (and (eq_attr "cpu" "znver4")
++			      (and (eq_attr "type" "ibr")
++					(eq_attr "memory" "load")))
++			 "znver1-vector,znver2-ivector+znver4-bru0")
++
+ ;; LEA executes in ALU units with 1 cycle latency.
+ (define_insn_reservation "znver1_lea" 1
+-			 (and (eq_attr "cpu" "znver1,znver2,znver3")
++			 (and (eq_attr "cpu" "znver1,znver2,znver3,znver4")
+ 			      (eq_attr "type" "lea"))
+ 			 "znver1-direct,znver1-ieu")
+ 
+-;; Other integer instrucions
++;; Other integer instructions
+ (define_insn_reservation "znver1_idirect" 1
+-			 (and (eq_attr "cpu" "znver1,znver2,znver3")
++			 (and (eq_attr "cpu" "znver1,znver2,znver3,znver4")
+ 			      (and (eq_attr "unit" "integer,unknown")
+ 				   (eq_attr "memory" "none,unknown")))
+ 			 "znver1-direct,znver1-ieu")
+ 
+ ;;  Floating point
+ (define_insn_reservation "znver1_fp_cmov" 6
+-			 (and (eq_attr "cpu" "znver1,znver2,znver3")
++			 (and (eq_attr "cpu" "znver1")
+ 			      (eq_attr "type" "fcmov"))
+ 			 "znver1-vector,znver1-fvector")
+ 
++(define_insn_reservation "znver2_fp_cmov" 6
++			 (and (eq_attr "cpu" "znver2,znver3,znver4")
++			      (eq_attr "type" "fcmov"))
++			 "znver1-vector,znver2-fvector")
++
+ (define_insn_reservation "znver1_fp_mov_direct_load" 8 
+ 			 (and (eq_attr "cpu" "znver1,znver2,znver3")
+ 			      (and (eq_attr "znver1_decode" "direct")
+@@ -494,6 +696,13 @@
+ 					(eq_attr "memory" "load"))))
+ 			 "znver1-direct,znver1-load,znver1-fp3|znver1-fp1")
+ 
++(define_insn_reservation "znver4_fp_mov_direct_load" 8 
++			 (and (eq_attr "cpu" "znver4")
++			      (and (eq_attr "znver1_decode" "direct")
++				   (and (eq_attr "type" "fmov")
++					(eq_attr "memory" "load"))))
++			 "znver1-direct,znver4-load,znver1-fp2|znver1-fp3")
++
+ (define_insn_reservation "znver1_fp_mov_direct_store" 5
+ 			 (and (eq_attr "cpu" "znver1")
+ 			      (and (eq_attr "znver1_decode" "direct")
+@@ -501,7 +710,7 @@
+ 					(eq_attr "memory" "store"))))
+ 			 "znver1-direct,znver1-fp2|znver1-fp3,znver1-store")
+ (define_insn_reservation "znver2_fp_mov_direct_store" 5
+-			 (and (eq_attr "cpu" "znver2,znver3")
++			 (and (eq_attr "cpu" "znver2,znver3,znver4")
+ 			      (and (eq_attr "znver1_decode" "direct")
+ 				   (and (eq_attr "type" "fmov")
+ 					(eq_attr "memory" "store"))))
+@@ -514,6 +723,13 @@
+ 					(eq_attr "memory" "none"))))
+ 			 "znver1-double,znver1-fp3")
+ 
++(define_insn_reservation "znver4_fp_mov_double" 4
++			 (and (eq_attr "cpu" "znver4")
++			      (and (eq_attr "znver1_decode" "double")
++				   (and (eq_attr "type" "fmov")
++					(eq_attr "memory" "none"))))
++			 "znver1-double,znver1-fp1")
++
+ (define_insn_reservation "znver1_fp_mov_double_load" 12
+ 			 (and (eq_attr "cpu" "znver1,znver2,znver3")
+ 			      (and (eq_attr "znver1_decode" "double")
+@@ -521,11 +737,23 @@
+ 					(eq_attr "memory" "load"))))
+ 			 "znver1-double,znver1-load,znver1-fp3")
+ 
++(define_insn_reservation "znver4_fp_mov_double_load" 11
++			 (and (eq_attr "cpu" "znver4")
++			      (and (eq_attr "znver1_decode" "double")
++				   (and (eq_attr "type" "fmov")
++					(eq_attr "memory" "load"))))
++			 "znver1-double,znver4-load,znver1-fp1")
++
+ (define_insn_reservation "znver1_fp_mov_direct" 1
+ 			 (and (eq_attr "cpu" "znver1,znver2,znver3")
+ 			      (eq_attr "type" "fmov"))
+ 			 "znver1-direct,znver1-fp3")
+ 
++(define_insn_reservation "znver4_fp_mov_direct" 1
++			 (and (eq_attr "cpu" "znver4")
++			      (eq_attr "type" "fmov"))
++			 "znver1-direct,znver1-fp1")
++
+ ;; TODO: AGU?
+ (define_insn_reservation "znver1_fp_spc_direct" 5
+ 			 (and (eq_attr "cpu" "znver1,znver2,znver3")
+@@ -533,13 +761,25 @@
+ 				   (eq_attr "memory" "store")))
+ 			 "znver1-direct,znver1-fp3,znver1-fp2")
+ 
++(define_insn_reservation "znver4_fp_spc_direct" 5
++			 (and (eq_attr "cpu" "znver4")
++			      (and (eq_attr "type" "fpspc")
++				   (eq_attr "memory" "store")))
++			 "znver1-direct,znver1-fp1,znver4-fp-store0")
++
++(define_insn_reservation "znver4_fp_sqrt_direct" 22
++			 (and (eq_attr "cpu" "znver4")
++			      (and (eq_attr "type" "fpspc")
++				   (eq_attr "memory" "none")))
++			 "znver1-direct,znver1-fp1")
++
+ (define_insn_reservation "znver1_fp_insn_vector" 6
+ 			 (and (eq_attr "cpu" "znver1")
+ 			      (and (eq_attr "znver1_decode" "vector")
+ 				   (eq_attr "type" "fpspc,mmxcvt,sselog1,ssemul,ssemov")))
+ 			 "znver1-vector,znver1-fvector")
+ (define_insn_reservation "znver2_fp_insn_vector" 6
+-			 (and (eq_attr "cpu" "znver2,znver3")
++			 (and (eq_attr "cpu" "znver2,znver3,znver4")
+ 			      (and (eq_attr "znver1_decode" "vector")
+ 				   (eq_attr "type" "fpspc,mmxcvt,sselog1,ssemul,ssemov")))
+ 			 "znver1-vector,znver2-fvector")
+@@ -550,6 +790,11 @@
+ 			      (eq_attr "type" "fsgn"))
+ 			 "znver1-direct,znver1-fp3")
+ 
++(define_insn_reservation "znver4_fp_fsgn" 1
++			 (and (eq_attr "cpu" "znver4")
++			      (eq_attr "type" "fsgn"))
++			 "znver1-direct,znver1-fp0|znver1-fp1")
++
+ (define_insn_reservation "znver1_fp_fcmp" 2
+ 			 (and (eq_attr "cpu" "znver1,znver2,znver3")
+ 			      (and (eq_attr "memory" "none")
+@@ -557,13 +802,39 @@
+ 					(eq_attr "type" "fcmp"))))
+ 			 "znver1-double,znver1-fp0,znver1-fp2")
+ 
++(define_insn_reservation "znver4_fp_fcmp_double" 4
++			 (and (eq_attr "cpu" "znver4")
++			      (and (eq_attr "memory" "none")
++				   (and (eq_attr "znver1_decode" "double")
++					(eq_attr "type" "fcmp"))))
++			 "znver1-double,znver1-fp0,znver4-fp-store0")
++
++(define_insn_reservation "znver4_fp_fcmp" 3
++			 (and (eq_attr "cpu" "znver4")
++			      (and (eq_attr "type" "fcmp")
++				   (eq_attr "memory" "none")))
++			 "znver1-direct,znver1-fp0")
++
+ (define_insn_reservation "znver1_fp_fcmp_load" 9
+ 			 (and (eq_attr "cpu" "znver1,znver2,znver3")
+-			      (and (eq_attr "memory" "none")
++			      (and (eq_attr "memory" "load")
+ 				   (and (eq_attr "znver1_decode" "double")
+ 					(eq_attr "type" "fcmp"))))
+ 			 "znver1-double,znver1-load, znver1-fp0,znver1-fp2")
+ 
++(define_insn_reservation "znver4_fp_fcmp_double_load" 11
++			 (and (eq_attr "cpu" "znver4")
++			      (and (eq_attr "memory" "load")
++				   (and (eq_attr "znver1_decode" "double")
++					(eq_attr "type" "fcmp"))))
++			 "znver1-double,znver4-load,znver1-fp0,znver4-fp-store0")
++
++(define_insn_reservation "znver4_fp_fcmp_load" 10
++			 (and (eq_attr "cpu" "znver4")
++			      (and (eq_attr "type" "fcmp")
++				   (eq_attr "memory" "load")))
++			 "znver1-direct,znver4-load,znver1-fp0")
++
+ ;;FADD FSUB FMUL
+ (define_insn_reservation "znver1_fp_op_mul" 5
+ 			 (and (eq_attr "cpu" "znver1,znver2,znver3")
+@@ -571,12 +842,31 @@
+ 				   (eq_attr "memory" "none")))
+ 			 "znver1-direct,znver1-fp0*5")
+ 
++(define_insn_reservation "znver4_fp_op_mul" 6
++			 (and (eq_attr "cpu" "znver4")
++			      (and (eq_attr "type" "fop,fmul")
++				   (eq_attr "memory" "none")))
++			 "znver1-direct,znver1-fp0*6")
++
+ (define_insn_reservation "znver1_fp_op_mul_load" 12 
+ 			 (and (eq_attr "cpu" "znver1,znver2,znver3")
+ 			      (and (eq_attr "type" "fop,fmul")
+ 				   (eq_attr "memory" "load")))
+ 			 "znver1-direct,znver1-load,znver1-fp0*5")
+ 
++(define_insn_reservation "znver4_fp_op_mul_load" 13 
++			 (and (eq_attr "cpu" "znver4")
++			      (and (eq_attr "type" "fop,fmul")
++				   (eq_attr "memory" "load")))
++			 "znver1-direct,znver4-load,znver1-fp0*6")
++
++(define_insn_reservation "znver4_fp_op_imul" 10
++			 (and (eq_attr "cpu" "znver4")
++			      (and (eq_attr "type" "fop,fmul")
++				   (and (eq_attr "fp_int_src" "true")
++				    (eq_attr "memory" "none"))))
++			 "znver1-double,znver1-fp1,znver1-fp0")
++
+ (define_insn_reservation "znver1_fp_op_imul_load" 16
+ 			 (and (eq_attr "cpu" "znver1,znver2,znver3")
+ 			      (and (eq_attr "type" "fop,fmul")
+@@ -584,8 +874,15 @@
+ 					(eq_attr "memory" "load"))))
+ 			"znver1-double,znver1-load,znver1-fp3,znver1-fp0")
+ 
++(define_insn_reservation "znver4_fp_op_imul_load" 17
++			 (and (eq_attr "cpu" "znver4")
++			      (and (eq_attr "type" "fop,fmul")
++				   (and (eq_attr "fp_int_src" "true")
++				    (eq_attr "memory" "load"))))
++			 "znver1-double,znver4-load,znver1-fp1,znver1-fp0")
++
+ (define_insn_reservation "znver1_fp_op_div" 15
+-			 (and (eq_attr "cpu" "znver1,znver2,znver3")
++			 (and (eq_attr "cpu" "znver1,znver2,znver3,znver4")
+ 			      (and (eq_attr "type" "fdiv")
+ 				   (eq_attr "memory" "none")))
+ 			 "znver1-direct,znver1-fp3*15")
+@@ -596,6 +893,12 @@
+ 				   (eq_attr "memory" "load")))
+ 			 "znver1-direct,znver1-load,znver1-fp3*15")
+ 
++(define_insn_reservation "znver4_fp_op_div_load" 22
++			 (and (eq_attr "cpu" "znver4")
++			      (and (eq_attr "type" "fdiv")
++				   (eq_attr "memory" "load")))
++			 "znver1-direct,znver4-load,znver1-fp3*15")
++
+ (define_insn_reservation "znver1_fp_op_idiv_load" 27
+ 			 (and (eq_attr "cpu" "znver1")
+ 			      (and (eq_attr "type" "fdiv")
+@@ -610,6 +913,19 @@
+ 					(eq_attr "memory" "load"))))
+ 			 "znver1-double,znver1-load,znver1-fp3*19")
+ 
++(define_insn_reservation "znver4_fp_op_idiv" 19
++			 (and (eq_attr "cpu" "znver4")
++			      (and (eq_attr "type" "fdiv")
++				   (and (eq_attr "fp_int_src" "true")
++					(eq_attr "memory" "none"))))
++			 "znver1-double,znver1-fp1,znver1-fp1")
++
++(define_insn_reservation "znver4_fp_op_idiv_load" 26
++			 (and (eq_attr "cpu" "znver4")
++			      (and (eq_attr "type" "fdiv")
++				   (and (eq_attr "fp_int_src" "true")
++					(eq_attr "memory" "none"))))
++			 "znver1-double,znver4-load,znver1-fp1,znver1-fp1")
+ 
+ ;; MMX, SSE, SSEn.n, AVX, AVX2 instructions
+ (define_insn_reservation "znver1_fp_insn" 1
+@@ -623,26 +939,49 @@
+ 				   (eq_attr "memory" "none")))
+ 			 "znver1-direct,znver1-fp0|znver1-fp1|znver1-fp3")
+ 
++(define_insn_reservation "znver4_fp_insn" 1
++			 (and (eq_attr "cpu" "znver4")
++			      (eq_attr "type" "mmx,mmxadd"))
++			 "znver1-direct,znver1-fpu")
++
+ (define_insn_reservation "znver1_mmx_add_load" 8
+ 			 (and (eq_attr "cpu" "znver1,znver2,znver3")
+ 			      (and (eq_attr "type" "mmxadd")
+ 				   (eq_attr "memory" "load")))
+ 			 "znver1-direct,znver1-load,znver1-fp0|znver1-fp1|znver1-fp3")
+ 
++(define_insn_reservation "znver4_mmx_add_load" 8
++			 (and (eq_attr "cpu" "znver1,znver2,znver3")
++			      (and (eq_attr "type" "mmxadd")
++				   (eq_attr "memory" "load")))
++			 "znver1-direct,znver4-load,znver1-fpu")
++
+ (define_insn_reservation "znver1_mmx_cmp" 1
+ 			 (and (eq_attr "cpu" "znver1,znver2,znver3")
+ 			      (and (eq_attr "type" "mmxcmp")
+ 				   (eq_attr "memory" "none")))
+ 			 "znver1-direct,znver1-fp0|znver1-fp3")
+ 
++(define_insn_reservation "znver4_mmx_cmp" 1
++			 (and (eq_attr "cpu" "znver4")
++			      (and (eq_attr "type" "mmxcmp")
++				   (eq_attr "memory" "none")))
++			 "znver1-direct,znver1-fpu")
++
+ (define_insn_reservation "znver1_mmx_cmp_load" 8
+ 			 (and (eq_attr "cpu" "znver1,znver2,znver3")
+ 			      (and (eq_attr "type" "mmxcmp")
+ 				   (eq_attr "memory" "load")))
+ 			 "znver1-direct,znver1-load,znver1-fp0|znver1-fp3")
+ 
++(define_insn_reservation "znver4_mmx_cmp_load" 8
++			 (and (eq_attr "cpu" "znver4")
++			      (and (eq_attr "type" "mmxcmp")
++				   (eq_attr "memory" "load")))
++			 "znver1-direct,znver4-load,znver1-fpu")
++
+ (define_insn_reservation "znver1_mmx_cvt_pck_shuf" 1
+-			 (and (eq_attr "cpu" "znver1,znver2,znver3")
++			 (and (eq_attr "cpu" "znver1,znver2,znver3,znver4")
+ 			      (and (eq_attr "type" "mmxcvt,sseshuf,sseshuf1")
+ 				   (eq_attr "memory" "none")))
+ 			 "znver1-direct,znver1-fp1|znver1-fp2")
+@@ -653,18 +992,48 @@
+ 				   (eq_attr "memory" "load")))
+ 			 "znver1-direct,znver1-load,znver1-fp1|znver1-fp2")
+ 
++(define_insn_reservation "znver4_mmx_cvt_pck_shuf_load" 8
++			 (and (eq_attr "cpu" "znver4")
++			      (and (eq_attr "type" "mmxcvt,sseshuf,sseshuf1")
++				   (eq_attr "memory" "load")))
++			 "znver1-direct,znver4-load,znver1-fp1|znver1-fp2")
++
+ (define_insn_reservation "znver1_mmx_shift_move" 1
+ 			 (and (eq_attr "cpu" "znver1,znver2,znver3")
+ 			      (and (eq_attr "type" "mmxshft,mmxmov")
+ 				   (eq_attr "memory" "none")))
+ 			 "znver1-direct,znver1-fp2")
+ 
++(define_insn_reservation "znver4_mmx_shift" 1
++			 (and (eq_attr "cpu" "znver4")
++			      (and (eq_attr "type" "mmxshft")
++				   (eq_attr "memory" "none")))
++			 "znver1-direct,znver1-fp1|znver1-fp2")
++
++(define_insn_reservation "znver4_mmx_move" 1
++			 (and (eq_attr "cpu" "znver4")
++			      (and (eq_attr "type" "mmxmov")
++				   (eq_attr "memory" "none")))
++			 "znver1-direct,znver4-fp-store0")
++
+ (define_insn_reservation "znver1_mmx_shift_move_load" 8
+ 			 (and (eq_attr "cpu" "znver1,znver2,znver3")
+ 			      (and (eq_attr "type" "mmxshft,mmxmov")
+ 				   (eq_attr "memory" "load")))
+ 			 "znver1-direct,znver1-load,znver1-fp2")
+ 
++(define_insn_reservation "znver4_mmx_shift_load" 8
++			 (and (eq_attr "cpu" "znver4")
++			      (and (eq_attr "type" "mmxshft")
++				   (eq_attr "memory" "load")))
++			 "znver1-direct,znver4-load,znver1-fp1|znver1-fp2")
++
++(define_insn_reservation "znver4_mmx_move_load" 8
++			 (and (eq_attr "cpu" "znver4")
++			      (and (eq_attr "type" "mmxmov")
++				   (eq_attr "memory" "load")))
++			 "znver1-direct,znver4-load,znver4-fp-store0")
++
+ (define_insn_reservation "znver1_mmx_move_store" 1
+ 			 (and (eq_attr "cpu" "znver1")
+ 			      (and (eq_attr "type" "mmxshft,mmxmov")
+@@ -676,18 +1045,42 @@
+ 				   (eq_attr "memory" "store,both")))
+ 			  "znver1-direct,znver1-fp2,znver2-store")
+ 
++(define_insn_reservation "znver4_mmx_shift_store" 1
++			 (and (eq_attr "cpu" "znver4")
++			      (and (eq_attr "type" "mmxshft")
++				   (eq_attr "memory" "store,both")))
++			 "znver1-direct,znver1-fp1|znver1-fp2,znver2-store")
++
++(define_insn_reservation "znver4_mmx_move_store" 1
++			 (and (eq_attr "cpu" "znver4")
++			      (and (eq_attr "type" "mmxmov")
++				   (eq_attr "memory" "store,both")))
++			 "znver1-direct,znver4-fp-store0")
++
+ (define_insn_reservation "znver1_mmx_mul" 3
+ 			 (and (eq_attr "cpu" "znver1,znver2,znver3")
+ 			      (and (eq_attr "type" "mmxmul")
+ 				   (eq_attr "memory" "none")))
+ 			  "znver1-direct,znver1-fp0*3")
+ 
++(define_insn_reservation "znver4_mmx_mul" 3
++			 (and (eq_attr "cpu" "znver4")
++			      (and (eq_attr "type" "mmxmul")
++				   (eq_attr "memory" "none")))
++			  "znver1-direct,(znver1-fp0|znver1-fp3)*3")
++
+ (define_insn_reservation "znver1_mmx_load" 10
+ 			 (and (eq_attr "cpu" "znver1,znver2,znver3")
+ 			      (and (eq_attr "type" "mmxmul")
+ 				   (eq_attr "memory" "load")))
+ 			 "znver1-direct,znver1-load,znver1-fp0*3")
+ 
++(define_insn_reservation "znver4_mmx_mul_load" 10
++			 (and (eq_attr "cpu" "znver4")
++			      (and (eq_attr "type" "mmxmul")
++				   (eq_attr "memory" "load")))
++			  "znver1-direct,znver4-load,(znver1-fp0|znver1-fp3)*3")
++
+ ;; TODO
+ (define_insn_reservation "znver1_avx256_log" 1
+ 			 (and (eq_attr "cpu" "znver1")
+@@ -709,6 +1102,62 @@
+ 				   (eq_attr "memory" "none")))
+ 			 "znver1-direct,znver1-fpu")
+ 
++(define_insn_reservation "znver4_sse_log" 1
++			 (and (eq_attr "cpu" "znver4")
++			      (and (eq_attr "type" "sselog,sselog1")
++				   (and (eq_attr "mode" "V4SF,V8SF,V2DF,V4DF")
++				    (eq_attr "memory" "none"))))
++			 "znver1-direct,znver1-fpu")
++
++(define_insn_reservation "znver4_sse_log_evex" 1
++			 (and (eq_attr "cpu" "znver4")
++			      (and (eq_attr "type" "sselog,sselog1")
++				   (and (eq_attr "mode" "V16SF,V8DF")
++				    (eq_attr "memory" "none"))))
++			 "znver1-direct,znver1-fp0+znver1-fp1|znver1-fp2+znver1-fp3")
++
++(define_insn_reservation "znver4_sse_log_load" 8
++			 (and (eq_attr "cpu" "znver4")
++			      (and (eq_attr "type" "sselog,sselog1")
++				   (and (eq_attr "mode" "V4SF,V8SF,V2DF,V4DF")
++				    (eq_attr "memory" "load"))))
++			 "znver1-direct,znver4-load,znver1-fpu")
++
++(define_insn_reservation "znver4_sse_log_evex_load" 8
++			 (and (eq_attr "cpu" "znver4")
++			      (and (eq_attr "type" "sselog,sselog1")
++				   (and (eq_attr "mode" "V16SF,V8DF")
++				    (eq_attr "memory" "load"))))
++			 "znver1-direct,znver4-load,znver1-fp0+znver1-fp1|znver1-fp2+znver1-fp3")
++
++(define_insn_reservation "znver4_sse_ilog" 1
++			 (and (eq_attr "cpu" "znver4")
++			      (and (eq_attr "type" "sselog,sselog1")
++				   (and (eq_attr "mode" "OI")
++				    (eq_attr "memory" "none"))))
++			 "znver1-direct,znver1-fp0+znver1-fp1|znver1-fp2+znver1-fp3")
++
++(define_insn_reservation "znver4_sse_ilog_evex" 1
++			 (and (eq_attr "cpu" "znver4")
++			      (and (eq_attr "type" "sselog,sselog1")
++				   (and (eq_attr "mode" "TI")
++				    (eq_attr "memory" "none"))))
++			 "znver1-direct,znver1-fp0+znver1-fp1+znver1-fp2+znver1-fp3")
++
++(define_insn_reservation "znver4_sse_ilog_load" 8
++			 (and (eq_attr "cpu" "znver4")
++			      (and (eq_attr "type" "sselog,sselog1")
++				   (and (eq_attr "mode" "OI")
++				    (eq_attr "memory" "load"))))
++			 "znver1-direct,znver4-load,znver1-fp0+znver1-fp1|znver1-fp2+znver1-fp3")
++
++(define_insn_reservation "znver4_sse_ilog_evex_load" 8
++			 (and (eq_attr "cpu" "znver4")
++			      (and (eq_attr "type" "sselog,sselog1")
++				   (and (eq_attr "mode" "TI")
++				    (eq_attr "memory" "load"))))
++			 "znver1-direct,znver4-load,znver1-fp0+znver1-fp1+znver1-fp2+znver1-fp3")
++
+ (define_insn_reservation "znver1_sse_log_load" 8
+ 			 (and (eq_attr "cpu" "znver1,znver2,znver3")
+ 			      (and (eq_attr "type" "sselog")
+@@ -771,6 +1220,18 @@
+ 					     (eq_attr "memory" "none")))))
+ 			 "znver1-double,znver1-fp0|znver1-fp1")
+ 
++(define_insn_reservation "znver4_sse_comi" 1
++			 (and (eq_attr "cpu" "znver4")
++			      (and (eq_attr "type" "ssecomi")
++				   (eq_attr "memory" "none")))
++			 "znver1-double,znver1-fp2|znver1-fp3,znver4-fp-store0")
++
++(define_insn_reservation "znver4_sse_comi_load" 8
++			 (and (eq_attr "cpu" "znver4")
++			      (and (eq_attr "type" "ssecomi")
++				   (eq_attr "memory" "load")))
++			 "znver1-double,znver4-load,znver1-fp2|znver1-fp3,znver4-fp-store0")
++
+ (define_insn_reservation "znver1_sse_comi_double_load" 10
+ 			 (and (ior (and (eq_attr "cpu" "znver1")
+ 			                (eq_attr "mode" "V4SF,V2DF,TI"))
+@@ -786,7 +1247,7 @@
+ 			 (and (ior (and (eq_attr "cpu" "znver1")
+ 			                (eq_attr "mode" "SF,DF,V4SF,V2DF,TI"))
+ 				   (ior (eq_attr "cpu" "znver2")
+-					(eq_attr "cpu" "znver3")))
++					(eq_attr "cpu" "znver3,znver4")))
+ 			      (and (eq_attr "prefix_extra" "1")
+ 				   (and (eq_attr "type" "ssecomi")
+ 					(eq_attr "memory" "none"))))
+@@ -802,6 +1263,13 @@
+ 					(eq_attr "memory" "load"))))
+ 			 "znver1-direct,znver1-load,znver1-fp1|znver1-fp2")
+ 
++(define_insn_reservation "znver4_sse_test_load" 8
++			 (and (eq_attr "cpu" "znver4")
++			      (and (eq_attr "prefix_extra" "1")
++				   (and (eq_attr "type" "ssecomi")
++					(eq_attr "memory" "load"))))
++			 "znver1-direct,znver4-load,znver1-fp1|znver1-fp2")
++
+ ;; SSE moves
+ ;; Fix me:  Need to revist this again some of the moves may be restricted
+ ;; to some fpu pipes.
+@@ -814,7 +1282,7 @@
+ 			 "znver1-direct,znver1-ieu0")
+ 
+ (define_insn_reservation "znver2_sse_mov" 1
+-			 (and (eq_attr "cpu" "znver2,znver3")
++			 (and (eq_attr "cpu" "znver2,znver3,znver4")
+ 			      (and (eq_attr "mode" "SI")
+ 				   (and (eq_attr "isa" "avx")
+ 					(and (eq_attr "type" "ssemov")
+@@ -831,7 +1299,7 @@
+ 			 "znver1-direct,znver1-ieu2")
+ 
+ (define_insn_reservation "znver2_avx_mov" 1
+-			 (and (eq_attr "cpu" "znver2,znver3")
++			 (and (eq_attr "cpu" "znver2,znver3,znver4")
+ 			      (and (eq_attr "mode" "TI")
+ 				   (and (eq_attr "isa" "avx")
+ 					(and (eq_attr "type" "ssemov")
+@@ -843,7 +1311,8 @@
+ 			 (and (ior (and (eq_attr "cpu" "znver1")
+ 			                (eq_attr "mode" "SF,DF,V4SF,V2DF,TI"))
+ 				   (ior (eq_attr "cpu" "znver2")
+-					      (eq_attr "cpu" "znver3")))
++					(ior (eq_attr "cpu" "znver3")
++					 (eq_attr "cpu" "znver4"))))
+ 			      (and (eq_attr "type" "ssemov")
+ 				   (eq_attr "memory" "none")))
+ 			 "znver1-direct,znver1-fpu")
+@@ -855,7 +1324,7 @@
+ 					(eq_attr "memory" "store"))))
+ 			"znver1-direct,znver1-fpu,znver1-store")
+ (define_insn_reservation "znver2_sseavx_mov_store" 1
+-			 (and (eq_attr "cpu" "znver2,znver3")
++			 (and (eq_attr "cpu" "znver2,znver3,znver4")
+ 			      (and (eq_attr "type" "ssemov")
+ 				   (eq_attr "memory" "store")))
+ 			"znver1-direct,znver1-fpu,znver2-store")
+@@ -869,6 +1338,12 @@
+ 				    (eq_attr "memory" "load")))
+ 			 "znver1-direct,znver1-load,znver1-fpu")
+ 
++(define_insn_reservation "znver4_sseavx_mov_load" 8
++			 (and (eq_attr "cpu" "znver4")
++				   (and (eq_attr "type" "ssemov")
++					(eq_attr "memory" "load")))
++			 "znver1-double,znver4-load,znver1-fpu")
++
+ (define_insn_reservation "znver1_avx256_mov" 1
+ 			 (and (eq_attr "cpu" "znver1")
+ 			      (and (eq_attr "mode" "V8SF,V4DF,OI")
+@@ -895,7 +1370,8 @@
+ 			 (and (ior (and (eq_attr "cpu" "znver1")
+ 			                (eq_attr "mode" "SF,DF,V4SF,V2DF,TI"))
+ 				   (ior (eq_attr "cpu" "znver2")
+-					(eq_attr "cpu" "znver3")))
++				    (ior (eq_attr "cpu" "znver3")
++					 (eq_attr "cpu" "znver4"))))
+ 			      (and (eq_attr "type" "sseadd")
+ 				   (eq_attr "memory" "none")))
+ 			 "znver1-direct,znver1-fp2|znver1-fp3")
+@@ -909,6 +1385,12 @@
+ 				   (eq_attr "memory" "load")))
+ 			 "znver1-direct,znver1-load,znver1-fp2|znver1-fp3")
+ 
++(define_insn_reservation "znver4_sseavx_add_load" 10
++			 (and (eq_attr "cpu" "znver4")
++				   (and (eq_attr "type" "sseadd")
++					(eq_attr "memory" "load")))
++			 "znver1-double,znver4-load,znver1-fp2|znver1-fp3")
++
+ (define_insn_reservation "znver1_avx256_add" 3
+ 			 (and (eq_attr "cpu" "znver1")
+ 			      (and (eq_attr "mode" "V8SF,V4DF,OI")
+@@ -960,6 +1442,20 @@
+ 					(eq_attr "memory" "none")))
+ 			 "znver1-direct,znver1-fp0|znver1-fp1")
+ 
++(define_insn_reservation "znver4_sseavx_fma" 4
++			 (and (and (eq_attr "cpu" "znver4")
++			      (eq_attr "mode" "SF,DF,V4SF,V2DF,V8SF,V4DF"))
++				   (and (eq_attr "type" "ssemuladd")
++					(eq_attr "memory" "none")))
++			 "znver1-direct,znver1-fp0|znver1-fp1")
++
++(define_insn_reservation "znver4_sseavx_fma_evex" 4
++			 (and (and (eq_attr "cpu" "znver4")
++			      (eq_attr "mode" "V16SF,V8DF"))
++				   (and (eq_attr "type" "ssemuladd")
++					(eq_attr "memory" "none")))
++			 "znver1-direct,znver1-fp0+znver1-fp1")
++
+ (define_insn_reservation "znver3_sseavx_fma_load" 11
+ 			 (and (and (eq_attr "cpu" "znver3")
+ 			       (eq_attr "mode" "SF,DF,V4SF,V2DF"))
+@@ -967,6 +1463,20 @@
+ 					  (eq_attr "memory" "load")))
+ 			 "znver1-direct,znver1-load,znver1-fp0|znver1-fp1")
+ 
++(define_insn_reservation "znver4_sseavx_fma_load" 11
++			 (and (and (eq_attr "cpu" "znver4")
++			      (eq_attr "mode" "SF,DF,V4SF,V2DF,V8SF,V4DF"))
++				   (and (eq_attr "type" "ssemuladd")
++					(eq_attr "memory" "load")))
++			 "znver1-direct,znver4-load,znver1-fp0|znver1-fp1")
++
++(define_insn_reservation "znver4_sseavx_fma_evex_load" 11
++			 (and (and (eq_attr "cpu" "znver4")
++			      (eq_attr "mode" "V16SF,V8DF"))
++				   (and (eq_attr "type" "ssemuladd")
++					(eq_attr "memory" "load")))
++			 "znver1-direct,znver4-load,znver1-fp0+znver1-fp1")
++
+ (define_insn_reservation "znver3_avx256_fma" 4
+ 			 (and (eq_attr "cpu" "znver3")
+ 			      (and (eq_attr "mode" "V8SF,V4DF")
+@@ -990,6 +1500,20 @@
+ 				   (eq_attr "memory" "none")))
+ 			 "znver1-direct,znver1-fp0|znver1-fp1|znver1-fp3")
+ 
++(define_insn_reservation "znver4_sseavx_iadd" 1
++			 (and (and (eq_attr "cpu" "znver4")
++			      (eq_attr "mode" "QI,HI,SI,DI,TI,OI,XI"))
++				   (and (eq_attr "type" "sseiadd")
++					(eq_attr "memory" "none")))
++			 "znver1-direct,znver1-fpu")
++
++(define_insn_reservation "znver4_sseavx_iadd_load" 8
++			 (and (and (eq_attr "cpu" "znver4")
++			      (eq_attr "mode" "QI,HI,SI,DI,TI,OI,XI"))
++				   (and (eq_attr "type" "sseiadd")
++					(eq_attr "memory" "load")))
++			 "znver1-direct,znver4-load,znver1-fpu")
++
+ (define_insn_reservation "znver1_sseavx_iadd_load" 8
+ 			 (and (ior (and (eq_attr "cpu" "znver1")
+ 			                (eq_attr "mode" "DI,TI"))
+@@ -1053,6 +1577,33 @@
+ 					     (eq_attr "memory" "load")))))
+ 			 "znver1-double,znver1-load,znver1-fp3,znver1-ieu0")
+ 
++(define_insn_reservation "znver4_ssecvtsfdf_si" 4
++			 (and (eq_attr "cpu" "znver4")
++			      (and (eq_attr "mode" "SI")
++				   (and (eq_attr "type" "sseicvt")
++					    (eq_attr "memory" "none"))))
++			 "znver1-double,znver1-fp2|znver1-fp3,znver4-fp-store0")
++
++(define_insn_reservation "znver4_ssecvtsfdf_si_load" 11
++			 (and (eq_attr "cpu" "znver4")
++			      (and (eq_attr "mode" "SI")
++				   (and (eq_attr "type" "sseicvt")
++					    (eq_attr "memory" "load"))))
++			 "znver1-double,znver4-load,znver1-fp2|znver1-fp3,znver4-fp-store0")
++
++(define_insn_reservation "znver4_ssecvtsfdf_di" 3
++			 (and (eq_attr "cpu" "znver4")
++			      (and (eq_attr "mode" "DI")
++				   (and (eq_attr "type" "sseicvt")
++					    (eq_attr "memory" "none"))))
++			 "znver1-direct,znver1-fp2|znver1-fp3")
++
++(define_insn_reservation "znver4_ssecvtsfdf_di_load" 10
++			 (and (eq_attr "cpu" "znver4")
++			      (and (eq_attr "mode" "DI")
++				   (and (eq_attr "type" "sseicvt")
++					    (eq_attr "memory" "load"))))
++			 "znver1-direct,znver4-load,znver1-fp2|znver1-fp3")
+ 
+ ;; All other used ssecvt fp3 pipes
+ ;; Check: Need to revisit this again.
+@@ -1069,12 +1620,24 @@
+ 				   (eq_attr "memory" "none")))
+ 			 "znver1-direct,znver1-fp3")
+ 
++(define_insn_reservation "znver4_ssecvt" 3
++			 (and (eq_attr "cpu" "znver4")
++			      (and (eq_attr "type" "ssecvt")
++				   (eq_attr "memory" "none")))
++			 "znver1-direct,znver1-fp2|znver1-fp3")
++
+ (define_insn_reservation "znver1_ssecvt_load" 11
+ 			 (and (eq_attr "cpu" "znver1,znver2,znver3")
+ 			      (and (eq_attr "type" "ssecvt")
+ 				   (eq_attr "memory" "load")))
+ 			 "znver1-direct,znver1-load,znver1-fp3")
+ 
++(define_insn_reservation "znver4_ssecvt_load" 10
++			 (and (eq_attr "cpu" "znver4")
++			      (and (eq_attr "type" "ssecvt")
++				   (eq_attr "memory" "load")))
++			 "znver1-direct,znver4-load,znver1-fp2|znver1-fp3")
++
+ ;; SSE div
+ (define_insn_reservation "znver1_ssediv_ss_ps" 10
+ 			 (and (ior (and (eq_attr "cpu" "znver1")
+@@ -1087,6 +1650,21 @@
+ 				   (eq_attr "memory" "none")))
+ 			 "znver1-direct,znver1-fp3*10")
+ 
++(define_insn_reservation "znver4_ssediv_ss_ps" 10
++			 (and (eq_attr "cpu" "znver4")
++			      (and (eq_attr "type" "ssecvt")
++				   (and (eq_attr "mode" "V16SF,V8SF,V4SF,SF")
++				    (eq_attr "memory" "none"))))
++			 "znver1-direct,znver1-fp3*10")
++
++(define_insn_reservation "znver4_ssediv_ss_ps_evex" 10
++			 (and (eq_attr "cpu" "znver4")
++			      (and (eq_attr "type" "ssecvt")
++				   (and (eq_attr "mode" "V16SF,V8SF,V4SF,SF")
++				    (and (eq_attr "prefix" "evex")
++				     (eq_attr "memory" "none")))))
++			 "znver1-direct,znver1-fp1*10")
++
+ (define_insn_reservation "znver1_ssediv_ss_ps_load" 17
+ 			 (and (ior (and (eq_attr "cpu" "znver1")
+ 			                (eq_attr "mode" "V4SF,SF"))
+@@ -1098,6 +1676,21 @@
+ 				   (eq_attr "memory" "load")))
+ 			 "znver1-direct,znver1-load,znver1-fp3*10")
+ 
++(define_insn_reservation "znver4_ssediv_ss_ps_load" 17
++			 (and (eq_attr "cpu" "znver4")
++			      (and (eq_attr "type" "ssecvt")
++				   (and (eq_attr "mode" "V16SF,V8SF,V4SF,SF")
++				    (eq_attr "memory" "load"))))
++			 "znver1-direct,znver4-load,znver1-fp3*10")
++
++(define_insn_reservation "znver4_ssediv_ss_ps_evex_load" 17
++			 (and (eq_attr "cpu" "znver4")
++			      (and (eq_attr "type" "ssecvt")
++				   (and (eq_attr "mode" "V16SF,V8SF,V4SF,SF")
++				    (and (eq_attr "prefix" "evex")
++				     (eq_attr "memory" "load")))))
++			 "znver1-direct,znver4-load,znver1-fp1*10")
++
+ (define_insn_reservation "znver1_ssediv_sd_pd" 13
+ 			 (and (ior (and (eq_attr "cpu" "znver1")
+ 			                (eq_attr "mode" "V2DF,DF"))
+@@ -1109,6 +1702,21 @@
+ 				   (eq_attr "memory" "none")))
+ 			 "znver1-direct,znver1-fp3*13")
+ 
++(define_insn_reservation "znver4_ssediv_sd_pd" 13
++			 (and (eq_attr "cpu" "znver4")
++			      (and (eq_attr "type" "ssecvt")
++				   (and (eq_attr "mode" "V8DF,V4DF,V2DF,DF")
++				    (eq_attr "memory" "none"))))
++			 "znver1-direct,znver1-fp3*13")
++
++(define_insn_reservation "znver4_ssediv_sd_pd_evex" 13
++			 (and (eq_attr "cpu" "znver4")
++			      (and (eq_attr "type" "ssecvt")
++				   (and (eq_attr "mode" "V8DF,V4DF,V2DF,DF")
++				    (and (eq_attr "prefix" "evex")
++				     (eq_attr "memory" "none")))))
++			 "znver1-direct,znver1-fp1*13")
++
+ (define_insn_reservation "znver1_ssediv_sd_pd_load" 20
+ 			 (and (ior (and (eq_attr "cpu" "znver1")
+ 					       (eq_attr "mode" "V2DF,DF"))
+@@ -1120,6 +1728,21 @@
+ 				   (eq_attr "memory" "load")))
+ 			 "znver1-direct,znver1-load,znver1-fp3*13")
+ 
++(define_insn_reservation "znver4_ssediv_sd_pd_load" 20
++			 (and (eq_attr "cpu" "znver4")
++			      (and (eq_attr "type" "ssecvt")
++				   (and (eq_attr "mode" "V8DF,V4DF,V2DF,DF")
++				    (eq_attr "memory" "load"))))
++			 "znver1-direct,znver4-load,znver1-fp3*13")
++
++(define_insn_reservation "znver4_ssediv_sd_pd_evex_load" 20
++			 (and (eq_attr "cpu" "znver4")
++			      (and (eq_attr "type" "ssecvt")
++				   (and (eq_attr "mode" "V8DF,V4DF,V2DF,DF")
++				    (and (eq_attr "prefix" "evex")
++				     (eq_attr "memory" "load")))))
++			 "znver1-direct,znver4-load,znver1-fp1*13")
++
+ (define_insn_reservation "znver1_ssediv_avx256_ps" 12
+ 			 (and (eq_attr "cpu" "znver1")
+ 			      (and (eq_attr "mode" "V8SF")
+@@ -1153,12 +1776,19 @@
+ 			                (eq_attr "mode" "V4SF,SF"))
+ 				   (and (eq_attr "cpu" "znver2")
+ 					      (eq_attr "mode" "V8SF,V4SF,SF,V4DF,V2DF,DF"))
+-				   (and (eq_attr "cpu" "znver3")
++				   (and (eq_attr "cpu" "znver3,znver4")
+ 					      (eq_attr "mode" "V8SF,V4SF,SF,V4DF,V2DF,DF")))
+ 			      (and (eq_attr "type" "ssemul")
+ 				   (eq_attr "memory" "none")))
+ 			 "znver1-direct,(znver1-fp0|znver1-fp1)*3")
+ 
++(define_insn_reservation "znver4_ssemul_ss_ps_evex" 3
++			 (and (eq_attr "cpu" "znver4")
++			      (and (eq_attr "type" "ssemul")
++				   (and (eq_attr "mode" "V8DF,V16SF")
++				    	(eq_attr "memory" "none"))))
++			 "znver1-direct,(znver1-fp0+znver1-fp1)*3")
++
+ (define_insn_reservation "znver1_ssemul_ss_ps_load" 10 
+ 			 (and (ior (and (eq_attr "cpu" "znver1")
+ 			                (eq_attr "mode" "V4SF,SF"))
+@@ -1170,6 +1800,13 @@
+ 				   (eq_attr "memory" "load")))
+ 			 "znver1-direct,znver1-load,(znver1-fp0|znver1-fp1)*3")
+ 
++(define_insn_reservation "znver4_ssemul_ss_ps_evex_load" 10
++			 (and (eq_attr "cpu" "znver4")
++			      (and (eq_attr "type" "ssemul")
++				   (and (eq_attr "mode" "V8DF,V16SF")
++				    	(eq_attr "memory" "none"))))
++			 "znver1-direct,znver4-load,(znver1-fp0+znver1-fp1)*3")
++
+ (define_insn_reservation "znver1_ssemul_avx256_ps" 3
+ 			 (and (eq_attr "cpu" "znver1")
+ 			      (and (eq_attr "mode" "V8SF")
+@@ -1231,12 +1868,44 @@
+ 			                (eq_attr "mode" "TI"))
+ 				   (and (eq_attr "cpu" "znver2")
+ 					      (eq_attr "mode" "TI,OI"))
+-				   (and (eq_attr "cpu" "znver3")
++				   (and (eq_attr "cpu" "znver3,znver4")
+ 					      (eq_attr "mode" "TI,OI")))
+ 			      (and (eq_attr "type" "sseimul")
+ 				   (eq_attr "memory" "none")))
+ 			 "znver1-direct,znver1-fp0*3")
+ 
++(define_insn_reservation "znver4_sseimul" 3
++			 (and (eq_attr "cpu" "znver4")
++			      (and (eq_attr "mode" "TI,OI")
++				   (and (eq_attr "type" "sseimul")
++				    (and (eq_attr "prefix" "evex")
++					 (eq_attr "memory" "none")))))
++			 "znver1-direct,znver1-fp0|znver1-fp1")
++
++(define_insn_reservation "znver4_sseimul_evex" 3
++			 (and (eq_attr "cpu" "znver4")
++			      (and (eq_attr "mode" "XI")
++				   (and (eq_attr "type" "sseimul")
++				    (and (eq_attr "prefix" "evex")
++					 (eq_attr "memory" "none")))))
++			 "znver1-direct,znver1-fp0+znver1-fp1")
++
++(define_insn_reservation "znver4_sseimul_load" 10
++			 (and (eq_attr "cpu" "znver4")
++			      (and (eq_attr "mode" "TI,OI")
++				   (and (eq_attr "type" "sseimul")
++				    (and (eq_attr "prefix" "evex")
++					 (eq_attr "memory" "load")))))
++			 "znver1-direct,znver4-load,znver1-fp0|znver1-fp1")
++
++(define_insn_reservation "znver4_sseimul_evex_load" 10
++			 (and (eq_attr "cpu" "znver4")
++			      (and (eq_attr "mode" "XI")
++				   (and (eq_attr "type" "sseimul")
++				    (and (eq_attr "prefix" "evex")
++					 (eq_attr "memory" "load")))))
++			 "znver1-direct,znver4-load,znver1-fp0+znver1-fp1")
++
+ (define_insn_reservation "znver1_sseimul_avx256" 4
+ 			 (and (eq_attr "cpu" "znver1,znver2,znver3")
+ 			      (and (eq_attr "mode" "OI")
+@@ -1282,12 +1951,66 @@
+ 			                (eq_attr "mode" "SF,DF,V4SF,V2DF"))
+ 				   (and (eq_attr "cpu" "znver2")
+ 					      (eq_attr "mode" "SF,DF,V4SF,V2DF,V8SF,V4DF"))
+-				   (and (eq_attr "cpu" "znver3")
++				   (and (eq_attr "cpu" "znver3,znver4")
+ 					      (eq_attr "mode" "SF,DF,V4SF,V2DF,V8SF,V4DF")))
+ 			       (and (eq_attr "type" "ssecmp")
+ 				    (eq_attr "memory" "none")))
+ 			 "znver1-direct,znver1-fp0|znver1-fp1")
+ 
++(define_insn_reservation "znver4_sse_cmp" 3
++			 (and (eq_attr "cpu" "znver4")
++			      (and (eq_attr "mode" "SF,DF,V4SF,V2DF")
++				   (and (eq_attr "type" "ssecmp")
++				    (and (eq_attr "prefix" "evex")
++					 (and (eq_attr "length_immediate" "1")
++					  (eq_attr "memory" "none"))))))
++			"znver1-direct,znver1-fp0|znver1-fp1")
++
++(define_insn_reservation "znver4_sse_cmp_load" 10
++			 (and (eq_attr "cpu" "znver4")
++			      (and (eq_attr "mode" "SF,DF,V4SF,V2DF")
++				   (and (eq_attr "type" "ssecmp")
++				    (and (eq_attr "prefix" "evex")
++					 (and (eq_attr "length_immediate" "1")
++					  (eq_attr "memory" "load"))))))
++			"znver1-double,znver4-load,znver1-fp0|znver1-fp1")
++
++(define_insn_reservation "znver4_sse_cmp_vex" 4
++			 (and (eq_attr "cpu" "znver4")
++			      (and (eq_attr "mode" "V8SF,V4DF")
++				   (and (eq_attr "type" "ssecmp")
++				    (and (eq_attr "prefix" "evex")
++					 (and (eq_attr "length_immediate" "1")
++					  (eq_attr "memory" "none"))))))
++			"znver1-direct,znver1-fp0|znver1-fp1")
++
++(define_insn_reservation "znver4_sse_cmp_vex_load" 11
++			 (and (eq_attr "cpu" "znver4")
++			      (and (eq_attr "mode" "V8SF,V4DF")
++				   (and (eq_attr "type" "ssecmp")
++				    (and (eq_attr "prefix" "evex")
++					 (and (eq_attr "length_immediate" "1")
++					  (eq_attr "memory" "load"))))))
++			"znver1-double,znver4-load,znver1-fp0|znver1-fp1")
++
++(define_insn_reservation "znver4_sse_cmp_evex" 5
++			 (and (eq_attr "cpu" "znver4")
++			      (and (eq_attr "mode" "V16SF,V8DF")
++				   (and (eq_attr "type" "ssecmp")
++				    (and (eq_attr "prefix" "evex")
++					 (and (eq_attr "length_immediate" "1")
++					  (eq_attr "memory" "none"))))))
++			"znver1-direct,znver1-fp0+znver1-fp1")
++
++(define_insn_reservation "znver4_sse_cmp_evex_load" 12
++			 (and (eq_attr "cpu" "znver4")
++			      (and (eq_attr "mode" "V16SF,V8DF")
++				   (and (eq_attr "type" "ssecmp")
++				    (and (eq_attr "prefix" "evex")
++					 (and (eq_attr "length_immediate" "1")
++					  (eq_attr "memory" "load"))))))
++			"znver1-double,znver4-load,znver1-fp0+znver1-fp1")
++
+ (define_insn_reservation "znver1_sse_cmp_load" 8
+ 			 (and (ior (and (eq_attr "cpu" "znver1")
+ 				         (eq_attr "mode" "SF,DF,V4SF,V2DF"))
+@@ -1318,7 +2041,7 @@
+ 					       (eq_attr "mode" "QI,HI,SI,DI,TI"))
+ 				   (and (eq_attr "cpu" "znver2")
+ 					      (eq_attr "mode" "QI,HI,SI,DI,TI,OI"))
+-				   (and (eq_attr "cpu" "znver3")
++				   (and (eq_attr "cpu" "znver3,znver4")
+ 					      (eq_attr "mode" "QI,HI,SI,DI,TI,OI")))
+ 			      (and (eq_attr "type" "ssecmp")
+ 				   (eq_attr "memory" "none")))
+@@ -1335,6 +2058,60 @@
+ 				   (eq_attr "memory" "load")))
+ 			 "znver1-direct,znver1-load,znver1-fp0|znver1-fp3")
+ 
++(define_insn_reservation "znver4_sse_icmp" 3
++			 (and (eq_attr "cpu" "znver4")
++			      (and (eq_attr "mode" "QI,HI,SI,DI,TI")
++				   (and (eq_attr "type" "ssecmp")
++				    (and (eq_attr "prefix" "evex")
++					 (and (eq_attr "length_immediate" "1")
++					  (eq_attr "memory" "none"))))))
++			"znver1-direct,znver1-fp0|znver1-fp1")
++
++(define_insn_reservation "znver4_sse_icmp_load" 10
++			 (and (eq_attr "cpu" "znver4")
++			      (and (eq_attr "mode" "QI,HI,SI,DI,TI")
++				   (and (eq_attr "type" "ssecmp")
++				    (and (eq_attr "prefix" "evex")
++					 (and (eq_attr "length_immediate" "1")
++					  (eq_attr "memory" "load"))))))
++			"znver1-double,znver4-load,znver1-fp0|znver1-fp1")
++
++(define_insn_reservation "znver4_sse_icmp_vex" 4
++			 (and (eq_attr "cpu" "znver4")
++			      (and (eq_attr "mode" "OI")
++				   (and (eq_attr "type" "ssecmp")
++				    (and (eq_attr "prefix" "evex")
++					 (and (eq_attr "length_immediate" "1")
++					  (eq_attr "memory" "none"))))))
++			"znver1-direct,znver1-fp0|znver1-fp1")
++
++(define_insn_reservation "znver4_sse_cmp_ivex_load" 11
++			 (and (eq_attr "cpu" "znver4")
++			      (and (eq_attr "mode" "OI")
++				   (and (eq_attr "type" "ssecmp")
++				    (and (eq_attr "prefix" "evex")
++					 (and (eq_attr "length_immediate" "1")
++					  (eq_attr "memory" "load"))))))
++			"znver1-double,znver4-load,znver1-fp0|znver1-fp1")
++
++(define_insn_reservation "znver4_sse_icmp_evex" 5
++			 (and (eq_attr "cpu" "znver4")
++			      (and (eq_attr "mode" "XI")
++				   (and (eq_attr "type" "ssecmp")
++				    (and (eq_attr "prefix" "evex")
++					 (and (eq_attr "length_immediate" "1")
++					  (eq_attr "memory" "none"))))))
++			"znver1-direct,znver1-fp0+znver1-fp1")
++
++(define_insn_reservation "znver4_sse_icmp_evex_load" 12
++			 (and (eq_attr "cpu" "znver4")
++			      (and (eq_attr "mode" "XI")
++				   (and (eq_attr "type" "ssecmp")
++				    (and (eq_attr "prefix" "evex")
++					 (and (eq_attr "length_immediate" "1")
++					  (eq_attr "memory" "load"))))))
++			"znver1-double,znver4-load,znver1-fp0+znver1-fp1")
++
+ (define_insn_reservation "znver1_sse_icmp_avx256" 1
+ 			 (and (eq_attr "cpu" "znver1")
+ 			      (and (eq_attr "mode" "OI")
+diff --git a/gcc/doc/extend.texi b/gcc/doc/extend.texi
+index a5afb467d23..17a45eb0d8a 100644
+--- a/gcc/doc/extend.texi
++++ b/gcc/doc/extend.texi
+@@ -21876,6 +21876,9 @@ AMD Family 19h CPU.
+ @item znver3
+ AMD Family 19h Zen version 3.
+ 
++@item znver4
++AMD Family 19h Zen version 4.
++
+ @item x86-64
+ Baseline x86-64 microarchitecture level (as defined in x86-64 psABI).
+ 
+diff --git a/gcc/doc/invoke.texi b/gcc/doc/invoke.texi
+index 2ac9cfc35f9..7c3ab9d0857 100644
+--- a/gcc/doc/invoke.texi
++++ b/gcc/doc/invoke.texi
+@@ -32119,6 +32119,15 @@ MWAITX, SHA, CLZERO, AES, PCLMUL, CX16, MOVBE, MMX, SSE, SSE2, SSE3, SSE4A,
+ SSSE3, SSE4.1, SSE4.2, ABM, XSAVEC, XSAVES, CLFLUSHOPT, POPCNT, RDPID,
+ WBNOINVD, PKU, VPCLMULQDQ, VAES, and 64-bit instruction set extensions.)
+ 
++@item znver4
++AMD Family 19h core based CPUs with x86-64 instruction set support. (This
++supersets BMI, BMI2, CLWB, F16C, FMA, FSGSBASE, AVX, AVX2, ADCX, RDSEED,
++MWAITX, SHA, CLZERO, AES, PCLMUL, CX16, MOVBE, MMX, SSE, SSE2, SSE3, SSE4A,
++SSSE3, SSE4.1, SSE4.2, ABM, XSAVEC, XSAVES, CLFLUSHOPT, POPCNT, RDPID,
++WBNOINVD, PKU, VPCLMULQDQ, VAES, AVX512F, AVX512DQ, AVX512IFMA, AVX512CD,
++AVX512BW, AVX512VL, AVX512BF16, AVX512VBMI, AVX512VBMI2, AVX512VNNI,
++AVX512BITALG, AVX512VPOPCNTDQ, GFNI and 64-bit instruction set extensions.)
++
+ @item btver1
+ CPUs based on AMD Family 14h cores with x86-64 instruction set support.  (This
+ supersets MMX, SSE, SSE2, SSE3, SSSE3, SSE4A, CX16, ABM and 64-bit
+diff --git a/gcc/testsuite/g++.target/i386/mv29.C b/gcc/testsuite/g++.target/i386/mv29.C
+index c7723e3168a..a8dd8ac4803 100644
+--- a/gcc/testsuite/g++.target/i386/mv29.C
++++ b/gcc/testsuite/g++.target/i386/mv29.C
+@@ -49,6 +49,9 @@ int __attribute__ ((target("arch=znver3"))) foo () {
+   return 9;
+ }
+ 
++int __attribute__ ((target("arch=znver4"))) foo () {
++  return 10;
++}
+ 
+ int main ()
+ {
+@@ -72,6 +75,8 @@ int main ()
+     assert (val == 8);
+   else if (__builtin_cpu_is ("znver3"))
+     assert (val == 9);
++  else if (__builtin_cpu_is ("znver4"))
++    assert (val == 10);
+   else
+     assert (val == 0);
+ 
+diff --git a/gcc/testsuite/gcc.target/i386/funcspec-56.inc b/gcc/testsuite/gcc.target/i386/funcspec-56.inc
+index b76dddb86a2..d12923f1979 100644
+--- a/gcc/testsuite/gcc.target/i386/funcspec-56.inc
++++ b/gcc/testsuite/gcc.target/i386/funcspec-56.inc
+@@ -200,6 +200,7 @@ extern void test_arch_bdver3 (void)		__attribute__((__target__("arch=bdver3")));
+ extern void test_arch_znver1 (void)             __attribute__((__target__("arch=znver1")));
+ extern void test_arch_znver2 (void)             __attribute__((__target__("arch=znver2")));
+ extern void test_arch_znver3 (void)             __attribute__((__target__("arch=znver3")));
++extern void test_arch_znver4 (void)             __attribute__((__target__("arch=znver4")));
+ 
+ extern void test_tune_nocona (void)		__attribute__((__target__("tune=nocona")));
+ extern void test_tune_core2 (void)		__attribute__((__target__("tune=core2")));
+@@ -223,6 +224,7 @@ extern void test_tune_generic (void)		__attribute__((__target__("tune=generic"))
+ extern void test_tune_znver1 (void)             __attribute__((__target__("tune=znver1")));
+ extern void test_tune_znver2 (void)             __attribute__((__target__("tune=znver2")));
+ extern void test_tune_znver3 (void)             __attribute__((__target__("tune=znver3")));
++extern void test_tune_znver4 (void)             __attribute__((__target__("tune=znver4")));
+ 
+ extern void test_fpmath_sse (void)		__attribute__((__target__("sse2,fpmath=sse")));
+ extern void test_fpmath_387 (void)		__attribute__((__target__("sse2,fpmath=387")));
+-- 
+2.25.1
+
