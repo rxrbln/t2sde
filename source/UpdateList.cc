@@ -154,7 +154,6 @@ private:
   std::string val;
 };
 
-// maybe inherit std::string? -ReneR
 class Version
 {
 public:
@@ -349,14 +348,20 @@ void ParseList (std::string file, std::istream& s,
 	std::string matched = token.substr(begin, length);
 	Version v;
 	v.ExtractFromFilename (matched);
-	if (v.size() > 0) {
+	
+	// filter out overly long versions, like -powerpc64le-linux-ubuntu-…
+	if (v.str().size() > version.str().size() * 3 / 2) {
+	  if (debug)
+	    std::cout << "subv> " << v.str() << " too long." << std::endl;
+	}
+	else if (v.size() > 0) {
           if (std::find (versions.begin(), versions.end(), v) == versions.end()) {
 	    std::string s = v.str();
 	    std::transform(s.begin(), s.end(), s.begin(), ::tolower);
 	    if (!beta) {
 	      if (s.find("alpha") != std::string::npos ||
 		  s.find("beta") != std::string::npos ||
-		  // TODO: pre[0-9], rc[0-9], r987
+		  // TODO: pre[0-9], rc[0-9], r987, b[0-9]
 		  // TODO: very high last version, like 1.2.99
 		  s.find("pre") != std::string::npos ||
 		  s.find("rc") != std::string::npos)
@@ -398,8 +403,6 @@ void ParseList (std::string file, std::istream& s,
     int sign = version.compare(versions[i], version);
     
     std::cout << "[MATCH] (" << versions[i].str() << ")";
-    
-    // TODO: insert here
     
     switch (sign) {
     case 0:
