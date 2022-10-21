@@ -19,10 +19,12 @@ CONFIG_PCI_LBA=y
 CONFIG_IOMMU_CCIO=y
 
 CONFIG_HPPB=y
-CONFIG_GSC_LASI=y
-CONFIG_EISA=y
+CONFIG_LASI_82596=y
 CONFIG_GSC_WAX=y
 CONFIG_PCCARD=m
+
+CONFIG_AGP=y
+CONFIG_AGP_PARISC=y
 
 include(`linux-common.conf.m4')
 include(`linux-block.conf.m4')
