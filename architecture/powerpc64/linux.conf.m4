@@ -45,6 +45,9 @@ CONFIG_ADB_CUDA=y
 CONFIG_ADB_PMU=y
 CONFIG_PMAC_SMU=y
 
+CONFIG_SERIAL_PMACZILOG=y
+CONFIG_SERIAL_PMACZILOG_CONSOLE=y
+
 include(`linux-common.conf.m4')
 include(`linux-block.conf.m4')
 include(`linux-net.conf.m4')
