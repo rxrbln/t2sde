@@ -61,7 +61,7 @@ if [ ! "$outfile" ]; then
 fi
 
 [ "$minimal" != 1 ] && filter="$filter -e reiserfs -e btrfs -e /jfs -e /xfs -e jffs2
--e /udf -e /unionfs -e ntfs -e /fat -e /hfs -e floppy
+-e /udf -e /unionfs -e ntfs -e /fat -e /hfs -e floppy -e efivarfs
 -e /ata/ -e /scsi/ -e /fusion/ -e /sdhci/ -e nvme/host -e /mmc/ -e ps3fb -e ps3disk
 -e dm-mod -e dm-raid -e md/raid -e dm/mirror -e dm/linear -e dm-crypt -e dm-cache
 -e /aes -e /sha -e /blake -e /cbc -e xts
