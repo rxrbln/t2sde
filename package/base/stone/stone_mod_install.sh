@@ -245,7 +245,9 @@ This dialog allows you to modify your storage layout and to create filesystems a
 
 	if [ "$install_now" -ne 0 ]; then
 		$STONE packages
-		mount -v /dev /mnt/dev --bind
+		reset # TODO: maybe better in gasgui?
+
+		mount -v --bind /dev /mnt/dev
 		cat > /mnt/tmp/stone_postinst.sh << EOT
 #!/bin/bash
 mount -v /proc
