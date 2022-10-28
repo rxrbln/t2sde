@@ -36,8 +36,8 @@ part_mount() {
 		if [ -z "$dir" ] || grep -q " /mnt " /proc/mounts
 		then
 			mkdir -p /mnt/$dir
-			mount /dev/$dev /mnt/$dir
-			[ "$2" ] && mount -o remount,$2 /mnt/$dir 2>/dev/null
+			[ "$2" ] && mount -o "$2" /dev/$dev /mnt/$dir 2>/dev/null ||
+				mount /dev/$dev /mnt/$dir
 		else
 			gui_message "Please mount a root filesystem first."
 		fi
