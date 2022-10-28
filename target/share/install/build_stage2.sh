@@ -78,7 +78,7 @@ done | (
 	         -e 'usr/.*-linux-gnu' -e '/gconv/' -e '/locale/' -e '/pkgconfig/' \
 	         -e 'bin/.*-config' \
 	         -e 'bin/install' -e 'bin/openssl' -e 'bin/localedef' \
-	         -e '/init.d/' -e '/rc.d/'
+	         -e '/init.d/' -e '/rc.d/' -e 'etc/conf' -e 'etc/mtab' -e 'etc/services'
 	# TODO: usr/lib/*/
 ) > ../2nd_stage.files
 
