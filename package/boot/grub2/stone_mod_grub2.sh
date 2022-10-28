@@ -14,7 +14,7 @@
 # [SETUP] 90 grub2
 
 # TODO:
-# void efibootmgr duplicates :-/
+# avoid efibootmgr duplicates :-/
 # auto-mount efivars?
 # impl. & test direct sparc, direct i386-pc-mbr, mips-arc, ...
 # unify non-crypt, and direct non-EFI BIOS install
@@ -128,7 +128,8 @@ set uuid=$grubdev
 cryptomount -u \$uuid
 configfile (crypto0)/boot/grub/grub.cfg
 EOT
-            fi
+		fi
+
 		# TODO: case
 		local exe=BOOTX64.EFI
 		[ $arch = i386 ] && exe=${exe/X64/IA32}
@@ -139,7 +140,10 @@ EOT
 			-p /efi/boot -d /usr/lib*/grub/$arch-efi/ \
 			$grubmods
 	    done
+
+	    mount -t efivarfs none /sys/firmware/efi/efivars
 	    efibootmgr -c -L "T2 Linux" -l "\\EFI\\boot\\$exe"
+	    umount /sys/firmware/efi/efivars
 	fi
     else
 	# Apple PowerPC - install into FW read-able HFS partition
