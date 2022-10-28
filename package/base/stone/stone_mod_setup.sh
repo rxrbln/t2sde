@@ -28,17 +28,10 @@ get_uuid() {
 }
 
 make_fstab() {
-	tmp1=`mktemp` ; tmp2=`mktemp`
+	tmp1=`mktemp` tmp2=`mktemp`
 
-	# some defaults and fallbacks
-	cat <<- EOT > $tmp2
-none /proc proc hidepid=2 0 0
-none /dev devtmpfs mode=755 0 0
-none /dev/pts devpts defaults 0 0
-none /dev/shm tmpfs defaults 0 0
-none /sys sysfs defaults 0 0
-none /tmp tmpfs nosuid,nodev,noexec 0 0
-EOT
+	# copy defaults and fallbacks
+	sed 's/  */ /g' /etc/fstab > $tmp2
 
 	# currently mounted filesystems
 	sed -e "s/ nfs [^ ]\+/ nfs rw/" < /etc/mtab |
@@ -88,23 +81,23 @@ EOT
 		)" "$e $f"
 	done < /etc/fstab | tr ' ' '\240' > $tmp1
 
-	gui_message $'Auto-created /etc/fstab file:\n\n'"$( cat $tmp1 )"
+	gui_message $'Auto-created /etc/fstab file:\n\n'"$(< $tmp1 )"
 	rm -f $tmp1 $tmp2
 }
 
 set_rootpw() {
 	if [ "$SETUPG" = dialog ]; then
-		tmp1="`mktemp`" ; tmp2="`mktemp`" ; rc=0
+		tmp1=`mktemp` tmp2=`mktemp` rc=0
 		gui_dialog --nocancel --passwordbox "Setting a root password. `
 			`Type password:" 8 70 > $tmp1
 		gui_dialog --nocancel --passwordbox "Setting a root password. `
 			`Retype password:" 8 70 > $tmp2
 		if [ -s $tmp1 ] && cmp -s $tmp1 $tmp2; then
-			echo -n "root:" > $tmp1 ; echo >> $tmp2
+			echo -n "root:" > $tmp1; echo >> $tmp2
 			cat $tmp1 $tmp2 | chpasswd
 		else
 			gui_message "Password 1 and password 2 are `
-					`not the same" ; rc=1
+					`not the same"; rc=1
 		fi
 		rm $tmp1 $tmp2
 		return $rc
@@ -125,7 +118,7 @@ main() {
 	unset gui_nocancel
 
 	# run the stone modules that registered itself for the first SETUP pass
-	while read -u 200 a b c cmd ; do
+	while read -u 200 a b c cmd; do
 		$STONE $cmd
 	done 200< <( grep -h '^# \[SETUP\] [0-9][0-9] ' \
 	          $SETUPD/mod_*.sh | sort )
@@ -133,7 +126,7 @@ main() {
 	cron.run
 
 	# run the postinstall scripts right here
-	for x in /etc/postinstall.d/* ; do
+	for x in /etc/postinstall.d/*; do
 		[ -f $x ] || continue
 		echo "Running $x ..."
 		$x

@@ -257,10 +257,9 @@ umount -v /proc
 umount -v /sys
 EOT
 		chmod +x /mnt/tmp/stone_postinst.sh
-		grep ' /mnt[/ ]' /proc/mounts |
-			sed 's,/mnt/\?,/,' > /mnt/etc/mtab
-		cd /mnt; chroot . ./tmp/stone_postinst.sh
-		rm -fv ./tmp/stone_postinst.sh
+		sed -n 's, /mnt/\?, /,p' /etc/mtab > /mnt/etc/mtab
+		chroot /mnt /tmp/stone_postinst.sh
+		rm -f /mnt/tmp/stone_postinst.sh
 		if gui_yesno "Do you want to un-mount the filesystems and reboot now?"
 		then
 			shutdown -r now
