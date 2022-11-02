@@ -37,14 +37,13 @@ xz                 zstd               ed                 zile
 curl               dialog             minicom            kmod
 lrzsz              rsync              tcpdump            module-init-tools
 sysvinit           shadow             util-linux         wireless-tools
-runit              runit-logacct      runit-shutdown
 net-tools          procps             psmisc             udev
-modutils           pciutils           portmap
-sysklogd           setserial          iproute2
+modutils           pciutils           portmap            inih
+sysklogd           setserial          iproute2           liburcu
 netkit-base        netkit-ftp         netkit-telnet      netkit-tftp
 sysfiles           libpcap            iptables           tcp_wrappers
 stone              rocknet
-kbd		   ntfsprogs          libol              memtester
+kbd                ntfsprogs          libol              memtester
 openssl            openssh            iproute2"
 
 # TODO: a global multilib package multiplexer that allows distrinct control
