@@ -34,3 +34,4 @@ case "$SDECFG_ARM_OPT" in
 esac
 
 arch_target="${arch_machine}-t2-linux-${SDECFG_ARM_ABI}"
+[ "$SDECFG_SOFTFLOAT" = 1 ] || arch_target="${arch_target}hf"
