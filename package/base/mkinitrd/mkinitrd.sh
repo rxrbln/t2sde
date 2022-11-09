@@ -64,7 +64,7 @@ fi
 -e /udf -e /unionfs -e ntfs -e /fat -e /hfs -e floppy -e efivarfs
 -e /ata/ -e /scsi/ -e /fusion/ -e /sdhci/ -e nvme/host -e /mmc/ -e ps3fb -e ps3disk
 -e dm-mod -e dm-raid -e md/raid -e dm/mirror -e dm/linear -e dm-crypt -e dm-cache
--e /aes -e /sha -e /blake -e /cbc -e xts
+-e /aes -e /sha -e /blake -e /cbc -e /ecb -e xts
 -e cciss -e ips -e virtio -e nls_cp437 -e nls_iso8859-1 -e nls_utf8
 -e /.hci -e usb-common -e usb-storage -e sbp2 -e uas
 -e usbhid -e i2c-hid -e hid-generic -e hid-multitouch
