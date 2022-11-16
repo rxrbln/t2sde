@@ -9,17 +9,6 @@
 # it under the terms of the GNU General Public License version 2.
 # --- T2-COPYRIGHT-NOTE-END ---
 
-case "$SDECFG_ARM_ENDIANESS" in
-	eb)
-		arch_bigendian=yes
-		arch_machine=armeb ;;
-		
-	*)
-		arch_bigendian=no
-		arch_machine=arm ;;
-esac
-
-[ "$arch_bigendian" = no ] &&
 case "$SDECFG_ARM_OPT" in
 	arm7*)
 		arch_machine=${arch_machine}v4 ;;
@@ -32,6 +21,11 @@ case "$SDECFG_ARM_OPT" in
 	*)
 		arch_machine=${arch_machine}v7 ;;
 esac
+
+if [ "$SDECFG_ARM_ENDIANESS" = "eb" ]; then
+	arch_bigendian=yes
+	arch_machine=${arch_machine}eb
+fi
 
 arch_target="${arch_machine}-t2-linux-${SDECFG_ARM_ABI}"
 [ "$SDECFG_SOFTFLOAT" = 1 ] || arch_target="${arch_target}hf"
