@@ -98,6 +98,6 @@ gui_edit() {
 # Use: gui_cmd "Title" "Command"
 #
 gui_cmd() {                       
-        shift ; eval "$@"
+	shift ; eval "$@"
 	read -p "Press ENTER to continue."
 }

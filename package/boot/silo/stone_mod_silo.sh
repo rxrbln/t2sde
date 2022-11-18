@@ -92,14 +92,14 @@ main() {
 Automatically install SILO now?"; then
 	    create_silo_conf
 	    if ! silo_install; then
-              gui_message "There was an error while installing SILO."
+	      gui_message "There was an error while installing SILO."
 	    fi
 	  fi
 	fi
 
 	while
 
-        gui_menu yaboot 'SILO Boot Loader Setup' \
+	gui_menu yaboot 'SILO Boot Loader Setup' \
 		"Root Device ........... $rootdev" "" \
 		"Boot Device ........... $bootdev" "" \
 		"Boot Path ............. $bootpath" "" \

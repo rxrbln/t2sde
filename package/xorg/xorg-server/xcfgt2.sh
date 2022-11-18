@@ -15,8 +15,8 @@
 
 var_append() {
 	local x="${3// /}"
-        eval "[ \"\$$1\" ] && $1=\"\${$1}$2\"" || true
-        eval "$1=\"\${$1}\$x\""
+	eval "[ \"\$$1\" ] && $1=\"\${$1}$2\"" || true
+	eval "$1=\"\${$1}\$x\""
 }
 
 tmp=`mktemp`
@@ -178,9 +178,9 @@ if type -p ddcprobe > /dev/null && [ "$ddc" = 1 ] && [ -z "$modes" ]; then
 			echo "mode $x $y skipped"
 		fi
 	  done < <( grep -A 1000 '^Established' $tmp |
-          grep -B 1000 '^Standard\|^Detailed' |
-          sed -e 's/[\t ]*\([^ ]*\).*/\1/' -e '/^[A-Z]/d' |
-          sort -rn | uniq )
+	  grep -B 1000 '^Standard\|^Detailed' |
+	  sed -e 's/[\t ]*\([^ ]*\).*/\1/' -e '/^[A-Z]/d' |
+	  sort -rn | uniq )
 	fi
 fi
 

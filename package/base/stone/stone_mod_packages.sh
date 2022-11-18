@@ -63,7 +63,7 @@ startgas() {
 		echo "Using Config-ID <${SDECFG_SHORTID:-None}> .."
 	fi
 	SDECFG_PKGFILE_TYPE="$(grep '^export SDECFG_PKGFILE_TYPE=' \
-                /etc/SDE-CONFIG/config 2> /dev/null | cut -f2- -d=)"
+		/etc/SDE-CONFIG/config 2> /dev/null | cut -f2- -d=)"
 	SDECFG_PKGFILE_TYPE="${SDECFG_PKGFILE_TYPE//\'/}"
 	if [ $startgas = 1 ]; then
 		echo

@@ -56,9 +56,9 @@ if [ $force -eq 0 ]; then
 
   if test $action = "down" && ! var_contains active_interfaces ',' "$if($profile)"
     then
-        echo "Interface $if($profile) is not listed active, it is probably a good idea to"
-        echo "activate it before deactivating it. Use -force to suppress this warning."
-        exit 2
+	echo "Interface $if($profile) is not listed active, it is probably a good idea to"
+	echo "activate it before deactivating it. Use -force to suppress this warning."
+	exit 2
   fi
 fi
 
