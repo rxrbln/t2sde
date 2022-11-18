@@ -185,4 +185,3 @@ if arg[1] then
 		sam.command[cmd](unpack(args or {}))
 	end
 end
-
