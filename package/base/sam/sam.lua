@@ -105,7 +105,7 @@ local function detect_modules()
 		path = moddir .. "/" .. file
 
 		if name and lfs.attributes(path).mode == "file" and "sam_" .. name .. ".lua" == file then
-			sam.dbg(_NAME, "Found '%s' (%s)\n", name, path)			
+			sam.dbg(_NAME, "Found '%s' (%s)\n", name, path)
 
 			-- preset the module structure of the detected module
 			-- for auto-loading
