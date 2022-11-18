@@ -63,7 +63,7 @@ end
 --   sam.log can be called as function via a metatable,
 --   default: log_stdout
 setmetatable(sam.log, {
-	__call = function(self, reqlvl, ident,  ...) 
+	__call = function(self, reqlvl, ident,  ...)
 			log_stdout(reqlvl, ident, unpack(arg))
 		 end
 })

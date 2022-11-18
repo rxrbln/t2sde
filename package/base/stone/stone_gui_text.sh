@@ -97,7 +97,7 @@ gui_edit() {
 
 # Use: gui_cmd "Title" "Command"
 #
-gui_cmd() {                       
+gui_cmd() {
 	shift ; eval "$@"
 	read -p "Press ENTER to continue."
 }

@@ -224,7 +224,7 @@ fi
 
 if [ "$ddc" = 0 ]; then
 	echo "Adding NoDDC option"
-	sed -i 's/.*Ident.*Card.*/&\n    Option\t"NoDDC"\n/' /etc/X11/xorg.conf 
+	sed -i 's/.*Ident.*Card.*/&\n    Option\t"NoDDC"\n/' /etc/X11/xorg.conf
 fi
 
 rm $tmp

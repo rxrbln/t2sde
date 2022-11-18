@@ -73,11 +73,11 @@ static symtab_t pnpsymtab[] = {
      * EzScroll returns PNP0F04 in the compatible device field; but it
      * doesn't look compatible... XXX
      */
-    { "PNP0F04",  "-msc" },		/* MouseSystems */ 
-    { "PNP0F05",  "-msc" },		/* MouseSystems */ 
+    { "PNP0F04",  "-msc" },		/* MouseSystems */
+    { "PNP0F05",  "-msc" },		/* MouseSystems */
 #ifdef notyet
-    { "PNP0F06",  PROT_??? },		/* Genius Mouse */ 
-    { "PNP0F07",  PROT_??? },		/* Genius Mouse */ 
+    { "PNP0F06",  PROT_??? },		/* Genius Mouse */
+    { "PNP0F07",  PROT_??? },		/* Genius Mouse */
 #endif
     { "PNP0F08",  "-mman" },	/* Logitech serial */
     { "PNP0F09",  "-ms" },		/* MS BallPoint serial */
@@ -92,7 +92,7 @@ static symtab_t pnpsymtab[] = {
     { "PNP0F10",  PROT_??? },		/* TI QuickPort */
     { "PNP0F11",  PROT_BM },		/* MS bus comatible */
     { "PNP0F14",  PROT_??? },		/* MS Kids Mouse */
-    { "PNP0F15",  PROT_BM },		/* Logitech bus */ 
+    { "PNP0F15",  PROT_BM },		/* Logitech bus */
     { "PNP0F16",  PROT_??? },		/* Logitech SWIFT */
 #endif
     { "PNP0F17",  "-mman" },	/* Logitech serial compat */
@@ -202,7 +202,7 @@ bool pnpparse (pnpid_t* id, char* buf, int len)
 		break;
 	}
 	/*
-	 * PnP COM spec prior to v0.96 allowed '*' in this field, 
+	 * PnP COM spec prior to v0.96 allowed '*' in this field,
 	 * it's not allowed now; just ignore it.
 	 */
 	if (buf[j] == '*')
@@ -236,9 +236,9 @@ bool pnpparse (pnpid_t* id, char* buf, int len)
 	if (strncmp(s, &buf[len - 3], 2) != 0) {
 	  printf ("checksum error!");
 #if 0
-	    /* 
+	    /*
 	     * Checksum error!!
-	     * I found some mice do not comply with the PnP COM device 
+	     * I found some mice do not comply with the PnP COM device
 	     * spec regarding checksum... XXX
 	     */
 	    return false;

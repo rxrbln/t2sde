@@ -12,7 +12,7 @@
 #
 
 #
-# [MAIN] 80 dictd Configuration for dictionary server 
+# [MAIN] 80 dictd Configuration for dictionary server
 
 
 conf=/etc/dictd.conf
@@ -29,12 +29,12 @@ select_dict() {
 	if grep "database[[:space:]]\+\"$1\"" $conf 2>&1 >/dev/null
 	then
 		# delete entry if it is not for select all
-		if [ "$2" != "1" ]; then  
+		if [ "$2" != "1" ]; then
 		perl -i -00 -p -e"s/database\s+\"$1\"\s+\{.+\}//s" $conf
 		fi
-	else 
+	else
 		# set entry if it is not in unselect all mode
-		if [ "$2" != "0" ]; then 
+		if [ "$2" != "0" ]; then
 		cat <<MSG >>$conf
 database "$1"
 {
@@ -43,7 +43,7 @@ database "$1"
 }
 MSG
 		fi
-	fi 
+	fi
 }
 
 select_dictionaries() {
@@ -56,14 +56,14 @@ select_dictionaries() {
 		"Stone can not find any dictionary. Please install one!"
 		return; fi
 
-		for dic in $ds 
+		for dic in $ds
 		do
 			if grep "database[[:space:]]\+\"$dic\"" $conf 2>&1 >/dev/null
 			then
 			     dics=$(printf "%-10sOK" "$dic")
 			else
 			     dics=$(printf "%-10s--" "$dic")
-			fi 
+			fi
 			cmd="$cmd '$dics' 'select_dict \"$dic\"'"			
 		done
 		eval $cmd

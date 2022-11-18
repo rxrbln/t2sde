@@ -106,7 +106,7 @@ device4() {
 		dev="`grep \" $try \" /proc/mounts | tail -n 1 | \
 		      cut -d ' ' -f 1`"
 	fi
-	if [ -h "$dev" ]; then 
+	if [ -h "$dev" ]; then
 	  echo "/dev/`readlink $dev`"
 	else
 	  echo $dev

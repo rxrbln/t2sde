@@ -44,7 +44,7 @@ gui_menu_tree_id=-1
 #
 gui_menu() {
 	# `cmd_ar' acts as a kind of mapper between the choosen category
-	# and the function's/command's name that is responsible for what 
+	# and the function's/command's name that is responsible for what
 	# next is to do. This command/function is finally executed.
 	local -a cmd_ar
 
@@ -66,7 +66,7 @@ gui_menu() {
 	# checking the current ID for the ones saved in `gui_menu_tree_name[]'),
 	# make the old item be cursored again.
 	local default='' count
-	for (( count=$gui_menu_tree_id; $count >= 0; count-- )) 
+	for (( count=$gui_menu_tree_id; $count >= 0; count-- ))
 	do
 		if [ "${gui_menu_tree_name[$count]}" = $id ]; then
 			default="${gui_menu_tree_value[$count]}"
@@ -132,7 +132,7 @@ gui_input() {
 	if [ "$gui_nocancel" = 1 ]; then cmd="gui_dialog --no-cancel"
 	else local cmd="gui_dialog --cancel-label Back"; fi
 
-	if tmp="$($cmd --inputbox "$headlines" $height $gui_dialog_s70 "$2")"; then 
+	if tmp="$($cmd --inputbox "$headlines" $height $gui_dialog_s70 "$2")"; then
 		eval "$3='$tmp'"
 	fi
 }
