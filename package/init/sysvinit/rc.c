@@ -1,6 +1,6 @@
 /*
  * --- T2-COPYRIGHT-NOTE-BEGIN ---
- * T2 SDE: package/*/sysvinit/rc.c
+ * T2 SDE: package/.../sysvinit/rc.c
  * Copyright (C) 2004 - 2022 The T2 SDE Project
  * Copyright (C) 1998 - 2003 ROCK Linux Project
  * 
