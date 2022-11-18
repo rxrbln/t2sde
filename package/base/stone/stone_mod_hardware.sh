@@ -52,7 +52,7 @@ main() {
 	fi
 
 	cmd="gui_menu hw 'Kernel Drivers and Hardware Configuration'"
-	    
+	
 	if [ "$clock_tz" = localtime ]; then
 	    cmd="$cmd '[*] Use localtime instead of utc' 'set_zone utc'"
 	else

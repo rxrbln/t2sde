@@ -13,7 +13,7 @@ ppp_option() {
 	local optfile=$1
 	local opt=$2 ; shift 2
 
-	case $opt in 
+	case $opt in
 	hide-password|show-password) optx="hide-password|show-password" ;;
 	refuse-chap|require-chap) optx="refuse-chap|require-chap" ;;
 	refuse-mschap|require-mschap) optx="refuse-mschap|require-mschap" ;;
@@ -89,7 +89,7 @@ exec `eval echo $ppp_command` nodetach' \
 	else
 		addcode up 6 2 "$ppp_command"
 
-		addcode down 5 5 "[ -f /var/run/$if.pid ] && kill -TERM \`head -n 1 /var/run/$if.pid\`" 
+		addcode down 5 5 "[ -f /var/run/$if.pid ] && kill -TERM \`head -n 1 /var/run/$if.pid\`"
 		addcode down 5 4 "[ -f /var/run/$if.pid ] && rm -f /var/run/$if.pid"
 	fi
 }

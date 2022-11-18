@@ -146,7 +146,7 @@ Automatically install GRUB now?"; then
 	if [ -s /boot/grub/device.map ]; then
 		rootdrive=`convert_device $rootdev`
 		bootdrive=`convert_device $bootdev`
-	else    
+	else
 		rootdrive='No Device Map found!'
 		bootdrive='No Device Map found!'
 	fi

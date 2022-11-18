@@ -163,7 +163,7 @@ edit_if() {
 	read_section "$1"
 
 	quit=0
-	while 
+	while
 		cmd="gui_menu if_edit 'Configure interface ${1//_/ }'"
 		for (( i=0 ; $i < ${#tags[@]} ; i=i+1 )) ; do
 			[ "${tags[$i]}" ] || continue
@@ -200,7 +200,7 @@ add_interface() {
 	fi
 
 	write_section "$if"
-} 
+}
 
 del_interface() {
 	unset tags

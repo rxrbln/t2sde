@@ -150,7 +150,7 @@ local function usage(cmd)
 		if sam.command[cmd]._load then sam.command[cmd]:_load() end
 		fprintf(io.stdout, "Usage: sam %s\n", sam.command[cmd]._USAGE)
 	else
-		fprintf(io.stdout, "Usage: sam <command> [command options]\n\n%s\n", 
+		fprintf(io.stdout, "Usage: sam <command> [command options]\n\n%s\n",
 			[[Commands:
 		help    Show command overview (this)
       help <command>    Show command specific usage information]])

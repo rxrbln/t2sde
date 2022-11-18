@@ -61,7 +61,7 @@ iwdetect_select_cell() {
 
 public_iwdetect() {
 	addcode up 4 2 "ip link set $if up"
-	addcode up 4 3 "iwdetect_mangle_cells" 
+	addcode up 4 3 "iwdetect_mangle_cells"
 	addcode up 4 4 "iwdetect_select_cell $1"
 	addcode down 4 5 "iwconfig $if essid any"
 }

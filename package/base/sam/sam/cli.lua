@@ -47,7 +47,7 @@ local __cli = {
 	ok = true,
 	command = {
 		-- default wildcard command
-		["*"] = function(self,cmd,...) 
+		["*"] = function(self,cmd,...)
 				self:send("[ERROR] unknown command: %s", cmd or "<none>")
 			end,
 		-- default "exit" command

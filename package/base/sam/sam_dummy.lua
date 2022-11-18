@@ -25,7 +25,7 @@ local function CLI_exit(self, ...)
 	self:finish()
 end
 
-local CLI = sam.cli({ 
+local CLI = sam.cli({
 	exit  = CLI_exit,
 })
 
@@ -35,7 +35,7 @@ local function main(...)
 	sam.info(_NAME, "main() in module %s\n", _NAME)
 
 	sam.dbg(_NAME, "Arguments (%d):\n", #arg)
-	for i=1,#arg do 
+	for i=1,#arg do
 		sam.dbg(_NAME, "   %s\n", arg[i])
 	end
 
@@ -44,10 +44,10 @@ local function main(...)
 end
 
 -- SAM MODULE INIT ---------------------------------------------------------
-return { 
+return {
 	_NAME = _NAME,
 	_DESCRIPTION = _DESCRIPTION,
 	_USAGE = _USAGE,
 	
-	main = main, 
+	main = main,
 }
