@@ -152,7 +152,7 @@ Automatically install yaboot now?"; then
 
 	while
 
-        gui_menu yaboot 'Yaboot Boot Loader Setup' \
+	gui_menu yaboot 'Yaboot Boot Loader Setup' \
 		"Following settings only for expert use: (default)" ""\
 		"Bootstrap Device ...... $bootstrapdev" "" \
 		"Yaboot partition:path . $yabootpart:$yabootpath" "" \

@@ -21,28 +21,28 @@ list_dictionaries () {
     ds=""
     for i in $( ls /usr/share/dictd/*.index )
     do
-        ds="$ds `basename $i .index`"
+	ds="$ds `basename $i .index`"
     done
 }
 
 select_dict() {
-        if grep "database[[:space:]]\+\"$1\"" $conf 2>&1 >/dev/null
-        then
-                # delete entry if it is not for select all
-                if [ "$2" != "1" ]; then  
-                perl -i -00 -p -e"s/database\s+\"$1\"\s+\{.+\}//s" $conf
-                fi
-        else 
-                # set entry if it is not in unselect all mode
-                if [ "$2" != "0" ]; then 
-                cat <<MSG >>$conf
+	if grep "database[[:space:]]\+\"$1\"" $conf 2>&1 >/dev/null
+	then
+		# delete entry if it is not for select all
+		if [ "$2" != "1" ]; then  
+		perl -i -00 -p -e"s/database\s+\"$1\"\s+\{.+\}//s" $conf
+		fi
+	else 
+		# set entry if it is not in unselect all mode
+		if [ "$2" != "0" ]; then 
+		cat <<MSG >>$conf
 database "$1"
 {
       data "/usr/share/dictd/$1.dict.dz"
       index "/usr/share/dictd/$1.index"
 }
 MSG
-                fi
+		fi
 	fi 
 }
 
@@ -58,47 +58,47 @@ select_dictionaries() {
 
 		for dic in $ds 
 		do
-                        if grep "database[[:space:]]\+\"$dic\"" $conf 2>&1 >/dev/null
-                        then
-                             dics=$(printf "%-10sOK" "$dic")
-                        else
-                             dics=$(printf "%-10s--" "$dic")
-                        fi 
-                	cmd="$cmd '$dics' 'select_dict \"$dic\"'"			
+			if grep "database[[:space:]]\+\"$dic\"" $conf 2>&1 >/dev/null
+			then
+			     dics=$(printf "%-10sOK" "$dic")
+			else
+			     dics=$(printf "%-10s--" "$dic")
+			fi 
+			cmd="$cmd '$dics' 'select_dict \"$dic\"'"			
 		done
 		eval $cmd
 	do : ; done
 }
 
 all_dictionaries() {
-        list_dictionaries
+	list_dictionaries
 	for dic in $ds
-        do
-                select_dict "$dic" 1
-        done
+	do
+		select_dict "$dic" 1
+	done
 }
 
 deselect_all() {
-        list_dictionaries
-        for dic in $ds
-        do
-                select_dict "$dic" 0
-        done
+	list_dictionaries
+	for dic in $ds
+	do
+		select_dict "$dic" 0
+	done
 }
 
 main() {
-        while
-        
-                cmd="gui_menu dictd 'Configuration for dictionary server' "
+	while
+	
+		cmd="gui_menu dictd 'Configuration for dictionary server' "
 	        list_dictionaries
-                if [ -z "$ds" ]; then gui_message \
-                "There is no dictionary installed. Please install one."
-                return; fi
+		if [ -z "$ds" ]; then gui_message \
+		"There is no dictionary installed. Please install one."
+		return; fi
   
-                cmd="$cmd 'Select dictionaries' 'select_dictionaries'"
-                cmd="$cmd 'Select all installed dictionaries' 'all_dictionaries'"
-                cmd="$cmd 'Deselect all dictionaries' 'deselect_all'"
-                cmd="$cmd 'Edit $conf' 'gui_edit DICTD $conf'"
-                eval $cmd
+		cmd="$cmd 'Select dictionaries' 'select_dictionaries'"
+		cmd="$cmd 'Select all installed dictionaries' 'all_dictionaries'"
+		cmd="$cmd 'Deselect all dictionaries' 'deselect_all'"
+		cmd="$cmd 'Edit $conf' 'gui_edit DICTD $conf'"
+		eval $cmd
 	do : ; done
 }

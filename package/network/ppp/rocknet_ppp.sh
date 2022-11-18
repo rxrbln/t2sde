@@ -105,8 +105,8 @@ public_pppoe() {
 }
 
 public_ppp_defaults() {
-        local each
-        for each in noipdefault noauth hide-password \
+	local each
+	for each in noipdefault noauth hide-password \
 	            ipcp-accept-local ipcp-accept-remote \
 	            defaultroute usepeerdns ; do
 		addcode up 4 4 "ppp_option \$ppp_${if}_config $each"
@@ -120,8 +120,8 @@ public_ppp_speed_defaults() {
 		addcode up 4 4 "ppp_option \$ppp_${if}_config $each"
 	done
 
-        addcode up 4 5 "ppp_option \$ppp_${if}_config lcp-echo-interval 20"
-        addcode up 4 5 "ppp_option \$ppp_${if}_config lcp-echo-failure 3"
+	addcode up 4 5 "ppp_option \$ppp_${if}_config lcp-echo-interval 20"
+	addcode up 4 5 "ppp_option \$ppp_${if}_config lcp-echo-failure 3"
 }
 
 public_ppp_option() {

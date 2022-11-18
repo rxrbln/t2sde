@@ -15,16 +15,16 @@
 
 create_kernel_list() {
 	local label= first=1 initrd=
-        first=1
-        for x in `(cd /boot/; ls vmlinuz-*) | sort -r` ; do
-                if [ $first = 1 ]; then
-                        label=linux first=0
-                else
-                        label=linux-${x/vmlinuz-/}
-                fi
+	first=1
+	for x in `(cd /boot/; ls vmlinuz-*) | sort -r` ; do
+		if [ $first = 1 ]; then
+			label=linux first=0
+		else
+			label=linux-${x/vmlinuz-/}
+		fi
 		initrd=initrd-${x/vmlinuz_/}
 
-                cat << EOT
+		cat << EOT
 
 image=/boot/$x
 	label=$label
@@ -33,7 +33,7 @@ image=/boot/$x
 	read-only
 
 EOT
-        done
+	done
 }
 
 create_lilo_conf() {
@@ -84,11 +84,11 @@ Automatically install LILO now?"; then
 
 	while
 
-        gui_menu lilo 'LILO Boot Loader Setup' \
-                '(Re-)Create lilo.conf with installed kernels' 'create_lilo_conf' \
-                '(Re-)Install LILO in MBR of /dev/discs/disc0/disc' \
+	gui_menu lilo 'LILO Boot Loader Setup' \
+		'(Re-)Create lilo.conf with installed kernels' 'create_lilo_conf' \
+		'(Re-)Install LILO in MBR of /dev/discs/disc0/disc' \
 			'gui_cmd "Installing LILO in MBR" "lilo -v"' \
-                "Edit /etc/lilo.conf (recommended before installing LILO)" \
-                        "gui_edit 'LILO Config File' /etc/lilo.conf"
+		"Edit /etc/lilo.conf (recommended before installing LILO)" \
+			"gui_edit 'LILO Config File' /etc/lilo.conf"
     do : ; done
 }

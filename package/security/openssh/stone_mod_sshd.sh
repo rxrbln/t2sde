@@ -25,8 +25,8 @@ main() {
 		'Create a ssh host keypair' \
 			'ssh_create_hostpair' \
 		'Configure runlevels for sshd service' \
-                        '$STONE runlevel edit_srv sshd' \
-                '(Re-)Start sshd init script' \
+			'$STONE runlevel edit_srv sshd' \
+		'(Re-)Start sshd init script' \
 			'$STONE runlevel restart sshd'
     do : ; done
 }

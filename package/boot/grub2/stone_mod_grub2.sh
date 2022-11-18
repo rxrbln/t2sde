@@ -281,7 +281,7 @@ get_uuid() {
 		d="/dev/${d##*/}"
 		if [ "$d" = $dev ]; then
 			echo $_dev
-                        return
+			return
 		fi
 	done
 }
@@ -336,7 +336,7 @@ Automatically install GRUB2 now?"; then
 
 	while
 
-        gui_menu grub 'GRUB2 Boot Loader Setup' \
+	gui_menu grub 'GRUB2 Boot Loader Setup' \
 		"Root device ... $rootdev" "" \
 		"Boot device ... $bootdev" "" \
 		"Crypt device .. $cryptdev" "" \

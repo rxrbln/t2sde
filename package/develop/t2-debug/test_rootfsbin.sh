@@ -18,17 +18,17 @@
 # Bin-Name <Tab> Should-Be <Tab> { "Not Found" | Current-Location }
 
 bin_fhs='cat chgrp chmod chown cp date dd df dmesg echo ed false
-         kill ln login ls mkdir mknod more mount mv ps pwd rm rmdir
-         sed setserial sh stty su sync true umount uname
-         tar gzip gunzip zcat cpio domainname hostname netstat ping
-         sleep bzip2 bunzip2 bzcat'
+	 kill ln login ls mkdir mknod more mount mv ps pwd rm rmdir
+	 sed setserial sh stty su sync true umount uname
+	 tar gzip gunzip zcat cpio domainname hostname netstat ping
+	 sleep bzip2 bunzip2 bzcat'
 
 bin_rock='bash sleep sync sort xargs grep cut skill snice find'
 
 sbin_fhs='clock getty init update mkswap swapon swapoff telinit
-          fastboot fasthalt halt reboot shutdown ifconfig route
-          fdisk fsck fsck.ext2 fsck.ext3 mkfs mkfs.ext2 badblocks dumpe2fs
-          e2fsck mke2fs mklost+found tune2fs lilo ctrlaltdel kbdrate'
+	  fastboot fasthalt halt reboot shutdown ifconfig route
+	  fdisk fsck fsck.ext2 fsck.ext3 mkfs mkfs.ext2 badblocks dumpe2fs
+	  e2fsck mke2fs mklost+found tune2fs lilo ctrlaltdel kbdrate'
 
 sbin_rock='devfsd'
 

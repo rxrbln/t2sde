@@ -39,7 +39,7 @@ set_zone() {
 
 set_rtc() {
 	gui_input "Set new enhanced real time clock precision" \
-                  "$clock_rtc" "clock_rtc"
+		  "$clock_rtc" "clock_rtc"
 	store_clock
 }
 

@@ -51,16 +51,16 @@ convert_device() {
     # find the matching BIOS device
     for bios_drive in `grep -v '^#' /boot/grub/device.map | awk '{print $2}'`
     do
-        bios_major_minor=`ls -Ll $bios_drive 2>/dev/null |
-        awk '{if ($6 < 64) printf("%c%d0", $1, $5); else printf("%c%d1", $1, $5)}'`
+	bios_major_minor=`ls -Ll $bios_drive 2>/dev/null |
+	awk '{if ($6 < 64) printf("%c%d0", $1, $5); else printf("%c%d1", $1, $5)}'`
 
-        if [ "$major_minor" = "$bios_major_minor" ]; then
+	if [ "$major_minor" = "$bios_major_minor" ]; then
 	    # we found it
 	    root_drive=`grep $bios_drive /boot/grub/device.map | awk '{print $1}'`
 	    root_part=`ls -Ll $device | awk '{print $6}'`
-            root_part=$(( $root_part % 16 - 1 ))
+	    root_part=$(( $root_part % 16 - 1 ))
 	    break
-        fi
+	fi
     done
 
     drive=`echo $root_drive | sed "s:)$:,$root_part):"`
@@ -72,7 +72,7 @@ create_boot_menu() {
 	# (non local as used by create_kernel_list() ...)
 	#
 	if [ "$rootdrive" = "$bootdrive" ]
-        then bootpath="/boot"; else bootpath=""; fi
+	then bootpath="/boot"; else bootpath=""; fi
 
 	cat << EOT > /boot/grub/menu.lst
 timeout 8
@@ -151,7 +151,7 @@ Automatically install GRUB now?"; then
 		bootdrive='No Device Map found!'
 	fi
 
-        gui_menu grub 'GRUB Boot Loader Setup' \
+	gui_menu grub 'GRUB Boot Loader Setup' \
 		'(Re-)Create GRUB Device Map' 'create_device_map' \
 		"Root Device ... $rootdev" "" \
 		"Boot Drive .... $bootdrive$boot_path" "" \

@@ -72,13 +72,13 @@ store_kbd(){
 
 set_kbd_rate() {
 	gui_input "Set new console keyboard auto-repeat rate" \
-                  "$kbd_rate" "kbd_rate"
+		  "$kbd_rate" "kbd_rate"
 	store_kbd
 }
 
 set_kbd_delay() {
 	gui_input "Set new console keyboard auto-repeat delay" \
-                  "$kbd_delay" "kbd_delay"
+		  "$kbd_delay" "kbd_delay"
 	store_kbd
 }
 
@@ -104,20 +104,20 @@ store_con() {
 
 set_con_term() {
 	gui_input "Set new console screen terminal type" \
-                  "$con_term" "con_term"
+		  "$con_term" "con_term"
 	store_con
 }
 
 set_con_blank() {
 	gui_input "Set new console screen blank interval" \
-                  "$con_blank" "con_blank"
+		  "$con_blank" "con_blank"
 	store_con
 }
 
 set_con_blength() {
-        gui_input "Set new console screen beep interval" \
-                  "$con_blength" "con_blength"
-        store_con
+	gui_input "Set new console screen beep interval" \
+		  "$con_blength" "con_blength"
+	store_con
 }
 
 set_tmzone() {

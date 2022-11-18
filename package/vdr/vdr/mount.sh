@@ -62,11 +62,11 @@ mount_directory() {
 }
 
 if [ "`grep $path /etc/fstab | grep -v '^#' `" != "" ]; then   # there is an entry in fstab
-        logger "Mounting device $path ..."
-        mount_device
+	logger "Mounting device $path ..."
+	mount_device
 else
-        logger "Mounting dir $path ..."
-        mount_directory
+	logger "Mounting dir $path ..."
+	mount_directory
 fi
 
 exit 0
