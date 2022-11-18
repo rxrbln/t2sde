@@ -64,7 +64,7 @@ select_dictionaries() {
 			else
 			     dics=$(printf "%-10s--" "$dic")
 			fi
-			cmd="$cmd '$dics' 'select_dict \"$dic\"'"			
+			cmd="$cmd '$dics' 'select_dict \"$dic\"'"
 		done
 		eval $cmd
 	do : ; done

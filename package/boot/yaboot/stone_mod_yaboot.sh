@@ -76,7 +76,7 @@ $( cat /etc/yaboot.conf )"
 
 yaboot_install()
 {
-	# format the boostrap if not already done	
+	# format the boostrap if not already done
 	if hmount $bootstrapdev > /dev/null; then
 		humount
 	else
