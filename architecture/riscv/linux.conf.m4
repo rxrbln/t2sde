@@ -13,6 +13,7 @@ define(`RISCV', 'RISCV')dnl
 
 dnl RiscV
 
+CONFIG_NONPORTABLE=y
 # CONFIG_64BIT is not set
 # CONFIG_ARCH_RV64I is not set
 CONFIG_32BIT=y
