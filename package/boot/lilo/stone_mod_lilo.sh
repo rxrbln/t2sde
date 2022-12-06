@@ -40,7 +40,7 @@ create_lilo_conf() {
 	i=0 ; rootdev="`grep ' / ' /proc/mounts | tail -n 1 | \
 					awk '/\/dev\// { print $1; }'`"
 	rootdev="$( cd ${rootdev%/*} ; pwd -P )/${rootdev##*/}"
-	# TODO: readlink? //mnemoc
+	# TODO: readlink?
 	while [ -L $rootdev ] ; do
 		directory="$( cd `dirname $rootdev` ; pwd -P )"
 		rootdev="$( ls -l $rootdev | sed 's,.* -> ,,' )"
