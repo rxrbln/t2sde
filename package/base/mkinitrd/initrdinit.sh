@@ -39,7 +39,7 @@ swap="swap= $cmdline" swap=${swap##*swap=} swap=${swap%% *}
 # maybe resume from disk?
 resume="resume= $cmdline" resume=${resume##*resume=} resume=${resume%% *}
 if [[ "$resume" != "" && "$cmdline" != *noresume* ]]; then
-	resume=`ls -l $resume |
+	resume=`ls -lL $resume |
 sed 's/[^ ]* *[^ t]* *[^ ]* *[^ ]* *\([0-9]*\), *\([0-9]*\) .*/\1:\2/'`
 	echo "Attempting to resume from $resume"
 	echo "$resume" > /sys/power/resume
