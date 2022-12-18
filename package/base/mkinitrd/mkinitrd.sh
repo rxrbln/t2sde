@@ -54,12 +54,6 @@ while [ "$1" ]; do
   shift
 done
 
-if [ ! "$outfile" ]; then
-    [ "$minimal" = 1 ] &&
-	outfile="$root/boot/minird-$kernelver" ||
-	outfile="$root/boot/initrd-$kernelver"
-fi
-
 [ "$minimal" != 1 ] && filter="$filter -e reiserfs -e btrfs -e /jfs -e /xfs -e jffs2
 -e /udf -e /unionfs -e ntfs -e /fat -e /hfs -e floppy -e efivarfs
 -e /ata/ -e /scsi/ -e /fusion/ -e /sdhci/ -e nvme/host -e /mmc/ -e ps3fb -e ps3disk
@@ -74,6 +68,12 @@ fi
 
 [ "$kernelver" ] || kernelver=`uname -r`
 [ "$moddir" ] || moddir="$root/lib/modules/$kernelver"
+
+if [ ! "$outfile" ]; then
+    [ "$minimal" = 1 ] &&
+	outfile="$root/boot/minird-$kernelver" ||
+	outfile="$root/boot/initrd-$kernelver"
+fi
 
 modinfo="${archprefix}modinfo -b $moddir -k $kernelver"
 depmod=${archprefix}depmod
