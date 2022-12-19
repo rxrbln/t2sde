@@ -38,7 +38,7 @@ create_kernel_list() {
 		cat << EOT
 
 menuentry "T2/Linux $label" {
-	linux $bootpath/$x root=$rootdev ro
+	linux $bootpath/$x root=$rootdev ro ${swapdev:+resume=$swapdev}
 	initrd $bootpath/initrd-${ver}
 }
 EOT
@@ -295,6 +295,7 @@ get_realdev() {
 main() {
 	rootdev="`grep ' / ' /proc/mounts | tail -n 1 | sed 's, .*,,'`"
 	bootdev="`grep ' /boot ' /proc/mounts | tail -n 1 | sed 's, .*,,'`"
+	swapdev="`grep ' swap ' /etc/fstab | tail -n 1 | sed 's, .*,,'`"
 
 	# if device-mapper, get backing device
 	if [[ "$rootdev" = *mapper* ]]; then
