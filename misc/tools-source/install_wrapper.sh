@@ -47,30 +47,33 @@ if [ "${*/--target-directory//}" != "$*" ]; then
 fi
 
 while [ $# -gt 0 ]; do
-	case "$1" in
+    # split combined args
+    for a in `echo $1 | sed '/^-[^-]/ {s/^-//; s/./-& /g}'`; do
+	case "$a" in
 		-g|-m|-o|-S|--group|--mode|--owner|--suffix)
-			newcommand="$newcommand $1 $2"
+			newcommand="$newcommand $a $2"
 			shift 1
 			;;
 		-s|--strip)
 			if [[ $command != *install ]]; then
-				newcommand="$newcommand $1"
+				newcommand="$newcommand $a"
 			fi
 			;;
 		-t)
 			: # skip -t for now, as we generate target filenames
 			;;
 		-*)
-			newcommand="$newcommand $1"
+			newcommand="$newcommand $a"
 			;;
 		*)
 			if [ -n "$destination" ]; then
 				sources[sources_counter++]="$destination"
 			fi
-			destination="$1"
+			destination="$a"
 			;;
 	esac
-	shift 1
+    done
+    shift 1
 done
 
 [ -z "${destination##/*}" ] || destination="$PWD/$destination"
