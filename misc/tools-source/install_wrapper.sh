@@ -48,7 +48,7 @@ fi
 
 while [ $# -gt 0 ]; do
     # split combined args
-    for a in `echo $1 | sed '/^-[^-]/ {s/^-//; s/./-& /g}'`; do
+    for a in `echo $1 | sed '/^-[^-]/ {s/^-//; s/\([^0-9-]\)/ -\1/g}'`; do
 	case "$a" in
 		-g|-m|-o|-S|--group|--mode|--owner|--suffix)
 			newcommand="$newcommand $a $2"
