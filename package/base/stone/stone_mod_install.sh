@@ -93,7 +93,7 @@ part_crypt() {
 
 part_pvcreate() {
 	local dev=$1
-	pvcreate $dev
+	pvcreate /dev/$dev
 }
 
 part_unmounted_action() {
@@ -136,7 +136,7 @@ part_add() {
 	       sed 's/.* size \(.*\) (.*/\1/'`"
 
 	[ "$type" ] || type="undetected"
-	dev=${1#*/}; ${dev#mapper/}
+	dev=${1#*/}; dev=${dev#mapper/}
 	cmd="$cmd '`printf "%-6s %-24s %-10s" $dev "$location" "$size"` $type' 'part_${action}_action $1'"
 }
 
