@@ -262,16 +262,24 @@ EOT
 		sed -n 's, /mnt/\?, /,p' /etc/mtab > /mnt/etc/mtab
 		chroot /mnt /tmp/stone_postinst.sh
 		rm -f /mnt/tmp/stone_postinst.sh
+
 		if gui_yesno "Do you want to un-mount the filesystems and reboot now?"
 		then
+			# try to re-boot via kexec, if available
+			if type -p kexec > /dev/null; then
+			    root=$(grep ' / ' /mnt/etc/fstab | cut -d ' ' -f 1)
+			    kernel="$(echo /mnt/boot/vmlinu[xz]-*)"
+			    kernel="${kernel##* }"
+			    kexec -l $kernel --initrd="${kernel/vmlinu?/initrd}" \
+				  --reuse-cmdline --append "root=$root"
+			fi
 			shutdown -r now
 		else
 			echo
 			echo "You might want to umount all filesystems now and reboot"
 			echo "the system now using the commands:"
 			echo
-			echo "	umount -arv"
-			echo "	reboot -f"
+			echo "	shutdown -r now"
 			echo
 			echo "Or by executing 'shutdown -r now' which will run the above commands."
 			echo
