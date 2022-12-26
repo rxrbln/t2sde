@@ -91,35 +91,44 @@ part_crypt() {
 	part_decrypt $dev
 }
 
+part_pvcreate() {
+	local dev=$1
+	pvcreate $dev
+}
+
 part_unmounted_action() {
+	# TODO: only show activate if matching type is detected
 	gui_menu part "$1" \
-		"Mount an existing filesystem from the partition" \
+		"Mount a filesystem from the partition" \
 				"part_mount $1" \
 		"Create a filesystem on the partition" \
 				"part_mkfs $1" \
-		"Activate an existing swap space on the partition" \
-				"swapon /dev/$1" \
-		"Create a swap space on the partition" \
-				"mkswap /dev/$1; swapon /dev/$1" \
 		"Activate a LUKS encrypted partition" \
 				"part_decrypt $1" \
 		"Encrypt partition using LUKS cryptsetup" \
-				"part_crypt $1"
+				"part_crypt $1" \
+		"Initialize as LVM physical volume" \
+				"part_pvcreate $1" \
+		"Create a swap space on the partition" \
+				"mkswap /dev/$1; swapon /dev/$1" \
+		"Activate an existing swap space on the partition" \
+				"swapon /dev/$1"
 }
 
 part_add() {
+	local dev=$1
 	local action="unmounted" location="currently not mounted"
-	if grep -q "^/dev/$1 " /proc/swaps; then
+	if grep -q "^/dev/$dev " /proc/swaps; then
 		action=swap location="swap  <no mount point>"
-	elif grep -q "^/dev/$1 " /proc/mounts; then
+	elif grep -q "^/dev/$dev " /proc/mounts; then
 		action=mounted
-		location="`grep "^/dev/$1 " /proc/mounts | cut -d ' ' -f 2 |
+		location="`grep "^/dev/$dev " /proc/mounts | cut -d ' ' -f 2 |
 			  sed "s,^/mnt,," `"
 		[ "$location" ] || location="/"
 	fi
 
 	# save partition information
-	disktype /dev/$1 > /tmp/stone-install
+	disktype /dev/$dev > /tmp/stone-install 2>/dev/null
 	type="`grep /tmp/stone-install -v -e '^  ' -e '^Block device' \
 	       -e '^Partition' -e '^---' |
 	       sed -e 's/[,(].*//' -e '/^$/d' -e 's/ $//' | tail -n 1`"
@@ -127,7 +136,8 @@ part_add() {
 	       sed 's/.* size \(.*\) (.*/\1/'`"
 
 	[ "$type" ] || type="undetected"
-	cmd="$cmd '`printf "%-6s %-24s %-10s" ${1#*/} "$location" "$size"` $type' 'part_${action}_action $1 $2'"
+	dev=${1#*/}; ${dev#mapper/}
+	cmd="$cmd '`printf "%-6s %-24s %-10s" $dev "$location" "$size"` $type' 'part_${action}_action $1'"
 }
 
 disk_action() {
@@ -149,49 +159,41 @@ can't modify this disks partition table."
 vg_action() {
 	cmd="gui_menu vg 'Volume Group $1'"
 
-	if [ -d /dev/$1 ]; then
-		cmd="$cmd 'Display attributes of $1' 'gui_cmd \"display $1\" vgdisplay $1'"
-
-		if grep -q "^/dev/$1/" /proc/swaps /proc/mounts; then
-		  cmd="$cmd \"LVs of $1 are currently in use, so you can't
-de-activate it.\" ''"
-		else
-		  cmd="$cmd \"De-activate VG '$1'\" 'vgchange -an $1'"
-		fi
-	else
-		cmd="$cmd 'Display attributes of $1' 'gui_cmd \"display $1\" vgdisplay -D $1'"
-
-		cmd="$cmd \"Activate VG '$1'\" 'vgchange -ay $1'"
-	fi
+	cmd="$cmd 'Display information of $1' 'gui_cmd \"display $1\" vgdisplay $1'"
+	cmd="$cmd \"De-activate VG '$1'\" 'vgchange -an $1'"
+	cmd="$cmd \"Activate VG '$1'\" 'vgchange -ay $1'"
 
 	eval $cmd
 }
 
 disk_add() {
-	local x y=0
+	local x found=0
 	cmd="$cmd 'Edit partition table of $1:' 'disk_action $1'"
 	# TODO: maybe better /sys/block/$1/$1* ?
 	for x in $(cd /dev; ls $1[0-9p]* 2> /dev/null)
 	do
-		part_add $x; y=1
+		part_add $x
+		found=1
 	done
-	[ $y = 0 ] && cmd="$cmd 'Partition table is empty.' ''"
+	[ $found = 0 ] && cmd="$cmd 'Partition table is empty.' ''"
 	cmd="$cmd '' ''"
 }
 
 vg_add() {
-	local x= y=0
+	local x= found=0
+
 	cmd="$cmd 'Logical volumes of $1:' 'vg_action $1'"
-	if [ -d /dev/$1 ]; then
-		for x in $(cd /dev; ls -1 $1/*); do
-			part_add $x; y=1
-		done
-		if [ $y = 0 ]; then
-			cmd="$cmd 'No logical volumes.' ''"
-		fi
-	else
-		cmd="$cmd 'Volume Group is not active.' ''"
+
+	[ -x /sbin/lvs ] && for x in $(lvs --noheadings -o dm_path $1 2> /dev/null); do
+		x=${x#/dev/}
+		part_add $x
+		volumes="${volumes/ $x /}"
+		found=1
+	done
+	if [ $found = 0 ]; then
+		cmd="$cmd 'No logical volumes.' ''"
 	fi
+
 	cmd="$cmd '' ''"
 }
 
@@ -204,38 +206,40 @@ main() {
 
 This dialog allows you to modify your storage layout and to create filesystems and swap-space - as well as mouting / activating it. Everything you can do using this tool can also be done manually on the command line.'"
 
-		# protect for the case no block devices are present ...
-		found=0
-		local volumes=
+		local found=0
+		volumes=""
 		for x in /sys/block/*; do
 			[ ! -e $x/device -a ! -e $x/dm ] && continue
 			x=${x#/sys/block/}
 			[[ "$x" = fd[0-9]* ]] && continue
 			# TODO: media? udevadm info -q property --name=/dev/sr0
 
-			# find user defined alias name
-			local devnode=$(stat -c "%t:%T" /dev/$x)
-			for d in /dev/mapper/*; do
-				[ "$(stat -c "%t:%T" $d)" = "$devnode" ] &&
-					x=${d#/dev/} && break
-			done
-			
-			[[ $x = mapper/* ]] && volumes="$volumes $x" || disk_add $x
+			# LVM Device Mapper?
+			if [ -e /sys/block/$x/dm ]; then
+				if [ -e /sys/block/$x/dm/name ]; then
+					x=$(< /sys/block/$x/dm/name)
+					[[ $x = *_rimage* ]] && continue
+				fi
+				volumes="${volumes} mapper/$x "
+			else
+				disk_add $x
+			fi
 			found=1
 		done
-		for x in $volumes; do
-			part_add $x
-		done
-		for x in $(cat /etc/lvmtab 2> /dev/null); do
-			vg_add "$x"
-			found=1
-		done
+
 		[ -x /sbin/vgs ] && for x in $(vgs --noheadings -o name 2> /dev/null); do
 			vg_add "$x"
 			found=1
 		done
+
+		# any other remaining device-mapper, e.g. LUKS cryptosetup
+		if [ "$volumes" ]; then
+			for x in $volumes; do part_add $x; done
+			cmd="$cmd '' ''"
+		fi
+
 		if [ $found = 0 ]; then
-		  cmd="$cmd 'No storage found!' ''"
+			cmd="$cmd 'No storage found!' ''"
 		fi
 
 		cmd="$cmd 'Install the system ...' 'install_now=1'"
