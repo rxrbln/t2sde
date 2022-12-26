@@ -134,7 +134,7 @@ EOT
 		local exe=BOOTX64.EFI
 		[ $arch = i386 ] && exe=${exe/X64/IA32}
 		[ $arch = arm64 ] && exe=${exe/X/AA}
-		[[ $arch = riscv* ]] && exe={exe/X64/${arch^^}}
+		[[ $arch = riscv* ]] && exe=${exe/X64/${arch^^}}
 		
 		grub-mkimage -O $arch-efi -o $efi/EFI/boot/$exe \
 			-p /efi/boot -d /usr/lib*/grub/$arch-efi/ \
@@ -309,7 +309,7 @@ main() {
 			cryptdev="(crypto0)"
 		fi
 	    else
-		cryptdev="lvm/${rootdev#/dev/mapper/}"
+		cryptdev="(lvm/${rootdev#/dev/mapper/})"
 	    fi
 	fi
 
