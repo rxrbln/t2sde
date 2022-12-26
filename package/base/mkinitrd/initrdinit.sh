@@ -39,8 +39,9 @@ swap="swap= $cmdline" swap=${swap##*swap=} swap=${swap%% *}
 # maybe resume from disk?
 resume="resume= $cmdline" resume=${resume##*resume=} resume=${resume%% *}
 if [[ "$resume" != "" && "$cmdline" != *noresume* ]]; then
-	resume=${resume#/dev/}
-	[ ${resume#*/} != $resume -a -e /sbin/lvchange ] && lvchange -a ay $resume
+	[ ${resume#/dev/*/*} != $resume -a -e /sbin/lvchange ] &&
+		echo "Activating LVM $resume" &&
+		lvchange -a ay ${resume#/dev/}
 	
 	resume=`ls -lL /dev/$resume |
 sed 's/[^ ]* *[^ t]* *[^ ]* *[^ ]* *\([0-9]*\), *\([0-9]*\) .*/\1:\2/'`
@@ -66,8 +67,12 @@ if [ "$root" ]; then
     unset addr
     if [ ! -e "$root" ]; then
 	echo "Activating RAID & LVM"
-	[ -e /sbin/mdadm ] && mdadm --assemble --scan
-	[ -e /sbin/lvchange ] && lvchange -a ay ${root#/dev/}
+	[ ${dev#/dev/md[0-9]} != $root -a -e /sbin/mdadm ] &&
+		echo "Scanning for mdadm RAID" &&
+		mdadm --assemble --scan
+	[ ${root#/dev/*/*} != $root -a -e /sbin/lvchange ] &&
+		echo "Activating LVM $root" &&
+		lvchange -a ay ${root#/dev/}
     fi
     if [ ! -e "$root" ]; then
 	modprobe pata_legacy
