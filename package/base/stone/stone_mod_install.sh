@@ -138,7 +138,7 @@ can't modify this disks partition table."
 	fi
 
 	cmd="gui_menu disk 'Edit partition table of $1'"
-	for x in parted cfdisk fdisk pdisk mac-fdisk; do
+	for x in cfdisk fdisk pdisk mac-fdisk parted; do
 		type -p $x > /dev/null &&
 		  cmd="$cmd \"Edit partition table using '$x'\" \"$x /dev/$1\""
 	done
