@@ -97,22 +97,29 @@ part_pvcreate() {
 }
 
 part_unmounted_action() {
-	# TODO: only show activate if matching type is detected
-	gui_menu part "$1" \
-		"Mount a filesystem from the partition" \
-				"part_mount $1" \
-		"Create a filesystem on the partition" \
-				"part_mkfs $1" \
-		"Activate a LUKS encrypted partition" \
-				"part_decrypt $1" \
-		"Encrypt partition using LUKS cryptsetup" \
-				"part_crypt $1" \
-		"Initialize as LVM physical volume" \
-				"part_pvcreate $1" \
-		"Create a swap space on the partition" \
-				"mkswap /dev/$1; swapon /dev/$1" \
-		"Activate an existing swap space on the partition" \
-				"swapon /dev/$1"
+	local dev=$1
+
+	type=$(blkid --match-tag TYPE /dev/$dev)
+	type=${type#*\"}; type=${type%\"*}
+
+	local cmd="gui_menu part $dev"
+
+	[ "$type" -a "$type" != "swap" -a "$type" != "crypto_LUKS" ] &&
+	cmd="$cmd \"Mount a filesystem from the partition\" \"part_mount $dev\""
+	cmd="$cmd \"Create a filesystem on the partition\" \"part_mkfs $dev\""
+
+	[ "$type" = "crypto_LUKS" ] &&
+		cmd="$cmd \"Activate a LUKS encrypted partition\"  \"part_decrypt $dev\""
+	cmd="$cmd \"Encrypt partition using LUKS cryptsetup\" \"part_crypt $dev\""
+
+	# TODO: add PV to VG
+	cmd="$cmd \"Initialize as LVM physical volume\" \"part_pvcreate $dev\""
+
+	[ "$type" = "swap" ] &&
+		cmd="$cmd \"Activate an existing swap space on the partition\" \"swapon /dev/$dev\""
+	cmd="$cmd \"Create a swap space on the partition\" \"mkswap /dev/$dev; swapon /dev/$dev\""
+
+	eval $cmd
 }
 
 part_add() {
@@ -134,10 +141,12 @@ part_add() {
 	       sed -e 's/[,(].*//' -e '/^$/d' -e 's/ $//' | tail -n 1`"
 	size="`grep 'Block device, size' /tmp/stone-install |
 	       sed 's/.* size \(.*\) (.*/\1/'`"
-
-	[ "$type" ] || type="undetected"
+	if [ -z "$type" ]; then
+		type=$(blkid --match-tag TYPE /dev/$dev)
+		type=${type#*\"}; type=${type%\"*}
+	fi
 	dev=${1#*/}; dev=${dev#mapper/}
-	cmd="$cmd '`printf "%-6s %-24s %-10s" $dev "$location" "$size"` $type' 'part_${action}_action $1'"
+	cmd="$cmd '`printf "%-6s %-24s %-10s" $dev "$location" "$size"` ${type//_/ }' 'part_${action}_action $1'"
 }
 
 disk_action() {
@@ -147,7 +156,7 @@ can't modify this disks partition table."
 		return
 	fi
 
-	cmd="gui_menu disk 'Edit partition table of $1'"
+	local cmd="gui_menu disk 'Edit partition table of $1'"
 	for x in cfdisk fdisk pdisk mac-fdisk parted; do
 		type -p $x > /dev/null &&
 		  cmd="$cmd \"Edit partition table using '$x'\" \"$x /dev/$1\""
@@ -157,7 +166,7 @@ can't modify this disks partition table."
 }
 
 vg_action() {
-	cmd="gui_menu vg 'Volume Group $1'"
+	local cmd="gui_menu vg 'Volume Group $1'"
 
 	cmd="$cmd 'Display information of $1' 'gui_cmd \"display $1\" vgdisplay $1'"
 	cmd="$cmd \"De-activate VG '$1'\" 'vgchange -an $1'"
@@ -200,11 +209,11 @@ vg_add() {
 main() {
 	$STONE general set_keymap
 
-	local cmd install_now=0
+	local install_now=0
 	while
-		cmd="gui_menu install 'Storage setup (partitions and mount-points)
+		cmd="gui_menu install 'Storage setup: partitions and mount-points
 
-This dialog allows you to modify your storage layout and to create filesystems and swap-space - as well as mouting / activating it. Everything you can do using this tool can also be done manually on the command line.'"
+Modify your storage layout: create file-systems, swap-space, encrypt and mount them. You can also use advanced low-level tools on the command line.'"
 
 		local found=0
 		volumes=""
