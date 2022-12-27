@@ -10,6 +10,9 @@
 # it under the terms of the GNU General Public License version 2.
 # --- T2-COPYRIGHT-NOTE-END ---
 
+# TODO: check error, esp. of lvm commands and display red alert on error
+# TODO: LVM rename
+
 part_mounted_action() {
 	if gui_yesno "Do you want to un-mount the filesystem on $1?"
 	then umount /dev/$1; fi
@@ -97,7 +100,7 @@ part_pvcreate() {
 }
 
 part_unmounted_action() {
-	local dev=$1
+	local dev=$1 stype=$2
 
 	type=$(blkid --match-tag TYPE /dev/$dev)
 	type=${type#*\"}; type=${type%\"*}
@@ -113,11 +116,17 @@ part_unmounted_action() {
 	cmd="$cmd \"Encrypt partition using LUKS cryptsetup\" \"part_crypt $dev\""
 
 	# TODO: add PV to VG
-	cmd="$cmd \"Initialize as LVM physical volume\" \"part_pvcreate $dev\""
+	[ "$stype" != "lv" ] &&
+		cmd="$cmd \"Create physical LVM volume\" \"part_pvcreate $dev\""
 
 	[ "$type" = "swap" ] &&
 		cmd="$cmd \"Activate an existing swap space on the partition\" \"swapon /dev/$dev\""
 	cmd="$cmd \"Create a swap space on the partition\" \"mkswap /dev/$dev; swapon /dev/$dev\""
+
+	[ "$stype" = "lv" ] &&
+		cmd="$cmd \"Remove logical LVM volume\" \"lvremove /dev/$dev\""
+	[ "$type" = "LVM2_member" ] &&
+		cmd="$cmd \"Remove physical LVM volume\" \"pvremove /dev/$dev\""
 
 	eval $cmd
 }
@@ -146,7 +155,7 @@ part_add() {
 		type=${type#*\"}; type=${type%\"*}
 	fi
 	dev=${1#*/}; dev=${dev#mapper/}
-	cmd="$cmd '`printf "%-6s %-24s %-10s" $dev "$location" "$size"` ${type//_/ }' 'part_${action}_action $1'"
+	cmd="$cmd '`printf "%-6s %-24s %-10s" $dev "$location" "$size"` ${type//_/ }' 'part_${action}_action $1 $2'"
 }
 
 disk_action() {
@@ -165,12 +174,29 @@ can't modify this disks partition table."
 	eval $cmd
 }
 
+lv_create() {
+	echo "$1 $2"
+	local size="-l 50%VG"
+	# TODO: size, name, stripes
+	lvcreate $size --type $2 $1 # -n root
+	read in
+}
+
 vg_action() {
 	local cmd="gui_menu vg 'Volume Group $1'"
 
-	cmd="$cmd 'Display information of $1' 'gui_cmd \"display $1\" vgdisplay $1'"
-	cmd="$cmd \"De-activate VG '$1'\" 'vgchange -an $1'"
-	cmd="$cmd \"Activate VG '$1'\" 'vgchange -ay $1'"
+	# TODO: toggle activate / deactivate
+	cmd="$cmd 'Create Linear logical volume' 'lv_create $1 linear'"
+	cmd="$cmd 'Create Striped logical volume' 'lv_create $1 striped'"
+	cmd="$cmd 'Create RAID 1 logical volume' 'lv_create $1 raid1'"
+	cmd="$cmd 'Create RAID 5 logical olume' 'lv_create $1 raid5'"
+	cmd="$cmd 'Create RAID 6 logical volume' 'lv_create $1 raid6'"
+	cmd="$cmd 'Create RAID 10 logical volume' 'lv_create $1 raid10'"
+
+	cmd="$cmd 'Activate volume group' 'vgchange -ay $1'"
+	cmd="$cmd 'Deactivate volume group' 'vgchange -an $1'"
+	cmd="$cmd 'Remove volume group' 'vgremove $1'"
+	cmd="$cmd 'Display low-level information' 'gui_cmd \"display $1\" vgdisplay $1'"
 
 	eval $cmd
 }
@@ -195,7 +221,7 @@ vg_add() {
 
 	[ -x /sbin/lvs ] && for x in $(lvs --noheadings -o dm_path $1 2> /dev/null); do
 		x=${x#/dev/}
-		part_add $x
+		part_add $x lv
 		volumes="${volumes/ $x /}"
 		found=1
 	done
