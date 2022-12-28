@@ -4,6 +4,16 @@ PATH=/sbin:/bin:/usr/bin:/usr/sbin
 
 echo "T2 SDE early userspace (c)2005-2022 Rene Rebe, ExactCODE GmbH; Germany."
 
+function mapper2lvm {
+	# support both, direct vg/lv or mapper/...
+	x=${1#mapper/} 
+	if [ "$x" != "$1" -a "${x#*-}" != "$x" ]; then
+		# TODO: --
+		x="${x%-*}/${x#*-}"
+	fi
+	echo $x
+}
+
 function boot {
 	mount -t none -o move {,/mnt}/dev
 	mount -t none -o move {,/mnt}/proc
@@ -39,12 +49,12 @@ swap="swap= $cmdline" swap=${swap##*swap=} swap=${swap%% *}
 # maybe resume from disk?
 resume="resume= $cmdline" resume=${resume##*resume=} resume=${resume%% *}
 if [[ "$resume" != "" && "$cmdline" != *noresume* ]]; then
-	[ ${resume#/dev/*/*} != $resume -a -e /sbin/lvchange ] &&
+	[ ! -e $resume -a ${resume#/dev/*/*} != $resume -a -e /sbin/lvchange ] &&
 		echo "Activating LVM $resume" &&
-		lvchange -a ay ${resume#/dev/}
+		lvchange -a ay $(mapper2lvm ${resume#/dev/})
 	
-	resume=`ls -lL /dev/$resume |
-sed 's/[^ ]* *[^ t]* *[^ ]* *[^ ]* *\([0-9]*\), *\([0-9]*\) .*/\1:\2/'`
+	resume=`ls -lL $resume |
+		sed 's/[^ ]* *[^ t]* *[^ ]* *[^ ]* *\([0-9]*\), *\([0-9]*\) .*/\1:\2/'`
 	echo "Resuming from $resume"
 	echo "$resume" > /sys/power/resume
 fi
@@ -72,10 +82,10 @@ if [ "$root" ]; then
 		mdadm --assemble --scan
 	[ ${root#/dev/*/*} != $root -a -e /sbin/lvchange ] &&
 		echo "Activating LVM $root" &&
-		lvchange -a ay ${root#/dev/}
+		lvchange -a ay $(mapper2lvm ${root#/dev/})
     fi
     if [ ! -e "$root" ]; then
-	modprobe pata_legacy
+	modprobe pata_legacy 2>/dev/null
     fi
   fi
 
