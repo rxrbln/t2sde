@@ -11,7 +11,14 @@
 # --- T2-COPYRIGHT-NOTE-END ---
 
 # TODO: check error, esp. of lvm commands and display red alert on error
-# TODO: LVM rename
+
+mapper2lvm() {
+	local x="${1//--/
+}"
+	x="${x//-//}"
+	echo "${x//
+/-}"
+}
 
 part_mounted_action() {
 	if gui_yesno "Do you want to un-mount the filesystem on $1?"
@@ -124,6 +131,7 @@ part_unmounted_action() {
 	cmd="$cmd \"Create a swap space on the partition\" \"mkswap /dev/$dev; swapon /dev/$dev\""
 
 	[ "$stype" = "lv" ] &&
+		cmd="$cmd \"Rename logical LVM volume\" \"lvm_rename ${dev#mapper/} lv\"" &&
 		cmd="$cmd \"Remove logical LVM volume\" \"lvremove /dev/$dev\""
 	[ "$type" = "LVM2_member" ] &&
 		cmd="$cmd \"Remove physical LVM volume\" \"pvremove /dev/$dev\""
@@ -174,11 +182,27 @@ can't modify this disks partition table."
 	eval $cmd
 }
 
+lvm_rename() {
+	local dev=$1
+	echo $dev $type
+	[ "$2" = lv ] && dev=$(mapper2lvm $dev)
+	gui_input "Rename $dev:" "${dev#*/}" name
+
+	if [ "$2" = vg ]; then
+		vgrename $dev $name
+	else
+		lvrename $dev $name
+	fi
+	read in
+}
+
+
 lv_create() {
-	echo "$1 $2"
-	local size="-l 50%VG"
-	# TODO: size, name, stripes
-	lvcreate $size --type $2 $1 # -n root
+	local dev=$1 type=$2
+	# TODO: name, stripes
+	local size=$(vgdisplay $dev | grep Free | sed 's,.*/,,; s, <,,; s/ //g ')
+	gui_input "Logical volume size:" "$size" size
+	lvcreate -L "$size" --type $type $dev # -n name
 	read in
 }
 
@@ -195,6 +219,7 @@ vg_action() {
 
 	cmd="$cmd 'Activate volume group' 'vgchange -ay $1'"
 	cmd="$cmd 'Deactivate volume group' 'vgchange -an $1'"
+	cmd="$cmd 'Rename volume group' 'lvm_rename $1 vg'"
 	cmd="$cmd 'Remove volume group' 'vgremove $1'"
 	cmd="$cmd 'Display low-level information' 'gui_cmd \"display $1\" vgdisplay $1'"
 
@@ -253,7 +278,7 @@ Modify your storage layout: create file-systems, swap-space, encrypt and mount t
 			if [ -e /sys/block/$x/dm ]; then
 				if [ -e /sys/block/$x/dm/name ]; then
 					x=$(< /sys/block/$x/dm/name)
-					[[ $x = *_rimage* ]] && continue
+					[[ $x = *_rimage* || $x = *_rmeta* ]] && continue
 				fi
 				volumes="${volumes} mapper/$x "
 			else
