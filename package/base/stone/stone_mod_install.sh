@@ -11,6 +11,7 @@
 # --- T2-COPYRIGHT-NOTE-END ---
 
 # TODO: check error, esp. of lvm commands and display red alert on error
+# TODO: vg create, vg extent
 
 mapper2lvm() {
 	local x="${1//--/
@@ -21,12 +22,12 @@ mapper2lvm() {
 }
 
 part_mounted_action() {
-	if gui_yesno "Do you want to un-mount the filesystem on $1?"
+	if gui_yesno "Do you want to unmount the filesystem on $1?"
 	then umount /dev/$1; fi
 }
 
 part_swap_action() {
-	if gui_yesno "Do you want to de-activate the swap space on $1?"
+	if gui_yesno "Do you want to deactivate the swap space on $1?"
 	then swapoff /dev/$1; fi
 }
 
@@ -130,9 +131,13 @@ part_unmounted_action() {
 		cmd="$cmd \"Activate an existing swap space on the partition\" \"swapon /dev/$dev\""
 	cmd="$cmd \"Create a swap space on the partition\" \"mkswap /dev/$dev; swapon /dev/$dev\""
 
-	[ "$stype" = "lv" ] &&
-		cmd="$cmd \"Rename logical LVM volume\" \"lvm_rename ${dev#mapper/} lv\"" &&
+	if [ "$stype" = "lv" ]; then
+		[[ "$(lvs -o active --noheadings /dev/$dev)" = *active ]] &&
+		cmd="$cmd 'Deactivate logical LVM volume' 'lvchange -an /dev/$dev'" ||
+		cmd="$cmd 'Activate logical LVM volume' 'lvchange -ay /dev/$dev'"
+		cmd="$cmd \"Rename logical LVM volume\" \"lvm_rename ${dev#mapper/} lv\""
 		cmd="$cmd \"Remove logical LVM volume\" \"lvremove /dev/$dev\""
+	fi
 	[ "$type" = "LVM2_member" ] &&
 		cmd="$cmd \"Remove physical LVM volume\" \"pvremove /dev/$dev\""
 
@@ -209,16 +214,15 @@ lv_create() {
 vg_action() {
 	local cmd="gui_menu vg 'Volume Group $1'"
 
-	# TODO: toggle activate / deactivate
 	cmd="$cmd 'Create Linear logical volume' 'lv_create $1 linear'"
 	cmd="$cmd 'Create Striped logical volume' 'lv_create $1 striped'"
 	cmd="$cmd 'Create RAID 1 logical volume' 'lv_create $1 raid1'"
 	cmd="$cmd 'Create RAID 5 logical olume' 'lv_create $1 raid5'"
 	cmd="$cmd 'Create RAID 6 logical volume' 'lv_create $1 raid6'"
 	cmd="$cmd 'Create RAID 10 logical volume' 'lv_create $1 raid10'"
-
-	cmd="$cmd 'Activate volume group' 'vgchange -ay $1'"
-	cmd="$cmd 'Deactivate volume group' 'vgchange -an $1'"
+	cmd="$cmd '' ''"
+	cmd="$cmd 'Activate all volumes in group' 'vgchange -ay $1'"
+	cmd="$cmd 'Deactivate all volumes in group' 'vgchange -an $1'"
 	cmd="$cmd 'Rename volume group' 'lvm_rename $1 vg'"
 	cmd="$cmd 'Remove volume group' 'vgremove $1'"
 	cmd="$cmd 'Display low-level information' 'gui_cmd \"display $1\" vgdisplay $1'"
