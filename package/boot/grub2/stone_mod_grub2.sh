@@ -89,7 +89,7 @@ EOT
 
 	gui_message "This is the new /boot/grub/grub.cfg file:
 
-$( cat /boot/grub/grub.cfg )"
+$(cat /boot/grub/grub.cfg)"
 	unset bootpath
 }
 
@@ -126,7 +126,7 @@ EOT
 		    cat << EOT > $efi/EFI/boot/grub.cfg
 set uuid=$grubdev
 cryptomount -u \$uuid
-configfile ($cryptdev)/boot/grub/grub.cfg
+configfile $cryptdev/boot/grub/grub.cfg
 EOT
 		fi
 
@@ -170,7 +170,7 @@ EOT
 		cat << EOT > /mnt/boot/grub/grub.cfg
 set uuid=$grubdev
 cryptomount -u \$uuid
-configfile (crypto0)/boot/grub/grub.cfg
+configfile $cryptdev/boot/grub/grub.cfg
 EOT
 	    fi
 	    grub-mkimage -O powerpc-ieee1275 -p /boot/grub \
