@@ -76,7 +76,6 @@ if [ "$root" ]; then
   else
     unset addr
     if [ ! -e "$root" ]; then
-	echo "Activating RAID & LVM"
 	[ ${dev#/dev/md[0-9]} != $root -a -e /sbin/mdadm ] &&
 		echo "Scanning for mdadm RAID" &&
 		mdadm --assemble --scan
