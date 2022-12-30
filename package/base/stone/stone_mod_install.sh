@@ -11,7 +11,6 @@
 # --- T2-COPYRIGHT-NOTE-END ---
 
 # TODO: check error, esp. of lvm commands and display red alert on error
-# TODO: vg create, vg extent
 
 mapper2lvm() {
 	local x="${1//--/
@@ -24,6 +23,11 @@ mapper2lvm() {
 part_mounted_action() {
 	if gui_yesno "Do you want to unmount the filesystem on $1?"
 	then umount /dev/$1; fi
+}
+
+part_activepv_action() {
+	if gui_yesno "Do you want to remove physical LVM $1 from volume group $2?"
+	then vgreduce $2 /dev/$1; fi
 }
 
 part_swap_action() {
@@ -107,6 +111,18 @@ part_pvcreate() {
 	pvcreate /dev/$dev
 }
 
+vg_add_pv() {
+	pvs -o vgname $2 --noheadings
+	gui_input "Add physical volume $1 to logical volume group:" "vg0" vg
+	if [ "$vg" ]; then
+	    if vgs $vg 2>/dev/null; then
+		vgextend $vg $1
+	    else
+		vgcreate $vg $1
+	    fi
+	fi
+}
+
 part_unmounted_action() {
 	local dev=$1 stype=$2
 
@@ -139,7 +155,8 @@ part_unmounted_action() {
 		cmd="$cmd \"Remove logical LVM volume\" \"lvremove /dev/$dev\""
 	fi
 	[ "$type" = "LVM2_member" ] &&
-		cmd="$cmd \"Remove physical LVM volume\" \"pvremove /dev/$dev\""
+		cmd="$cmd 'Add physical LVM volume to volume group' 'vg_add_pv /dev/$dev'"
+		cmd="$cmd 'Remove physical LVM volume' 'pvremove /dev/$dev'"
 
 	eval $cmd
 }
@@ -167,6 +184,14 @@ part_add() {
 		type=$(blkid --match-tag TYPE /dev/$dev)
 		type=${type#*\"}; type=${type%\"*}
 	fi
+
+	# active LVM pv?
+	if [[ "$type" = *LVM2*volume* ]]; then
+		local vg=`pvs --noheadings -o vgname /dev/$dev`
+		vg="${vg##* }"
+		[ "$vg" ] && action=activepv && location="$vg" && set "$1" "$vg"
+	fi
+
 	dev=${1#*/}; dev=${dev#mapper/}
 	cmd="$cmd '`printf "%-6s %-24s %-10s" $dev "$location" "$size"` ${type//_/ }' 'part_${action}_action $1 $2'"
 }
@@ -198,7 +223,6 @@ lvm_rename() {
 	else
 		lvrename $dev $name
 	fi
-	read in
 }
 
 
@@ -207,8 +231,8 @@ lv_create() {
 	# TODO: name, stripes
 	local size=$(vgdisplay $dev | grep Free | sed 's,.*/,,; s, <,,; s/ //g ')
 	gui_input "Logical volume size:" "$size" size
-	lvcreate -L "$size" --type $type $dev # -n name
-	read in
+	[ "$size" ] &&
+		lvcreate -L "$size" --type $type $dev && # -n name
 }
 
 vg_action() {
