@@ -94,9 +94,10 @@ $(cat /boot/grub/grub.cfg)"
 }
 
 grubmods="normal boot configfile linux part_msdos part_gpt \
-	  fat ext2 iso9660 reiserfs btrfs xfs jfs lvm \
-	  crypto cryptodisk luks luks2 all_video sleep reboot \
-	  search search_fs_file search_label search_fs_uuid"
+	  fat ext2 iso9660 reiserfs btrfs xfs jfs \
+	  search search_fs_file search_label search_fs_uuid \
+	  all_video sleep reboot \
+	  cryptodisk luks luks2" # lvm crypto
 
 case "$arch" in
 	ppc*)	grubmods="$grubmods part_apple hfs hfsplus suspend" ;;
@@ -114,35 +115,43 @@ grub_inst() {
 	    fi
 	else
 	    for efi in /boot/efi*; do
-		mkdir -p $efi/EFI/boot
+		mkdir -p $efi/efi/boot
 
 		if [ -z "$cryptdev" ]; then
-		    cat << EOT > $efi/EFI/boot/grub.cfg
+		    cat << EOT > $efi/efi/boot/grub.cfg
 set uuid=$grubdev
 search --set=root --no-floppy --fs-uuid \$uuid
 configfile (\$root)/boot/grub/grub.cfg
 EOT
 		else
-		    cat << EOT > $efi/EFI/boot/grub.cfg
+		    cat << EOT > $efi/efi/boot/grub.cfg
 set uuid=$grubdev
 cryptomount -u \$uuid
 configfile $cryptdev/boot/grub/grub.cfg
 EOT
 		fi
 
-		# TODO: case
-		local exe=BOOTX64.EFI
-		[ $arch = i386 ] && exe=${exe/X64/IA32}
-		[ $arch = arm64 ] && exe=${exe/X/AA}
-		[[ $arch = riscv* ]] && exe=${exe/X64/${arch^^}}
-		
-		grub-mkimage -O $arch-efi -o $efi/EFI/boot/$exe \
+		local exe=boot.efi
+		case $arch in
+		i386)	exe=${exe/./ia32.} ;;
+		ia64)	exe=${exe/./ia64.} ;;
+		x86_64)	exe=${exe/./x64.} ;;
+		arm64)	exe=${exe/./aa64.} ;;
+		arm*)	exe=${exe/./arm.} ;;
+		riscv*)	exe=${exe/./$arch.} ;;
+		esac
+
+		mkdir -p $efi/efi/boot/$arch-efi
+		cp -f /usr/lib*/grub/$arch-efi/*.{mod,lst} \
+			$efi/efi/boot/$arch-efi/
+
+		grub-mkimage -O $arch-efi -o $efi/efi/boot/$exe \
 			-p /efi/boot -d /usr/lib*/grub/$arch-efi/ \
 			$grubmods
 	    done
 
 	    mount -t efivarfs none /sys/firmware/efi/efivars
-	    efibootmgr -c -L "T2 Linux" -l "\\EFI\\boot\\$exe"
+	    efibootmgr -c -L "T2 Linux" -l "\\efi\\boot\\$exe"
 	    umount /sys/firmware/efi/efivars
 	fi
     else
