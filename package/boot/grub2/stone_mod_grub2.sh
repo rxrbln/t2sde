@@ -314,6 +314,8 @@ main() {
 		rootdev=$rootdev2
 		realroot=$(cd /sys/block/${rootdev##*/}/slaves/; ls -d [a-z]*)
 		if [ "$realroot" ]; then
+			[ -e /sys/block/$realroot/dm/name ] &&
+			rootdev=/dev/mapper/$(< /sys/block/$realroot/dm/name) ||
 			rootdev="/dev/$realroot"
 			cryptdev="(crypto0)"
 		fi
