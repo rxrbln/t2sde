@@ -97,7 +97,7 @@ grubmods="normal boot configfile linux part_msdos part_gpt \
 	  fat ext2 iso9660 reiserfs btrfs xfs jfs \
 	  search search_fs_file search_label search_fs_uuid \
 	  all_video sleep reboot \
-	  cryptodisk luks luks2" # lvm crypto
+	  cryptodisk lvm luks luks2 crypto"
 
 case "$arch" in
 	ppc*)	grubmods="$grubmods part_apple hfs hfsplus suspend" ;;
@@ -107,14 +107,14 @@ esac
 
 grub_inst() {
     if [[ $arch != ppc* ]]; then
-	if [ -z "$cryptdev" -a ! -d /sys/firmware/efi ]; then
+	if [[ ! "$cryptdev" && "$instdev" != *efi ]]; then
 	    if [[ "$arch" != sparc* ]]; then
 		grub2-install $instdev
 	    else
 		grub2-install --skip-fs-probe --force $instdev
 	    fi
 	else
-	    for efi in /boot/efi*; do
+	    for efi in ${instdev}*; do
 		mkdir -p $efi/efi/boot
 
 		if [ -z "$cryptdev" ]; then
@@ -333,7 +333,8 @@ main() {
 	fi
 
 	[ "$bootdev" ] || bootdev="$rootdev"
-	instdev=$(get_realdev $bootdev) instdev="${instdev%%[0-9*]}"
+	[ -d /sys/firmware/efi ] && instdev=/boot/efi ||
+		instdev=$(get_realdev $bootdev) instdev="${instdev%%[0-9*]}"
 	[ "$grubdev" ] || grubdev="${bootdev##*/}"
 
 	if [ ! -f /boot/grub/grub.cfg ]; then
