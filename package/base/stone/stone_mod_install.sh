@@ -231,7 +231,7 @@ lv_create() {
 	local size=$(vgdisplay $dev | grep Free | sed 's,.*/,,; s, <,,; s/ //g ')
 	gui_input "Logical volume size:" "$size" size
 	[ "$size" ] &&
-		lvcreate -L "$size" --type $type $dev && # -n name
+		lvcreate -L "$size" --type $type $dev # -n name
 }
 
 vg_action() {
