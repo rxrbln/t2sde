@@ -43,6 +43,14 @@ root="root= $cmdline" root=${root##*root=} root=${root%% *}
 init="init= $cmdline" init=${init##*init=} init=${init%% *}
 swap="swap= $cmdline" swap=${swap##*swap=} swap=${swap%% *}
 
+# open luks for lvm2 and resume from disk early
+if [ "${root%,*}" != "$root" ]; then
+	toor="${root%,*}" root="${root#*,}"
+	[ "${root#UUID=}" != "$root" ] && root="/dev/disk/by-uuid/${root#UUID=}"
+
+	cryptsetup --disable-locks luksOpen $toor toor
+fi
+
 [ "${root#UUID=}" != "$root" ] && root="/dev/disk/by-uuid/${root#UUID=}"
 [ "${swap#UUID=}" != "$swap" ] && swap="/dev/disk/by-uuid/${swap#UUID=}"
 
@@ -94,8 +102,8 @@ if [ "$root" ]; then
   while [ $i -le 9 ]; do
     if [ -e $root -o "$addr" ]; then
 	if [ -z "$addr" ]; then
-	  type -p cryptsetup >/dev/null && cryptsetup isLuks $root --disable-locks &&
-	          cryptsetup luksOpen $root root --disable-locks && root=/dev/mapper/root
+	  type -p cryptsetup >/dev/null && cryptsetup --disable-locks isLuks $root &&
+	          cryptsetup --disable-locks luksOpen $root root && root=/dev/mapper/root
 
 	  # try best match / detected root first, all the others thereafter
 	  filesystems=`disktype $root 2>/dev/null |
@@ -113,7 +121,7 @@ if [ "$root" ]; then
 			kill %1
 			boot $init "$@"
 		else
-			echo "Specified init ($init) does not exist!"
+			echo "Init ($init) does not exist!"
 		fi
 		break 2
 	  fi
