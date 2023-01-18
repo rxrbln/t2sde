@@ -325,7 +325,7 @@ main() {
 	uuid=$(get_uuid $rootdev)
 	[ "$uuid" ] && rootdev=$uuid
 	[ "$bootdev" ] && uuid=$(get_uuid $bootdev) && [ "$uuid" ] && bootdev=$uuid
-	[ "$cryptdev" ] && uuid=$(get_uuid $cryptdev) && [ "$uuid" ] &&cryptdev=$uuid
+	[ "$cryptdev" ] && uuid=$(get_uuid $cryptdev) && [ "$uuid" ] && cryptdev=$uuid
 
 	if [ -d /sys/firmware/efi ]; then
 		instdev=/boot/efi
@@ -337,8 +337,12 @@ main() {
 	fi
 
 	# lvm device-mapper?
-	[[ $bootdev = *mapper* ]] && grubdev="(lvm/${bootdev##*/})" ||
+	if [[ $bootdev = *mapper* ]]; then
+	        grubdev="(lvm/${bootdev##*/})"
+		[ "$cryptdev" ] && rootdev="$cryptdev,$rootdev"
+	else
 		grubdev="${bootdev##*/}"
+	fi
 
 	if [ ! -f /boot/grub/grub.cfg ]; then
 	  if gui_yesno "GRUB2 does not appear to be configured.
