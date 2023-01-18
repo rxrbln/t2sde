@@ -45,11 +45,6 @@ EOT
 }
 
 create_boot_menu() {
-	# determine /boot path, relative to the boot device
-	# (non local as used by create_kernel_list() ...)
-	#
-	[ "$rootdev" = "$bootdev" ] && bootpath="/boot" || bootpath=""
-
 	mkdir -p /boot/grub/
 	cat << EOT > /boot/grub/grub.cfg
 set timeout=30
@@ -76,7 +71,6 @@ EOT
 	gui_message "This is the new /boot/grub/grub.cfg file:
 
 $(cat /boot/grub/grub.cfg)"
-	unset bootpath
 }
 
 grubmods="normal boot configfile linux part_msdos part_gpt \
@@ -115,7 +109,7 @@ search --set=root --no-floppy --fs-uuid \$uuid
 EOT
 		else
 	    		cat << EOT >> $efi/efi/boot/grub.cfg
-set uuid=$cryptdev
+set uuid="${cryptdev##*/}"
 cryptomount -u \$uuid
 EOT
 		fi
@@ -317,6 +311,8 @@ main() {
 	bootdev="`grep ' /boot ' /etc/fstab | tail -n 1 | sed 's, .*,,'`"
 	swapdev="`grep ' swap ' /etc/fstab | tail -n 1 | sed 's, .*,,'`"
 	[ "$bootdev" ] || bootdev="$rootdev"
+	# /boot path, relative to the boot device
+	[ "$rootdev" = "$bootdev" ] && bootpath="/boot" || bootpath=""
 
 	# any device-mapper luks encrypted backing slave device?
 	cryptdev=$(get_crypted_dm_slaves $(get_dm_dev $bootdev))
