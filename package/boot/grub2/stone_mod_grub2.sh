@@ -15,7 +15,6 @@
 
 # TODO:
 # avoid efibootmgr duplicates :-/
-# auto-mount efivars?
 # impl. & test direct sparc, direct i386-pc-mbr, mips-arc, ...
 # unify non-crypt, and direct non-EFI BIOS install
 
@@ -72,18 +71,6 @@ if [ "\$grub_platform" = "efi" ]; then
 fi
 
 EOT
-	if [ -z "$cryptdev" ]; then
-		cat << EOT >> /boot/grub/grub.cfg
-set uuid=$grubdev
-search --set=root --no-floppy --fs-uuid \$uuid
-
-EOT
-	else
-		cat << EOT >> /boot/grub/grub.cfg
-set root=$cryptdev
-
-EOT
-	fi
 
 	create_kernel_list >> /boot/grub/grub.cfg
 
@@ -115,19 +102,21 @@ grub_inst() {
 	    fi
 	else
 	    for efi in ${instdev}*; do
+		mount -o remount,rw $efi
 		mkdir -p $efi/efi/boot
 
 		if [ -z "$cryptdev" ]; then
 		    cat << EOT > $efi/efi/boot/grub.cfg
 set uuid=$grubdev
 search --set=root --no-floppy --fs-uuid \$uuid
-configfile (\$root)/boot/grub/grub.cfg
+configfile /boot/grub/grub.cfg
 EOT
 		else
 		    cat << EOT > $efi/efi/boot/grub.cfg
 set uuid=$grubdev
 cryptomount -u \$uuid
-configfile $cryptdev/boot/grub/grub.cfg
+set root=(crypto0)
+configfile /boot/grub/grub.cfg
 EOT
 		fi
 
@@ -302,37 +291,23 @@ get_realdev() {
 }
 
 main() {
-	rootdev="`grep ' / ' /proc/mounts | tail -n 1 | sed 's, .*,,'`"
-	bootdev="`grep ' /boot ' /proc/mounts | tail -n 1 | sed 's, .*,,'`"
+	rootdev="`grep ' / ' /etc/fstab | tail -n 1 | sed 's, .*,,'`"
+	bootdev="`grep ' /boot ' /etc/fstab | tail -n 1 | sed 's, .*,,'`"
 	swapdev="`grep ' swap ' /etc/fstab | tail -n 1 | sed 's, .*,,'`"
+	[ "$bootdev" ] || bootdev="$rootdev"
 
-	# if device-mapper, get backing device
-	if [[ "$rootdev" = *mapper* ]]; then
-	    rootdev2=$(get_dm_dev $rootdev)
-	    # encrypted?
-	    if [[ "$(get_dm_type $rootdev2)" = CRYPT* ]]; then
-		rootdev=$rootdev2
-		realroot=$(cd /sys/block/${rootdev##*/}/slaves/; ls -d [a-z]*)
-		if [ "$realroot" ]; then
-			[ -e /sys/block/$realroot/dm/name ] &&
-			rootdev=/dev/mapper/$(< /sys/block/$realroot/dm/name) ||
-			rootdev="/dev/$realroot"
-			cryptdev="(crypto0)"
-		fi
-	    else
-		cryptdev="(lvm/${rootdev#/dev/mapper/})"
-	    fi
+	# any device-mapper luks encrypted backing device?
+	if [[ "$(blkid --match-tag TYPE $bootdev)" = *crypto_LUKS* ]]; then
+		cryptdev="$bootdev"
 	fi
 
 	# get uuid
 	uuid=$(get_uuid $rootdev)
 	[ "$uuid" ] && rootdev=$uuid
-	if [ "$bootdev" ]; then
-		uuid=$(get_uuid $bootdev)
-		[ "$uuid" ] && bootdev=$uuid
-	fi
+	[ "$bootdev" ] && uuid=$(get_uuid $bootdev) && [ "$uuid" ] && bootdev=$uuid
+	[ "$cryptdev" ] && uuid=$(get_uuid $cryptdev) && [ "$uuid" ] &&cryptdev=$uuid
 
-	[ "$bootdev" ] || bootdev="$rootdev"
+
 	if [ -d /sys/firmware/efi ]; then
 		instdev=/boot/efi
 	elif [[ "$arch" = sparc* ]]; then
