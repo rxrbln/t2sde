@@ -105,20 +105,28 @@ grub_inst() {
 		mount -o remount,rw $efi
 		mkdir -p $efi/efi/boot
 
-		if [ -z "$cryptdev" ]; then
-		    cat << EOT > $efi/efi/boot/grub.cfg
+		echo -n > $efi/efi/boot/grub.cfg
+
+		if [ ! "$cryptdev" ]; then
+			# if uuid, not LVM search it
+			[[ "$grubdev" != \(* ]] &&
+			cat << EOT >> $efi/efi/boot/grub.cfg
 set uuid=$grubdev
 search --set=root --no-floppy --fs-uuid \$uuid
-configfile /boot/grub/grub.cfg
 EOT
 		else
-		    cat << EOT > $efi/efi/boot/grub.cfg
-set uuid=$grubdev
+	    		cat << EOT >> $efi/efi/boot/grub.cfg
+set uuid=$cryptdev
 cryptomount -u \$uuid
-set root=(crypto0)
-configfile /boot/grub/grub.cfg
 EOT
 		fi
+
+		# set root for lvm or crypt
+		if [[ "$grubdev" = \(* ]]; then
+			echo "set root=$grubdev" >> $efi/efi/boot/grub.cfg
+		fi
+
+		echo "configfile /boot/grub/grub.cfg" >> $efi/efi/boot/grub.cfg
 
 		local exe=boot.efi
 		case $arch in
@@ -317,7 +325,9 @@ main() {
 		instdev="${instdev%%[0-9*]}"
 	fi
 
-	[ "$grubdev" ] || grubdev="${bootdev##*/}"
+	# lvm device-mapper?
+	[[ $bootdev = *mapper* ]] && grubdev="(lvm/${bootdev##*/})" ||
+		grubdev="${bootdev##*/}"
 
 	if [ ! -f /boot/grub/grub.cfg ]; then
 	  if gui_yesno "GRUB2 does not appear to be configured.
