@@ -12,6 +12,35 @@
 #
 # This module should only be executed once directly after the installation
 
+get_dm_dev() {
+	local dev="$1"
+	local devnode=$(stat -c "%t:%T" $dev)
+	for d in /dev/dm-*; do
+		[ "$(stat -c "%t:%T" "$d")" = "$devnode" ] && echo $d && return
+	done
+}
+
+get_dm_type() {
+	local dev="$1"
+	dev="${dev##*/}"
+	[ -e /sys/block/$dev/dm/uuid ] && cat /sys/block/$dev/dm/uuid
+}
+
+get_dm_slave() {
+	local dev="$1"
+
+	# if device-mapper, get slave backing device
+	if [[ "$dev" = *mapper* ]]; then
+		local dev2=$(get_dm_dev $dev)
+		# encrypted?
+		if [[ "$(get_dm_type $dev2)" = CRYPT* ]]; then
+			dev2=$(cd /sys/block/${dev2##*/}/slaves/; ls)
+			[ "$dev2" ] && echo /dev/$dev2
+		fi
+	fi
+	echo $dev
+}
+
 get_uuid() {
 	local dev="$1"
 
@@ -44,6 +73,7 @@ make_fstab() {
 	cut -f2 -d' ' < $tmp2 | sort -u | while read dn; do
 		grep " $dn " $tmp2 | tail -n 1 |
 		while read dev point type residual; do
+			dev=$(get_dm_slave $dev)
 			dev=$(get_uuid $dev)
 			case $type in
 			  *tmpfs|swap)
