@@ -44,7 +44,6 @@ EOT
 	done
 }
 
-
 create_boot_menu() {
 	# determine /boot path, relative to the boot device
 	# (non local as used by create_kernel_list() ...)
@@ -259,7 +258,6 @@ EOT
     fi
 }
 
-
 grub_install() {
 	gui_cmd 'Installing GRUB2' "grub_inst"
 }
@@ -276,6 +274,22 @@ get_dm_type() {
 	local dev="$1"
 	dev="${dev##*/}"
 	[ -e /sys/block/$dev/dm/uuid ] && cat /sys/block/$dev/dm/uuid
+}
+
+get_dm_slaves() {
+	local dev="$1"
+	dev="${dev##*/}"
+	[ -e /sys/block/$dev/slaves ] &&
+		cd /sys/block/$dev/slaves && ls | sed 's,^,/dev/,'
+}
+
+get_crypted_dm_slaves() {
+	for d ; do
+	    [[ "$(blkid --match-tag TYPE $d)" = *crypto_LUKS* ]] &&
+		  echo "$d" ||
+		  get_crypted_dm_slaves $(get_dm_slaves $d)
+	    
+	done
 }
 
 get_uuid() {
@@ -304,17 +318,14 @@ main() {
 	swapdev="`grep ' swap ' /etc/fstab | tail -n 1 | sed 's, .*,,'`"
 	[ "$bootdev" ] || bootdev="$rootdev"
 
-	# any device-mapper luks encrypted backing device?
-	if [[ "$(blkid --match-tag TYPE $bootdev)" = *crypto_LUKS* ]]; then
-		cryptdev="$bootdev"
-	fi
+	# any device-mapper luks encrypted backing slave device?
+	cryptdev=$(get_crypted_dm_slaves $(get_dm_dev $bootdev))
 
 	# get uuid
 	uuid=$(get_uuid $rootdev)
 	[ "$uuid" ] && rootdev=$uuid
 	[ "$bootdev" ] && uuid=$(get_uuid $bootdev) && [ "$uuid" ] && bootdev=$uuid
 	[ "$cryptdev" ] && uuid=$(get_uuid $cryptdev) && [ "$uuid" ] &&cryptdev=$uuid
-
 
 	if [ -d /sys/firmware/efi ]; then
 		instdev=/boot/efi
