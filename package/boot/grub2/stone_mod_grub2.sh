@@ -110,12 +110,12 @@ EOT
 		else
 	    		cat << EOT >> $efi/efi/boot/grub.cfg
 set uuid="${cryptdev##*/}"
-cryptomount -u \$uuid
+if cryptomount -u \$uuid; then set root=(crypto0); fi
 EOT
 		fi
 
-		# set root for lvm or crypt
-		if [[ "$grubdev" = \(* ]]; then
+		# explicitly set root for lvm
+		if [[ "$grubdev" = \(lvm* ]]; then
 			echo "set root=$grubdev" >> $efi/efi/boot/grub.cfg
 		fi
 
@@ -278,11 +278,10 @@ get_dm_slaves() {
 }
 
 get_crypted_dm_slaves() {
-	for d ; do
+	for d; do
 	    [[ "$(blkid --match-tag TYPE $d)" = *crypto_LUKS* ]] &&
 		  echo "$d" ||
 		  get_crypted_dm_slaves $(get_dm_slaves $d)
-	    
 	done
 }
 
@@ -315,7 +314,7 @@ main() {
 	[ "$rootdev" = "$bootdev" ] && bootpath="/boot" || bootpath=""
 
 	# any device-mapper luks encrypted backing slave device?
-	cryptdev=$(get_crypted_dm_slaves $(get_dm_dev $bootdev))
+	cryptdev=$(get_crypted_dm_slaves $bootdev $(get_dm_dev $bootdev))
 
 	# get uuid
 	uuid=$(get_uuid $rootdev)
