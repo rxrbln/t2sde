@@ -29,14 +29,14 @@ create_kernel_list() {
 		[[ $arch = *86* ]] && x=${x/vmlinux/vmlinuz}
 		[[ $arch = *arm* ]] && x=${x/vmlinux/Image}.gz
 		if [ $first = 1 ]; then
-			label=linux first=0
+			label="Linux" first=0
 		else
-			label=linux-$ver
+			label="Linux ($ver)"
 		fi
 
 		cat << EOT
 
-menuentry "T2/Linux $label" {
+menuentry "T2/$label" {
 	linux $bootpath/$x root=$rootdev ro ${swapdev:+resume=$swapdev}
 	initrd $bootpath/initrd-${ver}
 }
