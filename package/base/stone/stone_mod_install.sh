@@ -133,15 +133,15 @@ part_unmounted_action() {
 	local cmd="gui_menu part $dev"
 
 	[ "$type" -a "$type" != "swap" -a "$type" != "crypto_LUKS" ] &&
-		cmd="$cmd \"Mount filesystem from the partition\" \"part_mount $dev\""
+		cmd="$cmd \"Mount existing $type filesystem\" \"part_mount $dev\""
 	[ "$type" = "crypto_LUKS" ] &&
-		cmd="$cmd \"Activate LUKS encrypted partition\"  \"part_decrypt $dev\""
+		cmd="$cmd \"Activate encrypted LUKS\"  \"part_decrypt $dev\""
 	[ "$type" = "swap" ] &&
-		cmd="$cmd \"Activate existing swap space on the partition\" \"swapon /dev/$dev\""
+		cmd="$cmd \"Activate existing swap space\" \"swapon /dev/$dev\""
 	
-	cmd="$cmd \"Create filesystem on the partition\" \"part_mkfs $dev\""
-	cmd="$cmd \"Create swap space on the partition\" \"mkswap /dev/$dev; swapon /dev/$dev\""
-	cmd="$cmd \"Encrypt partition using LUKS cryptsetup\" \"part_crypt $dev\""
+	cmd="$cmd \"Create filesystem\" \"part_mkfs $dev\""
+	cmd="$cmd \"Create swap space\" \"mkswap /dev/$dev; swapon /dev/$dev\""
+	cmd="$cmd \"Encrypt using LUKS cryptsetup\" \"part_crypt $dev\""
 
 	[ "$stype" != "lv" ] &&
 		cmd="$cmd \"Create physical LVM volume\" \"part_pvcreate $dev\""
@@ -172,7 +172,7 @@ part_add() {
 		[ "$location" ] || location="/"
 	fi
 
-	# save partition information
+	# save volume information
 	disktype /dev/$dev > /tmp/stone-install 2>/dev/null
 	type="`grep /tmp/stone-install -v -e '^  ' -e '^Block device' \
 	       -e '^Partition' -e '^---' |
@@ -198,7 +198,7 @@ part_add() {
 disk_action() {
 	if grep -q "^/dev/$1 " /proc/swaps /proc/mounts; then
 		gui_message "Partitions from $1 are currently in use, so you
-can't modify this disks partition table."
+can't modify this partition table."
 		return
 	fi
 
