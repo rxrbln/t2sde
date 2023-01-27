@@ -106,13 +106,7 @@ part_crypt() {
 	part_decrypt $dev
 }
 
-part_pvcreate() {
-	local dev=$1
-	pvcreate /dev/$dev
-}
-
 vg_add_pv() {
-	pvs -o vgname $2 --noheadings
 	gui_input "Add physical volume $1 to logical volume group:" "vg0" vg
 	if [ "$vg" ]; then
 	    if vgs $vg 2>/dev/null; then
@@ -121,6 +115,12 @@ vg_add_pv() {
 		vgcreate $vg $1
 	    fi
 	fi
+}
+
+part_pvcreate() {
+	local dev=$1
+	pvcreate /dev/$dev
+	vg_add_pv /dev/$dev /dev/$dev
 }
 
 part_unmounted_action() {
@@ -227,11 +227,13 @@ lvm_rename() {
 
 lv_create() {
 	local dev=$1 type=$2
-	# TODO: name, stripes
+	# TODO: stripes?
 	local size=$(vgdisplay $dev | grep Free | sed 's,.*/,,; s, <,,; s/ //g ')
 	gui_input "Logical volume size:" "$size" size
-	[ "$size" ] &&
-		lvcreate -L "$size" --type $type $dev # -n name
+	if [ "$size" ]; then
+		gui_input "Logical volume name:" "" name
+		lvcreate -L "$size" --type $type $dev ${name:+-n $name}
+	fi
 }
 
 vg_action() {
