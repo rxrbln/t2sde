@@ -155,6 +155,8 @@ CONFIG_KMOD=y
 dnl Firmware loader can always be useful
 dnl
 CONFIG_FW_LOADER=y
+CONFIG_FW_LOADER_COMPRESS=y
+# CONFIG_FW_LOADER_COMPRESS_XZ is not set
 CONFIG_FW_LOADER_COMPRESS_ZSTD=y
 # CONFIG_FW_CACHE is not set
 
