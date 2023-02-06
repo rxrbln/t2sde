@@ -59,11 +59,11 @@ done
 -e /udf -e /unionfs -e ntfs -e /fat -e /hfs -e floppy -e efivarfs
 -e /ata/ -e /scsi/ -e /fusion/ -e /sdhci/ -e nvme/host -e /mmc/ -e ps3fb -e ps3disk
 -e dm-mod -e dm-raid -e md/raid -e dm/mirror -e dm/linear -e dm-crypt -e dm-cache
--e /aes -e /sha -e /blake -e /cbc -e /ecb -e xts
--e cciss -e ips -e virtio -e nls_cp437 -e nls_iso8859-1 -e nls_utf8
+-e /rtc/ -e /aes -e /sha -e /blake -e /cbc -e /ecb -e xts
+-e virtio.\(blk\|scsi\|net\|console\|input\|gpu\) -e /ast/
+-e cciss -e ips -e nls_cp437 -e nls_iso8859-1 -e nls_utf8
 -e /.hci -e usb-common -e usb-storage -e sbp2 -e uas
 -e usbhid -e i2c-hid -e hid-generic -e hid-multitouch
--e /ast/ -e virtio-gpu
 -e hid-apple -e hid-microsoft -e hyperv-keyboard"
 
 [ "$network" = 1 ] && filter="$filter -e /ipv4/ -e '/ipv6\.' -e ethernet -e nfsv4"
@@ -188,7 +188,7 @@ if [ "$moddir" ]; then
      fi
   }
 
-  find $moddir/kernel -type f > $map
+  find $moddir/*/ -type f > $map
   grep -v -e /wireless/ -e netfilter $map | grep $filter |
   while read fn; do
 	add_depend "$fn"
