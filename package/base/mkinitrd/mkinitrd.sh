@@ -188,7 +188,7 @@ if [ "$moddir" ]; then
      fi
   }
 
-  find $moddir/*/ -type f > $map
+  find -H $moddir/ -type f -name '*.ko*' > $map
   grep -v -e /wireless/ -e netfilter $map | grep $filter |
   while read fn; do
 	add_depend "$fn"
