@@ -57,10 +57,11 @@ done
 
 [ "$minimal" != 1 ] && filter="$filter -e reiserfs -e btrfs -e /jfs -e /xfs -e jffs2
 -e /udf -e /unionfs -e ntfs -e /fat -e /hfs -e floppy -e efivarfs
--e /ata/ -e /scsi/ -e /fusion/ -e /sdhci/ -e nvme/host -e /mmc/ -e ps3fb -e ps3disk
+-e /ata/ -e /scsi/ -e /fusion/ -e /sdhci/ -e nvme/host -e /mmc/
+-e virtio.\(blk\|scsi\|net\|console\|input\|gpu\)
+-e /ast/ -e ps3fb -e ps3disk
 -e dm-mod -e dm-raid -e md/raid -e dm/mirror -e dm/linear -e dm-crypt -e dm-cache
 -e /rtc/ -e /aes -e /sha -e /blake -e /cbc -e /ecb -e xts
--e virtio.\(blk\|scsi\|net\|console\|input\|gpu\) -e /ast/
 -e cciss -e ips -e nls_cp437 -e nls_iso8859-1 -e nls_utf8
 -e /.hci -e usb-common -e usb-storage -e sbp2 -e uas
 -e usbhid -e i2c-hid -e hid-generic -e hid-multitouch
