@@ -115,7 +115,8 @@ cd $tmpdir
 #
 echo "Create dirtree ..."
 
-mkdir -p {dev,bin,sbin,proc,sys,lib/modules,lib/udev,etc/hotplug.d/default}
+mkdir -p {dev,bin,sbin,proc,sys,usr,lib/modules,lib/udev,etc/hotplug.d/default}
+ln -sf ../sbin usr/sbin
 mknod dev/null c 1 3
 mknod dev/zero c 1 5
 mknod dev/tty c 5 0
@@ -289,7 +290,7 @@ done
 #
 [ "$minimal" != 1 ] &&
 for x in $root/sbin/{kmod,modprobe,insmod,blkid,vgchange,lvchange,lvm,mdadm} \
-	 $root/usr/sbin/{cryptsetup,ipconfig} $root/usr/embutils/{dmesg,swapon}
+	 $root/usr/sbin/{cryptsetup,cache_check,ipconfig} $root/usr/embutils/{dmesg,swapon}
 do
   if [ ! -e $x ]; then
 	echo "Warning: Skipped optional file ${x#$root}!"
