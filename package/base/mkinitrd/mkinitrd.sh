@@ -115,8 +115,8 @@ cd $tmpdir
 #
 echo "Create dirtree ..."
 
-mkdir -p {dev,bin,sbin,proc,sys,usr,lib/modules,lib/udev,etc/hotplug.d/default}
-ln -sf ../sbin usr/sbin
+mkdir -p {dev,bin,sbin,proc,sys,lib/modules,lib/udev,etc/hotplug.d/default}
+ln -sf . usr
 mknod dev/null c 1 3
 mknod dev/zero c 1 5
 mknod dev/tty c 5 0
