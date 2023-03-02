@@ -115,8 +115,7 @@ cd $tmpdir
 #
 echo "Create dirtree ..."
 
-mkdir -p {dev,bin,sbin,proc,sys,lib/modules,lib/udev,etc/hotplug.d/default}
-ln -sf . usr
+mkdir -p {dev,bin,sbin,proc,sys,usr/sbin,lib/modules,lib/udev,etc/hotplug.d/default}
 mknod dev/null c 1 3
 mknod dev/zero c 1 5
 mknod dev/tty c 5 0
@@ -295,7 +294,9 @@ do
   if [ ! -e $x ]; then
 	echo "Warning: Skipped optional file ${x#$root}!"
   else
-	cp -a $x $tmpdir/sbin/
+	d="${x%/*}"; d="${d#$root}"
+	d="${d/usr\/embutils/sbin}"
+	cp -a $x $tmpdir/$d/
 	copy_dyn_libs $x
   fi
 done
