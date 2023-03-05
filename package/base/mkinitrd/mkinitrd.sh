@@ -328,7 +328,14 @@ fi
 # create / truncate
 echo -n > "$outfile"
 
-if [ "$microcode" ]; then
+if true; then
+    if [ "$microcode" ]; then
+	microcode="$outfile"
+    else
+	microcode="$root/boot/microcode.img"
+	rm -f "$microcode"
+    fi
+
     # include cpu microcode, if available, ...
     if [ -d $root/lib/firmware/amd-ucode ]; then
 	mkdir -p $tmpdir/kernel/x86/microcode
@@ -343,7 +350,7 @@ if [ "$microcode" ]; then
     if [ -d $tmpdir/kernel/x86/microcode ]; then
     (
 	cd $tmpdir
-	find kernel | cpio -o -H newc >> "${outfile:-$root/boot/initrd-$kernelver}"
+	find kernel | cpio -o -H newc >> $microcode
     )
     fi
     rm -rf $tmpdir/kernel
