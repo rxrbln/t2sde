@@ -34,11 +34,14 @@ create_kernel_list() {
 			label="Linux ($ver)"
 		fi
 
+		local initrd="$bootpath/initrd-${ver}"
+		[ -e /boot/microcode.img ] && initrd="/boot/microcode.img $initrd"
+
 		cat << EOT
 
 menuentry "T2/$label" {
 	linux $bootpath/$x root=$rootdev ro ${swapdev:+resume=$swapdev}
-	initrd $bootpath/initrd-${ver}
+	initrd $initrd
 }
 EOT
 	done
