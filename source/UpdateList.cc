@@ -86,7 +86,9 @@ public:
     return ( (isalpha(a) && isalpha(b)) ||
 	     (isdigit(a) && isdigit(b)) );
   }
-      
+  
+  static const int percent_limit = 50;
+  
   bool operator< (const subversion& other) const {
     // special case for char < number
     try { // catch range exceptions ;-)
@@ -103,12 +105,13 @@ public:
 		    << other_int_val << std::endl;
 
 	// do not compare overly large versions - they are most probably
-	// a data (e.g. 3-... vs 2004-...)
-	if (std::abs(int_val - other_int_val) > 100) {
+	// a data (e.g. 3-... vs 2004-..., but not 20211212 vs 20221212)
+	using std::min, std::max;
+	if (max(int_val, other_int_val) / max(min(int_val, other_int_val), 1) > percent_limit) {
 	  if (debug)
 	    std::cout << "Version differ too much - skipped ..."
 		      << std::endl;
-	  return true; // always lower ,-)
+	  return true; // always lower
 	}
 
 	return int_val < other_int_val;
@@ -117,7 +120,7 @@ public:
     catch (...) {}
     return val < other.val;
   }
-
+  
   bool operator> (const subversion& other) const {
     // special case for char < number
     try { // catch range exceptions ;-)
@@ -134,12 +137,13 @@ public:
 		    << other_int_val << std::endl;
 
 	// do not compare overly large versions - they are most probably
-	// a data (e.g. 3-... vs 2004-...)
-	if (std::abs(int_val - other_int_val) > 100) {
+	// a data (e.g. 3-... vs 2004-..., but not 20211212 vs 20221212)
+	using std::min, std::max;
+	if (max(int_val, other_int_val) / max(min(int_val, other_int_val), 1) > percent_limit) {
 	  if (debug)
 	    std::cout << "Version differ too much - skipped ..." 
 		      << std::endl;
-	  return false;
+	  return false; // always lower
 	}
 
 	return int_val > other_int_val;
@@ -527,6 +531,7 @@ int main (int argc, char* argv[])
 
 #ifdef TESTING
   std::vector<Version> versions;
+#if 1
   versions.push_back(Version("1.2.2"));
   versions.push_back(Version("1.2.12"));
   versions.push_back(Version("1.2.4"));
@@ -541,6 +546,10 @@ int main (int argc, char* argv[])
   versions.push_back(Version("1.2.3-rc1"));
   versions.push_back(Version("1.2.3.1"));
   versions.push_back(Version("2004-12-24"));
+#else
+  versions.push_back(Version("v20200512"));
+  versions.push_back(Version("v20190419"));
+#endif
 
   std::cout << "-----------------------" << std::endl;
 
