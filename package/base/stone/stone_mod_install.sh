@@ -12,6 +12,31 @@
 
 # TODO: check error, esp. of lvm commands and display red alert on error
 
+# detect platform once
+platform=$(uname -m)
+platform2=$(grep '\(platform\|type\)' /proc/cpuinfo) platform2=${platform2##*: }
+[ -e /sys/firmware/efi ] && platform_efi=efi
+case $platform in
+	alpha)
+		: TODO: whatever aboot
+		;;
+	arm*|ia64|riscv*)
+		[ "$platform_efi" ] && platform="$platform-efi" || platform=
+		;;
+	ppc*|sparc*)
+		platform="$platform-$platform2"
+		;;
+	sparc*)
+		: # TODO: sunv4 w/ GPT
+	;;
+	i.86|x86_64)
+		[ "$platform_efi" ] && platform="$platform-efi" || platform="$platform-pc" 
+		;;
+	*)
+		platform=
+		;;
+esac
+
 mapper2lvm() {
 	local x="${1//--/
 }"
@@ -195,6 +220,40 @@ part_add() {
 	cmd="$cmd '`printf "%-6s %-24s %-10s" $dev "$location" "$size"` ${type//_/ }' 'part_${action}_action $1 $2'"
 }
 
+disk_partition() {
+	gui_yesno "Erase all data and partition $1 bootable for this platform?" || return
+	# TODO: choose schema, classic, lvm, swap
+	# TODO: also create and mount fs' and swap
+
+	size=$(($(blockdev --getsz $1) / 2 / 1024))
+	swap=$((size / 20))
+
+	fdisk="sfdisk -W always"
+	script=
+	case $platform in
+	    *efi)
+		script="label:gpt
+size=512M, type=uefi
+size=${swap}m, type=swap
+type=linux"
+		;;
+	    sun*)
+		script="label:sun
+size=$((size - swap)), type=83
+type=82
+start=0, type=W"
+		;;
+	    *)
+		script="label:dos
+size=$((size - swap)), type=83
+type=82"
+		;;
+	esac
+	
+	wipefs --all $1
+	echo "$script" | $fdisk $1
+}
+
 disk_action() {
 	if grep -q "^/dev/$1 " /proc/swaps /proc/mounts; then
 		gui_message "Partitions from $1 are currently in use, so you
@@ -203,6 +262,9 @@ can't modify this partition table."
 	fi
 
 	local cmd="gui_menu disk 'Edit partition table of $1'"
+
+	[ "$platform" ] && cmd="$cmd \"Automatically partition for this platform\" \"disk_partition /dev/$1\""
+
 	for x in cfdisk fdisk pdisk mac-fdisk parted; do
 		type -p $x > /dev/null &&
 		  cmd="$cmd \"Edit partition table using '$x'\" \"$x /dev/$1\""
