@@ -23,12 +23,18 @@ case $platform in
 	arm*|ia64|riscv*)
 		[ "$platform_efi" ] && platform="$platform-efi" || platform=
 		;;
-	ppc*|sparc*)
-		platform="$platform-$platform2"
+	hppa*)
+		;;
+	ppc*)
+		# TODO: chrp, prep, ps3, opal, ...
+		case "$platform2" in
+		    PowerMac)	platform="$platform-$platform2" ;;
+		    *)		platform= ;;
+		esac
 		;;
 	sparc*)
-		: # TODO: sunv4 w/ GPT
-	;;
+		platform="$platform-$platform2"
+		;;
 	i.86|x86_64)
 		[ "$platform_efi" ] && platform="$platform-efi" || platform="$platform-pc" 
 		;;
@@ -222,35 +228,65 @@ part_add() {
 
 disk_partition() {
 	gui_yesno "Erase all data and partition $1 bootable for this platform?" || return
+
 	# TODO: choose schema, classic, lvm, swap
 	# TODO: also create and mount fs' and swap
 
-	size=$(($(blockdev --getsz $1) / 2 / 1024))
-	swap=$((size / 20))
+	local size=$(($(blockdev --getsz $1) / 2 / 1024))
+	local swap=$((size / 20))
+	local boot=512
 
-	fdisk="sfdisk -W always"
-	script=
+	local fdisk="sfdisk -W always"
+	local script=
+	local fs=
+
 	case $platform in
 	    *efi)
+		fs="2 swap 3 any / 1 vfat /boot/efi"
 		script="label:gpt
-size=512M, type=uefi
+size=128m, type=uefi
 size=${swap}m, type=swap
 type=linux"
 		;;
-	    sun*)
+	    hppa*)
+		fs="2 ext3 /boot 3 any / 4 swap"
+		script="label:dos
+size=32m, type=f0
+size=${boot}m, type=83
+size=$((size - swap))m, type=83
+type=82"
+		;;
+	    ppc*PowerMac)
+		fs="3 any / 4 swap"
+		fdisk=mac-fdisk
+		script="i
+
+b 2p
+c 3p $((size - swap))m linux
+c 4p 4p swap
+w
+y
+q
+"
+		;;
+	    sparc*)
+		# TODO: silo vs grub2 have different requirements
+		fs="1 any / 2 swap"
 		script="label:sun
-size=$((size - swap)), type=83
+size=$((size - swap))m, type=83
 type=82
 start=0, type=W"
 		;;
 	    *)
+		fs="1 swap 2 any /"
 		script="label:dos
-size=$((size - swap)), type=83
-type=82"
+size=$((swap))m, type=82
+type=83"
 		;;
 	esac
-	
+
 	wipefs --all $1
+	dd if=/dev/zero of=$1 count=2 # mostly for Apple PowerPac parts
 	echo "$script" | $fdisk $1
 }
 
