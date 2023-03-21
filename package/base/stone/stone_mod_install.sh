@@ -90,15 +90,22 @@ part_mount() {
 	fi
 }
 
+part_mkswap() {
+	local dev=$1
+	mkswap $dev; swapon $dev
+}
+
 part_mkfs() {
 	local dev=$1
+	local fs=$2
+	local mnt=$3
+
 	cmd="gui_menu part_mkfs 'Create filesystem on $dev'"
 
 	maybe_add () {
-	  if #grep -q $1 /proc/filesystems &&
-	     type -p $3 > /dev/null; then
+	  if type -p $3 > /dev/null; then
 		cmd="$cmd '$1 ($2 filesystem)' \
-		'type wipefs 2>/dev/null && wipefs -a /dev/$dev; $3 $4 /dev/$dev'"
+		'type wipefs 2>/dev/null && wipefs -a $dev; $3 $4 $dev'"
 	  fi
 	}
 
@@ -111,7 +118,15 @@ part_mkfs() {
 	maybe_add xfs	'Sgi journaling'	'mkfs.xfs' '-f'
 	maybe_add fat	'File Allocation Table'	'mkfs.fat'
 
-	eval "$cmd" && part_mount $dev "compress=zstd"
+	[ "$fs" -a "$fs" != any ] && cmd="mkfs.$fs"
+
+	if eval "$cmd"; then
+		if [ "$mnt" ]; then
+			mount $dev /mnt/$mnt
+		else
+			part_mount $dev "compress=zstd"
+		fi
+	fi
 }
 
 part_decrypt() {
@@ -166,12 +181,12 @@ part_unmounted_action() {
 	[ "$type" -a "$type" != "swap" -a "$type" != "crypto_LUKS" ] &&
 		cmd="$cmd \"Mount existing $type filesystem\" \"part_mount $dev\""
 	[ "$type" = "crypto_LUKS" ] &&
-		cmd="$cmd \"Activate encrypted LUKS\"  \"part_decrypt $dev\""
+		cmd="$cmd \"Activate encrypted LUKS\" \"part_decrypt $dev\""
 	[ "$type" = "swap" ] &&
 		cmd="$cmd \"Activate existing swap space\" \"swapon /dev/$dev\""
-	
-	cmd="$cmd \"Create filesystem\" \"part_mkfs $dev\""
-	cmd="$cmd \"Create swap space\" \"mkswap /dev/$dev; swapon /dev/$dev\""
+
+	cmd="$cmd \"Create filesystem\" \"part_mkfs /dev/$dev\""
+	cmd="$cmd \"Create swap space\" \"part_mkswap /dev/$dev\""
 	cmd="$cmd \"Encrypt using LUKS cryptsetup\" \"part_crypt $dev\""
 
 	[ "$stype" != "lv" ] &&
@@ -227,29 +242,29 @@ part_add() {
 }
 
 disk_partition() {
-	gui_yesno "Erase all data and partition $1 bootable for this platform?" || return
+	local dev=$1
+	gui_yesno "Erase all data and partition $dev bootable for this platform?" || return
 
 	# TODO: choose schema, classic, lvm, swap
-	# TODO: also create and mount fs' and swap
 
-	local size=$(($(blockdev --getsz $1) / 2 / 1024))
+	local size=$(($(blockdev --getsz $dev) / 2 / 1024))
 	local swap=$((size / 20))
 	local boot=512
 
 	local fdisk="sfdisk -W always"
 	local script=
-	local fs=
+	local fs= # double space separated!
 
 	case $platform in
 	    *efi)
-		fs="2 swap 3 any / 1 vfat /boot/efi"
+		fs="2 swap  3 any /  1 fat /boot/efi"
 		script="label:gpt
 size=128m, type=uefi
 size=${swap}m, type=swap
 type=linux"
 		;;
 	    hppa*)
-		fs="2 ext3 /boot 3 any / 4 swap"
+		fs="2 ext3 /boot  3 any /  4 swap"
 		script="label:dos
 size=32m, type=f0
 size=${boot}m, type=83
@@ -257,7 +272,7 @@ size=$((size - swap))m, type=83
 type=82"
 		;;
 	    ppc*PowerMac)
-		fs="3 any / 4 swap"
+		fs="3 any /  4 swap"
 		fdisk=mac-fdisk
 		script="i
 
@@ -271,23 +286,32 @@ q
 		;;
 	    sparc*)
 		# TODO: silo vs grub2 have different requirements
-		fs="1 any / 2 swap"
+		fs="1 any /  2 swap"
 		script="label:sun
 size=$((size - swap))m, type=83
 type=82
 start=0, type=W"
 		;;
 	    *)
-		fs="1 swap 2 any /"
+		fs="1 swap  2 any /"
 		script="label:dos
 size=$((swap))m, type=82
 type=83"
 		;;
 	esac
 
-	wipefs --all $1
-	dd if=/dev/zero of=$1 count=2 # mostly for Apple PowerPac parts
-	echo "$script" | $fdisk $1
+	# partition
+	wipefs --all $dev
+	dd if=/dev/zero of=$dev seek=1 count=1 # mostly for Apple PowerPac parts
+	echo "$script" | $fdisk $dev
+
+	# create fs
+	echo -e "${fs//  /\\n}" | while read part fs mnt; do
+	    case $fs in
+		swap)	part_mkswap $dev$part ;;
+		*)	part_mkfs $dev$part $fs $mnt ;;
+	    esac
+	done
 }
 
 disk_action() {
