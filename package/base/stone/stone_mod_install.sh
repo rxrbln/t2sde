@@ -82,8 +82,8 @@ part_mount() {
 		if [ -z "$dir" ] || grep -q " /mnt " /proc/mounts
 		then
 			mkdir -p /mnt/$dir
-			[ "$2" ] && mount -o "$2" /dev/$dev /mnt/$dir 2>/dev/null ||
-				mount /dev/$dev /mnt/$dir
+			[ "$2" ] && mount -o "$2" $dev /mnt/$dir 2>/dev/null ||
+				mount $dev /mnt/$dir
 		else
 			gui_message "Please mount a root filesystem first."
 		fi
@@ -179,7 +179,7 @@ part_unmounted_action() {
 	local cmd="gui_menu part $dev"
 
 	[ "$type" -a "$type" != "swap" -a "$type" != "crypto_LUKS" ] &&
-		cmd="$cmd \"Mount existing $type filesystem\" \"part_mount $dev\""
+		cmd="$cmd \"Mount existing $type filesystem\" \"part_mount /dev/$dev\""
 	[ "$type" = "crypto_LUKS" ] &&
 		cmd="$cmd \"Activate encrypted LUKS\" \"part_decrypt $dev\""
 	[ "$type" = "swap" ] &&
@@ -253,7 +253,7 @@ disk_partition() {
 
 	local fdisk="sfdisk -W always"
 	local script=
-	local fs= # double space separated!
+	local fs=
 
 	case $platform in
 	    *efi)
@@ -306,10 +306,13 @@ type=83"
 	echo "$script" | $fdisk $dev
 
 	# create fs
-	echo -e "${fs//  /\\n}" | while read part fs mnt; do
+	set -- $fs
+	while [ $# -gt 0 ]; do
+	    local part=$1; shift
+	    local fs=$1; shift
 	    case $fs in
 		swap)	part_mkswap $dev$part ;;
-		*)	part_mkfs $dev$part $fs $mnt ;;
+		*)	part_mkfs $dev$part $fs $1; shift ;;
 	    esac
 	done
 }
