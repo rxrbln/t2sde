@@ -25,6 +25,8 @@ case $platform in
 		;;
 	hppa*)
 		;;
+	mips64)
+		;;
 	ppc*)
 		# TODO: chrp, prep, ps3, opal, ...
 		case "$platform2" in
@@ -270,6 +272,16 @@ size=32m, type=f0
 size=${boot}m, type=83
 size=$((size - swap))m, type=83
 type=82"
+		;;
+	    mips64)
+		boot=8
+		fs="1 any /  2 swap"
+		# the rounding is way off, so - 20m rounding safety :-/
+		script="label:sgi
+start=${boot}m, size=$((size - swap))m, type=83
+start=$((size - swap + boot))m, size=$((swap - boot - 20))m, type=82
+9: size=8m, type=0
+11: type=6"
 		;;
 	    ppc*PowerMac)
 		fs="3 any /  4 swap"
