@@ -120,10 +120,11 @@ part_mkfs() {
 	maybe_add xfs	'Sgi journaling'	'mkfs.xfs' '-f'
 	maybe_add fat	'File Allocation Table'	'mkfs.fat'
 
-	[ "$fs" -a "$fs" != any ] && cmd="mkfs.$fs"
+	[ "$fs" -a "$fs" != any ] && cmd="mkfs.$fs $dev"
 
 	if eval "$cmd"; then
 		if [ "$mnt" ]; then
+			mkdir -p /mnt/$mnt
 			mount $dev /mnt/$mnt
 		else
 			part_mount $dev "compress=zstd"
