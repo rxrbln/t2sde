@@ -134,29 +134,35 @@ part_mkfs() {
 
 part_decrypt() {
 	local dev=$1
+	local dir=$2
 
-	local dir="root home swap"
-	local d
-	for d in $dir; do
+	if [ ! "$dir" ]; then
+	    dir="root home swap"
+	    local d
+	    for d in $dir; do
 		[ -e /dev/mapper/$dir ] || break
-	done
-	gui_input "Mount device $dev on directory
+	    done
+	    gui_input "Mount device $dev on directory
 (for example ${dir// /, }, ...)" "${d:-/}" dir
+	fi
+
 	if [ "$dir" ]; then
+		# TBC
 		dir="$(echo $dir | sed 's,^/*,,; s,/*$,,')"
-		cryptsetup luksOpen --disable-locks /dev/$dev $dir
+		cryptsetup luksOpen --disable-locks $dev $dir
 	fi
 }
 
 part_crypt() {
 	local dev=$1
-	cryptsetup luksFormat --disable-locks --pbkdf=pbkdf2 /dev/$dev || return
+	cryptsetup luksFormat --disable-locks --pbkdf=pbkdf2 $dev || return
 
-	part_decrypt $dev
+	part_decrypt $dev $2
 }
 
 vg_add_pv() {
-	gui_input "Add physical volume $1 to logical volume group:" "vg0" vg
+	vg="$2"
+	[ "$vg" ] || gui_input "Add physical volume $1 to logical volume group:" "vg0" vg
 	if [ "$vg" ]; then
 	    if vgs $vg 2>/dev/null; then
 		vgextend $vg $1
@@ -168,8 +174,8 @@ vg_add_pv() {
 
 part_pvcreate() {
 	local dev=$1
-	pvcreate /dev/$dev
-	vg_add_pv /dev/$dev /dev/$dev
+	pvcreate $dev
+	vg_add_pv $dev $2
 }
 
 part_unmounted_action() {
@@ -184,16 +190,16 @@ part_unmounted_action() {
 	[ "$type" -a "$type" != "swap" -a "$type" != "crypto_LUKS" ] &&
 		cmd="$cmd \"Mount existing $type filesystem\" \"part_mount /dev/$dev\""
 	[ "$type" = "crypto_LUKS" ] &&
-		cmd="$cmd \"Activate encrypted LUKS\" \"part_decrypt $dev\""
+		cmd="$cmd \"Activate encrypted LUKS\" \"part_decrypt /dev/$dev\""
 	[ "$type" = "swap" ] &&
 		cmd="$cmd \"Activate existing swap space\" \"swapon /dev/$dev\""
 
 	cmd="$cmd \"Create filesystem\" \"part_mkfs /dev/$dev\""
 	cmd="$cmd \"Create swap space\" \"part_mkswap /dev/$dev\""
-	cmd="$cmd \"Encrypt using LUKS cryptsetup\" \"part_crypt $dev\""
+	cmd="$cmd \"Encrypt using LUKS cryptsetup\" \"part_crypt /dev/$dev\""
 
 	[ "$stype" != "lv" ] &&
-		cmd="$cmd \"Create physical LVM volume\" \"part_pvcreate $dev\""
+		cmd="$cmd \"Create physical LVM volume\" \"part_pvcreate /dev/$dev\""
 
 	if [ "$stype" = "lv" ]; then
 		[[ "$(lvs -o active --noheadings /dev/$dev)" = *active ]] &&
@@ -246,9 +252,9 @@ part_add() {
 
 disk_partition() {
 	local dev=$1
-	gui_yesno "Erase all data and partition $dev bootable for this platform?" || return
+	local typ=$2
 
-	# TODO: choose schema, classic, lvm, swap
+	gui_yesno "Erase all data and partition $dev bootable for this platform?" || return
 
 	local size=$(($(blockdev --getsz $dev) / 2 / 1024))
 	local swap=$((size / 20))
@@ -260,14 +266,19 @@ disk_partition() {
 
 	case $platform in
 	    *efi)
-		fs="2 swap  3 any /  1 fat /boot/efi"
+		fs="${dev}1 fat /boot/efi"
 		script="label:gpt
-size=128m, type=uefi
+size=128m, type=uefi"
+
+		[[ "$typ" != *lvm* ]] &&
+		fs="${dev}2 swap  ${dev}3 any /  $fs" script="$script
 size=${swap}m, type=swap
-type=linux"
+type=linux" ||
+		fs="${dev}2 lvm /  $fs" script="$script
+type=lvm"
 		;;
 	    hppa*)
-		fs="2 ext3 /boot  3 any /  4 swap"
+		fs="${dev}2 ext3 /boot  ${dev}3 any /  ${dev}4 swap"
 		script="label:dos
 size=32m, type=f0
 size=${boot}m, type=83
@@ -276,7 +287,7 @@ type=82"
 		;;
 	    mips64)
 		boot=8
-		fs="1 any /  2 swap"
+		fs="${dev}1 any /  ${dev}2 swap"
 		# the rounding is way off, so - 20m rounding safety :-/
 		script="label:sgi
 start=${boot}m, size=$((size - swap))m, type=83
@@ -285,7 +296,7 @@ start=$((size - swap + boot))m, size=$((swap - boot - 20))m, type=82
 11: type=6"
 		;;
 	    ppc*PowerMac)
-		fs="3 any /  4 swap"
+		fs="${dev}3 any /  ${dev}4 swap"
 		fdisk=mac-fdisk
 		script="i
 
@@ -299,14 +310,14 @@ q
 		;;
 	    sparc*)
 		# TODO: silo vs grub2 have different requirements
-		fs="1 any /  2 swap"
+		fs="${dev}1 any /  ${dev}2 swap"
 		script="label:sun
 size=$((size - swap))m, type=83
 type=82
 start=0, type=W"
 		;;
 	    *)
-		fs="1 swap  2 any /"
+		fs="${dev}1 swap  ${dev}2 any /"
 		script="label:dos
 size=$((swap))m, type=82
 type=83"
@@ -321,11 +332,29 @@ type=83"
 	# create fs
 	set -- $fs
 	while [ $# -gt 0 ]; do
-	    local part=$1; shift
+	    local dev=$1; shift
 	    local fs=$1; shift
+	    local mnt=$1
+	    [ "$fs" != swap ] && shift || mnt=
+
+	    if [[ "$typ" = *luks* && ("$mnt" = / || "$fs" = swap) ]]; then
+		local name=root
+		[ "$fs" = swap ] && name=swap
+		part_crypt $dev $name
+		dev=/dev/mapper/$name
+	    fi
+
 	    case $fs in
-		swap)	part_mkswap $dev$part ;;
-		*)	part_mkfs $dev$part $fs $1; shift ;;
+		lvm)	part_pvcreate $dev vg0
+			lv_create vg0 linear ${swap}m swap
+			lv_create vg0 linear 100%FREE root
+			part_mkswap /dev/vg0/swap
+			part_mkfs /dev/vg0/root any /
+			;;
+		swap)	part_mkswap $dev
+			;;
+		*)	part_mkfs $dev $fs $mnt
+			;;
 	    esac
 	done
 }
@@ -339,11 +368,22 @@ can't modify this partition table."
 
 	local cmd="gui_menu disk 'Edit partition table of $1'"
 
-	[ "$platform" ] && cmd="$cmd \"Automatically partition for this platform\" \"disk_partition /dev/$1\""
+	if [ "$platform" ]; then
+	    cmd="$cmd \"Automatically partition bootable for this platform:\" ''"
+	    cmd="$cmd \"Classic partitions\" \"disk_partition /dev/$1\""
+	    case "$platform" in
+	    *efi)
+		cmd="$cmd \"Encrypted partitions\" \"disk_partition /dev/$1 luks\""
+		cmd="$cmd \"Logical Volumes\" \"disk_partition /dev/$1 lvm\""
+		cmd="$cmd \"Encrypted Logical Volumes\" \"disk_partition /dev/$1 luks+lvm\""
+	    esac
+	    cmd="$cmd '' ''"
+	fi
 
+	cmd="$cmd \"Edit partition table:\" ''"
 	for x in cfdisk fdisk pdisk mac-fdisk parted; do
 		type -p $x > /dev/null &&
-		  cmd="$cmd \"Edit partition table using '$x'\" \"$x /dev/$1\""
+		  cmd="$cmd \"$x\" \"$x /dev/$1\""
 	done
 
 	eval $cmd
@@ -365,12 +405,18 @@ lvm_rename() {
 
 lv_create() {
 	local dev=$1 type=$2
+	size=$3 name=$4
 	# TODO: stripes?
-	local size=$(vgdisplay $dev | grep Free | sed 's,.*/,,; s, <,,; s/ //g ')
-	gui_input "Logical volume size:" "$size" size
+	if [ ! "$size" ]; then
+		#size=$(vgdisplay $dev | grep Free | sed 's,.*/,,; s, <,,; s/ //g ')
+		size="100%FREE"
+		gui_input "Logical volume size:" "$size" size
+	fi
+
 	if [ "$size" ]; then
-		gui_input "Logical volume name:" "" name
-		lvcreate -L "$size" --type $type $dev ${name:+-n $name}
+		[ "$name" ] || gui_input "Logical volume name:" "" name
+		[[ "$size" = *%* ]] && size="-l $size" || size="-L $size"
+		lvcreate $size --type $type $dev ${name:+-n $name}
 	fi
 }
 
