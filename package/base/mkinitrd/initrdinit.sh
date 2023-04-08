@@ -48,7 +48,7 @@ if [ "${root%,*}" != "$root" ]; then
 	toor="${root%,*}" root="${root#*,}"
 	[ "${root#UUID=}" != "$root" ] && root="/dev/disk/by-uuid/${root#UUID=}"
 
-	cryptsetup --disable-locks luksOpen $toor toor
+	cryptsetup --disable-locks luksOpen $toor root
 fi
 
 [ "${root#UUID=}" != "$root" ] && root="/dev/disk/by-uuid/${root#UUID=}"
