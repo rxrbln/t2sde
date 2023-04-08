@@ -475,7 +475,7 @@ main() {
 
 	local install_now=0
 	while
-		cmd="gui_menu install 'Storage setup: partitions and mount-points
+		cmd="gui_menu install 'Storage setup: Partitions and mount-points
 
 Modify your storage layout: create file-systems, swap-space, encrypt and mount them. You can also use advanced low-level tools on the command line.'"
 
@@ -517,7 +517,14 @@ Modify your storage layout: create file-systems, swap-space, encrypt and mount t
 
 		cmd="$cmd 'Install the system ...' 'install_now=1'"
 
-		eval "$cmd" && [ "$install_now" -eq 0 ]
+		eval "$cmd"
+
+		if [ "$install_now" = 1 ] && ! grep -q " /mnt" /proc/mounts; then
+			gui_yesno "No stroage mounted to /mnt, continue anyway?" ||
+				install_now=0
+		fi
+
+		[ "$install_now" -eq 0 ]
 	do : ; done
 
 	if [ "$install_now" -ne 0 ]; then
@@ -535,6 +542,7 @@ umount -v /proc
 umount -v /sys
 EOT
 		chmod +x /mnt/tmp/stone_postinst.sh
+		rm -f /mnt/etc/mtab
 		sed -n 's, /mnt/\?, /,p' /etc/mtab > /mnt/etc/mtab
 		chroot /mnt /tmp/stone_postinst.sh
 		rm -f /mnt/tmp/stone_postinst.sh
