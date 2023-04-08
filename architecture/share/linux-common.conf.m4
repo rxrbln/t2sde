@@ -176,6 +176,9 @@ CONFIG_PCIEAER=y
 CONFIG_I2C=m
 CONFIG_SPI=y
 
+# CONFIG_VIRTIO_PCI_LEGACY is not set
+# CONFIG_VIRTIO_PCI_LIB_LEGACY is no set
+
 dnl PCI name database is also quite big (another >80kB) - so let's use user-
 dnl space tools like lspci to use a non-kernel database
 dnl
