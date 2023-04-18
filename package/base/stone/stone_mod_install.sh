@@ -10,7 +10,9 @@
 # it under the terms of the GNU General Public License version 2.
 # --- T2-COPYRIGHT-NOTE-END ---
 
-# TODO: check error, esp. of lvm commands and display red alert on error
+# TODO:
+# - check error, esp. of cryptsetup and lvm commands and display red alert on error
+# - avoid all direct user input, so the installer works in GUI variants
 
 # detect platform once
 platform=$(uname -m)
@@ -155,7 +157,8 @@ part_decrypt() {
 
 part_crypt() {
 	local dev=$1
-	cryptsetup luksFormat --disable-locks --pbkdf=pbkdf2 $dev || return
+	local kdf= # "--pbkdf=pbkdf2"
+	cryptsetup luksFormat --disable-locks $kdf $dev || return
 
 	part_decrypt $dev $2
 }
@@ -189,8 +192,11 @@ part_unmounted_action() {
 
 	[ "$type" -a "$type" != "swap" -a "$type" != "crypto_LUKS" ] &&
 		cmd="$cmd \"Mount existing $type filesystem\" \"part_mount /dev/$dev\""
-	[ "$type" = "crypto_LUKS" ] &&
+	if [ "$type" = "crypto_LUKS" ]; then
 		cmd="$cmd \"Activate encrypted LUKS\" \"part_decrypt /dev/$dev\""
+		#cmd="$cmd \"Deactivate encrypted LUKS\" \"part_decrypt /dev/$dev\""
+	fi
+
 	[ "$type" = "swap" ] &&
 		cmd="$cmd \"Activate existing swap space\" \"swapon /dev/$dev\""
 
