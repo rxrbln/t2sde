@@ -480,7 +480,7 @@ main() {
 	$STONE general set_keymap
 
 	local install_now=0
-	while
+	while [ $install_now = 0 ]; do
 		cmd="gui_menu install 'Storage setup: Partitions and mount-points
 
 Modify your storage layout: create file-systems, swap-space, encrypt and mount them. You can also use advanced low-level tools on the command line.'"
@@ -523,15 +523,13 @@ Modify your storage layout: create file-systems, swap-space, encrypt and mount t
 
 		cmd="$cmd 'Install the system ...' 'install_now=1'"
 
-		eval "$cmd"
+		eval "$cmd" || break
 
 		if [ "$install_now" = 1 ] && ! grep -q " /mnt" /proc/mounts; then
 			gui_yesno "No stroage mounted to /mnt, continue anyway?" ||
 				install_now=0
 		fi
-
-		[ "$install_now" -eq 0 ]
-	do : ; done
+	done
 
 	if [ "$install_now" -ne 0 ]; then
 		$STONE packages
