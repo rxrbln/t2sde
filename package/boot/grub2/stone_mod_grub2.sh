@@ -22,6 +22,9 @@ arch=$(uname -m)
 arch=${arch/i?86/i386}
 arch=${arch/aarch/arm}
 
+cmdline="console= $(< /proc/cmdline)"
+cmdline=${cmdline##*console=} cmdline=${cmdline%%[ ,]*}
+
 create_kernel_list() {
 	first=1
 	for x in `(cd /boot/; ls vmlinux-* ) | sort -r`; do
@@ -40,7 +43,7 @@ create_kernel_list() {
 		cat << EOT
 
 menuentry "T2/$label" {
-	linux $bootpath/$x root=$rootdev ro ${swapdev:+resume=$swapdev}
+	linux $bootpath/$x root=$rootdev ro${swapdev:+ resume=$swapdev}${cmdline+ console=}$cmdline
 	initrd $initrd
 }
 EOT
