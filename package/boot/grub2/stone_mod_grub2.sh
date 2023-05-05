@@ -97,7 +97,7 @@ grub_inst() {
 	    if [[ "$arch" != sparc* ]]; then
 		grub2-install $instdev
 	    else
-		grub2-install --skip-fs-probe --force $instdev
+		grub2-install $instdev --skip-fs-probe --force
 	    fi
 	else
 	    for efi in ${instdev}*; do
@@ -331,7 +331,8 @@ main() {
 	if [ -d /sys/firmware/efi ]; then
 		instdev=/boot/efi
 	elif [[ "$arch" = sparc* ]]; then
-		instdev=$bootdev
+		instdev=$(get_realdev $bootdev)
+		instdev="${instdev%%[0-9*]}1"
 	else
 		instdev=$(get_realdev $bootdev)
 		instdev="${instdev%%[0-9*]}"
