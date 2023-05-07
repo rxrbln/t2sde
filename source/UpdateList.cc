@@ -30,6 +30,7 @@
 
 using namespace Utility;
 
+//#define TESTING
 const bool debug = false;
 
 std::vector <std::string> suffixes;
@@ -354,7 +355,7 @@ void ParseList (std::string file, std::istream& s,
 	v.ExtractFromFilename (matched);
 	
 	// filter out overly long versions, like -powerpc64le-linux-ubuntu-…
-	if (v.str().size() > version.str().size() * 3 / 2) {
+	if (v.str().size() >= version.str().size() * 2) {
 	  if (debug)
 	    std::cout << "subv> " << v.str() << " too long." << std::endl;
 	}
@@ -531,7 +532,7 @@ int main (int argc, char* argv[])
 
 #ifdef TESTING
   std::vector<Version> versions;
-#if 1
+#if 0
   versions.push_back(Version("1.2.2"));
   versions.push_back(Version("1.2.12"));
   versions.push_back(Version("1.2.4"));
@@ -546,9 +547,12 @@ int main (int argc, char* argv[])
   versions.push_back(Version("1.2.3-rc1"));
   versions.push_back(Version("1.2.3.1"));
   versions.push_back(Version("2004-12-24"));
-#else
+#elif 0
   versions.push_back(Version("v20200512"));
   versions.push_back(Version("v20190419"));
+#else
+  versions.push_back(Version("22.2.0.1"));
+  versions.push_back(Version("6.16.3"));
 #endif
 
   std::cout << "-----------------------" << std::endl;
