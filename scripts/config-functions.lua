@@ -28,13 +28,13 @@ function pkglistread(filename)
       local pkg = {}
       pkg.status, pkg.stages, pkg.priority, pkg.repository,
       pkg.name, pkg.ver, pkg.extraver, pkg.categories, pkg.flags =
-	 string.match(line, "([XO]) *([0123456789?-]+) *([0123456789.]+) *(%S+) *(%S+) *(%S+) *(%S*) */ ([abcdefghijklmnopqrstuvwxyz0123456789/ ]+) *([ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 _-]*) 0")
+	 string.match(line, "([XO]) *([0123456789?-]+) *([0123456789.]+) *(%S+) *(%S+) *(%S+) *(%S*) */ ([abcdefghijklmnopqrstuvwxyz0123456789/ ]+) *([abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 ._-]*) 0")
       
       -- shortcoming of above regex
       if pkg.categories then
 	pkg.categories = string.match(pkg.categories, "(.*%S) *");
       else
-	print("Error: no Cateory tag - parsing: ", line)
+	print("Error: no Cateory tag - parsing:", line)
       end
       
       pkg.alias = pkg.name
