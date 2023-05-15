@@ -21,6 +21,9 @@ CONFIG_STAGING=y
 # CONFIG_STAGING_EXCLUDE_BUILD is not set
 # CONFIG_IKHEADERS is not set
 
+dnl Default to thin LTO if the configured target supports it
+CONFIG_LTO_CLANG_THIN=y
+
 dnl Power management and ACPI options
 CONFIG_ACPI=y
 CONFIG_ACPI_SLEEP=y
