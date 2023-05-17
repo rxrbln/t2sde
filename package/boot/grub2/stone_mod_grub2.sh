@@ -43,7 +43,7 @@ create_kernel_list() {
 		cat << EOT
 
 menuentry "T2/$label" {
-	linux $bootpath/$x root=$rootdev ro${swapdev:+ resume=$swapdev}${cmdline+ console=}$cmdline
+	linux $bootpath/$x root=$rootdev ro${swapdev:+ resume=$swapdev}${cmdline:+ console=}$cmdline
 	initrd $initrd
 }
 EOT
