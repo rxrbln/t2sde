@@ -490,8 +490,9 @@ Modify your storage layout: create file-systems, swap-space, encrypt and mount t
 		for x in /sys/block/*; do
 			[ ! -e $x/device -a ! -e $x/dm ] && continue
 			x=${x#/sys/block/}
-			[[ "$x" = fd[0-9]* ]] && continue
-			# TODO: media? udevadm info -q property --name=/dev/sr0
+
+			# media? udevadm info -q property --name=/dev/...
+			[[ "$x" = fd[0-9]* || "$x" = sr[0-9]* ]] && continue
 
 			# LVM Device Mapper?
 			if [ -e /sys/block/$x/dm ]; then
