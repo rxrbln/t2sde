@@ -14,10 +14,10 @@
 
 create_kernel_list() {
 	local alpha_idx=0
-	for x in `(cd /boot/; ls vmlinuz-*gz) | sort -r` ; do
-		ver=${x/vmlinuz-}; ver=${ver%.gz}
+	for x in `(cd /boot/; ls vmlinux-*gz) | sort -r` ; do
+		ver=${x/vmlinux-}; ver=${ver%.gz}
 		cat << EOT
-$((alpha_idyx++)):${part}$bootpath/$x initrd=$bootpath/initrd-${ver} root=$rootdev ro
+$((alpha_idyx++)):${bootdev##*[^0-9]}$bootpath/$x initrd=$bootpath/initrd-${ver} root=$rootdev ro
 EOT
 	done
 }
@@ -37,7 +37,7 @@ $(< /boot/aboot.conf)"
 }
 
 aboot_install() {
-	gui_cmd 'Installing Aboot' "echo 'calling aboot'; aboot -C /boot/aboot.conf"
+	gui_cmd 'Installing Aboot' "echo 'calling swriteboot'; swriteboot ${bootdev%%[0-9]} /boot/bootlx"
 }
 
 device4()
