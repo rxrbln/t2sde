@@ -56,7 +56,7 @@ while [ "$1" ]; do
 done
 
 [ "$minimal" != 1 ] && filter="$filter -e reiserfs -e btrfs -e /jfs -e /xfs -e jffs2
--e /udf -e /unionfs -e ntfs -e /fat -e /hfs -e floppy -e efivarfs
+-e ext2 -e /udf -e /unionfs -e ntfs -e /fat -e /hfs -e floppy -e efivarfs
 -e /ata/ -e /scsi/ -e /fusion/ -e /sdhci/ -e nvme/host -e /mmc/
 -e virtio.\(blk\|scsi\|net\|console\|input\|gpu\|pci\)
 -e /ast/ -e ps3fb -e ps3disk -e drivers/pcmcia
