@@ -39,6 +39,8 @@ CONFIG_ISAPNP=y
 CONFIG_PNPBIOS=y
 CONFIG_PNP=y
 
+CONFIG_PATA_LEGACY=m
+
 dnl The default x86 frame-buffer fallback
 dnl
 CONFIG_FB_VESA=y
