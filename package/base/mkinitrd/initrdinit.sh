@@ -21,24 +21,26 @@ function boot {
 	exec switch_root /mnt "$@"
 }
 
-echo "Mounting /dev, /proc and /sys"
-mount -t devtmpfs -o mode=755 none /dev
 mount -t proc none /proc
+[ -e /proc/sys/kernel/ostype ] &&
+	echo "$(< /proc/sys/kernel/ostype) $(< /proc/sys/kernel/osrelease)." \
+"Mounting /dev, /proc, /sys and starting u/devd."
+mount -t devtmpfs -o mode=755 none /dev
 mount -t sysfs none /sys
 mkdir -p /tmp /mnt
 ln -s /proc/self/fd /dev/fd
-
-if [ -e /proc/cmdline ]; then
-	cmdline="$(< /proc/cmdline)"
-	echo "$(< /proc/sys/kernel/ostype) $(< /proc/sys/kernel/osrelease)," \
-"populating u/dev"
-fi
 
 udevd &
 udevadm trigger
 udevadm settle
 
+# if no block devices, load some legacy drivers
+if [ -z "$(ls -A /sys/block | sed '/^loop/d; /^fd/d')" ]; then
+	modprobe pata_legacy all=1 2>/dev/null
+fi
+
 # get the root device, init, early swap
+[ -e /proc/cmdline ] && cmdline="$(< /proc/cmdline)"
 root="root= $cmdline" root=${root##*root=} root=${root%% *}
 init="init= $cmdline" init=${init##*init=} init=${init%% *}
 swap="swap= $cmdline" swap=${swap##*swap=} swap=${swap%% *}
@@ -90,9 +92,6 @@ if [ "$root" ]; then
 	[ ${root#/dev/*/*} != $root -a -e /sbin/lvchange ] &&
 		echo "Activating LVM $root" &&
 		lvchange -a ay $(mapper2lvm ${root#/dev/})
-    fi
-    if [ ! -e "$root" ]; then
-	modprobe pata_legacy 2>/dev/null
     fi
   fi
 
