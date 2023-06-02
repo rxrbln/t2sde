@@ -37,7 +37,7 @@ var_insert KCC_WRAPPER_REMOVE " " "-O -O[0-9sgz]"
 #
 for x in CC CXX F77 ; do
 	eval "y=\$SDECFG_DEFAULT_$x"
-	if [[ $y = gcc* ]]; then
+	if [[ $y = gcc* || $pkg = glibc* || $pkg = gcc || $pkg = memtest86 ]]; then
 		case "$x-$stagelevel" in
 		    CC-*)
 			z="${archprefix}gcc ${archprefix}gcc" ;;
@@ -61,9 +61,9 @@ done
 debug_flags='-g -ggdb -g[0-9] -gdwarf*'
 
 if [ "$SDECFG_DEBUG" = 0 ]; then
-	var_append GCC_WRAPPER_APPEND " " "-s"
+	var_append GCC_WRAPPER_APPEND " " "-c?:-s"
 	var_insert GCC_WRAPPER_REMOVE " " "$debug_flags"
-	var_append SYSGCC_WRAPPER_APPEND " " "-s"
+	var_append SYSGCC_WRAPPER_APPEND " " "-c?:-s"
 	var_insert SYSGCC_WRAPPER_REMOVE " " "$debug_flags"
 else
 	var_append GCC_WRAPPER_APPEND " " "-ggdb"
@@ -162,9 +162,9 @@ if hasflag NO-PIE; then
 		echo_warning 'Position-Independent Executables disabled for this package'
 elif [ "$SDECFG_PIE" == 1 ]; then
 	case $SDECFG_STATIC in
-		0) var_append GCC_WRAPPER_INSERT " " "-fPIE -pie"
+		0) var_append GCC_WRAPPER_INSERT " " "-fPIE -c?:-pie"
 		   var_append GCC_WRAPPER_APPEND " " "-fPIC" ;;
-		1) var_append GCC_WRAPPER_INSERT " " "-fPIE -static-pie" ;;
+		1) var_append GCC_WRAPPER_INSERT " " "-fPIE -c?:-static-pie" ;;
 	esac
 fi
 
@@ -216,22 +216,26 @@ hasflag FPIC && var_append GCC_WRAPPER_APPEND ' ' '-fPIC'
 
 # Build with LTO, if not disabled for this package
 #
-if hasflag NO-LTO; then
-    [ "$SDECFG_LTO" == 1 ] && echo_warning 'Link Time Optimization disabled for this package'
-else
-    var_append GCC_WRAPPER_REMOVE " " "-flto*"
-    if [ "$SDECFG_LTO" == 1 ]; then
-	var_append GCC_WRAPPER_INSERT " " "conftest*.*?:-flto=${SDECFG_PARALLEL_MAX:-auto}"
-	var_append GCC_WRAPPER_INSERT " " "conftest*.*?:-shared?:-fwhole-program"
+if [ "$SDECFG_LTO" == 1 ]; then
+    if hasflag NO-LTO; then
+	[ "$SDECFG_LTO" == 1 ] && echo_warning 'Link Time Optimization disabled for this package'
+    else
+	var_append GCC_WRAPPER_REMOVE " " "-flto*"
+	if [ "$SDECFG_DEFAULT_CC" = clang ]; then
+	    var_append GCC_WRAPPER_INSERT " " "conftest*.*?:-flto=thin"
+	else
+	    var_append GCC_WRAPPER_INSERT " " "conftest*.*?:-flto=${SDECFG_PARALLEL_MAX:-auto}"
+	    var_append GCC_WRAPPER_INSERT " " "conftest*.*?:-shared?:-fwhole-program"
+	    hasflag FAT-LTO && var_append GCC_WRAPPER_INSERT " " "-ffat-lto-objects"
+	fi
     fi
-    hasflag FAT-LTO && var_append GCC_WRAPPER_INSERT " " "-ffat-lto-objects"
 fi
 
 # -fcommon backward compatibility
 hasflag FCOMMON && var_append GCC_WRAPPER_INSERT " " "-fcommon"
 
 # usually 64-bit -latomic for some architectures
-hasflag LATOMIC && var_append GCC_WRAPPER_INSERT ' ' '-c?:-latomic -Wl,--as-needed'
+hasflag LATOMIC && [ $arch != avr32 ] && var_append GCC_WRAPPER_INSERT ' ' '-c?:-latomic -Wl,--as-needed'
 
 # Remove -Wl,--as-needed, some packages break with it...
 #
