@@ -29,7 +29,9 @@ vitalmods[qla2xxx.ko]=1 # Sun Blade, T4
 vitalmods[tg3.ko]=1	# Sun Fire
 vitalmods[xhci-pci.ko]=1 # probably every modern machine
 
-filter="-e ext4 -e isofs -e pata_legacy -e sym53c8xx -e s[rd]_mod"
+# TODO: defauls for vintage vs. latest, usb, pata, etc.
+filter="-e ext4 -e isofs -e pata_legacy -e pata_.*platform -e sym53c8xx
+-e s[rd]_mod -e /ahci.ko -e /nvme.ko -e [uoex]hci-pci -e usbhid"
 
 declare -A added
 
@@ -279,7 +281,7 @@ copy_dyn_libs () {
 
 # setup programs
 #
-for x in $root/sbin/{udevd,udevadm} $root/usr/sbin/disktype
+for x in $root/sbin/{udevd,udevadm,kmod,modprobe} $root/usr/sbin/disktype
 do
 	cp -av $x $tmpdir/sbin/
 	copy_dyn_libs $x
@@ -288,7 +290,7 @@ done
 # setup optional programs
 #
 [ "$minimal" != 1 ] &&
-for x in $root/sbin/{kmod,modprobe,insmod,blkid,vgchange,lvchange,lvm,mdadm} \
+for x in $root/sbin/{insmod,blkid,vgchange,lvchange,lvm,mdadm} \
 	 $root/usr/sbin/{cryptsetup,cache_check,ipconfig} $root/usr/embutils/{dmesg,swapon}
 do
   if [ ! -e $x ]; then
