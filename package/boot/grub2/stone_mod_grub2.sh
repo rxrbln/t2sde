@@ -24,6 +24,11 @@ arch=${arch/aarch/arm}
 
 cmdline="console= $(< /proc/cmdline)"
 cmdline=${cmdline##*console=} cmdline=${cmdline%%[ ,]*}
+if [ -z "$cmdline" ]; then
+	cmdline="`grep -a -H Y /sys/class/tty/*/console`"
+	cmdline="${cmdline%%/console*}" cmdline=${cmdline##*/}
+	cmdline="${cmdline:+console=}$cmdline"
+fi
 
 create_kernel_list() {
 	first=1
