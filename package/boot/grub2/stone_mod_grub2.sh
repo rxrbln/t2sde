@@ -27,7 +27,6 @@ cmdline=${cmdline##*console=} cmdline=${cmdline%%[ ,]*}
 if [ -z "$cmdline" ]; then
 	cmdline="`grep -a -H Y /sys/class/tty/*/console`"
 	cmdline="${cmdline%%/console*}" cmdline=${cmdline##*/}
-	cmdline="${cmdline:+console=}$cmdline"
 fi
 
 create_kernel_list() {
@@ -271,7 +270,7 @@ get_dm_dev() {
 	local dev="$1"
 	local devnode=$(stat -c "%t:%T" $dev)
 	for d in /dev/dm-*; do
-		[ "$(stat -c "%t:%T" "$d")" = "$devnode" ] && echo $d && return
+		[ "$(stat -c "%t:%T" "$d" 2>/dev/null)" = "$devnode" ] && echo $d && return
 	done
 }
 
