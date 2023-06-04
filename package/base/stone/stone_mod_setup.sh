@@ -160,7 +160,7 @@ main() {
 	# run the postinstall scripts right here
 	for x in /etc/postinstall.d/*; do
 		[ -f $x ] || continue
-		echo "Running $x ..."
+		echo "Running $x"
 		$x
 	done
 
