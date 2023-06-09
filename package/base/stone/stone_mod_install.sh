@@ -563,7 +563,14 @@ EOT
 		then
 			# try to re-boot via kexec, if available
 			if type -p kexec > /dev/null; then
-			    root=$(sed -n '/.*\(root=.*\)/{ s//\1/p; q}' /mnt/boot/grub/grub.cfg)
+			    if [ -e /mnt/boot/grub/grub.cfg ]; then
+				root=$(sed -n "/.*\(root=.*\)/{ s//\1/p; q}" /mnt/boot/grub/grub.cfg)
+			    elif [ -e /mnt/etc/kboot.conf ]; then
+				root=$(sed -n "/.*\(root=[^\"']*\).*/{ s//\1/p; q}" /mnt/etc/kboot.conf)
+			    else
+				root=$(grep ' / ' /mnt/etc/fstab | tail -n 1 | sed 's, .*,,')
+				root=${root:+root=$root}
+			    fi
 			    kernel="$(echo /mnt/boot/vmlinu[xz]-*)"
 			    kernel="${kernel##* }"
 			    kexec -l $kernel --initrd="${kernel/vmlinu?/initrd}" \
