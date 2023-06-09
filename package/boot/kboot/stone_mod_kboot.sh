@@ -12,6 +12,13 @@
 # [MAIN] 70 kboot kBoot Loader Setup
 # [SETUP] 90 kboot
 
+cmdline="console= $(< /proc/cmdline)"
+cmdline=${cmdline##*console=} cmdline=${cmdline%%[ ,]*}
+if [ -z "$cmdline" ]; then
+	cmdline="`grep -a -H Y /sys/class/tty/*/console`"
+	cmdline="${cmdline%%/console*}" cmdline=${cmdline##*/}
+fi
+
 create_kernel_list() {
 	first=1
 	for x in `(cd /boot/; ls vmlinux-* ) | sort -r`; do
@@ -22,7 +29,8 @@ create_kernel_list() {
 		fi
 		ver=${x/vmlinux-}
 		cat << EOT
-$label='$bootpath/$x initrd=$bootpath/initrd-${ver} root=$rootdev' # video=ps3fb:mode:13
+$label='$bootpath/$x initrd=$bootpath/initrd-${ver} root=$rootdev ${cmdline:+ console=}$cmdline'
+# video=ps3fb:mode:13
 EOT
 	done
 }
