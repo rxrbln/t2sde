@@ -412,17 +412,23 @@ lvm_rename() {
 lv_create() {
 	local dev=$1 type=$2
 	size=$3 name=$4
-	# TODO: stripes?
+	stripes="--config allocation/raid_stripe_all_devices=1"
+
 	if [ ! "$size" ]; then
 		#size=$(vgdisplay $dev | grep Free | sed 's,.*/,,; s, <,,; s/ //g ')
 		size="100%FREE"
 		gui_input "Logical volume size:" "$size" size
 	fi
 
+	if [ "$type" = "striped" ]; then
+		stripes=$(vgs --noheadings -o pv_count $dev)
+		stripes=${stripes:+-i $stripes}
+	fi
+
 	if [ "$size" ]; then
 		[ "$name" ] || gui_input "Logical volume name:" "" name
 		[[ "$size" = *%* ]] && size="-l $size" || size="-L $size"
-		lvcreate $size --type $type $dev ${name:+-n $name}
+		lvcreate $size --type $type $stripes $dev ${name:+-n $name}
 	fi
 }
 
