@@ -431,6 +431,7 @@ vg_action() {
 
 	cmd="$cmd 'Create Linear logical volume' 'lv_create $1 linear'"
 	cmd="$cmd 'Create Striped logical volume' 'lv_create $1 striped'"
+	cmd="$cmd 'Create RAID 0 logical volume' 'lv_create $1 raid0'"
 	cmd="$cmd 'Create RAID 1 logical volume' 'lv_create $1 raid1'"
 	cmd="$cmd 'Create RAID 5 logical olume' 'lv_create $1 raid5'"
 	cmd="$cmd 'Create RAID 6 logical volume' 'lv_create $1 raid6'"
