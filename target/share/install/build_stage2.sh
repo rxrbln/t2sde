@@ -44,7 +44,7 @@ netkit-base        netkit-ftp         netkit-telnet      netkit-tftp
 sysfiles           libpcap            iptables           tcp_wrappers
 stone              rocknet            kexec-tools
 kbd                ntfsprogs          libol              memtester
-openssl            openssh            iproute2"
+openssl            openssh            iproute2           eudev"
 
 # TODO: a global multilib package multiplexer that allows distrinct control
 #       and avoids such hacks ...
