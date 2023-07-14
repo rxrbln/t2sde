@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 #
 # This shell-script genereates the fl_wrapper.c source file.
 
