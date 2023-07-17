@@ -262,6 +262,7 @@ disk_partition() {
 
 	gui_yesno "Erase all data and partition $dev bootable for this platform?" || return
 
+	# sizes in MB
 	local size=$(($(blockdev --getsz $dev) / 2 / 1024))
 	local swap=$((size / 20))
 	local boot=512
@@ -284,7 +285,7 @@ type=linux" ||
 type=lvm"
 		;;
 	    hppa*)
-		fs="${dev}2 ext3 /boot  ${dev}3 any /  ${dev}4 swap"
+		fs="${dev}4 swap  ${dev}3 any /  ${dev}2 ext3 /boot"
 		script="label:dos
 size=32m, type=f0
 size=${boot}m, type=83
@@ -293,7 +294,7 @@ type=82"
 		;;
 	    mips64)
 		boot=8
-		fs="${dev}1 any /  ${dev}2 swap"
+		fs="${dev}2 swap  ${dev}1 any /"
 		# the rounding is way off, so - 20m rounding safety :-/
 		script="label:sgi
 start=${boot}m, size=$((size - swap))m, type=83
@@ -302,7 +303,7 @@ start=$((size - swap + boot))m, size=$((swap - boot - 20))m, type=82
 11: type=6"
 		;;
 	    ppc*PowerMac)
-		fs="${dev}3 any /  ${dev}4 swap"
+		fs="${dev}4 swap  ${dev}3 any /"
 		fdisk=mac-fdisk
 		script="i
 
@@ -316,7 +317,7 @@ q
 		;;
 	    sparc*)
 		# TODO: silo vs grub2 have different requirements
-		fs="${dev}1 any /  ${dev}2 swap"
+		fs="${dev}2 swap  ${dev}1 any /"
 		script="label:sun
 size=$((size - swap))m, type=83
 type=82
