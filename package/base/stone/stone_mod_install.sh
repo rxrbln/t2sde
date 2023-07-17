@@ -20,7 +20,6 @@ platform2=$(grep '\(platform\|type\)' /proc/cpuinfo) platform2=${platform2##*: }
 [ -e /sys/firmware/efi ] && platform_efi=efi
 case $platform in
 	alpha)
-		: TODO: whatever aboot
 		;;
 	arm*|ia64|riscv*)
 		[ "$platform_efi" ] && platform="$platform-efi" || platform=
@@ -272,6 +271,16 @@ disk_partition() {
 	local fs=
 
 	case $platform in
+	    alpha)
+		fs="${dev}2 swap  ${dev}3 any /  ${dev}1 ext3 /boot"
+		fdisk=parted
+		script="mklabel
+bsd
+y
+mkpart 2048s ${boot}m
+mkpart ${boot}m $((boot + swap))m
+mkpart $((boot + swap))m 100% "
+		;;
 	    *efi)
 		fs="${dev}1 fat /boot/efi"
 		script="label:gpt
