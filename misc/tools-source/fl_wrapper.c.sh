@@ -3,7 +3,7 @@
 # This shell-script genereates the fl_wrapper.c source file.
 
 cat << EOT
-/* ROCK Linux Wrapper for getting a list of created files
+/* Wrapper for getting a list of created files.
  *
  * --- T2-COPYRIGHT-NOTE-BEGIN ---
  * T2 SDE: misc/tools-source/fl_wrapper.c.sh
@@ -369,11 +369,11 @@ static char *getpname(int pid)
 	close(fd);
 
 	b = basename(buffer);
-	snprintf(p, 512, "%s", b);
+	snprintf(p, sizeof(p), "%s", b);
 
 	if ( !strcmp(b, "bash") || !strcmp(b, "sh") || !strcmp(b, "perl") )
 		if (arg && *arg && *arg != '-')
-			snprintf(p, 512, "%s(%s)", b, basename(arg));
+			snprintf(p, sizeof(p), "%s(%s)", b, basename(arg));
 
 	return p;
 }
