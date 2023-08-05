@@ -290,7 +290,7 @@ done
 # setup optional programs
 #
 [ "$minimal" != 1 ] &&
-for x in $root/sbin/{insmod,blkid,vgchange,lvchange,lvm,mdadm} \
+for x in $root/sbin/{insmod,blkid,lvm,vgchange,lvchange,vgs,lvs,mdadm} \
 	 $root/usr/sbin/{cryptsetup,cache_check,ipconfig} $root/usr/embutils/{dmesg,swapon}
 do
   if [ ! -e $x ]; then

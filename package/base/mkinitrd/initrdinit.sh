@@ -66,9 +66,11 @@ while [[ "$root" && ($((i++)) -le 15 || "$cmdline" = *rootwait*) ]]; do
 
   # maybe resume from disk?
   if [[ "$resume" != "" && "$cmdline" != *noresume* ]]; then
-	[ ! -e $resume -a ${resume#/dev/*/*} != $resume -a -e /sbin/lvchange ] &&
-		echo "Activating LVM $resume" &&
+	if [ ! -e $resume -a ${resume#/dev/*/*} != $resume -a -e /sbin/lvchange ]; then
+		lvs $(mapper2lvm ${resume#/dev/}) >/dev/null 2>&1 || continue
+		echo "Activating LVM $resume"
 		lvchange -a ay $(mapper2lvm ${resume#/dev/})
+	fi
 	
 	# only try to resume if the device does not have a swap signature
 	if [ -z "$(disktype $resume | sed  -n "/swap,/p")" ]; then
@@ -101,9 +103,11 @@ while [[ "$root" && ($((i++)) -le 15 || "$cmdline" = *rootwait*) ]]; do
 	[ ${dev#/dev/md[0-9]} != $root -a -e /sbin/mdadm ] &&
 		echo "Scanning for mdadm RAID" &&
 		mdadm --assemble --scan
-	[ ${root#/dev/*/*} != $root -a -e /sbin/lvchange ] &&
-		echo "Activating LVM $root" &&
+	if [ ${root#/dev/*/*} != $root -a -e /sbin/lvchange ]; then
+		lvs $(mapper2lvm ${root#/dev/}) >/dev/null 2>&1 || continue
+		echo "Activating LVM $root"
 		lvchange -a ay $(mapper2lvm ${root#/dev/})
+	fi
     fi
   fi
 
