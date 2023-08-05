@@ -48,9 +48,10 @@ resume="resume= $cmdline" resume=${resume##*resume=} resume=${resume%% *}
 
 # wait for and mount root device, if specified
 i=0
-while [[ "$root" && ($((i++)) -le 15 || "$cmdline" = *rootwait*) ]]; do
+while [[ -n "$root" && ($((i++)) -le 15 || "$cmdline" = *rootwait*) ]]; do
   # only print once, for the 2nd iteration
-  [ $i -eq 2 ] && echo "Waiting for $root ..."
+  [ $i = 2 ] && echo "Waiting for $root ..."
+  [ $i -gt 1 ] && sleep 1
 
   # open luks for lvm2 and resume from disk early
   if [ "${root%,*}" != "$root" ]; then
@@ -66,7 +67,7 @@ while [[ "$root" && ($((i++)) -le 15 || "$cmdline" = *rootwait*) ]]; do
 
   # maybe resume from disk?
   if [[ "$resume" != "" && "$cmdline" != *noresume* ]]; then
-	if [ ! -e $resume -a ${resume#/dev/*/*} != $resume -a -e /sbin/lvchange ]; then
+	if [ ! -e $resume -a ${resume#/dev/*/*} != $resume -a -e /sbin/lvm ]; then
 		lvs $(mapper2lvm ${resume#/dev/}) >/dev/null 2>&1 || continue
 		echo "Activating LVM $resume"
 		lvchange -a ay $(mapper2lvm ${resume#/dev/})
@@ -103,7 +104,7 @@ while [[ "$root" && ($((i++)) -le 15 || "$cmdline" = *rootwait*) ]]; do
 	[ ${dev#/dev/md[0-9]} != $root -a -e /sbin/mdadm ] &&
 		echo "Scanning for mdadm RAID" &&
 		mdadm --assemble --scan
-	if [ ${root#/dev/*/*} != $root -a -e /sbin/lvchange ]; then
+	if [ ${root#/dev/*/*} != $root -a -e /sbin/lvm ]; then
 		lvs $(mapper2lvm ${root#/dev/}) >/dev/null 2>&1 || continue
 		echo "Activating LVM $root"
 		lvchange -a ay $(mapper2lvm ${root#/dev/})
@@ -140,8 +141,6 @@ while [[ "$root" && ($((i++)) -le 15 || "$cmdline" = *rootwait*) ]]; do
 	  fi
 	done
     fi
-
-  sleep 1
 done
 
 # PANICMARK
