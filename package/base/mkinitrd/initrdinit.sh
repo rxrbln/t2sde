@@ -70,10 +70,16 @@ while [ "$root" -a "$((i++))" -le 9 ]; do
 		echo "Activating LVM $resume" &&
 		lvchange -a ay $(mapper2lvm ${resume#/dev/})
 	
-	resume=`ls -lL $resume |
-		sed 's/[^ ]* *[^ t]* *[^ ]* *[^ ]* *\([0-9]*\), *\([0-9]*\) .*/\1:\2/'`
-	echo "Resuming from $resume"
-	echo "$resume" > /sys/power/resume
+	# only try to resume if the device does not have a swap signature
+	if [ -z "$(disktype $resume | sed  -n "/swap,/p")" ]; then
+		resume=`ls -lL $resume |
+		  sed 's/[^ ]* *[^ t]* *[^ ]* *[^ ]* *\([0-9]*\), *\([0-9]*\) .*/\1:\2/'`
+	
+		echo "Resuming from $resume"
+		echo "$resume" > /sys/power/resume
+		echo "Warning: Resume failed. Please check the kernel log for details."
+		resume=
+	fi
   fi
 
   if [ "$swap" ]; then
@@ -124,7 +130,7 @@ while [ "$root" -a "$((i++))" -le 9 ]; do
 			kill %1
 			boot $init "$@"
 		else
-			echo "Error: init ($init) does not exist!"
+			echo "Error: Init ($init) does not exist!"
 		fi
 		break 2
 	  fi
