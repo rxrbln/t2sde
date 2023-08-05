@@ -46,9 +46,9 @@ init="init= $cmdline" init=${init##*init=} init=${init%% *}
 swap="swap= $cmdline" swap=${swap##*swap=} swap=${swap%% *}
 resume="resume= $cmdline" resume=${resume##*resume=} resume=${resume%% *}
 
-# wait for and moutn root device, if specified
+# wait for and mount root device, if specified
 i=0
-while [ "$root" -a "$((i++))" -le 9 ]; do
+while [[ "$root" && ($((i++)) -le 15 || "$cmdline" = *rootwait*) ]]; do
   # only print once, for the 2nd iteration
   [ $i -eq 2 ] && echo "Waiting for $root ..."
 
