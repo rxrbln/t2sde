@@ -150,5 +150,5 @@ done
 # PANICMARK
 
 echo "No root or init, but we do not scream, debug shell:"
-kill %1
+#kill %1 # we leave udevd running for device hot-plug
 exec /bin/sh
