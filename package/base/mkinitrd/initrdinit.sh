@@ -116,8 +116,10 @@ while [[ -n "$root" && ($((i++)) -le 15 || "$cmdline" = *rootwait*) ]]; do
   if [ -e $root -o "$addr" ]; then
 	echo "Mounting $root on / $mountopt"
 	if [ -z "$addr" ]; then
-	  type -p cryptsetup >/dev/null && cryptsetup --disable-locks isLuks $root &&
-	          cryptsetup --disable-locks luksOpen $root root && root=/dev/mapper/root
+	  if type -p cryptsetup >/dev/null && cryptsetup --disable-locks isLuks $root; then
+	          cryptsetup --disable-locks luksOpen $root root &&
+			root=/dev/mapper/root || break
+	  fi
 
 	  # try best match / detected root first, all the others thereafter
 	  filesystems=`disktype $root 2>/dev/null |
@@ -140,6 +142,8 @@ while [[ -n "$root" && ($((i++)) -le 15 || "$cmdline" = *rootwait*) ]]; do
 		break 2
 	  fi
 	done
+
+	break
     fi
 done
 
