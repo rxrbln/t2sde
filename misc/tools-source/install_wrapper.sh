@@ -14,8 +14,6 @@ PATH="${PATH/:$INSTALL_WRAPPER_MYPATH:/:}"
 PATH="${PATH#$INSTALL_WRAPPER_MYPATH:}"
 PATH="${PATH%:$INSTALL_WRAPPER_MYPATH}"
 
-filter="${INSTALL_WRAPPER_FILTER:+|} $INSTALL_WRAPPER_FILTER"
-
 if [ "$INSTALL_WRAPPER_NOLOOP" = 1 ]; then
 	echo "--"
 	echo "Found loop in install_wrapper: $0 $*" >&2
@@ -30,7 +28,7 @@ logfile="${INSTALL_WRAPPER_LOGFILE:-/dev/null}"
 [ -z "${logfile##*/*}" -a ! -d "${logfile%/*}" ] && logfile=/dev/null
 
 command="${0##*/}"
-destination=""
+destination=
 declare -a sources
 newcommand="$command"
 sources_counter=0
@@ -78,8 +76,9 @@ done
 
 [ -z "${destination##/*}" ] || destination="$PWD/$destination"
 
-if [ "$filter" != " " ]; then
-	destination="$( eval "echo \"$destination\" | tr -s '/' $filter" )"
+if [ "$INSTALL_WRAPPER_FILTER" != "" ]; then
+	# normalize multiple / path separators to allow filters to just match
+	destination="$(eval "echo \"$destination\" | tr -s '/' | $INSTALL_WRAPPER_FILTER" )"
 fi
 
 if [ -z "$destination" -o $sources_counter -eq 0 ]; then
@@ -90,7 +89,8 @@ elif [ -d "$destination" ]; then
 		thisdest="${destination}"
 		[ ! -d "${source//\/\///}" ] && thisdest="$thisdest/${source##*/}"
 		thisdest="${thisdest//\/\///}"
-		[ "$filter" != " " ] && thisdest="$( eval "echo \"$thisdest\" $filter" )"
+		[ "$INSTALL_WRAPPER_FILTER" != "" ] &&
+			thisdest="$(eval "echo \"$thisdest\" | $INSTALL_WRAPPER_FILTER" )"
 		if [ ! -z "$thisdest" ]; then
 			echo "+ $newcommand $source $thisdest" >> $logfile
 			$newcommand "$source" "$thisdest" || error=$?
