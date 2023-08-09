@@ -46,11 +46,14 @@ fi
 
 while [ $# -gt 0 ]; do
     # split combined args
-    for a in `echo $1 | sed '/^-[^-]/ {s/^-//; s/\([^0-9-]\)/ -\1/g}'`; do
-	case "$a" in
+    case "$1" in
+	-*)
+	    # split combined args, like -m755
+	    for a in `echo $1 | sed '/^-[^-]/ {s/^-//; s/\([^0-9-]\)/ -\1/g}'`; do
+		case "$a" in
 		-g|-m|-o|-S|--group|--mode|--owner|--suffix)
 			newcommand="$newcommand $a $2"
-			shift 1
+			shift
 			;;
 		-s|--strip)
 			if [[ $command != *install ]]; then
@@ -63,15 +66,18 @@ while [ $# -gt 0 ]; do
 		-*)
 			newcommand="$newcommand $a"
 			;;
-		*)
-			if [ -n "$destination" ]; then
-				sources[sources_counter++]="$destination"
-			fi
-			destination="$a"
-			;;
-	esac
-    done
-    shift 1
+		esac
+	    done
+	    ;;
+
+	*)
+		if [ -n "$destination" ]; then
+			sources[sources_counter++]="$destination"
+		fi
+		destination="$1"
+		;;
+    esac
+    shift
 done
 
 [ -z "${destination##/*}" ] || destination="$PWD/$destination"
