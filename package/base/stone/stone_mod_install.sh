@@ -188,34 +188,38 @@ part_unmounted_action() {
 	[ "$type" = swsuspend ] && type="swap"
 
 	local cmd="gui_menu part $dev"
+	local active=1
+	[[ "$stype" = "lv" && "$(lvs -o active --noheadings /dev/$dev)" != *active ]] && active=
 
-	[ "$type" -a "$type" != "swap" -a "$type" != "crypto_LUKS" ] &&
+	if [ "$active" ]; then
+	  [ "$type" -a "$type" != "swap" -a "$type" != "crypto_LUKS" ] &&
 		cmd="$cmd \"Mount existing $type filesystem\" \"part_mount /dev/$dev\""
-	if [ "$type" = "crypto_LUKS" ]; then
+	  if [ "$type" = "crypto_LUKS" ]; then
 		cmd="$cmd \"Activate encrypted LUKS\" \"part_decrypt /dev/$dev\""
 		#cmd="$cmd \"Deactivate encrypted LUKS\" \"part_decrypt /dev/$dev\""
-	fi
+	  fi
 
-	[ "$type" = "swap" ] &&
+	  [ "$type" = "swap" ] &&
 		cmd="$cmd \"Activate existing swap space\" \"swapon /dev/$dev\""
 
-	cmd="$cmd \"Create filesystem\" \"part_mkfs /dev/$dev\""
-	cmd="$cmd \"Create swap space\" \"part_mkswap /dev/$dev\""
-	cmd="$cmd \"Encrypt using LUKS cryptsetup\" \"part_crypt /dev/$dev\""
+	  cmd="$cmd \"Create filesystem\" \"part_mkfs /dev/$dev\""
+	  cmd="$cmd \"Create swap space\" \"part_mkswap /dev/$dev\""
+	  cmd="$cmd \"Encrypt using LUKS cryptsetup\" \"part_crypt /dev/$dev\""
 
-	[ "$stype" != "lv" ] &&
+	  [ "$stype" != "lv" ] &&
 		cmd="$cmd \"Create physical LVM volume\" \"part_pvcreate /dev/$dev\""
+	fi
 
 	if [ "$stype" = "lv" ]; then
-		[[ "$(lvs -o active --noheadings /dev/$dev)" = *active ]] &&
+		[ "$active" ] &&
 		cmd="$cmd 'Deactivate logical LVM volume' 'lvchange -an /dev/$dev'" ||
 		cmd="$cmd 'Activate logical LVM volume' 'lvchange -ay /dev/$dev'"
 		cmd="$cmd \"Rename logical LVM volume\" \"lvm_rename ${dev#mapper/} lv\""
 		cmd="$cmd \"Remove logical LVM volume\" \"lvremove /dev/$dev\""
-	fi
-	[ "$type" = "LVM2_member" ] &&
-		cmd="$cmd 'Add physical LVM volume to volume group' 'vg_add_pv /dev/$dev'" &&
+	elif [ "$type" = "LVM2_member" ]; then
+		cmd="$cmd 'Add physical LVM volume to volume group' 'vg_add_pv /dev/$dev'"
 		cmd="$cmd 'Remove physical LVM volume' 'pvremove /dev/$dev'"
+	fi
 
 	eval $cmd
 }
