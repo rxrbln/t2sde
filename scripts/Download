@@ -270,24 +270,21 @@ echo_warn() {
 
 # Autodetect best Mirror and safe url in $mirror
 #
+info=
 detect_mirror() {
     if [ -f download/Mirror-Cache ]; then
-	[ "$quietmirror" != 1 ] &&
-	echo_info "To force a new mirror auto-detection, remove: download/Mirror-Cache"
 	read mirror mirrorver < download/Mirror-Cache
 	mirror=${mirror:-none}
 	if [ "$mirror" = "none" ]; then
 		[ "$quietmirror" != 1 ] &&
 		echo_info "Found download/Mirror-Cache: none" \
-			"(use the original download locations)"
+			"(using original download locations)"
 		return
 	elif [ "$mirrorver" != "$sdever" -a "$mirrorver" != "any" ]; then
 		echo_warn "Cached mirror URL in download/Mirror-Cache is outdated."
 	else
-		if [ "$quietmirror" != 1 ]; then
-		echo_info "Found cached mirror URL in download/Mirror-Cache:"
-		echo_info "$mirror"
-		fi
+		[ "$quietmirror" != 1 ] && var_append info "
+" "Found cached mirror: $mirror"
 		return
 	fi
     fi
@@ -316,7 +313,7 @@ detect_mirror() {
 			xval=`echo ${val#ok } | tr -d .,`; echo " $val B/s"
 			if [ "$xval" -gt "$bestval" ]; then
 				bestval=$xval mirror="${mirror_url%/}"
-				result="Using: <$mirror>"
+				result="Saving mirror $mirror (src/Mirror-Cache)"
 			fi
 		fi
 
@@ -353,7 +350,7 @@ download_file() {
 		echo "Found $lkfile -> skip download."
 		return 0
 	fi
-	trap 'rm -f "$lkfile"' INT
+	trap 'local ret=$?; rm -f "$lkfile"; return $ret' INT
 	echo $$ > "$lkfile"
 
 	# Check if we only like to test the cksum(s)
@@ -361,21 +358,22 @@ download_file() {
 	if [ $checkonly = 1 ]; then
 		if [ ! -f "$gzfile" ]; then
 			echo "File missing: $gzfile"
-			rm -f "$lkfile"; trap INT; return 1
+			rm -f "$lkfile"; trap INT; downloaderror=1; return
 		fi
 		if [ -z "${cksum##X*}" ]; then
 			echo "No checksum (ignore): $gzfile"
-			rm -f "$lkfile"; trap INT; return 1
+			rm -f "$lkfile"; trap INT; return
 		fi
 		if [ "$cksum" = 0 ]; then
 			echo "No checksum (missing): $gzfile"
-			rm -f "$lkfile"; trap INT; return 1
+			rm -f "$lkfile"; trap INT; return
 		fi
 
 	elif [ -s "$gzfile" ]; then
 		echo; echo "Already downloaded: $pkg:$gzfile"
 
 	else
+		[ "$info" ] && echo_info "$info" && info=
 		echo; echo "Downloading $pkg:$gzfile"
 
 		# Existing *.cksum-err
@@ -388,7 +386,7 @@ download_file() {
 			echo "ERROR: incorrect checksum. Remove the" \
 			     "*.cksum-err file to force a"
 			echo "ERROR: new download of that file."
-			rm -f "$lkfile"; trap INT; return 1
+			rm -f "$lkfile"; trap INT; downloaderror=1; return 1
 		fi
 
 		# Existing *.extck-err
@@ -401,7 +399,7 @@ download_file() {
 			echo "ERROR: did not match it's filename extension." \
 			     "Remove the *.extck-err file"
 			echo "ERROR: to force a new download of that file."
-			rm -f "$lkfile"; trap INT; return 1
+			rm -f "$lkfile"; trap INT; downloaderror=1; return 1
 		fi
 
 		# Questionable URL
@@ -452,7 +450,7 @@ download_file() {
 		    if [ -n "$mirror" -a "$mirror" != "none" -a -z "${gzfile##download/mirror/*}" ]; then
 			# try to use mirror
 			if ! download_file_now "!$mirror/${gzfile#download/mirror/}" $gzfile; then
-				echo "INFO: download from mirror failed, trying original URL."
+				echo "INFO: Download from mirror failed, trying original URL."
 				download_file_now "$location" $gzfile || downloaderror=1
 			else
 				gzfile="$gzfile"
@@ -472,11 +470,11 @@ download_file() {
 	if [[ $gzfile = *.gpg ]]; then
 		gzfile=${gzfile%.gpg}
 		if [ -f $gzfile.gpg ]; then
-			echo "unsigning GnuPG file: $gzfile.gpg"
+			echo "Unsigning GnuPG file: $gzfile.gpg"
 			gpg $gzfile.gpg
 		fi
 		if [ ! -f $gzfile ]; then
-			echo "unsigning failed"
+			echo "Unsigning failed"
 			rm -f "$lkfile"; trap INT; return 1
 		fi
 	fi
@@ -511,6 +509,7 @@ download_file() {
 		# Convert a .xz to .bz2 and test checksum
 		*.xz)
 			xzcat < "$gzfile" > src/down.$$.dat
+			cksum_chk src/down.$$.dat $cksum "$gzfile" || downloaderror=1
 			rm -f src/down.$$.dat
 			;;
  		# Convert a .bz2 to .bz2 and test checksum
@@ -593,47 +592,41 @@ download_file_now() {
 		[ -s download/Translations ] && trfile=download/Translations || trfile=misc/share/DownloadTranslations
 		trurl="$(echo "$url" | sed -f $trfile)"
 		if [ -n "$trurl" -a "$trurl" != "$url" ]; then
-			echo "INFO: url translated."
+			echo "INFO: URL translated."
 			url="$trurl"
 		fi
 		unset trurl trfile
 
-		curl -w '\rFinished downloading %{size_download} bytes in %{time_total} seconds (%{speed_download} bytes/sec). \n' --progress-bar $resume $curl_options "$url" -o "$gzfile.incomplete"
+		curl -w '\rFinished downloading %{size_download} bytes in %{time_total} seconds (%{speed_download} bytes/sec).\n' --progress-bar $resume $curl_options "$url" -o "$gzfile.incomplete"
 		curlret="$?"
 
 		if [ "$resume" ] &&
 		   [ $curlret -eq 33 -o $curlret -eq 36 ]; then
-		    echo "INFO: Resuming download not possible. ->" \
-		         "Overwriting old file."
+		    echo "INFO: Resuming download not possible. -> Overwriting old file."
 		    rm -f "$gzfile.incomplete"
-		    curl -w '\rFinished downloading %{size_download} bytes in %{time_total} seconds (%{speed_download} bytes/sec). \n' --progress-bar $curl_options "$url" -o "$gzfile.incomplete"
+		    curl -w '\rFinished downloading %{size_download} bytes in %{time_total} seconds (%{speed_download} bytes/sec).\n' --progress-bar $curl_options "$url" -o "$gzfile.incomplete"
 		    curlret="$?"
 		fi
 
 		if [ $curlret -ne 0 ]; then
 		    case "$curlret" in
 		      18)
-		      echo "WARNING: Got only some of the" \
-			   "file. A re-run of $0"
-		      echo "WARNING: is required to complete" \
-			   "the download." ;;
+		      echo "WARNING: Got only some of the file. A re-run of $0"
+		      echo "WARNING: is required to complete the download." ;;
+		      22) : ;; # 404 not found
 		      130)
 		      echo -e '\rWARNING: CURL got a SIGINT' \
 			   "(someone pressed Ctrl-C). A re-run of"
-		      echo "WARNING: $0 is required to complete" \
-			   "the download."; sleep 1 ;;
+		      echo "WARNING: $0 is required to complete the download."; sleep 1 ;;
 		      *)
 		      echo "$curlret $gzfile $url" \
 					>> src/Download-Errors
-		      echo -e '\rERROR: CURL Returned Error' \
-			   "$curlret. Please read" \
-			   "the curl manpage." ;;
+		      echo -e "\rERROR: CURL Returned error: $curlret" ;;
 		    esac
 		    return 1
 		elif [ ! -s "$gzfile.incomplete" ]; then
 		    echo "0 $gzfile $url" >> src/Download-Errors
-		    echo "ERROR: CURL returned success but" \
-		         "we have no data!"
+		    echo "ERROR: CURL returned success but we have no data!"
 		    curlret=1
 		else
 		    case "$gzfile" in
@@ -745,9 +738,7 @@ download_file_now() {
 			return 1
 		fi
 
-		echo `du -sh 2> /dev/null | \
-			cut -f1` 'downloaded from archive (download finished).'
-
+		echo `du -sh 2> /dev/null | cut -f1` 'downloaded from archive (download finished).'
 
 		if [ `echo * | wc -w` -gt 1 ]; then
 			# multi-module module
@@ -875,10 +866,10 @@ all() {
 }
 
 package() {
-	pkg="$1"
+	local pkg="$1"
 	detect_confdir # relies on $pkg being set
 	if [ ! "$confdir" ]; then
-		echo "Package $pkg not found!"
+		echo "Error: Package $pkg not found!"
 		downloaderror=1
 		return 1
 	fi
@@ -939,7 +930,7 @@ if [ "${1:0:5}" != "-list" -a $checkonly = 0 ]; then
 		if [ "$proxy" ]; then
 			curl_options="$curl_options --proxy $proxy"
 		else
-			echo "INFO: No proxy information, removing download/Proxy."
+			echo "INFO: No proxy information, removing: download/Proxy"
 			rm download/Proxy
 		fi
 	fi
@@ -949,7 +940,7 @@ if [ "${1:0:5}" != "-list" -a $checkonly = 0 ]; then
 			curl_options="$curl_options --proxy-user $proxyauth"
 			git_options="-c http.proxy=http://$proxyauth@$proxy"
 		else
-			echo "INFO: No proxy-auth information, removing download/Proxy-auth."
+			echo "INFO: No proxy-auth information, removing: download/Proxy-auth"
 			rm download/Proxy-auth
  		fi
  	fi
@@ -966,7 +957,7 @@ if [ "${1:0:5}" != "-list" -a $checkonly = 0 ]; then
 		# am i using a proxy?
 		# -- say i'm doing it even when i already did;-)
 		if [ "$proxy" ]; then
-			echo "INFO: Setting proxy to $proxy."
+			echo "INFO: Setting proxy to: $proxy"
 		fi
 		if [ "$proxyauth" ]; then
 			echo "INFO: Setting proxy authentication information."
