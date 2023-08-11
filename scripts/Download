@@ -338,16 +338,14 @@ download_file() {
 	local gzfile="$1" location="$2" cksum="$3" repo="$4" pkg="$5"
 	# Make src directory for creating tar balls
 	mkdir -p src/
-	# Tarball file name:
-	bzfile="`bz2filename "$gzfile"`"
 	# Remove optional '-' prefix from $location
 	[ "${location:0:1}" == '-' ] && location="${location:1}"
 	# Lock file name:
-	lkfile="src/down.lockfile.`echo $bzfile | tr / -`"
+	lkfile="src/down.lockfile.`echo $gzfile | tr / -`"
 
 	# Check if it's already there
 	#
-	[ -s "$bzfile" -a $checkonly != 1 ] && return 0
+	[ -s "$gzfile" -a $checkonly != 1 ] && return 0
 
 	# Make locking
 	#
@@ -361,17 +359,16 @@ download_file() {
 	# Check if we only like to test the cksum(s)
 	#
 	if [ $checkonly = 1 ]; then
-		gzfile="$bzfile"
-		if [ ! -f "$bzfile" ]; then
-			echo "File missing: $bzfile"
+		if [ ! -f "$gzfile" ]; then
+			echo "File missing: $gzfile"
 			rm -f "$lkfile"; trap INT; return 1
 		fi
 		if [ -z "${cksum##X*}" ]; then
-			echo "No checksum (ignore): $bzfile"
+			echo "No checksum (ignore): $gzfile"
 			rm -f "$lkfile"; trap INT; return 1
 		fi
 		if [ "$cksum" = 0 ]; then
-			echo "No checksum (missing): $bzfile"
+			echo "No checksum (missing): $gzfile"
 			rm -f "$lkfile"; trap INT; return 1
 		fi
 
@@ -423,50 +420,46 @@ download_file() {
 
 		# Make directory (if required)
 		#
-		if [ ! -d `dirname "$bzfile"` ]; then
-			mkdir -p `dirname "$bzfile"`
+		if [ ! -d `dirname "$gzfile"` ]; then
+			mkdir -p `dirname "$gzfile"`
 		fi
 		
 		# Alternative Directory
 		#
 		if [ "$altdir" ]; then
-		    altfile=$(find $altdir/ -name `basename $bzfile` | head -n 1)
+		    altfile=$(find $altdir/ -name `basename $gzfile` | head -n 1)
 		else
 		    altfile=""
 		fi
 
 		if [ "$altfile" ]; then
 
-			echo "Found `basename $bzfile` as: $altfile"
+			echo "Found `basename $gzfile` as: $altfile"
 			if [ "$altcopy" = 'link' ]; then
-				cp -lv $altfile $bzfile
+				cp -lv $altfile $gzfile
 			elif [ "$altcopy" = 'copy' ]; then
-				cp -v $altfile $bzfile
+				cp -v $altfile $gzfile
 			elif [ "$altcopy" = 'move' ]; then
-				mv -v $altfile $bzfile
+				mv -v $altfile $gzfile
 			fi
-			gzfile="$bzfile"
+			gzfile="$gzfile"
 
 		else
 		    # Mirroring
 		    #
 		    read mirror mirrorver < download/Mirror-Cache
 
-		    if [ -n "$mirror" -a "$mirror" != "none" -a -z "${bzfile##download/mirror/*}" ]; then
+		    if [ -n "$mirror" -a "$mirror" != "none" -a -z "${gzfile##download/mirror/*}" ]; then
 			# try to use mirror
-
-			if ! download_file_now "!$mirror/${bzfile#download/mirror/}" $bzfile $bzfile; then
+			if ! download_file_now "!$mirror/${gzfile#download/mirror/}" $gzfile; then
 				echo "INFO: download from mirror failed, trying original URL."
-				download_file_now "$location" $gzfile $bzfile \
-					|| downloaderror=1
-	
+				download_file_now "$location" $gzfile || downloaderror=1
 			else
-				gzfile="$bzfile"
+				gzfile="$gzfile"
 			fi
 		    else
 			# don't want to use mirror
-			download_file_now "$location" $gzfile $bzfile \
-				downloaderror=1
+			download_file_now "$location" $gzfile downloaderror=1
 		    fi
 		fi
 
@@ -488,77 +481,56 @@ download_file() {
 		fi
 	fi
 
+	echo "Checksum testing: $gzfile"
 	case "$gzfile" in
 		# Convert a .gz to .bz2 and test checksum
 		#
 		*.gz|*.tgz)
-			echo "compressing gzip file + cksum-test: $gzfile"
 			gunzip < "$gzfile" > src/down.$$.dat
-			if cksum_chk src/down.$$.dat $cksum "$gzfile"; then
-				$compressor < src/down.$$.dat > "$bzfile"; rm -f "$gzfile"
-			fi
+			cksum_chk src/down.$$.dat $cksum "$gzfile" || downloaderror=1
 			rm -f src/down.$$.dat
 			;;
 		# Convert a .lzip to .bz2 and test checksum
 		#
 		*.lz|*.tlz)
-			echo "compressing lzip file + cksum-test: $gzfile"
 			lzip -d < "$gzfile" > src/down.$$.dat
-			if cksum_chk src/down.$$.dat $cksum "$gzfile"; then
-				$compressor < src/down.$$.dat > "$bzfile"; rm -f "$gzfile"
-			fi
+			cksum_chk src/down.$$.dat $cksum "$gzfile" || downloaderror=1
 			rm -f src/down.$$.dat
 			;;
 		# Compress plain .tar .gz to .bz2 and test checksum
 		#
 		*.tar)
-			echo "compressing tar file + cksum-test: $gzfile"
-			if cksum_chk "$gzfile" $cksum "$gzfile"; then
-				$compressor < "$gzfile" > "$bzfile"; rm -f "$gzfile"
-			fi
+			cksum_chk "$gzfile" $cksum "$gzfile"
 			;;
 		# Convert a .Z to .bz2 and test checksum
 		*.Z)
-			echo "compressing Z file + cksum-test: $gzfile"
 			uncompress < "$gzfile" > src/down.$$.dat
-			if cksum_chk src/down.$$.dat $cksum "$gzfile"; then
-				$compressor < src/down.$$.dat > "$bzfile"; rm -f "$gzfile"
-			fi
+			cksum_chk src/down.$$.dat $cksum "$gzfile" || downloaderror=1
 			rm -f src/down.$$.dat
 			;;
 		# Convert a .xz to .bz2 and test checksum
 		*.xz)
-			echo "compressing xz file + cksum-test: $gzfile"
 			xzcat < "$gzfile" > src/down.$$.dat
-			if cksum_chk src/down.$$.dat $cksum "$gzfile"; then
-				$compressor < src/down.$$.dat > "$bzfile"; rm -f "$gzfile"
-			fi
 			rm -f src/down.$$.dat
 			;;
  		# Convert a .bz2 to .bz2 and test checksum
 		*.bz2|*.tbz2|.tbz)
-			echo "compressing bzip2 file + cksum-test: $gzfile"
 			bzcat < "$gzfile" > src/down.$$.dat
-			if cksum_chk src/down.$$.dat $cksum "$gzfile"; then
-				$compressor < src/down.$$.dat > "$bzfile"; rm -f "$gzfile"
-			fi
+			cksum_chk src/down.$$.dat $cksum "$gzfile" || downloaderror=1
 			rm -f src/down.$$.dat
 			;;
 		# Execute a cksum test on a zstd file
 		#
 		*.zstd|*.zst|*.tzst)
-			echo "cksum-test (zstd): $bzfile"
 			if [ $nocheck = 0 ]; then
-				zstdcat < "$bzfile" > src/down.$$.dat
-				cksum_chk src/down.$$.dat $cksum "$bzfile" \
-					|| downloaderror=1
+				zstdcat < "$gzfile" > src/down.$$.dat
+				cksum_chk src/down.$$.dat $cksum "$gzfile" || downloaderror=1
 			fi
 			rm -f src/down.$$.dat
 			;;
 		# Execute a cksum test on a raw data file
 		#
 		*)
-			echo "cksum-test (raw): $gzfile"
 			cksum_chk "$gzfile" $cksum "$gzfile" || downloaderror=1
 			;;
 	esac
@@ -568,12 +540,12 @@ download_file() {
 	rm -f "$lkfile"; trap INT; return 0
 }
 
-# download_file_now location remote_filename local_filename
+# download_file_now location filename
 #
 # This function executes the actual download using curl.
 #
 download_file_now() {
-	local location="$1" gzfile="$2" bzfile="$3" curlret=0
+	local location="$1" gzfile="$2" curlret=0
 
 	# Create URL
 	#
@@ -606,10 +578,8 @@ download_file_now() {
 			return 1
 		fi
 
-		# I am too lazy to do the copy and conversion myself,
-		# so I use this function again with a modified
-		# download location.
-		download_file_now "$location" $gzfile $bzfile
+		# Re-use this function with a modified download location.
+		download_file_now "$location" $gzfile
 		return $?
 		;;
 	http://*|https://*|ftp://*|file://*)
@@ -755,7 +725,7 @@ download_file_now() {
 				;;
 		esac
 
-		cvsdir="src/down.${protocol}dir.`echo $bzfile | tr / -`"
+		cvsdir="src/down.${protocol}dir.`echo $gzfile | tr / -`"
 		saved_pwd=$PWD; mkdir -p $cvsdir; cd $cvsdir
 
 		echo "$cmdline"
@@ -792,7 +762,7 @@ download_file_now() {
 		fi
 
 		cd `dirname $module`
-		tarname="`basename $bzfile`"
+		tarname="`basename $gzfile`"
 		echo "Preparing files for final tarball."
 		[ -n "$cmdpp" ] && eval "$cmdpp"
 		find -type d \( -name CVS -o -name .svn -o -name .git -o -name .hg \) | xargs rm -rf
@@ -801,7 +771,7 @@ download_file_now() {
 			find `basename $module` | xargs touch -t 200001010000
 			tar --owner root --group root \
 			    -c `basename $module` | $compressor > $tarname
-			mv $tarname $saved_pwd/$bzfile
+			mv $tarname $saved_pwd/$gzfile
 		else
 			echo "Too few files - assuming checkout failure."
 			curlret=1
@@ -841,7 +811,7 @@ list() {
 
 list_unknown() {
 	trap '' INT
-	mkdir -p src/; list | bz2filename > src/down.$$.lst
+	mkdir -p src/; list > src/down.$$.lst
 	ls download/{Proxy,Proxy-auth,Me,Mirror-Cache} \
 	   download/mirror/{README,DOWNTEST,LAST-UPDATE} \
 						>> src/down.$$.lst 2> /dev/null
@@ -855,7 +825,7 @@ list_unknown() {
 
 list_missing() {
 	trap '' INT
-	list | bz2filename | \
+	list |
 	while read fn; do
 		[ -f "$fn" ] || echo "$fn"
 	done
