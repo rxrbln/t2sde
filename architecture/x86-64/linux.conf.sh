@@ -75,6 +75,7 @@
 		CONFIG_INTEL_IOMMU=y
 		CONFIG_INTEL_IOMMU_SVM=y
 		CONFIG_HYPERV_IOMMU_SVM=y
+		CONFIG_XEN_VIRTIO=y
 		CONFIG_IOMMU_DEFAULT_PASSTHROUGH=y
 
 		dnl Support for latest low level clocks, gpio, and i2c glue
