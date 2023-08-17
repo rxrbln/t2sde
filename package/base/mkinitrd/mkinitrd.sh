@@ -90,8 +90,8 @@ if [ ! -d $moddir ]; then
 	moddir=""
 fi
 
-sysmap=""
-[ -f "$root/boot/System.map-$kernelver" ] && sysmap="$root/boot/System.map-$kernelver"
+sysmap="$root/boot/System.map-$kernelver"
+[ -f "$sysmap" ] || sysmap=
 
 if [ -z "$sysmap" ]; then
 	echo "System.map-$kernelver not found!"
