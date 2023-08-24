@@ -45,6 +45,7 @@ root="root= $cmdline" root=${root##*root=} root=${root%% *}
 init="init= $cmdline" init=${init##*init=} init=${init%% *}
 swap="swap= $cmdline" swap=${swap##*swap=} swap=${swap%% *}
 resume="resume= $cmdline" resume=${resume##*resume=} resume=${resume%% *}
+mountopt="ro"
 
 # wait for and mount root device, if specified
 i=0
@@ -90,8 +91,6 @@ while [[ -n "$root" && ($((i++)) -le 15 || "$cmdline" = *rootwait*) ]]; do
 	swapon $swap && swap=
   fi
 
-  mountopt="ro"
-
   # diskless network root?
   addr="${root%:*}"
   if [ "$addr" != "$root" ]; then
@@ -112,10 +111,9 @@ while [[ -n "$root" && ($((i++)) -le 15 || "$cmdline" = *rootwait*) ]]; do
     fi
   fi
 
-
   if [ -e $root -o "$addr" ]; then
 	echo "Mounting $root on / $mountopt"
-	if [ -z "$addr" ]; then
+	if [ -z "$filesystems" ]; then
 	  if type -p cryptsetup >/dev/null && cryptsetup --disable-locks isLuks $root; then
 	          cryptsetup --disable-locks luksOpen $root root &&
 			root=/dev/mapper/root || break
