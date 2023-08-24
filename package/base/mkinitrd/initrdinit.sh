@@ -95,8 +95,8 @@ while [[ -n "$root" && ($((i++)) -le 15 || "$cmdline" = *rootwait*) ]]; do
   # diskless network root?
   addr="${root%:*}"
   if [ "$addr" != "$root" ]; then
-    mountopt="$mountopt,nolock,port=2049,mountport=32790,vers=4,addr=$addr"
-    filesystems="nfs"
+    root="${root#$addr}" filesystems="nfs"
+    mountopt="vers=4,addr=$addr,$mountopt"
     ipconfig eth0
   else
     unset addr
