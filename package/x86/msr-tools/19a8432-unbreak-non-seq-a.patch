@@ -1,0 +1,82 @@
+From f2502a1201e95171265dfd707d3869e5f30ad01e Mon Sep 17 00:00:00 2001
+From: Kanoj Sarcar <kanoj@google.com>
+Date: Fri, 11 Mar 2016 14:50:59 -0800
+Subject: [PATCH] Fix -a option for rdmsr/wrmsr. Current Linux creates /dev/cpu
+ files for non existant CPU's that trips up the "all" handling on the first
+ encountered error.
+
+---
+ rdmsr.c | 9 ++++++++-
+ wrmsr.c | 4 ++++
+ 2 files changed, 12 insertions(+), 1 deletion(-)
+
+diff --git a/rdmsr.c b/rdmsr.c
+index d3e3c22..d1acca5 100644
+--- a/rdmsr.c
++++ b/rdmsr.c
+@@ -50,6 +50,7 @@ static const struct option long_options[] = {
+ 	{0, 0, 0, 0}
+ };
+ static const char short_options[] = "hVxXdoruc0ap:f:";
++static int doing_for_all = 0;
+ 
+ /* Number of decimal digits for a certain number of bits */
+ /* (int) ceil(log(2^n)/log(10)) */
+@@ -196,6 +197,7 @@ int main(int argc, char *argv[])
+ 	reg = strtoul(argv[optind], NULL, 0);
+ 
+ 	if (cpu == -1) {
++		doing_for_all = 1;
+ 		rdmsr_on_all_cpus(reg);
+ 	}
+ 	else
+@@ -216,6 +218,8 @@ void rdmsr_on_cpu(uint32_t reg, int cpu)
+ 	fd = open(msr_file_name, O_RDONLY);
+ 	if (fd < 0) {
+ 		if (errno == ENXIO) {
++			if (doing_for_all)
++				return;
+ 			fprintf(stderr, "rdmsr: No CPU %d\n", cpu);
+ 			exit(2);
+ 		} else if (errno == EIO) {
+@@ -350,7 +354,10 @@ void rdmsr_on_cpu(uint32_t reg, int cpu)
+ 	if (width < 1)
+ 		width = 1;
+ 
+-	if (pat)
++	if (pat) {
++		if (doing_for_all)
++			printf("CPU %d: ", cpu);
+ 		printf(pat, width, data);
++	}
+ 	return;
+ }
+diff --git a/wrmsr.c b/wrmsr.c
+index 8a601b9..af16a8d 100644
+--- a/wrmsr.c
++++ b/wrmsr.c
+@@ -39,6 +39,7 @@ static const struct option long_options[] = {
+ 	{0, 0, 0, 0}
+ };
+ static const char short_options[] = "hVap:";
++static int doing_for_all = 0;
+ 
+ const char *program;
+ 
+@@ -123,6 +124,7 @@ int main(int argc, char *argv[])
+ 	reg = strtoul(argv[optind++], NULL, 0);
+ 
+ 	if (cpu == -1) {
++		doing_for_all = 1;
+ 		wrmsr_on_all_cpus(reg, argc - optind, &argv[optind]);
+ 	} else {
+ 		wrmsr_on_cpu(reg, cpu, argc - optind, &argv[optind]);
+@@ -141,6 +143,8 @@ void wrmsr_on_cpu(uint32_t reg, int cpu, int valcnt, char *regvals[])
+ 	fd = open(msr_file_name, O_WRONLY);
+ 	if (fd < 0) {
+ 		if (errno == ENXIO) {
++			if (doing_for_all)
++				return;
+ 			fprintf(stderr, "wrmsr: No CPU %d\n", cpu);
+ 			exit(2);
+ 		} else if (errno == EIO) {
