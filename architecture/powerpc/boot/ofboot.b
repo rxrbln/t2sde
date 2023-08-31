@@ -6,7 +6,6 @@ MacRISC MacRISC3 MacRISC4
 T2 SDE
 </DESCRIPTION>
 <BOOT-SCRIPT>
-" screen" output
 load-base release-load-area
 boot &device;:,\grub
 </BOOT-SCRIPT>
