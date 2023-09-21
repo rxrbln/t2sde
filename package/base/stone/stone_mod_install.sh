@@ -470,13 +470,19 @@ disk_add() {
 	local x found=0
 	cmd="$cmd 'Edit partition table of $1:' 'disk_action $1'"
 
-	if type -p nvme > /dev/null; then
-		local fmt=$(nvme id-ns -H /dev/$1 2>/dev/null | grep -q "LBA Format.*4096")
-		[[ "$fmt" && "$fmt" != *in\ use* ]] &&
-			cmd="$cmd 'Warning: likely not formatted AF/4Kn for best performance!' ''"
-		# TODO: "Warning: formated w/ unsupported sector size (520)!"
+	local lbs=$(< /sys/block/$1/queue/logical_block_size)
+	local pbs=$(< /sys/block/$1/queue/physical_block_size)
+
+	if [ "$lbs" = 512 -a "$pbs" != 4096 ] && type -p nvme >/dev/null; then
+		nvme id-ns -H /dev/$1 2>/dev/null | grep -q "LBA Format.*4096" &&
+			pbs=4096
 	fi
-	
+
+	[ "$lbs" = 512 -a "$pbs" = 4096 ] &&
+		cmd="$cmd 'Warning: likely not formatted AF/4Kn for best performance!' ''"
+	[ "$lbs" != 512 -a "$lbs" != 4096 ] &&
+		cmd="$cmd 'Warning: formated w/ unsupported sector size ($lbs)!' ''"
+
 	# TODO: maybe better /sys/block/$1/$1* ?
 	for x in $(cd /dev; ls $1[0-9p]* 2> /dev/null)
 	do
