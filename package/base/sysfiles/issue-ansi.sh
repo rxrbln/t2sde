@@ -32,6 +32,7 @@ cat > etc/issue.ansi << EOT
 [39C[0m[31m[1mDate[0m[0m:[0m \d[0m 
 [39C[0m[31m[1mTime[0m[0m:[0m \t[0m 
 [39C[0m[31m[1mUsers[0m[0m:[0m \U online[0m 
-
 [?25h[?7h
+
+
 EOT
