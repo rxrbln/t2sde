@@ -27,13 +27,14 @@ Historically we adapted SVN when it was state of the art. Currently
 we mirror to Git for user's convenience and might switch to it as
 primary repository in the future.
 
-# Feature issue bounties
+# Feature & bug bounties
 
 In 2021 René Rebe's https://exactcode.com started a feature bounty
 program! At the time of writing paying out 10€ for bounty-S, 25€ for
 bounty-M, 50€ for bounty-L and 100€ for bounty-XL feature requests
-issues marked so by "rxrbln". Additionally one binary Euro (2.56€)
-may be eligible for any other bug filled by the T2 creator.
+issues marked so by "rxrbln". Additionally, since autumn 2023 one
+binary Euro (2.56€) may be eligible for any other bug filled by the
+T2 creator.
 
 The provided patch or pull request must be reasonable clean code and
 reproducible (at least mostly) build and work. Successful bounties are
