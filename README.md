@@ -30,11 +30,15 @@ primary repository in the future.
 # Feature issue bounties
 
 In 2021 René Rebe's https://exactcode.com started a feature bounty
-program, at the time of writing paying out 10€ for bounty-S, 20€ for
-bounty-M, 40€ for bounty-L and 100€ for bounty-XL feature requests
-issues marked so by "rxrbln". The provided patch or pull request must
-be reasonable clean code and reproducible (at least mostly) build and
-work. Payout thru normal means like PayPal or wire transfer in the EU.
+program! At the time of writing paying out 10€ for bounty-S, 25€ for
+bounty-M, 50€ for bounty-L and 100€ for bounty-XL feature requests
+issues marked so by "rxrbln". Additionally one binary Euro (2.56€)
+may be eligible for any other bug filled by the T2 creator.
+
+The provided patch or pull request must be reasonable clean code and
+reproducible (at least mostly) build and work. Successful bounties are
+paid out thru PayPal or -if preferred, and reasoable for the amount-
+wire transfer within the EU.
 
 https://github.com/rxrbln/t2sde/issues?q=is%3Aopen+is%3Aissue+author%3Arxrbln+label%3Abounty-M+
 
