@@ -41,7 +41,7 @@ reproducible (at least mostly) build and work. Successful bounties are
 paid out thru PayPal or -if preferred, and reasoable for the amount-
 wire transfer within the EU.
 
-https://github.com/rxrbln/t2sde/issues?q=is%3Aopen+is%3Aissue+author%3Arxrbln+label%3Abounty-M+
+https://github.com/rxrbln/t2sde/issues?q=is%3Aopen+is%3Aissue+author%3Arxrbln
 
 # History
 
