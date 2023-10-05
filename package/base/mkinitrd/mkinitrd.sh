@@ -165,7 +165,7 @@ if [ "$moddir" ]; then
 			echo -n ", $fn"
 			cp -af "$root$fn" "$dir/"
 			# TODO: copy source if symlink
-			[ -f "$tmpdir$fn" ] && $compressor --rm -f --quiet "$tmpdir$fn"
+			[ -f "$tmpdir$fn" ] && $compressor --rm -f --quiet "$tmpdir$fn" &
 		    fi
 		done
 		echo
@@ -178,7 +178,7 @@ if [ "$moddir" ]; then
 	if [ -z "$skipped" ]; then
 	    mkdir -p `dirname ./$xt` # TODO: use builtin?
 	    cp -af $x $tmpdir$xt
-	    $compressor --rm -f --quiet $tmpdir$xt
+	    $compressor --rm -f --quiet $tmpdir$xt &
 
 	    # add it's deps, too
 	    for fn in `$modinfo -F depends $x | sed 's/,/ /g'`; do
@@ -196,6 +196,8 @@ if [ "$moddir" ]; then
   while read fn; do
 	add_depend "$fn"
   done
+
+  wait
  ) | fold -s; echo
 
  # generate map files
