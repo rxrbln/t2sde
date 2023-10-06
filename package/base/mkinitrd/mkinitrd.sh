@@ -220,12 +220,12 @@ cp -ar $root/etc/modprobe.* $root/etc/ld-* $tmpdir/etc/ 2>/dev/null || true
 cp -a $root/lib/udev/{ata,scsi,cdrom}_id $tmpdir/lib/udev/
 
 elf_magic () {
-	readelf -h "$1" | grep 'Machine\|Class'
+	readelf -h "$1" 2>/dev/null | grep 'Machine\|Class'
 }
 
 # copy dynamic libraries, and optional plugins, if any.
 #
-if [ "$minimal" = 1 ]; then
+if [ "$minimal" ]; then
 	extralibs="`ls $root/lib*/{libdl,libncurses.so}* 2>/dev/null || true`"
 else
 	# glibc only
@@ -235,7 +235,7 @@ fi
 copy_dyn_libs () {
 	local magic
 	# we can not use ldd(1) as it loads the object, which does not work on cross builds
-	for lib in $extralibs `readelf -de $1 |
+	for lib in $extralibs `readelf -de $1 2>/dev/null |
 		sed -n -e 's/.*Shared library.*\[\([^]\]*\)\]/\1/p' \
 		       -e 's/.*Requesting program interpreter: \([^]]*\)\]/\1/p'`
 	do
@@ -250,10 +250,11 @@ copy_dyn_libs () {
 			if [ -e $libdir$lib ]; then
 			    [ ! -L $libdir$lib -a "$magic" != "$(elf_magic $libdir$lib)" ] && continue
 			    xlibdir=${libdir#$root}
-			    echo "	${1#$root} NEEDS $xlibdir$lib"
 
-			    if [ "${added["$xlibdir$lib"]}" != 1 ]; then
+			    if [ -z "${added["$xlibdir$lib"]}" ]; then
 				added["$xlibdir$lib"]=1
+
+				echo "	${1#$root} NEEDS $xlibdir$lib"
 
 				mkdir -p ./$xlibdir
 				while local x=`readlink $libdir$lib`; [ "$x" ]; do
@@ -288,7 +289,7 @@ done
 
 # setup optional programs
 #
-[ "$minimal" != 1 ] &&
+[ -z "$minimal" ] &&
 for x in $root/sbin/{insmod,blkid,lvm,vgchange,lvchange,vgs,lvs,mdadm} \
 	 $root/usr/sbin/{cryptsetup,cache_check,ipconfig} $root/usr/embutils/{dmesg,swapon}
 do
