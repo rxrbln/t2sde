@@ -131,16 +131,16 @@ if [ "$moddir" ]; then
  echo "Copying kernel modules ..."
  (
   add_depend() {
-     local skipped=
-     local x="$1"
+	local skipped=
+	local x="$1" module="${1##*/}"
 
-     # expand to full name if it was a depend
-     [ $x = ${x##*/} ] && x=`sed -n "/\/$x\.ko.*/{p; q}" $map`
+	[ "${added["$module"]}" ] && return
 
-     if [ -z "${added["$x"]}" ]; then
-	added["$x"]=1
+	# expand to full name if it was a depend
+	[ $x = ${x##*/} ] && x=`sed -n "/\/${x/./\\.}.*/{p; q}" $map`
 
-	local module=${x##*/}
+	added["$module"]=1
+
 	echo -n "$module "
 
 	# strip $root prefix
@@ -183,13 +183,9 @@ if [ "$moddir" ]; then
 
 	    # add it's deps, too
 	    for fn in `$modinfo -F depends $x | sed 's/,/ /g'`; do
-		add_depend "$fn"
+		add_depend "$fn.ko"
 	    done
 	fi
-     else
-	#echo "already there"
-	:
-     fi
   }
 
   find -H $moddir/ -type f -name '*.ko*' > $map
