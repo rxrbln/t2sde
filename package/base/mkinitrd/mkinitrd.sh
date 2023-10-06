@@ -57,7 +57,7 @@ while [ "$1" ]; do
   shift
 done
 
-[ "$minimal" != 1 ] && filter="$filter -e reiserfs -e btrfs -e /jfs -e /xfs -e jffs2
+[ -z "$minimal" ] && filter="$filter -e reiserfs -e btrfs -e /jfs -e /xfs -e jffs2
 -e ext2 -e /udf -e /unionfs -e ntfs -e /fat -e /hfs -e floppy -e efivarfs
 -e /ata/ -e /scsi/ -e /fusion/ -e /sdhci/ -e nvme/host -e /mmc/
 -e virtio.\(blk\|scsi\|net\|console\|input\|gpu\|pci\)
@@ -69,13 +69,13 @@ done
 -e usbhid -e i2c-hid -e hid-generic -e hid-multitouch
 -e hid-apple -e hid-microsoft -e hyperv-keyboard -e pci/controller"
 
-[ "$network" = 1 ] && filter="$filter -e /ipv4/ -e '/ipv6\.' -e ethernet -e nfsv4"
+[ "$network" ] && filter="$filter -e /ipv4/ -e '/ipv6\.' -e ethernet -e nfsv4"
 
 [ "$kernelver" ] || kernelver=`uname -r`
 [ "$moddir" ] || moddir="$root/lib/modules/$kernelver"
 
-if [ ! "$outfile" ]; then
-    [ "$minimal" = 1 ] &&
+if [ -z "$outfile" ]; then
+    [ "$minimal" ] &&
 	outfile="$root/boot/minird-$kernelver" ||
 	outfile="$root/boot/initrd-$kernelver"
 fi
@@ -136,7 +136,7 @@ if [ "$moddir" ]; then
      # expand to full name if it was a depend
      [ $x = ${x##*/} ] && x=`sed -n "/\/$x\.ko.*/{p; q}" $map`
 
-     if [ "${added["$x"]}" != 1 ]; then
+     if [ -z "${added["$x"]}" ]; then
 	added["$x"]=1
 
 	local module=${x##*/}
