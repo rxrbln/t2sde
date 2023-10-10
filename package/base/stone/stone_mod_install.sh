@@ -70,22 +70,27 @@ part_swap_action() {
 }
 
 part_mount() {
-	local dev=$1
-	local dir="/ /boot /home /srv /var"
-	[ -d /sys/firmware/efi ] && dir="${dir/boot/boot/efi}"
-	local d
-	for d in $dir; do
-		grep -q " /mnt${d%/} " /proc/mounts || break
-	done
-	gui_input "Mount device $dev on directory
+	local dev=$1 compress="$2" dir="$3"
+
+	if [ -z "$dir" ]; then
+		dir="/ /boot /home /srv /var"
+		[ -d /sys/firmware/efi ] && dir="${dir/boot/boot/efi}"
+		local d
+		for d in $dir; do
+			grep -q " /mnt${d%/} " /proc/mounts || break
+		done
+
+		gui_input "Mount device $dev on directory
 (for example ${dir// /, }, ...)" "${d:-/}" dir
+	fi
+
 	if [ "$dir" ]; then
 		dir="$(echo $dir | sed 's,^/*,,; s,/*$,,')"
 		# check if at least a rootfs / is already mounted
 		if [ -z "$dir" ] || grep -q " /mnt " /proc/mounts
 		then
 			mkdir -p /mnt/$dir
-			[ "$2" ] && mount -o "$2" $dev /mnt/$dir 2>/dev/null ||
+			[ "$compress" ] && mount -o "$compress" $dev /mnt/$dir 2>/dev/null ||
 				mount $dev /mnt/$dir
 		else
 			gui_message "Please mount a root filesystem first."
@@ -124,12 +129,7 @@ part_mkfs() {
 	[ "$fs" -a "$fs" != any ] && cmd="mkfs.$fs $dev"
 
 	if eval "$cmd"; then
-		if [ "$mnt" ]; then
-			mkdir -p /mnt/$mnt
-			mount $dev /mnt/$mnt
-		else
-			part_mount $dev "compress=zstd"
-		fi
+		part_mount $dev "compress=zstd" $mnt
 	fi
 }
 
