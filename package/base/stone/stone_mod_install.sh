@@ -38,7 +38,7 @@ case $platform in
 	sparc*)
 		platform="$platform-$platform2"
 		;;
-	i.86|x86_64)
+	i?86|x86_64)
 		[ "$platform_efi" ] && platform="$platform-efi" || platform="$platform-pc" 
 		;;
 	*)
