@@ -23,8 +23,8 @@ function boot {
 
 mount -t proc none /proc
 [ -e /proc/sys/kernel/ostype ] &&
-	echo "$(< /proc/sys/kernel/ostype) $(< /proc/sys/kernel/osrelease)." \
-"Mounting /dev, /proc, /sys and starting u/devd."
+	echo "$(< /proc/sys/kernel/ostype) $(< /proc/sys/kernel/osrelease)," \
+"mounting /dev, /proc, /sys and starting u/devd."
 mount -t devtmpfs -o mode=755 none /dev
 mount -t sysfs none /sys
 mkdir -p /tmp /mnt
