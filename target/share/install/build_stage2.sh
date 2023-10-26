@@ -26,14 +26,16 @@ e2fsprogs          reiserfsprogs      reiser4progs       genromfs
 popt               raidtools          mdadm              pcre
 lvm                lvm2               device-mapper      libaio
 dump               eject              disktype           mac-fdisk
-hdparm             memtest86          cpuburn            bonnie++
+libnvme            nvme-cli           hdparm             sgutils
+smartmontools      stressapptest
 ncurses            readline           libgpg-error       libgcrypt
 bash               attr               acl                findutils
 mktemp             coreutils          pciutils           libcap
-grep               sed                gzip               bzip2
-tar                gawk               lzo                lzop
-less               nvi                bc                 cpio
-xz                 zstd               ed                 zile
+grep               sed                less
+gzip               bzip2              xz                 zstd
+lzo                lzop               keyutils
+tar                gawk               bc                 cpio
+ed                 zile
 curl               dialog             minicom            kmod
 lrzsz              rsync              tcpdump            module-init-tools
 sysvinit           shadow             util-linux         wireless-tools
@@ -42,7 +44,7 @@ modutils           pciutils           portmap            inih
 sysklogd           setserial          iproute2           liburcu
 netkit-base        netkit-ftp         netkit-telnet      netkit-tftp
 sysfiles           libpcap            iptables           tcp_wrappers
-stone              rocknet            kexec-tools
+stone              rocknet            kexec-tools        memtest86
 kbd                ntfsprogs          libol              memtester
 openssl            openssh            iproute2           eudev"
 
