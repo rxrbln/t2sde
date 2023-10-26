@@ -248,7 +248,7 @@ copy_dyn_libs () {
 		fi
 		for libdir in $root/lib*/ $root/usr/lib*/ "$root"; do
 			if [ -e $libdir$lib ]; then
-			    [ ! -L $libdir$lib -a "$magic" != "$(elf_magic $libdir$lib)" ] && continue
+			    [ "$magic" != "$(elf_magic $libdir$lib)" ] && continue
 			    xlibdir=${libdir#$root}
 
 			    if [ -z "${added["$xlibdir$lib"]}" ]; then
@@ -291,7 +291,7 @@ done
 #
 [ -z "$minimal" ] &&
 for x in $root/sbin/{insmod,blkid,lvm,vgchange,lvchange,vgs,lvs,mdadm} \
-	 $root/usr/sbin/{cryptsetup,cache_check,ipconfig} $root/usr/embutils/{dmesg,swapon}
+	 $root/usr/sbin/{cryptsetup,smartctl,cache_check,ipconfig} $root/usr/embutils/{dmesg,swapon}
 do
   if [ ! -e $x ]; then
 	echo "Warning: Skipped optional file ${x#$root}!"
