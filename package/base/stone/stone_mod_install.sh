@@ -352,28 +352,31 @@ type=83"
 	# create fs
 	set -- $fs
 	while [ $# -gt 0 ]; do
-	    local dev=$1; shift
+	    local d=$1; shift
 	    local fs=$1; shift
 	    local mnt=$1
 	    [ "$fs" != swap ] && shift || mnt=
 
+	    # fix device partitions separated w/ p
+	    [[ $dev = *[0-9] ]] && d=${dev}p${d#$dev}
+
 	    if [[ "$typ" = *luks* && ("$mnt" = / || "$fs" = swap) ]]; then
 		local name=root
 		[ "$fs" = swap ] && name=swap
-		part_crypt $dev $name
-		dev=/dev/mapper/$name
+		part_crypt $d $name
+		d=/dev/mapper/$name
 	    fi
 
 	    case $fs in
-		lvm)	part_pvcreate $dev vg0
+		lvm)	part_pvcreate $d vg0
 			lv_create vg0 linear ${swap}m swap
 			lv_create vg0 linear 100%FREE root
 			part_mkswap /dev/vg0/swap
 			part_mkfs /dev/vg0/root any /
 			;;
-		swap)	part_mkswap $dev
+		swap)	part_mkswap $d
 			;;
-		*)	part_mkfs $dev $fs $mnt
+		*)	part_mkfs $d $fs $mnt
 			;;
 	    esac
 	done
@@ -389,7 +392,7 @@ can't modify this partition table."
 	local cmd="gui_menu disk 'Edit partition table of $1'"
 
 	if [ "$platform" ]; then
-	    cmd="$cmd \"Automatically partition bootable for this platform:\" ''"
+	    cmd="$cmd \"Automatically partition bootable for this platform ($platform${platform2:+-$platform}):\" ''"
 	    cmd="$cmd \"Classic partitions\" \"disk_partition /dev/$1\""
 	    case "$platform" in
 	    *efi)
