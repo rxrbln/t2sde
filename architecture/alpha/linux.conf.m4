@@ -21,3 +21,5 @@ CONFIG_BLK_DEV_CY82C693=y
 
 include(`linux-net.conf.m4')
 include(`linux-fs.conf.m4')
+
+# CONFIG_LOGO_DEC_CLUT224 is not set
