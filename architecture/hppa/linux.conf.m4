@@ -35,3 +35,5 @@ include(`linux-fs.conf.m4')
 
 CONFIG_PDC_CONSOLE=y
 CONFIG_FB_STI=y
+
+# CONFIG_LOGO_PARISC_CLUT224 is not set
