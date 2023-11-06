@@ -41,7 +41,8 @@ CONFIG_FB_CG14=y
 CONFIG_FB_LEO=y
 CONFIG_FB_P9100=y
 
-CONFIG_FONT_SUN8x16=y
+# CONFIG_FONT_SUN8x16 is not set
+# CONFIG_LOGO_SUN_CLUT224 is not set
 
 dnl need to make it small
 
