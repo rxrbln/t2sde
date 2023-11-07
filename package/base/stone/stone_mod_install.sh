@@ -29,9 +29,10 @@ case $platform in
 	mips64)
 		;;
 	ppc*)
-		# TODO: chrp, prep, ps3, opal, ...
+		# TODO: prep, ps3, opal, ...
 		case "$platform2" in
-		    PowerMac)	platform="$platform-$platform2" ;;
+		    CHRP|PowerMac)
+				platform="$platform-$platform2" ;;
 		    *)		platform= ;;
 		esac
 		;;
@@ -315,6 +316,14 @@ start=$((size - swap + boot))m, size=$((swap - boot - 20))m, type=82
 9: size=8m, type=0
 11: type=6"
 		;;
+	    ppc*CHRP)
+		# TODO: typ, luks, lvm, ...
+		fs="${dev}3 swap  ${dev}2 any /"
+		script="label:dos
+size=4m, type=41
+size=$((size - swap))m, type=83
+type=82"
+		;;
 	    ppc*PowerMac)
 		fs="${dev}4 swap  ${dev}3 any /"
 		fdisk=mac-fdisk
@@ -392,10 +401,10 @@ can't modify this partition table."
 	local cmd="gui_menu disk 'Edit partition table of $1'"
 
 	if [ "$platform" ]; then
-	    cmd="$cmd \"Automatically partition bootable for this platform ($platform${platform2:+-$platform}):\" ''"
+	    cmd="$cmd \"Automatically partition bootable for this platform ($platform):\" ''"
 	    cmd="$cmd \"Classic partitions\" \"disk_partition /dev/$1\""
 	    case "$platform" in
-	    *efi)
+	    *efi|*CHRP)
 		cmd="$cmd \"Encrypted partitions\" \"disk_partition /dev/$1 luks\""
 		cmd="$cmd \"Logical Volumes\" \"disk_partition /dev/$1 lvm\""
 		cmd="$cmd \"Encrypted Logical Volumes\" \"disk_partition /dev/$1 luks+lvm\""
