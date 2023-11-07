@@ -22,6 +22,14 @@ arch=$(uname -m)
 arch=${arch/i?86/i386}
 arch=${arch/aarch/arm}
 
+# detect platform once, Attn, SYNC w/ stone_mod_install!
+platform2=$(grep '\(platform\|type\)' /proc/cpuinfo) platform2=${platform2##*: }
+[ -e /sys/firmware/efi ] && platform=$arch-efi ||
+case $arch in
+	ppc*)
+		arch="$arch-$platform2" ;;
+esac
+
 cmdline="console= $(< /proc/cmdline)"
 cmdline=${cmdline##*console=} cmdline=${cmdline%%[ ,]*}
 if [ -z "$cmdline" ]; then
@@ -155,6 +163,26 @@ EOT
 	    umount /sys/firmware/efi/efivars
 	fi
     else
+      if [[ "$arch" = *CHRP ]]; then
+	instdev=/dev/sda # TODO: fix LVM setup
+
+	# IBM CHRP install into FW read-able RAW partition
+	local bootstrap=$instdev$(disktype $instdev | grep "PReP Boot" -B 1 |
+		sed -n 's/Partition \(.*\):.*/\1/p')
+	if [ "$bootstrap" = "$instdev" ]; then
+		echo "No CHRP PReP bootstrap partition found!"
+		return
+	fi
+
+	# TODO: tempfile, built-in config script -c
+	grub-mkimage --note -O powerpc-ieee1275 -p /boot/grub \
+		-o /tmp/grub -d /usr/lib*/grub/powerpc-ieee1275 \
+		$grubmods
+
+	dd if=/dev/zero of=$bootstrap bs=4096
+	dd if=/tmp/grub of=$bootstrap bs=4096
+	rm -f /tmp/grub
+      else
 	# Apple PowerPC - install into FW read-able HFS partition
 	local bootstrap=$instdev$(disktype $instdev | grep Apple_Bootstrap -B 1 |
 		sed -n 's/Partition \(.*\):.*/\1/p')
@@ -259,6 +287,7 @@ EOT
 	    hattrib -c UNIX -t tbxi bootstrap:boot:ofboot.b
 	    humount
 	fi
+      fi
     fi
 }
 
