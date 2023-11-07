@@ -17,12 +17,12 @@
 # detect platform once
 platform=$(uname -m)
 platform2=$(grep '\(platform\|type\)' /proc/cpuinfo) platform2=${platform2##*: }
-[ -e /sys/firmware/efi ] && platform_efi=efi
+[ -e /sys/firmware/efi ] && platform="$platform=efi" ||
 case $platform in
 	alpha)
 		;;
 	arm*|ia64|riscv*)
-		[ "$platform_efi" ] && platform="$platform-efi" || platform=
+		platform=
 		;;
 	hppa*)
 		;;
@@ -40,7 +40,7 @@ case $platform in
 		platform="$platform-$platform2"
 		;;
 	i?86|x86_64)
-		[ "$platform_efi" ] && platform="$platform-efi" || platform="$platform-pc" 
+		platform="$platform-pc" 
 		;;
 	*)
 		platform=
