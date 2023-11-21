@@ -17,6 +17,8 @@ dnl dynamic w/ _ITANIUM, but gcc can no longer tune for v1 since gcc-4.5
 # CONFIG_ITANIUM is not set
 CONFIG_MCKINLEY=y
 
+CONFIG_NR_CPUS=128
+
 include(`linux-common.conf.m4')
 include(`linux-block.conf.m4')
 include(`linux-net.conf.m4')
