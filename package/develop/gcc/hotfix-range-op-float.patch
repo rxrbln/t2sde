@@ -1,0 +1,105 @@
+From e684084a5fa9edaedb1a14e118b966a60e3449b9 Mon Sep 17 00:00:00 2001
+From: Jakub Jelinek <jakub@redhat.com>
+Date: Wed, 26 Jul 2023 10:50:50 +0200
+Subject: [PATCH] range-op-float: Fix up -frounding-math frange_arithmetic +-
+ handling [PR110755]
+
+IEEE754 says that x + (-x) and x - x result in +0 in all rounding modes
+but rounding towards negative infinity, in which case the result is -0
+for all finite x.  x + x and x - (-x) if it is zero retain sign of x.
+Now, range_arithmetic implements the normal rounds to even rounding,
+and as the addition or subtraction in those cases is exact, we don't do any
+further rounding etc. and e.g. on the testcase below distilled from glibc
+compute a range [+0, +INF], which is fine for -fno-rounding-math or
+if we'd have a guarantee that those statements aren't executed with rounding
+towards negative infinity.
+
+I believe it is only +- which has this problematic behavior and I think
+it is best to deal with it in frange_arithmetic; if we know -frounding-math
+is on, it is x + (-x) or x - x and we are asked to round to negative
+infinity (i.e. want low bound rather than high bound), change +0 result to
+-0.
+
+2023-07-26  Jakub Jelinek  <jakub@redhat.com>
+
+	PR tree-optimization/110755
+	* range-op-float.cc (frange_arithmetic): Change +0 result to -0
+	for PLUS_EXPR or MINUS_EXPR if -frounding-math, inf is negative and
+	it is exact op1 + (-op1) or op1 - op1.
+
+	* gcc.dg/pr110755.c: New test.
+
+(cherry picked from commit 21da32d995c8b574c929ec420cd3b0fcfe6fa4fe)
+---
+ gcc/range-op-float.cc           | 18 ++++++++++++++++++
+ gcc/testsuite/gcc.dg/pr110755.c | 29 +++++++++++++++++++++++++++++
+ 2 files changed, 47 insertions(+)
+ create mode 100644 gcc/testsuite/gcc.dg/pr110755.c
+
+diff --git a/gcc/range-op-float.cc b/gcc/range-op-float.cc
+index 22cf74b9d4a..606b201fd7a 100644
+--- a/gcc/range-op-float.cc
++++ b/gcc/range-op-float.cc
+@@ -319,6 +319,24 @@ frange_arithmetic (enum tree_code code, tree type,
+   bool inexact = real_arithmetic (&value, code, &op1, &op2);
+   real_convert (&result, mode, &value);
+ 
++  /* When rounding towards negative infinity, x + (-x) and
++     x - x is -0 rather than +0 real_arithmetic computes.
++     So, when we are looking for lower bound (inf is negative),
++     use -0 rather than +0.  */
++  if (flag_rounding_math
++      && (code == PLUS_EXPR || code == MINUS_EXPR)
++      && !inexact
++      && real_iszero (&result)
++      && !real_isneg (&result)
++      && real_isneg (&inf))
++    {
++      REAL_VALUE_TYPE op2a = op2;
++      if (code == PLUS_EXPR)
++	op2a.sign ^= 1;
++      if (real_isneg (&op1) == real_isneg (&op2a) && real_equal (&op1, &op2a))
++	result.sign = 1;
++    }
++
+   // Be extra careful if there may be discrepancies between the
+   // compile and runtime results.
+   bool round = false;
+diff --git a/gcc/testsuite/gcc.dg/pr110755.c b/gcc/testsuite/gcc.dg/pr110755.c
+new file mode 100644
+index 00000000000..c3bfaa61cb4
+--- /dev/null
++++ b/gcc/testsuite/gcc.dg/pr110755.c
+@@ -0,0 +1,29 @@
++/* PR tree-optimization/110755 */
++/* { dg-do run } */
++/* { dg-require-effective-target fenv } */
++/* { dg-require-effective-target hard_float } */
++/* { dg-options "-O2 -frounding-math" } */
++
++#include <fenv.h>
++
++__attribute__((noipa)) float
++foo (float x)
++{ 
++  if (x > 0.0)
++    { 
++      x += 0x1p+23;
++      x -= 0x1p+23;
++      x = __builtin_fabsf (x);
++    }
++  return x;
++}
++
++int
++main ()
++{
++#ifdef FE_DOWNWARD
++  fesetround (FE_DOWNWARD);
++  if (__builtin_signbit (foo (0.5)))
++    __builtin_abort ();
++#endif
++}
+-- 
+2.39.3
+
