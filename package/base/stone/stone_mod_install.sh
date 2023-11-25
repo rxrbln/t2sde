@@ -31,7 +31,7 @@ case $platform in
 	ppc*)
 		# TODO: prep, ps3, opal, ...
 		case "$platform2" in
-		    CHRP|PowerMac)
+		    CHRP|PowerMac|PS3)
 				platform="$platform-$platform2" ;;
 		    *)		platform= ;;
 		esac
@@ -336,6 +336,14 @@ w
 y
 q
 "
+		;;
+	    ppc*PS3)
+		# TODO: typ, luks, lvm, ...
+		fs="${dev}1 swap  ${dev}3 any /  ${dev}2 ext3 /boot"
+		script="label:dos
+size=$((swap))m, type=82
+size=$((boot))m, type=83
+type=83"
 		;;
 	    sparc*)
 		# TODO: silo vs grub2 have different requirements
