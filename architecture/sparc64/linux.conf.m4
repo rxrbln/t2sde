@@ -63,6 +63,7 @@ include(`linux-fs.conf.m4')
 
 CONFIG_NR_CPUS=64
 
-dnl LSI Logic / Symbios Logic (formerly NCR) 53c810 (rev 01)
-dnl does not work reliable with MMIO on my Ultra SPARC 5 -ReneR
-# CONFIG_SCSI_SYM53C8XX_IOMAPPED is not set
+dnl w/o DEBUG_PAGEALLOC Sun Blade 1xxx oops w/ 8GB RAM
+# CONFIG_HIBERNATION is not set
+CONFIG_DEBUG_KERNEL=y
+CONFIG_DEBUG_PAGEALLOC=y
