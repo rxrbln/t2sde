@@ -63,7 +63,6 @@ include(`linux-fs.conf.m4')
 
 CONFIG_NR_CPUS=64
 
-dnl w/o DEBUG_PAGEALLOC Sun Blade 1xxx oops w/ 8GB RAM
+dnl w/o DEBUG_PAGEALLOC Sun Blade 1xxx oops w/ 8GB RAM?
 # CONFIG_HIBERNATION is not set
-CONFIG_DEBUG_KERNEL=y
 CONFIG_DEBUG_PAGEALLOC=y
