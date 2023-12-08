@@ -608,10 +608,12 @@ EOT
 		cd /mnt; chroot . ./tmp/stone_postinst.sh
 		rm -fv ./tmp/stone_postinst.sh
 
-		if gui_yesno "Do you want to un-mount the filesystems and reboot now?"
+		kexec=$(type -p kexec)
+
+		if gui_yesno "Do you want to un-mount the filesystems and reboot${kexec:+ (via kexec)} now?"
 		then
 			# try to re-boot via kexec, if available
-			if type -p kexec > /dev/null; then
+			if [ "$kexec" ]; then
 			    cmdline=$(< /proc/cmdline)
 			    if [ -e /mnt/boot/grub/grub.cfg ]; then
 				root=$(sed -n "/.*\(root=.*\)/{ s//\1/p; q}" /mnt/boot/grub/grub.cfg)
