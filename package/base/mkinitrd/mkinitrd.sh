@@ -237,7 +237,7 @@ copy_dyn_libs () {
 	local magic
 	# we can not use ldd(1) as it loads the object, which does not work on cross builds
 	for lib in $(readelf -de $1 2>/dev/null |
-		sed -n -e 's/.*Shared library.3*\[\([^]\]*\)\]/\1/p' \
+		sed -n -e 's/.*Shared library.*\[\([^]\]*\)\]/\1/p' \
 		    -e 's/.*Requesting program interpreter: \([^]]*\)\]/\1/p') $extralibs
 	do
 		# remove $root prefix from extra libs
