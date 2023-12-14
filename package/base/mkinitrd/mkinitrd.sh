@@ -103,7 +103,7 @@ fi
 echo "System.map: $sysmap"
 
 # check needed tools
-for x in cpio gzip; do
+for x in cpio ${compressor%% *}; do
 	if ! type -p $x >/dev/null; then
 		echo "$x not found!"
 		exit 2
