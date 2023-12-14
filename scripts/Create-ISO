@@ -168,8 +168,8 @@ add() {
 	fi
 }
 
-bootoptions=""
-scripts=""
+bootoptions=
+scripts=
 while read tag data; do
 	# empty lines
 	[ "$tag" ] || continue
@@ -182,7 +182,7 @@ while read tag data; do
 			[[ $data == *-hfs* ]] && file_overhead=12
 		fi
 	elif [ $tag = SCRIPT ]; then
-		scripts="$scripts $data"
+		var_append scripts ' ' "$data"
 	fi
 done < $dat
 while read tag data; do
@@ -318,11 +318,15 @@ for x in $disks; do
 	echo "This is disc #$x." > $dat
 	# FIXME: current mkisofs does only accept one -path-list
 	sort -u ${pathspec}_${x} ${pathspec}_0 > ${pathspec}_current 2> /dev/null
+
+	# parallel sha? or scripts post-processing?
+	[ "$scripts" ] && psha="echo -n" || psha=sha${shalen}sum
 	$mkisofs -r -J -l -V "T2" -A "T2 SDE - Disc $x" \
 	    -publisher 'T2 System Develop Environment - https://t2sde.org' \
 	    -graft-points -path-list ${pathspec}_current \
 	    $bootoptions disk$x.txt=$dat \
-	    `cat ${pathspec}_iso 2>/dev/null` > $isoname.iso 
+	    `cat ${pathspec}_iso 2>/dev/null` | tee -p $isoname.iso |
+	$psha | sed "s/ -/ `basename $isoname.iso`/" >> $isoname.sha${shalen}
 	rm -f ${pathspec}_iso
 	rm -f ${pathspec}_current
 
@@ -330,10 +334,9 @@ for x in $disks; do
 
 	if [ "$scripts" ]; then
 		echo "$spacer Running post-processing scripts on image"
-		eval $scripts $x ${isoname}.iso
+		eval $scripts $x $isoname.iso
+		sha${shalen}sum < $isoname.iso | sed "s/ -/ `basename $isoname.iso`/" >> $isoname.sha${shalen}
 	fi
-
-	sha${shalen}sum < ${isoname}.iso | sed "s/ -/ `basename ${isoname}.iso`/" >> $isoname.sha${shalen}
 
 	if [ "$mkdebug" = 1 ]; then
 		cat > ${isoprefix}_loop$x.sh << EOT
