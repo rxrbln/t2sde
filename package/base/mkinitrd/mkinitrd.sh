@@ -236,9 +236,9 @@ fi
 copy_dyn_libs () {
 	local magic
 	# we can not use ldd(1) as it loads the object, which does not work on cross builds
-	for lib in $extralibs `readelf -de $1 2>/dev/null |
-		sed -n -e 's/.*Shared library.*\[\([^]\]*\)\]/\1/p' \
-		       -e 's/.*Requesting program interpreter: \([^]]*\)\]/\1/p'`
+	for lib in $(readelf -de $1 2>/dev/null |
+		sed -n -e 's/.*Shared library.3*\[\([^]\]*\)\]/\1/p' \
+		    -e 's/.*Requesting program interpreter: \([^]]*\)\]/\1/p') $extralibs
 	do
 		# remove $root prefix from extra libs
 		[ "$lib" != "${lib#$root/}" ] && lib="${lib##*/}"
@@ -249,7 +249,15 @@ copy_dyn_libs () {
 		fi
 		for libdir in $root/lib*/ $root/usr/lib*/ "$root"; do
 			if [ -e $libdir$lib ]; then
-			    [ "$magic" != "$(elf_magic $libdir$lib)" ] && continue
+			    # resolve absolute sym-links relative to the sys-root
+			    local rlib="$libdir$lib"
+			    if [ -L "$rlib" ]; then
+				rlib="$(readlink $rlib)"
+				[[ "$rlib" = /* ]] && rlib="$libdir$rlib" || rlib="$libdir$lib"
+			    fi
+	
+			    local magic2="$(elf_magic $rlib)" 
+			    [ "$magic" != "$magic2" ] && continue
 			    xlibdir=${libdir#$root}
 
 			    if [ -z "${added["$xlibdir$lib"]}" ]; then
