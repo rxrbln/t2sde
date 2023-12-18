@@ -41,7 +41,7 @@ main() {
 
 		cmd="$cmd '' ''"
 
-		for x in /usr/share/rock-registry/xdm/* ; do
+		for x in /usr/share/registry/xdm/* ; do
 		  if [ -f $x ]; then
 			. $x
 
@@ -57,7 +57,7 @@ main() {
 
 		cmd="$cmd '' ''"
 
-		for x in /usr/share/rock-registry/wm/* ; do
+		for x in /usr/share/registry/wm/* ; do
 		  if [ -f $x ]; then
 			. $x
 
