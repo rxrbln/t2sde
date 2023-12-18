@@ -10,7 +10,7 @@ dnl it under the terms of the GNU General Public License version 2.
 dnl --- T2-COPYRIGHT-NOTE-END ---
 
 dnl Default console loglevel, new since 4.10, before we patched it
-CONFIG_CONSOLE_LOGLEVEL_DEFAULT=4
+CONFIG_CONSOLE_LOGLEVEL_DEFAULT=5
 dnl CONFIG_SECURITY_DMESG_RESTRICT is not
 CONFIG_DEFAULT_HOSTNAME="t2"
 
