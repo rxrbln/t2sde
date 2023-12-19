@@ -34,6 +34,11 @@ udevd &
 udevadm trigger
 udevadm settle
 
+# if no fb, try legacy drivers
+if [ ! -e /proc/fb ]; then
+	modprobe offb 2>/dev/null
+fi
+
 # if no block devices, load some legacy drivers
 if [ -z "$(ls -A /sys/block | sed '/^loop/d; /^fd/d')" ]; then
 	modprobe pata_legacy all=2 2>/dev/null
