@@ -69,6 +69,7 @@ CONFIG_PPC_RTC=y
 dnl AGP
 dnl
 CONFIG_AGP_UNINORTH=y
+CONFIG_FB=m
 CONFIG_FB_PS3=m
 
 dnl power management
