@@ -32,7 +32,7 @@ vitalmods[xhci-pci.ko]=1 # probably every modern machine
 # TODO: defauls for vintage vs. latest, usb, pata, etc.
 filter="-e ext4 -e isofs -e pata_legacy -e pata_.*platform -e sym53c8xx
 -e s[rd]_mod -e /ahci.ko -e /nvme.ko -e [uoex]hci-pci -e usbhid -e zram
--e /offb -e ps3fb"
+-e /offb -e /bochs -e ps3fb"
 
 declare -A added
 
