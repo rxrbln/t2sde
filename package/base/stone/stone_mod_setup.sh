@@ -18,6 +18,7 @@ get_dm_dev() {
 	for d in /dev/dm-*; do
 		[ "$(stat -c "%t:%T" "$d")" = "$devnode" ] && echo $d && return
 	done
+	echo $dev
 }
 
 get_dm_type() {
