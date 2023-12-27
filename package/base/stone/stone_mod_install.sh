@@ -11,6 +11,9 @@
 # --- T2-COPYRIGHT-NOTE-END ---
 
 # TODO:
+# - i?86-pc lvm and encryption
+# - sun4v gpt
+# - more generic lvm and encryption support
 # - check error, esp. of cryptsetup and lvm commands and display red alert on error
 # - avoid all direct user input, so the installer works in GUI variants
 
@@ -273,6 +276,7 @@ disk_partition() {
 
 	local fdisk="sfdisk -W always"
 	local script=
+	local postscript=()
 	local fs=
 
 	case $platform in
@@ -347,11 +351,15 @@ type=83"
 		;;
 	    sparc*)
 		# TODO: silo vs grub2 have different requirements
-		fs="${dev}2 swap  ${dev}1 any /"
+		fs="${dev}2 swap  ${dev}4 any /  ${dev}1 ext3 /boot"
 		script="label:sun
-size=$((size - swap))m, type=83
+size=$((boot))m, type=83
 type=82
 start=0, type=W"
+		# sfdisk has a "hard" time creating more than 2 parts w/ whole-disk
+		postscript+=("sfdisk --delete ${dev} 2")
+		postscript+=("echo 'size=${swap}m, type=82' | sfdisk -N 2 ${dev}")
+		postscript+=("echo 'type=83' | sfdisk -N 4 ${dev}")
 		;;
 	    *)
 		fs="${dev}1 swap  ${dev}2 any /"
@@ -365,6 +373,11 @@ type=83"
 	wipefs --all $dev
 	dd if=/dev/zero of=$dev seek=1 count=1 # mostly for Apple PowerPac parts
 	echo "$script" | $fdisk $dev
+
+	# posrscript fixup, due less than stellar sfdisk
+	for cmd in "${postscript[@]}"; do
+	    eval "$cmd"
+	done
 
 	# create fs
 	set -- $fs
