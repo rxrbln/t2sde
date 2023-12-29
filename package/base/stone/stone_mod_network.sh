@@ -221,7 +221,7 @@ set_name() {
 	fi
 	new="$HOSTNAME.$DOMAINNAME $HOSTNAME"
 
-	echo "$HOSTNAME" > /etc/HOSTNAME ; hostname "$HOSTNAME"
+	echo "$HOSTNAME" > /etc/hostname ; hostname "$HOSTNAME"
 
 	#ip="`echo $IPADDR | sed 's,[/ ].*,,'`"
 	#if grep -q "^$ip\\b" /etc/hosts; then
