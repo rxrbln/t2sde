@@ -56,8 +56,8 @@ mountopt="ro"
 i=0
 while [[ -n "$root" && ($((i++)) -le 15 || "$cmdline" = *rootwait*) ]]; do
   # only print once, for the 2nd iteration
-  [ $i = 2 ] && echo "Waiting for $root ..."
-  [ $i -gt 1 ] && sleep 1
+  [ $i = 2 ] && echo -n "Waiting for $root "
+  [ $i -gt 1 ] && echo -n "." && sleep 1
 
   # open luks for lvm2 and resume from disk early
   if [ "${root%,*}" != "$root" ]; then
