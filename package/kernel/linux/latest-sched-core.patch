@@ -1,0 +1,3495 @@
+diff --git a/Documentation/scheduler/sched-design-CFS.rst b/Documentation/scheduler/sched-design-CFS.rst
+index f68919800f05..6cffffe26500 100644
+--- a/Documentation/scheduler/sched-design-CFS.rst
++++ b/Documentation/scheduler/sched-design-CFS.rst
+@@ -180,7 +180,7 @@ This is the (partial) list of the hooks:
+    compat_yield sysctl is turned on; in that case, it places the scheduling
+    entity at the right-most end of the red-black tree.
+ 
+- - check_preempt_curr(...)
++ - wakeup_preempt(...)
+ 
+    This function checks if a task that entered the runnable state should
+    preempt the currently running task.
+@@ -189,10 +189,10 @@ This is the (partial) list of the hooks:
+ 
+    This function chooses the most appropriate task eligible to run next.
+ 
+- - set_curr_task(...)
++ - set_next_task(...)
+ 
+-   This function is called when a task changes its scheduling class or changes
+-   its task group.
++   This function is called when a task changes its scheduling class, changes
++   its task group or is scheduled.
+ 
+  - task_tick(...)
+ 
+diff --git a/Documentation/scheduler/schedutil.rst b/Documentation/scheduler/schedutil.rst
+index 32c7d69fc86c..803fba8fc714 100644
+--- a/Documentation/scheduler/schedutil.rst
++++ b/Documentation/scheduler/schedutil.rst
+@@ -90,8 +90,8 @@ For more detail see:
+  - Documentation/scheduler/sched-capacity.rst:"1. CPU Capacity + 2. Task utilization"
+ 
+ 
+-UTIL_EST / UTIL_EST_FASTUP
+-==========================
++UTIL_EST
++========
+ 
+ Because periodic tasks have their averages decayed while they sleep, even
+ though when running their expected utilization will be the same, they suffer a
+@@ -99,8 +99,7 @@ though when running their expected utilization will be the same, they suffer a
+ 
+ To alleviate this (a default enabled option) UTIL_EST drives an Infinite
+ Impulse Response (IIR) EWMA with the 'running' value on dequeue -- when it is
+-highest. A further default enabled option UTIL_EST_FASTUP modifies the IIR
+-filter to instantly increase and only decay on decrease.
++highest. UTIL_EST filters to instantly increase and only decay on decrease.
+ 
+ A further runqueue wide sum (of runnable tasks) is maintained of:
+ 
+diff --git a/Documentation/translations/zh_CN/scheduler/sched-design-CFS.rst b/Documentation/translations/zh_CN/scheduler/sched-design-CFS.rst
+index 3076402406c4..abc6709ec3b2 100644
+--- a/Documentation/translations/zh_CN/scheduler/sched-design-CFS.rst
++++ b/Documentation/translations/zh_CN/scheduler/sched-design-CFS.rst
+@@ -80,7 +80,7 @@ p->se.vruntime。一旦p->se.vruntime变得足够大，其它的任务将成为
+ CFS使用纳秒粒度的计时，不依赖于任何jiffies或HZ的细节。因此CFS并不像之前的调度器那样
+ 有“时间片”的概念，也没有任何启发式的设计。唯一可调的参数（你需要打开CONFIG_SCHED_DEBUG）是：
+ 
+-   /sys/kernel/debug/sched/min_granularity_ns
++   /sys/kernel/debug/sched/base_slice_ns
+ 
+ 它可以用来将调度器从“桌面”模式（也就是低时延）调节为“服务器”（也就是高批处理）模式。
+ 它的默认设置是适合桌面的工作负载。SCHED_BATCH也被CFS调度器模块处理。
+@@ -147,7 +147,7 @@ array）。
+    这个函数的行为基本上是出队，紧接着入队，除非compat_yield sysctl被开启。在那种情况下，
+    它将调度实体放在红黑树的最右端。
+ 
+- - check_preempt_curr(...)
++ - wakeup_preempt(...)
+ 
+    这个函数检查进入可运行状态的任务能否抢占当前正在运行的任务。
+ 
+@@ -155,9 +155,9 @@ array）。
+ 
+    这个函数选择接下来最适合运行的任务。
+ 
+- - set_curr_task(...)
++ - set_next_task(...)
+ 
+-   这个函数在任务改变调度类或改变任务组时被调用。
++   这个函数在任务改变调度类，改变任务组时，或者任务被调度时被调用。
+ 
+  - task_tick(...)
+ 
+diff --git a/Documentation/translations/zh_CN/scheduler/schedutil.rst b/Documentation/translations/zh_CN/scheduler/schedutil.rst
+index d1ea68007520..7c8d87f21c42 100644
+--- a/Documentation/translations/zh_CN/scheduler/schedutil.rst
++++ b/Documentation/translations/zh_CN/scheduler/schedutil.rst
+@@ -89,16 +89,15 @@ r_cpu被定义为当前CPU的最高性能水平与系统中任何其它CPU的最
+  - Documentation/translations/zh_CN/scheduler/sched-capacity.rst:"1. CPU Capacity + 2. Task utilization"
+ 
+ 
+-UTIL_EST / UTIL_EST_FASTUP
+-==========================
++UTIL_EST
++========
+ 
+ 由于周期性任务的平均数在睡眠时会衰减，而在运行时其预期利用率会和睡眠前相同，
+ 因此它们在再次运行后会面临（DVFS）的上涨。
+ 
+ 为了缓解这个问题，（一个默认使能的编译选项）UTIL_EST驱动一个无限脉冲响应
+ （Infinite Impulse Response，IIR）的EWMA，“运行”值在出队时是最高的。
+-另一个默认使能的编译选项UTIL_EST_FASTUP修改了IIR滤波器，使其允许立即增加，
+-仅在利用率下降时衰减。
++UTIL_EST滤波使其在遇到更高值时立刻增加，而遇到低值时会缓慢衰减。
+ 
+ 进一步，运行队列的（可运行任务的）利用率之和由下式计算：
+ 
+diff --git a/arch/arm/include/asm/topology.h b/arch/arm/include/asm/topology.h
+index c7d2510e5a78..853c4f81ba4a 100644
+--- a/arch/arm/include/asm/topology.h
++++ b/arch/arm/include/asm/topology.h
+@@ -13,6 +13,7 @@
+ #define arch_set_freq_scale topology_set_freq_scale
+ #define arch_scale_freq_capacity topology_get_freq_scale
+ #define arch_scale_freq_invariant topology_scale_freq_invariant
++#define arch_scale_freq_ref topology_get_freq_ref
+ #endif
+ 
+ /* Replace task scheduler's default cpu-invariant accounting */
+diff --git a/arch/arm64/include/asm/topology.h b/arch/arm64/include/asm/topology.h
+index 9fab663dd2de..a323b109b9c4 100644
+--- a/arch/arm64/include/asm/topology.h
++++ b/arch/arm64/include/asm/topology.h
+@@ -23,6 +23,7 @@ void update_freq_counters_refs(void);
+ #define arch_set_freq_scale topology_set_freq_scale
+ #define arch_scale_freq_capacity topology_get_freq_scale
+ #define arch_scale_freq_invariant topology_scale_freq_invariant
++#define arch_scale_freq_ref topology_get_freq_ref
+ 
+ #ifdef CONFIG_ACPI_CPPC_LIB
+ #define arch_init_invariance_cppc topology_init_cpu_capacity_cppc
+diff --git a/arch/arm64/kernel/topology.c b/arch/arm64/kernel/topology.c
+index 817d788cd866..1a2c72f3e7f8 100644
+--- a/arch/arm64/kernel/topology.c
++++ b/arch/arm64/kernel/topology.c
+@@ -82,7 +82,12 @@ int __init parse_acpi_topology(void)
+ #undef pr_fmt
+ #define pr_fmt(fmt) "AMU: " fmt
+ 
+-static DEFINE_PER_CPU_READ_MOSTLY(unsigned long, arch_max_freq_scale);
++/*
++ * Ensure that amu_scale_freq_tick() will return SCHED_CAPACITY_SCALE until
++ * the CPU capacity and its associated frequency have been correctly
++ * initialized.
++ */
++static DEFINE_PER_CPU_READ_MOSTLY(unsigned long, arch_max_freq_scale) =  1UL << (2 * SCHED_CAPACITY_SHIFT);
+ static DEFINE_PER_CPU(u64, arch_const_cycles_prev);
+ static DEFINE_PER_CPU(u64, arch_core_cycles_prev);
+ static cpumask_var_t amu_fie_cpus;
+@@ -112,14 +117,14 @@ static inline bool freq_counters_valid(int cpu)
+ 	return true;
+ }
+ 
+-static int freq_inv_set_max_ratio(int cpu, u64 max_rate, u64 ref_rate)
++void freq_inv_set_max_ratio(int cpu, u64 max_rate)
+ {
+-	u64 ratio;
++	u64 ratio, ref_rate = arch_timer_get_rate();
+ 
+ 	if (unlikely(!max_rate || !ref_rate)) {
+-		pr_debug("CPU%d: invalid maximum or reference frequency.\n",
++		WARN_ONCE(1, "CPU%d: invalid maximum or reference frequency.\n",
+ 			 cpu);
+-		return -EINVAL;
++		return;
+ 	}
+ 
+ 	/*
+@@ -139,12 +144,10 @@ static int freq_inv_set_max_ratio(int cpu, u64 max_rate, u64 ref_rate)
+ 	ratio = div64_u64(ratio, max_rate);
+ 	if (!ratio) {
+ 		WARN_ONCE(1, "Reference frequency too low.\n");
+-		return -EINVAL;
++		return;
+ 	}
+ 
+-	per_cpu(arch_max_freq_scale, cpu) = (unsigned long)ratio;
+-
+-	return 0;
++	WRITE_ONCE(per_cpu(arch_max_freq_scale, cpu), (unsigned long)ratio);
+ }
+ 
+ static void amu_scale_freq_tick(void)
+@@ -195,10 +198,7 @@ static void amu_fie_setup(const struct cpumask *cpus)
+ 		return;
+ 
+ 	for_each_cpu(cpu, cpus) {
+-		if (!freq_counters_valid(cpu) ||
+-		    freq_inv_set_max_ratio(cpu,
+-					   cpufreq_get_hw_max_freq(cpu) * 1000ULL,
+-					   arch_timer_get_rate()))
++		if (!freq_counters_valid(cpu))
+ 			return;
+ 	}
+ 
+diff --git a/arch/riscv/include/asm/topology.h b/arch/riscv/include/asm/topology.h
+index e316ab3b77f3..61183688bdd5 100644
+--- a/arch/riscv/include/asm/topology.h
++++ b/arch/riscv/include/asm/topology.h
+@@ -9,6 +9,7 @@
+ #define arch_set_freq_scale		topology_set_freq_scale
+ #define arch_scale_freq_capacity	topology_get_freq_scale
+ #define arch_scale_freq_invariant	topology_scale_freq_invariant
++#define arch_scale_freq_ref		topology_get_freq_ref
+ 
+ /* Replace task scheduler's default cpu-invariant accounting */
+ #define arch_scale_cpu_capacity	topology_get_cpu_scale
+diff --git a/drivers/acpi/cppc_acpi.c b/drivers/acpi/cppc_acpi.c
+index 7ff269a78c20..d155a86a8614 100644
+--- a/drivers/acpi/cppc_acpi.c
++++ b/drivers/acpi/cppc_acpi.c
+@@ -39,6 +39,9 @@
+ #include <linux/rwsem.h>
+ #include <linux/wait.h>
+ #include <linux/topology.h>
++#include <linux/dmi.h>
++#include <linux/units.h>
++#include <asm/unaligned.h>
+ 
+ #include <acpi/cppc_acpi.h>
+ 
+@@ -1760,3 +1763,104 @@ unsigned int cppc_get_transition_latency(int cpu_num)
+ 	return latency_ns;
+ }
+ EXPORT_SYMBOL_GPL(cppc_get_transition_latency);
++
++/* Minimum struct length needed for the DMI processor entry we want */
++#define DMI_ENTRY_PROCESSOR_MIN_LENGTH	48
++
++/* Offset in the DMI processor structure for the max frequency */
++#define DMI_PROCESSOR_MAX_SPEED		0x14
++
++/* Callback function used to retrieve the max frequency from DMI */
++static void cppc_find_dmi_mhz(const struct dmi_header *dm, void *private)
++{
++	const u8 *dmi_data = (const u8 *)dm;
++	u16 *mhz = (u16 *)private;
++
++	if (dm->type == DMI_ENTRY_PROCESSOR &&
++	    dm->length >= DMI_ENTRY_PROCESSOR_MIN_LENGTH) {
++		u16 val = (u16)get_unaligned((const u16 *)
++				(dmi_data + DMI_PROCESSOR_MAX_SPEED));
++		*mhz = val > *mhz ? val : *mhz;
++	}
++}
++
++/* Look up the max frequency in DMI */
++static u64 cppc_get_dmi_max_khz(void)
++{
++	u16 mhz = 0;
++
++	dmi_walk(cppc_find_dmi_mhz, &mhz);
++
++	/*
++	 * Real stupid fallback value, just in case there is no
++	 * actual value set.
++	 */
++	mhz = mhz ? mhz : 1;
++
++	return KHZ_PER_MHZ * mhz;
++}
++
++/*
++ * If CPPC lowest_freq and nominal_freq registers are exposed then we can
++ * use them to convert perf to freq and vice versa. The conversion is
++ * extrapolated as an affine function passing by the 2 points:
++ *  - (Low perf, Low freq)
++ *  - (Nominal perf, Nominal freq)
++ */
++unsigned int cppc_perf_to_khz(struct cppc_perf_caps *caps, unsigned int perf)
++{
++	s64 retval, offset = 0;
++	static u64 max_khz;
++	u64 mul, div;
++
++	if (caps->lowest_freq && caps->nominal_freq) {
++		mul = caps->nominal_freq - caps->lowest_freq;
++		mul *= KHZ_PER_MHZ;
++		div = caps->nominal_perf - caps->lowest_perf;
++		offset = caps->nominal_freq * KHZ_PER_MHZ -
++			 div64_u64(caps->nominal_perf * mul, div);
++	} else {
++		if (!max_khz)
++			max_khz = cppc_get_dmi_max_khz();
++		mul = max_khz;
++		div = caps->highest_perf;
++	}
++
++	retval = offset + div64_u64(perf * mul, div);
++	if (retval >= 0)
++		return retval;
++	return 0;
++}
++EXPORT_SYMBOL_GPL(cppc_perf_to_khz);
++
++unsigned int cppc_khz_to_perf(struct cppc_perf_caps *caps, unsigned int freq)
++{
++	s64 retval, offset = 0;
++	static u64 max_khz;
++	u64  mul, div;
++
++	if (caps->lowest_freq && caps->nominal_freq) {
++		mul = caps->nominal_perf - caps->lowest_perf;
++		div = caps->nominal_freq - caps->lowest_freq;
++		/*
++		 * We don't need to convert to kHz for computing offset and can
++		 * directly use nominal_freq and lowest_freq as the div64_u64
++		 * will remove the frequency unit.
++		 */
++		offset = caps->nominal_perf -
++			 div64_u64(caps->nominal_freq * mul, div);
++		/* But we need it for computing the perf level. */
++		div *= KHZ_PER_MHZ;
++	} else {
++		if (!max_khz)
++			max_khz = cppc_get_dmi_max_khz();
++		mul = caps->highest_perf;
++		div = max_khz;
++	}
++
++	retval = offset + div64_u64(freq * mul, div);
++	if (retval >= 0)
++		return retval;
++	return 0;
++}
++EXPORT_SYMBOL_GPL(cppc_khz_to_perf);
+diff --git a/drivers/base/arch_topology.c b/drivers/base/arch_topology.c
+index b741b5ba82bd..5aaa0865625d 100644
+--- a/drivers/base/arch_topology.c
++++ b/drivers/base/arch_topology.c
+@@ -19,6 +19,7 @@
+ #include <linux/init.h>
+ #include <linux/rcupdate.h>
+ #include <linux/sched.h>
++#include <linux/units.h>
+ 
+ #define CREATE_TRACE_POINTS
+ #include <trace/events/thermal_pressure.h>
+@@ -26,7 +27,8 @@
+ static DEFINE_PER_CPU(struct scale_freq_data __rcu *, sft_data);
+ static struct cpumask scale_freq_counters_mask;
+ static bool scale_freq_invariant;
+-static DEFINE_PER_CPU(u32, freq_factor) = 1;
++DEFINE_PER_CPU(unsigned long, capacity_freq_ref) = 1;
++EXPORT_PER_CPU_SYMBOL_GPL(capacity_freq_ref);
+ 
+ static bool supports_scale_freq_counters(const struct cpumask *cpus)
+ {
+@@ -170,9 +172,9 @@ DEFINE_PER_CPU(unsigned long, thermal_pressure);
+  * operating on stale data when hot-plug is used for some CPUs. The
+  * @capped_freq reflects the currently allowed max CPUs frequency due to
+  * thermal capping. It might be also a boost frequency value, which is bigger
+- * than the internal 'freq_factor' max frequency. In such case the pressure
+- * value should simply be removed, since this is an indication that there is
+- * no thermal throttling. The @capped_freq must be provided in kHz.
++ * than the internal 'capacity_freq_ref' max frequency. In such case the
++ * pressure value should simply be removed, since this is an indication that
++ * there is no thermal throttling. The @capped_freq must be provided in kHz.
+  */
+ void topology_update_thermal_pressure(const struct cpumask *cpus,
+ 				      unsigned long capped_freq)
+@@ -183,10 +185,7 @@ void topology_update_thermal_pressure(const struct cpumask *cpus,
+ 
+ 	cpu = cpumask_first(cpus);
+ 	max_capacity = arch_scale_cpu_capacity(cpu);
+-	max_freq = per_cpu(freq_factor, cpu);
+-
+-	/* Convert to MHz scale which is used in 'freq_factor' */
+-	capped_freq /= 1000;
++	max_freq = arch_scale_freq_ref(cpu);
+ 
+ 	/*
+ 	 * Handle properly the boost frequencies, which should simply clean
+@@ -279,13 +278,13 @@ void topology_normalize_cpu_scale(void)
+ 
+ 	capacity_scale = 1;
+ 	for_each_possible_cpu(cpu) {
+-		capacity = raw_capacity[cpu] * per_cpu(freq_factor, cpu);
++		capacity = raw_capacity[cpu] * per_cpu(capacity_freq_ref, cpu);
+ 		capacity_scale = max(capacity, capacity_scale);
+ 	}
+ 
+ 	pr_debug("cpu_capacity: capacity_scale=%llu\n", capacity_scale);
+ 	for_each_possible_cpu(cpu) {
+-		capacity = raw_capacity[cpu] * per_cpu(freq_factor, cpu);
++		capacity = raw_capacity[cpu] * per_cpu(capacity_freq_ref, cpu);
+ 		capacity = div64_u64(capacity << SCHED_CAPACITY_SHIFT,
+ 			capacity_scale);
+ 		topology_set_cpu_scale(cpu, capacity);
+@@ -321,15 +320,15 @@ bool __init topology_parse_cpu_capacity(struct device_node *cpu_node, int cpu)
+ 			cpu_node, raw_capacity[cpu]);
+ 
+ 		/*
+-		 * Update freq_factor for calculating early boot cpu capacities.
++		 * Update capacity_freq_ref for calculating early boot CPU capacities.
+ 		 * For non-clk CPU DVFS mechanism, there's no way to get the
+ 		 * frequency value now, assuming they are running at the same
+-		 * frequency (by keeping the initial freq_factor value).
++		 * frequency (by keeping the initial capacity_freq_ref value).
+ 		 */
+ 		cpu_clk = of_clk_get(cpu_node, 0);
+ 		if (!PTR_ERR_OR_ZERO(cpu_clk)) {
+-			per_cpu(freq_factor, cpu) =
+-				clk_get_rate(cpu_clk) / 1000;
++			per_cpu(capacity_freq_ref, cpu) =
++				clk_get_rate(cpu_clk) / HZ_PER_KHZ;
+ 			clk_put(cpu_clk);
+ 		}
+ 	} else {
+@@ -345,11 +344,16 @@ bool __init topology_parse_cpu_capacity(struct device_node *cpu_node, int cpu)
+ 	return !ret;
+ }
+ 
++void __weak freq_inv_set_max_ratio(int cpu, u64 max_rate)
++{
++}
++
+ #ifdef CONFIG_ACPI_CPPC_LIB
+ #include <acpi/cppc_acpi.h>
+ 
+ void topology_init_cpu_capacity_cppc(void)
+ {
++	u64 capacity, capacity_scale = 0;
+ 	struct cppc_perf_caps perf_caps;
+ 	int cpu;
+ 
+@@ -366,6 +370,10 @@ void topology_init_cpu_capacity_cppc(void)
+ 		    (perf_caps.highest_perf >= perf_caps.nominal_perf) &&
+ 		    (perf_caps.highest_perf >= perf_caps.lowest_perf)) {
+ 			raw_capacity[cpu] = perf_caps.highest_perf;
++			capacity_scale = max_t(u64, capacity_scale, raw_capacity[cpu]);
++
++			per_cpu(capacity_freq_ref, cpu) = cppc_perf_to_khz(&perf_caps, raw_capacity[cpu]);
++
+ 			pr_debug("cpu_capacity: CPU%d cpu_capacity=%u (raw).\n",
+ 				 cpu, raw_capacity[cpu]);
+ 			continue;
+@@ -376,7 +384,18 @@ void topology_init_cpu_capacity_cppc(void)
+ 		goto exit;
+ 	}
+ 
+-	topology_normalize_cpu_scale();
++	for_each_possible_cpu(cpu) {
++		freq_inv_set_max_ratio(cpu,
++				       per_cpu(capacity_freq_ref, cpu) * HZ_PER_KHZ);
++
++		capacity = raw_capacity[cpu];
++		capacity = div64_u64(capacity << SCHED_CAPACITY_SHIFT,
++				     capacity_scale);
++		topology_set_cpu_scale(cpu, capacity);
++		pr_debug("cpu_capacity: CPU%d cpu_capacity=%lu\n",
++			cpu, topology_get_cpu_scale(cpu));
++	}
++
+ 	schedule_work(&update_topology_flags_work);
+ 	pr_debug("cpu_capacity: cpu_capacity initialization done\n");
+ 
+@@ -410,8 +429,11 @@ init_cpu_capacity_callback(struct notifier_block *nb,
+ 
+ 	cpumask_andnot(cpus_to_visit, cpus_to_visit, policy->related_cpus);
+ 
+-	for_each_cpu(cpu, policy->related_cpus)
+-		per_cpu(freq_factor, cpu) = policy->cpuinfo.max_freq / 1000;
++	for_each_cpu(cpu, policy->related_cpus) {
++		per_cpu(capacity_freq_ref, cpu) = policy->cpuinfo.max_freq;
++		freq_inv_set_max_ratio(cpu,
++				       per_cpu(capacity_freq_ref, cpu) * HZ_PER_KHZ);
++	}
+ 
+ 	if (cpumask_empty(cpus_to_visit)) {
+ 		topology_normalize_cpu_scale();
+diff --git a/drivers/cpufreq/cppc_cpufreq.c b/drivers/cpufreq/cppc_cpufreq.c
+index fe08ca419b3d..64420d9cfd1e 100644
+--- a/drivers/cpufreq/cppc_cpufreq.c
++++ b/drivers/cpufreq/cppc_cpufreq.c
+@@ -16,7 +16,6 @@
+ #include <linux/delay.h>
+ #include <linux/cpu.h>
+ #include <linux/cpufreq.h>
+-#include <linux/dmi.h>
+ #include <linux/irq_work.h>
+ #include <linux/kthread.h>
+ #include <linux/time.h>
+@@ -27,12 +26,6 @@
+ 
+ #include <acpi/cppc_acpi.h>
+ 
+-/* Minimum struct length needed for the DMI processor entry we want */
+-#define DMI_ENTRY_PROCESSOR_MIN_LENGTH	48
+-
+-/* Offset in the DMI processor structure for the max frequency */
+-#define DMI_PROCESSOR_MAX_SPEED		0x14
+-
+ /*
+  * This list contains information parsed from per CPU ACPI _CPC and _PSD
+  * structures: e.g. the highest and lowest supported performance, capabilities,
+@@ -291,97 +284,9 @@ static inline void cppc_freq_invariance_exit(void)
+ }
+ #endif /* CONFIG_ACPI_CPPC_CPUFREQ_FIE */
+ 
+-/* Callback function used to retrieve the max frequency from DMI */
+-static void cppc_find_dmi_mhz(const struct dmi_header *dm, void *private)
+-{
+-	const u8 *dmi_data = (const u8 *)dm;
+-	u16 *mhz = (u16 *)private;
+-
+-	if (dm->type == DMI_ENTRY_PROCESSOR &&
+-	    dm->length >= DMI_ENTRY_PROCESSOR_MIN_LENGTH) {
+-		u16 val = (u16)get_unaligned((const u16 *)
+-				(dmi_data + DMI_PROCESSOR_MAX_SPEED));
+-		*mhz = val > *mhz ? val : *mhz;
+-	}
+-}
+-
+-/* Look up the max frequency in DMI */
+-static u64 cppc_get_dmi_max_khz(void)
+-{
+-	u16 mhz = 0;
+-
+-	dmi_walk(cppc_find_dmi_mhz, &mhz);
+-
+-	/*
+-	 * Real stupid fallback value, just in case there is no
+-	 * actual value set.
+-	 */
+-	mhz = mhz ? mhz : 1;
+-
+-	return (1000 * mhz);
+-}
+-
+-/*
+- * If CPPC lowest_freq and nominal_freq registers are exposed then we can
+- * use them to convert perf to freq and vice versa. The conversion is
+- * extrapolated as an affine function passing by the 2 points:
+- *  - (Low perf, Low freq)
+- *  - (Nominal perf, Nominal perf)
+- */
+-static unsigned int cppc_cpufreq_perf_to_khz(struct cppc_cpudata *cpu_data,
+-					     unsigned int perf)
+-{
+-	struct cppc_perf_caps *caps = &cpu_data->perf_caps;
+-	s64 retval, offset = 0;
+-	static u64 max_khz;
+-	u64 mul, div;
+-
+-	if (caps->lowest_freq && caps->nominal_freq) {
+-		mul = caps->nominal_freq - caps->lowest_freq;
+-		div = caps->nominal_perf - caps->lowest_perf;
+-		offset = caps->nominal_freq - div64_u64(caps->nominal_perf * mul, div);
+-	} else {
+-		if (!max_khz)
+-			max_khz = cppc_get_dmi_max_khz();
+-		mul = max_khz;
+-		div = caps->highest_perf;
+-	}
+-
+-	retval = offset + div64_u64(perf * mul, div);
+-	if (retval >= 0)
+-		return retval;
+-	return 0;
+-}
+-
+-static unsigned int cppc_cpufreq_khz_to_perf(struct cppc_cpudata *cpu_data,
+-					     unsigned int freq)
+-{
+-	struct cppc_perf_caps *caps = &cpu_data->perf_caps;
+-	s64 retval, offset = 0;
+-	static u64 max_khz;
+-	u64  mul, div;
+-
+-	if (caps->lowest_freq && caps->nominal_freq) {
+-		mul = caps->nominal_perf - caps->lowest_perf;
+-		div = caps->nominal_freq - caps->lowest_freq;
+-		offset = caps->nominal_perf - div64_u64(caps->nominal_freq * mul, div);
+-	} else {
+-		if (!max_khz)
+-			max_khz = cppc_get_dmi_max_khz();
+-		mul = caps->highest_perf;
+-		div = max_khz;
+-	}
+-
+-	retval = offset + div64_u64(freq * mul, div);
+-	if (retval >= 0)
+-		return retval;
+-	return 0;
+-}
+-
+ static int cppc_cpufreq_set_target(struct cpufreq_policy *policy,
+ 				   unsigned int target_freq,
+ 				   unsigned int relation)
+-
+ {
+ 	struct cppc_cpudata *cpu_data = policy->driver_data;
+ 	unsigned int cpu = policy->cpu;
+@@ -389,7 +294,7 @@ static int cppc_cpufreq_set_target(struct cpufreq_policy *policy,
+ 	u32 desired_perf;
+ 	int ret = 0;
+ 
+-	desired_perf = cppc_cpufreq_khz_to_perf(cpu_data, target_freq);
++	desired_perf = cppc_khz_to_perf(&cpu_data->perf_caps, target_freq);
+ 	/* Return if it is exactly the same perf */
+ 	if (desired_perf == cpu_data->perf_ctrls.desired_perf)
+ 		return ret;
+@@ -417,7 +322,7 @@ static unsigned int cppc_cpufreq_fast_switch(struct cpufreq_policy *policy,
+ 	u32 desired_perf;
+ 	int ret;
+ 
+-	desired_perf = cppc_cpufreq_khz_to_perf(cpu_data, target_freq);
++	desired_perf = cppc_khz_to_perf(&cpu_data->perf_caps, target_freq);
+ 	cpu_data->perf_ctrls.desired_perf = desired_perf;
+ 	ret = cppc_set_perf(cpu, &cpu_data->perf_ctrls);
+ 
+@@ -530,7 +435,7 @@ static int cppc_get_cpu_power(struct device *cpu_dev,
+ 	min_step = min_cap / CPPC_EM_CAP_STEP;
+ 	max_step = max_cap / CPPC_EM_CAP_STEP;
+ 
+-	perf_prev = cppc_cpufreq_khz_to_perf(cpu_data, *KHz);
++	perf_prev = cppc_khz_to_perf(perf_caps, *KHz);
+ 	step = perf_prev / perf_step;
+ 
+ 	if (step > max_step)
+@@ -550,8 +455,8 @@ static int cppc_get_cpu_power(struct device *cpu_dev,
+ 			perf = step * perf_step;
+ 	}
+ 
+-	*KHz = cppc_cpufreq_perf_to_khz(cpu_data, perf);
+-	perf_check = cppc_cpufreq_khz_to_perf(cpu_data, *KHz);
++	*KHz = cppc_perf_to_khz(perf_caps, perf);
++	perf_check = cppc_khz_to_perf(perf_caps, *KHz);
+ 	step_check = perf_check / perf_step;
+ 
+ 	/*
+@@ -561,8 +466,8 @@ static int cppc_get_cpu_power(struct device *cpu_dev,
+ 	 */
+ 	while ((*KHz == prev_freq) || (step_check != step)) {
+ 		perf++;
+-		*KHz = cppc_cpufreq_perf_to_khz(cpu_data, perf);
+-		perf_check = cppc_cpufreq_khz_to_perf(cpu_data, *KHz);
++		*KHz = cppc_perf_to_khz(perf_caps, perf);
++		perf_check = cppc_khz_to_perf(perf_caps, *KHz);
+ 		step_check = perf_check / perf_step;
+ 	}
+ 
+@@ -591,7 +496,7 @@ static int cppc_get_cpu_cost(struct device *cpu_dev, unsigned long KHz,
+ 	perf_caps = &cpu_data->perf_caps;
+ 	max_cap = arch_scale_cpu_capacity(cpu_dev->id);
+ 
+-	perf_prev = cppc_cpufreq_khz_to_perf(cpu_data, KHz);
++	perf_prev = cppc_khz_to_perf(perf_caps, KHz);
+ 	perf_step = CPPC_EM_CAP_STEP * perf_caps->highest_perf / max_cap;
+ 	step = perf_prev / perf_step;
+ 
+@@ -679,10 +584,6 @@ static struct cppc_cpudata *cppc_cpufreq_get_cpu_data(unsigned int cpu)
+ 		goto free_mask;
+ 	}
+ 
+-	/* Convert the lowest and nominal freq from MHz to KHz */
+-	cpu_data->perf_caps.lowest_freq *= 1000;
+-	cpu_data->perf_caps.nominal_freq *= 1000;
+-
+ 	list_add(&cpu_data->node, &cpu_data_list);
+ 
+ 	return cpu_data;
+@@ -724,20 +625,16 @@ static int cppc_cpufreq_cpu_init(struct cpufreq_policy *policy)
+ 	 * Set min to lowest nonlinear perf to avoid any efficiency penalty (see
+ 	 * Section 8.4.7.1.1.5 of ACPI 6.1 spec)
+ 	 */
+-	policy->min = cppc_cpufreq_perf_to_khz(cpu_data,
+-					       caps->lowest_nonlinear_perf);
+-	policy->max = cppc_cpufreq_perf_to_khz(cpu_data,
+-					       caps->nominal_perf);
++	policy->min = cppc_perf_to_khz(caps, caps->lowest_nonlinear_perf);
++	policy->max = cppc_perf_to_khz(caps, caps->nominal_perf);
+ 
+ 	/*
+ 	 * Set cpuinfo.min_freq to Lowest to make the full range of performance
+ 	 * available if userspace wants to use any perf between lowest & lowest
+ 	 * nonlinear perf
+ 	 */
+-	policy->cpuinfo.min_freq = cppc_cpufreq_perf_to_khz(cpu_data,
+-							    caps->lowest_perf);
+-	policy->cpuinfo.max_freq = cppc_cpufreq_perf_to_khz(cpu_data,
+-							    caps->nominal_perf);
++	policy->cpuinfo.min_freq = cppc_perf_to_khz(caps, caps->lowest_perf);
++	policy->cpuinfo.max_freq = cppc_perf_to_khz(caps, caps->nominal_perf);
+ 
+ 	policy->transition_delay_us = cppc_cpufreq_get_transition_delay_us(cpu);
+ 	policy->shared_type = cpu_data->shared_type;
+@@ -773,7 +670,7 @@ static int cppc_cpufreq_cpu_init(struct cpufreq_policy *policy)
+ 		boost_supported = true;
+ 
+ 	/* Set policy->cur to max now. The governors will adjust later. */
+-	policy->cur = cppc_cpufreq_perf_to_khz(cpu_data, caps->highest_perf);
++	policy->cur = cppc_perf_to_khz(caps, caps->highest_perf);
+ 	cpu_data->perf_ctrls.desired_perf =  caps->highest_perf;
+ 
+ 	ret = cppc_set_perf(cpu, &cpu_data->perf_ctrls);
+@@ -863,7 +760,7 @@ static unsigned int cppc_cpufreq_get_rate(unsigned int cpu)
+ 	delivered_perf = cppc_perf_from_fbctrs(cpu_data, &fb_ctrs_t0,
+ 					       &fb_ctrs_t1);
+ 
+-	return cppc_cpufreq_perf_to_khz(cpu_data, delivered_perf);
++	return cppc_perf_to_khz(&cpu_data->perf_caps, delivered_perf);
+ }
+ 
+ static int cppc_cpufreq_set_boost(struct cpufreq_policy *policy, int state)
+@@ -878,11 +775,9 @@ static int cppc_cpufreq_set_boost(struct cpufreq_policy *policy, int state)
+ 	}
+ 
+ 	if (state)
+-		policy->max = cppc_cpufreq_perf_to_khz(cpu_data,
+-						       caps->highest_perf);
++		policy->max = cppc_perf_to_khz(caps, caps->highest_perf);
+ 	else
+-		policy->max = cppc_cpufreq_perf_to_khz(cpu_data,
+-						       caps->nominal_perf);
++		policy->max = cppc_perf_to_khz(caps, caps->nominal_perf);
+ 	policy->cpuinfo.max_freq = policy->max;
+ 
+ 	ret = freq_qos_update_request(policy->max_freq_req, policy->max);
+@@ -937,7 +832,7 @@ static unsigned int hisi_cppc_cpufreq_get_rate(unsigned int cpu)
+ 	if (ret < 0)
+ 		return -EIO;
+ 
+-	return cppc_cpufreq_perf_to_khz(cpu_data, desired_perf);
++	return cppc_perf_to_khz(&cpu_data->perf_caps, desired_perf);
+ }
+ 
+ static void cppc_check_hisi_workaround(void)
+diff --git a/drivers/cpufreq/cpufreq.c b/drivers/cpufreq/cpufreq.c
+index 934d35f570b7..44db4f59c4cc 100644
+--- a/drivers/cpufreq/cpufreq.c
++++ b/drivers/cpufreq/cpufreq.c
+@@ -454,7 +454,7 @@ void cpufreq_freq_transition_end(struct cpufreq_policy *policy,
+ 
+ 	arch_set_freq_scale(policy->related_cpus,
+ 			    policy->cur,
+-			    policy->cpuinfo.max_freq);
++			    arch_scale_freq_ref(policy->cpu));
+ 
+ 	spin_lock(&policy->transition_lock);
+ 	policy->transition_ongoing = false;
+@@ -2174,7 +2174,7 @@ unsigned int cpufreq_driver_fast_switch(struct cpufreq_policy *policy,
+ 
+ 	policy->cur = freq;
+ 	arch_set_freq_scale(policy->related_cpus, freq,
+-			    policy->cpuinfo.max_freq);
++			    arch_scale_freq_ref(policy->cpu));
+ 	cpufreq_stats_record_transition(policy, freq);
+ 
+ 	if (trace_cpu_frequency_enabled()) {
+diff --git a/include/acpi/cppc_acpi.h b/include/acpi/cppc_acpi.h
+index 6126c977ece0..3a0995f8bce8 100644
+--- a/include/acpi/cppc_acpi.h
++++ b/include/acpi/cppc_acpi.h
+@@ -144,6 +144,8 @@ extern int cppc_set_perf(int cpu, struct cppc_perf_ctrls *perf_ctrls);
+ extern int cppc_set_enable(int cpu, bool enable);
+ extern int cppc_get_perf_caps(int cpu, struct cppc_perf_caps *caps);
+ extern bool cppc_perf_ctrs_in_pcc(void);
++extern unsigned int cppc_perf_to_khz(struct cppc_perf_caps *caps, unsigned int perf);
++extern unsigned int cppc_khz_to_perf(struct cppc_perf_caps *caps, unsigned int freq);
+ extern bool acpi_cpc_valid(void);
+ extern bool cppc_allow_fast_switch(void);
+ extern int acpi_get_psd_map(unsigned int cpu, struct cppc_cpudata *cpu_data);
+diff --git a/include/linux/arch_topology.h b/include/linux/arch_topology.h
+index a07b510e7dc5..a63d61ca55af 100644
+--- a/include/linux/arch_topology.h
++++ b/include/linux/arch_topology.h
+@@ -27,6 +27,13 @@ static inline unsigned long topology_get_cpu_scale(int cpu)
+ 
+ void topology_set_cpu_scale(unsigned int cpu, unsigned long capacity);
+ 
++DECLARE_PER_CPU(unsigned long, capacity_freq_ref);
++
++static inline unsigned long topology_get_freq_ref(int cpu)
++{
++	return per_cpu(capacity_freq_ref, cpu);
++}
++
+ DECLARE_PER_CPU(unsigned long, arch_freq_scale);
+ 
+ static inline unsigned long topology_get_freq_scale(int cpu)
+@@ -92,6 +99,7 @@ void update_siblings_masks(unsigned int cpu);
+ void remove_cpu_topology(unsigned int cpuid);
+ void reset_cpu_topology(void);
+ int parse_acpi_topology(void);
++void freq_inv_set_max_ratio(int cpu, u64 max_rate);
+ #endif
+ 
+ #endif /* _LINUX_ARCH_TOPOLOGY_H_ */
+diff --git a/include/linux/cpufreq.h b/include/linux/cpufreq.h
+index 1c5ca92a0555..afda5f24d3dd 100644
+--- a/include/linux/cpufreq.h
++++ b/include/linux/cpufreq.h
+@@ -1203,6 +1203,7 @@ void arch_set_freq_scale(const struct cpumask *cpus,
+ {
+ }
+ #endif
++
+ /* the following are really really optional */
+ extern struct freq_attr cpufreq_freq_attr_scaling_available_freqs;
+ extern struct freq_attr cpufreq_freq_attr_scaling_boost_freqs;
+diff --git a/include/linux/energy_model.h b/include/linux/energy_model.h
+index b9caa01dfac4..88d91e087471 100644
+--- a/include/linux/energy_model.h
++++ b/include/linux/energy_model.h
+@@ -224,7 +224,7 @@ static inline unsigned long em_cpu_energy(struct em_perf_domain *pd,
+ 				unsigned long max_util, unsigned long sum_util,
+ 				unsigned long allowed_cpu_cap)
+ {
+-	unsigned long freq, scale_cpu;
++	unsigned long freq, ref_freq, scale_cpu;
+ 	struct em_perf_state *ps;
+ 	int cpu;
+ 
+@@ -241,11 +241,10 @@ static inline unsigned long em_cpu_energy(struct em_perf_domain *pd,
+ 	 */
+ 	cpu = cpumask_first(to_cpumask(pd->cpus));
+ 	scale_cpu = arch_scale_cpu_capacity(cpu);
+-	ps = &pd->table[pd->nr_perf_states - 1];
++	ref_freq = arch_scale_freq_ref(cpu);
+ 
+-	max_util = map_util_perf(max_util);
+ 	max_util = min(max_util, allowed_cpu_cap);
+-	freq = map_util_freq(max_util, ps->frequency, scale_cpu);
++	freq = map_util_freq(max_util, ref_freq, scale_cpu);
+ 
+ 	/*
+ 	 * Find the lowest performance state of the Energy Model above the
+diff --git a/include/linux/mm_types.h b/include/linux/mm_types.h
+index 957ce38768b2..950df415d7de 100644
+--- a/include/linux/mm_types.h
++++ b/include/linux/mm_types.h
+@@ -600,6 +600,9 @@ struct vma_numab_state {
+ 	 */
+ 	unsigned long pids_active[2];
+ 
++	/* MM scan sequence ID when scan first started after VMA creation */
++	int start_scan_seq;
++
+ 	/*
+ 	 * MM scan sequence ID when the VMA was last completely scanned.
+ 	 * A VMA is not eligible for scanning if prev_scan_seq == numa_scan_seq
+diff --git a/include/linux/sched.h b/include/linux/sched.h
+index 292c31697248..03bfe9ab2951 100644
+--- a/include/linux/sched.h
++++ b/include/linux/sched.h
+@@ -63,11 +63,13 @@ struct robust_list_head;
+ struct root_domain;
+ struct rq;
+ struct sched_attr;
++struct sched_dl_entity;
+ struct seq_file;
+ struct sighand_struct;
+ struct signal_struct;
+ struct task_delay_info;
+ struct task_group;
++struct task_struct;
+ struct user_event_mm;
+ 
+ /*
+@@ -413,42 +415,6 @@ struct load_weight {
+ 	u32				inv_weight;
+ };
+ 
+-/**
+- * struct util_est - Estimation utilization of FAIR tasks
+- * @enqueued: instantaneous estimated utilization of a task/cpu
+- * @ewma:     the Exponential Weighted Moving Average (EWMA)
+- *            utilization of a task
+- *
+- * Support data structure to track an Exponential Weighted Moving Average
+- * (EWMA) of a FAIR task's utilization. New samples are added to the moving
+- * average each time a task completes an activation. Sample's weight is chosen
+- * so that the EWMA will be relatively insensitive to transient changes to the
+- * task's workload.
+- *
+- * The enqueued attribute has a slightly different meaning for tasks and cpus:
+- * - task:   the task's util_avg at last task dequeue time
+- * - cfs_rq: the sum of util_est.enqueued for each RUNNABLE task on that CPU
+- * Thus, the util_est.enqueued of a task represents the contribution on the
+- * estimated utilization of the CPU where that task is currently enqueued.
+- *
+- * Only for tasks we track a moving average of the past instantaneous
+- * estimated utilization. This allows to absorb sporadic drops in utilization
+- * of an otherwise almost periodic task.
+- *
+- * The UTIL_AVG_UNCHANGED flag is used to synchronize util_est with util_avg
+- * updates. When a task is dequeued, its util_est should not be updated if its
+- * util_avg has not been updated in the meantime.
+- * This information is mapped into the MSB bit of util_est.enqueued at dequeue
+- * time. Since max value of util_est.enqueued for a task is 1024 (PELT util_avg
+- * for a task) it is safe to use MSB.
+- */
+-struct util_est {
+-	unsigned int			enqueued;
+-	unsigned int			ewma;
+-#define UTIL_EST_WEIGHT_SHIFT		2
+-#define UTIL_AVG_UNCHANGED		0x80000000
+-} __attribute__((__aligned__(sizeof(u64))));
+-
+ /*
+  * The load/runnable/util_avg accumulates an infinite geometric series
+  * (see __update_load_avg_cfs_rq() in kernel/sched/pelt.c).
+@@ -503,9 +469,20 @@ struct sched_avg {
+ 	unsigned long			load_avg;
+ 	unsigned long			runnable_avg;
+ 	unsigned long			util_avg;
+-	struct util_est			util_est;
++	unsigned int			util_est;
+ } ____cacheline_aligned;
+ 
++/*
++ * The UTIL_AVG_UNCHANGED flag is used to synchronize util_est with util_avg
++ * updates. When a task is dequeued, its util_est should not be updated if its
++ * util_avg has not been updated in the meantime.
++ * This information is mapped into the MSB bit of util_est at dequeue time.
++ * Since max value of util_est for a task is 1024 (PELT util_avg for a task)
++ * it is safe to use MSB.
++ */
++#define UTIL_EST_WEIGHT_SHIFT		2
++#define UTIL_AVG_UNCHANGED		0x80000000
++
+ struct sched_statistics {
+ #ifdef CONFIG_SCHEDSTATS
+ 	u64				wait_start;
+@@ -523,7 +500,7 @@ struct sched_statistics {
+ 	u64				block_max;
+ 	s64				sum_block_runtime;
+ 
+-	u64				exec_max;
++	s64				exec_max;
+ 	u64				slice_max;
+ 
+ 	u64				nr_migrations_cold;
+@@ -553,7 +530,7 @@ struct sched_entity {
+ 	struct load_weight		load;
+ 	struct rb_node			run_node;
+ 	u64				deadline;
+-	u64				min_deadline;
++	u64				min_vruntime;
+ 
+ 	struct list_head		group_node;
+ 	unsigned int			on_rq;
+@@ -607,6 +584,9 @@ struct sched_rt_entity {
+ #endif
+ } __randomize_layout;
+ 
++typedef bool (*dl_server_has_tasks_f)(struct sched_dl_entity *);
++typedef struct task_struct *(*dl_server_pick_f)(struct sched_dl_entity *);
++
+ struct sched_dl_entity {
+ 	struct rb_node			rb_node;
+ 
+@@ -654,6 +634,7 @@ struct sched_dl_entity {
+ 	unsigned int			dl_yielded        : 1;
+ 	unsigned int			dl_non_contending : 1;
+ 	unsigned int			dl_overrun	  : 1;
++	unsigned int			dl_server         : 1;
+ 
+ 	/*
+ 	 * Bandwidth enforcement timer. Each -deadline task has its
+@@ -668,7 +649,20 @@ struct sched_dl_entity {
+ 	 * timer is needed to decrease the active utilization at the correct
+ 	 * time.
+ 	 */
+-	struct hrtimer inactive_timer;
++	struct hrtimer			inactive_timer;
++
++	/*
++	 * Bits for DL-server functionality. Also see the comment near
++	 * dl_server_update().
++	 *
++	 * @rq the runqueue this server is for
++	 *
++	 * @server_has_tasks() returns true if @server_pick return a
++	 * runnable task.
++	 */
++	struct rq			*rq;
++	dl_server_has_tasks_f		server_has_tasks;
++	dl_server_pick_f		server_pick;
+ 
+ #ifdef CONFIG_RT_MUTEXES
+ 	/*
+@@ -795,6 +789,7 @@ struct task_struct {
+ 	struct sched_entity		se;
+ 	struct sched_rt_entity		rt;
+ 	struct sched_dl_entity		dl;
++	struct sched_dl_entity		*dl_server;
+ 	const struct sched_class	*sched_class;
+ 
+ #ifdef CONFIG_SCHED_CORE
+diff --git a/include/linux/sched/topology.h b/include/linux/sched/topology.h
+index de545ba85218..a6e04b4a21d7 100644
+--- a/include/linux/sched/topology.h
++++ b/include/linux/sched/topology.h
+@@ -279,6 +279,14 @@ void arch_update_thermal_pressure(const struct cpumask *cpus,
+ { }
+ #endif
+ 
++#ifndef arch_scale_freq_ref
++static __always_inline
++unsigned int arch_scale_freq_ref(int cpu)
++{
++	return 0;
++}
++#endif
++
+ static inline int task_node(const struct task_struct *p)
+ {
+ 	return cpu_to_node(task_cpu(p));
+diff --git a/include/trace/events/sched.h b/include/trace/events/sched.h
+index 6188ad0d9e0d..dbb01b4b7451 100644
+--- a/include/trace/events/sched.h
++++ b/include/trace/events/sched.h
+@@ -493,33 +493,30 @@ DEFINE_EVENT_SCHEDSTAT(sched_stat_template, sched_stat_blocked,
+  */
+ DECLARE_EVENT_CLASS(sched_stat_runtime,
+ 
+-	TP_PROTO(struct task_struct *tsk, u64 runtime, u64 vruntime),
++	TP_PROTO(struct task_struct *tsk, u64 runtime),
+ 
+-	TP_ARGS(tsk, __perf_count(runtime), vruntime),
++	TP_ARGS(tsk, __perf_count(runtime)),
+ 
+ 	TP_STRUCT__entry(
+ 		__array( char,	comm,	TASK_COMM_LEN	)
+ 		__field( pid_t,	pid			)
+ 		__field( u64,	runtime			)
+-		__field( u64,	vruntime			)
+ 	),
+ 
+ 	TP_fast_assign(
+ 		memcpy(__entry->comm, tsk->comm, TASK_COMM_LEN);
+ 		__entry->pid		= tsk->pid;
+ 		__entry->runtime	= runtime;
+-		__entry->vruntime	= vruntime;
+ 	),
+ 
+-	TP_printk("comm=%s pid=%d runtime=%Lu [ns] vruntime=%Lu [ns]",
++	TP_printk("comm=%s pid=%d runtime=%Lu [ns]",
+ 			__entry->comm, __entry->pid,
+-			(unsigned long long)__entry->runtime,
+-			(unsigned long long)__entry->vruntime)
++			(unsigned long long)__entry->runtime)
+ );
+ 
+ DEFINE_EVENT(sched_stat_runtime, sched_stat_runtime,
+-	     TP_PROTO(struct task_struct *tsk, u64 runtime, u64 vruntime),
+-	     TP_ARGS(tsk, runtime, vruntime));
++	     TP_PROTO(struct task_struct *tsk, u64 runtime),
++	     TP_ARGS(tsk, runtime));
+ 
+ /*
+  * Tracepoint for showing priority inheritance modifying a tasks
+diff --git a/kernel/freezer.c b/kernel/freezer.c
+index 759006a9a910..f57aaf96b829 100644
+--- a/kernel/freezer.c
++++ b/kernel/freezer.c
+@@ -187,6 +187,7 @@ static int __restore_freezer_state(struct task_struct *p, void *arg)
+ 
+ 	if (state != TASK_RUNNING) {
+ 		WRITE_ONCE(p->__state, state);
++		p->saved_state = TASK_RUNNING;
+ 		return 1;
+ 	}
+ 
+diff --git a/kernel/sched/core.c b/kernel/sched/core.c
+index a708d225c28e..db4be4921e7f 100644
+--- a/kernel/sched/core.c
++++ b/kernel/sched/core.c
+@@ -1131,6 +1131,28 @@ static void wake_up_idle_cpu(int cpu)
+ 	if (cpu == smp_processor_id())
+ 		return;
+ 
++	/*
++	 * Set TIF_NEED_RESCHED and send an IPI if in the non-polling
++	 * part of the idle loop. This forces an exit from the idle loop
++	 * and a round trip to schedule(). Now this could be optimized
++	 * because a simple new idle loop iteration is enough to
++	 * re-evaluate the next tick. Provided some re-ordering of tick
++	 * nohz functions that would need to follow TIF_NR_POLLING
++	 * clearing:
++	 *
++	 * - On most archs, a simple fetch_or on ti::flags with a
++	 *   "0" value would be enough to know if an IPI needs to be sent.
++	 *
++	 * - x86 needs to perform a last need_resched() check between
++	 *   monitor and mwait which doesn't take timers into account.
++	 *   There a dedicated TIF_TIMER flag would be required to
++	 *   fetch_or here and be checked along with TIF_NEED_RESCHED
++	 *   before mwait().
++	 *
++	 * However, remote timer enqueue is not such a frequent event
++	 * and testing of the above solutions didn't appear to report
++	 * much benefits.
++	 */
+ 	if (set_nr_and_not_polling(rq->idle))
+ 		smp_send_reschedule(cpu);
+ 	else
+@@ -2124,12 +2146,14 @@ void activate_task(struct rq *rq, struct task_struct *p, int flags)
+ 
+ 	enqueue_task(rq, p, flags);
+ 
+-	p->on_rq = TASK_ON_RQ_QUEUED;
++	WRITE_ONCE(p->on_rq, TASK_ON_RQ_QUEUED);
++	ASSERT_EXCLUSIVE_WRITER(p->on_rq);
+ }
+ 
+ void deactivate_task(struct rq *rq, struct task_struct *p, int flags)
+ {
+-	p->on_rq = (flags & DEQUEUE_SLEEP) ? 0 : TASK_ON_RQ_MIGRATING;
++	WRITE_ONCE(p->on_rq, (flags & DEQUEUE_SLEEP) ? 0 : TASK_ON_RQ_MIGRATING);
++	ASSERT_EXCLUSIVE_WRITER(p->on_rq);
+ 
+ 	dequeue_task(rq, p, flags);
+ }
+@@ -3795,6 +3819,8 @@ ttwu_do_activate(struct rq *rq, struct task_struct *p, int wake_flags,
+ 		rq->idle_stamp = 0;
+ 	}
+ #endif
++
++	p->dl_server = NULL;
+ }
+ 
+ /*
+@@ -4509,10 +4535,7 @@ static void __sched_fork(unsigned long clone_flags, struct task_struct *p)
+ 	memset(&p->stats, 0, sizeof(p->stats));
+ #endif
+ 
+-	RB_CLEAR_NODE(&p->dl.rb_node);
+-	init_dl_task_timer(&p->dl);
+-	init_dl_inactive_task_timer(&p->dl);
+-	__dl_clear_params(p);
++	init_dl_entity(&p->dl);
+ 
+ 	INIT_LIST_HEAD(&p->rt.run_list);
+ 	p->rt.timeout		= 0;
+@@ -6004,12 +6027,27 @@ __pick_next_task(struct rq *rq, struct task_struct *prev, struct rq_flags *rf)
+ 			p = pick_next_task_idle(rq);
+ 		}
+ 
++		/*
++		 * This is the fast path; it cannot be a DL server pick;
++		 * therefore even if @p == @prev, ->dl_server must be NULL.
++		 */
++		if (p->dl_server)
++			p->dl_server = NULL;
++
+ 		return p;
+ 	}
+ 
+ restart:
+ 	put_prev_task_balance(rq, prev, rf);
+ 
++	/*
++	 * We've updated @prev and no longer need the server link, clear it.
++	 * Must be done before ->pick_next_task() because that can (re)set
++	 * ->dl_server.
++	 */
++	if (prev->dl_server)
++		prev->dl_server = NULL;
++
+ 	for_each_class(class) {
+ 		p = class->pick_next_task(rq);
+ 		if (p)
+@@ -7429,18 +7467,13 @@ int sched_core_idle_cpu(int cpu)
+  * required to meet deadlines.
+  */
+ unsigned long effective_cpu_util(int cpu, unsigned long util_cfs,
+-				 enum cpu_util_type type,
+-				 struct task_struct *p)
++				 unsigned long *min,
++				 unsigned long *max)
+ {
+-	unsigned long dl_util, util, irq, max;
++	unsigned long util, irq, scale;
+ 	struct rq *rq = cpu_rq(cpu);
+ 
+-	max = arch_scale_cpu_capacity(cpu);
+-
+-	if (!uclamp_is_used() &&
+-	    type == FREQUENCY_UTIL && rt_rq_is_runnable(&rq->rt)) {
+-		return max;
+-	}
++	scale = arch_scale_cpu_capacity(cpu);
+ 
+ 	/*
+ 	 * Early check to see if IRQ/steal time saturates the CPU, can be
+@@ -7448,45 +7481,49 @@ unsigned long effective_cpu_util(int cpu, unsigned long util_cfs,
+ 	 * update_irq_load_avg().
+ 	 */
+ 	irq = cpu_util_irq(rq);
+-	if (unlikely(irq >= max))
+-		return max;
++	if (unlikely(irq >= scale)) {
++		if (min)
++			*min = scale;
++		if (max)
++			*max = scale;
++		return scale;
++	}
++
++	if (min) {
++		/*
++		 * The minimum utilization returns the highest level between:
++		 * - the computed DL bandwidth needed with the IRQ pressure which
++		 *   steals time to the deadline task.
++		 * - The minimum performance requirement for CFS and/or RT.
++		 */
++		*min = max(irq + cpu_bw_dl(rq), uclamp_rq_get(rq, UCLAMP_MIN));
++
++		/*
++		 * When an RT task is runnable and uclamp is not used, we must
++		 * ensure that the task will run at maximum compute capacity.
++		 */
++		if (!uclamp_is_used() && rt_rq_is_runnable(&rq->rt))
++			*min = max(*min, scale);
++	}
+ 
+ 	/*
+ 	 * Because the time spend on RT/DL tasks is visible as 'lost' time to
+ 	 * CFS tasks and we use the same metric to track the effective
+ 	 * utilization (PELT windows are synchronized) we can directly add them
+ 	 * to obtain the CPU's actual utilization.
+-	 *
+-	 * CFS and RT utilization can be boosted or capped, depending on
+-	 * utilization clamp constraints requested by currently RUNNABLE
+-	 * tasks.
+-	 * When there are no CFS RUNNABLE tasks, clamps are released and
+-	 * frequency will be gracefully reduced with the utilization decay.
+ 	 */
+ 	util = util_cfs + cpu_util_rt(rq);
+-	if (type == FREQUENCY_UTIL)
+-		util = uclamp_rq_util_with(rq, util, p);
+-
+-	dl_util = cpu_util_dl(rq);
++	util += cpu_util_dl(rq);
+ 
+ 	/*
+-	 * For frequency selection we do not make cpu_util_dl() a permanent part
+-	 * of this sum because we want to use cpu_bw_dl() later on, but we need
+-	 * to check if the CFS+RT+DL sum is saturated (ie. no idle time) such
+-	 * that we select f_max when there is no idle time.
+-	 *
+-	 * NOTE: numerical errors or stop class might cause us to not quite hit
+-	 * saturation when we should -- something for later.
++	 * The maximum hint is a soft bandwidth requirement, which can be lower
++	 * than the actual utilization because of uclamp_max requirements.
+ 	 */
+-	if (util + dl_util >= max)
+-		return max;
++	if (max)
++		*max = min(scale, uclamp_rq_get(rq, UCLAMP_MAX));
+ 
+-	/*
+-	 * OTOH, for energy computation we need the estimated running time, so
+-	 * include util_dl and ignore dl_bw.
+-	 */
+-	if (type == ENERGY_UTIL)
+-		util += dl_util;
++	if (util >= scale)
++		return scale;
+ 
+ 	/*
+ 	 * There is still idle time; further improve the number by using the
+@@ -7497,28 +7534,15 @@ unsigned long effective_cpu_util(int cpu, unsigned long util_cfs,
+ 	 *   U' = irq + --------- * U
+ 	 *                 max
+ 	 */
+-	util = scale_irq_capacity(util, irq, max);
++	util = scale_irq_capacity(util, irq, scale);
+ 	util += irq;
+ 
+-	/*
+-	 * Bandwidth required by DEADLINE must always be granted while, for
+-	 * FAIR and RT, we use blocked utilization of IDLE CPUs as a mechanism
+-	 * to gracefully reduce the frequency when no tasks show up for longer
+-	 * periods of time.
+-	 *
+-	 * Ideally we would like to set bw_dl as min/guaranteed freq and util +
+-	 * bw_dl as requested freq. However, cpufreq is not yet ready for such
+-	 * an interface. So, we only do the latter for now.
+-	 */
+-	if (type == FREQUENCY_UTIL)
+-		util += cpu_bw_dl(rq);
+-
+-	return min(max, util);
++	return min(scale, util);
+ }
+ 
+ unsigned long sched_cpu_util(int cpu)
+ {
+-	return effective_cpu_util(cpu, cpu_util_cfs(cpu), ENERGY_UTIL, NULL);
++	return effective_cpu_util(cpu, cpu_util_cfs(cpu), NULL, NULL);
+ }
+ #endif /* CONFIG_SMP */
+ 
+diff --git a/kernel/sched/cpufreq_schedutil.c b/kernel/sched/cpufreq_schedutil.c
+index 5888176354e2..95c3c097083e 100644
+--- a/kernel/sched/cpufreq_schedutil.c
++++ b/kernel/sched/cpufreq_schedutil.c
+@@ -47,7 +47,7 @@ struct sugov_cpu {
+ 	u64			last_update;
+ 
+ 	unsigned long		util;
+-	unsigned long		bw_dl;
++	unsigned long		bw_min;
+ 
+ 	/* The field below is for single-CPU policies only: */
+ #ifdef CONFIG_NO_HZ_COMMON
+@@ -114,6 +114,28 @@ static void sugov_deferred_update(struct sugov_policy *sg_policy)
+ 	}
+ }
+ 
++/**
++ * get_capacity_ref_freq - get the reference frequency that has been used to
++ * correlate frequency and compute capacity for a given cpufreq policy. We use
++ * the CPU managing it for the arch_scale_freq_ref() call in the function.
++ * @policy: the cpufreq policy of the CPU in question.
++ *
++ * Return: the reference CPU frequency to compute a capacity.
++ */
++static __always_inline
++unsigned long get_capacity_ref_freq(struct cpufreq_policy *policy)
++{
++	unsigned int freq = arch_scale_freq_ref(policy->cpu);
++
++	if (freq)
++		return freq;
++
++	if (arch_scale_freq_invariant())
++		return policy->cpuinfo.max_freq;
++
++	return policy->cur;
++}
++
+ /**
+  * get_next_freq - Compute a new frequency for a given cpufreq policy.
+  * @sg_policy: schedutil policy object to compute the new frequency for.
+@@ -140,10 +162,9 @@ static unsigned int get_next_freq(struct sugov_policy *sg_policy,
+ 				  unsigned long util, unsigned long max)
+ {
+ 	struct cpufreq_policy *policy = sg_policy->policy;
+-	unsigned int freq = arch_scale_freq_invariant() ?
+-				policy->cpuinfo.max_freq : policy->cur;
++	unsigned int freq;
+ 
+-	util = map_util_perf(util);
++	freq = get_capacity_ref_freq(policy);
+ 	freq = map_util_freq(util, freq, max);
+ 
+ 	if (freq == sg_policy->cached_raw_freq && !sg_policy->need_freq_update)
+@@ -153,14 +174,31 @@ static unsigned int get_next_freq(struct sugov_policy *sg_policy,
+ 	return cpufreq_driver_resolve_freq(policy, freq);
+ }
+ 
+-static void sugov_get_util(struct sugov_cpu *sg_cpu)
++unsigned long sugov_effective_cpu_perf(int cpu, unsigned long actual,
++				 unsigned long min,
++				 unsigned long max)
++{
++	/* Add dvfs headroom to actual utilization */
++	actual = map_util_perf(actual);
++	/* Actually we don't need to target the max performance */
++	if (actual < max)
++		max = actual;
++
++	/*
++	 * Ensure at least minimum performance while providing more compute
++	 * capacity when possible.
++	 */
++	return max(min, max);
++}
++
++static void sugov_get_util(struct sugov_cpu *sg_cpu, unsigned long boost)
+ {
+-	unsigned long util = cpu_util_cfs_boost(sg_cpu->cpu);
+-	struct rq *rq = cpu_rq(sg_cpu->cpu);
++	unsigned long min, max, util = cpu_util_cfs_boost(sg_cpu->cpu);
+ 
+-	sg_cpu->bw_dl = cpu_bw_dl(rq);
+-	sg_cpu->util = effective_cpu_util(sg_cpu->cpu, util,
+-					  FREQUENCY_UTIL, NULL);
++	util = effective_cpu_util(sg_cpu->cpu, util, &min, &max);
++	util = max(util, boost);
++	sg_cpu->bw_min = min;
++	sg_cpu->util = sugov_effective_cpu_perf(sg_cpu->cpu, util, min, max);
+ }
+ 
+ /**
+@@ -251,18 +289,16 @@ static void sugov_iowait_boost(struct sugov_cpu *sg_cpu, u64 time,
+  * This mechanism is designed to boost high frequently IO waiting tasks, while
+  * being more conservative on tasks which does sporadic IO operations.
+  */
+-static void sugov_iowait_apply(struct sugov_cpu *sg_cpu, u64 time,
++static unsigned long sugov_iowait_apply(struct sugov_cpu *sg_cpu, u64 time,
+ 			       unsigned long max_cap)
+ {
+-	unsigned long boost;
+-
+ 	/* No boost currently required */
+ 	if (!sg_cpu->iowait_boost)
+-		return;
++		return 0;
+ 
+ 	/* Reset boost if the CPU appears to have been idle enough */
+ 	if (sugov_iowait_reset(sg_cpu, time, false))
+-		return;
++		return 0;
+ 
+ 	if (!sg_cpu->iowait_boost_pending) {
+ 		/*
+@@ -271,7 +307,7 @@ static void sugov_iowait_apply(struct sugov_cpu *sg_cpu, u64 time,
+ 		sg_cpu->iowait_boost >>= 1;
+ 		if (sg_cpu->iowait_boost < IOWAIT_BOOST_MIN) {
+ 			sg_cpu->iowait_boost = 0;
+-			return;
++			return 0;
+ 		}
+ 	}
+ 
+@@ -281,10 +317,7 @@ static void sugov_iowait_apply(struct sugov_cpu *sg_cpu, u64 time,
+ 	 * sg_cpu->util is already in capacity scale; convert iowait_boost
+ 	 * into the same scale so we can compare.
+ 	 */
+-	boost = (sg_cpu->iowait_boost * max_cap) >> SCHED_CAPACITY_SHIFT;
+-	boost = uclamp_rq_util_with(cpu_rq(sg_cpu->cpu), boost, NULL);
+-	if (sg_cpu->util < boost)
+-		sg_cpu->util = boost;
++	return (sg_cpu->iowait_boost * max_cap) >> SCHED_CAPACITY_SHIFT;
+ }
+ 
+ #ifdef CONFIG_NO_HZ_COMMON
+@@ -306,7 +339,7 @@ static inline bool sugov_cpu_is_busy(struct sugov_cpu *sg_cpu) { return false; }
+  */
+ static inline void ignore_dl_rate_limit(struct sugov_cpu *sg_cpu)
+ {
+-	if (cpu_bw_dl(cpu_rq(sg_cpu->cpu)) > sg_cpu->bw_dl)
++	if (cpu_bw_dl(cpu_rq(sg_cpu->cpu)) > sg_cpu->bw_min)
+ 		sg_cpu->sg_policy->limits_changed = true;
+ }
+ 
+@@ -314,6 +347,8 @@ static inline bool sugov_update_single_common(struct sugov_cpu *sg_cpu,
+ 					      u64 time, unsigned long max_cap,
+ 					      unsigned int flags)
+ {
++	unsigned long boost;
++
+ 	sugov_iowait_boost(sg_cpu, time, flags);
+ 	sg_cpu->last_update = time;
+ 
+@@ -322,8 +357,8 @@ static inline bool sugov_update_single_common(struct sugov_cpu *sg_cpu,
+ 	if (!sugov_should_update_freq(sg_cpu->sg_policy, time))
+ 		return false;
+ 
+-	sugov_get_util(sg_cpu);
+-	sugov_iowait_apply(sg_cpu, time, max_cap);
++	boost = sugov_iowait_apply(sg_cpu, time, max_cap);
++	sugov_get_util(sg_cpu, boost);
+ 
+ 	return true;
+ }
+@@ -407,8 +442,8 @@ static void sugov_update_single_perf(struct update_util_data *hook, u64 time,
+ 	    sugov_cpu_is_busy(sg_cpu) && sg_cpu->util < prev_util)
+ 		sg_cpu->util = prev_util;
+ 
+-	cpufreq_driver_adjust_perf(sg_cpu->cpu, map_util_perf(sg_cpu->bw_dl),
+-				   map_util_perf(sg_cpu->util), max_cap);
++	cpufreq_driver_adjust_perf(sg_cpu->cpu, sg_cpu->bw_min,
++				   sg_cpu->util, max_cap);
+ 
+ 	sg_cpu->sg_policy->last_freq_update_time = time;
+ }
+@@ -424,9 +459,10 @@ static unsigned int sugov_next_freq_shared(struct sugov_cpu *sg_cpu, u64 time)
+ 
+ 	for_each_cpu(j, policy->cpus) {
+ 		struct sugov_cpu *j_sg_cpu = &per_cpu(sugov_cpu, j);
++		unsigned long boost;
+ 
+-		sugov_get_util(j_sg_cpu);
+-		sugov_iowait_apply(j_sg_cpu, time, max_cap);
++		boost = sugov_iowait_apply(j_sg_cpu, time, max_cap);
++		sugov_get_util(j_sg_cpu, boost);
+ 
+ 		util = max(j_sg_cpu->util, util);
+ 	}
+diff --git a/kernel/sched/deadline.c b/kernel/sched/deadline.c
+index b28114478b82..a04a436af8cc 100644
+--- a/kernel/sched/deadline.c
++++ b/kernel/sched/deadline.c
+@@ -54,8 +54,14 @@ static int __init sched_dl_sysctl_init(void)
+ late_initcall(sched_dl_sysctl_init);
+ #endif
+ 
++static bool dl_server(struct sched_dl_entity *dl_se)
++{
++	return dl_se->dl_server;
++}
++
+ static inline struct task_struct *dl_task_of(struct sched_dl_entity *dl_se)
+ {
++	BUG_ON(dl_server(dl_se));
+ 	return container_of(dl_se, struct task_struct, dl);
+ }
+ 
+@@ -64,12 +70,19 @@ static inline struct rq *rq_of_dl_rq(struct dl_rq *dl_rq)
+ 	return container_of(dl_rq, struct rq, dl);
+ }
+ 
+-static inline struct dl_rq *dl_rq_of_se(struct sched_dl_entity *dl_se)
++static inline struct rq *rq_of_dl_se(struct sched_dl_entity *dl_se)
+ {
+-	struct task_struct *p = dl_task_of(dl_se);
+-	struct rq *rq = task_rq(p);
++	struct rq *rq = dl_se->rq;
++
++	if (!dl_server(dl_se))
++		rq = task_rq(dl_task_of(dl_se));
++
++	return rq;
++}
+ 
+-	return &rq->dl;
++static inline struct dl_rq *dl_rq_of_se(struct sched_dl_entity *dl_se)
++{
++	return &rq_of_dl_se(dl_se)->dl;
+ }
+ 
+ static inline int on_dl_rq(struct sched_dl_entity *dl_se)
+@@ -335,6 +348,8 @@ static void dl_change_utilization(struct task_struct *p, u64 new_bw)
+ 	__add_rq_bw(new_bw, &rq->dl);
+ }
+ 
++static void __dl_clear_params(struct sched_dl_entity *dl_se);
++
+ /*
+  * The utilization of a task cannot be immediately removed from
+  * the rq active utilization (running_bw) when the task blocks.
+@@ -389,12 +404,11 @@ static void dl_change_utilization(struct task_struct *p, u64 new_bw)
+  * up, and checks if the task is still in the "ACTIVE non contending"
+  * state or not (in the second case, it updates running_bw).
+  */
+-static void task_non_contending(struct task_struct *p)
++static void task_non_contending(struct sched_dl_entity *dl_se)
+ {
+-	struct sched_dl_entity *dl_se = &p->dl;
+ 	struct hrtimer *timer = &dl_se->inactive_timer;
+-	struct dl_rq *dl_rq = dl_rq_of_se(dl_se);
+-	struct rq *rq = rq_of_dl_rq(dl_rq);
++	struct rq *rq = rq_of_dl_se(dl_se);
++	struct dl_rq *dl_rq = &rq->dl;
+ 	s64 zerolag_time;
+ 
+ 	/*
+@@ -424,24 +438,33 @@ static void task_non_contending(struct task_struct *p)
+ 	 * utilization now, instead of starting a timer
+ 	 */
+ 	if ((zerolag_time < 0) || hrtimer_active(&dl_se->inactive_timer)) {
+-		if (dl_task(p))
++		if (dl_server(dl_se)) {
+ 			sub_running_bw(dl_se, dl_rq);
+-		if (!dl_task(p) || READ_ONCE(p->__state) == TASK_DEAD) {
+-			struct dl_bw *dl_b = dl_bw_of(task_cpu(p));
+-
+-			if (READ_ONCE(p->__state) == TASK_DEAD)
+-				sub_rq_bw(&p->dl, &rq->dl);
+-			raw_spin_lock(&dl_b->lock);
+-			__dl_sub(dl_b, p->dl.dl_bw, dl_bw_cpus(task_cpu(p)));
+-			raw_spin_unlock(&dl_b->lock);
+-			__dl_clear_params(p);
++		} else {
++			struct task_struct *p = dl_task_of(dl_se);
++
++			if (dl_task(p))
++				sub_running_bw(dl_se, dl_rq);
++
++			if (!dl_task(p) || READ_ONCE(p->__state) == TASK_DEAD) {
++				struct dl_bw *dl_b = dl_bw_of(task_cpu(p));
++
++				if (READ_ONCE(p->__state) == TASK_DEAD)
++					sub_rq_bw(dl_se, &rq->dl);
++				raw_spin_lock(&dl_b->lock);
++				__dl_sub(dl_b, dl_se->dl_bw, dl_bw_cpus(task_cpu(p)));
++				raw_spin_unlock(&dl_b->lock);
++				__dl_clear_params(dl_se);
++			}
+ 		}
+ 
+ 		return;
+ 	}
+ 
+ 	dl_se->dl_non_contending = 1;
+-	get_task_struct(p);
++	if (!dl_server(dl_se))
++		get_task_struct(dl_task_of(dl_se));
++
+ 	hrtimer_start(timer, ns_to_ktime(zerolag_time), HRTIMER_MODE_REL_HARD);
+ }
+ 
+@@ -468,8 +491,10 @@ static void task_contending(struct sched_dl_entity *dl_se, int flags)
+ 		 * will not touch the rq's active utilization,
+ 		 * so we are still safe.
+ 		 */
+-		if (hrtimer_try_to_cancel(&dl_se->inactive_timer) == 1)
+-			put_task_struct(dl_task_of(dl_se));
++		if (hrtimer_try_to_cancel(&dl_se->inactive_timer) == 1) {
++			if (!dl_server(dl_se))
++				put_task_struct(dl_task_of(dl_se));
++		}
+ 	} else {
+ 		/*
+ 		 * Since "dl_non_contending" is not set, the
+@@ -482,10 +507,8 @@ static void task_contending(struct sched_dl_entity *dl_se, int flags)
+ 	}
+ }
+ 
+-static inline int is_leftmost(struct task_struct *p, struct dl_rq *dl_rq)
++static inline int is_leftmost(struct sched_dl_entity *dl_se, struct dl_rq *dl_rq)
+ {
+-	struct sched_dl_entity *dl_se = &p->dl;
+-
+ 	return rb_first_cached(&dl_rq->root) == &dl_se->rb_node;
+ }
+ 
+@@ -737,8 +760,10 @@ static inline void deadline_queue_pull_task(struct rq *rq)
+ }
+ #endif /* CONFIG_SMP */
+ 
++static void
++enqueue_dl_entity(struct sched_dl_entity *dl_se, int flags);
+ static void enqueue_task_dl(struct rq *rq, struct task_struct *p, int flags);
+-static void __dequeue_task_dl(struct rq *rq, struct task_struct *p, int flags);
++static void dequeue_dl_entity(struct sched_dl_entity *dl_se, int flags);
+ static void wakeup_preempt_dl(struct rq *rq, struct task_struct *p, int flags);
+ 
+ static inline void replenish_dl_new_period(struct sched_dl_entity *dl_se,
+@@ -986,8 +1011,7 @@ static inline bool dl_is_implicit(struct sched_dl_entity *dl_se)
+  */
+ static void update_dl_entity(struct sched_dl_entity *dl_se)
+ {
+-	struct dl_rq *dl_rq = dl_rq_of_se(dl_se);
+-	struct rq *rq = rq_of_dl_rq(dl_rq);
++	struct rq *rq = rq_of_dl_se(dl_se);
+ 
+ 	if (dl_time_before(dl_se->deadline, rq_clock(rq)) ||
+ 	    dl_entity_overflow(dl_se, rq_clock(rq))) {
+@@ -1018,11 +1042,11 @@ static inline u64 dl_next_period(struct sched_dl_entity *dl_se)
+  * actually started or not (i.e., the replenishment instant is in
+  * the future or in the past).
+  */
+-static int start_dl_timer(struct task_struct *p)
++static int start_dl_timer(struct sched_dl_entity *dl_se)
+ {
+-	struct sched_dl_entity *dl_se = &p->dl;
+ 	struct hrtimer *timer = &dl_se->dl_timer;
+-	struct rq *rq = task_rq(p);
++	struct dl_rq *dl_rq = dl_rq_of_se(dl_se);
++	struct rq *rq = rq_of_dl_rq(dl_rq);
+ 	ktime_t now, act;
+ 	s64 delta;
+ 
+@@ -1056,13 +1080,33 @@ static int start_dl_timer(struct task_struct *p)
+ 	 * and observe our state.
+ 	 */
+ 	if (!hrtimer_is_queued(timer)) {
+-		get_task_struct(p);
++		if (!dl_server(dl_se))
++			get_task_struct(dl_task_of(dl_se));
+ 		hrtimer_start(timer, act, HRTIMER_MODE_ABS_HARD);
+ 	}
+ 
+ 	return 1;
+ }
+ 
++static void __push_dl_task(struct rq *rq, struct rq_flags *rf)
++{
++#ifdef CONFIG_SMP
++	/*
++	 * Queueing this task back might have overloaded rq, check if we need
++	 * to kick someone away.
++	 */
++	if (has_pushable_dl_tasks(rq)) {
++		/*
++		 * Nothing relies on rq->lock after this, so its safe to drop
++		 * rq->lock.
++		 */
++		rq_unpin_lock(rq, rf);
++		push_dl_task(rq);
++		rq_repin_lock(rq, rf);
++	}
++#endif
++}
++
+ /*
+  * This is the bandwidth enforcement timer callback. If here, we know
+  * a task is not on its dl_rq, since the fact that the timer was running
+@@ -1081,10 +1125,34 @@ static enum hrtimer_restart dl_task_timer(struct hrtimer *timer)
+ 	struct sched_dl_entity *dl_se = container_of(timer,
+ 						     struct sched_dl_entity,
+ 						     dl_timer);
+-	struct task_struct *p = dl_task_of(dl_se);
++	struct task_struct *p;
+ 	struct rq_flags rf;
+ 	struct rq *rq;
+ 
++	if (dl_server(dl_se)) {
++		struct rq *rq = rq_of_dl_se(dl_se);
++		struct rq_flags rf;
++
++		rq_lock(rq, &rf);
++		if (dl_se->dl_throttled) {
++			sched_clock_tick();
++			update_rq_clock(rq);
++
++			if (dl_se->server_has_tasks(dl_se)) {
++				enqueue_dl_entity(dl_se, ENQUEUE_REPLENISH);
++				resched_curr(rq);
++				__push_dl_task(rq, &rf);
++			} else {
++				replenish_dl_entity(dl_se);
++			}
++
++		}
++		rq_unlock(rq, &rf);
++
++		return HRTIMER_NORESTART;
++	}
++
++	p = dl_task_of(dl_se);
+ 	rq = task_rq_lock(p, &rf);
+ 
+ 	/*
+@@ -1155,21 +1223,7 @@ static enum hrtimer_restart dl_task_timer(struct hrtimer *timer)
+ 	else
+ 		resched_curr(rq);
+ 
+-#ifdef CONFIG_SMP
+-	/*
+-	 * Queueing this task back might have overloaded rq, check if we need
+-	 * to kick someone away.
+-	 */
+-	if (has_pushable_dl_tasks(rq)) {
+-		/*
+-		 * Nothing relies on rq->lock after this, so its safe to drop
+-		 * rq->lock.
+-		 */
+-		rq_unpin_lock(rq, &rf);
+-		push_dl_task(rq);
+-		rq_repin_lock(rq, &rf);
+-	}
+-#endif
++	__push_dl_task(rq, &rf);
+ 
+ unlock:
+ 	task_rq_unlock(rq, p, &rf);
+@@ -1183,7 +1237,7 @@ static enum hrtimer_restart dl_task_timer(struct hrtimer *timer)
+ 	return HRTIMER_NORESTART;
+ }
+ 
+-void init_dl_task_timer(struct sched_dl_entity *dl_se)
++static void init_dl_task_timer(struct sched_dl_entity *dl_se)
+ {
+ 	struct hrtimer *timer = &dl_se->dl_timer;
+ 
+@@ -1211,12 +1265,11 @@ void init_dl_task_timer(struct sched_dl_entity *dl_se)
+  */
+ static inline void dl_check_constrained_dl(struct sched_dl_entity *dl_se)
+ {
+-	struct task_struct *p = dl_task_of(dl_se);
+-	struct rq *rq = rq_of_dl_rq(dl_rq_of_se(dl_se));
++	struct rq *rq = rq_of_dl_se(dl_se);
+ 
+ 	if (dl_time_before(dl_se->deadline, rq_clock(rq)) &&
+ 	    dl_time_before(rq_clock(rq), dl_next_period(dl_se))) {
+-		if (unlikely(is_dl_boosted(dl_se) || !start_dl_timer(p)))
++		if (unlikely(is_dl_boosted(dl_se) || !start_dl_timer(dl_se)))
+ 			return;
+ 		dl_se->dl_throttled = 1;
+ 		if (dl_se->runtime > 0)
+@@ -1267,44 +1320,19 @@ static u64 grub_reclaim(u64 delta, struct rq *rq, struct sched_dl_entity *dl_se)
+ 	return (delta * u_act) >> BW_SHIFT;
+ }
+ 
+-/*
+- * Update the current task's runtime statistics (provided it is still
+- * a -deadline task and has not been removed from the dl_rq).
+- */
+-static void update_curr_dl(struct rq *rq)
++static inline void
++update_stats_dequeue_dl(struct dl_rq *dl_rq, struct sched_dl_entity *dl_se,
++                        int flags);
++static void update_curr_dl_se(struct rq *rq, struct sched_dl_entity *dl_se, s64 delta_exec)
+ {
+-	struct task_struct *curr = rq->curr;
+-	struct sched_dl_entity *dl_se = &curr->dl;
+-	u64 delta_exec, scaled_delta_exec;
+-	int cpu = cpu_of(rq);
+-	u64 now;
+-
+-	if (!dl_task(curr) || !on_dl_rq(dl_se))
+-		return;
++	s64 scaled_delta_exec;
+ 
+-	/*
+-	 * Consumed budget is computed considering the time as
+-	 * observed by schedulable tasks (excluding time spent
+-	 * in hardirq context, etc.). Deadlines are instead
+-	 * computed using hard walltime. This seems to be the more
+-	 * natural solution, but the full ramifications of this
+-	 * approach need further study.
+-	 */
+-	now = rq_clock_task(rq);
+-	delta_exec = now - curr->se.exec_start;
+-	if (unlikely((s64)delta_exec <= 0)) {
++	if (unlikely(delta_exec <= 0)) {
+ 		if (unlikely(dl_se->dl_yielded))
+ 			goto throttle;
+ 		return;
+ 	}
+ 
+-	schedstat_set(curr->stats.exec_max,
+-		      max(curr->stats.exec_max, delta_exec));
+-
+-	trace_sched_stat_runtime(curr, delta_exec, 0);
+-
+-	update_current_exec_runtime(curr, now, delta_exec);
+-
+ 	if (dl_entity_is_special(dl_se))
+ 		return;
+ 
+@@ -1316,10 +1344,9 @@ static void update_curr_dl(struct rq *rq)
+ 	 * according to current frequency and CPU maximum capacity.
+ 	 */
+ 	if (unlikely(dl_se->flags & SCHED_FLAG_RECLAIM)) {
+-		scaled_delta_exec = grub_reclaim(delta_exec,
+-						 rq,
+-						 &curr->dl);
++		scaled_delta_exec = grub_reclaim(delta_exec, rq, dl_se);
+ 	} else {
++		int cpu = cpu_of(rq);
+ 		unsigned long scale_freq = arch_scale_freq_capacity(cpu);
+ 		unsigned long scale_cpu = arch_scale_cpu_capacity(cpu);
+ 
+@@ -1338,11 +1365,20 @@ static void update_curr_dl(struct rq *rq)
+ 		    (dl_se->flags & SCHED_FLAG_DL_OVERRUN))
+ 			dl_se->dl_overrun = 1;
+ 
+-		__dequeue_task_dl(rq, curr, 0);
+-		if (unlikely(is_dl_boosted(dl_se) || !start_dl_timer(curr)))
+-			enqueue_task_dl(rq, curr, ENQUEUE_REPLENISH);
++		dequeue_dl_entity(dl_se, 0);
++		if (!dl_server(dl_se)) {
++			update_stats_dequeue_dl(&rq->dl, dl_se, 0);
++			dequeue_pushable_dl_task(rq, dl_task_of(dl_se));
++		}
++
++		if (unlikely(is_dl_boosted(dl_se) || !start_dl_timer(dl_se))) {
++			if (dl_server(dl_se))
++				enqueue_dl_entity(dl_se, ENQUEUE_REPLENISH);
++			else
++				enqueue_task_dl(rq, dl_task_of(dl_se), ENQUEUE_REPLENISH);
++		}
+ 
+-		if (!is_leftmost(curr, &rq->dl))
++		if (!is_leftmost(dl_se, &rq->dl))
+ 			resched_curr(rq);
+ 	}
+ 
+@@ -1372,20 +1408,82 @@ static void update_curr_dl(struct rq *rq)
+ 	}
+ }
+ 
++void dl_server_update(struct sched_dl_entity *dl_se, s64 delta_exec)
++{
++	update_curr_dl_se(dl_se->rq, dl_se, delta_exec);
++}
++
++void dl_server_start(struct sched_dl_entity *dl_se)
++{
++	if (!dl_server(dl_se)) {
++		dl_se->dl_server = 1;
++		setup_new_dl_entity(dl_se);
++	}
++	enqueue_dl_entity(dl_se, ENQUEUE_WAKEUP);
++}
++
++void dl_server_stop(struct sched_dl_entity *dl_se)
++{
++	dequeue_dl_entity(dl_se, DEQUEUE_SLEEP);
++}
++
++void dl_server_init(struct sched_dl_entity *dl_se, struct rq *rq,
++		    dl_server_has_tasks_f has_tasks,
++		    dl_server_pick_f pick)
++{
++	dl_se->rq = rq;
++	dl_se->server_has_tasks = has_tasks;
++	dl_se->server_pick = pick;
++}
++
++/*
++ * Update the current task's runtime statistics (provided it is still
++ * a -deadline task and has not been removed from the dl_rq).
++ */
++static void update_curr_dl(struct rq *rq)
++{
++	struct task_struct *curr = rq->curr;
++	struct sched_dl_entity *dl_se = &curr->dl;
++	s64 delta_exec;
++
++	if (!dl_task(curr) || !on_dl_rq(dl_se))
++		return;
++
++	/*
++	 * Consumed budget is computed considering the time as
++	 * observed by schedulable tasks (excluding time spent
++	 * in hardirq context, etc.). Deadlines are instead
++	 * computed using hard walltime. This seems to be the more
++	 * natural solution, but the full ramifications of this
++	 * approach need further study.
++	 */
++	delta_exec = update_curr_common(rq);
++	update_curr_dl_se(rq, dl_se, delta_exec);
++}
++
+ static enum hrtimer_restart inactive_task_timer(struct hrtimer *timer)
+ {
+ 	struct sched_dl_entity *dl_se = container_of(timer,
+ 						     struct sched_dl_entity,
+ 						     inactive_timer);
+-	struct task_struct *p = dl_task_of(dl_se);
++	struct task_struct *p = NULL;
+ 	struct rq_flags rf;
+ 	struct rq *rq;
+ 
+-	rq = task_rq_lock(p, &rf);
++	if (!dl_server(dl_se)) {
++		p = dl_task_of(dl_se);
++		rq = task_rq_lock(p, &rf);
++	} else {
++		rq = dl_se->rq;
++		rq_lock(rq, &rf);
++	}
+ 
+ 	sched_clock_tick();
+ 	update_rq_clock(rq);
+ 
++	if (dl_server(dl_se))
++		goto no_task;
++
+ 	if (!dl_task(p) || READ_ONCE(p->__state) == TASK_DEAD) {
+ 		struct dl_bw *dl_b = dl_bw_of(task_cpu(p));
+ 
+@@ -1398,23 +1496,30 @@ static enum hrtimer_restart inactive_task_timer(struct hrtimer *timer)
+ 		raw_spin_lock(&dl_b->lock);
+ 		__dl_sub(dl_b, p->dl.dl_bw, dl_bw_cpus(task_cpu(p)));
+ 		raw_spin_unlock(&dl_b->lock);
+-		__dl_clear_params(p);
++		__dl_clear_params(dl_se);
+ 
+ 		goto unlock;
+ 	}
++
++no_task:
+ 	if (dl_se->dl_non_contending == 0)
+ 		goto unlock;
+ 
+ 	sub_running_bw(dl_se, &rq->dl);
+ 	dl_se->dl_non_contending = 0;
+ unlock:
+-	task_rq_unlock(rq, p, &rf);
+-	put_task_struct(p);
++
++	if (!dl_server(dl_se)) {
++		task_rq_unlock(rq, p, &rf);
++		put_task_struct(p);
++	} else {
++		rq_unlock(rq, &rf);
++	}
+ 
+ 	return HRTIMER_NORESTART;
+ }
+ 
+-void init_dl_inactive_task_timer(struct sched_dl_entity *dl_se)
++static void init_dl_inactive_task_timer(struct sched_dl_entity *dl_se)
+ {
+ 	struct hrtimer *timer = &dl_se->inactive_timer;
+ 
+@@ -1472,10 +1577,8 @@ static inline void dec_dl_deadline(struct dl_rq *dl_rq, u64 deadline) {}
+ static inline
+ void inc_dl_tasks(struct sched_dl_entity *dl_se, struct dl_rq *dl_rq)
+ {
+-	int prio = dl_task_of(dl_se)->prio;
+ 	u64 deadline = dl_se->deadline;
+ 
+-	WARN_ON(!dl_prio(prio));
+ 	dl_rq->dl_nr_running++;
+ 	add_nr_running(rq_of_dl_rq(dl_rq), 1);
+ 
+@@ -1485,9 +1588,6 @@ void inc_dl_tasks(struct sched_dl_entity *dl_se, struct dl_rq *dl_rq)
+ static inline
+ void dec_dl_tasks(struct sched_dl_entity *dl_se, struct dl_rq *dl_rq)
+ {
+-	int prio = dl_task_of(dl_se)->prio;
+-
+-	WARN_ON(!dl_prio(prio));
+ 	WARN_ON(!dl_rq->dl_nr_running);
+ 	dl_rq->dl_nr_running--;
+ 	sub_nr_running(rq_of_dl_rq(dl_rq), 1);
+@@ -1608,6 +1708,41 @@ enqueue_dl_entity(struct sched_dl_entity *dl_se, int flags)
+ 
+ 	update_stats_enqueue_dl(dl_rq_of_se(dl_se), dl_se, flags);
+ 
++	/*
++	 * Check if a constrained deadline task was activated
++	 * after the deadline but before the next period.
++	 * If that is the case, the task will be throttled and
++	 * the replenishment timer will be set to the next period.
++	 */
++	if (!dl_se->dl_throttled && !dl_is_implicit(dl_se))
++		dl_check_constrained_dl(dl_se);
++
++	if (flags & (ENQUEUE_RESTORE|ENQUEUE_MIGRATING)) {
++		struct dl_rq *dl_rq = dl_rq_of_se(dl_se);
++
++		add_rq_bw(dl_se, dl_rq);
++		add_running_bw(dl_se, dl_rq);
++	}
++
++	/*
++	 * If p is throttled, we do not enqueue it. In fact, if it exhausted
++	 * its budget it needs a replenishment and, since it now is on
++	 * its rq, the bandwidth timer callback (which clearly has not
++	 * run yet) will take care of this.
++	 * However, the active utilization does not depend on the fact
++	 * that the task is on the runqueue or not (but depends on the
++	 * task's state - in GRUB parlance, "inactive" vs "active contending").
++	 * In other words, even if a task is throttled its utilization must
++	 * be counted in the active utilization; hence, we need to call
++	 * add_running_bw().
++	 */
++	if (dl_se->dl_throttled && !(flags & ENQUEUE_REPLENISH)) {
++		if (flags & ENQUEUE_WAKEUP)
++			task_contending(dl_se, flags);
++
++		return;
++	}
++
+ 	/*
+ 	 * If this is a wakeup or a new instance, the scheduling
+ 	 * parameters of the task might need updating. Otherwise,
+@@ -1619,17 +1754,35 @@ enqueue_dl_entity(struct sched_dl_entity *dl_se, int flags)
+ 	} else if (flags & ENQUEUE_REPLENISH) {
+ 		replenish_dl_entity(dl_se);
+ 	} else if ((flags & ENQUEUE_RESTORE) &&
+-		  dl_time_before(dl_se->deadline,
+-				 rq_clock(rq_of_dl_rq(dl_rq_of_se(dl_se))))) {
++		   dl_time_before(dl_se->deadline, rq_clock(rq_of_dl_se(dl_se)))) {
+ 		setup_new_dl_entity(dl_se);
+ 	}
+ 
+ 	__enqueue_dl_entity(dl_se);
+ }
+ 
+-static void dequeue_dl_entity(struct sched_dl_entity *dl_se)
++static void dequeue_dl_entity(struct sched_dl_entity *dl_se, int flags)
+ {
+ 	__dequeue_dl_entity(dl_se);
++
++	if (flags & (DEQUEUE_SAVE|DEQUEUE_MIGRATING)) {
++		struct dl_rq *dl_rq = dl_rq_of_se(dl_se);
++
++		sub_running_bw(dl_se, dl_rq);
++		sub_rq_bw(dl_se, dl_rq);
++	}
++
++	/*
++	 * This check allows to start the inactive timer (or to immediately
++	 * decrease the active utilization, if needed) in two cases:
++	 * when the task blocks and when it is terminating
++	 * (p->state == TASK_DEAD). We can handle the two cases in the same
++	 * way, because from GRUB's point of view the same thing is happening
++	 * (the task moves from "active contending" to "active non contending"
++	 * or "inactive")
++	 */
++	if (flags & DEQUEUE_SLEEP)
++		task_non_contending(dl_se);
+ }
+ 
+ static void enqueue_task_dl(struct rq *rq, struct task_struct *p, int flags)
+@@ -1674,76 +1827,31 @@ static void enqueue_task_dl(struct rq *rq, struct task_struct *p, int flags)
+ 		return;
+ 	}
+ 
+-	/*
+-	 * Check if a constrained deadline task was activated
+-	 * after the deadline but before the next period.
+-	 * If that is the case, the task will be throttled and
+-	 * the replenishment timer will be set to the next period.
+-	 */
+-	if (!p->dl.dl_throttled && !dl_is_implicit(&p->dl))
+-		dl_check_constrained_dl(&p->dl);
+-
+-	if (p->on_rq == TASK_ON_RQ_MIGRATING || flags & ENQUEUE_RESTORE) {
+-		add_rq_bw(&p->dl, &rq->dl);
+-		add_running_bw(&p->dl, &rq->dl);
+-	}
+-
+-	/*
+-	 * If p is throttled, we do not enqueue it. In fact, if it exhausted
+-	 * its budget it needs a replenishment and, since it now is on
+-	 * its rq, the bandwidth timer callback (which clearly has not
+-	 * run yet) will take care of this.
+-	 * However, the active utilization does not depend on the fact
+-	 * that the task is on the runqueue or not (but depends on the
+-	 * task's state - in GRUB parlance, "inactive" vs "active contending").
+-	 * In other words, even if a task is throttled its utilization must
+-	 * be counted in the active utilization; hence, we need to call
+-	 * add_running_bw().
+-	 */
+-	if (p->dl.dl_throttled && !(flags & ENQUEUE_REPLENISH)) {
+-		if (flags & ENQUEUE_WAKEUP)
+-			task_contending(&p->dl, flags);
+-
+-		return;
+-	}
+-
+ 	check_schedstat_required();
+ 	update_stats_wait_start_dl(dl_rq_of_se(&p->dl), &p->dl);
+ 
++	if (p->on_rq == TASK_ON_RQ_MIGRATING)
++		flags |= ENQUEUE_MIGRATING;
++
+ 	enqueue_dl_entity(&p->dl, flags);
+ 
+-	if (!task_current(rq, p) && p->nr_cpus_allowed > 1)
+-		enqueue_pushable_dl_task(rq, p);
+-}
++	if (dl_server(&p->dl))
++		return;
+ 
+-static void __dequeue_task_dl(struct rq *rq, struct task_struct *p, int flags)
+-{
+-	update_stats_dequeue_dl(&rq->dl, &p->dl, flags);
+-	dequeue_dl_entity(&p->dl);
+-	dequeue_pushable_dl_task(rq, p);
++	if (!task_current(rq, p) && !p->dl.dl_throttled && p->nr_cpus_allowed > 1)
++		enqueue_pushable_dl_task(rq, p);
+ }
+ 
+ static void dequeue_task_dl(struct rq *rq, struct task_struct *p, int flags)
+ {
+ 	update_curr_dl(rq);
+-	__dequeue_task_dl(rq, p, flags);
+ 
+-	if (p->on_rq == TASK_ON_RQ_MIGRATING || flags & DEQUEUE_SAVE) {
+-		sub_running_bw(&p->dl, &rq->dl);
+-		sub_rq_bw(&p->dl, &rq->dl);
+-	}
++	if (p->on_rq == TASK_ON_RQ_MIGRATING)
++		flags |= DEQUEUE_MIGRATING;
+ 
+-	/*
+-	 * This check allows to start the inactive timer (or to immediately
+-	 * decrease the active utilization, if needed) in two cases:
+-	 * when the task blocks and when it is terminating
+-	 * (p->state == TASK_DEAD). We can handle the two cases in the same
+-	 * way, because from GRUB's point of view the same thing is happening
+-	 * (the task moves from "active contending" to "active non contending"
+-	 * or "inactive")
+-	 */
+-	if (flags & DEQUEUE_SLEEP)
+-		task_non_contending(p);
++	dequeue_dl_entity(&p->dl, flags);
++	if (!p->dl.dl_throttled && !dl_server(&p->dl))
++		dequeue_pushable_dl_task(rq, p);
+ }
+ 
+ /*
+@@ -1933,12 +2041,12 @@ static void wakeup_preempt_dl(struct rq *rq, struct task_struct *p,
+ }
+ 
+ #ifdef CONFIG_SCHED_HRTICK
+-static void start_hrtick_dl(struct rq *rq, struct task_struct *p)
++static void start_hrtick_dl(struct rq *rq, struct sched_dl_entity *dl_se)
+ {
+-	hrtick_start(rq, p->dl.runtime);
++	hrtick_start(rq, dl_se->runtime);
+ }
+ #else /* !CONFIG_SCHED_HRTICK */
+-static void start_hrtick_dl(struct rq *rq, struct task_struct *p)
++static void start_hrtick_dl(struct rq *rq, struct sched_dl_entity *dl_se)
+ {
+ }
+ #endif
+@@ -1958,9 +2066,6 @@ static void set_next_task_dl(struct rq *rq, struct task_struct *p, bool first)
+ 	if (!first)
+ 		return;
+ 
+-	if (hrtick_enabled_dl(rq))
+-		start_hrtick_dl(rq, p);
+-
+ 	if (rq->curr->sched_class != &dl_sched_class)
+ 		update_dl_rq_load_avg(rq_clock_pelt(rq), rq, 0);
+ 
+@@ -1983,12 +2088,25 @@ static struct task_struct *pick_task_dl(struct rq *rq)
+ 	struct dl_rq *dl_rq = &rq->dl;
+ 	struct task_struct *p;
+ 
++again:
+ 	if (!sched_dl_runnable(rq))
+ 		return NULL;
+ 
+ 	dl_se = pick_next_dl_entity(dl_rq);
+ 	WARN_ON_ONCE(!dl_se);
+-	p = dl_task_of(dl_se);
++
++	if (dl_server(dl_se)) {
++		p = dl_se->server_pick(dl_se);
++		if (!p) {
++			WARN_ON_ONCE(1);
++			dl_se->dl_yielded = 1;
++			update_curr_dl_se(rq, dl_se, 0);
++			goto again;
++		}
++		p->dl_server = dl_se;
++	} else {
++		p = dl_task_of(dl_se);
++	}
+ 
+ 	return p;
+ }
+@@ -1998,9 +2116,15 @@ static struct task_struct *pick_next_task_dl(struct rq *rq)
+ 	struct task_struct *p;
+ 
+ 	p = pick_task_dl(rq);
+-	if (p)
++	if (!p)
++		return p;
++
++	if (!p->dl_server)
+ 		set_next_task_dl(rq, p, true);
+ 
++	if (hrtick_enabled(rq))
++		start_hrtick_dl(rq, &p->dl);
++
+ 	return p;
+ }
+ 
+@@ -2038,8 +2162,8 @@ static void task_tick_dl(struct rq *rq, struct task_struct *p, int queued)
+ 	 * be set and schedule() will start a new hrtick for the next task.
+ 	 */
+ 	if (hrtick_enabled_dl(rq) && queued && p->dl.runtime > 0 &&
+-	    is_leftmost(p, &rq->dl))
+-		start_hrtick_dl(rq, p);
++	    is_leftmost(&p->dl, &rq->dl))
++		start_hrtick_dl(rq, &p->dl);
+ }
+ 
+ static void task_fork_dl(struct task_struct *p)
+@@ -2558,7 +2682,7 @@ static void switched_from_dl(struct rq *rq, struct task_struct *p)
+ 	 * will reset the task parameters.
+ 	 */
+ 	if (task_on_rq_queued(p) && p->dl.dl_runtime)
+-		task_non_contending(p);
++		task_non_contending(&p->dl);
+ 
+ 	/*
+ 	 * In case a task is setscheduled out from SCHED_DEADLINE we need to
+@@ -2966,10 +3090,8 @@ bool __checkparam_dl(const struct sched_attr *attr)
+ /*
+  * This function clears the sched_dl_entity static params.
+  */
+-void __dl_clear_params(struct task_struct *p)
++static void __dl_clear_params(struct sched_dl_entity *dl_se)
+ {
+-	struct sched_dl_entity *dl_se = &p->dl;
+-
+ 	dl_se->dl_runtime		= 0;
+ 	dl_se->dl_deadline		= 0;
+ 	dl_se->dl_period		= 0;
+@@ -2981,12 +3103,21 @@ void __dl_clear_params(struct task_struct *p)
+ 	dl_se->dl_yielded		= 0;
+ 	dl_se->dl_non_contending	= 0;
+ 	dl_se->dl_overrun		= 0;
++	dl_se->dl_server		= 0;
+ 
+ #ifdef CONFIG_RT_MUTEXES
+ 	dl_se->pi_se			= dl_se;
+ #endif
+ }
+ 
++void init_dl_entity(struct sched_dl_entity *dl_se)
++{
++	RB_CLEAR_NODE(&dl_se->rb_node);
++	init_dl_task_timer(dl_se);
++	init_dl_inactive_task_timer(dl_se);
++	__dl_clear_params(dl_se);
++}
++
+ bool dl_param_changed(struct task_struct *p, const struct sched_attr *attr)
+ {
+ 	struct sched_dl_entity *dl_se = &p->dl;
+diff --git a/kernel/sched/debug.c b/kernel/sched/debug.c
+index 4580a450700e..8d5d98a5834d 100644
+--- a/kernel/sched/debug.c
++++ b/kernel/sched/debug.c
+@@ -628,8 +628,8 @@ static void print_rq(struct seq_file *m, struct rq *rq, int rq_cpu)
+ 
+ void print_cfs_rq(struct seq_file *m, int cpu, struct cfs_rq *cfs_rq)
+ {
+-	s64 left_vruntime = -1, min_vruntime, right_vruntime = -1, spread;
+-	struct sched_entity *last, *first;
++	s64 left_vruntime = -1, min_vruntime, right_vruntime = -1, left_deadline = -1, spread;
++	struct sched_entity *last, *first, *root;
+ 	struct rq *rq = cpu_rq(cpu);
+ 	unsigned long flags;
+ 
+@@ -644,15 +644,20 @@ void print_cfs_rq(struct seq_file *m, int cpu, struct cfs_rq *cfs_rq)
+ 			SPLIT_NS(cfs_rq->exec_clock));
+ 
+ 	raw_spin_rq_lock_irqsave(rq, flags);
++	root = __pick_root_entity(cfs_rq);
++	if (root)
++		left_vruntime = root->min_vruntime;
+ 	first = __pick_first_entity(cfs_rq);
+ 	if (first)
+-		left_vruntime = first->vruntime;
++		left_deadline = first->deadline;
+ 	last = __pick_last_entity(cfs_rq);
+ 	if (last)
+ 		right_vruntime = last->vruntime;
+ 	min_vruntime = cfs_rq->min_vruntime;
+ 	raw_spin_rq_unlock_irqrestore(rq, flags);
+ 
++	SEQ_printf(m, "  .%-30s: %Ld.%06ld\n", "left_deadline",
++			SPLIT_NS(left_deadline));
+ 	SEQ_printf(m, "  .%-30s: %Ld.%06ld\n", "left_vruntime",
+ 			SPLIT_NS(left_vruntime));
+ 	SEQ_printf(m, "  .%-30s: %Ld.%06ld\n", "min_vruntime",
+@@ -679,8 +684,8 @@ void print_cfs_rq(struct seq_file *m, int cpu, struct cfs_rq *cfs_rq)
+ 			cfs_rq->avg.runnable_avg);
+ 	SEQ_printf(m, "  .%-30s: %lu\n", "util_avg",
+ 			cfs_rq->avg.util_avg);
+-	SEQ_printf(m, "  .%-30s: %u\n", "util_est_enqueued",
+-			cfs_rq->avg.util_est.enqueued);
++	SEQ_printf(m, "  .%-30s: %u\n", "util_est",
++			cfs_rq->avg.util_est);
+ 	SEQ_printf(m, "  .%-30s: %ld\n", "removed.load_avg",
+ 			cfs_rq->removed.load_avg);
+ 	SEQ_printf(m, "  .%-30s: %ld\n", "removed.util_avg",
+@@ -1070,8 +1075,7 @@ void proc_sched_show_task(struct task_struct *p, struct pid_namespace *ns,
+ 	P(se.avg.runnable_avg);
+ 	P(se.avg.util_avg);
+ 	P(se.avg.last_update_time);
+-	P(se.avg.util_est.ewma);
+-	PM(se.avg.util_est.enqueued, ~UTIL_AVG_UNCHANGED);
++	PM(se.avg.util_est, ~UTIL_AVG_UNCHANGED);
+ #endif
+ #ifdef CONFIG_UCLAMP_TASK
+ 	__PS("uclamp.min", p->uclamp_req[UCLAMP_MIN].value);
+diff --git a/kernel/sched/fair.c b/kernel/sched/fair.c
+index d7a3c63a2171..b803030c3a03 100644
+--- a/kernel/sched/fair.c
++++ b/kernel/sched/fair.c
+@@ -551,7 +551,11 @@ static inline u64 min_vruntime(u64 min_vruntime, u64 vruntime)
+ static inline bool entity_before(const struct sched_entity *a,
+ 				 const struct sched_entity *b)
+ {
+-	return (s64)(a->vruntime - b->vruntime) < 0;
++	/*
++	 * Tiebreak on vruntime seems unnecessary since it can
++	 * hardly happen.
++	 */
++	return (s64)(a->deadline - b->deadline) < 0;
+ }
+ 
+ static inline s64 entity_key(struct cfs_rq *cfs_rq, struct sched_entity *se)
+@@ -720,7 +724,7 @@ static void update_entity_lag(struct cfs_rq *cfs_rq, struct sched_entity *se)
+  * Note: using 'avg_vruntime() > se->vruntime' is inacurate due
+  *       to the loss in precision caused by the division.
+  */
+-int entity_eligible(struct cfs_rq *cfs_rq, struct sched_entity *se)
++static int vruntime_eligible(struct cfs_rq *cfs_rq, u64 vruntime)
+ {
+ 	struct sched_entity *curr = cfs_rq->curr;
+ 	s64 avg = cfs_rq->avg_vruntime;
+@@ -733,7 +737,12 @@ int entity_eligible(struct cfs_rq *cfs_rq, struct sched_entity *se)
+ 		load += weight;
+ 	}
+ 
+-	return avg >= entity_key(cfs_rq, se) * load;
++	return avg >= (s64)(vruntime - cfs_rq->min_vruntime) * load;
++}
++
++int entity_eligible(struct cfs_rq *cfs_rq, struct sched_entity *se)
++{
++	return vruntime_eligible(cfs_rq, se->vruntime);
+ }
+ 
+ static u64 __update_min_vruntime(struct cfs_rq *cfs_rq, u64 vruntime)
+@@ -752,9 +761,8 @@ static u64 __update_min_vruntime(struct cfs_rq *cfs_rq, u64 vruntime)
+ 
+ static void update_min_vruntime(struct cfs_rq *cfs_rq)
+ {
+-	struct sched_entity *se = __pick_first_entity(cfs_rq);
++	struct sched_entity *se = __pick_root_entity(cfs_rq);
+ 	struct sched_entity *curr = cfs_rq->curr;
+-
+ 	u64 vruntime = cfs_rq->min_vruntime;
+ 
+ 	if (curr) {
+@@ -766,9 +774,9 @@ static void update_min_vruntime(struct cfs_rq *cfs_rq)
+ 
+ 	if (se) {
+ 		if (!curr)
+-			vruntime = se->vruntime;
++			vruntime = se->min_vruntime;
+ 		else
+-			vruntime = min_vruntime(vruntime, se->vruntime);
++			vruntime = min_vruntime(vruntime, se->min_vruntime);
+ 	}
+ 
+ 	/* ensure we never gain time by being placed backwards. */
+@@ -781,34 +789,34 @@ static inline bool __entity_less(struct rb_node *a, const struct rb_node *b)
+ 	return entity_before(__node_2_se(a), __node_2_se(b));
+ }
+ 
+-#define deadline_gt(field, lse, rse) ({ (s64)((lse)->field - (rse)->field) > 0; })
++#define vruntime_gt(field, lse, rse) ({ (s64)((lse)->field - (rse)->field) > 0; })
+ 
+-static inline void __update_min_deadline(struct sched_entity *se, struct rb_node *node)
++static inline void __min_vruntime_update(struct sched_entity *se, struct rb_node *node)
+ {
+ 	if (node) {
+ 		struct sched_entity *rse = __node_2_se(node);
+-		if (deadline_gt(min_deadline, se, rse))
+-			se->min_deadline = rse->min_deadline;
++		if (vruntime_gt(min_vruntime, se, rse))
++			se->min_vruntime = rse->min_vruntime;
+ 	}
+ }
+ 
+ /*
+- * se->min_deadline = min(se->deadline, left->min_deadline, right->min_deadline)
++ * se->min_vruntime = min(se->vruntime, {left,right}->min_vruntime)
+  */
+-static inline bool min_deadline_update(struct sched_entity *se, bool exit)
++static inline bool min_vruntime_update(struct sched_entity *se, bool exit)
+ {
+-	u64 old_min_deadline = se->min_deadline;
++	u64 old_min_vruntime = se->min_vruntime;
+ 	struct rb_node *node = &se->run_node;
+ 
+-	se->min_deadline = se->deadline;
+-	__update_min_deadline(se, node->rb_right);
+-	__update_min_deadline(se, node->rb_left);
++	se->min_vruntime = se->vruntime;
++	__min_vruntime_update(se, node->rb_right);
++	__min_vruntime_update(se, node->rb_left);
+ 
+-	return se->min_deadline == old_min_deadline;
++	return se->min_vruntime == old_min_vruntime;
+ }
+ 
+-RB_DECLARE_CALLBACKS(static, min_deadline_cb, struct sched_entity,
+-		     run_node, min_deadline, min_deadline_update);
++RB_DECLARE_CALLBACKS(static, min_vruntime_cb, struct sched_entity,
++		     run_node, min_vruntime, min_vruntime_update);
+ 
+ /*
+  * Enqueue an entity into the rb-tree:
+@@ -816,18 +824,28 @@ RB_DECLARE_CALLBACKS(static, min_deadline_cb, struct sched_entity,
+ static void __enqueue_entity(struct cfs_rq *cfs_rq, struct sched_entity *se)
+ {
+ 	avg_vruntime_add(cfs_rq, se);
+-	se->min_deadline = se->deadline;
++	se->min_vruntime = se->vruntime;
+ 	rb_add_augmented_cached(&se->run_node, &cfs_rq->tasks_timeline,
+-				__entity_less, &min_deadline_cb);
++				__entity_less, &min_vruntime_cb);
+ }
+ 
+ static void __dequeue_entity(struct cfs_rq *cfs_rq, struct sched_entity *se)
+ {
+ 	rb_erase_augmented_cached(&se->run_node, &cfs_rq->tasks_timeline,
+-				  &min_deadline_cb);
++				  &min_vruntime_cb);
+ 	avg_vruntime_sub(cfs_rq, se);
+ }
+ 
++struct sched_entity *__pick_root_entity(struct cfs_rq *cfs_rq)
++{
++	struct rb_node *root = cfs_rq->tasks_timeline.rb_root.rb_node;
++
++	if (!root)
++		return NULL;
++
++	return __node_2_se(root);
++}
++
+ struct sched_entity *__pick_first_entity(struct cfs_rq *cfs_rq)
+ {
+ 	struct rb_node *left = rb_first_cached(&cfs_rq->tasks_timeline);
+@@ -850,23 +868,29 @@ struct sched_entity *__pick_first_entity(struct cfs_rq *cfs_rq)
+  *     with the earliest virtual deadline.
+  *
+  * We can do this in O(log n) time due to an augmented RB-tree. The
+- * tree keeps the entries sorted on service, but also functions as a
+- * heap based on the deadline by keeping:
++ * tree keeps the entries sorted on deadline, but also functions as a
++ * heap based on the vruntime by keeping:
+  *
+- *  se->min_deadline = min(se->deadline, se->{left,right}->min_deadline)
++ *  se->min_vruntime = min(se->vruntime, se->{left,right}->min_vruntime)
+  *
+- * Which allows an EDF like search on (sub)trees.
++ * Which allows tree pruning through eligibility.
+  */
+-static struct sched_entity *__pick_eevdf(struct cfs_rq *cfs_rq)
++static struct sched_entity *pick_eevdf(struct cfs_rq *cfs_rq)
+ {
+ 	struct rb_node *node = cfs_rq->tasks_timeline.rb_root.rb_node;
++	struct sched_entity *se = __pick_first_entity(cfs_rq);
+ 	struct sched_entity *curr = cfs_rq->curr;
+ 	struct sched_entity *best = NULL;
+-	struct sched_entity *best_left = NULL;
++
++	/*
++	 * We can safely skip eligibility check if there is only one entity
++	 * in this cfs_rq, saving some cycles.
++	 */
++	if (cfs_rq->nr_running == 1)
++		return curr && curr->on_rq ? curr : se;
+ 
+ 	if (curr && (!curr->on_rq || !entity_eligible(cfs_rq, curr)))
+ 		curr = NULL;
+-	best = curr;
+ 
+ 	/*
+ 	 * Once selected, run a task until it either becomes non-eligible or
+@@ -875,95 +899,45 @@ static struct sched_entity *__pick_eevdf(struct cfs_rq *cfs_rq)
+ 	if (sched_feat(RUN_TO_PARITY) && curr && curr->vlag == curr->deadline)
+ 		return curr;
+ 
++	/* Pick the leftmost entity if it's eligible */
++	if (se && entity_eligible(cfs_rq, se)) {
++		best = se;
++		goto found;
++	}
++
++	/* Heap search for the EEVD entity */
+ 	while (node) {
+-		struct sched_entity *se = __node_2_se(node);
++		struct rb_node *left = node->rb_left;
+ 
+ 		/*
+-		 * If this entity is not eligible, try the left subtree.
++		 * Eligible entities in left subtree are always better
++		 * choices, since they have earlier deadlines.
+ 		 */
+-		if (!entity_eligible(cfs_rq, se)) {
+-			node = node->rb_left;
++		if (left && vruntime_eligible(cfs_rq,
++					__node_2_se(left)->min_vruntime)) {
++			node = left;
+ 			continue;
+ 		}
+ 
+-		/*
+-		 * Now we heap search eligible trees for the best (min_)deadline
+-		 */
+-		if (!best || deadline_gt(deadline, best, se))
+-			best = se;
++		se = __node_2_se(node);
+ 
+ 		/*
+-		 * Every se in a left branch is eligible, keep track of the
+-		 * branch with the best min_deadline
++		 * The left subtree either is empty or has no eligible
++		 * entity, so check the current node since it is the one
++		 * with earliest deadline that might be eligible.
+ 		 */
+-		if (node->rb_left) {
+-			struct sched_entity *left = __node_2_se(node->rb_left);
+-
+-			if (!best_left || deadline_gt(min_deadline, best_left, left))
+-				best_left = left;
+-
+-			/*
+-			 * min_deadline is in the left branch. rb_left and all
+-			 * descendants are eligible, so immediately switch to the second
+-			 * loop.
+-			 */
+-			if (left->min_deadline == se->min_deadline)
+-				break;
+-		}
+-
+-		/* min_deadline is at this node, no need to look right */
+-		if (se->deadline == se->min_deadline)
++		if (entity_eligible(cfs_rq, se)) {
++			best = se;
+ 			break;
+-
+-		/* else min_deadline is in the right branch. */
+-		node = node->rb_right;
+-	}
+-
+-	/*
+-	 * We ran into an eligible node which is itself the best.
+-	 * (Or nr_running == 0 and both are NULL)
+-	 */
+-	if (!best_left || (s64)(best_left->min_deadline - best->deadline) > 0)
+-		return best;
+-
+-	/*
+-	 * Now best_left and all of its children are eligible, and we are just
+-	 * looking for deadline == min_deadline
+-	 */
+-	node = &best_left->run_node;
+-	while (node) {
+-		struct sched_entity *se = __node_2_se(node);
+-
+-		/* min_deadline is the current node */
+-		if (se->deadline == se->min_deadline)
+-			return se;
+-
+-		/* min_deadline is in the left branch */
+-		if (node->rb_left &&
+-		    __node_2_se(node->rb_left)->min_deadline == se->min_deadline) {
+-			node = node->rb_left;
+-			continue;
+ 		}
+ 
+-		/* else min_deadline is in the right branch */
+ 		node = node->rb_right;
+ 	}
+-	return NULL;
+-}
++found:
++	if (!best || (curr && entity_before(curr, best)))
++		best = curr;
+ 
+-static struct sched_entity *pick_eevdf(struct cfs_rq *cfs_rq)
+-{
+-	struct sched_entity *se = __pick_eevdf(cfs_rq);
+-
+-	if (!se) {
+-		struct sched_entity *left = __pick_first_entity(cfs_rq);
+-		if (left) {
+-			pr_err("EEVDF scheduling fail, picking leftmost\n");
+-			return left;
+-		}
+-	}
+-
+-	return se;
++	return best;
+ }
+ 
+ #ifdef CONFIG_SCHED_DEBUG
+@@ -1129,23 +1103,17 @@ static void update_tg_load_avg(struct cfs_rq *cfs_rq)
+ }
+ #endif /* CONFIG_SMP */
+ 
+-/*
+- * Update the current task's runtime statistics.
+- */
+-static void update_curr(struct cfs_rq *cfs_rq)
++static s64 update_curr_se(struct rq *rq, struct sched_entity *curr)
+ {
+-	struct sched_entity *curr = cfs_rq->curr;
+-	u64 now = rq_clock_task(rq_of(cfs_rq));
+-	u64 delta_exec;
+-
+-	if (unlikely(!curr))
+-		return;
++	u64 now = rq_clock_task(rq);
++	s64 delta_exec;
+ 
+ 	delta_exec = now - curr->exec_start;
+-	if (unlikely((s64)delta_exec <= 0))
+-		return;
++	if (unlikely(delta_exec <= 0))
++		return delta_exec;
+ 
+ 	curr->exec_start = now;
++	curr->sum_exec_runtime += delta_exec;
+ 
+ 	if (schedstat_enabled()) {
+ 		struct sched_statistics *stats;
+@@ -1155,20 +1123,54 @@ static void update_curr(struct cfs_rq *cfs_rq)
+ 				max(delta_exec, stats->exec_max));
+ 	}
+ 
+-	curr->sum_exec_runtime += delta_exec;
+-	schedstat_add(cfs_rq->exec_clock, delta_exec);
++	return delta_exec;
++}
++
++static inline void update_curr_task(struct task_struct *p, s64 delta_exec)
++{
++	trace_sched_stat_runtime(p, delta_exec);
++	account_group_exec_runtime(p, delta_exec);
++	cgroup_account_cputime(p, delta_exec);
++	if (p->dl_server)
++		dl_server_update(p->dl_server, delta_exec);
++}
++
++/*
++ * Used by other classes to account runtime.
++ */
++s64 update_curr_common(struct rq *rq)
++{
++	struct task_struct *curr = rq->curr;
++	s64 delta_exec;
++
++	delta_exec = update_curr_se(rq, &curr->se);
++	if (likely(delta_exec > 0))
++		update_curr_task(curr, delta_exec);
++
++	return delta_exec;
++}
++
++/*
++ * Update the current task's runtime statistics.
++ */
++static void update_curr(struct cfs_rq *cfs_rq)
++{
++	struct sched_entity *curr = cfs_rq->curr;
++	s64 delta_exec;
++
++	if (unlikely(!curr))
++		return;
++
++	delta_exec = update_curr_se(rq_of(cfs_rq), curr);
++	if (unlikely(delta_exec <= 0))
++		return;
+ 
+ 	curr->vruntime += calc_delta_fair(delta_exec, curr);
+ 	update_deadline(cfs_rq, curr);
+ 	update_min_vruntime(cfs_rq);
+ 
+-	if (entity_is_task(curr)) {
+-		struct task_struct *curtask = task_of(curr);
+-
+-		trace_sched_stat_runtime(curtask, delta_exec, curr->vruntime);
+-		cgroup_account_cputime(curtask, delta_exec);
+-		account_group_exec_runtime(curtask, delta_exec);
+-	}
++	if (entity_is_task(curr))
++		update_curr_task(task_of(curr), delta_exec);
+ 
+ 	account_cfs_rq_runtime(cfs_rq, delta_exec);
+ }
+@@ -3164,7 +3166,7 @@ static bool vma_is_accessed(struct mm_struct *mm, struct vm_area_struct *vma)
+ 	 * This is also done to avoid any side effect of task scanning
+ 	 * amplifying the unfairness of disjoint set of VMAs' access.
+ 	 */
+-	if (READ_ONCE(current->mm->numa_scan_seq) < 2)
++	if ((READ_ONCE(current->mm->numa_scan_seq) - vma->numab_state->start_scan_seq) < 2)
+ 		return true;
+ 
+ 	pids = vma->numab_state->pids_active[0] | vma->numab_state->pids_active[1];
+@@ -3307,6 +3309,8 @@ static void task_numa_work(struct callback_head *work)
+ 			if (!vma->numab_state)
+ 				continue;
+ 
++			vma->numab_state->start_scan_seq = mm->numa_scan_seq;
++
+ 			vma->numab_state->next_scan = now +
+ 				msecs_to_jiffies(sysctl_numa_balancing_scan_delay);
+ 
+@@ -3811,17 +3815,17 @@ static void reweight_entity(struct cfs_rq *cfs_rq, struct sched_entity *se,
+ 	enqueue_load_avg(cfs_rq, se);
+ 	if (se->on_rq) {
+ 		update_load_add(&cfs_rq->load, se->load.weight);
+-		if (!curr) {
+-			/*
+-			 * The entity's vruntime has been adjusted, so let's check
+-			 * whether the rq-wide min_vruntime needs updated too. Since
+-			 * the calculations above require stable min_vruntime rather
+-			 * than up-to-date one, we do the update at the end of the
+-			 * reweight process.
+-			 */
++		if (!curr)
+ 			__enqueue_entity(cfs_rq, se);
+-			update_min_vruntime(cfs_rq);
+-		}
++
++		/*
++		 * The entity's vruntime has been adjusted, so let's check
++		 * whether the rq-wide min_vruntime needs updated too. Since
++		 * the calculations above require stable min_vruntime rather
++		 * than up-to-date one, we do the update at the end of the
++		 * reweight process.
++		 */
++		update_min_vruntime(cfs_rq);
+ 	}
+ }
+ 
+@@ -4096,6 +4100,10 @@ static inline void update_tg_load_avg(struct cfs_rq *cfs_rq)
+ 	if (cfs_rq->tg == &root_task_group)
+ 		return;
+ 
++	/* rq has been offline and doesn't contribute to the share anymore: */
++	if (!cpu_active(cpu_of(rq_of(cfs_rq))))
++		return;
++
+ 	/*
+ 	 * For migration heavy workloads, access to tg->load_avg can be
+ 	 * unbound. Limit the update rate to at most once per ms.
+@@ -4112,6 +4120,49 @@ static inline void update_tg_load_avg(struct cfs_rq *cfs_rq)
+ 	}
+ }
+ 
++static inline void clear_tg_load_avg(struct cfs_rq *cfs_rq)
++{
++	long delta;
++	u64 now;
++
++	/*
++	 * No need to update load_avg for root_task_group, as it is not used.
++	 */
++	if (cfs_rq->tg == &root_task_group)
++		return;
++
++	now = sched_clock_cpu(cpu_of(rq_of(cfs_rq)));
++	delta = 0 - cfs_rq->tg_load_avg_contrib;
++	atomic_long_add(delta, &cfs_rq->tg->load_avg);
++	cfs_rq->tg_load_avg_contrib = 0;
++	cfs_rq->last_update_tg_load_avg = now;
++}
++
++/* CPU offline callback: */
++static void __maybe_unused clear_tg_offline_cfs_rqs(struct rq *rq)
++{
++	struct task_group *tg;
++
++	lockdep_assert_rq_held(rq);
++
++	/*
++	 * The rq clock has already been updated in
++	 * set_rq_offline(), so we should skip updating
++	 * the rq clock again in unthrottle_cfs_rq().
++	 */
++	rq_clock_start_loop_update(rq);
++
++	rcu_read_lock();
++	list_for_each_entry_rcu(tg, &task_groups, list) {
++		struct cfs_rq *cfs_rq = tg->cfs_rq[cpu_of(rq)];
++
++		clear_tg_load_avg(cfs_rq);
++	}
++	rcu_read_unlock();
++
++	rq_clock_stop_loop_update(rq);
++}
++
+ /*
+  * Called within set_task_rq() right before setting a task's CPU. The
+  * caller only guarantees p->pi_lock is held; no other assumptions,
+@@ -4408,6 +4459,8 @@ static inline bool skip_blocked_update(struct sched_entity *se)
+ 
+ static inline void update_tg_load_avg(struct cfs_rq *cfs_rq) {}
+ 
++static inline void clear_tg_offline_cfs_rqs(struct rq *rq) {}
++
+ static inline int propagate_entity_load_avg(struct sched_entity *se)
+ {
+ 	return 0;
+@@ -4770,11 +4823,14 @@ static inline unsigned long task_util(struct task_struct *p)
+ 	return READ_ONCE(p->se.avg.util_avg);
+ }
+ 
+-static inline unsigned long _task_util_est(struct task_struct *p)
++static inline unsigned long task_runnable(struct task_struct *p)
+ {
+-	struct util_est ue = READ_ONCE(p->se.avg.util_est);
++	return READ_ONCE(p->se.avg.runnable_avg);
++}
+ 
+-	return max(ue.ewma, (ue.enqueued & ~UTIL_AVG_UNCHANGED));
++static inline unsigned long _task_util_est(struct task_struct *p)
++{
++	return READ_ONCE(p->se.avg.util_est) & ~UTIL_AVG_UNCHANGED;
+ }
+ 
+ static inline unsigned long task_util_est(struct task_struct *p)
+@@ -4791,9 +4847,9 @@ static inline void util_est_enqueue(struct cfs_rq *cfs_rq,
+ 		return;
+ 
+ 	/* Update root cfs_rq's estimated utilization */
+-	enqueued  = cfs_rq->avg.util_est.enqueued;
++	enqueued  = cfs_rq->avg.util_est;
+ 	enqueued += _task_util_est(p);
+-	WRITE_ONCE(cfs_rq->avg.util_est.enqueued, enqueued);
++	WRITE_ONCE(cfs_rq->avg.util_est, enqueued);
+ 
+ 	trace_sched_util_est_cfs_tp(cfs_rq);
+ }
+@@ -4807,34 +4863,20 @@ static inline void util_est_dequeue(struct cfs_rq *cfs_rq,
+ 		return;
+ 
+ 	/* Update root cfs_rq's estimated utilization */
+-	enqueued  = cfs_rq->avg.util_est.enqueued;
++	enqueued  = cfs_rq->avg.util_est;
+ 	enqueued -= min_t(unsigned int, enqueued, _task_util_est(p));
+-	WRITE_ONCE(cfs_rq->avg.util_est.enqueued, enqueued);
++	WRITE_ONCE(cfs_rq->avg.util_est, enqueued);
+ 
+ 	trace_sched_util_est_cfs_tp(cfs_rq);
+ }
+ 
+ #define UTIL_EST_MARGIN (SCHED_CAPACITY_SCALE / 100)
+ 
+-/*
+- * Check if a (signed) value is within a specified (unsigned) margin,
+- * based on the observation that:
+- *
+- *     abs(x) < y := (unsigned)(x + y - 1) < (2 * y - 1)
+- *
+- * NOTE: this only works when value + margin < INT_MAX.
+- */
+-static inline bool within_margin(int value, int margin)
+-{
+-	return ((unsigned int)(value + margin - 1) < (2 * margin - 1));
+-}
+-
+ static inline void util_est_update(struct cfs_rq *cfs_rq,
+ 				   struct task_struct *p,
+ 				   bool task_sleep)
+ {
+-	long last_ewma_diff, last_enqueued_diff;
+-	struct util_est ue;
++	unsigned int ewma, dequeued, last_ewma_diff;
+ 
+ 	if (!sched_feat(UTIL_EST))
+ 		return;
+@@ -4846,71 +4888,73 @@ static inline void util_est_update(struct cfs_rq *cfs_rq,
+ 	if (!task_sleep)
+ 		return;
+ 
++	/* Get current estimate of utilization */
++	ewma = READ_ONCE(p->se.avg.util_est);
++
+ 	/*
+ 	 * If the PELT values haven't changed since enqueue time,
+ 	 * skip the util_est update.
+ 	 */
+-	ue = p->se.avg.util_est;
+-	if (ue.enqueued & UTIL_AVG_UNCHANGED)
++	if (ewma & UTIL_AVG_UNCHANGED)
+ 		return;
+ 
+-	last_enqueued_diff = ue.enqueued;
++	/* Get utilization at dequeue */
++	dequeued = task_util(p);
+ 
+ 	/*
+ 	 * Reset EWMA on utilization increases, the moving average is used only
+ 	 * to smooth utilization decreases.
+ 	 */
+-	ue.enqueued = task_util(p);
+-	if (sched_feat(UTIL_EST_FASTUP)) {
+-		if (ue.ewma < ue.enqueued) {
+-			ue.ewma = ue.enqueued;
+-			goto done;
+-		}
++	if (ewma <= dequeued) {
++		ewma = dequeued;
++		goto done;
+ 	}
+ 
+ 	/*
+ 	 * Skip update of task's estimated utilization when its members are
+ 	 * already ~1% close to its last activation value.
+ 	 */
+-	last_ewma_diff = ue.enqueued - ue.ewma;
+-	last_enqueued_diff -= ue.enqueued;
+-	if (within_margin(last_ewma_diff, UTIL_EST_MARGIN)) {
+-		if (!within_margin(last_enqueued_diff, UTIL_EST_MARGIN))
+-			goto done;
+-
+-		return;
+-	}
++	last_ewma_diff = ewma - dequeued;
++	if (last_ewma_diff < UTIL_EST_MARGIN)
++		goto done;
+ 
+ 	/*
+ 	 * To avoid overestimation of actual task utilization, skip updates if
+ 	 * we cannot grant there is idle time in this CPU.
+ 	 */
+-	if (task_util(p) > arch_scale_cpu_capacity(cpu_of(rq_of(cfs_rq))))
++	if (dequeued > arch_scale_cpu_capacity(cpu_of(rq_of(cfs_rq))))
+ 		return;
+ 
++	/*
++	 * To avoid underestimate of task utilization, skip updates of EWMA if
++	 * we cannot grant that thread got all CPU time it wanted.
++	 */
++	if ((dequeued + UTIL_EST_MARGIN) < task_runnable(p))
++		goto done;
++
++
+ 	/*
+ 	 * Update Task's estimated utilization
+ 	 *
+ 	 * When *p completes an activation we can consolidate another sample
+-	 * of the task size. This is done by storing the current PELT value
+-	 * as ue.enqueued and by using this value to update the Exponential
+-	 * Weighted Moving Average (EWMA):
++	 * of the task size. This is done by using this value to update the
++	 * Exponential Weighted Moving Average (EWMA):
+ 	 *
+ 	 *  ewma(t) = w *  task_util(p) + (1-w) * ewma(t-1)
+ 	 *          = w *  task_util(p) +         ewma(t-1)  - w * ewma(t-1)
+ 	 *          = w * (task_util(p) -         ewma(t-1)) +     ewma(t-1)
+-	 *          = w * (      last_ewma_diff            ) +     ewma(t-1)
+-	 *          = w * (last_ewma_diff  +  ewma(t-1) / w)
++	 *          = w * (      -last_ewma_diff           ) +     ewma(t-1)
++	 *          = w * (-last_ewma_diff +  ewma(t-1) / w)
+ 	 *
+ 	 * Where 'w' is the weight of new samples, which is configured to be
+ 	 * 0.25, thus making w=1/4 ( >>= UTIL_EST_WEIGHT_SHIFT)
+ 	 */
+-	ue.ewma <<= UTIL_EST_WEIGHT_SHIFT;
+-	ue.ewma  += last_ewma_diff;
+-	ue.ewma >>= UTIL_EST_WEIGHT_SHIFT;
++	ewma <<= UTIL_EST_WEIGHT_SHIFT;
++	ewma  -= last_ewma_diff;
++	ewma >>= UTIL_EST_WEIGHT_SHIFT;
+ done:
+-	ue.enqueued |= UTIL_AVG_UNCHANGED;
+-	WRITE_ONCE(p->se.avg.util_est, ue);
++	ewma |= UTIL_AVG_UNCHANGED;
++	WRITE_ONCE(p->se.avg.util_est, ewma);
+ 
+ 	trace_sched_util_est_se_tp(&p->se);
+ }
+@@ -7638,16 +7682,16 @@ cpu_util(int cpu, struct task_struct *p, int dst_cpu, int boost)
+ 	if (sched_feat(UTIL_EST)) {
+ 		unsigned long util_est;
+ 
+-		util_est = READ_ONCE(cfs_rq->avg.util_est.enqueued);
++		util_est = READ_ONCE(cfs_rq->avg.util_est);
+ 
+ 		/*
+ 		 * During wake-up @p isn't enqueued yet and doesn't contribute
+-		 * to any cpu_rq(cpu)->cfs.avg.util_est.enqueued.
++		 * to any cpu_rq(cpu)->cfs.avg.util_est.
+ 		 * If @dst_cpu == @cpu add it to "simulate" cpu_util after @p
+ 		 * has been enqueued.
+ 		 *
+ 		 * During exec (@dst_cpu = -1) @p is enqueued and does
+-		 * contribute to cpu_rq(cpu)->cfs.util_est.enqueued.
++		 * contribute to cpu_rq(cpu)->cfs.util_est.
+ 		 * Remove it to "simulate" cpu_util without @p's contribution.
+ 		 *
+ 		 * Despite the task_on_rq_queued(@p) check there is still a
+@@ -7776,7 +7820,7 @@ static inline void eenv_pd_busy_time(struct energy_env *eenv,
+ 	for_each_cpu(cpu, pd_cpus) {
+ 		unsigned long util = cpu_util(cpu, p, -1, 0);
+ 
+-		busy_time += effective_cpu_util(cpu, util, ENERGY_UTIL, NULL);
++		busy_time += effective_cpu_util(cpu, util, NULL, NULL);
+ 	}
+ 
+ 	eenv->pd_busy_time = min(eenv->pd_cap, busy_time);
+@@ -7799,7 +7843,7 @@ eenv_pd_max_util(struct energy_env *eenv, struct cpumask *pd_cpus,
+ 	for_each_cpu(cpu, pd_cpus) {
+ 		struct task_struct *tsk = (cpu == dst_cpu) ? p : NULL;
+ 		unsigned long util = cpu_util(cpu, p, dst_cpu, 1);
+-		unsigned long eff_util;
++		unsigned long eff_util, min, max;
+ 
+ 		/*
+ 		 * Performance domain frequency: utilization clamping
+@@ -7808,7 +7852,23 @@ eenv_pd_max_util(struct energy_env *eenv, struct cpumask *pd_cpus,
+ 		 * NOTE: in case RT tasks are running, by default the
+ 		 * FREQUENCY_UTIL's utilization can be max OPP.
+ 		 */
+-		eff_util = effective_cpu_util(cpu, util, FREQUENCY_UTIL, tsk);
++		eff_util = effective_cpu_util(cpu, util, &min, &max);
++
++		/* Task's uclamp can modify min and max value */
++		if (tsk && uclamp_is_used()) {
++			min = max(min, uclamp_eff_value(p, UCLAMP_MIN));
++
++			/*
++			 * If there is no active max uclamp constraint,
++			 * directly use task's one, otherwise keep max.
++			 */
++			if (uclamp_rq_is_idle(cpu_rq(cpu)))
++				max = uclamp_eff_value(p, UCLAMP_MAX);
++			else
++				max = max(max, uclamp_eff_value(p, UCLAMP_MAX));
++		}
++
++		eff_util = sugov_effective_cpu_perf(cpu, eff_util, min, max);
+ 		max_util = max(max_util, eff_util);
+ 	}
+ 
+@@ -8210,7 +8270,6 @@ static void check_preempt_wakeup_fair(struct rq *rq, struct task_struct *p, int
+ 	struct task_struct *curr = rq->curr;
+ 	struct sched_entity *se = &curr->se, *pse = &p->se;
+ 	struct cfs_rq *cfs_rq = task_cfs_rq(curr);
+-	int next_buddy_marked = 0;
+ 	int cse_is_idle, pse_is_idle;
+ 
+ 	if (unlikely(se == pse))
+@@ -8227,7 +8286,6 @@ static void check_preempt_wakeup_fair(struct rq *rq, struct task_struct *p, int
+ 
+ 	if (sched_feat(NEXT_BUDDY) && !(wake_flags & WF_FORK)) {
+ 		set_next_buddy(pse);
+-		next_buddy_marked = 1;
+ 	}
+ 
+ 	/*
+@@ -9060,7 +9118,7 @@ static int detach_tasks(struct lb_env *env)
+ 		case migrate_util:
+ 			util = task_util_est(p);
+ 
+-			if (util > env->imbalance)
++			if (shr_bound(util, env->sd->nr_balance_failed) > env->imbalance)
+ 				goto next;
+ 
+ 			env->imbalance -= util;
+@@ -12413,6 +12471,9 @@ static void rq_offline_fair(struct rq *rq)
+ 
+ 	/* Ensure any throttled groups are reachable by pick_next_task */
+ 	unthrottle_offline_cfs_rqs(rq);
++
++	/* Ensure that we remove rq contribution to group share: */
++	clear_tg_offline_cfs_rqs(rq);
+ }
+ 
+ #endif /* CONFIG_SMP */
+diff --git a/kernel/sched/features.h b/kernel/sched/features.h
+index a3ddf84de430..143f55df890b 100644
+--- a/kernel/sched/features.h
++++ b/kernel/sched/features.h
+@@ -83,7 +83,6 @@ SCHED_FEAT(WA_BIAS, true)
+  * UtilEstimation. Use estimated CPU utilization.
+  */
+ SCHED_FEAT(UTIL_EST, true)
+-SCHED_FEAT(UTIL_EST_FASTUP, true)
+ 
+ SCHED_FEAT(LATENCY_WARN, false)
+ 
+diff --git a/kernel/sched/idle.c b/kernel/sched/idle.c
+index 565f8374ddbb..31231925f1ec 100644
+--- a/kernel/sched/idle.c
++++ b/kernel/sched/idle.c
+@@ -258,6 +258,36 @@ static void do_idle(void)
+ 	while (!need_resched()) {
+ 		rmb();
+ 
++		/*
++		 * Interrupts shouldn't be re-enabled from that point on until
++		 * the CPU sleeping instruction is reached. Otherwise an interrupt
++		 * may fire and queue a timer that would be ignored until the CPU
++		 * wakes from the sleeping instruction. And testing need_resched()
++		 * doesn't tell about pending needed timer reprogram.
++		 *
++		 * Several cases to consider:
++		 *
++		 * - SLEEP-UNTIL-PENDING-INTERRUPT based instructions such as
++		 *   "wfi" or "mwait" are fine because they can be entered with
++		 *   interrupt disabled.
++		 *
++		 * - sti;mwait() couple is fine because the interrupts are
++		 *   re-enabled only upon the execution of mwait, leaving no gap
++		 *   in-between.
++		 *
++		 * - ROLLBACK based idle handlers with the sleeping instruction
++		 *   called with interrupts enabled are NOT fine. In this scheme
++		 *   when the interrupt detects it has interrupted an idle handler,
++		 *   it rolls back to its beginning which performs the
++		 *   need_resched() check before re-executing the sleeping
++		 *   instruction. This can leak a pending needed timer reprogram.
++		 *   If such a scheme is really mandatory due to the lack of an
++		 *   appropriate CPU sleeping instruction, then a FAST-FORWARD
++		 *   must instead be applied: when the interrupt detects it has
++		 *   interrupted an idle handler, it must resume to the end of
++		 *   this idle handler so that the generic idle loop is iterated
++		 *   again to reprogram the tick.
++		 */
+ 		local_irq_disable();
+ 
+ 		if (cpu_is_offline(cpu)) {
+diff --git a/kernel/sched/pelt.h b/kernel/sched/pelt.h
+index 3a0e0dc28721..9e1083465fbc 100644
+--- a/kernel/sched/pelt.h
++++ b/kernel/sched/pelt.h
+@@ -52,13 +52,13 @@ static inline void cfs_se_util_change(struct sched_avg *avg)
+ 		return;
+ 
+ 	/* Avoid store if the flag has been already reset */
+-	enqueued = avg->util_est.enqueued;
++	enqueued = avg->util_est;
+ 	if (!(enqueued & UTIL_AVG_UNCHANGED))
+ 		return;
+ 
+ 	/* Reset flag to report util_avg has been updated */
+ 	enqueued &= ~UTIL_AVG_UNCHANGED;
+-	WRITE_ONCE(avg->util_est.enqueued, enqueued);
++	WRITE_ONCE(avg->util_est, enqueued);
+ }
+ 
+ static inline u64 rq_clock_pelt(struct rq *rq)
+diff --git a/kernel/sched/rt.c b/kernel/sched/rt.c
+index 6aaf0a3d6081..3261b067b67e 100644
+--- a/kernel/sched/rt.c
++++ b/kernel/sched/rt.c
+@@ -1002,24 +1002,15 @@ static void update_curr_rt(struct rq *rq)
+ {
+ 	struct task_struct *curr = rq->curr;
+ 	struct sched_rt_entity *rt_se = &curr->rt;
+-	u64 delta_exec;
+-	u64 now;
++	s64 delta_exec;
+ 
+ 	if (curr->sched_class != &rt_sched_class)
+ 		return;
+ 
+-	now = rq_clock_task(rq);
+-	delta_exec = now - curr->se.exec_start;
+-	if (unlikely((s64)delta_exec <= 0))
++	delta_exec = update_curr_common(rq);
++	if (unlikely(delta_exec <= 0))
+ 		return;
+ 
+-	schedstat_set(curr->stats.exec_max,
+-		      max(curr->stats.exec_max, delta_exec));
+-
+-	trace_sched_stat_runtime(curr, delta_exec, 0);
+-
+-	update_current_exec_runtime(curr, now, delta_exec);
+-
+ 	if (!rt_bandwidth_enabled())
+ 		return;
+ 
+diff --git a/kernel/sched/sched.h b/kernel/sched/sched.h
+index 2e5a95486a42..e58a54bda77d 100644
+--- a/kernel/sched/sched.h
++++ b/kernel/sched/sched.h
+@@ -273,8 +273,6 @@ struct rt_bandwidth {
+ 	unsigned int		rt_period_active;
+ };
+ 
+-void __dl_clear_params(struct task_struct *p);
+-
+ static inline int dl_bandwidth_enabled(void)
+ {
+ 	return sysctl_sched_rt_runtime >= 0;
+@@ -315,6 +313,33 @@ extern bool dl_param_changed(struct task_struct *p, const struct sched_attr *att
+ extern int  dl_cpuset_cpumask_can_shrink(const struct cpumask *cur, const struct cpumask *trial);
+ extern int  dl_bw_check_overflow(int cpu);
+ 
++/*
++ * SCHED_DEADLINE supports servers (nested scheduling) with the following
++ * interface:
++ *
++ *   dl_se::rq -- runqueue we belong to.
++ *
++ *   dl_se::server_has_tasks() -- used on bandwidth enforcement; we 'stop' the
++ *                                server when it runs out of tasks to run.
++ *
++ *   dl_se::server_pick() -- nested pick_next_task(); we yield the period if this
++ *                           returns NULL.
++ *
++ *   dl_server_update() -- called from update_curr_common(), propagates runtime
++ *                         to the server.
++ *
++ *   dl_server_start()
++ *   dl_server_stop()  -- start/stop the server when it has (no) tasks.
++ *
++ *   dl_server_init() -- initializes the server.
++ */
++extern void dl_server_update(struct sched_dl_entity *dl_se, s64 delta_exec);
++extern void dl_server_start(struct sched_dl_entity *dl_se);
++extern void dl_server_stop(struct sched_dl_entity *dl_se);
++extern void dl_server_init(struct sched_dl_entity *dl_se, struct rq *rq,
++		    dl_server_has_tasks_f has_tasks,
++		    dl_server_pick_f pick);
++
+ #ifdef CONFIG_CGROUP_SCHED
+ 
+ struct cfs_rq;
+@@ -2179,6 +2204,10 @@ extern const u32		sched_prio_to_wmult[40];
+  * MOVE - paired with SAVE/RESTORE, explicitly does not preserve the location
+  *        in the runqueue.
+  *
++ * NOCLOCK - skip the update_rq_clock() (avoids double updates)
++ *
++ * MIGRATION - p->on_rq == TASK_ON_RQ_MIGRATING (used for DEADLINE)
++ *
+  * ENQUEUE_HEAD      - place at front of runqueue (tail if not specified)
+  * ENQUEUE_REPLENISH - CBS (replenish runtime and postpone deadline)
+  * ENQUEUE_MIGRATED  - the task was migrated during wakeup
+@@ -2189,6 +2218,7 @@ extern const u32		sched_prio_to_wmult[40];
+ #define DEQUEUE_SAVE		0x02 /* Matches ENQUEUE_RESTORE */
+ #define DEQUEUE_MOVE		0x04 /* Matches ENQUEUE_MOVE */
+ #define DEQUEUE_NOCLOCK		0x08 /* Matches ENQUEUE_NOCLOCK */
++#define DEQUEUE_MIGRATING	0x100 /* Matches ENQUEUE_MIGRATING */
+ 
+ #define ENQUEUE_WAKEUP		0x01
+ #define ENQUEUE_RESTORE		0x02
+@@ -2203,6 +2233,7 @@ extern const u32		sched_prio_to_wmult[40];
+ #define ENQUEUE_MIGRATED	0x00
+ #endif
+ #define ENQUEUE_INITIAL		0x80
++#define ENQUEUE_MIGRATING	0x100
+ 
+ #define RETRY_TASK		((void *)-1UL)
+ 
+@@ -2212,6 +2243,8 @@ struct affinity_context {
+ 	unsigned int flags;
+ };
+ 
++extern s64 update_curr_common(struct rq *rq);
++
+ struct sched_class {
+ 
+ #ifdef CONFIG_UCLAMP_TASK
+@@ -2425,8 +2458,7 @@ extern struct rt_bandwidth def_rt_bandwidth;
+ extern void init_rt_bandwidth(struct rt_bandwidth *rt_b, u64 period, u64 runtime);
+ extern bool sched_rt_bandwidth_account(struct rt_rq *rt_rq);
+ 
+-extern void init_dl_task_timer(struct sched_dl_entity *dl_se);
+-extern void init_dl_inactive_task_timer(struct sched_dl_entity *dl_se);
++extern void init_dl_entity(struct sched_dl_entity *dl_se);
+ 
+ #define BW_SHIFT		20
+ #define BW_UNIT			(1 << BW_SHIFT)
+@@ -2822,6 +2854,7 @@ DEFINE_LOCK_GUARD_2(double_rq_lock, struct rq,
+ 		    double_rq_lock(_T->lock, _T->lock2),
+ 		    double_rq_unlock(_T->lock, _T->lock2))
+ 
++extern struct sched_entity *__pick_root_entity(struct cfs_rq *cfs_rq);
+ extern struct sched_entity *__pick_first_entity(struct cfs_rq *cfs_rq);
+ extern struct sched_entity *__pick_last_entity(struct cfs_rq *cfs_rq);
+ 
+@@ -2961,24 +2994,14 @@ static inline void cpufreq_update_util(struct rq *rq, unsigned int flags) {}
+ #endif
+ 
+ #ifdef CONFIG_SMP
+-/**
+- * enum cpu_util_type - CPU utilization type
+- * @FREQUENCY_UTIL:	Utilization used to select frequency
+- * @ENERGY_UTIL:	Utilization used during energy calculation
+- *
+- * The utilization signals of all scheduling classes (CFS/RT/DL) and IRQ time
+- * need to be aggregated differently depending on the usage made of them. This
+- * enum is used within effective_cpu_util() to differentiate the types of
+- * utilization expected by the callers, and adjust the aggregation accordingly.
+- */
+-enum cpu_util_type {
+-	FREQUENCY_UTIL,
+-	ENERGY_UTIL,
+-};
+-
+ unsigned long effective_cpu_util(int cpu, unsigned long util_cfs,
+-				 enum cpu_util_type type,
+-				 struct task_struct *p);
++				 unsigned long *min,
++				 unsigned long *max);
++
++unsigned long sugov_effective_cpu_perf(int cpu, unsigned long actual,
++				 unsigned long min,
++				 unsigned long max);
++
+ 
+ /*
+  * Verify the fitness of task @p to run on @cpu taking into account the
+@@ -3035,59 +3058,6 @@ static inline bool uclamp_rq_is_idle(struct rq *rq)
+ 	return rq->uclamp_flags & UCLAMP_FLAG_IDLE;
+ }
+ 
+-/**
+- * uclamp_rq_util_with - clamp @util with @rq and @p effective uclamp values.
+- * @rq:		The rq to clamp against. Must not be NULL.
+- * @util:	The util value to clamp.
+- * @p:		The task to clamp against. Can be NULL if you want to clamp
+- *		against @rq only.
+- *
+- * Clamps the passed @util to the max(@rq, @p) effective uclamp values.
+- *
+- * If sched_uclamp_used static key is disabled, then just return the util
+- * without any clamping since uclamp aggregation at the rq level in the fast
+- * path is disabled, rendering this operation a NOP.
+- *
+- * Use uclamp_eff_value() if you don't care about uclamp values at rq level. It
+- * will return the correct effective uclamp value of the task even if the
+- * static key is disabled.
+- */
+-static __always_inline
+-unsigned long uclamp_rq_util_with(struct rq *rq, unsigned long util,
+-				  struct task_struct *p)
+-{
+-	unsigned long min_util = 0;
+-	unsigned long max_util = 0;
+-
+-	if (!static_branch_likely(&sched_uclamp_used))
+-		return util;
+-
+-	if (p) {
+-		min_util = uclamp_eff_value(p, UCLAMP_MIN);
+-		max_util = uclamp_eff_value(p, UCLAMP_MAX);
+-
+-		/*
+-		 * Ignore last runnable task's max clamp, as this task will
+-		 * reset it. Similarly, no need to read the rq's min clamp.
+-		 */
+-		if (uclamp_rq_is_idle(rq))
+-			goto out;
+-	}
+-
+-	min_util = max_t(unsigned long, min_util, uclamp_rq_get(rq, UCLAMP_MIN));
+-	max_util = max_t(unsigned long, max_util, uclamp_rq_get(rq, UCLAMP_MAX));
+-out:
+-	/*
+-	 * Since CPU's {min,max}_util clamps are MAX aggregated considering
+-	 * RUNNABLE tasks with _different_ clamps, we can end up with an
+-	 * inversion. Fix it now when the clamps are applied.
+-	 */
+-	if (unlikely(min_util >= max_util))
+-		return min_util;
+-
+-	return clamp(util, min_util, max_util);
+-}
+-
+ /* Is the rq being capped/throttled by uclamp_max? */
+ static inline bool uclamp_rq_is_capped(struct rq *rq)
+ {
+@@ -3125,13 +3095,6 @@ static inline unsigned long uclamp_eff_value(struct task_struct *p,
+ 	return SCHED_CAPACITY_SCALE;
+ }
+ 
+-static inline
+-unsigned long uclamp_rq_util_with(struct rq *rq, unsigned long util,
+-				  struct task_struct *p)
+-{
+-	return util;
+-}
+-
+ static inline bool uclamp_rq_is_capped(struct rq *rq) { return false; }
+ 
+ static inline bool uclamp_is_used(void)
+@@ -3261,16 +3224,6 @@ extern int sched_dynamic_mode(const char *str);
+ extern void sched_dynamic_update(int mode);
+ #endif
+ 
+-static inline void update_current_exec_runtime(struct task_struct *curr,
+-						u64 now, u64 delta_exec)
+-{
+-	curr->se.sum_exec_runtime += delta_exec;
+-	account_group_exec_runtime(curr, delta_exec);
+-
+-	curr->se.exec_start = now;
+-	cgroup_account_cputime(curr, delta_exec);
+-}
+-
+ #ifdef CONFIG_SCHED_MM_CID
+ 
+ #define SCHED_MM_CID_PERIOD_NS	(100ULL * 1000000)	/* 100ms */
+diff --git a/kernel/sched/stop_task.c b/kernel/sched/stop_task.c
+index 6cf7304e6449..b1b8fe61c532 100644
+--- a/kernel/sched/stop_task.c
++++ b/kernel/sched/stop_task.c
+@@ -70,18 +70,7 @@ static void yield_task_stop(struct rq *rq)
+ 
+ static void put_prev_task_stop(struct rq *rq, struct task_struct *prev)
+ {
+-	struct task_struct *curr = rq->curr;
+-	u64 now, delta_exec;
+-
+-	now = rq_clock_task(rq);
+-	delta_exec = now - curr->se.exec_start;
+-	if (unlikely((s64)delta_exec < 0))
+-		delta_exec = 0;
+-
+-	schedstat_set(curr->stats.exec_max,
+-		      max(curr->stats.exec_max, delta_exec));
+-
+-	update_current_exec_runtime(curr, now, delta_exec);
++	update_curr_common(rq);
+ }
+ 
+ /*
