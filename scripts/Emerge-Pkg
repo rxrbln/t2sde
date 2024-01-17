@@ -92,18 +92,34 @@ fi
 . scripts/parse-config
 
 add_if_req() {
-	[ "$verbose" = 1 ] && echo -n "$1"
+	local pkg=$1 msg="$2" typ=$3
+	local buildtime=$(pkgbuildtime $pkg)
+
+	[ "$verbose" = 1 ] && echo -n "$msg"
 
 	# some more check for packages not manually specified
 	if [ $depth != 0 ]; then
 		# no auto update list
-		if [ "$noautolist" != "${noautolist/ $package /}" ]; then
+		if [ "$noautolist" != "${noautolist/ $pkg /}" ]; then
 			[ $verbose = 1 ] && echo " Vital, skipped by default."
 			return
 		fi
 
-		# missing ones? yes, no, only
-		if [ ! -f /var/adm/packages/$package ]; then
+		# optional dep, not yet installed? ask user:
+		if [ "$typ" = '[OPT]' ]; then
+			echo -n " (y/n$(fmt_time $buildtime)) "
+			read in
+			if [[ "$in" = y* ]]; then
+				var_append deplist " " "$pkg"
+				esttime=$((esttime + buildtime))
+				[ "$deps" = indirect ] && dep4pkg "$pkg"
+				[ "$deps" = indirect2 -a $depth -le 2 ] && dep4pkg "$pkg"
+			fi
+			return
+		fi
+
+		# missing ones? yes, no, only TODO: maybe delete
+		if [ ! -f /var/adm/packages/$pkg ]; then
 			if [ "$missing" = 'no' ]; then
 				[ $verbose = 1 ] && echo " Not missing, skipped."
 				return
@@ -114,36 +130,36 @@ add_if_req() {
 		fi
 	fi
 
-	local buildtime=$(pkgbuildtime $package)
 	[ $verbose = 1 ] && echo " Added.$(fmt_time $buildtime)"
-	var_append deplist " " "$package"
+	var_append deplist " " "$pkg"
 	esttime=$((esttime + buildtime))
-	[ "$deps" = indirect ] && dep4pkg "$package"
-	[ "$deps" = indirect2 -a $depth -le 2 ] && dep4pkg "$package"
+	[ "$deps" = indirect ] && dep4pkg "$pkg"
+	[ "$deps" = indirect2 -a $depth -le 2 ] && dep4pkg "$pkg"
 }
 
 add_if_updated() {
-	local package=$1
+	local pkg=$1
+	local typ=$2
 
 	# some variable name mangling ...
-	local var="__BEEN_HERE_${package//[^a-zA-Z0-9]/_}"
+	local var="__BEEN_HERE_${pkg//[^a-zA-Z0-9]/_}"
 	eval local x=\$$var
 	if [ "$x" = 1 ]; then
-		[ $debug = 1 ] && echo "already been at $package ..."
+		[ $debug = 1 ] && echo "already been at $pkg ..."
 		return
 	else
 		eval $var=1
 	fi
 
-	[ $verbose = 1 ] && echo -n "$deptree> $package ..."
+	[ $verbose = 1 ] && echo -n "$deptree> $pkg ..."
 	confdir=""
-	for x in package/*/$package/$package.desc; do
+	for x in package/*/$pkg/$pkg.desc; do
 	    if [ -f "$x" ]; then
 		if [ "$confdir" ]; then
 		  echo " Warning: Package in multiple trees! Skipped."
 		  return
 		fi
-		confdir=${x/$package.desc/}
+		confdir=${x/$pkg.desc/}
 	    fi
 	done
 	if [ -z "$confdir" ]; then
@@ -156,37 +172,41 @@ add_if_updated() {
 	    fi
 	fi
 
-	if [ ! -f /var/adm/packages/$package ]; then
-		add_if_req ' Not installed.'
+	if [ ! -f /var/adm/packages/$pkg ]; then
+		if [ "$typ" = "[OPT]" ]; then
+			add_if_req $pkg ' Not installed. Add optional dep?' $typ
+		else
+			add_if_req $pkg ' Not installed.'
+		fi
 		return
 	fi
 
 	o_ver=$(grep -a '^Package Name and Version' \
-	        /var/adm/packages/$package | cut -f6 -d' ')
+	        /var/adm/packages/$pkg | cut -f6 -d' ')
 	# we avoid parse_desc here, because it is ~50x slower
-	n_ver=$(grep -a '^\[V\] ' $confdir/$package.desc \
-	                       architecture/$SDECFG_ARCH/package/$package/$package.desc \
-	                       target/$SDECFG_TARGET/package/$package/$package.desc \
+	n_ver=$(grep -a '^\[V\] ' $confdir/$pkg.desc \
+	                       architecture/$SDECFG_ARCH/package/$pkg/$pkg.desc \
+	                       target/$SDECFG_TARGET/package/$pkg/$pkg.desc \
 	        2> /dev/null | cut -f2 -d' ' | tail -n 1)
 	if [ "$o_ver" != "$n_ver" -a "$n_ver" != "0000" ]; then
-		add_if_req " New version ($o_ver -> $n_ver)."
+		add_if_req $pkg " New version ($o_ver -> $n_ver)."
 		return
 	fi
 
 	o_ck=$(grep -a '^\(ROCK Linux\|T2\) Package Source Checksum' \
-	       /var/adm/packages/$package | sed 's,.*: ,,')
-	n_ck=$(pkgchksum package/*/$package)
+	       /var/adm/packages/$pkg | sed 's,.*: ,,')
+	n_ck=$(pkgchksum package/*/$pkg)
 	if [ $ignore_chksum = 0 -a "$o_ck" != "$n_ck" ]; then
-		add_if_req " New source checksum."
+		add_if_req $pkg " New source checksum."
 		return
 	fi
 
-	if [ -f /var/adm/cache/$package ] &&
+	if [ -f /var/adm/cache/$pkg ] &&
 	   grep -a -q '\[BUILDTIME\] .* ERROR' \
-	   /var/adm/cache/$package; then
+	   /var/adm/cache/$pkg; then
 		[ $verbose = 1 ] && echo -n " Former build was broken."
 		if [ $rebuild = 1 ]; then
-			add_if_req ''
+			add_if_req $pkg ''
 		else
 			[ $verbose = 1 ] && echo " Skipped."
 		fi
@@ -194,7 +214,7 @@ add_if_updated() {
 	fi
 
 	if [ $force = 1 -a $depth = 0 ]; then
-		add_if_req ' Build forced.'
+		add_if_req $pkg ' Build forced.'
 		return
 	fi
 
@@ -209,10 +229,12 @@ add_if_updated() {
 dep4pkg() {
 	((depth++))
 	var_append deptree '>' "$1"
-	for x in `grep -a '\[DEP\]' package/*/$1/$1.cache 2>/dev/null |
-	          cut -d ' ' -f 2`; do
-		add_if_updated $x
+
+	local IFS=$'\n'
+	for dep in `grep -a '\[\(DEP\|OPT\)\]' package/*/$1/$1.cache 2>/dev/null`; do
+		add_if_updated ${dep#* } ${dep% *}
 	done
+
 	var_remove deptree '>' "$1" # or cache the previous value?
 	((depth--))
 }
@@ -273,17 +295,17 @@ fi
 
 . config/$config/config
 
-for package in $deplist; do
-	if scripts/Download -cfg $config $dloptions $package; then
+for pkg in $deplist; do
+	if scripts/Download -cfg $config $dloptions $pkg; then
 		if [ $downloadonly != 1 ] &&
-		   ! scripts/Build-Pkg $options $package; then
+		   ! scripts/Build-Pkg $options $pkg; then
 			if [ $SDECFG_CONTINUE_ON_ERROR_AFTER -gt 8 ]; then
 				echo "Aborting further builds due to config setting CONTINUE_ON_ERROR_AFTER."
 				exit 1
 			fi
 		fi
 	else
-		echo "The download for package $package failed!"
+		echo "The download for package $pkg failed!"
 		#exit 1
 	fi
 
