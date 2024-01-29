@@ -64,11 +64,10 @@ make_fstab() {
 	sed 's/  */ /g' /etc/fstab > $tmp2
 
 	# currently mounted filesystems
-	sed -e "s/ nfs [^ ]\+/ nfs rw/" < /etc/mtab |
-		sed "s/ rw,/ /; s/ rw / defaults /" >> $tmp2
+	sed -e "s/ nfs [^ ]\+/ nfs rw/;s/ rw,/ /; s/ rw / defaults /" /etc/mtab >> $tmp2
+
 	# currently active swaps
-	sed -e 1d -e 's/ .*//' -e 's,.*$,& none swap defaults 0 0,' \
-	    /proc/swaps >> $tmp2
+	sed '1d; s/ .*/ none swap defaults 0 0/' /proc/swaps >> $tmp2
 
 	# sort resulting entries and grab the last (e.g. non-default) one
 	cut -f2 -d' ' < $tmp2 | sort -u | while read dn; do
@@ -104,7 +103,7 @@ ARGIND == 2 {
 EOT
 	gawk -f $tmp2 $tmp1 $tmp1 > /etc/fstab
 
-	while read a b c d e f ; do
+	while read a b c d e f; do
 		printf "%-60s %s\n" "$(
 			printf "%-50s %s" "$(
 				printf "%-40s %s" "$(
@@ -114,7 +113,7 @@ EOT
 		)" "$e $f"
 	done < /etc/fstab | tr ' ' '\240' > $tmp1
 
-	gui_message $'Auto-created /etc/fstab file:\n\n'"$(< $tmp1 )"
+	gui_message $'Auto-created /etc/fstab file:\n\n'"$(< $tmp1)"
 	rm -f $tmp1 $tmp2
 }
 
@@ -154,7 +153,7 @@ main() {
 	while read -u 200 a b c cmd; do
 		$STONE $cmd
 	done 200< <( grep -h '^# \[SETUP\] [0-9][0-9] ' \
-	          $SETUPD/mod_*.sh | sort )
+	          $SETUPD/mod_*.sh | sort)
 
 	cron.run
 

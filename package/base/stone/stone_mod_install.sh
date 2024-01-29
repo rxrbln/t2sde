@@ -616,8 +616,7 @@ umount -v /sys
 EOT
 		chmod +x /mnt/tmp/stone_postinst.sh
 		rm -f /mnt/etc/mtab
-		grep ' /mnt[/ ]' /proc/mounts |
-			sed 's,/mnt/\?,/,' > /mnt/etc/mtab
+		sed -n '/ \/mnt[/ ]/s,/mnt/\?,/,p' /proc/mounts > /mnt/etc/mtab
 		cd /mnt; chroot . ./tmp/stone_postinst.sh
 		rm -fv ./tmp/stone_postinst.sh
 
