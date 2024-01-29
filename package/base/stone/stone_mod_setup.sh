@@ -71,7 +71,9 @@ make_fstab() {
 
 	# sort resulting entries and grab the last (e.g. non-default) one
 	cut -f2 -d' ' < $tmp2 | sort -u | while read dn; do
-		grep " $dn " $tmp2 | tail -n 1 |
+		# include all (999) swaps
+		[ "$dn" != none ] && n=1 || n=999
+		grep " $dn " $tmp2 | tail -n $n |
 		while read dev point type residual; do
 			dev=$(get_dm_slave $dev)
 			dev=$(get_uuid $dev)
