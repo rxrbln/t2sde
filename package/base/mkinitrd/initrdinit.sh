@@ -80,7 +80,7 @@ while [[ -n "$root" && ($((i++)) -le 15 || "$cmdline" = *rootwait*) ]]; do
 	fi
 	
 	# only try to resume if the device does not have a swap signature
-	if [ -z "$(disktype $resume | sed  -n "/swap,/p")" ]; then
+	if [ -e $resume -a -z "$(disktype $resume | sed  -n "/swap,/p")" ]; then
 		resume=`ls -lL $resume |
 		  sed 's/[^ ]* *[^ t]* *[^ ]* *[^ ]* *\([0-9]*\), *\([0-9]*\) .*/\1:\2/'`
 	
