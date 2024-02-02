@@ -346,7 +346,7 @@ if [ $this_is_the_2nd_run = 0 ]; then
 
 			x="$root/var/adm/dependencies/$xpkg"
 			[ "$pkg" != "t2-debug" -a -f $x ] &&
-				sed 's,^[^:]*:,[DEP],' $x
+				sed 's,^opt:,[OPT],; s,^:,[DEP],' $x
 		} > $root/var/adm/cache/$xpkg
 
 		exit $returncode
@@ -786,21 +786,14 @@ abort() {
 			}
 		' var/adm/flists/* - >> $builddir/dependencies.debug
 
-		awk 'BEGIN { FS=": "; } { print "'$xpkg': " $1; }' \
-			<  $builddir/dependencies.debug \
-			>> $builddir/dependencies.txt
+		awk 'BEGIN { FS=": "; } { print ": " $1; }' \
+			<  $builddir/dependencies.debug >> $builddir/dependencies.txt
 
 		sort -u $builddir/dependencies.debug > var/adm/dep-debug/$xpkg
 
-		# merge the dependencies defined by the package
-		for x in `echo "$desc_E" | egrep '^(add|opt) ' | sed 's/^[^ ]* //' `; do
-			echo "Adding dependency: $x ..."
-			echo "$xpkg: $x" >> $builddir/dependencies.txt
-		done
-
 		# remove dependencies as requested by the package
 		# TODO: goups are not used yet (and it is not easy here)
-		del_pattern=""
+		del_pattern=
 		for x in $SDECFG_LIBC $SDECFG_DEFAULT_CC ${compressor%% *} \
 			`echo "$desc_E" | egrep '^del ' | sed 's/^del //' `; do
 			del_pattern="$del_pattern -e \".*: $x\$\""
@@ -808,12 +801,25 @@ abort() {
 		if [ -n "$del_pattern" ]; then
 			echo "Deleting dependencies, pattern: $del_pattern ..."
 			eval egrep -v $del_pattern \
-			  $builddir/dependencies.txt > \
-			  $builddir/dependencies.txt.new
+			  $builddir/dependencies.txt > $builddir/dependencies.txt.new
 			mv $builddir/dependencies.txt{.new,}
 		fi
 
-		sort -u $builddir/dependencies.txt > var/adm/dependencies/$xpkg
+		# merge the dependencies defined by the package
+		for x in `echo "$desc_E" | egrep '^(add|opt) ' | sed 's/^[^ ]* //' `; do
+			echo "Adding dependency: $x"
+			echo ": $x" >> $builddir/dependencies.txt
+		done
+	
+		sort -u $builddir/dependencies.txt > $builddir/dependencies.txt.new
+		mv $builddir/dependencies.txt{.new,}
+
+		for x in `echo "$desc_E" | egrep '^(opt) ' | sed 's/^[^ ]* //' `; do
+			echo "Marking optional dependency: $x"
+			sed -i "s/: $x$/opt&/" $builddir/dependencies.txt
+		done
+
+		cat $builddir/dependencies.txt > var/adm/dependencies/$xpkg
 	fi
 
 	echo "Creating md5sum files ..."
