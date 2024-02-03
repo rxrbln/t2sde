@@ -2,7 +2,7 @@
 
 PATH=/sbin:/bin:/usr/bin:/usr/sbin
 
-echo "T2 SDE early userspace (c)2005-2023 Rene Rebe, ExactCODE GmbH; Germany."
+echo "T2 SDE early userspace (c)2005-2024 Rene Rebe, ExactCODE GmbH; Germany."
 
 function mapper2lvm {
 	# support both, direct vg/lv or mapper/...
@@ -53,11 +53,12 @@ resume="resume= $cmdline" resume=${resume##*resume=} resume=${resume%% *}
 mountopt="ro"
 
 # wait for and mount root device, if specified
-i=0
+i=0 n=
 while [[ -n "$root" && ($((i++)) -le 15 || "$cmdline" = *rootwait*) ]]; do
   # only print once, for the 2nd iteration
   [ $i = 2 ] && echo -n "Waiting for $root "
-  [ $i -gt 1 ] && echo -n "." && sleep 1
+  [ $i -gt 1 ] && echo -n "." && sleep 1 && n="
+"
 
   # open luks for lvm2 and resume from disk early
   if [ "${root%,*}" != "$root" ]; then
@@ -75,7 +76,7 @@ while [[ -n "$root" && ($((i++)) -le 15 || "$cmdline" = *rootwait*) ]]; do
   if [[ "$resume" != "" && "$cmdline" != *noresume* ]]; then
 	if [ ! -e $resume -a ${resume#/dev/*/*} != $resume -a -e /sbin/lvm ]; then
 		lvs $(mapper2lvm ${resume#/dev/}) >/dev/null 2>&1 || continue
-		echo "Activating LVM $resume"
+		echo "${n}Activating LVM $resume"; n=
 		lvchange -a ay $(mapper2lvm ${resume#/dev/})
 	fi
 	
@@ -83,8 +84,8 @@ while [[ -n "$root" && ($((i++)) -le 15 || "$cmdline" = *rootwait*) ]]; do
 	if [ -e $resume -a -z "$(disktype $resume | sed  -n "/swap,/p")" ]; then
 		resume=`ls -lL $resume |
 		  sed 's/[^ ]* *[^ t]* *[^ ]* *[^ ]* *\([0-9]*\), *\([0-9]*\) .*/\1:\2/'`
-	
-		echo "Resuming from $resume"
+
+		echo "${n}Resuming from $resume"; n=
 		echo "$resume" > /sys/power/resume
 		echo "Warning: Resume failed. Please check the kernel log for details."
 		resume=
@@ -92,7 +93,7 @@ while [[ -n "$root" && ($((i++)) -le 15 || "$cmdline" = *rootwait*) ]]; do
   fi
 
   if [ "$swap" ]; then
-	echo "Activating swap"
+	echo "${n}Activating swap"; n=
 	swapon $swap && swap=
   fi
 
@@ -105,19 +106,20 @@ while [[ -n "$root" && ($((i++)) -le 15 || "$cmdline" = *rootwait*) ]]; do
   else
     unset addr
     if [ ! -e "$root" ]; then
-	[ ${dev#/dev/md[0-9]} != $root -a -e /sbin/mdadm ] &&
-		echo "Scanning for mdadm RAID" &&
+	if [ ${dev#/dev/md[0-9]} != $root -a -e /sbin/mdadm ]; then
+		echo "${n}Scanning for mdadm RAID"; n=
 		mdadm --assemble --scan
+	fi
 	if [ ${root#/dev/*/*} != $root -a -e /sbin/lvm ]; then
 		lvs $(mapper2lvm ${root#/dev/}) >/dev/null 2>&1 || continue
-		echo "Activating LVM $root"
+		echo "${n}Activating LVM $root"; n=
 		lvchange -a ay $(mapper2lvm ${root#/dev/})
 	fi
     fi
   fi
 
   if [ -e $root -o "$addr" ]; then
-	echo "Mounting $root on / $mountopt"
+	echo "${n}Mounting $root on / $mountopt"; n=
 	if [ -z "$filesystems" ]; then
 	  if type -p cryptsetup >/dev/null && cryptsetup --disable-locks isLuks $root; then
 	          cryptsetup --disable-locks luksOpen $root root &&
@@ -152,6 +154,6 @@ done
 
 # PANICMARK
 
-echo "No root or init, but we do not scream, debug shell:"
+echo "${n}No root or init, but we do not scream, debug shell:"
 #kill %1 # we leave udevd running for device hot-plug
 exec /bin/sh
