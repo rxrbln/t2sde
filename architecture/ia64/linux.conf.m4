@@ -11,6 +11,8 @@ dnl --- T2-COPYRIGHT-NOTE-END ---
 
 define(`IA64', 'ITANIUM')dnl
 
+CONFIG_IA64_PAGE_SIZE_16KB=y
+
 dnl System type
 
 dnl dynamic w/ _ITANIUM, but gcc can no longer tune for v1 since gcc-4.5
