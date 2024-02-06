@@ -204,7 +204,7 @@ if [ "$moddir" ]; then
  cp -avf $moddir/modules.{order*,builtin*} lib/modules/$kernelver/
  $depmod -ae -b $tmpdir -F $sysmap $kernelver
  # only keep the .bin-ary files
- rm $tmpdir/lib/modules/$kernelver/modules.{alias,dep,symbols,builtin,order,builtin.modinfo}
+ rm -vf $tmpdir/lib/modules/$kernelver/modules.{alias,dep,symbols,builtin,order,builtin.modinfo}
 fi
 
 echo "Injecting programs and configuration ..."
