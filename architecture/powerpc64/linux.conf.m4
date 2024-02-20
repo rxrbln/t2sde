@@ -81,13 +81,14 @@ dnl
 CONFIG_PMAC_PBOOK=y
 CONFIG_PMAC_BACKLIGHT=y
 CONFIG_PMAC_APM_EMU=y
-dnl the thermal control stuff needed for newer desktop macs and iBook G4
+
+dnl the thermal control stuff needed for Macs
 dnl
 CONFIG_I2C=y
 CONFIG_I2C_KEYWEST=y
-CONFIG_TAU=y
-CONFIG_WINDFARM=m
+CONFIG_I2C_POWERMAC=y
 
+CONFIG_WINDFARM=m
 CONFIG_CPU_FREQ_PMAC64=y
 
 CONFIG_BLK_DEV_IDE_PMAC=y
