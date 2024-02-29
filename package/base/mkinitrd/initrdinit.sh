@@ -100,7 +100,7 @@ while [[ -n "$root" && ($((i++)) -le 15 || "$cmdline" = *rootwait*) ]]; do
   # diskless network root?
   addr="${root%:*}"
   if [ "$addr" != "$root" ]; then
-    root="${root#$addr}" filesystems="nfs"
+    filesystems="nfs"
     mountopt="vers=4,addr=$addr,$mountopt"
     ipconfig eth0
   else
