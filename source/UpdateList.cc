@@ -186,7 +186,7 @@ public:
       if (version.empty())
          std::cout << "No version extracted!" << std::endl;
       else
-         std::cout << "Vesion set to: " << version << std::endl;
+         std::cout << "Version set to: " << version << std::endl;
     }
   }
   
