@@ -62,7 +62,7 @@ case "${card,,}" in
 	*intel*8*|*intel*9*|*intel*mobile*)	xdrv=intel ;;
 	*intel*7*)	xdrv=i740 ;;
 
-	*trident*)	xdrv=trident ;;
+	*trident*)	xdrv=trident depth=16 ;;
 	*rendition*)	xdrv=rendition ;;
 	*neo*)		xdrv=neomagic ;;
 	*tseng*)	xdrv=tseng ;;
