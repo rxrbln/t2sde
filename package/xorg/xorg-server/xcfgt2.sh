@@ -54,11 +54,8 @@ case "${card,,}" in
 	*geforce*)	xdrv=nv ;;
 	*cirrus*)	xdrv=cirrus ;;
 	*savage*)	xdrv=savage ;;
-	*unichrome*|*castlerock*)	xdrv=via ;;
 	*virge*)	xdrv=s3virge ;;
 	ps3*fb)		xdrv=fbdev ;;
-	*s3*)		xdrv=s3 ;;
-
 	*intel*8*|*intel*9*|*intel*mobile*)	xdrv=intel ;;
 	*intel*7*)	xdrv=i740 ;;
 
@@ -87,6 +84,9 @@ case "${card,,}" in
 
 	*ati\ *)	xdrv=ati ;;
 	*sis*|*xgi*)	xdrv=sis depth=16 ;;
+
+	*chrome*|*castlerock*)	xdrv=openchrome ;;
+	*s3*)		xdrv=s3 ;;
 
 	creator\ 3d|elite\ 3d)	xdrv=sunffb ;;
 	bwtwo)		xdrv=sunbw2 depth=1 ;;
