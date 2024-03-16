@@ -52,6 +52,17 @@ swap="swap= $cmdline" swap=${swap##*swap=} swap=${swap%% *}
 resume="resume= $cmdline" resume=${resume##*resume=} resume=${resume%% *}
 mountopt="ro"
 
+# diskless network root?
+addr="${root%:*}"
+if [ "$addr" != "$root" ]; then
+    filesystems="nfs"
+    mountopt="vers=4,addr=$addr,$mountopt"
+    _root=$root
+    root=/sys/class/net/eth0
+else
+    unset addr
+fi
+
 # wait for and mount root device, if specified
 i=0 n=
 while [[ -n "$root" && ($((i++)) -le 15 || "$cmdline" = *rootwait*) ]]; do
@@ -97,15 +108,7 @@ while [[ -n "$root" && ($((i++)) -le 15 || "$cmdline" = *rootwait*) ]]; do
 	swapon $swap && swap=
   fi
 
-  # diskless network root?
-  addr="${root%:*}"
-  if [ "$addr" != "$root" ]; then
-    filesystems="nfs"
-    mountopt="vers=4,addr=$addr,$mountopt"
-    ipconfig eth0
-  else
-    unset addr
-    if [ ! -e "$root" ]; then
+  if [ ! -e "$root" ]; then
 	if [ ${dev#/dev/md[0-9]} != $root -a -e /sbin/mdadm ]; then
 		echo "${n}Scanning for mdadm RAID"; n=
 		mdadm --assemble --scan
@@ -115,10 +118,15 @@ while [[ -n "$root" && ($((i++)) -le 15 || "$cmdline" = *rootwait*) ]]; do
 		echo "${n}Activating LVM $root"; n=
 		lvchange -a ay $(mapper2lvm ${root#/dev/})
 	fi
-    fi
   fi
 
-  if [ -e $root -o "$addr" ]; then
+  if [ -e $root ]; then
+        if [ "$addr" ]; then
+	    echo -n "${n}"; n=
+	    ipconfig eth0
+	    root="$_root"; unset _root
+	fi
+
 	echo "${n}Mounting $root on / $mountopt"; n=
 	if [ -z "$filesystems" ]; then
 	  if type -p cryptsetup >/dev/null && cryptsetup --disable-locks isLuks $root; then
