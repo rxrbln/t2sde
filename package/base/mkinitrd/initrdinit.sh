@@ -57,8 +57,9 @@ addr="${root%:*}"
 if [ "$addr" != "$root" ]; then
     filesystems="nfs"
     mountopt="vers=4,addr=$addr,$mountopt"
+    netif=eth0
     _root=$root
-    root=/sys/class/net/eth0
+    root=/sys/class/net/$netif
 else
     unset addr
 fi
@@ -123,7 +124,7 @@ while [[ -n "$root" && ($((i++)) -le 15 || "$cmdline" = *rootwait*) ]]; do
   if [ -e $root ]; then
         if [ "$addr" ]; then
 	    echo -n "${n}"; n=
-	    ipconfig eth0
+	    ipconfig $netif
 	    root="$_root"; unset _root
 	fi
 
