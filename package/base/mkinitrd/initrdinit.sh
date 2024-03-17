@@ -35,7 +35,7 @@ udevadm trigger
 udevadm settle
 
 # if no fb, try legacy drivers
-if [ ! -e /proc/fb -o -z "$(< /proc/fb)" ]; then
+if [ -z "$(cat /proc/fb 2>/dev/null)" ]; then
 	modprobe offb 2>/dev/null
 fi
 
