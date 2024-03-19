@@ -11,7 +11,6 @@
 # --- T2-COPYRIGHT-NOTE-END ---
 
 # TODO:
-# - i?86-pc lvm and encryption
 # - sun4v gpt
 # - more generic lvm and encryption support
 # - check error, esp. of cryptsetup and lvm commands and display red alert on error
@@ -43,7 +42,10 @@ case $platform in
 		platform="$platform-$platform2"
 		;;
 	i?86|x86_64)
-		platform="$platform-pc" 
+		platform="$platform-pc"
+		# TODO: better test for 528m and 2gb BIOS limits
+		[ -e /sys/bus/platform/devices/pata_legacy.0 ] &&
+		    platform="$platform-legacy"
 		;;
 	*)
 		platform=
@@ -266,6 +268,11 @@ part_add() {
 	cmd="$cmd '`printf "%-6s %-24s %-10s" $dev "$location" "$size"` ${type//_/ }' 'part_${action}_action $1 $2'"
 }
 
+function join() {
+	local IFS="$1"; shift
+	echo "$*"
+}
+
 disk_partition() {
 	local dev=$1
 	local typ=$2
@@ -278,117 +285,144 @@ disk_partition() {
 	local boot=512
 
 	local fdisk="sfdisk -W always"
-	local script=
+	local script=()
 	local postscript=()
-	local fs=
+	local fs=()
+	local any=any
+
+	# dedicated swap partition or lvm?
+	local _swap=$swap
+	[[ "$typ" = *lvm* ]] && _swap=0 && any=lvm
 
 	case $platform in
 	    alpha)
-		fs="${dev}2 swap  ${dev}3 any /  ${dev}1 ext3 /boot"
 		fdisk=parted
-		script="mklabel
+		fs+=("${dev}2 $any /")
+		fs+=("${dev}1 ext3 /boot")
+		script+=("mklabel
 bsd
 y
 mkpart 2048s ${boot}m
-mkpart ${boot}m $((boot + swap))m
-mkpart $((boot + swap))m 100% "
-		;;
-	    *efi)
-		fs="${dev}1 fat /boot/efi"
-		script="label:gpt
-size=128m, type=uefi"
+mkpart ${boot}m $((boot + _swap))m")
 
-		[[ "$typ" != *lvm* ]] &&
-		fs="${dev}2 swap  ${dev}3 any /  $fs" script="$script
-size=${swap}m, type=swap
-type=linux" ||
-		fs="${dev}2 lvm /  $fs" script="$script
-type=lvm"
+		[ $_swap != 0 ] &&
+		    script+=("$mkpart $((boot + _swap))m 100%") fs+=("${dev}3 swap") 
+		;;
+	    *-efi)
+		script+=("label:gpt")
+		script+=("size=128m, type=uefi")
+		script+=("size=$((size - 128 - _swap))m, type=linux")
+		fs+=("${dev}2 $any /")
+		fs+=("${dev}1 fat /boot/efi")
+
+		[ $_swap != 0 ] &&
+		    script+=("type=swap") fs+=("${dev}3 swap")
 		;;
 	    hppa*)
-		fs="${dev}4 swap  ${dev}3 any /  ${dev}2 ext3 /boot"
-		script="label:dos
+		fs+=("${dev}3 $any /")
+		fs+=("${dev}2 ext3 /boot")
+
+		script+=("label:dos
 size=32m, type=f0
 size=${boot}m, type=83
-size=$((size - swap))m, type=83
-type=82"
+size=$((size - _swap))m, type=83")
+		[ $_swap != 0 ] &&
+		    script+=("type=82") fs+=("${dev}4 swap")
 		;;
 	    mips64)
-		boot=8
-		fs="${dev}2 swap  ${dev}1 any /"
+		boot=8 # volhdr
+		# TODO: if rootfs too modern, or lvm, we need a /boot part
+		fs+=("${dev}1 $any /")
+		script+=("label:sgi
+start=${boot}m, size=$((size - _swap))m, type=83")
+
 		# the rounding is way off, so - 20m rounding safety :-/
-		script="label:sgi
-start=${boot}m, size=$((size - swap))m, type=83
-start=$((size - swap + boot))m, size=$((swap - boot - 20))m, type=82
-9: size=8m, type=0
-11: type=6"
+		[ $_swap != 0 ] &&
+		    script+=("start=$((size - _swap + boot))m, size=$((_swap - boot - 20))m, type=82") &&
+		    fs+=("${dev}2 swap")
+
+		script+=("9: size=8m, type=0
+11: type=6")
 		;;
 	    ppc*CHRP)
 		# TODO: typ, luks, lvm, ...
-		fs="${dev}3 swap  ${dev}2 any /"
-		script="label:dos
+		fs+=("${dev}2 $any /")
+		script+=("label:dos
 size=4m, type=41
-size=$((size - swap))m, type=83
-type=82"
+size=$((size - _swap))m, type=83")
+
+		[ $_swap != 0 ] &&
+		    script+=("type=82") fs+=("${dev}3 swap")
 		;;
 	    ppc*PowerMac)
-		fs="${dev}4 swap  ${dev}3 any /"
 		fdisk=mac-fdisk
-		script="i
+		fs+=("${dev}3 $any /")
+		script+=("i
 
 b 2p
-c 3p $((size - swap))m linux
-c 4p 4p swap
-w
+c 3p $((size - _swap))m linux")
+
+		[ $_swap != 0 ] &&
+		    script+=("c 4p 4p swap") fs+=("${dev}4 swap")
+
+		script+=("w
 y
 q
-"
-		;;
-	    ppc*PS3)
-		# TODO: typ, luks, lvm, ...
-		fs="${dev}1 swap  ${dev}3 any /  ${dev}2 ext3 /boot"
-		script="label:dos
-size=$((swap))m, type=82
-size=$((boot))m, type=83
-type=83"
+")
 		;;
 	    sparc*)
 		# TODO: silo vs grub2 have different requirements
-		fs="${dev}2 swap  ${dev}4 any /  ${dev}1 ext3 /boot"
-		script="label:sun
+		# TODO: support sun4v-gpt
+		script+=("label:sun
 size=$((boot))m, type=83
 type=82
-start=0, type=W"
+start=0, type=W")
+
 		# sfdisk has a "hard" time creating more than 2 parts w/ whole-disk
-		postscript+=("sfdisk --delete ${dev} 2")
-		postscript+=("echo 'size=${swap}m, type=82' | sfdisk -N 2 ${dev}")
-		postscript+=("echo 'type=83' | sfdisk -N 4 ${dev}")
+		local i=2
+		if [ $_swap != 0 ]; then
+		    postscript+=("sfdisk --delete ${dev} 2")
+		    postscript+=("echo 'size=${_swap}m, type=82' | sfdisk -N 2 ${dev}")
+		    postscript+=("echo 'type=83' | sfdisk -N 4 ${dev}")
+		    i=4
+		    fs+=("${dev}2 swap")
+		fi
+
+		fs+=("${dev}$i $any /")
+		fs+=("${dev}1 ext3 /boot")
 		;;
 	    *)
-		fs="${dev}1 swap  ${dev}2 any /"
-		script="label:dos
-size=$((swap))m, type=82
-type=83"
+		script+=("label:dos")
+		local i=1
+
+		[[ "$platform" != ppc*PS3 && "$platform" != *86*-legacy ]] &&
+		    boot=0
+
+		[ $boot != 0 ] && script+=("size=$((boot))m, type=83") && ((i++))
+		[ $_swap != 0 ] && fs+=("${dev}$((i++)) swap") script+=("size=${_swap}m, type=82")
+
+		script+=("type=83") fs+=("${dev}$((i++)) $any /") 
+
+		[ $boot != 0 ] && fs+=("${dev}1 ext3 /boot")
 		;;
 	esac
 
 	# partition
 	wipefs --all $dev
 	dd if=/dev/zero of=$dev seek=1 count=1 # mostly for Apple PowerPac parts
-	echo "$script" | $fdisk $dev
+	join $'\n' "${script[@]}" | $fdisk $dev
 
-	# posrscript fixup, due less than stellar sfdisk
+	# postscript fixup, due less than stellar sfdisk
 	for cmd in "${postscript[@]}"; do
 	    eval "$cmd"
 	done
 
 	# create fs
-	set -- $fs
-	while [ $# -gt 0 ]; do
-	    local d=$1; shift
-	    local fs=$1; shift
-	    local mnt=$1
-	    [ "$fs" != swap ] && shift || mnt=
+	for f in "${fs[@]}"; do
+	    set -- $f
+	    local d=$1
+	    local fs=$2
+	    local mnt=$3
 
 	    # fix device partitions separated w/ p
 	    [[ $dev = *[0-9] ]] && d=${dev}p${d#$dev}
@@ -428,7 +462,8 @@ can't modify this partition table."
 	    cmd="$cmd \"Automatically partition bootable for this platform ($platform):\" ''"
 	    cmd="$cmd \"Classic partitions\" \"disk_partition /dev/$1\""
 	    case "$platform" in
-	    *efi|*CHRP)
+	    #*efi|*CHRP|*86*-pc)
+	    *)
 		cmd="$cmd \"Encrypted partitions\" \"disk_partition /dev/$1 luks\""
 		cmd="$cmd \"Logical Volumes\" \"disk_partition /dev/$1 lvm\""
 		cmd="$cmd \"Encrypted Logical Volumes\" \"disk_partition /dev/$1 luks+lvm\""
@@ -520,8 +555,7 @@ disk_add() {
 		cmd="$cmd 'Warning: formated w/ unsupported sector size ($lbs)!' ''"
 
 	# TODO: maybe better /sys/block/$1/$1* ?
-	for x in $(cd /dev; ls $1[0-9p]* 2> /dev/null)
-	do
+	for x in $(cd /dev; ls $1[0-9p]* 2> /dev/null); do
 		part_add $x
 		found=1
 	done
