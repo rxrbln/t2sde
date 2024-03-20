@@ -57,7 +57,24 @@ addr="${root%:*}"
 if [ "$addr" != "$root" ]; then
     filesystems="nfs"
     mountopt="vers=4,addr=$addr,$mountopt"
-    netif=eth0
+
+    # parse additional, comma separated options
+    _mountopt="$root" root=${root%%,*}
+    _mountopt="${_mountopt#$root}" _mountopt="${_mountopt#,}"
+
+    _IFS="$IFS" IFS=','
+    for v in $_mountopt; do
+	case "$v" in
+	if=*)	netif="${v#if=}" ;;
+	*)	mountopt="$mountopt,$v" ;;
+	esac
+    done
+    IFS="$_IFS"
+    unset _IFS _mountopt
+
+    [ "$netif" ] || netif=eth0
+
+    # shadow $root, to allow loop to wait for nic, first
     _root=$root
     root=/sys/class/net/$netif
 else
