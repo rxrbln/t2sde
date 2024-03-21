@@ -20,7 +20,8 @@
 		 "power6	POWER6_CPU"	\
 		 "power7	POWER7_CPU"	\
 		 "power8	POWER8_CPU"	\
-		 "power9	POWER9_CPU"
+		 "power9	POWER9_CPU"	\
+		 "power10	POWER10_CPU"
 	do
 		set $x
 		[[ "$SDECFG_POWERPC64_OPT" = $1 ]] && linux_arch=$2
@@ -37,9 +38,11 @@
 	if [ "$SDECFG_POWERPC64_ENDIANESS" = "le" ]; then
 		echo "CONFIG_CPU_LITTLE_ENDIAN=y"
 		echo "CONFIG_NR_CPUS=128"
+		echo "CONFIG_PPC_PSERIES=y"
 	else
 		echo "CONFIG_CPU_BIG_ENDIAN=y"
 		echo "CONFIG_NR_CPUS=8"
+		echo "# CONFIG_PPC_PSERIES is not"
 	fi
 
 	echo
