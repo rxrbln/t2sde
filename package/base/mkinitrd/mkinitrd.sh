@@ -31,7 +31,8 @@ vitalmods[xhci-pci.ko]=1 # probably every modern machine
 vitalmods[r8152.ko]=1
 
 # TODO: defauls for vintage vs. latest, usb, pata, etc.
-filter="-e ext4 -e isofs -e pata_legacy -e pata_.*platform -e sym53c8xx -e /aic7xxx
+filter="-e ext4 -e isofs -e virtio_blk -e pata_legacy
+-e pata_.*platform -e pata_macio -e sym53c8xx -e /aic7xxx
 -e s[rd]_mod -e /ahci.ko -e /nvme.ko -e [uoex]hci-pci -e usbhid -e zram
 -e /offb -e /bochs -e ps3fb"
 
@@ -59,17 +60,16 @@ while [ "$1" ]; do
   shift
 done
 
-# -e ps3vram
+# -e ps3vram -e /rtc/
 [ -z "$minimal" ] && filter="$filter -e reiserfs -e btrfs -e /jfs -e /xfs -e jffs2
 -e ext2 -e /udf -e overlayfs -e ntfs -e /fat -e /hfs -e floppy -e efivarfs
 -e /ata/ -e /scsi/ -e /fusion/ -e /sdhci/ -e nvme/host -e /mmc/
--e virtio.\(blk\|scsi\|net\|console\|input\|gpu\|pci\)
--e /ast/ -e ps3disk -e drivers/pcmcia
+-e virtio.\(blk\|scsi\|net\|console\|input\|gpu\|pci\) -e ps3disk -e drivers/pcmcia
 -e dm-mod -e dm-raid -e md/raid -e dm/mirror -e dm/linear -e dm-crypt -e dm-cache
--e /rtc/ -e /aes -e /sha -e /blake -e /cbc -e /ecb -e xts
+-e /aes -e /sha -e /blake -e /cbc -e /ecb -e xts
 -e cciss -e ips -e nls_cp437 -e nls_iso8859-1 -e nls_utf8
 -e /.hci -e usb-common -e usb-storage -e sbp2 -e uas
--e usbhid -e i2c-hid -e hid-generic -e hid-multitouch
+-e usbhid -e i2c-hid -e hid-generic -e hid-multitouch -e /ast/
 -e hid-apple -e hid-microsoft -e hyperv-keyboard -e pci/controller
 -e aqc111 -e asix -e ax88179_178a -e cdc_ether -e cx82310_eth -e r8153_ecm -e rtl8150 -e r8152
 -e cpufreq/[^_]\+$ -e hwmon.*temp"
