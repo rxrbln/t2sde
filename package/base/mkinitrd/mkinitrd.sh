@@ -49,7 +49,7 @@ while [ "$1" ]; do
 	-a) archprefix="$2" ; shift ;;
 	--firmware) firmware=1 ;;
 	--minimal) minimal=1 ;;
-	--network) network=0 ;;
+	--network) network= ;;
 	--microcode) microcode=1 ;;
 	-e) filter="$filter $2" ; shift ;;
 	-o) outfile="$2" ; shift ;;
