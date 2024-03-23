@@ -31,8 +31,9 @@ vitalmods[xhci-pci.ko]=1 # probably every modern machine
 vitalmods[r8152.ko]=1
 
 # TODO: defauls for vintage vs. latest, usb, pata, etc.
-filter="-e ext4 -e isofs -e virtio_blk -e pata_legacy
--e pata_.*platform -e pata_macio -e sym53c8xx -e /aic7xxx
+filter="-e ext4 -e isofs -e pata_legacy -e pata_.*platform
+-e pata_macio -e mac_esp -e sym53c8xx -e /aic7xxx
+-e pci-host-generic -e virtio_pci_.*_dev -e virtio_pci -e virtio_blk
 -e s[rd]_mod -e /ahci.ko -e /nvme.ko -e [uoex]hci-pci -e usbhid -e zram
 -e /offb -e /bochs -e ps3fb"
 
