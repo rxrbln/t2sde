@@ -44,8 +44,10 @@ case $platform in
 	i?86|x86_64)
 		platform="$platform-pc"
 		# TODO: better test for 528m and 2gb BIOS limits
-		[ -e /sys/bus/platform/devices/pata_legacy.0 ] &&
-		    platform="$platform-legacy"
+		atadrv="$(cat /sys/bus/scsi/devices/host0/scsi_host/host0/proc_name 2>/dev/null)"
+		[ "$atadrv" = pata_legacy -o "$atadrv" = pata_isapnp ] &&
+			platform="$platform-legacy"
+		unset atadrv
 		;;
 	*)
 		platform=
