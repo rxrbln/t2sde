@@ -61,7 +61,7 @@ while [ "$1" ]; do
   shift
 done
 
-# -e ps3vram -e /rtc/
+# -e ps3vram
 [ -z "$minimal" ] && filter="$filter -e reiserfs -e btrfs -e /jfs -e /xfs -e jffs2
 -e ext2 -e /udf -e overlayfs -e ntfs -e /fat -e /hfs -e floppy -e efivarfs
 -e /ata/ -e /scsi/ -e /fusion/ -e /sdhci/ -e nvme/host -e /mmc/
@@ -73,7 +73,7 @@ done
 -e usbhid -e i2c-hid -e hid-generic -e hid-multitouch -e /ast/
 -e hid-apple -e hid-microsoft -e hyperv-keyboard -e pci/controller
 -e aqc111 -e asix -e ax88179_178a -e cdc_ether -e cx82310_eth -e r8153_ecm -e rtl8150 -e r8152
--e cpufreq/[^_]\+$ -e hwmon.*temp"
+-e cpufreq/[^_]\+$ -e hwmon.*temp -e /rtc/"
 
 [ "$network" ] && filter="$filter -e /ipv4/ -e '/ipv6\.' -e ethernet -e nfsv4"
 
