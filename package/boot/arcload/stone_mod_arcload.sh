@@ -13,7 +13,7 @@
 # [SETUP] 90 arcload
 
 install_arcload() {
-	dvhtool -d "${bootdev%[0-9]*}" --unix-to-vh /boot/arcload.elf32 sash
+	dvhtool -d "${bootdev%[0-9]*}" --unix-to-vh /boot/arcload.ecoff sash
 	dvhtool -d "${bootdev%[0-9]*}" --unix-to-vh /boot/arcload sash64
 }
 
