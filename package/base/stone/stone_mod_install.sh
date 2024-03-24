@@ -12,7 +12,6 @@
 
 # TODO:
 # - sun4v gpt
-# - more generic lvm and encryption support
 # - check error, esp. of cryptsetup and lvm commands and display red alert on error
 # - avoid all direct user input, so the installer works in GUI variants
 
@@ -119,7 +118,7 @@ part_mkfs() {
 	cmd="gui_menu part_mkfs 'Create filesystem on $dev'"
 
 	maybe_add () {
-	  if type -p $3 > /dev/null; then
+	  if type -p $3 >/dev/null; then
 		cmd="$cmd '$1 ($2 filesystem)' \
 		'type wipefs 2>/dev/null && wipefs -a $dev; $3 $4 $dev'"
 	  fi
@@ -466,16 +465,20 @@ can't modify this partition table."
 	    case "$platform" in
 	    #*efi|*CHRP|*86*-pc)
 	    *)
+		type -p cryptsetup >/dev/null &&
 		cmd="$cmd \"Encrypted partitions\" \"disk_partition /dev/$1 luks\""
+		type -p lvm >/dev/null &&
 		cmd="$cmd \"Logical Volumes\" \"disk_partition /dev/$1 lvm\""
+		type -p cryptsetup >/dev/null && type -p lvm >/dev/null &&
 		cmd="$cmd \"Encrypted Logical Volumes\" \"disk_partition /dev/$1 luks+lvm\""
+		;;
 	    esac
 	    cmd="$cmd '' ''"
 	fi
 
 	cmd="$cmd \"Edit partition table:\" ''"
 	for x in cfdisk fdisk pdisk mac-fdisk parted; do
-		type -p $x > /dev/null &&
+		type -p $x >/dev/null &&
 		  cmd="$cmd \"$x\" \"$x /dev/$1\""
 	done
 
