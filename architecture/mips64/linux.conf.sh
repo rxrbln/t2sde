@@ -17,6 +17,6 @@
 	echo
 	cat <<- 'EOT'
  		include(`linux.conf.m4')
-		include(`linux.conf.ip30')
+		include(`linux.conf.ip32')
 	EOT
 } | m4 -I $base/architecture/$arch -I $base/architecture/mips -I $base/architecture/share

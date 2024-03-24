@@ -12,10 +12,13 @@ dnl the Free Software Foundation; version 2 of the License. A copy of the
 dnl GNU General Public License can be found in the file COPYING.
 dnl --- T2-COPYRIGHT-NOTE-END ---
 
-define(`MIPS', `MIPS')dnl
+define(`MIPS64', `MIPS64')dnl
 
 CONFIG_MIPS=y
 CONFIG_MIPS64=y
+
+CONFIG_MIPS32_O32=y
+CONFIG_MIPS32_N32=y
 
 include(`linux-common.conf.m4')
 include(`linux-block.conf.m4')
