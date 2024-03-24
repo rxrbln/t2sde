@@ -9,9 +9,7 @@
 # it under the terms of the GNU General Public License version 2.
 # --- T2-COPYRIGHT-NOTE-END ---
 
-if [ -f .config.defconfig ]; then
-	cat .config.defconfig
-elif [ -f $base/architecture/$arch/linux.conf.m4 ]; then
+if [ -f $base/architecture/$arch/linux.conf.m4 ]; then
 	m4 -I $base/architecture/$arch -I $base/architecture/share $base/architecture/$arch/linux.conf.m4
 	[ "$SDECFG_ARM_ENDIANESS" = "eb" ] &&
 		echo CONFIG_CPU_BIG_ENDIAN=y || echo CONFIG_CPU_LITTLE_ENDIAN=y
