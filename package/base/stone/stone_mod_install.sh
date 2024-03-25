@@ -27,7 +27,7 @@ case $platform in
 		;;
 	hppa*)
 		;;
-	mips64)
+	mips*)
 		;;
 	ppc*)
 		# TODO: prep, ps3, opal, ...
@@ -459,9 +459,9 @@ can't modify this partition table."
 
 	local cmd="gui_menu disk 'Edit partition table of $1'"
 
+	cmd="$cmd \"Automatically partition${platform:+ bootable for this platform ($platform)}:\" ''"
+	cmd="$cmd \"Classic partitions\" \"disk_partition /dev/$1\""
 	if [ "$platform" ]; then
-	    cmd="$cmd \"Automatically partition bootable for this platform ($platform):\" ''"
-	    cmd="$cmd \"Classic partitions\" \"disk_partition /dev/$1\""
 	    case "$platform" in
 	    #*efi|*CHRP|*86*-pc)
 	    *)
@@ -473,8 +473,8 @@ can't modify this partition table."
 		cmd="$cmd \"Encrypted Logical Volumes\" \"disk_partition /dev/$1 luks+lvm\""
 		;;
 	    esac
-	    cmd="$cmd '' ''"
 	fi
+	cmd="$cmd '' ''"
 
 	cmd="$cmd \"Edit partition table:\" ''"
 	for x in cfdisk fdisk pdisk mac-fdisk parted; do
