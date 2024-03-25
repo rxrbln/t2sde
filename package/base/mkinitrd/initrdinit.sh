@@ -52,6 +52,14 @@ swap="swap= $cmdline" swap=${swap##*swap=} swap=${swap%% *}
 resume="resume= $cmdline" resume=${resume##*resume=} resume=${resume%% *}
 mountopt="ro"
 
+# parse cmdline
+for v in $cmdline; do
+    case "$v" in
+    ro)	mountopt="ro${mountopt#r[ow]}" ;;
+    rw)	mountopt="rw${mountopt#r[ow]}" ;;
+    esac
+done
+ 
 # diskless network root?
 addr="${root%:*}"
 if [ "$addr" != "$root" ]; then
