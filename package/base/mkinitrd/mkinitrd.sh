@@ -29,6 +29,7 @@ vitalmods[qla2xxx.ko]=1 # Sun Blade, T4
 vitalmods[tg3.ko]=1	# Sun Fire
 vitalmods[xhci-pci.ko]=1 # probably every modern machine
 vitalmods[r8152.ko]=1
+vitalmods[r8169.ko]=1
 
 # TODO: defauls for vintage vs. latest, usb, pata, etc.
 filter="-e ext4 -e isofs -e pata_legacy -e pata_.*platform
@@ -75,7 +76,7 @@ done
 -e aqc111 -e asix -e ax88179_178a -e cdc_ether -e cx82310_eth -e r8153_ecm -e rtl8150 -e r8152
 -e cpufreq/[^_]\+$ -e hwmon.*temp -e /rtc/"
 
-[ "$network" ] && filter="$filter -e /ipv4/ -e '/ipv6\.' -e ethernet -e nfsv4"
+[ "$network" ] && filter="$filter -e /ipv4/ -e '/ipv6\.' -e ethernet -e net/phy -e nfsv4"
 
 [ "$kernelver" ] || kernelver=`uname -r`
 [ "$moddir" ] || moddir="$root/lib/modules/$kernelver"
