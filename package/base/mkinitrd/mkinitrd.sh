@@ -62,7 +62,7 @@ while [ "$1" ]; do
   shift
 done
 
-# -e ps3vram
+# -e ps3vram -e net/phy
 [ -z "$minimal" ] && filter="$filter -e reiserfs -e btrfs -e /jfs -e /xfs -e jffs2
 -e ext2 -e /udf -e overlayfs -e ntfs -e /fat -e /hfs -e floppy -e efivarfs
 -e /ata/ -e /scsi/ -e /fusion/ -e /sdhci/ -e nvme/host -e /mmc/
@@ -76,7 +76,7 @@ done
 -e aqc111 -e asix -e ax88179_178a -e cdc_ether -e cx82310_eth -e r8153_ecm -e rtl8150 -e r8152
 -e cpufreq/[^_]\+$ -e hwmon.*temp -e /rtc/"
 
-[ "$network" ] && filter="$filter -e /ipv4/ -e '/ipv6\.' -e ethernet -e net/phy -e nfsv4"
+[ "$network" ] && filter="$filter -e /ipv4/ -e '/ipv6\.' -e ethernet -e nfsv4"
 
 [ "$kernelver" ] || kernelver=`uname -r`
 [ "$moddir" ] || moddir="$root/lib/modules/$kernelver"
@@ -141,11 +141,14 @@ if [ "$moddir" ]; then
 	local x="$1" module="${1##*/}"
 
 	[ "${added["$module"]}" ] && return
-
-	# expand to full name if it was a depend
-	[ $x = ${x##*/} ] && x=`sed -n "/\/${x/./\\.}.*/{p; q}" $map`
-
 	added["$module"]=1
+
+	# expand to full name if it was a depend, softdep may also built-in
+	if [ $x = ${x##*/} ]; then
+		x=`sed -n "/\/${x/./\\.}.*/{p; q}" $map`
+		# found? e.g. no built-in softdep?
+		[ "$x" ] || return
+	fi
 
 	echo -n "$module "
 
@@ -187,8 +190,9 @@ if [ "$moddir" ]; then
 	    cp -af $x $tmpdir$xt
 	    $compressor --rm -f --quiet $tmpdir$xt &
 
-	    # add it's deps, too
-	    for fn in `$modinfo -F depends $x | sed 's/,/ /g'`; do
+	    # add deps: one are comma separated, the other pre: post: prefixed
+	    for fn in $($modinfo -F depends $x | sed 's/,/ /g') \
+		$($modinfo -F softdep $x | sed 's/.*: //'); do
 		add_depend "$fn.ko"
 	    done
 	fi
