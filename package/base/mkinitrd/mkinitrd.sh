@@ -72,9 +72,9 @@ done
 -e cciss -e ips -e nls_cp437 -e nls_iso8859-1 -e nls_utf8
 -e /.hci -e usb-common -e usb-storage -e sbp2 -e uas
 -e usbhid -e i2c-hid -e hid-generic -e hid-multitouch -e /ast/
--e hid-apple -e hid-microsoft -e hyperv-keyboard -e pci/controller
+-e hid-apple[^i] -e hid-microsoft -e hyperv-keyboard -e pci/controller
 -e aqc111 -e asix -e ax88179_178a -e cdc_ether -e cx82310_eth -e r8153_ecm -e rtl8150 -e r8152
--e cpufreq/[^_]\+$ -e hwmon.*temp -e /rtc/"
+-e cpufreq/[^_]\+$ -e hwmon.*temp -e /rtc/ -e input-leds"
 
 [ "$network" ] && filter="$filter -e /ipv4/ -e '/ipv6\.' -e ethernet -e nfsv4"
 
@@ -147,7 +147,7 @@ if [ "$moddir" ]; then
 	if [ $x = ${x##*/} ]; then
 		x=`sed -n "/\/${x/./\\.}.*/{p; q}" $map`
 		# found? e.g. no built-in softdep?
-		[ "$x" ] || return
+		[ -z "$x" ] && return
 	fi
 
 	echo -n "$module "
