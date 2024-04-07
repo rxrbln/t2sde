@@ -62,9 +62,10 @@ done
  
 # diskless network root?
 addr="${root%:*}"
-if [ "$addr" != "$root" ]; then
+if [ "$addr" != "$root" -o "${addr%%,*}" = "/dev/nfs" ]; then
     filesystems="nfs"
-    mountopt="vers=4,addr=$addr,$mountopt"
+    mountopt="vers=4,$mountopt"
+    addr=${addr%%,*}
 
     # parse additional, comma separated options
     _mountopt="$root" root=${root%%,*}
@@ -150,6 +151,17 @@ while [[ -n "$root" && ($((i++)) -le 15 || "$cmdline" = *rootwait*) ]]; do
         if [ "$addr" ]; then
 	    echo -n "${n}"; n=
 	    ipconfig $netif
+
+	    # get nfs details via bootp/dhcp server?
+	    if [ "$addr" = "/dev/nfs" ]; then
+		. /tmp/net-$netif.conf
+		if [ "$ROOTPATH" ]; then
+		    _root="$ROOTPATH"
+		    addr="${_root%:*}"
+		fi
+	    fi
+
+	    mountopt="addr=$addr,$mountopt"
 	    root="$_root"; unset _root
 	fi
 
