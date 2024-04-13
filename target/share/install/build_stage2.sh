@@ -31,12 +31,10 @@ smartmontools      stressapptest
 ncurses            readline           libgpg-error       libgcrypt
 bash               attr               acl                findutils
 mktemp             coreutils          pciutils           libcap
-grep               sed                less
+dialog             grep               sed                less
 gzip               bzip2              xz                 zstd
 lzo                lzop               keyutils
 tar                gawk               bc                 cpio
-ed                 zile
-curl               dialog             minicom            kmod
 lrzsz              rsync              tcpdump            module-init-tools
 sysvinit           shadow             util-linux         wireless-tools
 net-tools          procps             psmisc             udev
@@ -116,7 +114,7 @@ progs="agetty sh bash cat cp date dd df dmesg ifconfig ln ls $packager mkdir \
        mkswap mount mv rm reboot route sleep swapoff swapon sync umount cut \
        setsid eject chmod chroot grep halt rmdir init shutdown uname killall5 \
        install stone tar mktemp sort fold sed wipefs blockdev blkid disktype \
-       login-shell stat gzip mkfs.ext4 mkfs.fat mkfs.jfs gasgui dialog stty  \
+       login-shell stat gzip mkfs.ext3 mkfs.fat gasgui dialog stty  \
        head tail wc fmt"
 
 progs="$progs parted fdisk sfdisk"
