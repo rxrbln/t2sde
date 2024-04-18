@@ -265,7 +265,7 @@ copy_dyn_libs () {
 				[[ "$rlib" = /* ]] && rlib="$libdir$rlib" || rlib="$libdir$lib"
 			    fi
 	
-			    local magic2="$(elf_magic $rlib)" 
+			    local magic2="$(elf_magic $rlib)"
 			    [ "$magic" != "$magic2" ] && continue
 			    xlibdir=${libdir#$root}
 
@@ -322,7 +322,7 @@ do
 done
 
 # copy a small shell
-for sh in $root/bin/{pdksh,bash}; do
+for sh in $root/bin/{mksh,pdksh,bash}; do
     if [ -e "$sh" ]; then
 	cp $sh $tmpdir/bin/${sh##*/}
 	ln -sf ${sh##*/} $tmpdir/bin/sh
