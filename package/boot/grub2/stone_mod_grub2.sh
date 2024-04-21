@@ -296,7 +296,8 @@ grub_install() {
 }
 
 get_dm_dev() {
-	local dev="$1"
+	local dev
+	[ ! -L $1 ] && dev=$1 || dev=$(readlink $1)
 	local devnode=$(stat -c "%t:%T" $dev)
 	for d in /dev/dm-*; do
 		[ "$(stat -c "%t:%T" "$d" 2>/dev/null)" = "$devnode" ] && echo $d && return
@@ -372,8 +373,8 @@ main() {
 	fi
 
 	# lvm device-mapper?
-	if [[ $bootdev = *mapper* ]]; then
-	        grubdev="(lvm/${bootdev##*/})"
+	if [[ "$(readlink $bootdev)" = *mapper* ]]; then
+	        grubdev="${bootdev#/dev/}" grubdev="(lvm/${grubdev//\//-})"
 		[ "$cryptdev" ] && rootdev="$cryptdev,$rootdev"
 	else
 		grubdev="${bootdev##*/}"
