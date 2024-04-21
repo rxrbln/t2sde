@@ -669,6 +669,7 @@ EOT
 			# try to re-boot via kexec, if available
 			if [ "$kexec" ]; then
 			    cmdline=$(< /proc/cmdline)
+			    # extract root=
 			    if [ -e /mnt/boot/grub/grub.cfg ]; then
 				root=$(sed -n "/.*\(root=.*\)/{ s//\1/p; q}" /mnt/boot/grub/grub.cfg)
 			    elif [ -e /mnt/boot/etc/kboot.conf ]; then
@@ -677,9 +678,17 @@ EOT
 				root=$(grep ' / ' /mnt/etc/fstab | tail -n 1 | sed 's, .*,,')
 				root=${root:+root=$root}
 			    fi
-			    kernel="$(echo /mnt/boot/vmlinu[xz]-*)"
-			    kernel="${kernel##* }"
-			    kexec -l $kernel --initrd="${kernel/vmlinu?/initrd}" \
+			    # determine kernel image, from cmdline or installed files
+			    kernel="BOOT_IMAGE= $cmdline" kernel=${kernel##*BOOT_IMAGE=} kernel=${kernel%% *}
+			    kernel="${kernel//*\//}"
+			    if [ "$kernel" ]; then
+				kernel="boot/$kernel"
+			    else
+				# any vmlinu*
+			        kernel="$(cd /mnt; echo boot/vmlinu[xz]-*)"
+			        kernel="${kernel##* }" # last, compressed if both
+			    fi
+			    kexec -l /mnt/$kernel --initrd="/mnt/${kernel/vmlinu?/initrd}" \
 				  --command-line="$cmdline $root"
 			fi
 			shutdown -r now
