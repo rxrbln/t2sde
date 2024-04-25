@@ -38,6 +38,7 @@ dnl
 CONFIG_8139TOO=m
 CONFIG_FORCEDETH=m
 CONFIG_E1000=m
+CONFIG_MLX5_CORE_EN=y
 
 dnl Enable some categories so drivers are enabled as modules
 dnl
