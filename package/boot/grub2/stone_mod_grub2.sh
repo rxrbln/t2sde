@@ -348,7 +348,7 @@ get_realdev() {
 main() {
 	rootdev="`grep ' / ' /etc/fstab | tail -n 1 | sed 's, .*,,'`"
 	bootdev="`grep ' /boot ' /etc/fstab | tail -n 1 | sed 's, .*,,'`"
-	swapdev="`grep ' swap ' /etc/fstab | head -n 1 | sed 's, .*,,'`"
+	swapdev="`grep ' swap ' /etc/fstab | grep -v dev/zram  | head -n 1 | sed 's, .*,,'`"
 	[ "$bootdev" ] || bootdev="$rootdev"
 	# /boot path, relative to the boot device
 	[ "$rootdev" = "$bootdev" ] && bootpath="/boot" || bootpath=""
