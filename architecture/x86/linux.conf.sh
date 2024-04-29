@@ -76,10 +76,14 @@
 			echo "# CONFIG_NAMESPACES is not set"
 			echo "# CONFIG_SMP is not set"
 			echo "# CONFIG_KVM is not set"
+			echo "# CONFIG_HIGHMEM is not set"
+			echo "CONFIG_NOHIGHMEM=y"
 			;;
 		*)
 			echo "# CONFIG_MATH_EMULATION is not set"
 			echo "CONFIG_NR_CPUS=4"
+			echo "CONFIG_HIGHMEM=y"
+			echo "CONFIG_HIGHMEM4G=y"
 			;;
 	esac
 
@@ -87,10 +91,8 @@
 		dnl Allow more than 4GB (split 3/1) of RAM by default
 		dnl (and NX (Execute Disable) protection)
 		dnl
-		CONFIG_HIGHMEM=y
-		CONFIG_HIGHMEM4G=y
-		CONFIG_HIGHMEM64G=y
 		CONFIG_X86_PAE=y
+		CONFIG_HIGHMEM64G=y
 EOT
 
 	echo
@@ -99,8 +101,6 @@ EOT
 		include(`linux-net.conf.m4')
 		include(`linux-fs.conf.m4')
 EOT
-
-	[ ! "$pae" ] && echo CONFIG_NOHIGHMEM=y
 
 	cat <<- 'EOT'
 		CONFIG_X86_ANCIENT_MCE=y
