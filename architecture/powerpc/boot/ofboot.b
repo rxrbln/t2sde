@@ -7,7 +7,7 @@ T2 SDE
 </DESCRIPTION>
 <BOOT-SCRIPT>
 load-base release-load-area
-boot &device;:,\grub
+boot &device;:,\boot\bootppc.elf
 </BOOT-SCRIPT>
 <OS-BADGE-ICONS>
 1010
