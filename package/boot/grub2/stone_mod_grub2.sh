@@ -41,8 +41,7 @@ create_kernel_list() {
 	first=1
 	for x in `(cd /boot/; ls vmlinux-* ) | sort -r`; do
 		ver=${x/vmlinux-/}
-		[[ $arch = *86* ]] && x=${x/vmlinux/vmlinuz}
-		[[ $arch = *arm* ]] && x=${x/vmlinux/Image}.gz
+		[ -e /boot/${x/vmlinux/vmlinuz} ] && x=${x/vmlinux/vmlinuz}
 		if [ $first = 1 ]; then
 			label="Linux" first=0
 		else
