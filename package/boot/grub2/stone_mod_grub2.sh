@@ -155,7 +155,7 @@ EOT
 
 		grub-mkimage -O $arch-efi -o $efi/efi/boot/$exe \
 			-p /efi/boot -d /usr/lib*/grub/$arch-efi/ \
-			$grubmods
+			--compression auto $grubmods
 	    done
 
 	    mount -t efivarfs none /sys/firmware/efi/efivars
@@ -177,7 +177,7 @@ EOT
 	# TODO: tempfile, built-in config script -c
 	grub-mkimage --note -O powerpc-ieee1275 -p /boot/grub \
 		-o /tmp/grub -d /usr/lib*/grub/powerpc-ieee1275 \
-		$grubmods
+		--compression auto $grubmods
 
 	dd if=/dev/zero of=$bootstrap bs=4096
 	dd if=/tmp/grub of=$bootstrap bs=4096
@@ -212,7 +212,7 @@ EOT
 	    fi
 	    grub-mkimage -O powerpc-ieee1275 -p /boot/grub \
 		-o /mnt/grub -d /usr/lib*/grub/powerpc-ieee1275 \
-		$grubmods
+		--compression auto $grubmods
 
 	    cat > /mnt/boot/ofboot.b <<-EOT
 <CHRP-BOOT>
