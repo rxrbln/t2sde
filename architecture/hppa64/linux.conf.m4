@@ -13,6 +13,9 @@ CONFIG_PA8X00=y
 CONFIG_64BIT=y
 CONFIG_SMP=y
 
+# CONFIG_GSC is not set
+# CONFIG_CPU_ISOLATION is not set
+
 CONFIG_HUGETLBFS=y
 
 CONFIG_PCI_MESON=y
@@ -32,6 +35,9 @@ include(`linux-common.conf.m4')
 include(`linux-block.conf.m4')
 include(`linux-net.conf.m4')
 include(`linux-fs.conf.m4')
+
+# CONFIG_BPF_JIT is not set
+# CONFIG_CHECKPOINT_RESTORE is not set
 
 CONFIG_PDC_CONSOLE=y
 CONFIG_FB_STI=y
