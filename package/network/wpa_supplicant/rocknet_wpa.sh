@@ -25,7 +25,8 @@ wpa_init_if() {
 	addcode up 5 2 "wpa_write_conf $if"
 	addcode up 5 3 "wpa_supplicant -Dnl80211,wext -i$if -B \
 -c/var/run/wpa_supplicant-$if.conf -P/var/run/wpa_supplicant-$if.pid"
-	addcode down 5 5 "kill \$(cat /var/run/wpa_supplicant-$if.pid)"
+	addcode down 5 2 "rm -f /var/run/wpa_supplicant-$if.{pid,conf}"
+	addcode down 5 3 "kill \$(cat /var/run/wpa_supplicant-$if.pid)"
     fi
 }
 
