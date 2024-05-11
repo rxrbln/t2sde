@@ -21,8 +21,8 @@
  obj-$(CONFIG_USB_SISUSBVGA)		+= sisusbvga/
  obj-$(CONFIG_USB_LINK_LAYER_TEST)	+= lvstest.o
 --- /dev/null	2024-04-27 11:06:15.379862889 +0200
-+++ linux-6.8/drivers/usb/misc/xserve-frontpanel.c	2024-05-10 17:28:57.362124928 +0200
-@@ -0,0 +1,418 @@
++++ linux-6.8/drivers/usb/misc/xserve-frontpanel.c	2024-05-11 21:16:46.803435238 +0200
+@@ -0,0 +1,394 @@
 +// SPDX-License-Identifier: GPL-2.0
 +/*
 + * Apple Xserve USB front-panel driver.
@@ -47,7 +47,7 @@
 +#include <linux/uaccess.h>
 +#include <linux/usb.h>
 +#include <linux/mutex.h>
-+#include <linux/kernel_stat.h>
++#include <linux/cpufreq.h>
 +
 +#define PANEL_VENDOR 0x5ac
 +#define PANEL_PRODUCT 0x8261
@@ -56,9 +56,6 @@
 +
 +/* CPU meter sampling rate in ms */
 +#define CPU_SAMPLING_RATE	250
-+
-+/* To be set as a tunable */
-+static int rackmeter_ignore_nice;
 +
 +
 +/* table of devices that work with this driver */
@@ -79,11 +76,9 @@
 +
 +
 +struct rackmeter_cpu {
-+	struct delayed_work	sniffer;
-+	struct usb_frontpanel	*fp;
 +	u64			prev_wall;
 +	u64			prev_idle;
-+} ____cacheline_aligned;
++};
 +
 +
 +/* Structure to hold all of our device specific stuff */
@@ -99,6 +94,8 @@
 +	__u8			bulk_out_endpointAddr;	/* the address of the bulk out endpoint */
 +	unsigned long		disconnected:1;
 +
++	struct delayed_work	sniffer;
++	
 +	__u8			buffer[PANEL_DATA_SIZE];
 +	struct rackmeter_cpu	cpu[16];
 +};
@@ -232,86 +229,65 @@
 +	return retval;
 +}
 +
-+
-+/* This is copied from cpufreq_ondemand, maybe we should put it in
-+ * a common header somewhere
-+ */
-+static inline u64 get_cpu_idle_time(unsigned int cpu)
-+{
-+	struct kernel_cpustat *kcpustat = &kcpustat_cpu(cpu);
-+	u64 retval;
-+
-+	retval = kcpustat->cpustat[CPUTIME_IDLE] +
-+		 kcpustat->cpustat[CPUTIME_IOWAIT];
-+
-+	if (rackmeter_ignore_nice)
-+		retval += kcpustat_field(kcpustat, CPUTIME_NICE, cpu);
-+
-+	return retval;
-+}
-+
 +static void rackmeter_do_timer(struct work_struct *work)
 +{
-+	struct rackmeter_cpu *rcpu =
-+		container_of(work, struct rackmeter_cpu, sniffer.work);
-+	struct usb_frontpanel *fp = rcpu->fp;
++	struct usb_frontpanel *fp = container_of(work, struct usb_frontpanel, sniffer.work);
 +
-+	unsigned int load, cpu = smp_processor_id();
-+	u64 cur_nsecs, total_idle_nsecs;
-+	u64 total_nsecs, idle_nsecs;
++	unsigned int load, cpu;
++	u64 cpu_idle, cpu_wall;
++	s64 diff_idle, diff_wall;
 +
-+	cur_nsecs = jiffies64_to_nsecs(get_jiffies_64());
-+	total_nsecs = cur_nsecs - rcpu->prev_wall;
-+	rcpu->prev_wall = cur_nsecs;
++	for_each_online_cpu(cpu) {
++		struct rackmeter_cpu *rcpu;
++		if (cpu > 15)
++			continue;
++		rcpu = &fp->cpu[cpu];
 +
-+	total_idle_nsecs = get_cpu_idle_time(cpu);
-+	idle_nsecs = total_idle_nsecs - rcpu->prev_idle;
-+	idle_nsecs = min(idle_nsecs, total_nsecs);
-+	rcpu->prev_idle = total_idle_nsecs;
++		cpu_idle = get_cpu_idle_time(cpu, &cpu_wall, 0);
++		diff_idle = cpu_idle - rcpu->prev_idle;
++		diff_wall = cpu_wall - rcpu->prev_wall;
++		if (diff_idle > diff_wall)
++			diff_wall = diff_idle;
++	
++		/* We do a very dumb calculation to update the LEDs for now */
++		load = div64_u64(255 * (diff_wall - diff_idle), diff_wall);
 +
-+	/* We do a very dumb calculation to update the LEDs for now,
-+	 * we'll do better once we have actual PWM implemented
-+	 */
-+	load = div64_u64(255 * (total_nsecs - idle_nsecs), total_nsecs);
++		fp->buffer[cpu] = (__u8)load;
 +
-+	fp->buffer[cpu] = (__u8)load;
++		rcpu->prev_idle = cpu_idle;
++		rcpu->prev_wall = cpu_wall;
++	}
 +
-+	if (cpu == 0) {
-+	  size_t test = frontpanel_write(fp, fp->buffer, PANEL_DATA_SIZE);
-+	  if (test <=0)
-+	  	printk("USB Frontpanel test: %ld\n", test);
-+	}  
++	size_t test = frontpanel_write(fp, fp->buffer, PANEL_DATA_SIZE);
++	if (test <= 0)
++		printk("USB Frontpanel failed: %ld\n", test);
 +
-+	schedule_delayed_work_on(cpu, &rcpu->sniffer,
-+				 msecs_to_jiffies(CPU_SAMPLING_RATE));
++	schedule_delayed_work_on(smp_processor_id(), &fp->sniffer, msecs_to_jiffies(CPU_SAMPLING_RATE));
 +}
 +
 +static void rackmeter_init_cpu_sniffer(struct usb_frontpanel *fp)
 +{
 +	unsigned int cpu;
++
++	INIT_DELAYED_WORK(&fp->sniffer, rackmeter_do_timer);
++
 +	for_each_online_cpu(cpu) {
 +		struct rackmeter_cpu *rcpu;
-+
-+		fp->cpu[cpu].fp = fp;
-+		INIT_DELAYED_WORK(&fp->cpu[cpu].sniffer, rackmeter_do_timer);
-+
 +		if (cpu > 15)
 +			continue;
-+
 +		rcpu = &fp->cpu[cpu];
-+		rcpu->prev_idle = get_cpu_idle_time(cpu);
-+		rcpu->prev_wall = jiffies64_to_nsecs(get_jiffies_64());
-+		schedule_delayed_work_on(cpu, &fp->cpu[cpu].sniffer,
-+					 msecs_to_jiffies(CPU_SAMPLING_RATE));
++
++		rcpu->prev_wall = 0;
++		rcpu->prev_idle = 0;
 +	}
++
++	schedule_delayed_work_on(smp_processor_id(), &fp->sniffer, msecs_to_jiffies(CPU_SAMPLING_RATE));
 +}
++
 +
 +static void rackmeter_stop_cpu_sniffer(struct usb_frontpanel *fp)
 +{
-+	unsigned int cpu;
-+	for_each_online_cpu(cpu) {
-+		cancel_delayed_work_sync(&fp->cpu[cpu].sniffer);
-+	}
++	cancel_delayed_work_sync(&fp->sniffer);
 +}
 +
 +static int frontpanel_probe(struct usb_interface *interface,
