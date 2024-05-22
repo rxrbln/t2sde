@@ -643,7 +643,7 @@ Modify your storage layout: create file-systems, swap-space, encrypt and mount t
 		eval "$cmd" || break
 
 		if [ "$install_now" = 1 ] && ! grep -q " /mnt" /proc/mounts; then
-			gui_yesno "No stroage mounted to /mnt, continue anyway?" ||
+			gui_yesno "No storage mounted to /mnt, continue anyway?" ||
 				install_now=0
 		fi
 	done
