@@ -51,7 +51,7 @@ esac
 
 case "${card,,}" in
 	*radeon*)	xdrv=radeon ;;
-	*geforce*)	xdrv=nv ;;
+	*geforce*)	xdrv=nouveau ;;
 	*cirrus*)	xdrv=cirrus ;;
 	*savage*)	xdrv=savage ;;
 	*virge*)	xdrv=s3virge ;;

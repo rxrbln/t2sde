@@ -54,11 +54,9 @@ case $platform in
 esac
 
 mapper2lvm() {
-	local x="${1//--/
-}"
-	x="${x//-//}"
-	echo "${x//
-/-}"
+	local x="${1//--/	}"
+	x="${x/-//}" x="${x//	/-}"
+	echo "$x"
 }
 
 part_mounted_action() {
@@ -222,10 +220,10 @@ part_unmounted_action() {
 
 	if [ "$stype" = "lv" ]; then
 		[ "$active" ] &&
-		cmd="$cmd 'Deactivate logical LVM volume' 'lvchange -an /dev/$dev'" ||
-		cmd="$cmd 'Activate logical LVM volume' 'lvchange -ay /dev/$dev'"
-		cmd="$cmd \"Rename logical LVM volume\" \"lvm_rename ${dev#mapper/} lv\""
-		cmd="$cmd \"Remove logical LVM volume\" \"lvremove /dev/$dev\""
+		cmd="$cmd 'Deactivate logical LVM volume' 'lvchange -an $dev'" ||
+		cmd="$cmd 'Activate logical LVM volume' 'lvchange -ay $dev'"
+		cmd="$cmd \"Rename logical LVM volume\" \"lvm_rename $dev lv\""
+		cmd="$cmd \"Remove logical LVM volume\" \"lvremove $dev\""
 	elif [ "$type" = "LVM2_member" ]; then
 		cmd="$cmd 'Add physical LVM volume to volume group' 'vg_add_pv /dev/$dev'"
 		cmd="$cmd 'Remove physical LVM volume' 'pvremove /dev/$dev'"
@@ -235,32 +233,34 @@ part_unmounted_action() {
 }
 
 part_add() {
-	local dev=$1
+	local dev
+	[ ! -L /dev/$1 ] && dev=/dev/$1 || dev=$(readlink /dev/$1)
+
 	local action="unmounted" location="currently not mounted"
-	if grep -q "^/dev/$dev " /proc/swaps; then
+	if grep -q "^$dev " /proc/swaps; then
 		action=swap location="swap  <no mount point>"
-	elif grep -q "^/dev/$dev " /proc/mounts; then
+	elif grep -q "^$dev " /proc/mounts; then
 		action=mounted
-		location="`grep "^/dev/$dev " /proc/mounts | cut -d ' ' -f 2 |
+		location="`grep "^$dev " /proc/mounts | cut -d ' ' -f 2 |
 			  sed "s,^/mnt,," `"
 		[ "$location" ] || location="/"
 	fi
 
 	# save volume information
-	disktype /dev/$dev > /tmp/stone-install 2>/dev/null
+	disktype $dev > /tmp/stone-install 2>/dev/null
 	type="`grep /tmp/stone-install -v -e '^  ' -e '^Block device' \
 	       -e '^Partition' -e '^---' |
 	       sed -e 's/[,(].*//' -e '/^$/d' -e 's/ $//' | tail -n 1`"
 	size="`grep 'Block device, size' /tmp/stone-install |
 	       sed 's/.* size \(.*\) (.*/\1/'`"
 	if [ -z "$type" ]; then
-		type=$(blkid --match-tag TYPE /dev/$dev)
+		type=$(blkid --match-tag TYPE $dev)
 		type=${type#*\"}; type=${type%\"*}
 	fi
 
 	# active LVM pv?
 	if [[ "$type" = *LVM2*volume* ]]; then
-		local vg=`pvs --noheadings -o vgname /dev/$dev`
+		local vg=`pvs --noheadings -o vgname $dev`
 		vg="${vg##* }"
 		[ "$vg" ] && action=activepv && location="$vg" && set "$1" "$vg"
 	fi
@@ -420,7 +420,7 @@ start=0, type=W")
 
 	# create fs
 	for f in "${fs[@]}"; do
-	    set -- $f
+	    set $f
 	    local d=$1
 	    local fs=$2
 	    local mnt=$3
@@ -488,7 +488,6 @@ can't modify this partition table."
 lvm_rename() {
 	local dev=$1
 	echo $dev $type
-	[ "$2" = lv ] && dev=$(mapper2lvm $dev)
 	gui_input "Rename $dev:" "${dev#*/}" name
 
 	if [ "$2" = vg ]; then
@@ -573,11 +572,15 @@ vg_add() {
 
 	cmd="$cmd 'Logical volumes of $1:' 'vg_action $1'"
 
-	[ -x /sbin/lvs ] && for x in $(lvs --noheadings -o dm_path $1 2> /dev/null); do
+	[ -x /sbin/lvs ] &&
+	for x in $(lvs --noheadings -o lv_path $1 2> /dev/null); do
 		x=${x#/dev/}
 		part_add $x lv
-		volumes="${volumes/ $x /}"
 		found=1
+
+		# remove from raw device-mapper list
+		x=$(readlink /dev/$x)
+		volumes="${volumes/ ${x#/dev/} /}"
 	done
 	if [ $found = 0 ]; then
 		cmd="$cmd 'No logical volumes.' ''"
@@ -617,14 +620,17 @@ Modify your storage layout: create file-systems, swap-space, encrypt and mount t
 			found=1
 		done
 
-		[ -x /sbin/vgs ] && for x in $(vgs --noheadings -o name 2> /dev/null); do
+		[ -x /sbin/vgs ] &&
+		for x in $(vgs --noheadings -o name 2> /dev/null); do
 			vg_add "$x"
 			found=1
 		done
 
 		# any other remaining device-mapper, e.g. LUKS cryptosetup
 		if [ "$volumes" ]; then
-			for x in $volumes; do part_add $x; done
+			for x in $volumes; do
+				part_add $x
+			done
 			cmd="$cmd '' ''"
 		fi
 
@@ -658,7 +664,17 @@ umount -v /sys
 EOT
 		chmod +x /mnt/tmp/stone_postinst.sh
 		rm -f /mnt/etc/mtab
-		sed -n '/ \/mnt[/ ]/s,/mnt/\?,/,p' /proc/mounts > /mnt/etc/mtab
+		# TODO: tr mapper2lvm
+		sed -n '/ \/mnt[/ ]/s,/mnt/\?,/,p' /proc/mounts |
+		# convert mapper to 1st class lvm names
+		while read dev x; do
+		    if [[ "$dev" = *mapper* ]]; then
+			local y=/dev/$(mapper2lvm ${dev#/dev/mapper/})
+			[ -e $y ] && dev=$y
+		    fi
+		    echo "$dev $x"
+		done > /mnt/etc/mtab
+
 		cd /mnt; chroot . ./tmp/stone_postinst.sh
 		rm -fv ./tmp/stone_postinst.sh
 
@@ -669,6 +685,7 @@ EOT
 			# try to re-boot via kexec, if available
 			if [ "$kexec" ]; then
 			    cmdline=$(< /proc/cmdline)
+			    # extract root=
 			    if [ -e /mnt/boot/grub/grub.cfg ]; then
 				root=$(sed -n "/.*\(root=.*\)/{ s//\1/p; q}" /mnt/boot/grub/grub.cfg)
 			    elif [ -e /mnt/boot/etc/kboot.conf ]; then
@@ -677,9 +694,17 @@ EOT
 				root=$(grep ' / ' /mnt/etc/fstab | tail -n 1 | sed 's, .*,,')
 				root=${root:+root=$root}
 			    fi
-			    kernel="$(echo /mnt/boot/vmlinu[xz]-*)"
-			    kernel="${kernel##* }"
-			    kexec -l $kernel --initrd="${kernel/vmlinu?/initrd}" \
+			    # determine kernel image, from cmdline or installed files
+			    kernel="BOOT_IMAGE= $cmdline" kernel=${kernel##*BOOT_IMAGE=} kernel=${kernel%% *}
+			    kernel="${kernel//*\//}"
+			    if [ "$kernel" ]; then
+				kernel="boot/$kernel"
+			    else
+				# any vmlinu*
+			        kernel="$(cd /mnt; echo boot/vmlinu[xz]-*)"
+			        kernel="${kernel##* }" # last, compressed if both
+			    fi
+			    kexec -l /mnt/$kernel --initrd="/mnt/${kernel/vmlinu?/initrd}" \
 				  --command-line="$cmdline $root"
 			fi
 			shutdown -r now
