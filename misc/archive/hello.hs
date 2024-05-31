@@ -14,4 +14,4 @@
  GNU General Public License can be found in the file COPYING.
  --- T2-COPYRIGHT-NOTE-END --- -}
 
-main = putStrLn "Hello, World! (A simple Haskell program.)"
+main = putStrLn "Hello from Haskell."

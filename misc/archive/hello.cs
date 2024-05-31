@@ -22,6 +22,6 @@ class Hello
 {
    static void Main() 
    {
-      System.Console.WriteLine("Hello World! (A simple C# program.)");
+      System.Console.WriteLine("Hello from C#.)");
    }
 }

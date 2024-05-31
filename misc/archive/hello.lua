@@ -14,4 +14,4 @@
 -- GNU General Public License can be found in the file COPYING.
 -- --- T2-COPYRIGHT-NOTE-END ---
 
-print "Hello World! (A simple Lua program.)"
+print "Hello from Lua."

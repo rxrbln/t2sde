@@ -16,5 +16,5 @@ c GNU General Public License can be found in the file COPYING.
 c --- T2-COPYRIGHT-NOTE-END ---
 
 	program hello_world
-		print *, "Hello World! (A simple Fortran program.)"
+		print *, "Hello from Fortran."
 	end

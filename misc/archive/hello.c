@@ -19,7 +19,7 @@
 #include <stdio.h>
 
 int main() {
-	printf("Hello World! (A simple C program.)\n");
+	printf("Hello from C.\n");
 	return 0;
 }
 

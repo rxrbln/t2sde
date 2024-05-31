@@ -14,4 +14,4 @@
 # GNU General Public License can be found in the file COPYING.
 # --- T2-COPYRIGHT-NOTE-END ---
 
-println("Hello, World!")
+println("Hello from Julia.")

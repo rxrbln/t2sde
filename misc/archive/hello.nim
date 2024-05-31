@@ -11,4 +11,4 @@
 # it under the terms of the GNU General Public License version 2.
 # --- T2-COPYRIGHT-NOTE-END ---
 
-echo "Hello World!", "(A simple Nim program.)"
+echo "Hello from Nim."

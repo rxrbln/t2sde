@@ -4,6 +4,6 @@
 Program HelloWorld;
 
 Begin
-	writeln('Hello World!');
+	writeln('Hello from Pascal.');
 End.
 

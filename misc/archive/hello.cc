@@ -18,7 +18,7 @@
 #include <iostream>
 
 int main() {
-	std::cout << "Hello World! (A simple C++ program.)" << std::endl;
+	std::cout << "Hello from C++." << std::endl;
 	return 0;
 }
 
