@@ -1,4 +1,3 @@
-
 { Hello World in Pascal }
 
 Program HelloWorld;

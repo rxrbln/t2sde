@@ -1,5 +1,3 @@
-# Hello World in Nim
-#
 # --- T2-COPYRIGHT-NOTE-BEGIN ---
 # T2 SDE: misc/archive/hello.nim
 # Copyright (C) 2019 - 2022 The T2 SDE Project

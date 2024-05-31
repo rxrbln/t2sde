@@ -1,4 +1,3 @@
-// Hello World in Java (by Clifford)
 // Compile with 'gcj --main=hello hello.java'
 //
 // --- T2-COPYRIGHT-NOTE-BEGIN ---
