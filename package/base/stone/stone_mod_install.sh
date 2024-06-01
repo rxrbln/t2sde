@@ -278,10 +278,28 @@ disk_partition() {
 	local dev=$1
 	local typ=$2
 
-	gui_yesno "Erase all data and partition $dev bootable for this platform?" || return
-
 	# sizes in MB
 	local size=$(($(blockdev --getsz $dev) / 2 / 1024))
+	si=0
+	for p in $dev[0-9]*; do
+		size=$((size - $(blockdev --getsz $p) / 2 / 1024))
+		# determine last used partition, too
+		local i=${p#$dev}
+		[ $i -gt $si ] && si=$i
+	done
+
+	local cmd="gui_menu part 'Partition $dev bootable for this platform?'"
+
+	cmd="$cmd 'Erasing all data' 'si=0'"
+	# TODO: check patform is efi
+	# TODO: sanity check part is GPT?
+	[ $size -gt 4096 ] &&
+		cmd="$cmd 'Adding partitions in free space' si=$si"
+
+	eval $cmd || return
+
+	# if re-partition: reset size to all
+	[ "$si" = 0 ] && size=$(($(blockdev --getsz $dev) / 2 / 1024))
 	local swap=$((size / 20))
 	local boot=512
 
@@ -313,11 +331,11 @@ mkpart ${boot}m $((boot + _swap))m")
 		script+=("label:gpt")
 		script+=("size=128m, type=uefi")
 		script+=("size=$((size - 128 - _swap))m, type=linux")
-		fs+=("${dev}2 $any /")
-		fs+=("${dev}1 fat /boot/efi")
+		fs+=("${dev}$((si + 2)) $any /")
+		fs+=("${dev}$((si + 1)) fat /boot/efi")
 
 		[ $_swap != 0 ] &&
-		    script+=("type=swap") fs+=("${dev}3 swap")
+		    script+=("type=swap") fs+=("${dev}$((si + 3)) swap")
 		;;
 	    hppa*)
 		fs+=("${dev}3 $any /")
@@ -408,9 +426,16 @@ start=0, type=W")
 		;;
 	esac
 
-	# partition
-	wipefs --all $dev
-	dd if=/dev/zero of=$dev seek=1 count=1 # mostly for Apple PowerPac parts
+	# re-partition or append?
+	if [ "$si" = 0 ]; then
+		# partition
+		wipefs --all $dev
+		dd if=/dev/zero of=$dev seek=1 count=1 # mostly for Apple PowerPac parts
+	else
+		fdisk="$fdisk -a"
+		script=("${script[@]:1}") # removed 1st "label:*"
+	fi
+
 	join $'\n' "${script[@]}" | $fdisk $dev
 
 	# postscript fixup, due less than stellar sfdisk
@@ -528,7 +553,7 @@ vg_action() {
 	cmd="$cmd 'Create Striped logical volume' 'lv_create $1 striped'"
 	cmd="$cmd 'Create RAID 0 logical volume' 'lv_create $1 raid0'"
 	cmd="$cmd 'Create RAID 1 logical volume' 'lv_create $1 raid1'"
-	cmd="$cmd 'Create RAID 5 logical olume' 'lv_create $1 raid5'"
+	cmd="$cmd 'Create RAID 5 logical volume' 'lv_create $1 raid5'"
 	cmd="$cmd 'Create RAID 6 logical volume' 'lv_create $1 raid6'"
 	cmd="$cmd 'Create RAID 10 logical volume' 'lv_create $1 raid10'"
 	cmd="$cmd '' ''"
