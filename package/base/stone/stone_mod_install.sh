@@ -282,6 +282,7 @@ disk_partition() {
 	local size=$(($(blockdev --getsz $dev) / 2 / 1024))
 	si=0
 	for p in $dev[0-9]*; do
+		[ -e $p ] || continue
 		size=$((size - $(blockdev --getsz $p) / 2 / 1024))
 		# determine last used partition, too
 		local i=${p#$dev}
@@ -291,9 +292,8 @@ disk_partition() {
 	local cmd="gui_menu part 'Partition $dev bootable for this platform?'"
 
 	cmd="$cmd 'Erasing all data' 'si=0'"
-	# TODO: check patform is efi
-	# TODO: sanity check part is GPT?
-	[ $size -gt 4096 ] &&
+	# TODO: check patform is efi and type is GPT?
+	[ $si -gt 0 -a $size -gt 4096 ] &&
 		cmd="$cmd 'Adding partitions in free space' si=$si"
 
 	eval $cmd || return
