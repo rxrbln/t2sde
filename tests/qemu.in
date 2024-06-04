@@ -1,0 +1,121 @@
+#!/bin/bash
+
+# Copyright (C) 2022-2024 René Rebe, ExactCODE GmbH; Germany.
+
+[ "$QEMUSYS" ] || exit 43
+
+qemuargs=
+
+vmlinux=vmlinux
+append="console=ttyS0"
+isoboot="-boot d"
+
+lowmem=128	# installer needs a bit more than minird
+normmem=768
+highmem=2048
+
+intstorage="-device virtio-blk,drive=drv0 -drive if=none,id=drv0,file="
+extstorage="-cdrom "
+
+host_arch=$(uname -m)
+
+efidir=/srv
+
+case "$QEMUSYS" in
+  *-alpha)
+	intstorage="-hda "
+	isoboot=
+	;;
+  *-arm*|*-aarch64*)
+	qemuargs="-M virt"
+	vmlinux=vmlinuz
+	[[ "$QEMUSYS" = *-aarch64* ]] &&
+		qemuargs="$qemuargs -cpu max" &&
+		isoboot="-bios $efidir/RELEASEAARCH64_QEMU_EFI.fd $isoboot"
+
+	[[ "$QEMUSYS" = *-arm* ]] &&
+		isoboot="-bios $efidir/RELEASEARM_QEMU_EFI.fd $isoboot"
+
+	[ "$host_arch"  = aarch64 ] && qemuargs="$qemuargs --enable-kvm"
+	append= # "console=ttyAMA0"
+	;;
+  *-mipsel)
+  	qemuargs="-M malta"
+	intstorage="-hda "
+	isoboot=
+	;;
+  *mips*)
+	isoboot=
+	;;
+  *-m68k)
+	qemuargs="-M q800"
+	intstorage="-hda "
+	lowmem=256
+	normmem=512
+	isoboot=
+	;;
+  *-microblaze|*-nios2|*-or1k)
+	intstorage="-hda "
+	isoboot=
+	;;
+  *-ppc*)
+	if [[ $QEMU = *64le ]]; then
+		qemuargs="-M powernv"
+		append="console=hvc0"
+		lowmem=1024
+		normmem=1024
+		extstorage="-drive if=virtio,file="
+		isoboot=
+	elif [[ $QEMUSYS = *64 ]]; then
+		intstorage="-hda "
+		qemuargs="-M mac99"
+		append=
+	else
+		qemuargs="-M g3beige"
+		intstorage="-hda "
+		highmem=1024
+		append=
+	fi
+	[ "$host_arch" = ppc64 ] && qemuargs="$qemuargs --enable-kvm"
+	;;
+  *-*riscv*)
+	vmlinux=vmlinuz
+	qemuargs="-M virt"
+	extstorage="-drive if=virtio,file="
+	isoboot=
+	;;
+  *-sh4)
+	append="console=ttySC1,115200"
+	qemuargs="-M r2d"
+	intstorage="-hda "
+	isoboot=
+	;;
+  *-sparc)
+	qemuargs="-M SS-5" # -cpu 'TI SuperSparc II'"
+	intstorage="-hda "
+	normmem=256 highmem=256
+	;;
+  *-s390x)
+	vmlinux=vmlinuz
+	qemuargs=
+	isoboot=
+	;;
+  *-hppa64*)
+	qemuargs="$qemuargs -machine C3700 -cpu hppa64"
+	intstorage="-hda "
+	QEMUSYS=${QEMUSYS%64*}
+	;;
+  *-*86*)
+	vmlinux=vmlinuz
+	if [[ "$QEMUSYS" = *386 ]]; then
+		lowmem=96
+		isoboot="-bios $efidir/RELEASEIa32_OVMF.fd $isoboot"
+	else
+		isoboot="-bios $efidir/RELEASEX64_OVMF.fd $isoboot"
+	fi
+
+	[ "$host_arch"  = x86_64 ] && qemuargs="$qemuargs --enable-kvm"
+	;;
+esac
+
+[ -e $SYSROOT/boot/$vmlinux ] || exit 42

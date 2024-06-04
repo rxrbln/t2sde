@@ -1,0 +1,71 @@
+#!/bin/bash
+
+# Copyright (C) 2004-2024 René Rebe, ExactCODE GmbH; Germany.
+
+verbose=0
+time=0
+tee=cat
+
+if [ "$1" = -v ]; then
+	verbose=1
+	shift
+fi
+
+if [ "$1" = -v ]; then
+	verbose=2
+	shift
+fi
+
+if [ "$1" = -t ]; then
+        time=1
+	shift
+fi
+
+
+tmp=`mktemp || mktemp -t tmp.XXXXXXXXXX`
+errors=0
+
+[ "$1" ] || set -- *.cmd
+
+[ "$verbose" -gt 1 ] && tee="tee /dev/tty"
+
+for x; do
+	x=${x%.cmd}
+	printf "Running test $x ..."
+	/bin/bash $PWD/$x.cmd | $tee > $tmp 2>&1
+	error=$?
+
+	if [ $error = 42 ]; then
+		echo " NAT"
+	elif [ $error = 43 ]; then
+		echo " N/A"
+	elif [ ! -f $x.out -a $error != 0 ]; then
+		echo " Failed (as expected)"
+	elif [ ! -f $x.out ]; then
+		echo " Passed (unexpected)"
+		cp $tmp $x.out
+		: $((errors++))
+	elif [ $error = 0 ] && grep -q "==NO-DIFF==" $x.out; then
+		echo " Passed"
+	elif cmp $tmp $x.out 2>&1 >/dev/null; then
+		echo " Passed"
+	else
+		echo " Failed !!!"
+		[ $verbose -gt 0 ] && diff -ua $x.out $tmp
+		: $((errors++))
+	fi
+done
+
+if [ $errors -ne 0 ]; then
+	echo -e "\n\t$errors error(s) total!\n"
+	[ $time -ne 0 ] && echo "(timing supressed due to errors)"
+elif [ $time -ne 0 ]; then
+	echo "Timing:"
+	time for x in *.cmd ; do
+		x=${x%.cmd}
+		echo -n . >&2
+		$1 -f $x.sed > $tmp
+	done
+fi
+
+rm -f $tmp

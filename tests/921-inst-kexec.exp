@@ -1,0 +1,70 @@
+#!/usr/bin/expect -f
+
+set qemu [lindex $argv 0]
+set kernel [lindex $argv 1]
+set initrd [lindex $argv 2]
+set append [lindex $argv 3]
+set argv [lreplace $argv 0 3]
+
+# Wait enough (forever) until a long-time boot
+set timeout 45
+#timeout {exit 1}
+set send_slow {8 .1}
+
+# Start the guest VM
+spawn $qemu -kernel $kernel -initrd $initrd -nographic -append "$append" {*}$argv
+
+expect {
+timeout {exit 1}
+"T2 SDE installer first stage*"
+}
+
+expect {
+timeout {exit 1}
+"* hit enter otherwise. (default:*"
+}
+
+send "\n"
+expect {
+timeout {exit 1}
+"install:/#"
+}
+
+
+send "mount \$ROCK_INSTALL_SOURCE_DEV /media\n"
+expect {
+timeout {exit 1}
+"*mounted read-only*"
+}
+
+send "kernel=$kernel initrd=$initrd\n"
+send "kexec -l /media/boot/\${kernel##*/} --initrd=/media/boot/\${initrd##*/} --command-line=\$(< /proc/cmdline)\n"
+send "\[ \$? != 0 \] && echo FA''IL\n"
+send "kexec -e\n"
+
+
+expect {
+timeout {exit 1}
+"FAIL" {exit 1}
+"Nothing has been loaded" {exit 1}
+"T2 SDE installer first stage*"
+}
+
+
+expect {
+timeout {exit 1}
+"* hit enter otherwise. (default:*"
+}
+
+send "\n"
+expect {
+timeout {exit 1}
+"install:/#"
+}
+
+
+send "echo o > /proc/sysrq-trigger\n"
+expect {
+timeout {exit 1}
+"reboot: Power down"
+}
