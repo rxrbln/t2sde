@@ -211,7 +211,7 @@ EOT
 	    fi
 	    grub-mkimage -O powerpc-ieee1275 -p /boot/grub \
 		-o /mnt/grub -d /usr/lib*/grub/powerpc-ieee1275 \
-		--compression auto $grubmods
+		-c /mnt/boot/grub/grub.cfg --compression auto $grubmods
 
 	    cat > /mnt/boot/ofboot.b <<-EOT
 <CHRP-BOOT>
