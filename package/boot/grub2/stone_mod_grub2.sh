@@ -198,8 +198,8 @@ EOT
 	    mkdir -p /mnt/boot/grub
 	    if [ -z "$cryptdev" ]; then
 		cat << EOT > /mnt/boot/grub/grub.cfg
-set uuid=$grubdev
-search --set=root --no-floppy --fs-uuid \$uuid
+set root=$grubdev
+search --set=root --no-floppy --fs-uuid \$root
 configfile (\$root)/boot/grub/grub.cfg
 EOT
 	    else
