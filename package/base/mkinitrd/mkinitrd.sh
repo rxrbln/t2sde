@@ -32,7 +32,7 @@ vitalmods[r8152.ko]=1
 vitalmods[r8169.ko]=1
 
 # TODO: defauls for vintage vs. latest, usb, pata, etc.
-filter="-e ext4 -e isofs -e pata_legacy -e pata_.*platform
+filter="-e ext4 -e xfs -e isofs -e pata_legacy -e pata_.*platform
 -e pata_macio -e mac_esp -e sym53c8xx -e /aic7xxx
 -e pci-host-generic -e virtio_pci_.*_dev -e virtio_pci -e virtio_blk
 -e s[rd]_mod -e /ahci.ko -e /nvme.ko -e [uoex]hci-pci -e usbhid -e zram
@@ -70,7 +70,7 @@ done
 -e dm-mod -e dm-raid -e md/raid -e dm/mirror -e dm/linear -e dm-crypt -e dm-cache
 -e /aes -e /sha -e /blake -e /cbc -e /ecb -e xts
 -e cciss -e ips -e nls_cp437 -e nls_iso8859-1 -e nls_utf8
--e /.hci -e usb-common -e usb-storage -e sbp2 -e uas
+-e /.hci -e usb-common -e usb-storage -e sbp2 -e uas -e thunderbolt\.
 -e usbhid -e i2c-hid -e hid-generic -e hid-multitouch -e /ast/
 -e hid-apple[^i] -e hid-microsoft -e hyperv-keyboard -e pci/controller
 -e aqc111 -e asix -e ax88179_178a -e cdc_ether -e cx82310_eth -e r8153_ecm -e rtl8150 -e r8152
