@@ -162,9 +162,9 @@ EOT
 	    umount /sys/firmware/efi/efivars
 	fi
     else
-      if [[ "$arch" = *CHRP ]]; then
-	instdev=/dev/sda # TODO: fix LVM setup
+      [ -e $instdev ] || instdev=/dev/sda # TODO: fix LVM setup
 
+      if [[ "$arch" = *CHRP ]]; then
 	# IBM CHRP install into FW read-able RAW partition
 	local bootstrap=$instdev$(disktype $instdev | grep "PReP Boot" -B 1 |
 		sed -n 's/Partition \(.*\):.*/\1/p')
