@@ -64,7 +64,7 @@ EOT
 create_boot_menu() {
 	mkdir -p /boot/grub/
 	cat << EOT > /boot/grub/grub.cfg
-set timeout=30
+set timeout=8
 set default=0
 set fallback=1
 
