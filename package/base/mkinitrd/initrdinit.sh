@@ -6,10 +6,9 @@ echo "T2 SDE early userspace (c)2005-2024 Rene Rebe, ExactCODE GmbH; Germany."
 
 function mapper2lvm {
 	# support both, direct vg/lv or mapper/...
-	x=${1#mapper/} 
+	x=${1#mapper/}
 	if [ "$x" != "$1" -a "${x#*-}" != "$x" ]; then
-		# TODO: --
-		x="${x%-*}/${x#*-}"
+		x="${x//--/	}" x="${x/-//}" x="${x/	/-}"
 	fi
 	echo $x
 }
@@ -59,7 +58,7 @@ for v in $cmdline; do
     rw)	mountopt="rw${mountopt#r[ow]}" ;;
     esac
 done
- 
+
 # diskless network root?
 addr="${root%:*}"
 if [ "$addr" != "$root" -o "${addr%%,*}" = "/dev/nfs" ]; then
@@ -104,6 +103,7 @@ while [[ -n "$root" && ($((i++)) -le 15 || "$cmdline" = *rootwait*) ]]; do
 	[ "${toor#UUID=}" != "$toor" ] && toor="/dev/disk/by-uuid/${root#UUID=}"
 	[ -e "$toor" ] || continue
 
+	echo -n "${n}"; n=
 	cryptsetup --disable-locks luksOpen $toor root && root="${root#*,}"
   fi
 
