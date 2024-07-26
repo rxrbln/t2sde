@@ -39,7 +39,10 @@ fi
 
 create_kernel_list() {
 	first=1
-	for x in `(cd /boot/; ls vmlinux-* ) | sort -r`; do
+	default=
+	for x in vmlinux $(cd /boot; ls vmlinux-* | sort -r -n); do
+		[ "$default" ] || default=$(readlink /boot/$x)
+		[ "$default" = "$x" ] && continue
 		ver=${x/vmlinux-/}
 		[ -e /boot/${x/vmlinux/vmlinuz} ] && x=${x/vmlinux/vmlinuz}
 		if [ $first = 1 ]; then
