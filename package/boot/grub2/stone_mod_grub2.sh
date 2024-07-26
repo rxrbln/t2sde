@@ -43,7 +43,7 @@ create_kernel_list() {
 	for x in vmlinux $(cd /boot; ls vmlinux-* | sort -r -n); do
 		[ "$default" ] || default=$(readlink /boot/$x)
 		[ "$default" = "$x" ] && continue
-		ver=${x/vmlinux-/}
+		ver=${x#vmlinux} ver=${ver#-}
 		[ -e /boot/${x/vmlinux/vmlinuz} ] && x=${x/vmlinux/vmlinuz}
 		if [ $first = 1 ]; then
 			label="Linux" first=0
@@ -51,7 +51,7 @@ create_kernel_list() {
 			label="Linux ($ver)"
 		fi
 
-		local initrd="$bootpath/initrd-${ver}"
+		local initrd="$bootpath/${x/vmlinu?/initrd}"
 		[ -e /boot/microcode.img ] && initrd="/boot/microcode.img $initrd"
 
 		cat << EOT
