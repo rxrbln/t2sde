@@ -32,7 +32,7 @@ vitalmods[r8152.ko]=1
 vitalmods[r8169.ko]=1
 
 # TODO: defauls for vintage vs. latest, usb, pata, etc.
-filter="-e ext4 -e xfs -e isofs -e pata_legacy -e pata_.*platform
+filter="-e ext4 -e xfs -e isofs -e nfsv4 -e pata_legacy -e pata_.*platform
 -e pata_macio -e mac_esp -e sym53c8xx -e /aic7xxx
 -e pci-host-generic -e virtio_pci_.*_dev -e virtio_pci -e virtio_blk
 -e s[rd]_mod -e /ahci.ko -e /nvme.ko -e [uoex]hci-pci -e usbhid -e zram
@@ -76,7 +76,7 @@ done
 -e aqc111 -e asix -e ax88179_178a -e cdc_ether -e cx82310_eth -e r8153_ecm -e rtl8150 -e r8152
 -e cpufreq/[^_]\+$ -e hwmon.*temp -e /rtc/ -e input-leds"
 
-[ "$network" ] && filter="$filter -e /ipv4/ -e '/ipv6\.' -e ethernet -e nfsv4"
+[ "$network" ] && filter="$filter -e '/ipv4\.' -e '/ipv6\.' -e ethernet"
 
 [ "$kernelver" ] || kernelver=`uname -r`
 [ "$moddir" ] || moddir="$root/lib/modules/$kernelver"
@@ -299,7 +299,7 @@ copy_dyn_libs () {
 
 # setup programs
 #
-for x in $root/sbin/{udevd,udevadm,kmod,modprobe} $root/usr/sbin/disktype
+for x in $root/sbin/{udevd,udevadm,kmod,modprobe} $root/usr/sbin/{disktype,ipconfig}
 do
 	cp -av $x $tmpdir/sbin/
 	copy_dyn_libs $x
@@ -309,7 +309,7 @@ done
 #
 [ -z "$minimal" ] &&
 for x in $root/sbin/{insmod,blkid,lvm,vgchange,lvchange,vgs,lvs,mdadm} \
-	 $root/usr/sbin/{cryptsetup,smartctl,cache_check,ipconfig} $root/usr/embutils/{dmesg,mkswap,swapon}
+	 $root/usr/sbin/{cryptsetup,smartctl,cache_check} $root/usr/embutils/{dmesg,mkswap,swapon}
 do
   if [ ! -e $x ]; then
 	echo "Warning: Skipped optional file ${x#$root}!"
