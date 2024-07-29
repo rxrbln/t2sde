@@ -411,8 +411,6 @@ CONFIG_RTC_CLASS=y
 dnl Other nice to have
 dnl
 CONFIG_MAGIC_SYSRQ=y
-CONFIG_PANIC_TIMEOUT=60
-
 CONFIG_PANIC_TIMEOUT=30
 
 dnl No unit test stuff
