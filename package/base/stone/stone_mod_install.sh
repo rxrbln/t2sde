@@ -569,10 +569,12 @@ vg_action() {
 disk_add() {
 	local x found=0
 
-	local vendor=$(cat /sys/block/$1/device/vendor 2>/dev/null)
-	local model=$(cat /sys/block/$1/device/model 2>/dev/null)
+	local vendor model # read w/ whitespaces stripped:
+	read vendor < <(cat /sys/block/$1/device/vendor 2>/dev/null)
+	read model < <(cat /sys/block/$1/device/model 2>/dev/null)
+	read vendor <<< "$vendor $model"
 
-	cmd="$cmd 'Edit partition table of $1${vendor:+ ($vendor $model)}:' 'disk_action $1'"
+	cmd="$cmd 'Edit partition table of $1${vendor:+ ($vendor)}:' 'disk_action $1'"
 
 	local lbs=$(< /sys/block/$1/queue/logical_block_size)
 	local pbs=$(< /sys/block/$1/queue/physical_block_size)
