@@ -413,6 +413,8 @@ dnl
 CONFIG_MAGIC_SYSRQ=y
 CONFIG_PANIC_TIMEOUT=60
 
+CONFIG_PANIC_TIMEOUT=30
+
 dnl No unit test stuff
 dnl
 # CONFIG_SLUB_DEBUG is not set
