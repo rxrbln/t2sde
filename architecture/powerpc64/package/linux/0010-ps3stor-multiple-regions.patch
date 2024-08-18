@@ -41,7 +41,7 @@
  extern u64 ps3stor_send_command(struct ps3_storage_device *dev, u64 cmd,
  				u64 arg1, u64 arg2, u64 arg3, u64 arg4);
 --- a/drivers/block/ps3disk.c.orig	2024-07-15 00:43:32.000000000 +0200
-+++ b/drivers/block/ps3disk.c	2024-08-18 19:16:30.762053123 +0200
++++ b/drivers/block/ps3disk.c	2024-08-18 23:23:40.324352412 +0200
 @@ -2,6 +2,8 @@
  /*
   * PS3 Disk Storage Driver
@@ -188,16 +188,18 @@
  static const struct blk_mq_ops ps3disk_mq_ops = {
  	.queue_rq	= ps3disk_queue_rq,
  };
-@@ -381,7 +408,7 @@
+@@ -381,7 +408,9 @@
  	struct ps3_storage_device *dev = to_ps3_storage_device(&_dev->core);
  	struct ps3disk_private *priv;
  	int error;
 -	unsigned int devidx;
 +	unsigned int regidx, devidx;
++
++	dev->bounce_size = BOUNCE_SIZE;
  	struct queue_limits lim = {
  		.logical_block_size	= dev->blk_size,
  		.max_hw_sectors		= dev->bounce_size >> 9,
-@@ -393,6 +420,8 @@
+@@ -393,6 +422,8 @@
  	struct request_queue *queue;
  	struct gendisk *gendisk;
  
@@ -206,7 +208,7 @@
  	if (dev->blk_size < 512) {
  		dev_err(&dev->sbd.core,
  			"%s:%u: cannot handle block size %llu\n", __func__,
-@@ -400,18 +429,6 @@
+@@ -400,18 +431,6 @@
  		return -EINVAL;
  	}
  
@@ -225,7 +227,14 @@
  	priv = kzalloc(sizeof(*priv), GFP_KERNEL);
  	if (!priv) {
  		error = -ENOMEM;
-@@ -428,56 +445,65 @@
+@@ -421,63 +440,71 @@
+ 	ps3_system_bus_set_drvdata(_dev, priv);
+ 	spin_lock_init(&priv->lock);
+ 
+-	dev->bounce_size = BOUNCE_SIZE;
+ 	dev->bounce_buf = kmalloc(BOUNCE_SIZE, GFP_DMA);
+ 	if (!dev->bounce_buf) {
+ 		error = -ENOMEM;
  		goto fail_free_priv;
  	}
  
@@ -242,35 +251,6 @@
 -					BLK_MQ_F_SHOULD_MERGE);
 -	if (error)
 -		goto fail_teardown;
--
--	gendisk = blk_mq_alloc_disk(&priv->tag_set, &lim, dev);
--	if (IS_ERR(gendisk)) {
--		dev_err(&dev->sbd.core, "%s:%u: blk_mq_alloc_disk failed\n",
--			__func__, __LINE__);
--		error = PTR_ERR(gendisk);
--		goto fail_free_tag_set;
--	}
--
--	queue = gendisk->queue;
--
--	blk_queue_write_cache(queue, true, false);
--
--	priv->gendisk = gendisk;
--	gendisk->major = ps3disk_major;
--	gendisk->first_minor = devidx * PS3DISK_MINORS;
--	gendisk->minors = PS3DISK_MINORS;
--	gendisk->fops = &ps3disk_fops;
--	gendisk->private_data = dev;
--	snprintf(gendisk->disk_name, sizeof(gendisk->disk_name), PS3DISK_NAME,
--		 devidx+'a');
--	priv->blocking_factor = dev->blk_size >> 9;
--	set_capacity(gendisk,
--		     dev->regions[dev->region_idx].size*priv->blocking_factor);
--
--	dev_info(&dev->sbd.core,
--		 "%s is a %s (%llu MiB total, %llu MiB for OtherOS)\n",
--		 gendisk->disk_name, priv->model, priv->raw_capacity >> 11,
--		 get_capacity(gendisk) >> 11);
 +	for (devidx = 0; devidx < dev->num_regions; devidx++) {
 +		if (test_bit(devidx, &dev->accessible_regions) == 0)
 +			continue;
@@ -309,6 +289,35 @@
 +			 gendisk->disk_name, priv->model, priv->raw_capacity >> 11,
 +			 get_capacity(gendisk) >> 11);
  
+-	gendisk = blk_mq_alloc_disk(&priv->tag_set, &lim, dev);
+-	if (IS_ERR(gendisk)) {
+-		dev_err(&dev->sbd.core, "%s:%u: blk_mq_alloc_disk failed\n",
+-			__func__, __LINE__);
+-		error = PTR_ERR(gendisk);
+-		goto fail_free_tag_set;
+-	}
+-
+-	queue = gendisk->queue;
+-
+-	blk_queue_write_cache(queue, true, false);
+-
+-	priv->gendisk = gendisk;
+-	gendisk->major = ps3disk_major;
+-	gendisk->first_minor = devidx * PS3DISK_MINORS;
+-	gendisk->minors = PS3DISK_MINORS;
+-	gendisk->fops = &ps3disk_fops;
+-	gendisk->private_data = dev;
+-	snprintf(gendisk->disk_name, sizeof(gendisk->disk_name), PS3DISK_NAME,
+-		 devidx+'a');
+-	priv->blocking_factor = dev->blk_size >> 9;
+-	set_capacity(gendisk,
+-		     dev->regions[dev->region_idx].size*priv->blocking_factor);
+-
+-	dev_info(&dev->sbd.core,
+-		 "%s is a %s (%llu MiB total, %llu MiB for OtherOS)\n",
+-		 gendisk->disk_name, priv->model, priv->raw_capacity >> 11,
+-		 get_capacity(gendisk) >> 11);
+-
 -	error = device_add_disk(&dev->sbd.core, gendisk, NULL);
 -	if (error)
 -		goto fail_cleanup_disk;
@@ -331,7 +340,7 @@
  	ps3stor_teardown(dev);
  fail_free_bounce:
  	kfree(dev->bounce_buf);
-@@ -485,9 +511,6 @@
+@@ -485,9 +512,6 @@
  	kfree(priv);
  	ps3_system_bus_set_drvdata(_dev, NULL);
  fail:
@@ -341,7 +350,7 @@
  	return error;
  }
  
-@@ -495,14 +518,15 @@
+@@ -495,14 +519,15 @@
  {
  	struct ps3_storage_device *dev = to_ps3_storage_device(&_dev->core);
  	struct ps3disk_private *priv = ps3_system_bus_get_drvdata(&dev->sbd);
