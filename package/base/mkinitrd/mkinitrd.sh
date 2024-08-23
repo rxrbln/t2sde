@@ -222,6 +222,7 @@ echo "Injecting programs and configuration ..."
 #
 cp -ar $root/etc/{group,udev} $tmpdir/etc/
 
+[ -e $root/etc/os-release ] && cp -a $root/etc/os-release $tmpdir/etc/initrd-release
 [ -e $root/lib/udev/rules.d ] && cp -ar $root/lib/udev/rules.d $tmpdir/lib/udev/
 [ -e $root/etc/mdadm.conf ] && cp -ar $root/etc/mdadm.conf $tmpdir/etc/
 cp -ar $root/etc/modprobe.* $root/etc/ld-* $tmpdir/etc/ 2>/dev/null || true
