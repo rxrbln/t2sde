@@ -47,10 +47,17 @@
 
 	echo
 	cat <<- 'EOT'
+		dnl Other useful stuff
+		dnl
+		include(`linux-common.conf.m4')
+		include(`linux-block.conf.m4')
+		include(`linux-net.conf.m4')
+		include(`linux-fs.conf.m4')
+		include(`linux-x86.conf.m4')
+
 		CONFIG_NR_CPUS=128
 
-		CONFIG_HZ_1000=y
-		CONFIG_HZ=1000
+		CONFIG_HZ_300=y
 
 		CONFIG_TRANSPARENT_HUGEPAGE=y
 		CONFIG_HUGETLBFS=y
@@ -59,13 +66,6 @@
 		CONFIG_X86_X32=y
 		CONFIG_X86_X32_ABI=y
 
-		dnl Other useful stuff
-		dnl
-		include(`linux-common.conf.m4')
-		include(`linux-block.conf.m4')
-		include(`linux-net.conf.m4')
-		include(`linux-fs.conf.m4')
-		include(`linux-x86.conf.m4')
 
 		# CONFIG_NUMA=y
 		# CONFIG_NUMA_BALANCING=y
