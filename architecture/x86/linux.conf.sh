@@ -17,9 +17,6 @@
 		dnl
 
 		# CONFIG_64BIT is not set
-
-		include(`linux-x86.conf.m4')
-		include(`linux-common.conf.m4')
 	EOT
 
 	# all CPUs with PAE must sort after pentiumpro
@@ -97,9 +94,11 @@ EOT
 
 	echo
 	cat <<- 'EOT'
+		include(`linux-common.conf.m4')
 		include(`linux-block.conf.m4')
 		include(`linux-net.conf.m4')
 		include(`linux-fs.conf.m4')
+		include(`linux-x86.conf.m4')
 EOT
 
 	cat <<- 'EOT'

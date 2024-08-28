@@ -43,6 +43,9 @@ CONFIG_BLK_DEV_IDETAPE=m
 CONFIG_BLK_DEV_IDEFLOPPY=m
 CONFIG_BLK_DEV_IDEDMA_PCI=y
 
+dnl BUG: Unable to handle kernel data access - on most $arch
+# CONFIG_PATA_LEGACY is not set
+
 dnl Make sure the drivers are modular ...
 dnl
 CONFIG_IDE_GENERIC=m
