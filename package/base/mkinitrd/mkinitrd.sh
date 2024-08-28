@@ -34,7 +34,7 @@ vitalmods[r8169.ko]=1
 # TODO: defauls for vintage vs. latest, usb, pata, etc.
 filter="-e ext4 -e xfs -e isofs -e nfsv4 -e pata_legacy -e pata_.*platform
 -e pata_macio -e mac_esp -e sym53c8xx -e /aic7xxx
--e pci-host-generic -e virtio_pci_.*_dev -e virtio_pci -e virtio_blk
+-e pci-host-generic -e virtio_pci_.*_dev -e virtio_pci -e virtio_blk -e sunvdc
 -e s[rd]_mod -e /ahci.ko -e /nvme.ko -e [uoex]hci-pci -e usbhid -e zram
 -e /offb -e /bochs -e ps3fb"
 
