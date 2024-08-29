@@ -13,12 +13,24 @@ define(`MIPS64', `MIPS64')dnl
 
 CONFIG_MIPS=y
 CONFIG_MIPS64=y
+CONFIG_CPU_MIPS64=y
 
 # CONFIG_MIPS_GENERIC_KERNEL is not set
 CONFIG_MIPS_MALTA=y
+# CONFIG_CPU_RM7000=y
+CONFIG_CPU_NEVADA=y
 
 CONFIG_MIPS32_O32=y
 CONFIG_MIPS32_N32=y
+
+dnl Sgi ip-* specific drivers, but they will only enable for that platform
+CONFIG_SGI_MFD_IOC3=y
+CONFIG_SERIO_SGI_IOC3=y
+CONFIG_SERIAL_8250_IOC3=y
+CONFIG_SGI_IOC3_ETH=y
+CONFIG_W1=y
+CONFIG_W1_MASTER_SGI=y
+CONFIG_W1_SLAVE_DS250X=y
 
 include(`linux-common.conf.m4')
 include(`linux-block.conf.m4')
@@ -27,6 +39,9 @@ include(`linux-fs.conf.m4')
 
 CONFIG_HZ_250=y
 CONFIG_PREEMPT_NONE=y
+
+dnl Could work for some generic boards, but prevents Sgi kernel to load
+# CONFIG_KEXEC is not set
 
 # CONFIG_GPIO_DWAPB is not set
 # CONFIG_GPIO_PCH is not set
