@@ -46,3 +46,9 @@ CONFIG_IPMI_HANDLER=y
 CONFIG_IPMI_POWEROFF=y
 
 # CONFIG_LOGO_PARISC_CLUT224 is not set
+
+dnl gcc-13.2 ICE
+# CONFIG_MWIFIEX is not set
+
+dnl "__multi3" [fs/bcachefs/bcachefs.ko] undefined!
+# CONFIG_BCACHEFS_FS is not set

@@ -46,3 +46,6 @@ dnl
 CONFIG_FB_VESA=y
 CONFIG_VGA_SWITCHEROO=y
 CONFIG_FB_GEODE=y
+
+dnl does often corrupt the FB
+# CONFIG_FB_NVIDIA is not set

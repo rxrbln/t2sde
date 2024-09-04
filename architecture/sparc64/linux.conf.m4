@@ -62,3 +62,6 @@ include(`linux-net.conf.m4')
 include(`linux-fs.conf.m4')
 
 CONFIG_NR_CPUS=64
+
+dnl implicit declaration of function cpu_data
+# CONFIG_CRYPTO_DEV_VIRTIO is not set

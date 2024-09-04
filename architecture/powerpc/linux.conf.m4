@@ -111,3 +111,6 @@ dnl
 CONFIG_SUNGEM=m
 
 CONFIG_XMON=y
+
+dnl enables PATA_LEGACY
+# CONFIG_PATA_QDI is not set

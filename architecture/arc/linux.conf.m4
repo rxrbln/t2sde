@@ -32,3 +32,6 @@ include(`linux-common.conf.m4')
 include(`linux-block.conf.m4')
 include(`linux-net.conf.m4')
 include(`linux-fs.conf.m4')
+
+dnl redefinition of 'get_unaligned_be16'
+# CONFIG_MFD_MT6360 is not set

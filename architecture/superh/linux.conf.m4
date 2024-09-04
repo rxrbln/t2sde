@@ -15,3 +15,6 @@ include(`linux-common.conf.m4')
 include(`linux-block.conf.m4')
 include(`linux-net.conf.m4')
 include(`linux-fs.conf.m4')
+
+dnl just disable after defconf
+# CONFIG_CMDLINE_OVERWRITE it not set

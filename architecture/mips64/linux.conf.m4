@@ -49,3 +49,7 @@ dnl Could work for some generic boards, but prevents Sgi kernel to load
 # CONFIG_IRQ_DOMAIN is not set
 
 # CONFIG_LOGO_SGI_CLUT224 is not set
+
+dnl did not build
+# CONFIG_VFIO is not set
+# CONFIG_DRM_XE is not set
