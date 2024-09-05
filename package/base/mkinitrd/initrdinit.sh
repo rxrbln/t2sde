@@ -136,18 +136,18 @@ while [[ -n "$root" && ($((i++)) -le 15 || "$cmdline" = *rootwait*) ]]; do
   fi
 
   if [ ! -e "$root" ]; then
-	if [ ${dev#/dev/md[0-9]} != $root -a -e /sbin/mdadm ]; then
+	if [ "${root#/dev/md[0-9]}" != "$root" -a -e /sbin/mdadm ]; then
 		echo "${n}Scanning for mdadm RAID"; n=
 		mdadm --assemble --scan
 	fi
-	if [ ${root#/dev/*/*} != $root -a -e /sbin/lvm ]; then
+	if [ "${root#/dev/*/*}" != "$root" -a -e /sbin/lvm ]; then
 		lvs $(mapper2lvm ${root#/dev/}) >/dev/null 2>&1 || continue
 		echo "${n}Activating LVM $root"; n=
 		lvchange -a ay $(mapper2lvm ${root#/dev/})
 	fi
   fi
 
-  if [ -e $root ]; then
+  if [ -e "$root" ]; then
         if [ "$addr" ]; then
 	    echo -n "${n}"; n=
 	    ipconfig $netif
