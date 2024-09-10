@@ -100,6 +100,7 @@ while [[ -n "$root" && ($((i++)) -le 15 || "$cmdline" = *rootwait*) ]]; do
   # open luks for lvm2 and resume from disk early
   if [ "${root%,*}" != "$root" ]; then
 	toor="${root%,*}"
+	[ "${toor#LABEL=}" != "$toor" ] && toor="/dev/disk/by-label/${root#LABEL=}"
 	[ "${toor#UUID=}" != "$toor" ] && toor="/dev/disk/by-uuid/${root#UUID=}"
 	[ -e "$toor" ] || continue
 
@@ -108,7 +109,9 @@ while [[ -n "$root" && ($((i++)) -le 15 || "$cmdline" = *rootwait*) ]]; do
   fi
 
   [ "${root#UUID=}" != "$root" ] && root="/dev/disk/by-uuid/${root#UUID=}"
+  [ "${root#LABEL=}" != "$root" ] && root="/dev/disk/by-label/${root#LABEL=}"
   [ "${swap#UUID=}" != "$swap" ] && swap="/dev/disk/by-uuid/${swap#UUID=}"
+  [ "${swap#LABEL=}" != "$swap" ] && swap="/dev/disk/by-label/${swap#LABEL=}"
 
   # maybe resume from disk?
   if [[ "$resume" != "" && "$cmdline" != *noresume* ]]; then
