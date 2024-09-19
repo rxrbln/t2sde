@@ -11,11 +11,17 @@
 
 wpa_write_conf() {
 	local if=$1
+	local ssid=${wpa_ssid[$if]}
+	local psk=${wpa_psk[$if]}
+	# add quotes if necessary
+	[[ "$ssid" != \"*\" ]] && ssid="\"$ssid\""
+	[[ "$psk" != \"*\" ]] && psk="\"$psk\""
+
 	cat > /var/run/wpa_supplicant-$if.conf <<EOT
 ctrl_interface=/var/run/wpa_supplicant
 network={
-	ssid="${wpa_ssid[$if]}"
-	psk="${wpa_psk[$if]}"
+	ssid=$ssid
+	psk=$psk
 }
 EOT
 }
@@ -32,10 +38,10 @@ wpa_init_if() {
 
 public_ssid() {
 	wpa_init_if
-	wpa_ssid[$if]="$1"
+	wpa_ssid[$if]="$*"
 }
 
 public_psk() {
 	wpa_init_if
-	wpa_psk[$if]="$1"
+	wpa_psk[$if]="$*"
 }
