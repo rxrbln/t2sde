@@ -363,14 +363,13 @@ main() {
 	[ "$bootdev" ] && uuid=$(get_uuid $bootdev) && [ "$uuid" ] && bootdev=$uuid
 	[ "$cryptdev" ] && uuid=$(get_uuid $cryptdev) && [ "$uuid" ] && cryptdev=$uuid
 
+	instdev=$(get_realdev $bootdev)
+	instdev="${instdev%%[0-9*]}"
 	if [ -d /sys/firmware/efi ]; then
 		instdev=/boot/efi
-	elif [[ "$arch" = sparc* ]]; then
-		instdev=$(get_realdev $bootdev)
-		instdev="${instdev%%[0-9*]}1"
-	else
-		instdev=$(get_realdev $bootdev)
-		instdev="${instdev%%[0-9*]}"
+	elif [[ "$arch" = sparc* ]] && ! disktype $instdev | grep -q "^GPT part"; then
+		# old disklabel, non sun4v-gpt SPARC boot via blocklist
+		instdev="${instdev}1"
 	fi
 
 	# lvm device-mapper?

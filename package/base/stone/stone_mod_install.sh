@@ -11,7 +11,6 @@
 # --- T2-COPYRIGHT-NOTE-END ---
 
 # TODO:
-# - sun4v gpt
 # - check error, esp. of cryptsetup and lvm commands and display red alert on error
 # - avoid all direct user input, so the installer works in GUI variants
 
@@ -39,6 +38,8 @@ case $platform in
 		;;
 	sparc*)
 		platform="$platform-$platform2"
+		grep -q gpt /sys/firmware/devicetree/base/packages/disk-label/supported-labels 2>/dev/null &&
+			platform="$platform-gpt"
 		;;
 	i?86|x86_64)
 		platform="$platform-pc"
@@ -388,6 +389,15 @@ c 3p $((size - _swap))m linux")
 y
 q
 ")
+		;;
+	    sparc*-gpt)
+		script+=("label:gpt")
+		script+=("size=2m, type=biosboot")
+		script+=("size=$((size - _swap))m, type=linux")
+		fs+=("${dev}$((si + 1)) $any /")
+
+		[ $_swap != 0 ] &&
+		    script+=("type=swap") fs+=("${dev}$((si + 2)) swap")
 		;;
 	    sparc*)
 		# TODO: silo vs grub2 have different requirements
