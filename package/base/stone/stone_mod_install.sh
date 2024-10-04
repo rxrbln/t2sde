@@ -106,34 +106,41 @@ part_mount() {
 
 part_mkswap() {
 	local dev=$1
-	mkswap $dev; swapon $dev
+	mkswap -L swap $dev; swapon $dev
 }
 
 part_mkfs() {
-	local dev=$1
-	local fs=$2
-	local mnt=$3
-
+	local dev=$1 fs=$2 mnt=$3 label= opts=
 	cmd="gui_menu part_mkfs 'Create filesystem on $dev'"
 
-	maybe_add () {
+	case "$mnt" in
+	    /)	label="root" ;;
+	    /home)	label="home" ;;
+	    /boot)	label="swap" ;;
+	    /boot/efi)	label="efi" ;;
+	esac
+
+	maybe_add() {
+	  local l=
+	  [ "$label" -a "$5" ] && l="$5 $label"
+	  [ $1 = $fs ] && opts="$3 $4 $l"
 	  if type -p $3 >/dev/null; then
 		cmd="$cmd '$1 ($2 filesystem)' \
-		'type wipefs 2>/dev/null && wipefs -a $dev; $3 $4 $dev'"
+		'type wipefs 2>/dev/null && wipefs -a $dev; $3 $4 $l $dev'"
 	  fi
 	}
 
-	maybe_add btrfs	'Better, b-tree, CoW journaling' 'mkfs.btrfs' '-f'
-	maybe_add bcachefs	'Bcache Copy-On-Write file system' 'mkfs.bcachefs' '-f'
-	maybe_add ext4	'journaling, extents'	'mkfs.ext4'
-	maybe_add ext3	'journaling'		'mkfs.ext3'
-	maybe_add ext2	'non-journaling'	'mkfs.ext2'
-	maybe_add jfs	'IBM journaling'	'mkfs.jfs'
-	maybe_add reiserfs 'journaling'		'mkfs.reiserfs'
-	maybe_add xfs	'Sgi journaling'	'mkfs.xfs' '-f'
-	maybe_add fat	'File Allocation Table'	'mkfs.fat'
+	maybe_add btrfs	'Better, b-tree, CoW journaling' 'mkfs.btrfs' '-f' '-L'
+	maybe_add bcachefs	'Bcache CoW file system' 'mkfs.bcachefs' '-f' '-l'
+	maybe_add ext4	'journaling, extents'	'mkfs.ext4' '' '-L'
+	maybe_add ext3	'journaling'		'mkfs.ext3' '' '-L'
+	maybe_add ext2	'non-journaling'	'mkfs.ext2' '' '-L'
+	maybe_add jfs	'IBM journaling'	'mkfs.jfs' '' '-L'
+	maybe_add reiserfs 'journaling'		'mkfs.reiserfs' '' '-l'
+	maybe_add xfs	'SGI journaling'	'mkfs.xfs' '-f' '-l'
+	maybe_add fat	'File Allocation Table'	'mkfs.fat' '' '-n'
 
-	[ "$fs" -a "$fs" != any ] && cmd="mkfs.$fs $dev"
+	[ "$fs" -a "$fs" != any ] && cmd="$opts $dev"
 
 	if eval "$cmd"; then
 		part_mount $dev "compress=zstd" $mnt
