@@ -124,6 +124,7 @@ part_mkfs() {
 	}
 
 	maybe_add btrfs	'Better, b-tree, CoW journaling' 'mkfs.btrfs' '-f'
+	maybe_add bcachefs	'Bcache Copy-On-Write file system' 'mkfs.bcachefs' '-f'
 	maybe_add ext4	'journaling, extents'	'mkfs.ext4'
 	maybe_add ext3	'journaling'		'mkfs.ext3'
 	maybe_add ext2	'non-journaling'	'mkfs.ext2'
