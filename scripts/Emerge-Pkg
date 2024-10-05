@@ -102,15 +102,13 @@ fi
 
 noautolist=" 00-dirtree $SDECFG_DEFAULT_CC $SDECFG_LIBC ${SDECFG_LIBC}32 "
 declare -A packages
-declare -A package_vers
 declare -A scanned
 declare -A deplist
 
 read_packages() {
-	local sel pkg ver _
-	while read sel _ _ _ pkg ver _; do
+	local sel pkg _
+	while read sel _ _ _ pkg _; do
 		packages[$pkg]=$sel
-		package_vers[$pkg]=$ver
 	done < <(cat config/$config/packages)
 }
 
@@ -187,6 +185,25 @@ add_if_updated() {
 	[ ${#packages[@]} = 0 ] && read_packages
 
 	[ $verbose = 1 ] && echo -n "$deptree$pkg:"
+	confdir=
+	for x in package/*/$pkg/$pkg.desc; do
+	    if [ -f "$x" ]; then
+		if [ "$confdir" ]; then
+		  echo " Warning: Package in multiple trees! Skipped."
+		  return
+		fi
+		confdir=${x/$pkg.desc/}
+	    fi
+	done
+	if [ -z "$confdir" ]; then
+	    if [ $depth = 0 ]; then
+		echo " Error: No such package."
+		exit 1
+	    else
+		echo " Warning: No such package."
+		return
+	    fi
+	fi
 
 	# TODO: keep unselected in the config, to avoid re-config for masked pkgs
 	if [ -z "${packages[$pkg]}" ]; then
@@ -225,7 +242,10 @@ add_if_updated() {
 	o_ver=$(grep -a '^Package Name and Version' \
 	        /var/adm/packages/$pkg | cut -f6 -d' ')
 	# we avoid parse_desc here, because it is ~50x slower
-	n_ver=${package_vers[$pkg]}
+	n_ver=$(grep -a '^\[V\] ' $confdir/$pkg.desc \
+	                       architecture/$SDECFG_ARCH/package/$pkg/$pkg.desc \
+	                       target/$SDECFG_TARGET/package/$pkg/$pkg.desc \
+	        2> /dev/null | cut -f2 -d' ' | tail -n 1)
 	if [ "$o_ver" != "$n_ver" -a "$n_ver" != "0000" ]; then
 		add_if_req $pkg " New version ($o_ver -> $n_ver)."
 		return
