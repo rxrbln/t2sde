@@ -19,7 +19,6 @@ dnl dynamic w/ _ITANIUM, but gcc can no longer tune for v1 since gcc-4.5
 # CONFIG_ITANIUM is not set
 CONFIG_MCKINLEY=y
 
-CONFIG_NR_CPUS=64
 CONFIG_IA64_MCA_RECOVERY=y
 
 include(`linux-common.conf.m4')
@@ -27,5 +26,9 @@ include(`linux-block.conf.m4')
 include(`linux-net.conf.m4')
 include(`linux-fs.conf.m4')
 
+CONFIG_NR_CPUS=16
+CONFIG_HZ_250=y
+
+dnl ld: arch/ia64/kernel/efi.o: in function `efi_initialize_iomem_resources':
+dnl efi.c:(.text+0x2db1): undefined reference to `crashk_res' ...
 # CONFIG_KEXEC is not set
-# CONFIG_IA64_ACPI_CPUFREQ is not set
