@@ -16,5 +16,8 @@
 
  	echo "include(\`linux.conf.m4')"
 
-	[ "$1" ] && echo "include(\`linux.conf.$1')"
+	if [ "$1" ]; then
+		echo "# CONFIG_OF is not set"
+		echo "include(\`linux.conf.$1')"
+	fi
 } | m4 -I $base/architecture/$arch -I $base/architecture/mips -I $base/architecture/share
