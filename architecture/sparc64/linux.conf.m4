@@ -17,6 +17,7 @@ CONFIG_BINFMT_ELF32=y
 CONFIG_HUGETLBFS=y
 CONFIG_HUGETLB_PAGE=y
 
+CONFIG_US3_MC=y
 CONFIG_SUN_LDOMS=y
 
 CONFIG_RTC=y
@@ -61,7 +62,13 @@ include(`linux-block.conf.m4')
 include(`linux-net.conf.m4')
 include(`linux-fs.conf.m4')
 
-CONFIG_NR_CPUS=64
+CONFIG_NR_CPUS=128
+CONFIG_NUMA=y
 
-dnl implicit declaration of function cpu_data
-# CONFIG_CRYPTO_DEV_VIRTIO is not set
+CONFIG_HZ_250=y
+
+CONFIG_USB_PCI_AMD=y
+CONFIG_USB_AUTOSUSPEND_DELAY=67890
+
+# CONFIG_NET_VENDOR_NETRONOME is not set
+# CONFIG_DRM_NOUVEAU is not set
