@@ -20,6 +20,7 @@ dnl Activate SCSI discs and cd-roms - but not the verbose
 dnl SCSI error reporting (CONSTANTS)
 dnl
 CONFIG_SCSI=m
+CONFIG_SCSI_SAS_ATA=y
 CONFIG_BLK_DEV_RAM=m
 CONFIG_BLK_DEV_SD=m
 CONFIG_BLK_DEV_SR=m
@@ -60,6 +61,9 @@ dnl Make sure the drivers are modular ...
 dnl
 CONFIG_SCSI_ATA_PIIX=m
 # CONFIG_PATA_WINBOND_VLB is not set
+
+dnl BUG: Unable to handle kernel data access - on most $arch
+# CONFIG_PATA_LEGACY is not set
 
 CONFIG_SCSI_QLA2XXX=m
 CONFIG_SCSI_SYM53C8XX_2=m
