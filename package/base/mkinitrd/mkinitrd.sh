@@ -24,7 +24,7 @@ compressor="zstd -T0 -19"
 
 declare -A vitalmods	# vital modules that need firmware
 vitalmods[ast.ko]=1	# many modern servers
-vitalmods[qla1280.ko]=1 # Sgi Octane
+vitalmods[qla1280.ko]=1 # Sgi Octane, DEC Alpha
 vitalmods[qla2xxx.ko]=1 # Sun Blade, T4
 vitalmods[tg3.ko]=1	# Sun Fire
 vitalmods[xhci-pci.ko]=1 # probably every modern machine
@@ -73,7 +73,7 @@ done
 -e /.hci -e usb-common -e usb-storage -e sbp2 -e uas -e thunderbolt\.
 -e usbhid -e i2c-hid -e hid-generic -e hid-multitouch -e /ast/
 -e hid-apple[^i] -e hid-microsoft -e hyperv-keyboard -e pci/controller
--e aqc111 -e asix -e ax88179_178a -e cdc_ether -e cx82310_eth -e r8153_ecm -e rtl8150 -e r8152
+-e aqc111 -e asix -e ax88179_178a -e cdc_ether -e /cdc_ncm -e cx82310_eth -e r8153_ecm -e rtl8150 -e r8152
 -e cpufreq/[^_]\+$ -e hwmon.*temp -e /rtc/ -e input-leds"
 
 [ "$network" ] && filter="$filter -e '/ipv4\.' -e '/ipv6\.' -e ethernet"
