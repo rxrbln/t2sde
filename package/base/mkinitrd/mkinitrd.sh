@@ -73,7 +73,7 @@ done
 -e /.hci -e usb-common -e usb-storage -e sbp2 -e uas -e thunderbolt\.
 -e usbhid -e i2c-hid -e hid-generic -e hid-multitouch -e /ast/
 -e hid-apple[^i] -e hid-microsoft -e hyperv-keyboard -e pci/controller
--e aqc111 -e asix -e ax88179_178a -e cdc_ether -e /cdc_ncm -e cx82310_eth -e r8153_ecm -e rtl8150 -e r8152
+-e aqc111 -e asix -e ax88179_178a -e cdc_ether -e /cdc_ncm -e cx82310_eth -e r8153_ecm -e rtl8150 -e r8152 -e r8169
 -e cpufreq/[^_]\+$ -e hwmon.*temp -e /rtc/ -e input-leds"
 
 [ "$network" ] && filter="$filter -e '/ipv4\.' -e '/ipv6\.' -e ethernet"
