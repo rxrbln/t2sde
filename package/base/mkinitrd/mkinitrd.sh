@@ -35,7 +35,7 @@ vitalmods[r8169.ko]=1
 filter="-e /loop -e ext4 -e /xfs -e isofs -e nfsv4 -e pata_legacy -e pata_.*platform
 -e pata_macio -e mac_esp -e sym53c8xx -e /aic7xxx
 -e pci-host-generic -e virtio_pci_.*_dev -e virtio_pci -e virtio_blk -e sunvdc
--e s[rd]_mod -e /ahci.ko -e /nvme.ko -e [uoex]hci-pci -e usbhid -e zram
+-e s[rd]_mod -e /ahci.ko -e /nvme.ko -e [uoex]hci-[ph][c][id] -e usbhid -e zram
 -e /offb -e /bochs -e ps3fb"
 
 declare -A added
@@ -65,18 +65,18 @@ done
 # -e ps3vram -e net/phy
 [ -z "$minimal" ] && filter="$filter -e reiserfs -e btrfs -e /jfs -e /xfs -e jffs2
 -e ext2 -e /udf -e overlayfs -e ntfs -e /fat -e /hfs -e floppy -e efivarfs
--e /ata/ -e /scsi/ -e /fusion/ -e /sdhci/ -e nvme/host -e /mmc/
+-e pci/controller -e /ata/ -e /scsi/ -e /fusion/ -e /sdhci/ -e nvme/host -e /mmc/
 -e virtio.\(blk\|scsi\|net\|console\|input\|gpu\|pci\) -e ps3disk -e drivers/pcmcia
 -e dm-mod -e dm-raid -e md/raid -e dm/mirror -e dm/linear -e dm-crypt -e dm-cache
 -e /aes -e /sha -e /blake -e /cbc -e /ecb -e xts
--e cciss -e ips -e nls_cp437 -e nls_iso8859-1 -e nls_utf8
--e /.hci -e usb-common -e usb-storage -e sbp2 -e uas -e thunderbolt\.
--e usbhid -e i2c-hid -e hid-generic -e hid-multitouch -e /ast/
--e hid-apple[^i] -e hid-microsoft -e hyperv-keyboard -e pci/controller
--e aqc111 -e asix -e ax88179_178a -e cdc_ether -e /cdc_ncm -e cx82310_eth -e r8153_ecm -e rtl8150 -e r8152 -e r8169
--e cpufreq/[^_]\+$ -e hwmon.*temp -e /rtc/ -e input-leds"
+-e nls_cp437 -e nls_iso8859-1 -e nls_utf8
+-e usb/host -e usb-common -e usb-storage -e firewire-ohci -e sbp2 -e uas -e thunderbolt\.
+-e i2c-hid -e hid-generic -e hid-multitouch
+-e hid-apple[^i] -e hid-microsoft -e hyperv-keyboard
+-e cpufreq/[^_]\+$ -e hwmon.*temp -e /rtc/ -e input-leds -e /ast/"
 
-[ "$network" ] && filter="$filter -e '/ipv4\.' -e '/ipv6\.' -e ethernet"
+[ "$network" ] && filter="$filter -e '/ipv4\.' -e '/ipv6\.' -e ethernet
+-e aqc111 -e asix -e ax88179_178a -e cdc_ether -e /cdc_ncm -e cx82310_eth -e r8153_ecm -e rtl8150 -e r8152"
 
 [ "$kernelver" ] || kernelver=`uname -r`
 [ "$moddir" ] || moddir="$root/lib/modules/$kernelver"
