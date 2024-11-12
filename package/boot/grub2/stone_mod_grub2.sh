@@ -113,6 +113,8 @@ grub_inst() {
 		grub2-install $instdev --skip-fs-probe --force
 	    fi
 	else
+	    mount -t efivarfs none /sys/firmware/efi/efivars
+
 	    for efi in ${instdev}*; do
 		mount -o remount,rw $efi
 		mkdir -p $efi/efi/boot
@@ -157,10 +159,13 @@ EOT
 		grub-mkimage -O $arch-efi -o $efi/efi/boot/$exe \
 			-p /efi/boot -d /usr/lib*/grub/$arch-efi/ \
 			--compression auto $grubmods
+
+		local dev=$(grep "$efi " /proc/mounts | sed 's/ .*//;q')
+		local d=${dev%[0-9]} # TODO: multi-digits
+		local p=${dev#$d}
+	    	efibootmgr -c -L "T2 Linux" -d $d -p $p -l "\\efi\\boot\\$exe"
 	    done
 
-	    mount -t efivarfs none /sys/firmware/efi/efivars
-	    efibootmgr -c -L "T2 Linux" -l "\\efi\\boot\\$exe"
 	    umount /sys/firmware/efi/efivars
 	fi
     else
