@@ -166,6 +166,17 @@ EOT
 	    	efibootmgr -c -L "T2 Linux" -d $d -p $p -l "\\efi\\boot\\$exe"
 	    done
 
+	    # remove possible duplicates, sigh
+	    efibootmgr | grep "T2 Linux" | sed 's/.*[[:space:]]//' |
+		sort | uniq -c | grep -v ' 1 ' | sed 's/.*[[:space:]]//' |
+		while read -r dup; do
+			# re-list dups again
+			efibootmgr | grep "${dup//\\/\\\\}" | sed 's/[ *].*//; $d'
+		done | while read bootnum; do
+			echo "removing duplicate $bootnum"
+			efibootmgr -q -b ${bootnum#Boot} -B # delete
+		done
+
 	    umount /sys/firmware/efi/efivars
 	fi
     else
