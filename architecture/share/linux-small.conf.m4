@@ -29,3 +29,5 @@ CONFIG_LOG_BUF_SHIFT=14
 # CONFIG_KSM is not set
 # CONFIG_CHECKPOINT_RESTORE is not set
 # CONFIG_DEBUG_FS is not set
+
+# CONFIG_FONT_TER16x32 is not set

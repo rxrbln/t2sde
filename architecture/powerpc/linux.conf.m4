@@ -61,6 +61,8 @@ include(`linux-block.conf.m4')
 include(`linux-net.conf.m4')
 include(`linux-fs.conf.m4')
 
+# CONFIG_FONT_PEARL_8x8 is not set
+
 dnl read-only enlarges kernel by 66%, does not load on IBM rs6k B50
 # CONFIG_STRICT_KERNEL_RWX is not set
 
