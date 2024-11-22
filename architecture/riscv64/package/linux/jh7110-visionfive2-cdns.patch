@@ -1,0 +1,419 @@
+diff --git a/Documentation/devicetree/bindings/display/bridge/cdns,dsi.yaml b/Documentation/devicetree/bindings/display/bridge/cdns,dsi.yaml
+index 23060324d16e..4ad0ecaacaae 100644
+--- a/Documentation/devicetree/bindings/display/bridge/cdns,dsi.yaml
++++ b/Documentation/devicetree/bindings/display/bridge/cdns,dsi.yaml
+@@ -16,6 +16,7 @@ properties:
+   compatible:
+     enum:
+       - cdns,dsi
++      - starfive,jh7110-dsi
+       - ti,j721e-dsi
+ 
+   reg:
+@@ -27,14 +28,20 @@ properties:
+           Register block for wrapper settings registers in case of TI J7 SoCs.
+ 
+   clocks:
++    minItems: 2
+     items:
+       - description: PSM clock, used by the IP
+       - description: sys clock, used by the IP
++      - description: dpi clock, used by the IP
++      - description: txesc clock, used by the IP
+ 
+   clock-names:
++    minItems: 2
+     items:
+       - const: dsi_p_clk
+       - const: dsi_sys_clk
++      - const: dpi
++      - const: txesc
+ 
+   phys:
+     maxItems: 1
+@@ -46,10 +53,22 @@ properties:
+     maxItems: 1
+ 
+   resets:
+-    maxItems: 1
++    minItems: 1
++    items:
++      - description: apb reset, associated to dsi_p_clk
++      - description: sys reset, associated to sys clock
++      - description: dpi reset, associated to dpi clock
++      - description: txesc reset, associated to txesc clock
++      - description: txbytehs reset, associated to txbytehs clock
+ 
+   reset-names:
+-    const: dsi_p_rst
++    minItems: 1
++    items:
++      - const: dsi_p_rst
++      - const: sys
++      - const: dpi
++      - const: txesc
++      - const: txbytehs
+ 
+   ports:
+     $ref: /schemas/graph.yaml#/properties/ports
+@@ -90,6 +109,39 @@ allOf:
+         reg:
+           maxItems: 1
+ 
++  - if:
++      properties:
++        compatible:
++          contains:
++            const: starfive,jh7110-dsi
++    then:
++      properties:
++        clocks:
++          minItems: 4
++          maxItems: 4
++        clock-names:
++          minItems: 4
++          maxItems: 4
++        resets:
++          minItems: 5
++          maxItems: 5
++        reset-names:
++          minItems: 5
++          maxItems: 5
++      required:
++        - resets
++        - reset-names
++    else:
++      properties:
++        clocks:
++          maxItems: 2
++        clock-names:
++          maxItems: 2
++        resets:
++          maxItems: 1
++        reset-names:
++          maxItems: 1
++
+ required:
+   - compatible
+   - reg
+diff --git a/drivers/gpu/drm/bridge/cadence/Kconfig b/drivers/gpu/drm/bridge/cadence/Kconfig
+index cced81633ddc..ad9f572f4720 100644
+--- a/drivers/gpu/drm/bridge/cadence/Kconfig
++++ b/drivers/gpu/drm/bridge/cadence/Kconfig
+@@ -19,6 +19,13 @@ config DRM_CDNS_DSI_J721E
+ 	help
+ 	  Support J721E Cadence DSI wrapper. The wrapper manages
+ 	  the routing of the DSS DPI signal to the Cadence DSI.
++
++config DRM_CDNS_DSI_JH7110
++	bool "JH7110 SOC Cadence DSI support"
++	default n
++	help
++	  Cadence DPI to DSI bridge which is embedded in the
++	  StarFive JH7110 SoC.
+ endif
+ 
+ config DRM_CDNS_MHDP8546
+diff --git a/drivers/gpu/drm/bridge/cadence/Makefile b/drivers/gpu/drm/bridge/cadence/Makefile
+index c95fd5b81d13..87f603a9f4ad 100644
+--- a/drivers/gpu/drm/bridge/cadence/Makefile
++++ b/drivers/gpu/drm/bridge/cadence/Makefile
+@@ -2,6 +2,7 @@
+ obj-$(CONFIG_DRM_CDNS_DSI) += cdns-dsi.o
+ cdns-dsi-y := cdns-dsi-core.o
+ cdns-dsi-$(CONFIG_DRM_CDNS_DSI_J721E) += cdns-dsi-j721e.o
++cdns-dsi-$(CONFIG_DRM_CDNS_DSI_JH7110) += cdns-dsi-jh7110.o
+ obj-$(CONFIG_DRM_CDNS_MHDP8546) += cdns-mhdp8546.o
+ cdns-mhdp8546-y := cdns-mhdp8546-core.o cdns-mhdp8546-hdcp.o
+ cdns-mhdp8546-$(CONFIG_DRM_CDNS_MHDP8546_J721E) += cdns-mhdp8546-j721e.o
+diff --git a/drivers/gpu/drm/bridge/cadence/cdns-dsi-core.c b/drivers/gpu/drm/bridge/cadence/cdns-dsi-core.c
+index 7457d38622b0..c0c81745e765 100644
+--- a/drivers/gpu/drm/bridge/cadence/cdns-dsi-core.c
++++ b/drivers/gpu/drm/bridge/cadence/cdns-dsi-core.c
+@@ -27,6 +27,10 @@
+ #include "cdns-dsi-j721e.h"
+ #endif
+ 
++#ifdef CONFIG_DRM_CDNS_DSI_JH7110
++#include "cdns-dsi-jh7110.h"
++#endif
++
+ #define IP_CONF				0x0
+ #define SP_HS_FIFO_DEPTH(x)		(((x) & GENMASK(30, 26)) >> 26)
+ #define SP_LP_FIFO_DEPTH(x)		(((x) & GENMASK(25, 21)) >> 21)
+@@ -552,6 +556,10 @@ static int cdns_dsi_adjust_phy_config(struct cdns_dsi *dsi,
+ 	/* data rate was in bytes/sec, convert to bits/sec. */
+ 	phy_cfg->hs_clk_rate = dlane_bps * 8;
+ 
++	if (dsi->platform_ops && dsi->platform_ops->mode_fixup)
++		adj_dsi_htotal = dsi->platform_ops->mode_fixup(dsi, dsi_cfg, phy_cfg,
++							   dpi_hz, dpi_htotal, dsi_htotal);
++
+ 	dsi_hfp_ext = adj_dsi_htotal - dsi_htotal;
+ 	dsi_cfg->hfp += dsi_hfp_ext;
+ 	dsi_cfg->htotal = dsi_htotal + dsi_hfp_ext;
+@@ -683,7 +691,7 @@ static void cdns_dsi_bridge_post_disable(struct drm_bridge *bridge)
+ 	pm_runtime_put(dsi->base.dev);
+ }
+ 
+-static void cdns_dsi_hs_init(struct cdns_dsi *dsi)
++void cdns_dsi_hs_init(struct cdns_dsi *dsi)
+ {
+ 	struct cdns_dsi_output *output = &dsi->output;
+ 	u32 status;
+@@ -1026,6 +1034,14 @@ static ssize_t cdns_dsi_transfer(struct mipi_dsi_host *host,
+ 
+ 	cdns_dsi_init_link(dsi);
+ 
++	/*
++	 * on JH7110 SoC , when transfer dsi command ,
++	 * cdns_dsi_hs_init is needed.
++	 * or the final ret will be error value.
++	 */
++	if (dsi->platform_ops && dsi->platform_ops->transfer)
++		dsi->platform_ops->transfer(dsi);
++
+ 	ret = mipi_dsi_create_packet(&packet, msg);
+ 	if (ret)
+ 		goto out;
+@@ -1142,6 +1158,9 @@ static int __maybe_unused cdns_dsi_resume(struct device *dev)
+ 	clk_prepare_enable(dsi->dsi_p_clk);
+ 	clk_prepare_enable(dsi->dsi_sys_clk);
+ 
++	if (dsi->platform_ops && dsi->platform_ops->resume)
++		dsi->platform_ops->resume(dsi);
++
+ 	return 0;
+ }
+ 
+@@ -1152,6 +1171,10 @@ static int __maybe_unused cdns_dsi_suspend(struct device *dev)
+ 	clk_disable_unprepare(dsi->dsi_sys_clk);
+ 	clk_disable_unprepare(dsi->dsi_p_clk);
+ 	reset_control_assert(dsi->dsi_p_rst);
++
++	if (dsi->platform_ops && dsi->platform_ops->suspend)
++		dsi->platform_ops->suspend(dsi);
++
+ 	dsi->link_initialized = false;
+ 	return 0;
+ }
+@@ -1294,6 +1317,10 @@ static const struct of_device_id cdns_dsi_of_match[] = {
+ #ifdef CONFIG_DRM_CDNS_DSI_J721E
+ 	{ .compatible = "ti,j721e-dsi", .data = &dsi_ti_j721e_ops, },
+ #endif
++#ifdef CONFIG_DRM_CDNS_DSI_JH7110
++	{ .compatible = "starfive,jh7110-dsi", .data = &dsi_ti_jh7110_ops, },
++#endif
++
+ 	{ },
+ };
+ MODULE_DEVICE_TABLE(of, cdns_dsi_of_match);
+diff --git a/drivers/gpu/drm/bridge/cadence/cdns-dsi-core.h b/drivers/gpu/drm/bridge/cadence/cdns-dsi-core.h
+index ca7ea2da635c..fec2d5a9c778 100644
+--- a/drivers/gpu/drm/bridge/cadence/cdns-dsi-core.h
++++ b/drivers/gpu/drm/bridge/cadence/cdns-dsi-core.h
+@@ -53,12 +53,22 @@ struct cdns_dsi;
+  * @deinit: Called in the CDNS DSI remove
+  * @enable: Called at the beginning of CDNS DSI bridge enable
+  * @disable: Called at the end of CDNS DSI bridge disable
++ * @resume: Called at the resume of CDNS DSI
++ * @suspend: Called at the suspend of CDNS DSI
++ * @update: Called at the middle of CDNS DSI bridge enable
+  */
+ struct cdns_dsi_platform_ops {
+ 	int (*init)(struct cdns_dsi *dsi);
+ 	void (*deinit)(struct cdns_dsi *dsi);
+ 	void (*enable)(struct cdns_dsi *dsi);
+ 	void (*disable)(struct cdns_dsi *dsi);
++	void (*resume)(struct cdns_dsi *dsi);
++	void (*suspend)(struct cdns_dsi *dsi);
++	int (*mode_fixup)(struct cdns_dsi *dsi, struct cdns_dsi_cfg *dsi_cfg,
++			  struct phy_configure_opts_mipi_dphy *phy_cfg,
++			  unsigned long dpi_hz, unsigned long dpi_htotal,
++			  unsigned long dsi_htotal);
++	void (*transfer)(struct cdns_dsi *dsi);
+ };
+ 
+ struct cdns_dsi {
+@@ -79,6 +89,15 @@ struct cdns_dsi {
+ 	bool link_initialized;
+ 	bool phy_initialized;
+ 	struct phy *dphy;
++
++#ifdef CONFIG_DRM_CDNS_DSI_JH7110
++	int num_rsts;
++	int num_clks;
++	struct reset_control_bulk_data *resets;
++	struct clk_bulk_data *clocks;
++#endif
+ };
+ 
++void cdns_dsi_hs_init(struct cdns_dsi *dsi);
++
+ #endif /* !__CDNS_DSI_H__ */
+diff --git a/drivers/gpu/drm/bridge/cadence/cdns-dsi-jh7110.c b/drivers/gpu/drm/bridge/cadence/cdns-dsi-jh7110.c
+new file mode 100644
+index 000000000000..0bee5a622508
+--- /dev/null
++++ b/drivers/gpu/drm/bridge/cadence/cdns-dsi-jh7110.c
+@@ -0,0 +1,138 @@
++// SPDX-License-Identifier: GPL-2.0
++/*
++ * JH7110 SoC Cadence DSI wrapper
++ *
++ * Copyright (C) 2023 StarFive Technology Co., Ltd.
++ */
++
++#include <linux/clk.h>
++#include <linux/io.h>
++#include <linux/iopoll.h>
++#include <linux/reset.h>
++
++#include "cdns-dsi-jh7110.h"
++
++static const char * const dsi_resets[] = {
++	"sys",
++	"dpi",
++	"txesc",
++	"txbytehs",
++};
++
++static const char * const dsi_clocks[] = {
++	"dpi",
++	"txesc",
++};
++
++static int cdns_dsi_get_clock(struct device *dev, struct cdns_dsi *dsi)
++{
++	int i;
++	int ret;
++
++	dsi->num_clks = ARRAY_SIZE(dsi_clocks);
++
++	dsi->clocks = devm_kcalloc(dev, dsi->num_clks,
++				   sizeof(*dsi->clocks), GFP_KERNEL);
++	if (!dsi->clocks)
++		return -ENOMEM;
++
++	for (i = 0; i < dsi->num_clks; i++)
++		dsi->clocks[i].id = dsi_clocks[i];
++
++	ret = devm_clk_bulk_get_optional(dev, dsi->num_clks,
++					 dsi->clocks);
++	if (ret)
++		return dev_err_probe(dev, ret, "Failed to get clocks\n");
++
++	return 0;
++}
++
++static int cdns_dsi_get_reset(struct device *dev, struct cdns_dsi *dsi)
++{
++	int i;
++	int ret;
++
++	dsi->num_rsts = ARRAY_SIZE(dsi_resets);
++
++	dsi->resets = devm_kcalloc(dev, dsi->num_rsts,
++				   sizeof(*dsi->resets), GFP_KERNEL);
++	if (!dsi->resets)
++		return -ENOMEM;
++
++	for (i = 0; i < dsi->num_rsts; i++)
++		dsi->resets[i].id = dsi_resets[i];
++
++	ret = devm_reset_control_bulk_get_exclusive(dev, dsi->num_rsts,
++						    dsi->resets);
++	if (ret)
++		return dev_err_probe(dev, ret, "Failed to get resets\n");
++
++	return 0;
++}
++
++static int cdns_dsi_jh7110_init(struct cdns_dsi *dsi)
++{
++	int ret;
++
++	ret = cdns_dsi_get_clock(dsi->base.dev, dsi);
++	if (ret)
++		return ret;
++
++	return cdns_dsi_get_reset(dsi->base.dev, dsi);
++}
++
++static void cdns_dsi_jh7110_resume(struct cdns_dsi *dsi)
++{
++	int ret;
++
++	ret = clk_bulk_prepare_enable(dsi->num_clks, dsi->clocks);
++	if (ret) {
++		dev_err(dsi->base.dev, "Failed to enable clocks\n");
++		return;
++	}
++
++	ret = reset_control_bulk_deassert(dsi->num_rsts - 1, dsi->resets);
++	if (ret) {
++		dev_err(dsi->base.dev, "Failed to deassert resets\n");
++		clk_bulk_disable_unprepare(dsi->num_clks, dsi->clocks);
++		return;
++	}
++}
++
++static void cdns_dsi_jh7110_suspend(struct cdns_dsi *dsi)
++{
++	reset_control_bulk_assert(dsi->num_rsts, dsi->resets);
++
++	clk_bulk_disable_unprepare(dsi->num_clks, dsi->clocks);
++}
++
++static int cdns_dsi_jh7110_mode_fixup(struct cdns_dsi *dsi, struct cdns_dsi_cfg *dsi_cfg,
++				      struct phy_configure_opts_mipi_dphy *phy_cfg,
++				      unsigned long dpi_hz, unsigned long dpi_htotal,
++				      unsigned long dsi_htotal)
++{
++	unsigned long long dlane_bps;
++	unsigned long adj_dsi_htotal;
++	unsigned int lanes = dsi->output.dev->lanes;
++
++	phy_cfg->hs_clk_rate = phy_cfg->hs_clk_rate - (phy_cfg->hs_clk_rate % 10000000);
++	phy_cfg->hs_clk_rate = roundup(phy_cfg->hs_clk_rate, 100000000);
++	dlane_bps = phy_cfg->hs_clk_rate * lanes * dpi_htotal / 8;
++	adj_dsi_htotal = dlane_bps / dpi_hz;
++
++	return adj_dsi_htotal;
++}
++
++static void jh7110_cdns_dsi_hs_init(struct cdns_dsi *dsi)
++{
++	cdns_dsi_hs_init(dsi);
++	reset_control_deassert(dsi->resets[3].rstc);
++}
++
++const struct cdns_dsi_platform_ops dsi_ti_jh7110_ops = {
++	.init = cdns_dsi_jh7110_init,
++	.resume = cdns_dsi_jh7110_resume,
++	.suspend = cdns_dsi_jh7110_suspend,
++	.mode_fixup = cdns_dsi_jh7110_mode_fixup,
++	.transfer = jh7110_cdns_dsi_hs_init,
++};
+diff --git a/drivers/gpu/drm/bridge/cadence/cdns-dsi-jh7110.h b/drivers/gpu/drm/bridge/cadence/cdns-dsi-jh7110.h
+new file mode 100644
+index 000000000000..15d6a766b502
+--- /dev/null
++++ b/drivers/gpu/drm/bridge/cadence/cdns-dsi-jh7110.h
+@@ -0,0 +1,16 @@
++/* SPDX-License-Identifier: GPL-2.0 */
++/*
++ * JH7110 Cadence DSI
++ *
++ * Copyright (C) 2022-2023 StarFive Technology Co., Ltd.
++ * Author: keith.zhao <keith.zhao@starfivetech.com>
++ */
++
++#ifndef __CDNS_DSI_JH7110_H__
++#define __CDNS_DSI_JH7110_H__
++
++#include "cdns-dsi-core.h"
++
++extern const struct cdns_dsi_platform_ops dsi_ti_jh7110_ops;
++
++#endif /* !__CDNS_DSI_JH7110_H__ */
