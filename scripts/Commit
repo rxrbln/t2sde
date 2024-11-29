@@ -14,6 +14,7 @@ force=
 cache=
 svnopt=
 addtxt=
+fold=
 untested=
 
 locations=
@@ -27,6 +28,8 @@ while [ "$1" ]; do
 		addtxt="$2"; shift ;;
 	-cache)
 		cache=1 ;;
+	-fold)
+		fold=1 ;;
 	*)
 		[ ! -e "$1" -a -e `echo package/*/$1` ] &&
 			x=`echo package/*/$1` || x="$1"
@@ -48,6 +51,16 @@ cleanup() {
 }
 trap cleanup EXIT
 
+fold_desc() {
+	# save out [T], fold and insert with appropriate newlines
+	sed -n '/\[T\] \(.*\)/{s//\1/; H}; ${x; s/\n/ /g; s/^ //; p}' "$1" |
+		fold -w 76 -s | sed 's/^/[T] /; s/  */ /g; s/ $//' > x
+	sed "/^\[I\].*/{ s//&\n/; r x
+}; /^\[T\]/d" $1 | sed '/^$/{n;/^$/d}' > x.2
+	cat x.2 > $f
+	rm -f x x.2
+}
+
 trap 'echo "Got SIGINT (Ctrl-C)."; exit 1' INT
 
 # Copy .caches if requested
@@ -67,9 +80,12 @@ done
 svn st $locations | grep '^\(A\|M\)' | cut -c8- | while read f; do
 	if [ -f "$f" ]; then
 		scripts/Create-CopyPatch $f | patch -p0
-		if [[ $f = *.desc ]] && grep '\[D\] \+0 \+' $f; then
+		if [[ $f = *.desc ]]; then
+		    [ "$fold" ] && fold_desc $f
+		    if grep '\[D\] \+0 \+' $f; then
 			pkg=${f%.desc} pkg=${pkg##*/}
 			scripts/Create-CkSumPatch $pkg | patch -p0
+		    fi
 		fi
 	fi
 done
