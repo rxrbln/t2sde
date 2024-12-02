@@ -27,7 +27,7 @@ mount -t proc none /proc
 mount -t devtmpfs -o mode=755 none /dev
 mount -t sysfs none /sys
 mkdir -p /tmp /mnt
-ln -s /proc/self/fd /dev/fd
+ln -sf /proc/self/fd /dev/fd
 
 udevd &
 udevadm trigger
@@ -100,21 +100,21 @@ while [[ -n "$root" && ($((i++)) -le 15 || "$cmdline" = *rootwait*) ]]; do
   # open luks for lvm2 and resume from disk early
   if [ "${root%,*}" != "$root" ]; then
 	toor="${root%,*}"
-	[ "${toor#LABEL=}" != "$toor" ] && toor="/dev/disk/by-label/${root#LABEL=}"
-	[ "${toor#UUID=}" != "$toor" ] && toor="/dev/disk/by-uuid/${root#UUID=}"
+	[[ "${toor}" = LABEL=* ]] && toor="/dev/disk/by-label/${root#LABEL=}"
+	[[ "${toor}" = UUID=* ]] && toor="/dev/disk/by-uuid/${root#UUID=}"
 	[ -e "$toor" ] || continue
 
 	echo -n "${n}"; n=
 	cryptsetup --disable-locks luksOpen $toor root && root="${root#*,}"
   fi
 
-  [ "${root#UUID=}" != "$root" ] && root="/dev/disk/by-uuid/${root#UUID=}"
-  [ "${root#LABEL=}" != "$root" ] && root="/dev/disk/by-label/${root#LABEL=}"
-  [ "${swap#UUID=}" != "$swap" ] && swap="/dev/disk/by-uuid/${swap#UUID=}"
-  [ "${swap#LABEL=}" != "$swap" ] && swap="/dev/disk/by-label/${swap#LABEL=}"
+  [[ "${root}" = UUID=* ]] && root="/dev/disk/by-uuid/${root#UUID=}"
+  [[ "${root}" = LABEL=* ]] && root="/dev/disk/by-label/${root#LABEL=}"
+  [[ "${swap}" = UUID=* ]] && swap="/dev/disk/by-uuid/${swap#UUID=}"
+  [[ "${swap}" = LABEL=* ]] && swap="/dev/disk/by-label/${swap#LABEL=}"
 
   # maybe resume from disk?
-  if [[ "$resume" != "" && "$cmdline" != *noresume* ]]; then
+  if [[ "$resume" && "$cmdline" != *noresume* ]]; then
 	if [ ! -e $resume -a ${resume#/dev/*/*} != $resume -a -e /sbin/lvm ]; then
 		lvs $(mapper2lvm ${resume#/dev/}) >/dev/null 2>&1 || continue
 		echo "${n}Activating LVM $resume"; n=
@@ -139,11 +139,12 @@ while [[ -n "$root" && ($((i++)) -le 15 || "$cmdline" = *rootwait*) ]]; do
   fi
 
   if [ ! -e "$root" ]; then
-	if [ "${root#/dev/md[0-9]}" != "$root" -a -e /sbin/mdadm ]; then
+	if [[ "${root}" = /dev/md[0-9]* && -e /sbin/mdadm ]]; then
 		echo "${n}Scanning for mdadm RAID"; n=
 		mdadm --assemble --scan
 	fi
-	if [ "${root#/dev/*/*}" != "$root" -a -e /sbin/lvm ]; then
+	# TODO: scripter not match /dev/disk/by-uuid/e561ecfc-1358-49e4-84b6-93a357900df3
+	if [[ "${root}" = /dev/*/* && -e /sbin/lvm ]]; then
 		lvs $(mapper2lvm ${root#/dev/}) >/dev/null 2>&1 || continue
 		echo "${n}Activating LVM $root"; n=
 		lvchange -a ay $(mapper2lvm ${root#/dev/})
