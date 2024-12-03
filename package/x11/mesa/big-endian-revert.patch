@@ -1,0 +1,319 @@
+diff --git a/src/gallium/targets/dril/dril_target.c b/src/gallium/targets/dril/dril_target.c
+index 583728e4093..020fb28844a 100644
+--- a/src/gallium/targets/dril/dril_target.c
++++ b/src/gallium/targets/dril/dril_target.c
+@@ -26,7 +26,6 @@
+ #include <EGL/egl.h>
+ #include <EGL/eglext.h>
+ #include "gbm/main/gbm.h"
+-#include "drm-uapi/drm_fourcc.h"
+ 
+ #define EGL_PLATFORM_GBM_MESA             0x31D7
+ 
+@@ -34,56 +33,33 @@
+ #define GLX_NONE 0x8000
+ #define GLX_DONT_CARE 0xFFFFFFFF
+ 
+-#define CONFIG_ZS(color, zs) \
++#define CONFIG_DB(color, zs, doublebuffer) \
+    { \
+       .color_format = color, \
+       .zs_format = zs, \
++      .doubleBufferMode = doublebuffer, \
+    }
+-
+-#define CONFIG(color) \
+-   CONFIG_ZS(color, PIPE_FORMAT_S8_UINT), \
+-   CONFIG_ZS(color, PIPE_FORMAT_Z24_UNORM_S8_UINT), \
+-   CONFIG_ZS(color, PIPE_FORMAT_Z24X8_UNORM), \
+-   CONFIG_ZS(color, PIPE_FORMAT_Z16_UNORM), \
+-   CONFIG_ZS(color, PIPE_FORMAT_NONE) \
+-
+-/*
+- * (copy of a comment in dri_screen.c:dri_fill_in_modes())
+- *
+- * The 32-bit RGBA format must not precede the 32-bit BGRA format.
+- * Likewise for RGBX and BGRX.  Otherwise, the GLX client and the GLX
+- * server may disagree on which format the GLXFBConfig represents,
+- * resulting in swapped color channels.
+- *
+- * The problem, as of 2017-05-30:
+- * When matching a GLXFBConfig to a __DRIconfig, GLX ignores the channel
+- * order and chooses the first __DRIconfig with the expected channel
+- * sizes. Specifically, GLX compares the GLXFBConfig's and __DRIconfig's
+- * __DRI_ATTRIB_{CHANNEL}_SIZE but ignores __DRI_ATTRIB_{CHANNEL}_MASK.
+- *
+- * EGL does not suffer from this problem. It correctly compares the
+- * channel masks when matching EGLConfig to __DRIconfig.
+- */
++#define CONFIG(color, zs) \
++   CONFIG_DB(color, zs, GL_TRUE), \
++   CONFIG_DB(color, zs, GL_FALSE)
+ 
+ static const struct gl_config drilConfigs[] = {
+-   CONFIG(PIPE_FORMAT_B8G8R8A8_UNORM),
+-   CONFIG(PIPE_FORMAT_B8G8R8X8_UNORM),
+-   CONFIG(PIPE_FORMAT_R8G8B8A8_UNORM),
+-   CONFIG(PIPE_FORMAT_R8G8B8X8_UNORM),
+-   CONFIG(PIPE_FORMAT_B10G10R10A2_UNORM),
+-   CONFIG(PIPE_FORMAT_B10G10R10X2_UNORM),
+-   CONFIG(PIPE_FORMAT_R10G10B10A2_UNORM),
+-   CONFIG(PIPE_FORMAT_R10G10B10X2_UNORM),
+-   CONFIG(PIPE_FORMAT_B5G6R5_UNORM),
+-   CONFIG(PIPE_FORMAT_B5G5R5A1_UNORM),
+-   CONFIG(PIPE_FORMAT_B5G5R5X1_UNORM),
+-   CONFIG(PIPE_FORMAT_B4G4R4A4_UNORM),
+-   CONFIG(PIPE_FORMAT_B4G4R4X4_UNORM),
+-   CONFIG(PIPE_FORMAT_R5G6B5_UNORM),
+-   CONFIG(PIPE_FORMAT_R5G5B5A1_UNORM),
+-   CONFIG(PIPE_FORMAT_R5G5B5X1_UNORM),
+-   CONFIG(PIPE_FORMAT_R4G4B4A4_UNORM),
+-   CONFIG(PIPE_FORMAT_R4G4B4X4_UNORM),
++   CONFIG(PIPE_FORMAT_R8G8B8A8_UNORM, PIPE_FORMAT_S8_UINT),
++   CONFIG(PIPE_FORMAT_R8G8B8A8_UNORM, PIPE_FORMAT_Z24_UNORM_S8_UINT),
++   CONFIG(PIPE_FORMAT_R8G8B8A8_UNORM, PIPE_FORMAT_NONE),
++   CONFIG(PIPE_FORMAT_R8G8B8X8_UNORM, PIPE_FORMAT_S8_UINT),
++   CONFIG(PIPE_FORMAT_R8G8B8X8_UNORM, PIPE_FORMAT_Z24_UNORM_S8_UINT),
++   CONFIG(PIPE_FORMAT_R8G8B8X8_UNORM, PIPE_FORMAT_NONE),
++   CONFIG(PIPE_FORMAT_R10G10B10A2_UNORM, PIPE_FORMAT_S8_UINT),
++   CONFIG(PIPE_FORMAT_R10G10B10A2_UNORM, PIPE_FORMAT_Z24_UNORM_S8_UINT),
++   CONFIG(PIPE_FORMAT_R10G10B10A2_UNORM, PIPE_FORMAT_NONE),
++   CONFIG(PIPE_FORMAT_R10G10B10X2_UNORM, PIPE_FORMAT_S8_UINT),
++   CONFIG(PIPE_FORMAT_R10G10B10X2_UNORM, PIPE_FORMAT_Z24_UNORM_S8_UINT),
++   CONFIG(PIPE_FORMAT_R10G10B10X2_UNORM, PIPE_FORMAT_NONE),
++   CONFIG(PIPE_FORMAT_R5G6B5_UNORM, PIPE_FORMAT_S8_UINT),
++   CONFIG(PIPE_FORMAT_R5G6B5_UNORM, PIPE_FORMAT_Z16_UNORM),
++   CONFIG(PIPE_FORMAT_R5G6B5_UNORM, PIPE_FORMAT_NONE),
++   // etc...
+ };
+ 
+ #define RGB UTIL_FORMAT_COLORSPACE_RGB
+@@ -147,7 +123,6 @@ drilIndexConfigAttrib(const __DRIconfig *_config, int index,
+       CASE(CONFORMANT, GL_TRUE);
+       CASE(DOUBLE_BUFFER, config->doubleBufferMode);
+       CASE(SAMPLES, config->samples);
+-      CASE(FRAMEBUFFER_SRGB_CAPABLE, config->sRGBCapable);
+ 
+       CASE(TRANSPARENT_TYPE,        GLX_NONE);
+       CASE(TRANSPARENT_INDEX_VALUE, GLX_NONE);
+@@ -297,56 +272,14 @@ drilCreateNewDrawable(__DRIscreen *psp,
+    return NULL;
+ }
+ 
+-
+-static enum pipe_format
+-fourcc_to_pipe_format(int fourcc)
+-{
+-   switch (fourcc) {
+-   case DRM_FORMAT_RGB565: return PIPE_FORMAT_B5G6R5_UNORM;
+-   case DRM_FORMAT_XRGB8888: return PIPE_FORMAT_BGRX8888_UNORM;
+-   case DRM_FORMAT_ARGB8888: return PIPE_FORMAT_BGRA8888_UNORM;
+-   case DRM_FORMAT_ABGR8888: return PIPE_FORMAT_RGBA8888_UNORM;
+-   case DRM_FORMAT_XBGR8888: return PIPE_FORMAT_RGBX8888_UNORM;
+-   case DRM_FORMAT_XRGB2101010: return PIPE_FORMAT_B10G10R10X2_UNORM;
+-   case DRM_FORMAT_ARGB2101010: return PIPE_FORMAT_B10G10R10A2_UNORM;
+-   case DRM_FORMAT_XBGR2101010: return PIPE_FORMAT_R10G10B10X2_UNORM;
+-   case DRM_FORMAT_ABGR2101010: return PIPE_FORMAT_R10G10B10A2_UNORM;
+-   case DRM_FORMAT_XBGR16161616F: return PIPE_FORMAT_R16G16B16A16_FLOAT;
+-   case DRM_FORMAT_ABGR16161616F: return PIPE_FORMAT_R16G16B16X16_FLOAT;
+-   case DRM_FORMAT_ARGB1555: return PIPE_FORMAT_B5G5R5A1_UNORM;
+-   case DRM_FORMAT_ABGR1555: return PIPE_FORMAT_R5G5B5A1_UNORM;
+-   case DRM_FORMAT_ARGB4444: return PIPE_FORMAT_B4G4R4A4_UNORM;
+-   case DRM_FORMAT_ABGR4444: return PIPE_FORMAT_R4G4B4A4_UNORM;
+-   default:                             return PIPE_FORMAT_NONE;
+-   }
+-}
+-
+-static unsigned
+-add_srgb_config(struct gl_config **configs, unsigned c, enum pipe_format last_pformat, unsigned last_start)
+-{
+-   enum pipe_format srgb = util_format_srgb(last_pformat);
+-   if (!srgb)
+-      return c;
+-   unsigned end = c;
+-   for (unsigned j = last_start; j < end; j++) {
+-      configs[c] = mem_dup(configs[j], sizeof(drilConfigs[j]));
+-
+-      struct gl_config *cfg = configs[c++];
+-      cfg->color_format = srgb;
+-      cfg->sRGBCapable = 1;
+-   }
+-   return c;
+-}
++#define NUM_SAMPLE_COUNTS 7
+ 
+ /* DRI2 awfulness */
+-static const __DRIconfig **
+-init_dri2_configs(int fd)
++static bool
++init_dri2_configs(int fd, const __DRIconfig **configs)
+ {
+    void *egl = NULL;
+-   struct gl_config **configs = NULL;
+-   unsigned c = 0;
+-   enum pipe_format last_pformat = 0;
+-   unsigned last_start = 0;
++   bool ret = false;
+ 
+    /* dlopen/dlsym to avoid linkage */
+    egl = dlopen("libEGL.so.1", RTLD_LAZY | RTLD_LOCAL);
+@@ -357,93 +290,62 @@ init_dri2_configs(int fd)
+    EGLDisplay (*peglGetPlatformDisplayEXT)(EGLenum, void *, const EGLint *) = peglGetProcAddress("eglGetPlatformDisplayEXT");
+    EGLBoolean (*peglInitialize)(EGLDisplay, int*, int*) = peglGetProcAddress("eglInitialize");
+    EGLBoolean (*peglTerminate)(EGLDisplay) = peglGetProcAddress("eglTerminate");
+-   EGLBoolean (*peglGetConfigs)(EGLDisplay, EGLConfig*, EGLint, EGLint*) = peglGetProcAddress("eglGetConfigs");
+-   EGLBoolean (*peglGetConfigAttrib)(EGLDisplay, EGLConfig, EGLint, EGLint *) = peglGetProcAddress("eglGetConfigAttrib");
+-   const char *(*peglQueryString)(EGLDisplay, EGLint) = peglGetProcAddress("eglQueryString");
+-
+-   struct gbm_device *gbm = NULL;
+-   if (fd != -1) {
+-      /* try opening GBM for hardware driver info */
+-      gbm = gbm_create_device(fd);
+-      if (!gbm)
+-         goto out;
+-   }
++   EGLBoolean (*peglChooseConfig)(EGLDisplay, EGLint const *, EGLConfig *, EGLint, EGLint*) = peglGetProcAddress("eglChooseConfig");
++
++   /* try opening GBM for hardware driver info */
++   struct gbm_device *gbm = gbm_create_device(fd);
++   if (!gbm)
++      goto out;
+ 
+-   EGLDisplay dpy = peglGetPlatformDisplayEXT(EGL_PLATFORM_GBM_MESA, gbm ? gbm : EGL_DEFAULT_DISPLAY, NULL);
++   EGLDisplay dpy = peglGetPlatformDisplayEXT(EGL_PLATFORM_GBM_MESA, gbm, NULL);
+    if (!dpy)
+       goto out_gbm;
++
+    int maj, min;
+    if (!peglInitialize(dpy, &maj, &min))
+       goto out_gbm;
+ 
+-   const char *egl_extension_list = peglQueryString(dpy, EGL_EXTENSIONS);
+-   bool has_srgb = strstr(egl_extension_list, "EGL_KHR_gl_colorspace");
+-
+-   int num_configs = 0;
+-   EGLConfig *eglconfigs = NULL;
+-   if (!peglGetConfigs(dpy, NULL, 0, &num_configs))
+-      goto out_egl;
+-   eglconfigs = malloc(sizeof(EGLConfig) * num_configs);
+-   /* overestimate: num_configs * doubleBuffer * sRGB + NULL */
+-   configs = calloc(num_configs * 2 * 2 + 1, sizeof(struct gl_config));
+-   if (!peglGetConfigs(dpy, eglconfigs, num_configs, &num_configs))
+-      goto out_egl;
+-
+-   for (unsigned i = 0; i < num_configs; i++) {
+-      /* verify that this is the right format */
+-      EGLint format, depth, stencil, samples;
+-
+-      if (!peglGetConfigAttrib(dpy, eglconfigs[i], EGL_NATIVE_VISUAL_ID, &format) ||
+-          !peglGetConfigAttrib(dpy, eglconfigs[i], EGL_DEPTH_SIZE, &depth) ||
+-          !peglGetConfigAttrib(dpy, eglconfigs[i], EGL_STENCIL_SIZE, &stencil) ||
+-          !peglGetConfigAttrib(dpy, eglconfigs[i], EGL_SAMPLES, &samples))
+-         continue;
+-
+-      enum pipe_format pformat = fourcc_to_pipe_format(format);
+-
+-      /* srgb configs go after base configs */
+-      if (last_pformat && has_srgb && pformat != last_pformat)
+-         c = add_srgb_config(configs, c, last_pformat, last_start);
+-      /* tracking for the number of srgb configs to create */
+-      if (pformat != last_pformat)
+-         last_start = c;
+-
+-      for (unsigned j = 0; j < ARRAY_SIZE(drilConfigs); j++) {
+-         unsigned depth_size = SIZE(drilConfigs[j].zs_format, ZS, 0);
+-         unsigned stencil_size = SIZE(drilConfigs[j].zs_format, ZS, 1);
+-         /* only copy supported configs */
+-         if (pformat != drilConfigs[j].color_format || depth != depth_size || stencil != stencil_size)
+-            continue;
+-
+-         /* always create single-buffered and double-buffered */
+-         for (unsigned k = 0; k < 2; k++) {
+-            configs[c] = mem_dup(&drilConfigs[j], sizeof(drilConfigs[j]));
+-
+-            struct gl_config *cfg = configs[c++];
+-            cfg->samples = samples;
+-            cfg->doubleBufferMode = k;
++   unsigned c = 0;
++
++   /* iterate over base configs and check for multisample support */
++   for (unsigned i = 0; i < ARRAY_SIZE(drilConfigs); i++) {
++      unsigned num_samples[] = {
++         0, 2, 4, 6, 8, 16, 32
++      };
++      static_assert(ARRAY_SIZE(num_samples) == NUM_SAMPLE_COUNTS, "sample count define needs updating");
++      for (unsigned j = 0; j < ARRAY_SIZE(num_samples); j++) {
++         const EGLint config_attribs[] = {
++            EGL_RED_SIZE,           SIZE(drilConfigs[i].color_format, RGB, 0),
++            EGL_GREEN_SIZE,         SIZE(drilConfigs[i].color_format, RGB, 1),
++            EGL_BLUE_SIZE,          SIZE(drilConfigs[i].color_format, RGB, 2),
++            EGL_ALPHA_SIZE,         SIZE(drilConfigs[i].color_format, RGB, 3),
++            EGL_DEPTH_SIZE,         SIZE(drilConfigs[i].zs_format, ZS, 0),
++            EGL_STENCIL_SIZE,       SIZE(drilConfigs[i].zs_format, ZS, 1),
++            EGL_SAMPLES,            num_samples[j],
++            EGL_NONE
++         };
++         int num_configs = 0;
++         if (peglChooseConfig(dpy, config_attribs, NULL, 0, &num_configs) && num_configs) {
++            /* only copy supported configs */
++            configs[c] = mem_dup(&drilConfigs[i], sizeof(drilConfigs[i]));
++
++            /* hardcoded configs have samples=0, need to update */
++            struct gl_config *cfg = (void*)configs[c];
++            cfg->samples = num_samples[j];
++            ret = true;
++            c++;
+          }
+-         break;
+       }
+-      last_pformat = pformat;
+    }
+-   /* check last format for srgbness too */
+-   if (c && has_srgb)
+-      c = add_srgb_config(configs, c, last_pformat, last_start);
+-out_egl:
+-   free(eglconfigs);
++
+    /* don't forget cleanup */
+    peglTerminate(dpy);
+ 
+ out_gbm:
+-   if (gbm)
+-      gbm_device_destroy(gbm);
++   gbm_device_destroy(gbm);
+ out:
+    dlclose(egl);
+-   if (c)
+-      return (void*)configs;
+-   free(configs);
+-   return NULL;
++   return ret;
+ }
+ 
+ static __DRIscreen *
+@@ -452,19 +354,14 @@ drilCreateNewScreen(int scrn, int fd,
+                     const __DRIextension **driver_extensions,
+                     const __DRIconfig ***driver_configs, void *data)
+ {
+-   const __DRIconfig **configs = init_dri2_configs(fd);
+-   if (!configs && fd == -1) {
++   /* multiply for possible 1/2/4/8/16/32 MSAA configs */
++   // allocate an array of pointers
++   const __DRIconfig **configs = calloc(ARRAY_SIZE(drilConfigs) * NUM_SAMPLE_COUNTS + 1, sizeof(void *));
++   /* try dri2 if fd is valid */
++   if (fd < 0 || !init_dri2_configs(fd, configs)) {
+       // otherwise set configs to point to our config list
+-      configs = calloc(ARRAY_SIZE(drilConfigs) * 2 + 1, sizeof(void *));
+-      int c = 0;
+       for (int i = 0; i < ARRAY_SIZE(drilConfigs); i++) {
+-         /* create normal config */
+-         configs[c++] = mem_dup(&drilConfigs[i], sizeof(drilConfigs[i]));
+-
+-         /* create double-buffered config */
+-         configs[c] = mem_dup(&drilConfigs[i], sizeof(drilConfigs[i]));
+-         struct gl_config *cfg = (void*)configs[c++];
+-         cfg->doubleBufferMode = 1;
++         configs[i] = mem_dup(&drilConfigs[i], sizeof(drilConfigs[i]));
+       }
+    }
+ 
