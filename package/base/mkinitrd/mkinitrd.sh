@@ -22,9 +22,10 @@ archprefix=
 outfile=
 compressor="zstd -T0 -19"
 
-declare -A vitalmods	# vital modules that need firmware
+# vital modules that need firmware
+declare -A vitalmods
 vitalmods[ast.ko]=1	# many modern servers
-vitalmods[qla1280.ko]=1 # Sgi Octane, DEC Alpha
+vitalmods[qla1280.ko]=1 # Sgi Octane, Origin, DEC Alpha
 vitalmods[qla2xxx.ko]=1 # Sun Blade, T4
 vitalmods[tg3.ko]=1	# Sun Fire
 vitalmods[xhci-pci.ko]=1 # probably every modern machine
@@ -32,10 +33,10 @@ vitalmods[r8152.ko]=1
 vitalmods[r8169.ko]=1
 
 # TODO: defauls for vintage vs. latest, usb, pata, etc.
-filter="-e /loop -e ext4 -e /xfs -e isofs -e nfsv4 -e pata_legacy -e pata_.*platform
--e pata_macio -e mac_esp -e sym53c8xx -e /aic7xxx
+filter="-e /loop -e ext2 -e ext4 -e /xfs -e isofs -e nfsv4 -e zram -e pata_legacy
+-e pata_.*platform -e pata_macio -e mac_esp -e sym53c8xx -e /aic7xxx -e qla1280
 -e pci-host-generic -e virtio_pci_.*_dev -e virtio_pci -e virtio_blk -e sunvdc
--e s[rd]_mod -e /ahci.ko -e /nvme.ko -e [uoex]hci-[ph][c][id] -e usbhid -e zram
+-e s[rd]_mod -e /ahci.ko -e /nvme.ko -e [uoex]hci-[ph][c][id] -e usbhid
 -e /offb -e /bochs -e ps3fb"
 
 declare -A added
@@ -64,7 +65,7 @@ done
 
 # -e ps3vram -e net/phy
 [ -z "$minimal" ] && filter="$filter -e reiserfs -e btrfs -e /jfs -e /xfs -e jffs2
--e ext2 -e /udf -e overlayfs -e ntfs -e /fat -e /hfs -e floppy -e efivarfs
+-e /udf -e overlayfs -e ntfs -e /fat -e /hfs -e floppy -e efivarfs
 -e pci/controller -e /ata/ -e /scsi/ -e /fusion/ -e /sdhci/ -e nvme/host -e /mmc/
 -e virtio.\(blk\|scsi\|net\|console\|input\|gpu\|pci\) -e ps3disk -e drivers/pcmcia
 -e dm-mod -e dm-raid -e md/raid -e dm/mirror -e dm/linear -e dm-crypt -e dm-cache
