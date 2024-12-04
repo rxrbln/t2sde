@@ -98,7 +98,7 @@ while [[ -n "$root" && ($((i++)) -le 15 || "$cmdline" = *rootwait*) ]]; do
 "
 
   # open luks for lvm2 and resume from disk early
-  if [ "${root%,*}" != "$root" ]; then
+  if [[ "${root}" = *,* ]]; then
 	toor="${root%,*}"
 	[[ "${toor}" = LABEL=* ]] && toor="/dev/disk/by-label/${root#LABEL=}"
 	[[ "${toor}" = UUID=* ]] && toor="/dev/disk/by-uuid/${root#UUID=}"
@@ -115,7 +115,7 @@ while [[ -n "$root" && ($((i++)) -le 15 || "$cmdline" = *rootwait*) ]]; do
 
   # maybe resume from disk?
   if [[ "$resume" && "$cmdline" != *noresume* ]]; then
-	if [ ! -e $resume -a ${resume#/dev/*/*} != $resume -a -e /sbin/lvm ]; then
+	if [[ ! -e $resume && "${resume}" = /dev/*/* && -e /sbin/lvm ]]; then
 		lvs $(mapper2lvm ${resume#/dev/}) >/dev/null 2>&1 || continue
 		echo "${n}Activating LVM $resume"; n=
 		lvchange -a ay $(mapper2lvm ${resume#/dev/})
