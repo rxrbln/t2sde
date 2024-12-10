@@ -20,12 +20,12 @@ function boot {
 	exec switch_root /mnt "$@"
 }
 
-mount -t proc none /proc
+mount -t proc proc /proc
 [ -e /proc/sys/kernel/ostype ] &&
 	echo "$(< /proc/sys/kernel/ostype) $(< /proc/sys/kernel/osrelease)," \
 "mounting /dev, /proc, /sys and starting u/devd."
-mount -t devtmpfs -o mode=755 none /dev
-mount -t sysfs none /sys
+mount -t devtmpfs -o mode=755 devtmpfs /dev
+mount -t sysfs sysfs /sys
 mkdir -p /tmp /mnt
 ln -sf /proc/self/fd /dev/fd
 
