@@ -58,6 +58,8 @@ time rsync -artH $v --devices --specials --delete --delete-excluded \
 rm ../files-{wanted,all,exclude}
 
 echo "Overlaying root file-system with target defined files ..."
+sed '/PANICMARK/Q' $build_root/sbin/initrdinit > $imagelocation/init
+chmod +x $imagelocation/init
 copy_and_parse_from_source $base/target/share/initrd/rootfs $imagelocation
 [ -e $base/target/$target/rootfs ] &&
 	copy_and_parse_from_source $base/target/$target/rootfs $imagelocation
@@ -67,7 +69,7 @@ copy_and_parse_from_source $base/target/share/initrd/rootfs $imagelocation
 if false; then
 echo "Running ldconfig and other postinstall scripts ..."
 mount /dev dev --bind
-mount none proc -t proc
+mount proc proc -t proc
 for x in sbin/ldconfig etc/postinstall.d/*; do
 	cat > $$.sh <<-EOT
 		. /etc/profile
