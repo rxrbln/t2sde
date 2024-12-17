@@ -17,7 +17,3 @@ include(`linux-net.conf.m4')
 include(`linux-fs.conf.m4')
 
 # CONFIG_ACPI_PROCESSOR is not set
-
-# loongarch64-t2-linux-gnu-ld: arch/loongarch/kernel/paravirt.o: in function `pv_send_ipi_mask':
-# paravirt.c:(.text+0x1b0): undefined reference to `__ashlti3'
-# CONFIG_PARAVIRT is not set
