@@ -6,4 +6,4 @@
 [ -e $SYSROOT/lib/modules/*/fs/binfmt_misc.ko ] || exit 42
 
 cd $SYSROOT
-$QEMU -chroot $SYSROOT sbin/modinfo -F name lib/modules/*/fs/binfmt_misc.ko
+$QEMU -chroot $SYSROOT sbin/modinfo -F name lib/modules/*-t2/fs/binfmt_misc.ko
