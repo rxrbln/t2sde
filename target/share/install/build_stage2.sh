@@ -27,20 +27,20 @@ popt               raidtools          mdadm              pcre
 lvm                lvm2               device-mapper      libaio
 dump               eject              disktype           mac-fdisk
 libnvme            nvme-cli           hdparm             sgutils
-smartmontools      stressapptest
+smartmontools      stressapptest      xxhash
 ncurses            readline           libgpg-error       libgcrypt
 bash               attr               acl                findutils
 mktemp             coreutils          pciutils           libcap
 dialog             grep               sed                less
 gzip               bzip2              xz                 zstd
-lzo                lzop               keyutils
-tar                gawk               bc                 cpio
-lrzsz              rsync              tcpdump            module-init-tools
-sysvinit           shadow             util-linux         wireless-tools
+lzo                lzop               lz4                keyutils
+tar                gawk               cpio
+lrzsz              rsync
+sysvinit           shadow             util-linux
 net-tools          procps             psmisc             udev
-modutils           pciutils           portmap            inih
-sysklogd           setserial          iproute2           liburcu
-netkit-base        netkit-ftp         netkit-telnet      netkit-tftp
+pciutils           portmap            inih
+sysklogd           iproute2           liburcu
+netkit-base        netkit-telnet      netkit-tftp        netcat
 sysfiles           libpcap            iptables           tcp_wrappers
 stone              rocknet            kexec-tools        memtest86
 kbd                ntfsprogs          libol              memtester
@@ -213,9 +213,6 @@ for x in `egrep 'X .* KERNEL .*' $base/config/$config/packages |
   done
 done
 
-
-echo_status "Creating links for identical files:"
-link_identical_files
 
 cd $disksdir/
 
