@@ -24,7 +24,7 @@ case $platform in
 	arm*|ia64|riscv*)
 		platform=
 		;;
-	hppa*)
+	parisc*)
 		;;
 	mips*)
 		;;
@@ -346,7 +346,7 @@ mkpart ${boot}m $((boot + _swap))m")
 		[ $_swap != 0 ] &&
 		    script+=("type=swap") fs+=("${dev}$((si + 3)) swap")
 		;;
-	    hppa*)
+	    parisc*)
 		fs+=("${dev}3 $any /")
 		fs+=("${dev}2 ext3 /boot")
 
