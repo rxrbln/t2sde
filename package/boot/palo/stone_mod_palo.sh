@@ -76,7 +76,7 @@ main() {
 	if [ ! -f $rootpath/etc/palo.conf ]; then
 	  if gui_yesno "PALO does not appear to be configured.
 Automatically configure PALO now?"; then
-	    create_palo_conf && install_palo
+	    create_palo_conf && install_palo $rootdev
 	  fi
 	fi
 
@@ -88,7 +88,7 @@ Automatically configure PALO now?"; then
 		"Boot Device ........... $bootdev" "" \
 		'' '' \
 		"(Re-)Create default $rootpath/etc/palo.conf" 'create_palo_conf' \
-		'(Re-)Install PALO into the IPL' 'install_palo' \
+		'(Re-)Install PALO into the IPL' "install_palo $rootdev" \
 		'' '' \
 		"Edit $bootpath/palo.conf (Config file)" \
 		"gui_edit 'PALO Configuration' $rootpath/etc/palo.conf"
