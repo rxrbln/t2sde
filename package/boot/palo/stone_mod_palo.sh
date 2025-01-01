@@ -30,9 +30,9 @@ create_kernel_list() {
 	local bootdev=$(get_realdev $bootdev)
 	local part=${bootdev%[0-9]*}
 	part=${bootdev#$part}
-	for x in `(cd /boot/; ls vmlinuz-*) | sort -r`; do
+	for x in `(cd /boot/; ls vmlinuz-*) | sort -Vr`; do
 		[ $first = 0 ] && continue
- 		ver=${x/vmlinuz-}
+		ver=${x/vmlinuz-}
 		echo "--commandline=$part/$x initrd=$part/initrd-${ver} root=$rootdev"
 		first=0
 	done
