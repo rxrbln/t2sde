@@ -1,0 +1,396 @@
+# --- T2-COPYRIGHT-BEGIN ---
+# t2/package/*/f2fs-tools/hotfix-lseek.patch.musl
+# Copyright (C) 2025 The T2 SDE Project
+# SPDX-License-Identifier: GPL-2.0 or patched project license
+# --- T2-COPYRIGHT-END ---
+
+--- f2fs-tools-1.16.0/fsck/Makefile.am.vanilla	2025-01-01 14:55:59.688265896 +0100
++++ f2fs-tools-1.16.0/fsck/Makefile.am	2025-01-01 14:56:17.804932692 +0100
+@@ -1,7 +1,7 @@
+ ## Makefile.am
+ 
+ AM_CPPFLAGS = ${libuuid_CFLAGS} -I$(top_srcdir)/include
+-AM_CFLAGS = -Wall
++AM_CFLAGS = -Wall -D_FILE_OFFSET_BITS=64
+ sbin_PROGRAMS = fsck.f2fs
+ noinst_HEADERS = common.h dict.h dqblk_v2.h f2fs.h fsck.h node.h quotaio.h \
+ 		quotaio_tree.h quotaio_v2.h xattr.h compress.h
+--- f2fs-tools-1.16.0/include/android_config.h.vanilla	2025-01-01 14:56:33.968266150 +0100
++++ f2fs-tools-1.16.0/include/android_config.h	2025-01-01 14:57:11.241599727 +0100
+@@ -30,8 +30,6 @@
+ #define HAVE_FSTAT 1
+ #define HAVE_FSTAT64 1
+ #define HAVE_GETMNTENT 1
+-#define HAVE_LLSEEK 1
+-#define HAVE_LSEEK64 1
+ #define HAVE_MEMSET 1
+ #define HAVE_SELINUX_ANDROID_H 1
+ #define HAVE_SETMNTENT 1
+@@ -67,7 +65,6 @@
+ #define HAVE_FSTAT 1
+ #define HAVE_FSTAT64 1
+ #define HAVE_GETMNTENT 1
+-#define HAVE_LLSEEK 1
+ #define HAVE_MEMSET 1
+ #define HAVE_SPARSE_SPARSE_H 1
+ #define HAVE_LIBLZ4 1
+@@ -78,6 +75,5 @@
+ #endif
+ 
+ #if defined(_WIN32)
+-#define HAVE_LSEEK64
+ #define HAVE_SPARSE_SPARSE_H 1
+ #endif
+--- f2fs-tools-1.16.0/lib/Makefile.am.vanilla	2025-01-01 14:57:20.141599790 +0100
++++ f2fs-tools-1.16.0/lib/Makefile.am	2025-01-01 14:57:32.861599878 +0100
+@@ -3,7 +3,7 @@
+ lib_LTLIBRARIES = libf2fs.la
+ 
+ libf2fs_la_SOURCES = libf2fs.c libf2fs_io.c libf2fs_zoned.c nls_utf8.c
+-libf2fs_la_CFLAGS = -Wall
++libf2fs_la_CFLAGS = -Wall -D_FILE_OFFSET_BITS=64
+ libf2fs_la_CPPFLAGS = -I$(top_srcdir)/include
+ libf2fs_la_LDFLAGS = -version-info $(LIBF2FS_CURRENT):$(LIBF2FS_REVISION):$(LIBF2FS_AGE)
+ 
+--- f2fs-tools-1.16.0/lib/libf2fs.c.vanilla	2025-01-01 14:57:47.234933316 +0100
++++ f2fs-tools-1.16.0/lib/libf2fs.c	2025-01-01 14:58:02.701600097 +0100
+@@ -6,9 +6,6 @@
+  *
+  * Dual licensed under the GPL or LGPL version 2 licenses.
+  */
+-#define _LARGEFILE64_SOURCE
+-#define _FILE_OFFSET_BITS 64
+-
+ #include <f2fs_fs.h>
+ #include <stdio.h>
+ #include <stdlib.h>
+--- f2fs-tools-1.16.0/lib/libf2fs_io.c.vanilla	2025-01-01 14:58:07.168266798 +0100
++++ f2fs-tools-1.16.0/lib/libf2fs_io.c	2025-01-01 15:03:56.918269150 +0100
+@@ -11,8 +11,6 @@
+  *
+  * Dual licensed under the GPL or LGPL version 2 licenses.
+  */
+-#define _LARGEFILE64_SOURCE
+-
+ #include <stdio.h>
+ #include <stdlib.h>
+ #include <string.h>
+@@ -67,22 +65,13 @@
+ 	return -1;
+ }
+ 
+-#ifndef HAVE_LSEEK64
+-typedef off_t	off64_t;
+-
+-static inline off64_t lseek64(int fd, __u64 offset, int set)
+-{
+-	return lseek(fd, offset, set);
+-}
+-#endif
+-
+ /* ---------- dev_cache, Least Used First (LUF) policy  ------------------- */
+ /*
+  * Least used block will be the first victim to be replaced when max hash
+  * collision exceeds
+  */
+ static bool *dcache_valid; /* is the cached block valid? */
+-static off64_t  *dcache_blk; /* which block it cached */
++static off_t  *dcache_blk; /* which block it cached */
+ static uint64_t *dcache_lastused; /* last used ticks for cache entries */
+ static char *dcache_buf; /* cached block data */
+ static uint64_t dcache_usetick; /* current use tick */
+@@ -172,7 +161,7 @@
+ {
+ 	if (n <= 0)
+ 		return -1;
+-	if ((dcache_blk = (off64_t *) malloc(sizeof(off64_t) * n)) == NULL
++	if ((dcache_blk = (off_t *) malloc(sizeof(off_t) * n)) == NULL
+ 		|| (dcache_lastused = (uint64_t *)
+ 				malloc(sizeof(uint64_t) * n)) == NULL
+ 		|| (dcache_buf = (char *) malloc (F2FS_BLKSIZE * n)) == NULL
+@@ -257,7 +246,7 @@
+ 			dcache_config.num_cache_entry;
+ }
+ 
+-static long dcache_find(off64_t blk)
++static long dcache_find(off_t blk)
+ {
+ 	register long n = dcache_config.num_cache_entry;
+ 	register unsigned m = dcache_config.max_hash_collision;
+@@ -278,10 +267,10 @@
+ }
+ 
+ /* Physical read into cache */
+-static int dcache_io_read(int fd, long entry, off64_t offset, off64_t blk)
++static int dcache_io_read(int fd, long entry, off_t offset, off_t blk)
+ {
+-	if (lseek64(fd, offset, SEEK_SET) < 0) {
+-		MSG(0, "\n lseek64 fail.\n");
++	if (lseek(fd, offset, SEEK_SET) < 0) {
++		MSG(0, "\n lseek fail.\n");
+ 		return -1;
+ 	}
+ 	if (read(fd, dcache_buf + entry * F2FS_BLKSIZE, F2FS_BLKSIZE) < 0) {
+@@ -308,12 +297,12 @@
+  *       1: cache not available (uninitialized)
+  *      -1: error
+  */
+-static int dcache_update_rw(int fd, void *buf, off64_t offset,
++static int dcache_update_rw(int fd, void *buf, off_t offset,
+ 		size_t byte_count, bool is_write)
+ {
+-	off64_t blk;
++	off_t blk;
+ 	int addr_in_blk;
+-	off64_t start;
++	off_t start;
+ 
+ 	if (!dcache_initialized)
+ 		dcache_init(); /* auto initialize */
+@@ -377,13 +366,13 @@
+  * return value: 1: cache not available
+  *               0: success, -1: I/O error
+  */
+-int dcache_update_cache(int fd, void *buf, off64_t offset, size_t count)
++int dcache_update_cache(int fd, void *buf, off_t offset, size_t count)
+ {
+ 	return dcache_update_rw(fd, buf, offset, count, true);
+ }
+ 
+ /* handles read into cache + read into buffer  */
+-int dcache_read(int fd, void *buf, off64_t offset, size_t count)
++int dcache_read(int fd, void *buf, off_t offset, size_t count)
+ {
+ 	return dcache_update_rw(fd, buf, offset, count, false);
+ }
+@@ -395,7 +384,7 @@
+ {
+ 	if (c.sparse_mode)
+ 		return 0;
+-	if (lseek64(c.kd, (off64_t)offset, SEEK_SET) < 0)
++	if (lseek(c.kd, (off_t)offset, SEEK_SET) < 0)
+ 		return -1;
+ 	if (read(c.kd, buf, len) < 0)
+ 		return -1;
+@@ -534,10 +523,10 @@
+ 
+ 	/* err = 1: cache not available, fall back to non-cache R/W */
+ 	/* err = 0: success, err=-1: I/O error */
+-	err = dcache_read(fd, buf, (off64_t)offset, len);
++	err = dcache_read(fd, buf, (off_t)offset, len);
+ 	if (err <= 0)
+ 		return err;
+-	if (lseek64(fd, (off64_t)offset, SEEK_SET) < 0)
++	if (lseek(fd, (off_t)offset, SEEK_SET) < 0)
+ 		return -1;
+ 	if (read(fd, buf, len) < 0)
+ 		return -1;
+@@ -580,9 +569,9 @@
+ 	 * dcache_update_cache() just update cache, won't do I/O.
+ 	 * Thus even no error, we need normal non-cache I/O for actual write
+ 	 */
+-	if (dcache_update_cache(fd, buf, (off64_t)offset, len) < 0)
++	if (dcache_update_cache(fd, buf, (off_t)offset, len) < 0)
+ 		return -1;
+-	if (lseek64(fd, (off64_t)offset, SEEK_SET) < 0)
++	if (lseek(fd, (off_t)offset, SEEK_SET) < 0)
+ 		return -1;
+ 	if (write(fd, buf, len) < 0)
+ 		return -1;
+@@ -596,7 +585,7 @@
+ 
+ int dev_write_dump(void *buf, __u64 offset, size_t len)
+ {
+-	if (lseek64(c.dump_fd, (off64_t)offset, SEEK_SET) < 0)
++	if (lseek(c.dump_fd, (off_t)offset, SEEK_SET) < 0)
+ 		return -1;
+ 	if (write(c.dump_fd, buf, len) < 0)
+ 		return -1;
+@@ -618,7 +607,7 @@
+ 	/* Only allow fill to zero */
+ 	if (*((__u8*)buf))
+ 		return -1;
+-	if (lseek64(fd, (off64_t)offset, SEEK_SET) < 0)
++	if (lseek(fd, (off_t)offset, SEEK_SET) < 0)
+ 		return -1;
+ 	if (write(fd, buf, len) < 0)
+ 		return -1;
+--- f2fs-tools-1.16.0/lib/libf2fs_zoned.c.vanilla	2025-01-01 15:04:13.531602603 +0100
++++ f2fs-tools-1.16.0/lib/libf2fs_zoned.c	2025-01-01 15:04:23.861602690 +0100
+@@ -6,8 +6,6 @@
+  *
+  * Dual licensed under the GPL or LGPL version 2 licenses.
+  */
+-#define _LARGEFILE64_SOURCE
+-
+ #include <f2fs_fs.h>
+ #include <stdio.h>
+ #include <stdlib.h>
+--- f2fs-tools-1.16.0/mkfs/Makefile.am.vanilla	2025-01-01 15:04:33.181602758 +0100
++++ f2fs-tools-1.16.0/mkfs/Makefile.am	2025-01-01 15:05:09.358269657 +0100
+@@ -1,7 +1,7 @@
+ ## Makefile.am
+ 
+ AM_CPPFLAGS = ${libuuid_CFLAGS} ${libblkid_CFLAGS} -I$(top_srcdir)/include
+-AM_CFLAGS = -Wall -DWITH_BLKDISCARD
++AM_CFLAGS = -Wall -DWITH_BLKDISCARD -D_FILE_OFFSET_BITS=64
+ sbin_PROGRAMS = mkfs.f2fs
+ noinst_HEADERS = f2fs_format_utils.h
+ include_HEADERS = $(top_srcdir)/include/f2fs_fs.h
+@@ -10,7 +10,7 @@
+ 
+ lib_LTLIBRARIES = libf2fs_format.la
+ libf2fs_format_la_SOURCES = f2fs_format_main.c f2fs_format.c f2fs_format_utils.c
+-libf2fs_format_la_CFLAGS = -DWITH_BLKDISCARD
++libf2fs_format_la_CFLAGS = -DWITH_BLKDISCARD -D_FILE_OFFSET_BITS=64
+ libf2fs_format_la_LDFLAGS = ${libblkid_LIBS} ${libuuid_LIBS} -L$(top_builddir)/lib -lf2fs \
+ 	-version-info $(FMT_CURRENT):$(FMT_REVISION):$(FMT_AGE)
+ 
+--- f2fs-tools-1.16.0/mkfs/f2fs_format.c.vanilla	2025-01-01 15:05:20.661603076 +0100
++++ f2fs-tools-1.16.0/mkfs/f2fs_format.c	2025-01-01 15:05:30.924936481 +0100
+@@ -6,8 +6,6 @@
+  *
+  * Dual licensed under the GPL or LGPL version 2 licenses.
+  */
+-#define _LARGEFILE64_SOURCE
+-
+ #include <stdio.h>
+ #include <stdlib.h>
+ #include <fcntl.h>
+--- f2fs-tools-1.16.0/mkfs/f2fs_format_main.c.vanilla	2025-01-01 15:05:40.274936559 +0100
++++ f2fs-tools-1.16.0/mkfs/f2fs_format_main.c	2025-01-01 15:05:44.404936590 +0100
+@@ -6,8 +6,6 @@
+  *
+  * Dual licensed under the GPL or LGPL version 2 licenses.
+  */
+-#define _LARGEFILE64_SOURCE
+-
+ #include <stdio.h>
+ #include <stdlib.h>
+ #include <fcntl.h>
+--- f2fs-tools-1.16.0/mkfs/f2fs_format_utils.c.vanilla	2025-01-01 15:05:55.631603338 +0100
++++ f2fs-tools-1.16.0/mkfs/f2fs_format_utils.c	2025-01-01 15:06:22.948270195 +0100
+@@ -6,20 +6,10 @@
+  *
+  * Dual licensed under the GPL or LGPL version 2 licenses.
+  */
+-#ifndef _LARGEFILE_SOURCE
+-#define _LARGEFILE_SOURCE
+-#endif
+-#ifndef _LARGEFILE64_SOURCE
+-#define _LARGEFILE64_SOURCE
+-#endif
+ #ifndef _GNU_SOURCE
+ #define _GNU_SOURCE
+ #endif
+ 
+-#ifndef _FILE_OFFSET_BITS
+-#define _FILE_OFFSET_BITS 64
+-#endif
+-
+ #include <f2fs_fs.h>
+ 
+ #include <stdio.h>
+--- f2fs-tools-1.16.0/mkfs/f2fs_format_utils.h.vanilla	2025-01-01 15:06:27.448270229 +0100
++++ f2fs-tools-1.16.0/mkfs/f2fs_format_utils.h	2025-01-01 15:06:36.771603628 +0100
+@@ -6,8 +6,6 @@
+  *
+  * Dual licensed under the GPL or LGPL version 2 licenses.
+  */
+-#define _LARGEFILE64_SOURCE
+-
+ #include "f2fs_fs.h"
+ 
+ extern struct f2fs_configuration c;
+--- f2fs-tools-1.16.0/tools/f2fs_io/Makefile.am.vanilla	2025-01-01 15:07:12.548270557 +0100
++++ f2fs-tools-1.16.0/tools/f2fs_io/Makefile.am	2025-01-01 15:07:21.898270634 +0100
+@@ -2,7 +2,7 @@
+ 
+ if LINUX
+ AM_CPPFLAGS = -I$(top_srcdir)/include
+-AM_CFLAGS = -Wall
++AM_CFLAGS = -Wall -D_FILE_OFFSET_BITS=64
+ sbin_PROGRAMS = f2fs_io
+ f2fs_io_SOURCES = f2fs_io.c
+ endif
+--- f2fs-tools-1.16.0/tools/f2fs_io/f2fs_io.c.vanilla	2025-01-01 15:07:29.041604021 +0100
++++ f2fs-tools-1.16.0/tools/f2fs_io/f2fs_io.c	2025-01-01 15:07:43.821604126 +0100
+@@ -9,12 +9,6 @@
+ #ifndef _GNU_SOURCE
+ #define _GNU_SOURCE
+ #endif
+-#ifndef _LARGEFILE_SOURCE
+-#define _LARGEFILE_SOURCE
+-#endif
+-#ifndef _LARGEFILE64_SOURCE
+-#define _LARGEFILE64_SOURCE
+-#endif
+ #ifndef O_LARGEFILE
+ #define O_LARGEFILE 0
+ #endif
+--- f2fs-tools-1.16.0/tools/Makefile.am.vanilla	2025-01-01 15:06:45.728270359 +0100
++++ f2fs-tools-1.16.0/tools/Makefile.am	2025-01-01 15:06:57.331603778 +0100
+@@ -1,7 +1,7 @@
+ ## Makefile.am
+ 
+ AM_CPPFLAGS = ${libuuid_CFLAGS} -I$(top_srcdir)/include
+-AM_CFLAGS = -Wall
++AM_CFLAGS = -Wall -D_FILE_OFFSET_BITS=64
+ sbin_PROGRAMS =
+ if !WINDOWS
+ sbin_PROGRAMS += fibmap.f2fs parse.f2fs
+--- f2fs-tools-1.16.0/tools/f2fs_io_parse.c.vanilla	2025-01-01 15:08:03.048270928 +0100
++++ f2fs-tools-1.16.0/tools/f2fs_io_parse.c	2025-01-01 15:08:11.914937654 +0100
+@@ -8,7 +8,6 @@
+  * it under the terms of the GNU General Public License version 2 as
+  * published by the Free Software Foundation.
+  */
+-#define _LARGEFILE64_SOURCE
+ #include <stdio.h>
+ #include <stdlib.h>
+ #include <unistd.h>
+--- f2fs-tools-1.16.0/tools/f2fscrypt.c.vanilla	2025-01-01 15:08:18.958271044 +0100
++++ f2fs-tools-1.16.0/tools/f2fscrypt.c	2025-01-01 15:08:31.311604461 +0100
+@@ -7,15 +7,6 @@
+  * Authors: Michael Halcrow <mhalcrow@google.com>,
+  *	    Ildar Muslukhov <ildarm@google.com>
+  */
+-
+-#ifndef _LARGEFILE_SOURCE
+-#define _LARGEFILE_SOURCE
+-#endif
+-
+-#ifndef _LARGEFILE64_SOURCE
+-#define _LARGEFILE64_SOURCE
+-#endif
+-
+ #ifndef _GNU_SOURCE
+ #define _GNU_SOURCE
+ #endif
+--- f2fs-tools-1.16.0/tools/fibmap.c.vanilla	2025-01-01 15:08:36.401604506 +0100
++++ f2fs-tools-1.16.0/tools/fibmap.c	2025-01-01 15:08:54.024937967 +0100
+@@ -1,13 +1,6 @@
+ #if !defined(__FreeBSD__) && !defined(__NetBSD__) && !defined(__OpenBSD__)
+ #define _XOPEN_SOURCE 600
+ #define _DARWIN_C_SOURCE
+-#define _FILE_OFFSET_BITS 64
+-#ifndef _LARGEFILE_SOURCE
+-#define _LARGEFILE_SOURCE
+-#endif
+-#ifndef _LARGEFILE64_SOURCE
+-#define _LARGEFILE64_SOURCE
+-#endif
+ #ifndef _GNU_SOURCE
+ #define _GNU_SOURCE
+ #endif
+--- f2fs-tools-1.16.0/configure.ac.vanilla	2025-01-01 14:55:34.664932362 +0100
++++ f2fs-tools-1.16.0/configure.ac	2025-01-01 14:55:47.491599126 +0100
+@@ -187,8 +187,6 @@
+ 	getmntent
+ 	getuid
+ 	keyctl
+-	llseek
+-	lseek64
+ 	memset
+ 	setmntent
+ 	clock_gettime
