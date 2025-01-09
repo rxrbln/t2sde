@@ -1,8 +1,14 @@
 #!/bin/sh
+# --- T2-COPYRIGHT-BEGIN ---
+# t2/package/*/mkinitrd/initrdinit.sh
+# Copyright (C) 2025 The T2 SDE Project
+# Copyright (C) 2005-2025 Rene Rebe, ExactCODE GmbH; Germany
+# SPDX-License-Identifier: GPL-2.0
+# --- T2-COPYRIGHT-END ---
 
 PATH=/sbin:/bin:/usr/bin:/usr/sbin
 
-echo "T2 SDE early userspace (c)2005-2024 Rene Rebe, ExactCODE GmbH; Germany."
+echo "T2 SDE early userspace (c)2005-2025 Rene Rebe, ExactCODE GmbH; Germany."
 
 function mapper2lvm {
 	# support both, direct vg/lv or mapper/...
@@ -30,7 +36,7 @@ mkdir -p /tmp /mnt
 ln -sf /proc/self/fd /dev/fd
 
 udevd &
-udevadm trigger
+udevadm trigger --action=add
 udevadm settle
 
 # if no fb, try legacy drivers
