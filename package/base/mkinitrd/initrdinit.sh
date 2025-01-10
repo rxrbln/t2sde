@@ -1,9 +1,5 @@
 #!/bin/sh
 # --- T2-COPYRIGHT-BEGIN ---
-# t2/package/*/mkinitrd/initrdinit.sh
-# Copyright (C) 2025 The T2 SDE Project
-# Copyright (C) 2005-2025 Rene Rebe, ExactCODE GmbH; Germany
-# SPDX-License-Identifier: GPL-2.0
 # --- T2-COPYRIGHT-END ---
 
 PATH=/sbin:/bin:/usr/bin:/usr/sbin
@@ -32,7 +28,8 @@ mount -t proc proc /proc
 "mounting /dev, /proc, /sys and starting u/devd."
 mount -t devtmpfs -o mode=755 devtmpfs /dev
 mount -t sysfs sysfs /sys
-mkdir -p /tmp /mnt
+mkdir -p /tmp /mnt /var/run
+ln -sf var/run /run
 ln -sf /proc/self/fd /dev/fd
 
 udevd &
