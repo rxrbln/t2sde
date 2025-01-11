@@ -1,0 +1,227 @@
+# --- T2-COPYRIGHT-BEGIN ---
+# t2/package/*/vlang/new_buildscript.patch
+# Copyright (C) 2025 The T2 SDE Project
+# SPDX-License-Identifier: GPL-2.0 or patched project license
+# --- T2-COPYRIGHT-END ---
+
+diff --git a/build.sh b/build.sh
+new file mode 100755
+index 000000000..aae8070be
+--- /dev/null
++++ b/build.sh
+@@ -0,0 +1,215 @@
++#/bin/bash
++set -e
++
++install=0
++force_boostrap=0
++show_help=0
++while [[ $# -gt 0 ]]; do
++    arg="$1"
++
++    key=$(echo $arg | cut -sd'=' -f1)
++    val=$(echo $arg | cut -sd'=' -f2)
++
++    case $arg in
++        help)
++            show_help=1
++            ;;
++        --help)
++            show_help=1
++            ;;
++        -help)
++            show_help=1
++            ;;
++        build)
++            if ! [ -z $val ]; then
++                echo "argument $arg expected no value"
++                exit 1
++            fi
++            # ignore for now
++            ;;
++        install)
++            if ! [ -z $val ]; then
++                echo "argument $arg expected no value"
++                exit 1
++            fi
++            install=1
++            ;;
++        clean)
++            if ! [ -z $val ]; then
++                echo "argument $arg expected no value"
++                exit 1
++            fi
++            # ignore for now
++            ;;
++        force-bootstrap)
++            if ! [ -z $val ]; then
++                echo "argument $arg expected no value"
++                exit 1
++            fi
++            force_boostrap=1
++            ;;
++        *)
++            echo "unknown argument: $arg"
++            ;;
++    esac
++
++    shift # Move to the next argument
++done
++
++if ((show_help)); then
++    echo "usage: ./build.sh [build|install|clean] (force-bootstrap)"
++    exit 0
++fi
++
++
++test_prog () {
++    echo "$1" > ".check.c"
++    if $CC $2 ".check.c" -o ".check.exe" 2>/dev/null; then
++        echo 1
++    else
++        echo 0
++    fi
++}
++
++check_cc_arg () {
++    test_prog "int main() {return 0;}" $1
++}
++
++check_include () {
++    test_prog "#include <$1>
++    int main() { return 0; }"
++}
++
++
++# ==================================== #
++echo -n "checking for cc: "
++if [ -z $CC ]; then
++    if command -v cc 2>&1 > /dev/null; then
++        CC=$(which cc)
++        echo $CC
++    else
++        echo no
++        echo Please manually set \$CC
++        exit 1
++    fi
++fi
++# ==================================== #
++echo -n "can cc compile simple program: "
++if [ $(test_prog "int main() {return 0;}") = 1 ]; then
++    echo yes
++else
++    echo no
++    echo Please set \$CC to a working C compiler
++    exit 1
++fi
++# ==================================== #
++backtrace=0
++echo -n "checking for backtrace(): "
++if [ $(test_prog "int main() {void* buf[1]; (void) backtrace(buf, 1);}") = 1 ]; then
++    echo yes
++    backtrace=1
++else
++    echo no
++fi
++# ==================================== #
++echo -n "checking for v: "
++have_v=0
++if command -v v 2>&1 > /dev/null; then
++    have_v=1
++    echo yes
++else
++    echo no
++fi
++# ==================================== #
++echo -n "checking for downloader: "
++if command -v wget 2>&1 > /dev/null; then
++    downloader=wget
++    echo wget
++elif command -v curl 2>&1 > /dev/null; then
++    downloader=curl
++    echo curl
++else
++    echo no curl or wget found in path
++    exit 1
++fi
++# ==================================== #
++echo -n "checking for libgc: "
++if [ "$(check_cc_arg "-lgc")" = "1" ]; then
++    echo yes
++else
++    echo no
++    echo please install libgc / gc-boehem
++    exit 1
++fi
++# ==================================== #
++echo -n "checking for bindir: "
++if ! [ -z $BINDIR ]; then
++    echo $BINDIR
++elif [ -d /usr/bin ]; then
++    BINDIR=/usr/bin
++    echo $BINDIR
++else
++    echo could not find bin dir. manually set \$BINDIR
++    exit 1
++fi
++# ==================================== #
++
++
++download () {
++    if [ "$downloader" = "wget" ]; then
++        wget "$2" -O "$1"
++    elif [ "$downloader" = "curl" ]; then
++        curl "$2" -o "$1"
++    fi
++}
++
++
++VFLAGS="-d dynamic_boehm"
++if ((!backtrace)); then
++    VFLAGS+=" -d no_backtrace"
++fi
++
++if ((!have_v)); then
++    force_boostrap=1
++fi
++
++if ((!force_boostrap)); then
++    echo "skipping stage 1 (boostrap) because V in path, and force-bootstrap argument not set"
++    stage1_cmd="v"
++else
++    if [ -f "v.c" ]; then
++        echo "boostrap (v.c) already downloaded, skipping"
++    else
++        echo "download boostrap (v.c)"
++        download "v.c" "https://raw.githubusercontent.com/vlang/vc/f553add34becae265cd107b55d0d0b9907fc1b6d/v.c"
++    fi
++
++    echo "compile stage 1 (boostrap)"
++    $CC v.c -o v1.exe -std=c99 -lpthread -lm -w
++
++    stage1_cmd="./v1.exe"
++fi
++
++echo "compile stage 2"
++"$stage1_cmd" -no-parallel -o v2.exe $VFLAGS -d tools_vflags="$VFLAGS" cmd/v
++
++echo "compile stage 3"
++./v2.exe -nocache -o v3.exe $VFLAGS -d tools_vflags="$VFLAGS" cmd/v
++
++if ((install)); then
++    echo "installing to /opt/vlang"
++    mkdir -p /opt/vlang
++    cp v3.exe "/opt/vlang/v"
++    cp -r vlib "/opt/vlang/"
++    cp -r thirdparty "/opt/vlang/"
++    cp -r doc "/opt/vlang/"
++    cp -r cmd "/opt/vlang/"
++    cp v.mod "/opt/vlang/"
++    cp LICENSE "/opt/vlang/"
++
++    echo "creating symlink"
++    if [ -f "$BINDIR/v" ]; then
++        rm "$BINDIR/v"
++    fi
++    ln -s "/opt/vlang/v" "$BINDIR/v"
++fi
