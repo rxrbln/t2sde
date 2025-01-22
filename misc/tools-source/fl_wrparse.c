@@ -35,7 +35,7 @@ char * get_realname(char * origname, int is_dir) {
 
 	if (strcmp(buf, "/")) strcat(buf,"/");
 	strcat(buf, file);
-
+#if 0
 	/* term dirs with / */
 	if (is_dir) {
 		int slen = strlen(buf);
@@ -44,6 +44,7 @@ char * get_realname(char * origname, int is_dir) {
 			buf[slen+1] = 0;
 		}
 	}
+#endif
 
 	return buf;
 }
