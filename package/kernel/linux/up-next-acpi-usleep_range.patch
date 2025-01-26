@@ -1,0 +1,111 @@
+From: "Rafael J. Wysocki" <rjw@rjwysocki.net>
+To: Linux ACPI <linux-acpi@vger.kernel.org>
+Cc: LKML <linux-kernel@vger.kernel.org>, Linux PM <linux-pm@vger.kernel.org>,
+ Len Brown <len.brown@intel.com>, Arjan van de Ven <arjan@linux.intel.com>,
+ Pierre Gondois <pierre.gondois@arm.com>,
+ Dietmar Eggemann <dietmar.eggemann@arm.com>,
+ Hans de Goede <hdegoede@redhat.com>,
+ Mario Limonciello <mario.limonciello@amd.com>,
+ "Gautham R. Shenoy" <gautham.shenoy@amd.com>
+Subject: [PATCH v1] ACPI: OSL: Use usleep_range() in acpi_os_sleep()
+Date: Thu, 05 Dec 2024 12:24:35 +0100
+Message-ID: <5857066.DvuYhMxLoT@rjwysocki.net>
+Precedence: bulk
+X-Mailing-List: linux-kernel@vger.kernel.org
+List-Id: <linux-kernel.vger.kernel.org>
+List-Subscribe: <mailto:linux-kernel+subscribe@vger.kernel.org>
+List-Unsubscribe: <mailto:linux-kernel+unsubscribe@vger.kernel.org>
+MIME-Version: 1.0
+Content-Transfer-Encoding: 7Bit
+Content-Type: text/plain; charset="UTF-8"
+
+From: Rafael J. Wysocki <rafael.j.wysocki@intel.com>
+Subject: [PATCH v0.1] ACPI: OSL: Use usleep_range() in acpi_os_sleep()
+
+As stated by Len in [1], the extra delay added by msleep() to the
+sleep time value passed to it can be significant, roughly between
+1.5 ns on systems with HZ = 1000 and as much as 15 ms on systems with
+HZ = 100, which is hardly acceptable, at least for small sleep time
+values.
+
+msleep(5) on the default HZ = 250 in Ubuntu on a modern PC takes about
+12 ms.  This results in over 800 ms of spurious system resume delay on
+systems such as the Dell XPS-13-9300, which use ASL Sleep(5ms) in a
+tight loop.
+
+Address this by using usleep_range() in acpi_os_sleep() instead of
+msleep().  For short sleep times this is a no brainer, but even for
+long sleeps usleep_range() should be preferred because timer wheel
+timers are optimized for cancelation before they expire and this
+particular timer is not going to be canceled.
+
+Add at least 50 us on top of the requested sleep time in case the
+timer can be subject to coalescing, which is consistent with what's
+done in user space in this context [2], but for sleeps longer than 5 ms
+use 1% of the requested sleep time for this purpose.
+
+The rationale here is that longer sleeps don't need that much of a timer
+precision as a rule and making the timer a more likely candidate for
+coalescing in these cases is generally desirable.  It starts at 5 ms so
+that the delta between the requested sleep time and the effective
+deadline is a contiuous function of the former.
+
+Link: https://lore.kernel.org/linux-pm/c7db7e804c453629c116d508558eaf46477a2d73.1731708405.git.len.brown@intel.com/ [1]
+Link: https://lore.kernel.org/linux-pm/
+CAJvTdK=Q1kwWA6Wxn8Zcf0OicDEk6cHYFAvQVizgA47mXu63+g@mail.gmail.com/ [2]
+Closes: https://bugzilla.kernel.org/show_bug.cgi?id=216263
+Reported-by: Len Brown <lenb@kernel.org>
+Reviewed-by: Hans de Goede <hdegoede@redhat.com>
+Reviewed-by: Mario Limonciello <mario.limonciello@amd.com>
+Tested-by: Mario Limonciello <mario.limonciello@amd.com>
+Signed-off-by: Rafael J. Wysocki <rafael.j.wysocki@intel.com>
+---
+
+The previous RFC version of this patch is here:
+
+https://lore.kernel.org/linux-pm/5839859.DvuYhMxLoT@rjwysocki.net/
+
+The difference between this version and the RFC is a changelog update
+suggested by Len, the Closes: tag and the tags from Hans and Mario.
+
+---
+ drivers/acpi/osl.c |   22 +++++++++++++++++++++-
+ 1 file changed, 21 insertions(+), 1 deletion(-)
+
+Index: linux-pm/drivers/acpi/osl.c
+===================================================================
+--- linux-pm.orig/drivers/acpi/osl.c
++++ linux-pm/drivers/acpi/osl.c
+@@ -607,7 +607,27 @@ acpi_status acpi_os_remove_interrupt_han
+ 
+ void acpi_os_sleep(u64 ms)
+ {
+-	msleep(ms);
++	u64 usec = ms * USEC_PER_MSEC, delta_us = 50;
++
++	/*
++	 * Use a hrtimer because the timer wheel timers are optimized for
++	 * cancelation before they expire and this timer is not going to be
++	 * canceled.
++	 *
++	 * Set the delta between the requested sleep time and the effective
++	 * deadline to at least 50 us in case there is an opportunity for timer
++	 * coalescing.
++	 *
++	 * Moreover, longer sleeps can be assumed to need somewhat less timer
++	 * precision, so sacrifice some of it for making the timer a more likely
++	 * candidate for coalescing by setting the delta to 1% of the sleep time
++	 * if it is above 5 ms (this value is chosen so that the delta is a
++	 * continuous function of the sleep time).
++	 */
++	if (ms > 5)
++		delta_us = (USEC_PER_MSEC / 100) * ms;
++
++	usleep_range(usec, usec + delta_us);
+ }
+ 
+ void acpi_os_stall(u32 us)
+
+
+
+
