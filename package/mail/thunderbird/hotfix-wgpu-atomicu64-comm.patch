@@ -1,0 +1,174 @@
+# --- T2-COPYRIGHT-BEGIN ---
+# t2/package/*/thunderbird/hotfix-wgpu-atomicu64-comm.patch
+# Copyright (C) 2024 - 2025 The T2 SDE Project
+# SPDX-License-Identifier: GPL-2.0 or patched project license
+# --- T2-COPYRIGHT-END ---
+
+--- firefox-134.0.2/comm/third_party/rust/wgpu-core/src/device/resource.rs.vanilla	2025-01-31 11:24:53.200939943 +0100
++++ firefox-134.0.2/comm/third_party/rust/wgpu-core/src/device/resource.rs	2025-01-31 11:24:58.516939731 +0100
+@@ -46,7 +46,7 @@
+     mem::{self, ManuallyDrop},
+     num::NonZeroU32,
+     sync::{
+-        atomic::{AtomicBool, AtomicU64, Ordering},
++        atomic::{AtomicBool, AtomicUsize, Ordering},
+         Arc, OnceLock, Weak,
+     },
+ };
+@@ -280,8 +280,8 @@
+             zero_buffer: ManuallyDrop::new(zero_buffer),
+             label: desc.label.to_string(),
+             command_allocator,
+-            active_submission_index: AtomicU64::new(0),
+-            last_successful_submission_index: AtomicU64::new(0),
++            active_submission_index: AtomicUsize::new(0),
++            last_successful_submission_index: AtomicUsize::new(0),
+             fence: RwLock::new(rank::DEVICE_FENCE, ManuallyDrop::new(fence)),
+             snatchable_lock: unsafe { SnatchLock::new(rank::DEVICE_SNATCHABLE_LOCK) },
+             valid: AtomicBool::new(true),
+--- firefox-130.0/comm/third_party/rust/wgpu-hal/src/lib.rs.orig	2024-09-03 13:18:29.730010017 +0200
++++ firefox-130.0/comm/third_party/rust/wgpu-hal/src/lib.rs	2024-09-03 13:30:13.876693816 +0200
+@@ -293,8 +293,8 @@
+ 
+ pub type Label<'a> = Option<&'a str>;
+ pub type MemoryRange = Range<wgt::BufferAddress>;
+-pub type FenceValue = u64;
+-pub type AtomicFenceValue = std::sync::atomic::AtomicU64;
++pub type FenceValue = usize;
++pub type AtomicFenceValue = std::sync::atomic::AtomicUsize;
+ 
+ /// Drop guard to signal wgpu-hal is no longer using an externally created object.
+ pub type DropGuard = Box<dyn std::any::Any + Send + Sync>;
+--- firefox-128.0/comm/third_party/rust/ash/src/extensions/khr/timeline_semaphore.rs.vanilla	2024-07-09 14:28:32.931405214 +0200
++++ firefox-128.0/comm/third_party/rust/ash/src/extensions/khr/timeline_semaphore.rs	2024-07-09 14:29:05.602402066 +0200
+@@ -7,7 +7,7 @@
+ impl crate::khr::timeline_semaphore::Device {
+     /// <https://registry.khronos.org/vulkan/specs/1.3-extensions/man/html/vkGetSemaphoreCounterValue.html>
+     #[inline]
+-    pub unsafe fn get_semaphore_counter_value(&self, semaphore: vk::Semaphore) -> VkResult<u64> {
++    pub unsafe fn get_semaphore_counter_value(&self, semaphore: vk::Semaphore) -> VkResult<usize> {
+         let mut value = mem::MaybeUninit::uninit();
+         (self.fp.get_semaphore_counter_value_khr)(self.handle, semaphore, value.as_mut_ptr())
+             .assume_init_on_success(value)
+--- firefox-128.0/comm/third_party/rust/ash/src/vk/definitions.rs.vanilla	2024-07-09 14:31:17.061389400 +0200
++++ firefox-128.0/comm/third_party/rust/ash/src/vk/definitions.rs	2024-07-09 14:34:06.172373105 +0200
+@@ -12913,9 +12913,9 @@
+     pub s_type: StructureType,
+     pub p_next: *const c_void,
+     pub wait_semaphore_values_count: u32,
+-    pub p_wait_semaphore_values: *const u64,
++    pub p_wait_semaphore_values: *const usize,
+     pub signal_semaphore_values_count: u32,
+-    pub p_signal_semaphore_values: *const u64,
++    pub p_signal_semaphore_values: *const usize,
+     pub _marker: PhantomData<&'a ()>,
+ }
+ unsafe impl Send for D3D12FenceSubmitInfoKHR<'_> {}
+@@ -12940,13 +12940,13 @@
+ unsafe impl ExtendsSubmitInfo for D3D12FenceSubmitInfoKHR<'_> {}
+ impl<'a> D3D12FenceSubmitInfoKHR<'a> {
+     #[inline]
+-    pub fn wait_semaphore_values(mut self, wait_semaphore_values: &'a [u64]) -> Self {
++    pub fn wait_semaphore_values(mut self, wait_semaphore_values: &'a [usize]) -> Self {
+         self.wait_semaphore_values_count = wait_semaphore_values.len() as _;
+         self.p_wait_semaphore_values = wait_semaphore_values.as_ptr();
+         self
+     }
+     #[inline]
+-    pub fn signal_semaphore_values(mut self, signal_semaphore_values: &'a [u64]) -> Self {
++    pub fn signal_semaphore_values(mut self, signal_semaphore_values: &'a [usize]) -> Self {
+         self.signal_semaphore_values_count = signal_semaphore_values.len() as _;
+         self.p_signal_semaphore_values = signal_semaphore_values.as_ptr();
+         self
+@@ -21911,9 +21911,9 @@
+     pub s_type: StructureType,
+     pub p_next: *const c_void,
+     pub wait_semaphore_value_count: u32,
+-    pub p_wait_semaphore_values: *const u64,
++    pub p_wait_semaphore_values: *const usize,
+     pub signal_semaphore_value_count: u32,
+-    pub p_signal_semaphore_values: *const u64,
++    pub p_signal_semaphore_values: *const usize,
+     pub _marker: PhantomData<&'a ()>,
+ }
+ unsafe impl Send for TimelineSemaphoreSubmitInfo<'_> {}
+@@ -21939,13 +21939,13 @@
+ unsafe impl ExtendsBindSparseInfo for TimelineSemaphoreSubmitInfo<'_> {}
+ impl<'a> TimelineSemaphoreSubmitInfo<'a> {
+     #[inline]
+-    pub fn wait_semaphore_values(mut self, wait_semaphore_values: &'a [u64]) -> Self {
++    pub fn wait_semaphore_values(mut self, wait_semaphore_values: &'a [usize]) -> Self {
+         self.wait_semaphore_value_count = wait_semaphore_values.len() as _;
+         self.p_wait_semaphore_values = wait_semaphore_values.as_ptr();
+         self
+     }
+     #[inline]
+-    pub fn signal_semaphore_values(mut self, signal_semaphore_values: &'a [u64]) -> Self {
++    pub fn signal_semaphore_values(mut self, signal_semaphore_values: &'a [usize]) -> Self {
+         self.signal_semaphore_value_count = signal_semaphore_values.len() as _;
+         self.p_signal_semaphore_values = signal_semaphore_values.as_ptr();
+         self
+--- firefox-128.0/comm/third_party/rust/ash/src/vk/extensions.rs.vanilla	2024-07-09 14:36:01.436361999 +0200
++++ firefox-128.0/comm/third_party/rust/ash/src/vk/extensions.rs	2024-07-09 14:37:29.562353508 +0200
+@@ -5945,7 +5945,7 @@
+ pub type PFN_vkGetSemaphoreCounterValue = unsafe extern "system" fn(
+     device: crate::vk::Device,
+     semaphore: Semaphore,
+-    p_value: *mut u64,
++    p_value: *mut usize,
+ ) -> Result;
+ #[allow(non_camel_case_types)]
+ pub type PFN_vkWaitSemaphores = unsafe extern "system" fn(
+--- firefox-128.0/comm/third_party/rust/ash/src/device.rs.vanilla	2024-07-09 14:37:45.857351938 +0200
++++ firefox-128.0/comm/third_party/rust/ash/src/device.rs	2024-07-09 14:38:22.375348419 +0200
+@@ -676,7 +676,7 @@
+ 
+     /// <https://registry.khronos.org/vulkan/specs/1.3-extensions/man/html/vkGetSemaphoreCounterValue.html>
+     #[inline]
+-    pub unsafe fn get_semaphore_counter_value(&self, semaphore: vk::Semaphore) -> VkResult<u64> {
++    pub unsafe fn get_semaphore_counter_value(&self, semaphore: vk::Semaphore) -> VkResult<usize> {
+         let mut value = mem::MaybeUninit::uninit();
+         (self.device_fn_1_2.get_semaphore_counter_value)(
+             self.handle(),
+--- firefox-128.0/comm/third_party/rust/ash/src/vk/definitions.rs.vanilla	2024-07-09 15:01:16.235216042 +0200
++++ firefox-128.0/comm/third_party/rust/ash/src/vk/definitions.rs	2024-07-09 15:03:26.056203534 +0200
+@@ -21962,7 +21962,7 @@
+     pub flags: SemaphoreWaitFlags,
+     pub semaphore_count: u32,
+     pub p_semaphores: *const Semaphore,
+-    pub p_values: *const u64,
++    pub p_values: *const usize,
+     pub _marker: PhantomData<&'a ()>,
+ }
+ unsafe impl Send for SemaphoreWaitInfo<'_> {}
+@@ -21997,7 +21997,7 @@
+         self
+     }
+     #[inline]
+-    pub fn values(mut self, values: &'a [u64]) -> Self {
++    pub fn values(mut self, values: &'a [usize]) -> Self {
+         self.semaphore_count = values.len() as _;
+         self.p_values = values.as_ptr();
+         self
+--- firefox-128.0/comm/third_party/rust/ash/src/extensions_generated.rs.vanilla	2024-07-09 14:49:16.545285387 +0200
++++ firefox-128.0/comm/third_party/rust/ash/src/extensions_generated.rs	2024-07-09 14:52:55.543264286 +0200
+@@ -14711,7 +14711,7 @@
+                         unsafe extern "system" fn get_semaphore_counter_value_khr(
+                             _device: crate::vk::Device,
+                             _semaphore: Semaphore,
+-                            _p_value: *mut u64,
++                            _p_value: *mut usize,
+                         ) -> Result {
+                             panic!(concat!(
+                                 "Unable to load ",
+--- firefox-128.0/comm/third_party/rust/ash/src/tables.rs.vanilla	2024-07-09 14:54:09.300257179 +0200
++++ firefox-128.0/comm/third_party/rust/ash/src/tables.rs	2024-07-09 14:54:20.596256091 +0200
+@@ -3463,7 +3463,7 @@
+                 unsafe extern "system" fn get_semaphore_counter_value(
+                     _device: crate::vk::Device,
+                     _semaphore: Semaphore,
+-                    _p_value: *mut u64,
++                    _p_value: *mut usize,
+                 ) -> Result {
+                     panic!(concat!(
+                         "Unable to load ",
