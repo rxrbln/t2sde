@@ -1,0 +1,640 @@
+# --- T2-COPYRIGHT-BEGIN ---
+# t2/package/*/linux/0000-wifi-ext.patch
+# Copyright (C) 2025 The T2 SDE Project
+# SPDX-License-Identifier: GPL-2.0 or patched project license
+# --- T2-COPYRIGHT-END ---
+
+diff --git a/drivers/net/ethernet/toshiba/ps3_gelic_wireless.c b/drivers/net/ethernet/toshiba/ps3_gelic_wireless.c
+index 4fbe4b7cd12a..44488c153ea2 100644
+--- a/drivers/net/ethernet/toshiba/ps3_gelic_wireless.c
++++ b/drivers/net/ethernet/toshiba/ps3_gelic_wireless.c
+@@ -2566,6 +2566,7 @@ static void gelic_wl_setup_netdev_ops(struct net_device *netdev)
+ 
+ 	netdev->ethtool_ops = &gelic_wl_ethtool_ops;
+ 	netdev->netdev_ops = &gelic_wl_netdevice_ops;
++	netdev->wireless_data = &wl->wireless_data;
+ 	netdev->wireless_handlers = &gelic_wl_wext_handler_def;
+ }
+ 
+diff --git a/drivers/net/ethernet/toshiba/ps3_gelic_wireless.h b/drivers/net/ethernet/toshiba/ps3_gelic_wireless.h
+index dbabf538e10a..1f203d1ae8db 100644
+--- a/drivers/net/ethernet/toshiba/ps3_gelic_wireless.h
++++ b/drivers/net/ethernet/toshiba/ps3_gelic_wireless.h
+@@ -276,6 +276,7 @@ struct gelic_wl_info {
+ 	u8 active_bssid[ETH_ALEN]; /* associated bssid */
+ 	unsigned int essid_len;
+ 
++	struct iw_public_data wireless_data;
+ 	struct iw_statistics iwstat;
+ };
+ 
+diff --git a/drivers/net/wireless/intel/ipw2x00/ipw2100.c b/drivers/net/wireless/intel/ipw2x00/ipw2100.c
+index 15bf35f2de2a..a89e06c1b8ee 100644
+--- a/drivers/net/wireless/intel/ipw2x00/ipw2100.c
++++ b/drivers/net/wireless/intel/ipw2x00/ipw2100.c
+@@ -6022,6 +6022,8 @@ static struct net_device *ipw2100_alloc_device(struct pci_dev *pci_dev,
+ 	dev->netdev_ops = &ipw2100_netdev_ops;
+ 	dev->ethtool_ops = &ipw2100_ethtool_ops;
+ 	dev->wireless_handlers = &ipw2100_wx_handler_def;
++	priv->wireless_data.libipw = priv->ieee;
++	dev->wireless_data = &priv->wireless_data;
+ 	dev->watchdog_timeo = 3 * HZ;
+ 	dev->irq = 0;
+ 	dev->min_mtu = 68;
+diff --git a/drivers/net/wireless/intel/ipw2x00/ipw2100.h b/drivers/net/wireless/intel/ipw2x00/ipw2100.h
+index 6f81f509b9cb..b34085ade3aa 100644
+--- a/drivers/net/wireless/intel/ipw2x00/ipw2100.h
++++ b/drivers/net/wireless/intel/ipw2x00/ipw2100.h
+@@ -554,6 +554,8 @@ struct ipw2100_priv {
+ 	struct net_device *net_dev;
+ 	struct iw_statistics wstats;
+ 
++	struct iw_public_data wireless_data;
++
+ 	struct tasklet_struct irq_tasklet;
+ 
+ 	struct delayed_work reset_work;
+diff --git a/drivers/net/wireless/intel/ipw2x00/ipw2200.c b/drivers/net/wireless/intel/ipw2x00/ipw2200.c
+index be1d971b3d32..c0e9d2109e34 100644
+--- a/drivers/net/wireless/intel/ipw2x00/ipw2200.c
++++ b/drivers/net/wireless/intel/ipw2x00/ipw2200.c
+@@ -11645,6 +11645,7 @@ static int ipw_pci_probe(struct pci_dev *pdev,
+ 
+ 	net_dev->netdev_ops = &ipw_netdev_ops;
+ 	priv->ieee->spy_enabled = true;
++	net_dev->wireless_data = &priv->wireless_data;
+ 	net_dev->wireless_handlers = &ipw_wx_handler_def;
+ 	net_dev->ethtool_ops = &ipw_ethtool_ops;
+ 
+diff --git a/drivers/net/wireless/intel/ipw2x00/ipw2200.h b/drivers/net/wireless/intel/ipw2x00/ipw2200.h
+index d3db54e6d37c..46f119123b49 100644
+--- a/drivers/net/wireless/intel/ipw2x00/ipw2200.h
++++ b/drivers/net/wireless/intel/ipw2x00/ipw2200.h
+@@ -1274,6 +1274,8 @@ struct ipw_priv {
+ 
+ 	struct iw_statistics wstats;
+ 
++	struct iw_public_data wireless_data;
++
+ 	int user_requested_scan;
+ 	u8 direct_scan_ssid[IW_ESSID_MAX_SIZE];
+ 	u8 direct_scan_ssid_len;
+diff --git a/drivers/net/wireless/intel/ipw2x00/libipw_spy.c b/drivers/net/wireless/intel/ipw2x00/libipw_spy.c
+index ba876e92f7f6..979aeb10aeeb 100644
+--- a/drivers/net/wireless/intel/ipw2x00/libipw_spy.c
++++ b/drivers/net/wireless/intel/ipw2x00/libipw_spy.c
+@@ -18,10 +18,9 @@
+ 
+ static struct iw_spy_data *get_spydata(struct net_device *dev)
+ {
+-	struct libipw_device *ieee = netdev_priv(dev);
+-
+-	if (ieee->spy_enabled)
+-		return &ieee->spy_data;
++	if (dev->wireless_data && dev->wireless_data->libipw &&
++	    dev->wireless_data->libipw->spy_enabled)
++		return &dev->wireless_data->libipw->spy_data;
+ 	return NULL;
+ }
+ 
+diff --git a/include/linux/netdevice.h b/include/linux/netdevice.h
+index f0abed1e6e45..e87b5e488325 100644
+--- a/include/linux/netdevice.h
++++ b/include/linux/netdevice.h
+@@ -1773,6 +1773,7 @@ enum netdev_reg_state {
+  *	@wireless_handlers:	List of functions to handle Wireless Extensions,
+  *				instead of ioctl,
+  *				see <net/iw_handler.h> for details.
++ *	@wireless_data:	Instance data managed by the core of wireless extensions
+  *
+  *	@netdev_ops:	Includes several pointers to callbacks,
+  *			if one wants to override the ndo_*() functions
+@@ -2149,6 +2150,7 @@ struct net_device {
+ 
+ #ifdef CONFIG_WIRELESS_EXT
+ 	const struct iw_handler_def *wireless_handlers;
++	struct iw_public_data	*wireless_data;
+ #endif
+ 	const struct ethtool_ops *ethtool_ops;
+ #ifdef CONFIG_NET_L3_MASTER_DEV
+diff --git a/include/net/iw_handler.h b/include/net/iw_handler.h
+index fc44fcca1d5c..a7b502958d27 100644
+--- a/include/net/iw_handler.h
++++ b/include/net/iw_handler.h
+@@ -404,6 +404,24 @@ struct iw_spy_data {
+ 	u_char			spy_thr_under[IW_MAX_SPY];
+ };
+ 
++/* --------------------- DEVICE WIRELESS DATA --------------------- */
++/*
++ * This is all the wireless data specific to a device instance that
++ * is managed by the core of Wireless Extensions or the 802.11 layer.
++ * We only keep pointer to those structures, so that a driver is free
++ * to share them between instances.
++ * This structure should be initialised before registering the device.
++ * Access to this data follow the same rules as any other struct net_device
++ * data (i.e. valid as long as struct net_device exist, same locking rules).
++ */
++/* Forward declaration */
++struct libipw_device;
++/* The struct */
++struct iw_public_data {
++	/* Legacy structure managed by the ipw2x00-specific IEEE 802.11 layer */
++	struct libipw_device *		libipw;
++};
++
+ /**************************** PROTOTYPES ****************************/
+ /*
+  * Functions part of the Wireless Extensions (defined in net/wireless/wext-core.c).
+diff --git a/drivers/net/wireless/intel/ipw2x00/Kconfig b/drivers/net/wireless/intel/ipw2x00/Kconfig
+index 5e98be664d38..ce34118f1e90 100644
+--- a/drivers/net/wireless/intel/ipw2x00/Kconfig
++++ b/drivers/net/wireless/intel/ipw2x00/Kconfig
+@@ -65,6 +65,7 @@ config IPW2100_DEBUG
+ config IPW2200
+ 	tristate "Intel PRO/Wireless 2200BG and 2915ABG Network Connection"
+ 	depends on PCI && CFG80211
++	select CFG80211_WEXT_EXPORT
+ 	select WIRELESS_EXT
+ 	select WEXT_PRIV
+ 	select FW_LOADER
+diff --git a/drivers/net/wireless/intel/ipw2x00/ipw2200.c b/drivers/net/wireless/intel/ipw2x00/ipw2200.c
+index c0e9d2109e34..0008b4615731 100644
+--- a/drivers/net/wireless/intel/ipw2x00/ipw2200.c
++++ b/drivers/net/wireless/intel/ipw2x00/ipw2200.c
+@@ -6463,14 +6463,6 @@ static int ipw_set_rsn_capa(struct ipw_priv *priv,
+  * WE-18 support
+  */
+ 
+-static int ipw_wx_get_name(struct net_device *dev,
+-			   struct iw_request_info *info,
+-			   union iwreq_data *wrqu, char *extra)
+-{
+-	strcpy(wrqu->name, "IEEE 802.11");
+-	return 0;
+-}
+-
+ /* SIOCSIWGENIE */
+ static int ipw_wx_set_genie(struct net_device *dev,
+ 			    struct iw_request_info *info,
+@@ -9834,7 +9826,7 @@ static int ipw_wx_sw_reset(struct net_device *dev,
+ 
+ /* Rebase the WE IOCTLs to zero for the handler array */
+ static iw_handler ipw_wx_handlers[] = {
+-	IW_HANDLER(SIOCGIWNAME, ipw_wx_get_name),
++	IW_HANDLER(SIOCGIWNAME, cfg80211_wext_giwname),
+ 	IW_HANDLER(SIOCSIWFREQ, ipw_wx_set_freq),
+ 	IW_HANDLER(SIOCGIWFREQ, ipw_wx_get_freq),
+ 	IW_HANDLER(SIOCSIWMODE, ipw_wx_set_mode),
+diff --git a/net/wireless/Kconfig b/net/wireless/Kconfig
+index 2d67b5f2010e..8c8bd8b75708 100644
+--- a/net/wireless/Kconfig
++++ b/net/wireless/Kconfig
+@@ -185,12 +185,19 @@ config CFG80211_CRDA_SUPPORT
+ 	  If unsure, say Y.
+ 
+ config CFG80211_WEXT
+-	bool "cfg80211 wireless extensions compatibility"
++	bool "cfg80211 wireless extensions compatibility" if !CFG80211_WEXT_EXPORT
+ 	select WEXT_CORE
++	default y if CFG80211_WEXT_EXPORT
+ 	help
+ 	  Enable this option if you need old userspace for wireless
+ 	  extensions with cfg80211-based drivers.
+ 
++config CFG80211_WEXT_EXPORT
++	bool
++	help
++	  Drivers should select this option if they require cfg80211's
++	  wext compatibility symbols to be exported.
++
+ config CFG80211_KUNIT_TEST
+ 	tristate "KUnit tests for cfg80211" if !KUNIT_ALL_TESTS
+ 	depends on KUNIT
+diff --git a/net/wireless/scan.c b/net/wireless/scan.c
+index 8ba618f4734f..59a90bf3c0d6 100644
+--- a/net/wireless/scan.c
++++ b/net/wireless/scan.c
+@@ -3594,6 +3594,7 @@ int cfg80211_wext_siwscan(struct net_device *dev,
+ 	kfree(creq);
+ 	return err;
+ }
++EXPORT_WEXT_HANDLER(cfg80211_wext_siwscan);
+ 
+ static char *ieee80211_scan_add_ies(struct iw_request_info *info,
+ 				    const struct cfg80211_bss_ies *ies,
+@@ -3965,4 +3966,5 @@ int cfg80211_wext_giwscan(struct net_device *dev,
+ 
+ 	return res;
+ }
++EXPORT_WEXT_HANDLER(cfg80211_wext_giwscan);
+ #endif
+diff --git a/net/wireless/wext-compat.c b/net/wireless/wext-compat.c
+index 0c8d3797a02e..cd9f8f6e298b 100644
+--- a/net/wireless/wext-compat.c
++++ b/net/wireless/wext-compat.c
+@@ -30,6 +30,7 @@ int cfg80211_wext_giwname(struct net_device *dev,
+ 	strcpy(wrqu->name, "IEEE 802.11");
+ 	return 0;
+ }
++EXPORT_WEXT_HANDLER(cfg80211_wext_giwname);
+ 
+ int cfg80211_wext_siwmode(struct net_device *dev, struct iw_request_info *info,
+ 			  union iwreq_data *wrqu, char *extra)
+@@ -68,6 +69,7 @@ int cfg80211_wext_siwmode(struct net_device *dev, struct iw_request_info *info,
+ 
+ 	return ret;
+ }
++EXPORT_WEXT_HANDLER(cfg80211_wext_siwmode);
+ 
+ int cfg80211_wext_giwmode(struct net_device *dev, struct iw_request_info *info,
+ 			  union iwreq_data *wrqu, char *extra)
+@@ -103,6 +105,7 @@ int cfg80211_wext_giwmode(struct net_device *dev, struct iw_request_info *info,
+ 	}
+ 	return 0;
+ }
++EXPORT_WEXT_HANDLER(cfg80211_wext_giwmode);
+ 
+ 
+ int cfg80211_wext_giwrange(struct net_device *dev,
+@@ -217,6 +220,7 @@ int cfg80211_wext_giwrange(struct net_device *dev,
+ 
+ 	return 0;
+ }
++EXPORT_WEXT_HANDLER(cfg80211_wext_giwrange);
+ 
+ 
+ /**
+@@ -277,6 +281,7 @@ int cfg80211_wext_siwrts(struct net_device *dev,
+ 	wiphy_unlock(&rdev->wiphy);
+ 	return err;
+ }
++EXPORT_WEXT_HANDLER(cfg80211_wext_siwrts);
+ 
+ int cfg80211_wext_giwrts(struct net_device *dev,
+ 			 struct iw_request_info *info,
+@@ -291,6 +296,7 @@ int cfg80211_wext_giwrts(struct net_device *dev,
+ 
+ 	return 0;
+ }
++EXPORT_WEXT_HANDLER(cfg80211_wext_giwrts);
+ 
+ int cfg80211_wext_siwfrag(struct net_device *dev,
+ 			  struct iw_request_info *info,
+@@ -321,6 +327,7 @@ int cfg80211_wext_siwfrag(struct net_device *dev,
+ 
+ 	return err;
+ }
++EXPORT_WEXT_HANDLER(cfg80211_wext_siwfrag);
+ 
+ int cfg80211_wext_giwfrag(struct net_device *dev,
+ 			  struct iw_request_info *info,
+@@ -335,6 +342,7 @@ int cfg80211_wext_giwfrag(struct net_device *dev,
+ 
+ 	return 0;
+ }
++EXPORT_WEXT_HANDLER(cfg80211_wext_giwfrag);
+ 
+ static int cfg80211_wext_siwretry(struct net_device *dev,
+ 				  struct iw_request_info *info,
+@@ -405,6 +413,7 @@ int cfg80211_wext_giwretry(struct net_device *dev,
+ 
+ 	return 0;
+ }
++EXPORT_WEXT_HANDLER(cfg80211_wext_giwretry);
+ 
+ static int cfg80211_set_encryption(struct cfg80211_registered_device *rdev,
+ 				   struct net_device *dev, bool pairwise,
+diff --git a/net/wireless/wext-compat.h b/net/wireless/wext-compat.h
+index 8251ca5df8ae..c02eb789e676 100644
+--- a/net/wireless/wext-compat.h
++++ b/net/wireless/wext-compat.h
+@@ -5,6 +5,12 @@
+ #include <net/iw_handler.h>
+ #include <linux/wireless.h>
+ 
++#ifdef CONFIG_CFG80211_WEXT_EXPORT
++#define EXPORT_WEXT_HANDLER(h) EXPORT_SYMBOL_GPL(h)
++#else
++#define EXPORT_WEXT_HANDLER(h)
++#endif /* CONFIG_CFG80211_WEXT_EXPORT */
++
+ int cfg80211_ibss_wext_siwfreq(struct net_device *dev,
+ 			       struct iw_request_info *info,
+ 			       struct iw_freq *wextfreq, char *extra);
+diff --git a/drivers/net/wireless/intel/ipw2x00/Kconfig b/drivers/net/wireless/intel/ipw2x00/Kconfig
+index ce34118f1e90..d9c042772399 100644
+--- a/drivers/net/wireless/intel/ipw2x00/Kconfig
++++ b/drivers/net/wireless/intel/ipw2x00/Kconfig
+@@ -7,6 +7,7 @@ config IPW2100
+ 	tristate "Intel PRO/Wireless 2100 Network Connection"
+ 	depends on PCI && CFG80211
+ 	select WIRELESS_EXT
++	select WEXT_SPY
+ 	select WEXT_PRIV
+ 	select FW_LOADER
+ 	select LIBIPW
+@@ -67,6 +68,7 @@ config IPW2200
+ 	depends on PCI && CFG80211
+ 	select CFG80211_WEXT_EXPORT
+ 	select WIRELESS_EXT
++	select WEXT_SPY
+ 	select WEXT_PRIV
+ 	select FW_LOADER
+ 	select LIBIPW
+@@ -154,6 +156,7 @@ config LIBIPW
+ 	tristate
+ 	depends on PCI && CFG80211
+ 	select WIRELESS_EXT
++	select WEXT_SPY
+ 	select CRYPTO
+ 	select CRYPTO_MICHAEL_MIC
+ 	select CRC32
+diff --git a/drivers/net/wireless/intel/ipw2x00/Makefile b/drivers/net/wireless/intel/ipw2x00/Makefile
+index 91e6091c4ebf..60c5faccbe15 100644
+--- a/drivers/net/wireless/intel/ipw2x00/Makefile
++++ b/drivers/net/wireless/intel/ipw2x00/Makefile
+@@ -13,7 +13,6 @@ libipw-objs := \
+ 	libipw_rx.o \
+ 	libipw_wx.o \
+ 	libipw_geo.o \
+-	libipw_spy.o \
+ 	libipw_crypto.o \
+ 	libipw_crypto_ccmp.o \
+ 	libipw_crypto_tkip.o \
+diff --git a/drivers/net/wireless/intel/ipw2x00/ipw2200.c b/drivers/net/wireless/intel/ipw2x00/ipw2200.c
+index 0008b4615731..f4fd1fc784b7 100644
+--- a/drivers/net/wireless/intel/ipw2x00/ipw2200.c
++++ b/drivers/net/wireless/intel/ipw2x00/ipw2200.c
+@@ -9856,10 +9856,10 @@ static iw_handler ipw_wx_handlers[] = {
+ 	IW_HANDLER(SIOCGIWENCODE, ipw_wx_get_encode),
+ 	IW_HANDLER(SIOCSIWPOWER, ipw_wx_set_power),
+ 	IW_HANDLER(SIOCGIWPOWER, ipw_wx_get_power),
+-	IW_HANDLER(SIOCSIWSPY, ipw_wx_set_spy),
+-	IW_HANDLER(SIOCGIWSPY, ipw_wx_get_spy),
+-	IW_HANDLER(SIOCSIWTHRSPY, ipw_wx_set_thrspy),
+-	IW_HANDLER(SIOCGIWTHRSPY, ipw_wx_get_thrspy),
++	IW_HANDLER(SIOCSIWSPY, iw_handler_set_spy),
++	IW_HANDLER(SIOCGIWSPY, iw_handler_get_spy),
++	IW_HANDLER(SIOCSIWTHRSPY, iw_handler_set_thrspy),
++	IW_HANDLER(SIOCGIWTHRSPY, iw_handler_get_thrspy),
+ 	IW_HANDLER(SIOCSIWGENIE, ipw_wx_set_genie),
+ 	IW_HANDLER(SIOCGIWGENIE, ipw_wx_get_genie),
+ 	IW_HANDLER(SIOCSIWMLME, ipw_wx_set_mlme),
+@@ -11636,7 +11636,7 @@ static int ipw_pci_probe(struct pci_dev *pdev,
+ 	priv->ieee->worst_rssi = -85;
+ 
+ 	net_dev->netdev_ops = &ipw_netdev_ops;
+-	priv->ieee->spy_enabled = true;
++	priv->wireless_data.spy_data = &priv->ieee->spy_data;
+ 	net_dev->wireless_data = &priv->wireless_data;
+ 	net_dev->wireless_handlers = &ipw_wx_handler_def;
+ 	net_dev->ethtool_ops = &ipw_ethtool_ops;
+diff --git a/drivers/net/wireless/intel/ipw2x00/libipw.h b/drivers/net/wireless/intel/ipw2x00/libipw.h
+index 3c20353e5a41..bc727c99ff3c 100644
+--- a/drivers/net/wireless/intel/ipw2x00/libipw.h
++++ b/drivers/net/wireless/intel/ipw2x00/libipw.h
+@@ -788,7 +788,6 @@ struct libipw_device {
+ 
+ 	int iw_mode;		/* operating mode (IW_MODE_*) */
+ 	struct iw_spy_data spy_data;	/* iwspy support */
+-	bool spy_enabled;
+ 
+ 	spinlock_t lock;
+ 
+@@ -1084,16 +1083,4 @@ void libipw_crypto_tkip_exit(void);
+ void libipw_crypto_ccmp_exit(void);
+ void libipw_crypto_exit(void);
+ 
+-
+-int ipw_wx_set_spy(struct net_device *dev, struct iw_request_info *info,
+-		   union iwreq_data *wrqu, char *extra);
+-int ipw_wx_get_spy(struct net_device *dev, struct iw_request_info *info,
+-		   union iwreq_data *wrqu, char *extra);
+-int ipw_wx_set_thrspy(struct net_device *dev, struct iw_request_info *info,
+-		      union iwreq_data *wrqu, char *extra);
+-int ipw_wx_get_thrspy(struct net_device *dev, struct iw_request_info *info,
+-		      union iwreq_data *wrqu, char *extra);
+-void libipw_spy_update(struct net_device *dev, unsigned char *address,
+-		       struct iw_quality *wstats);
+-
+ #endif				/* LIBIPW_H */
+diff --git a/drivers/net/wireless/intel/ipw2x00/libipw_rx.c b/drivers/net/wireless/intel/ipw2x00/libipw_rx.c
+index 7e41cb7bbfe0..1fe05e73a17c 100644
+--- a/drivers/net/wireless/intel/ipw2x00/libipw_rx.c
++++ b/drivers/net/wireless/intel/ipw2x00/libipw_rx.c
+@@ -393,7 +393,7 @@ int libipw_rx(struct libipw_device *ieee, struct sk_buff *skb,
+ 			wstats.updated |= IW_QUAL_QUAL_INVALID;
+ 
+ 		/* Update spy records */
+-		libipw_spy_update(ieee->dev, hdr->addr2, &wstats);
++		wireless_spy_update(ieee->dev, hdr->addr2, &wstats);
+ 	}
+ #endif				/* IW_WIRELESS_SPY */
+ #endif				/* CONFIG_WIRELESS_EXT */
+diff --git a/include/net/iw_handler.h b/include/net/iw_handler.h
+index a7b502958d27..7af1082ea9a0 100644
+--- a/include/net/iw_handler.h
++++ b/include/net/iw_handler.h
+@@ -418,6 +418,8 @@ struct iw_spy_data {
+ struct libipw_device;
+ /* The struct */
+ struct iw_public_data {
++	/* Driver enhanced spy support */
++	struct iw_spy_data *		spy_data;
+ 	/* Legacy structure managed by the ipw2x00-specific IEEE 802.11 layer */
+ 	struct libipw_device *		libipw;
+ };
+@@ -441,6 +443,22 @@ static inline void wireless_nlevent_flush(void) {}
+ /* We may need a function to send a stream of events to user space.
+  * More on that later... */
+ 
++/* Standard handler for SIOCSIWSPY */
++int iw_handler_set_spy(struct net_device *dev, struct iw_request_info *info,
++		       union iwreq_data *wrqu, char *extra);
++/* Standard handler for SIOCGIWSPY */
++int iw_handler_get_spy(struct net_device *dev, struct iw_request_info *info,
++		       union iwreq_data *wrqu, char *extra);
++/* Standard handler for SIOCSIWTHRSPY */
++int iw_handler_set_thrspy(struct net_device *dev, struct iw_request_info *info,
++			  union iwreq_data *wrqu, char *extra);
++/* Standard handler for SIOCGIWTHRSPY */
++int iw_handler_get_thrspy(struct net_device *dev, struct iw_request_info *info,
++			  union iwreq_data *wrqu, char *extra);
++/* Driver call to update spy records */
++void wireless_spy_update(struct net_device *dev, unsigned char *address,
++			 struct iw_quality *wstats);
++
+ /************************* INLINE FUNCTIONS *************************/
+ /*
+  * Function that are so simple that it's more efficient inlining them
+diff --git a/net/wireless/Kconfig b/net/wireless/Kconfig
+index 8c8bd8b75708..733c53ad4de5 100644
+--- a/net/wireless/Kconfig
++++ b/net/wireless/Kconfig
+@@ -11,6 +11,9 @@ config WEXT_PROC
+ 	depends on PROC_FS
+ 	depends on WEXT_CORE
+ 
++config WEXT_SPY
++	bool
++
+ config WEXT_PRIV
+ 	bool
+ 
+diff --git a/net/wireless/Makefile b/net/wireless/Makefile
+index 62a83faf0e07..27f211bd9954 100644
+--- a/net/wireless/Makefile
++++ b/net/wireless/Makefile
+@@ -4,6 +4,7 @@ obj-y += tests/
+ 
+ obj-$(CONFIG_WEXT_CORE) += wext-core.o
+ obj-$(CONFIG_WEXT_PROC) += wext-proc.o
++obj-$(CONFIG_WEXT_SPY) += wext-spy.o
+ obj-$(CONFIG_WEXT_PRIV) += wext-priv.o
+ 
+ cfg80211-y += core.o sysfs.o radiotap.o util.o reg.o scan.o nl80211.o
+diff --git a/drivers/net/wireless/intel/ipw2x00/libipw_spy.c b/net/wireless/wext-spy.c
+similarity index 81%
+rename from drivers/net/wireless/intel/ipw2x00/libipw_spy.c
+rename to net/wireless/wext-spy.c
+index 979aeb10aeeb..b379a0371653 100644
+--- a/drivers/net/wireless/intel/ipw2x00/libipw_spy.c
++++ b/net/wireless/wext-spy.c
+@@ -14,20 +14,19 @@
+ #include <net/iw_handler.h>
+ #include <net/arp.h>
+ #include <net/wext.h>
+-#include "libipw.h"
+ 
+-static struct iw_spy_data *get_spydata(struct net_device *dev)
++static inline struct iw_spy_data *get_spydata(struct net_device *dev)
+ {
+-	if (dev->wireless_data && dev->wireless_data->libipw &&
+-	    dev->wireless_data->libipw->spy_enabled)
+-		return &dev->wireless_data->libipw->spy_data;
++	/* This is the new way */
++	if (dev->wireless_data)
++		return dev->wireless_data->spy_data;
+ 	return NULL;
+ }
+ 
+-int ipw_wx_set_spy(struct net_device *		dev,
+-		   struct iw_request_info *	info,
+-		   union iwreq_data *		wrqu,
+-		   char *			extra)
++int iw_handler_set_spy(struct net_device *	dev,
++		       struct iw_request_info *	info,
++		       union iwreq_data *	wrqu,
++		       char *			extra)
+ {
+ 	struct iw_spy_data *	spydata = get_spydata(dev);
+ 	struct sockaddr *	address = (struct sockaddr *) extra;
+@@ -37,15 +36,15 @@ int ipw_wx_set_spy(struct net_device *		dev,
+ 		return -EOPNOTSUPP;
+ 
+ 	/* Disable spy collection while we copy the addresses.
+-	 * While we copy addresses, any call to libipw_spy_update()
++	 * While we copy addresses, any call to wireless_spy_update()
+ 	 * will NOP. This is OK, as anyway the addresses are changing. */
+ 	spydata->spy_number = 0;
+ 
+-	/* We want to operate without locking, because libipw_spy_update()
++	/* We want to operate without locking, because wireless_spy_update()
+ 	 * most likely will happen in the interrupt handler, and therefore
+ 	 * have its own locking constraints and needs performance.
+ 	 * The rtnl_lock() make sure we don't race with the other iw_handlers.
+-	 * This make sure libipw_spy_update() "see" that the spy list
++	 * This make sure wireless_spy_update() "see" that the spy list
+ 	 * is temporarily disabled. */
+ 	smp_wmb();
+ 
+@@ -70,12 +69,12 @@ int ipw_wx_set_spy(struct net_device *		dev,
+ 
+ 	return 0;
+ }
+-EXPORT_SYMBOL(ipw_wx_set_spy);
++EXPORT_SYMBOL(iw_handler_set_spy);
+ 
+-int ipw_wx_get_spy(struct net_device *		dev,
+-		   struct iw_request_info *	info,
+-		   union iwreq_data *		wrqu,
+-		   char *			extra)
++int iw_handler_get_spy(struct net_device *	dev,
++		       struct iw_request_info *	info,
++		       union iwreq_data *	wrqu,
++		       char *			extra)
+ {
+ 	struct iw_spy_data *	spydata = get_spydata(dev);
+ 	struct sockaddr *	address = (struct sockaddr *) extra;
+@@ -102,16 +101,16 @@ int ipw_wx_get_spy(struct net_device *		dev,
+ 		spydata->spy_stat[i].updated &= ~IW_QUAL_ALL_UPDATED;
+ 	return 0;
+ }
+-EXPORT_SYMBOL(ipw_wx_get_spy);
++EXPORT_SYMBOL(iw_handler_get_spy);
+ 
+ /*------------------------------------------------------------------*/
+ /*
+  * Standard Wireless Handler : set spy threshold
+  */
+-int ipw_wx_set_thrspy(struct net_device *	dev,
+-		      struct iw_request_info *	info,
+-		      union iwreq_data *	wrqu,
+-		      char *			extra)
++int iw_handler_set_thrspy(struct net_device *	dev,
++			  struct iw_request_info *info,
++			  union iwreq_data *	wrqu,
++			  char *		extra)
+ {
+ 	struct iw_spy_data *	spydata = get_spydata(dev);
+ 	struct iw_thrspy *	threshold = (struct iw_thrspy *) extra;
+@@ -129,16 +128,16 @@ int ipw_wx_set_thrspy(struct net_device *	dev,
+ 
+ 	return 0;
+ }
+-EXPORT_SYMBOL(ipw_wx_set_thrspy);
++EXPORT_SYMBOL(iw_handler_set_thrspy);
+ 
+ /*------------------------------------------------------------------*/
+ /*
+  * Standard Wireless Handler : get spy threshold
+  */
+-int ipw_wx_get_thrspy(struct net_device *	dev,
+-		      struct iw_request_info *	info,
+-		      union iwreq_data *	wrqu,
+-		      char *			extra)
++int iw_handler_get_thrspy(struct net_device *	dev,
++			  struct iw_request_info *info,
++			  union iwreq_data *	wrqu,
++			  char *		extra)
+ {
+ 	struct iw_spy_data *	spydata = get_spydata(dev);
+ 	struct iw_thrspy *	threshold = (struct iw_thrspy *) extra;
+@@ -153,7 +152,7 @@ int ipw_wx_get_thrspy(struct net_device *	dev,
+ 
+ 	return 0;
+ }
+-EXPORT_SYMBOL(ipw_wx_get_thrspy);
++EXPORT_SYMBOL(iw_handler_get_thrspy);
+ 
+ /*------------------------------------------------------------------*/
+ /*
+@@ -190,9 +189,9 @@ static void iw_send_thrspy_event(struct net_device *	dev,
+  * small, this is good enough. If we wanted to support larger number of
+  * spy addresses, we should use something more efficient...
+  */
+-void libipw_spy_update(struct net_device *	dev,
+-		       unsigned char *		address,
+-		       struct iw_quality *	wstats)
++void wireless_spy_update(struct net_device *	dev,
++			 unsigned char *	address,
++			 struct iw_quality *	wstats)
+ {
+ 	struct iw_spy_data *	spydata = get_spydata(dev);
+ 	int			i;
+@@ -230,3 +229,4 @@ void libipw_spy_update(struct net_device *	dev,
+ 		}
+ 	}
+ }
++EXPORT_SYMBOL(wireless_spy_update);

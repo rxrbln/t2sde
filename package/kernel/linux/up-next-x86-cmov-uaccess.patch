@@ -1,0 +1,87 @@
+# --- T2-COPYRIGHT-BEGIN ---
+# t2/package/*/linux/up-next-x86-cmov-uaccess.patch
+# Copyright (C) 2025 The T2 SDE Project
+# SPDX-License-Identifier: GPL-2.0 or patched project license
+# --- T2-COPYRIGHT-END ---
+
+From 91309a70829d94c735c8bb1cc383e78c96127a16 Mon Sep 17 00:00:00 2001
+From: Linus Torvalds <torvalds@linux-foundation.org>
+Date: Tue, 10 Dec 2024 10:25:04 -0800
+Subject: x86: use cmov for user address masking
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+This was a suggestion by David Laight, and while I was slightly worried
+that some micro-architecture would predict cmov like a conditional
+branch, there is little reason to actually believe any core would be
+that broken.
+
+Intel documents that their existing cores treat CMOVcc as a data
+dependency that will constrain speculation in their "Speculative
+Execution Side Channel Mitigations" whitepaper:
+
+  "Other instructions such as CMOVcc, AND, ADC, SBB and SETcc can also
+   be used to prevent bounds check bypass by constraining speculative
+   execution on current family 6 processors (Intel® Core™, Intel® Atom™,
+   Intel® Xeon® and Intel® Xeon Phi™ processors)"
+
+and while that leaves the future uarch issues open, that's certainly
+true of our traditional SBB usage too.
+
+Any core that predicts CMOV will be unusable for various crypto
+algorithms that need data-independent timing stability, so let's just
+treat CMOV as the safe choice that simplifies the address masking by
+avoiding an extra instruction and doesn't need a temporary register.
+
+Suggested-by: David Laight <David.Laight@aculab.com>
+Link: https://www.intel.com/content/dam/develop/external/us/en/documents/336996-speculative-execution-side-channel-mitigations.pdf
+Signed-off-by: Linus Torvalds <torvalds@linux-foundation.org>
+---
+ arch/x86/include/asm/uaccess_64.h | 12 ++++++------
+ arch/x86/lib/getuser.S            |  5 ++---
+ 2 files changed, 8 insertions(+), 9 deletions(-)
+
+diff --git a/arch/x86/include/asm/uaccess_64.h b/arch/x86/include/asm/uaccess_64.h
+index b0a887209400de..c52f0133425b94 100644
+--- a/arch/x86/include/asm/uaccess_64.h
++++ b/arch/x86/include/asm/uaccess_64.h
+@@ -63,13 +63,13 @@ static inline unsigned long __untagged_addr_remote(struct mm_struct *mm,
+  */
+ static inline void __user *mask_user_address(const void __user *ptr)
+ {
+-	unsigned long mask;
++	void __user *ret;
+ 	asm("cmp %1,%0\n\t"
+-	    "sbb %0,%0"
+-		:"=r" (mask)
+-		:"r" (ptr),
+-		 "0" (runtime_const_ptr(USER_PTR_MAX)));
+-	return (__force void __user *)(mask | (__force unsigned long)ptr);
++	    "cmova %1,%0"
++		:"=r" (ret)
++		:"r" (runtime_const_ptr(USER_PTR_MAX)),
++		 "0" (ptr));
++	return ret;
+ }
+ #define masked_user_access_begin(x) ({				\
+ 	__auto_type __masked_ptr = (x);				\
+diff --git a/arch/x86/lib/getuser.S b/arch/x86/lib/getuser.S
+index 4357ec2a0bfc2c..89ecd57c9d4234 100644
+--- a/arch/x86/lib/getuser.S
++++ b/arch/x86/lib/getuser.S
+@@ -44,9 +44,8 @@
+   .pushsection runtime_ptr_USER_PTR_MAX,"a"
+ 	.long 1b - 8 - .
+   .popsection
+-	cmp %rax, %rdx
+-	sbb %rdx, %rdx
+-	or %rdx, %rax
++	cmp %rdx, %rax
++	cmova %rdx, %rax
+ .else
+ 	cmp $TASK_SIZE_MAX-\size+1, %eax
+ 	jae .Lbad_get_user
+-- 
+cgit 1.2.3-korg
+
