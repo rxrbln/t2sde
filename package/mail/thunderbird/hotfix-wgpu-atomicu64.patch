@@ -183,3 +183,131 @@
                  ) -> Result {
                      panic!(concat!(
                          "Unable to load ",
+--- firefox-135.0/third_party/rust/wgpu-core/src/command/ray_tracing.rs.vanilla	2025-02-04 16:42:17.143353216 +0100
++++ firefox-135.0/third_party/rust/wgpu-core/src/command/ray_tracing.rs	2025-02-04 16:47:45.458340125 +0100
+@@ -23,7 +23,7 @@
+ use hal::BufferUses;
+ use std::{
+     cmp::max,
+-    num::NonZeroU64,
++    num::NonZeroUsize,
+     ops::{Deref, Range},
+     sync::{atomic::Ordering, Arc},
+ };
+@@ -88,7 +88,7 @@
+             return Err(BuildAccelerationStructureError::MissingFeature);
+         }
+ 
+-        let build_command_index = NonZeroU64::new(
++        let build_command_index = NonZeroUsize::new(
+             device
+                 .last_acceleration_structure_build_command_index
+                 .fetch_add(1, Ordering::Relaxed),
+@@ -388,7 +388,7 @@
+             return Err(BuildAccelerationStructureError::MissingFeature);
+         }
+ 
+-        let build_command_index = NonZeroU64::new(
++        let build_command_index = NonZeroUsize::new(
+             device
+                 .last_acceleration_structure_build_command_index
+                 .fetch_add(1, Ordering::Relaxed),
+@@ -872,7 +872,7 @@
+ fn iter_blas<'a>(
+     blas_iter: impl Iterator<Item = BlasBuildEntry<'a>>,
+     cmd_buf_data: &mut CommandBufferMutable,
+-    build_command_index: NonZeroU64,
++    build_command_index: NonZeroUsize,
+     buf_storage: &mut Vec<TriangleBufferStore<'a>>,
+     hub: &Hub,
+     device: &Device,
+--- firefox-135.0/third_party/rust/wgpu-core/src/device/resource.rs.vanilla	2025-02-04 16:39:38.337359548 +0100
++++ firefox-135.0/third_party/rust/wgpu-core/src/device/resource.rs	2025-02-04 16:44:55.791346890 +0100
+@@ -121,7 +121,7 @@
+     pub(crate) instance_flags: wgt::InstanceFlags,
+     pub(crate) deferred_destroy: Mutex<Vec<DeferredDestroy>>,
+     pub(crate) usage_scopes: UsageScopePool,
+-    pub(crate) last_acceleration_structure_build_command_index: AtomicU64,
++    pub(crate) last_acceleration_structure_build_command_index: AtomicUsize,
+     #[cfg(feature = "indirect-validation")]
+     pub(crate) indirect_validation: Option<crate::indirect_validation::IndirectValidation>,
+     // needs to be dropped last
+@@ -277,8 +277,8 @@
+             instance_flags,
+             deferred_destroy: Mutex::new(rank::DEVICE_DEFERRED_DESTROY, Vec::new()),
+             usage_scopes: Mutex::new(rank::DEVICE_USAGE_SCOPES, Default::default()),
+-            // By starting at one, we can put the result in a NonZeroU64.
+-            last_acceleration_structure_build_command_index: AtomicU64::new(1),
++            // By starting at one, we can put the result in a NonZeroUsize.
++            last_acceleration_structure_build_command_index: AtomicUsize::new(1),
+             #[cfg(feature = "indirect-validation")]
+             indirect_validation,
+         })
+--- firefox-135.0/third_party/rust/wgpu-core/src/device/queue.rs.vanilla	2025-02-04 16:50:24.683333777 +0100
++++ firefox-135.0/third_party/rust/wgpu-core/src/device/queue.rs	2025-02-04 16:50:59.192332401 +0100
+@@ -112,7 +112,7 @@
+ 
+     pub(crate) fn maintain(
+         &self,
+-        submission_index: u64,
++        submission_index: usize,
+         snatch_guard: &SnatchGuard,
+     ) -> (
+         SmallVec<[SubmittedWorkDoneClosure; 1]>,
+--- firefox-135.0/third_party/rust/wgpu-core/src/ray_tracing.rs.vanilla	2025-02-04 16:51:35.348330959 +0100
++++ firefox-135.0/third_party/rust/wgpu-core/src/ray_tracing.rs	2025-02-04 16:52:10.435329560 +0100
+@@ -13,7 +13,7 @@
+     id::{BlasId, BufferId, TlasId},
+     resource::CreateBufferError,
+ };
+-use std::num::NonZeroU64;
++use std::num::NonZeroUsize;
+ use std::sync::Arc;
+ 
+ use crate::resource::{Blas, ResourceErrorIdent, Tlas};
+@@ -209,14 +209,14 @@
+ 
+ #[derive(Debug, Copy, Clone)]
+ pub(crate) enum BlasActionKind {
+-    Build(NonZeroU64),
++    Build(NonZeroUsize),
+     Use,
+ }
+ 
+ #[derive(Debug, Clone)]
+ pub(crate) enum TlasActionKind {
+     Build {
+-        build_index: NonZeroU64,
++        build_index: NonZeroUsize,
+         dependencies: Vec<Arc<Blas>>,
+     },
+     Use,
+--- firefox-135.0/third_party/rust/wgpu-core/src/resource.rs.vanilla	2025-02-04 17:11:25.241283515 +0100
++++ firefox-135.0/third_party/rust/wgpu-core/src/resource.rs	2025-02-04 17:13:00.043279735 +0100
+@@ -21,7 +21,7 @@
+ use smallvec::SmallVec;
+ use thiserror::Error;
+ 
+-use std::num::NonZeroU64;
++use std::num::NonZeroUsize;
+ use std::{
+     borrow::{Borrow, Cow},
+     fmt::Debug,
+@@ -1870,7 +1870,7 @@
+     pub(crate) sizes: wgt::BlasGeometrySizeDescriptors,
+     pub(crate) flags: wgt::AccelerationStructureFlags,
+     pub(crate) update_mode: wgt::AccelerationStructureUpdateMode,
+-    pub(crate) built_index: RwLock<Option<NonZeroU64>>,
++    pub(crate) built_index: RwLock<Option<NonZeroUsize>>,
+     pub(crate) handle: u64,
+     /// The `label` from the descriptor used to create the resource.
+     pub(crate) label: String,
+@@ -1950,7 +1950,7 @@
+     pub(crate) max_instance_count: u32,
+     pub(crate) flags: wgt::AccelerationStructureFlags,
+     pub(crate) update_mode: wgt::AccelerationStructureUpdateMode,
+-    pub(crate) built_index: RwLock<Option<NonZeroU64>>,
++    pub(crate) built_index: RwLock<Option<NonZeroUsize>>,
+     pub(crate) dependencies: RwLock<Vec<Arc<Blas>>>,
+     pub(crate) instance_buffer: ManuallyDrop<Box<dyn hal::DynBuffer>>,
+     /// The `label` from the descriptor used to create the resource.
