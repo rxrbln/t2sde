@@ -100,7 +100,6 @@ fi
 noautolist=" 00-dirtree $SDECFG_DEFAULT_CC $SDECFG_LIBC ${SDECFG_LIBC}32 "
 declare -A packages
 declare -A alternatives
-declare -A scanned
 declare -A deplist
 
 read_packages() {
@@ -148,10 +147,12 @@ add_if_req() {
 			fi
 
 			if [[ "$in" = y* ]]; then
-				deplist[$pkg]=1
+				deplist[$pkg]=y
 				esttime=$((esttime + buildtime))
 				[ "$deps" = indirect ] && dep4pkg "$pkg"
 				[ "$deps" = indirect2 -a $depth -le $maxdepth ] && dep4pkg "$pkg"
+			else
+				deplist[$pkg]=o
 			fi
 			return
 		fi
@@ -170,7 +171,7 @@ add_if_req() {
 	fi
 
 	[ $verbose = 1 ] && echo " Added.$(fmt_time $buildtime)"
-	deplist[$pkg]=1
+	deplist[$pkg]=y
 	esttime=$((esttime + buildtime))
 	[ "$deps" = indirect ] && dep4pkg "$pkg"
 	[ "$deps" = indirect2 -a $depth -le $maxdepth ] && dep4pkg "$pkg"
@@ -180,11 +181,14 @@ add_if_updated() {
 	local pkg=$1
 	local typ=$2
 
-	if [ "${scanned[$pkg]}" = 1 ]; then
+	local scanned=${deplist[$pkg]}
+	if [ "$scanned" ]; then
 		[ $debug = 1 ] && echo "already been at $pkg ..."
-		return
+
+		# if prevously only an unselected opt dep, re-check if hard dep now
+		[ "$scanned" = o -a "$typ" != "[OPT]" ] || return
 	else
-		scanned[$pkg]=1
+		deplist[$pkg]=n # not yet, but been here marker
 	fi
 
 	# read in pkg list?
@@ -281,7 +285,7 @@ add_if_updated() {
 	   grep -a -q '\[BUILDTIME\] .* ERROR' /var/adm/cache/$pkg; then
 		[ $verbose = 1 ] && echo -n " Former build was broken."
 		if [ $rebuild = 1 ]; then
-			add_if_req $pkg ''
+			add_if_req $pkg
 		else
 			[ $verbose = 1 ] && echo " Skipped."
 		fi
@@ -317,8 +321,6 @@ dep4pkg() {
 
 # the remaining arguments are packages to be built
 for pkg in $*; do
-	# override previously unselected dependency scan
-	[ "${deplist[$pkg]}" ] || scanned[$pkg]=
 	add_if_updated $pkg
 done
 
@@ -339,11 +341,11 @@ if [ "$system" ]; then
 	depth=0
 fi
 
-# The deplist is unsorted: sort by priority and convert to string.
-#
-deplist=`echo -n "${!deplist[@]}" | tr '\n' ' ' | tr -s ' '`
-deplist=$(grep -a "^. .* .* .* \\(${deplist// /\\|}\\) " \
-	  config/$config/packages | sort -k 3 | cut -d ' ' -f 5 | tr '\n' ' ')
+# deplist is unsorted: remove unselected and sort by priority
+for p in ${!deplist[@]}; do [ ${deplist[$p]} != y ] && unset deplist[$p]; done
+deplist=${!deplist[@]}
+deplist=$(grep -a "^. .* .* .* \\(${deplist// /\\|}\\) " config/$config/packages |
+	sort -k 3 | cut -d ' ' -f 5 | tr '\n' ' ')
 
 if [ "$deplist" ]; then
 	echo "$(echo "$deplist" |
