@@ -123,10 +123,10 @@ part_mkfs() {
 	maybe_add() {
 	  local l=
 	  [ "$label" -a "$5" ] && l="$5 $label"
-	  [ $1 = $fs ] && opts="$3 $4 $l"
+	  [ "$1" = "$fs" ] && opts="$3 $4 $l"
 	  if type -p $3 >/dev/null; then
 		cmd="$cmd '$1 ($2 filesystem)' \
-		'type wipefs 2>/dev/null && wipefs -a $dev; $3 $4 $l $dev'"
+		'type -p wipefs >/dev/null && wipefs -a $dev; $3 $4 $l $dev'"
 	  fi
 	}
 
@@ -318,23 +318,23 @@ disk_partition() {
 	local fs=()
 	local any=any
 
+	[ $swap -gt 1024 ] && swap=1024
 	# dedicated swap partition or lvm?
 	local _swap=$swap
 	[[ "$typ" = *lvm* ]] && _swap=0 && any=lvm
 
 	case $platform in
 	    alpha)
-		fdisk=parted
+		fdisk="parted -f"
 		fs+=("${dev}2 $any /")
 		fs+=("${dev}1 ext3 /boot")
-		script+=("mklabel
-bsd
+		script+=("mklabel bsd
 y
 mkpart 2048s ${boot}m
-mkpart ${boot}m $((boot + _swap))m")
+mkpart ${boot}m $(($size - $boot - $_swap))m")
 
 		[ $_swap != 0 ] &&
-		    script+=("$mkpart $((boot + _swap))m 100%") fs+=("${dev}3 swap") 
+		    script+=("mkpart $(($size - $boot - $_swap))m 100%") fs+=("${dev}3 swap") 
 		;;
 	    *-efi)
 		script+=("label:gpt")
@@ -727,7 +727,7 @@ EOT
 		cd /mnt; chroot . ./tmp/stone_postinst.sh
 		rm -fv ./tmp/stone_postinst.sh
 
-		kexec=$(type -p kexec)
+		kexec=$(type -p kexec >/dev/null)
 
 		if gui_yesno "Do you want to un-mount the filesystems and reboot${kexec:+ (via kexec)} now?"
 		then
