@@ -37,7 +37,9 @@ $(< /boot/aboot.conf)"
 }
 
 aboot_install() {
-	gui_cmd 'Installing Aboot' "echo 'calling swriteboot'; swriteboot ${bootdev%%[0-9]} /boot/bootlx"
+	local boot=${bootdev%%[0-9]}
+	local part=${bootdev#$boot}
+	gui_cmd 'Installing Aboot' "echo 'Running swriteboot -c$part $boot /boot/bootlx'; swriteboot -c$part $boot} /boot/bootlx"
 }
 
 device4()
@@ -57,8 +59,8 @@ device4()
 }
 
 realpath() {
-	dir="`dirname $1`"
-	file="`basename $1`"
+	local dir="`dirname $1`"
+	local file="`basename $1`"
 	dir="`dirname $dir`/`readlink $dir`"
 	dir="`echo $dir | sed 's,[^/]*/\.\./,,g'`"
 	echo $dir/$file
