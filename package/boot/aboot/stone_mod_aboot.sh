@@ -9,10 +9,10 @@
 
 create_kernel_list() {
 	local alpha_idx=0
-	for x in `(cd /boot/; ls vmlinuz*) | sort -Vr`; do
-		ver=${x#vmlinuz} ver=${x#-}
+	for ver in `(cd /boot/; ls vmlinuz-*) | sort -Vr`; do
+		ver=${ver#vmlinuz-}
 		cat << EOT
-$((alpha_idx++)):${bootdev##*[^0-9]}$bootpath/$x initrd=$bootpath/initrd-${ver} root=$rootdev ro
+$((alpha_idx++)):${bootdev##*[^0-9]}$bootpath/vmlinuz-$ver initrd=$bootpath/initrd-$ver root=$rootdev ro
 EOT
 	done
 }
