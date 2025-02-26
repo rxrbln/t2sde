@@ -1,6 +1,4 @@
 #!/bin/sh
-# --- T2-COPYRIGHT-BEGIN ---
-# --- T2-COPYRIGHT-END ---
 
 PATH=/sbin:/bin:/usr/bin:/usr/sbin
 
@@ -28,8 +26,7 @@ mount -t proc proc /proc
 "mounting /dev, /proc, /sys and starting u/devd."
 mount -t devtmpfs -o mode=755 devtmpfs /dev
 mount -t sysfs sysfs /sys
-mkdir -p /tmp /mnt /var/run
-ln -sf var/run /run
+mkdir -p /tmp /mnt /run /var/run
 ln -sf /proc/self/fd /dev/fd
 
 udevd &
