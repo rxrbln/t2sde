@@ -49,7 +49,8 @@ root="root= $cmdline" root=${root##*root=} root=${root%% *}
 init="init= $cmdline" init=${init##*init=} init=${init%% *}
 swap="swap= $cmdline" swap=${swap##*swap=} swap=${swap%% *}
 resume="resume= $cmdline" resume=${resume##*resume=} resume=${resume%% *}
-mountopt="ro"
+mountopt="rootflags= $cmdline" mountopt=${mountopt##*rootflags=} mountopt=${mountopt%% *}
+mountopt="ro${mountopt:+,$mountopt}"
 
 # parse cmdline
 for v in $cmdline; do
