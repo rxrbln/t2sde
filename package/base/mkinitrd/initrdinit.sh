@@ -48,6 +48,7 @@ fi
 
 # get the root device, init, early swap
 [ -e /proc/cmdline ] && cmdline="$(< /proc/cmdline)"
+rootflags="rootflags= $cmdline" rootflags=${rootflags##*rootflags=} rootflags=${rootflags%% *}
 root="root= $cmdline" root=${root##*root=} root=${root%% *}
 init="init= $cmdline" init=${init##*init=} init=${init%% *}
 swap="swap= $cmdline" swap=${swap##*swap=} swap=${swap%% *}
@@ -61,6 +62,8 @@ for v in $cmdline; do
     rw)	mountopt="rw${mountopt#r[ow]}" ;;
     esac
 done
+
+[ -n "$rootflags" ] && mountopt="$rootflags"
 
 # diskless network root?
 addr="${root%:*}"
