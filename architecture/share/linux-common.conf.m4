@@ -394,6 +394,8 @@ CONFIG_DRM_AMDGPU_USERPTR=y
 CONFIG_DRM_AMD_DC=y
 CONFIG_DRM_AMD_DC_DCN1_0=y
 CONFIG_DRM_AMD_ACP=y
+CONFIG_DRM_AMD_ISP=y
+CONFIG_HSA_AMD=y
 
 dnl The 2.6 kernel has several debugging options enabled
 dnl
