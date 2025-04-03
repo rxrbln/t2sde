@@ -1,0 +1,120 @@
+# --- T2-COPYRIGHT-BEGIN ---
+# t2/package/*/llama-cpp/opencl-amd.patch
+# Copyright (C) 2025 The T2 SDE Project
+# SPDX-License-Identifier: GPL-2.0 or patched project license
+# --- T2-COPYRIGHT-END ---
+
+--- llama.cpp.git/ggml/src/ggml-opencl/ggml-opencl.cpp.vanilla	2025-04-03 16:10:28.453521710 +0200
++++ llama.cpp.git/ggml/src/ggml-opencl/ggml-opencl.cpp	2025-04-03 16:19:30.697993755 +0200
+@@ -54,6 +54,7 @@
+ enum GPU_FAMILY {
+     ADRENO,
+     INTEL,
++    AMD,
+     UNKNOWN,
+ };
+ 
+@@ -564,6 +565,8 @@
+         backend_ctx->adreno_wave_size = 64;
+     } else if (strstr(default_device->name, "Intel")) {
+         backend_ctx->gpu_family = GPU_FAMILY::INTEL;
++    } else if (strstr(default_device->name, "AMD")) {
++        backend_ctx->gpu_family = GPU_FAMILY::AMD;
+     } else {
+         GGML_LOG_ERROR("Unsupported GPU: %s\n", default_device->name);
+         backend_ctx->gpu_family = GPU_FAMILY::UNKNOWN;
+@@ -3332,6 +3335,11 @@
+                     nth1 = 1;
+ 
+                     kernel = backend_ctx->kernel_mul_mat_q4_0_f32_1d_16x_flat;
++		} else if (backend_ctx->gpu_family == AMD) {
++                    nth0 = 16;
++                    nth1 = 1;
++
++                    kernel = backend_ctx->kernel_mul_mat_q4_0_f32_1d_16x_flat;
+                 } else if (backend_ctx->gpu_family == ADRENO) {
+                     nth0 = 64;
+                     nth1 = 1;
+@@ -3371,6 +3379,11 @@
+                 global_work_size[0] = (size_t)(ne01 + 15)/16*nth0;
+                 global_work_size[1] = (size_t)ne11*nth1;
+                 global_work_size[2] = (size_t)ne12*ne13;
++            } else if (backend_ctx->gpu_family == AMD) {
++                // Set global size for AMD. It uses 16x output values.
++                global_work_size[0] = (size_t)(ne01 + 15)/16*nth0;
++                global_work_size[1] = (size_t)ne11*nth1;
++                global_work_size[2] = (size_t)ne12*ne13;
+             }
+ 
+ #ifdef GGML_OPENCL_PROFILING
+@@ -3400,6 +3413,9 @@
+             if (backend_ctx->gpu_family == INTEL) {
+                 nth0 = 32;
+                 nth1 = 1;
++            } else if (backend_ctx->gpu_family == AMD) {
++                nth0 = 32;
++                nth1 = 1;
+             } else if (backend_ctx->gpu_family == ADRENO) {
+                 nth0 = 64;
+                 nth1 = 1;
+@@ -3437,6 +3453,9 @@
+             if (backend_ctx->gpu_family == INTEL) {
+                 nth0 = 32;
+                 nth1 = 1;
++            } else if (backend_ctx->gpu_family == AMD) {
++                nth0 = 32;
++                nth1 = 1;
+             } else if (backend_ctx->gpu_family == ADRENO) {
+                 nth0 = 64;
+                 nth1 = 1;
+@@ -3496,6 +3515,12 @@
+ 
+                 kernel = backend_ctx->kernel_mul_mat_q4_0_f32_8x_flat;
+                 ndst = 8;
++            } else if (backend_ctx->gpu_family == AMD) {
++                nth0 = 16;
++                nth1 = 1;
++
++                kernel = backend_ctx->kernel_mul_mat_q4_0_f32_8x_flat;
++                ndst = 8;
+             } else if (backend_ctx->gpu_family == ADRENO) {
+                 nth0 = 64;
+                 nth1 = 1;
+@@ -3532,6 +3557,16 @@
+ 
+                 kernel = backend_ctx->kernel_mul_mat_q4_0_f32;
+                 ndst = 4;
++            } else if (backend_ctx->gpu_family == AMD) {
++                // Use 1D local size. Each workgroup is a SIMD group. Each SIMD
++                // group produces N_DST (4 for Q4_0 kernel) values in the result.
++                // The number of workgroups on dim 0 (the leading dimension) is
++                // the nearest multiple of 4 that covers ne0 (equals ne01).
++                nth0 = 16;
++                nth1 = 1;
++
++                kernel = backend_ctx->kernel_mul_mat_q4_0_f32;
++                ndst = 4;
+             } else if (backend_ctx->gpu_family == ADRENO) {
+                 nth0 = 64;
+                 nth1 = 1;
+@@ -3571,6 +3606,9 @@
+             if (backend_ctx->gpu_family == INTEL) {
+                 nth0 = 2;
+                 nth1 = 16;
++            } else if (backend_ctx->gpu_family == AMD) {
++                nth0 = 2;
++                nth1 = 16;
+             } else if (backend_ctx->gpu_family == ADRENO) {
+                 nth0 = 2;
+                 nth1 = 64;
+@@ -3985,6 +3985,10 @@
+         // This is the same as the initial value.
+         nth = MIN(32, ne00);
+     }
++    else if (backend_ctx->gpu_family == AMD) {
++        // This is the same as the initial value.
++        nth = MIN(32, ne00);
++    }
+     else if (backend_ctx->gpu_family == ADRENO) {
+         nth = 64;
+     } else {
