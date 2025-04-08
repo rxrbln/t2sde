@@ -15,8 +15,9 @@ Ash Logan <ash@heyquark.com>'s gcc Wii U IBM Espresso workaround patch.
 
 Modified to also apply if just -mtune'ed for Espresso, too.
 
---- gcc-14-20241221.old/gcc/config/rs6000/7xx.md        2025-02-20 13:57:34.608349795 +1100
-+++ gcc-14-20241221/gcc/config/rs6000/7xx.md    2025-02-20 14:00:13.591468537 +1100
+diff -rup gcc-13.2.0/gcc/config/rs6000/7xx.md gcc-13.2.0.new/gcc/config/rs6000/7xx.md
+--- gcc-13.2.0/gcc/config/rs6000/7xx.md	2023-07-27 18:13:04.000000000 +1000
++++ gcc-13.2.0.new/gcc/config/rs6000/7xx.md	2023-12-25 17:30:50.475274708 +1100
 @@ -47,79 +47,79 @@
  
  (define_insn_reservation "ppc750-load" 2
@@ -39,8 +40,8 @@ Modified to also apply if just -mtune'ed for Espresso, too.
  
  (define_insn_reservation "ppc750-integer" 1
    (and (ior (eq_attr "type" "integer,insert,trap,cntlz,isel")
-            (and (eq_attr "type" "add,logical,shift,exts")
-                 (eq_attr "dot" "no")))
+ 	    (and (eq_attr "type" "add,logical,shift,exts")
+ 		 (eq_attr "dot" "no")))
 -       (eq_attr "cpu" "ppc750,ppc7400"))
 +       (eq_attr "cpu" "ppc750,ppc7400,espresso"))
    "ppc750_du,iu1_7xx|iu2_7xx")
@@ -86,8 +87,8 @@ Modified to also apply if just -mtune'ed for Espresso, too.
  
  (define_insn_reservation "ppc750-compare" 2
    (and (ior (eq_attr "type" "cmp")
-            (and (eq_attr "type" "add,logical,shift,exts")
-                 (eq_attr "dot" "yes")))
+ 	    (and (eq_attr "type" "add,logical,shift,exts")
+ 		 (eq_attr "dot" "yes")))
 -       (eq_attr "cpu" "ppc750,ppc7400"))
 +       (eq_attr "cpu" "ppc750,ppc7400,espresso"))
    "ppc750_du,(iu1_7xx|iu2_7xx)")
@@ -156,19 +157,59 @@ Modified to also apply if just -mtune'ed for Espresso, too.
    "nothing,bpu_7xx")
  
  ;; Altivec
---- gcc-14-20241221.old/gcc/config/rs6000/driver-rs6000.cc      2025-02-20 13:57:34.610349821 +1100
-+++ gcc-14-20241221/gcc/config/rs6000/driver-rs6000.cc  2025-02-20 14:00:13.591468537 +1100
-@@ -508,6 +508,7 @@ static const struct asm_name asm_names[]
-   { "630",     "-mppc64" },
-   { "740",     "-mppc" },
-   { "750",     "-mppc" },
+diff -rup gcc-13.2.0/gcc/config/rs6000/driver-rs6000.cc gcc-13.2.0.new/gcc/config/rs6000/driver-rs6000.cc
+--- gcc-13.2.0/gcc/config/rs6000/driver-rs6000.cc	2023-07-27 18:13:04.000000000 +1000
++++ gcc-13.2.0.new/gcc/config/rs6000/driver-rs6000.cc	2023-12-25 17:37:00.150252750 +1100
+@@ -506,6 +506,7 @@ static const struct asm_name asm_names[]
+   { "630",	"-mppc64" },
+   { "740",	"-mppc" },
+   { "750",	"-mppc" },
 +  { "espresso", "-mppc" },
-   { "G3",      "-mppc" },
-   { "7400",    "-mppc %{!mvsx:%{!maltivec:-maltivec}}" },
-   { "7450",    "-mppc %{!mvsx:%{!maltivec:-maltivec}}" },
---- gcc-14-20241221.old/gcc/config/rs6000/rs6000-c.cc   2025-02-20 13:57:34.612349848 +1100
-+++ gcc-14-20241221/gcc/config/rs6000/rs6000-c.cc       2025-02-20 14:00:13.595468590 +1100
-@@ -649,6 +649,8 @@ rs6000_cpu_cpp_builtins (cpp_reader *pfi
+   { "G3",	"-mppc" },
+   { "7400",	"-mppc %{!mvsx:%{!maltivec:-maltivec}}" },
+   { "7450",	"-mppc %{!mvsx:%{!maltivec:-maltivec}}" },
+diff -rup gcc-13.2.0/gcc/config/rs6000/rs6000.cc gcc-13.2.0.new/gcc/config/rs6000/rs6000.cc
+--- gcc-13.2.0/gcc/config/rs6000/rs6000.cc	2023-07-27 18:13:04.000000000 +1000
++++ gcc-13.2.0.new/gcc/config/rs6000/rs6000.cc	2023-12-25 17:43:33.317711721 +1100
+@@ -4687,6 +4687,7 @@ rs6000_option_override_internal (bool gl
+ 
+       case PROCESSOR_PPC750:
+       case PROCESSOR_PPC7400:
++      case PROCESSOR_ESPRESSO:
+ 	rs6000_cost = &ppc750_cost;
+ 	break;
+ 
+@@ -16545,6 +16546,10 @@ emit_store_conditional (machine_mode mod
+   if (PPC405_ERRATUM77)
+     emit_insn (gen_hwsync ());
+ 
++  /* Emit dcbst before stwcx. to address Espresso erratum */
++  if (ESPRESSO_ERRATUM)
++    emit_insn (gen_rs6000_dcbst (mem));
++
+   emit_insn (fn (res, mem, val));
+ }
+ 
+@@ -17964,6 +17969,7 @@ rs6000_adjust_cost (rtx_insn *insn, int
+                  || rs6000_tune == PROCESSOR_PPC620
+                  || rs6000_tune == PROCESSOR_PPC630
+                  || rs6000_tune == PROCESSOR_PPC750
++                 || rs6000_tune == PROCESSOR_ESPRESSO
+                  || rs6000_tune == PROCESSOR_PPC7400
+                  || rs6000_tune == PROCESSOR_PPC7450
+                  || rs6000_tune == PROCESSOR_PPCE5500
+@@ -18520,6 +18526,7 @@ rs6000_issue_rate (void)
+   case PROCESSOR_PPC440:
+   case PROCESSOR_PPC603:
+   case PROCESSOR_PPC750:
++  case PROCESSOR_ESPRESSO:
+   case PROCESSOR_PPC7400:
+   case PROCESSOR_PPC8540:
+   case PROCESSOR_PPC8548:
+diff -rup gcc-13.2.0/gcc/config/rs6000/rs6000-c.cc gcc-13.2.0.new/gcc/config/rs6000/rs6000-c.cc
+--- gcc-13.2.0/gcc/config/rs6000/rs6000-c.cc	2023-07-27 18:13:04.000000000 +1000
++++ gcc-13.2.0.new/gcc/config/rs6000/rs6000-c.cc	2023-12-25 17:43:42.106575203 +1100
+@@ -654,6 +654,8 @@ rs6000_cpu_cpp_builtins (cpp_reader *pfi
    /* Used by lwarx/stwcx. errata work-around.  */
    if (rs6000_cpu == PROCESSOR_PPC405)
      builtin_define ("__PPC405__");
@@ -177,9 +218,10 @@ Modified to also apply if just -mtune'ed for Espresso, too.
    /* Used by libstdc++.  */
    if (TARGET_NO_LWSYNC)
      builtin_define ("__NO_LWSYNC__");
---- gcc-14-20241221.old/gcc/config/rs6000/rs6000-cpus.def       2025-02-20 13:57:34.612349848 +1100
-+++ gcc-14-20241221/gcc/config/rs6000/rs6000-cpus.def   2025-02-20 14:00:13.595468590 +1100
-@@ -203,6 +203,7 @@ RS6000_CPU ("740", PROCESSOR_PPC750, OPT
+diff -rup gcc-13.2.0/gcc/config/rs6000/rs6000-cpus.def gcc-13.2.0.new/gcc/config/rs6000/rs6000-cpus.def
+--- gcc-13.2.0/gcc/config/rs6000/rs6000-cpus.def	2023-07-27 18:13:04.000000000 +1000
++++ gcc-13.2.0.new/gcc/config/rs6000/rs6000-cpus.def	2023-12-25 17:35:46.983993390 +1100
+@@ -206,6 +206,7 @@ RS6000_CPU ("740", PROCESSOR_PPC750, OPT
  RS6000_CPU ("7400", PROCESSOR_PPC7400, POWERPC_7400_MASK)
  RS6000_CPU ("7450", PROCESSOR_PPC7450, POWERPC_7400_MASK)
  RS6000_CPU ("750", PROCESSOR_PPC750, OPTION_MASK_PPC_GFXOPT)
@@ -187,18 +229,53 @@ Modified to also apply if just -mtune'ed for Espresso, too.
  RS6000_CPU ("801", PROCESSOR_MPCCORE, OPTION_MASK_SOFT_FLOAT)
  RS6000_CPU ("821", PROCESSOR_MPCCORE, OPTION_MASK_SOFT_FLOAT)
  RS6000_CPU ("823", PROCESSOR_MPCCORE, OPTION_MASK_SOFT_FLOAT)
---- gcc-14-20241221.old/gcc/config/rs6000/rs6000-logue.cc       2025-02-20 13:57:34.612349848 +1100
-+++ gcc-14-20241221/gcc/config/rs6000/rs6000-logue.cc   2025-02-20 14:00:13.597468617 +1100
-@@ -4318,6 +4318,7 @@ rs6000_emit_epilogue (enum epilogue_type
+diff -rup gcc-13.2.0/gcc/config/rs6000/rs6000.h gcc-13.2.0.new/gcc/config/rs6000/rs6000.h
+--- gcc-13.2.0/gcc/config/rs6000/rs6000.h	2023-07-27 18:13:04.000000000 +1000
++++ gcc-13.2.0.new/gcc/config/rs6000/rs6000.h	2023-12-25 17:41:53.759311091 +1100
+@@ -77,6 +77,9 @@
+ #define PPC405_ERRATUM77 0
+ #endif
+ 
++/* Support Espresso stwcx erratum. */
++#define ESPRESSO_ERRATUM (rs6000_cpu == PROCESSOR_ESPRESSO || rs6000_tune == PROCESSOR_ESPRESSO)
++
+ #ifndef SUBTARGET_DRIVER_SELF_SPECS
+ # define SUBTARGET_DRIVER_SELF_SPECS ""
+ #endif
+@@ -144,6 +147,7 @@
+   mcpu=630: -mppc64; \
+   mcpu=740: -mppc; \
+   mcpu=750: -mppc; \
++  mcpu=espresso: -mppc; \
+   mcpu=G3: -mppc; \
+   mcpu=7400: -mppc %{!mvsx:%{!maltivec:-maltivec}}; \
+   mcpu=7450: -mppc %{!mvsx:%{!maltivec:-maltivec}}; \
+diff -rup gcc-13.2.0/gcc/config/rs6000/rs6000-logue.cc gcc-13.2.0.new/gcc/config/rs6000/rs6000-logue.cc
+--- gcc-13.2.0/gcc/config/rs6000/rs6000-logue.cc	2023-07-27 18:13:04.000000000 +1000
++++ gcc-13.2.0.new/gcc/config/rs6000/rs6000-logue.cc	2023-12-25 17:37:48.965097770 +1100
+@@ -4327,6 +4327,7 @@ rs6000_emit_epilogue (enum epilogue_type
    bool using_mtcr_multiple = (rs6000_tune == PROCESSOR_PPC601
-                              || rs6000_tune == PROCESSOR_PPC603
-                              || rs6000_tune == PROCESSOR_PPC750
-+                             || rs6000_tune == PROCESSOR_ESPRESSO
-                              || optimize_size);
+ 			      || rs6000_tune == PROCESSOR_PPC603
+ 			      || rs6000_tune == PROCESSOR_PPC750
++			      || rs6000_tune == PROCESSOR_ESPRESSO
+ 			      || optimize_size);
  
    /* Restore via the backchain when we have a large frame, since this
---- gcc-14-20241221.old/gcc/config/rs6000/rs6000-opts.h 2025-02-20 13:57:34.612349848 +1100
-+++ gcc-14-20241221/gcc/config/rs6000/rs6000-opts.h     2025-02-20 14:00:13.599468643 +1100
+diff -rup gcc-13.2.0/gcc/config/rs6000/rs6000.md gcc-13.2.0.new/gcc/config/rs6000/rs6000.md
+--- gcc-13.2.0/gcc/config/rs6000/rs6000.md	2023-07-27 18:13:04.000000000 +1000
++++ gcc-13.2.0.new/gcc/config/rs6000/rs6000.md	2023-12-28 17:19:39.415655616 +1100
+@@ -346,7 +346,7 @@
+ ;; enumeration in rs6000-opts.h.
+ (define_attr "cpu"
+   "ppc601,ppc603,ppc604,ppc604e,ppc620,ppc630,
+-   ppc750,ppc7400,ppc7450,
++   ppc750,ppc7400,ppc7450,espresso,
+    ppc403,ppc405,ppc440,ppc476,
+    ppc8540,ppc8548,ppce300c2,ppce300c3,ppce500mc,ppce500mc64,ppce5500,ppce6500,
+    power4,power5,power6,power7,power8,power9,power10,
+diff -rup gcc-13.2.0/gcc/config/rs6000/rs6000-opts.h gcc-13.2.0.new/gcc/config/rs6000/rs6000-opts.h
+--- gcc-13.2.0/gcc/config/rs6000/rs6000-opts.h	2023-07-27 18:13:04.000000000 +1000
++++ gcc-13.2.0.new/gcc/config/rs6000/rs6000-opts.h	2023-12-25 17:26:21.545836774 +1100
 @@ -40,6 +40,7 @@ enum processor_type
     PROCESSOR_PPC750,
     PROCESSOR_PPC7400,
@@ -207,9 +284,10 @@ Modified to also apply if just -mtune'ed for Espresso, too.
  
     PROCESSOR_PPC403,
     PROCESSOR_PPC405,
---- gcc-14-20241221.old/gcc/config/rs6000/rs6000-tables.opt     2025-02-20 13:57:34.613349861 +1100
-+++ gcc-14-20241221/gcc/config/rs6000/rs6000-tables.opt 2025-02-20 14:02:23.828204187 +1100
-@@ -96,107 +96,110 @@ EnumValue
+diff -rup gcc-13.2.0/gcc/config/rs6000/rs6000-tables.opt gcc-13.2.0.new/gcc/config/rs6000/rs6000-tables.opt
+--- gcc-13.2.0/gcc/config/rs6000/rs6000-tables.opt	2023-07-27 18:13:04.000000000 +1000
++++ gcc-13.2.0.new/gcc/config/rs6000/rs6000-tables.opt	2023-12-25 17:43:57.525335704 +1100
+@@ -96,104 +96,107 @@ EnumValue
  Enum(rs6000_cpu_opt_value) String(750) Value(22)
  
  EnumValue
@@ -333,106 +411,34 @@ Modified to also apply if just -mtune'ed for Espresso, too.
 +Enum(rs6000_cpu_opt_value) String(power9) Value(52)
  
  EnumValue
--Enum(rs6000_cpu_opt_value) String(power11) Value(53)
+-Enum(rs6000_cpu_opt_value) String(powerpc) Value(53)
 +Enum(rs6000_cpu_opt_value) String(power10) Value(53)
  
  EnumValue
--Enum(rs6000_cpu_opt_value) String(powerpc) Value(54)
-+Enum(rs6000_cpu_opt_value) String(power11) Value(54)
+-Enum(rs6000_cpu_opt_value) String(powerpc64) Value(54)
++Enum(rs6000_cpu_opt_value) String(powerpc) Value(54)
  
  EnumValue
--Enum(rs6000_cpu_opt_value) String(powerpc64) Value(55)
-+Enum(rs6000_cpu_opt_value) String(powerpc) Value(55)
+-Enum(rs6000_cpu_opt_value) String(powerpc64le) Value(55)
++Enum(rs6000_cpu_opt_value) String(powerpc64) Value(55)
  
  EnumValue
--Enum(rs6000_cpu_opt_value) String(powerpc64le) Value(56)
-+Enum(rs6000_cpu_opt_value) String(powerpc64) Value(56)
- 
- EnumValue
--Enum(rs6000_cpu_opt_value) String(rs64) Value(57)
-+Enum(rs6000_cpu_opt_value) String(powerpc64le) Value(57)
+-Enum(rs6000_cpu_opt_value) String(rs64) Value(56)
++Enum(rs6000_cpu_opt_value) String(powerpc64le) Value(56)
 +
 +EnumValue
-+Enum(rs6000_cpu_opt_value) String(rs64) Value(58)
++Enum(rs6000_cpu_opt_value) String(rs64) Value(57)
  
---- gcc-14-20241221.old/gcc/config/rs6000/rs6000.cc     2025-02-20 13:57:34.613349861 +1100
-+++ gcc-14-20241221/gcc/config/rs6000/rs6000.cc 2025-02-20 14:00:13.594468577 +1100
-@@ -4652,6 +4652,7 @@ rs6000_option_override_internal (bool gl
- 
-       case PROCESSOR_PPC750:
-       case PROCESSOR_PPC7400:
-+      case PROCESSOR_ESPRESSO:
-        rs6000_cost = &ppc750_cost;
-        break;
- 
-@@ -16826,6 +16827,10 @@ emit_store_conditional (machine_mode mod
-   if (PPC405_ERRATUM77)
-     emit_insn (gen_hwsync ());
- 
-+  /* Emit dcbst before stwcx. to address Espresso erratum */
-+  if (ESPRESSO_ERRATUM)
-+    emit_insn (gen_rs6000_dcbst (mem));
-+
-   emit_insn (fn (res, mem, val));
- }
- 
-@@ -18246,6 +18251,7 @@ rs6000_adjust_cost (rtx_insn *insn, int
-                  || rs6000_tune == PROCESSOR_PPC620
-                  || rs6000_tune == PROCESSOR_PPC630
-                  || rs6000_tune == PROCESSOR_PPC750
-+                 || rs6000_tune == PROCESSOR_ESPRESSO
-                  || rs6000_tune == PROCESSOR_PPC7400
-                  || rs6000_tune == PROCESSOR_PPC7450
-                  || rs6000_tune == PROCESSOR_PPCE5500
-@@ -18803,6 +18809,7 @@ rs6000_issue_rate (void)
-   case PROCESSOR_PPC440:
-   case PROCESSOR_PPC603:
-   case PROCESSOR_PPC750:
-+  case PROCESSOR_ESPRESSO:
-   case PROCESSOR_PPC7400:
-   case PROCESSOR_PPC8540:
-   case PROCESSOR_PPC8548:
---- gcc-14-20241221.old/gcc/config/rs6000/rs6000.h      2025-02-20 13:57:34.613349861 +1100
-+++ gcc-14-20241221/gcc/config/rs6000/rs6000.h  2025-02-20 14:00:13.596468603 +1100
-@@ -77,6 +77,9 @@
- #define PPC405_ERRATUM77 0
- #endif
- 
-+/* Support Espresso stwcx erratum. */
-+#define ESPRESSO_ERRATUM (rs6000_cpu == PROCESSOR_ESPRESSO || rs6000_tune == PROCESSOR_ESPRESSO)
-+
- #ifndef SUBTARGET_DRIVER_SELF_SPECS
- # define SUBTARGET_DRIVER_SELF_SPECS ""
- #endif
-@@ -144,6 +147,7 @@
-   mcpu=630: -mppc64; \
-   mcpu=740: -mppc; \
-   mcpu=750: -mppc; \
-+  mcpu=espresso: -mppc; \
-   mcpu=G3: -mppc; \
-   mcpu=7400: -mppc %{!mvsx:%{!maltivec:-maltivec}}; \
-   mcpu=7450: -mppc %{!mvsx:%{!maltivec:-maltivec}}; \
---- gcc-14-20241221.old/gcc/config/rs6000/rs6000.md     2025-02-20 13:57:34.613349861 +1100
-+++ gcc-14-20241221/gcc/config/rs6000/rs6000.md 2025-02-20 14:00:13.599468643 +1100
-@@ -347,7 +347,7 @@
- ;; enumeration in rs6000-opts.h.
- (define_attr "cpu"
-   "ppc601,ppc603,ppc604,ppc604e,ppc620,ppc630,
--   ppc750,ppc7400,ppc7450,
-+   ppc750,ppc7400,ppc7450,espresso,
-    ppc403,ppc405,ppc440,ppc476,
-    ppc8540,ppc8548,ppce300c2,ppce300c3,ppce500mc,ppce500mc64,ppce5500,ppce6500,
-    power4,power5,power6,power7,power8,power9,power10,power11,
---- gcc-14-20241221.old/gcc/config/rs6000/sync.md       2025-02-20 13:57:34.613349861 +1100
-+++ gcc-14-20241221/gcc/config/rs6000/sync.md   2025-02-20 14:00:13.600468656 +1100
+diff -rup gcc-13.2.0/gcc/config/rs6000/sync.md gcc-13.2.0.new/gcc/config/rs6000/sync.md
+--- gcc-13.2.0/gcc/config/rs6000/sync.md	2023-07-27 18:13:04.000000000 +1000
++++ gcc-13.2.0.new/gcc/config/rs6000/sync.md	2023-12-28 16:58:45.235128306 +1100
 @@ -347,6 +347,13 @@
    "<stcx> %2,%y1"
    [(set_attr "type" "store_c")])
  
 +;; I am pretty sure VOID is correct since this actually affects a cache-block sized
 +;; chunk of memory
-+
- (define_insn "rs6000_dcbst"
++(define_insn "rs6000_dcbst"
 +  [(match_operand:VOID 0 "memory_operand" "=Z")]
 +  ""
 +  "dcbst %y0")
@@ -440,14 +446,15 @@ Modified to also apply if just -mtune'ed for Espresso, too.
  ;; Use a temporary register to force getting an even register for the
  ;; lqarx/stqcrx. instructions.  Normal optimizations will eliminate this extra
  ;; copy on big endian systems.
---- gcc-14-20241221.old/gcc/config.gcc  2025-02-20 13:57:39.322412618 +1100
-+++ gcc-14-20241221/gcc/config.gcc      2025-02-20 14:00:13.600468656 +1100
-@@ -5604,7 +5604,7 @@ case "${target}" in
-                        | rs64 \
-                        | 401 | 403 | 405 | 405fp | 440 | 440fp | 464 | 464fp \
-                        | 476 | 476fp | 505 | 601 | 602 | 603 | 603e | ec603e \
--                       | 604 | 604e | 620 | 630 | 740 | 750 | 7400 | 7450 \
-+                       | 604 | 604e | 620 | 630 | 740 | 750 | 7400 | 7450 | espresso \
-                        | a2 | e300c[23] | 854[08] | e500mc | e500mc64 | e5500 | e6500 \
-                        | titan | 801 | 821 | 823 | 860 | 970 | G3 | G4 | G5 | cell)
-                                # OK
+diff -rup gcc-13.2.0/gcc/config.gcc gcc-13.2.0.new/gcc/config.gcc
+--- gcc-13.2.0/gcc/config.gcc	2023-07-27 18:13:04.000000000 +1000
++++ gcc-13.2.0.new/gcc/config.gcc	2023-12-28 17:58:48.853211935 +1100
+@@ -5417,7 +5417,7 @@ case "${target}" in
+ 			| rs64 \
+ 			| 401 | 403 | 405 | 405fp | 440 | 440fp | 464 | 464fp \
+ 			| 476 | 476fp | 505 | 601 | 602 | 603 | 603e | ec603e \
+-			| 604 | 604e | 620 | 630 | 740 | 750 | 7400 | 7450 \
++			| 604 | 604e | 620 | 630 | 740 | 750 | 7400 | 7450 | espresso \
+ 			| a2 | e300c[23] | 854[08] | e500mc | e500mc64 | e5500 | e6500 \
+ 			| titan | 801 | 821 | 823 | 860 | 970 | G3 | G4 | G5 | cell)
+ 				# OK
