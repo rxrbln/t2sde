@@ -1,0 +1,156 @@
+diff --git a/doc/magic.man b/doc/magic.man
+index 6916b7b2..b712fc13 100644
+--- a/doc/magic.man
++++ b/doc/magic.man
+@@ -1,5 +1,5 @@
+-.\" $File: magic.man,v 1.110 2024/11/27 15:37:00 christos Exp $
+-.Dd November 27, 2024
++.\" $File: magic.man,v 1.109 2024/06/18 17:04:23 christos Exp $
++.Dd June 18, 2024
+ .Dt MAGIC __FSECTION__
+ .Os
+ .\" install as magic.4 on USG, magic.5 on V7, Berkeley and Linux systems.
+@@ -50,10 +50,6 @@ is a regular file.
+ A continuation offset relative to the end of the last up-level field
+ .Dv ( \*[Am] ) .
+ .El
+-If the offset starts with the symbol
+-.Dq + ,
+-then all offsets are interpreted as from the beginning of the file (the
+-default).
+ .It Dv type
+ The type of the data to be tested.
+ The possible values are:
+diff --git a/src/apprentice.c b/src/apprentice.c
+index cf040cdd..bb17cc1a 100644
+--- a/src/apprentice.c
++++ b/src/apprentice.c
+@@ -2127,9 +2127,9 @@ parse(struct magic_set *ms, struct magic_entry *me, const char *file,
+ 	}
+ 
+ 	/* get offset, then skip over it */
+-	if (*l == '-' || *l == '+') {
++	if (*l == '-') {
+ 		++l;            /* step over */
+-		m->flag |= l[-1] == '-' ? OFFNEGATIVE : OFFPOSITIVE;
++		m->flag |= OFFNEGATIVE;
+ 	}
+ 	m->offset = CAST(int32_t, strtol(l, &t, 0));
+         if (l == t) {
+diff --git a/src/file.h b/src/file.h
+index 99226327..67d85e70 100644
+--- a/src/file.h
++++ b/src/file.h
+@@ -179,7 +179,7 @@
+ #define MAXstring 128		/* max len of "string" types */
+ 
+ #define MAGICNO		0xF11E041C
+-#define VERSIONNO	20
++#define VERSIONNO	19
+ #define FILE_MAGICSIZE	432
+ 
+ #define FILE_GUID_SIZE	sizeof("XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX")
+@@ -218,7 +218,8 @@ union VALUETYPE {
+ 
+ struct magic {
+ 	/* Word 1 */
+-	uint16_t flag;
++	uint16_t cont_level;	/* level of ">" */
++	uint8_t flag;
+ #define INDIR		0x01	/* if '(...)' appears */
+ #define OFFADD		0x02	/* if '>&' or '>...(&' appears */
+ #define INDIROFFADD	0x04	/* if '>&(' appears */
+@@ -228,9 +229,7 @@ struct magic {
+ 				   for top-level tests) */
+ #define TEXTTEST	0x40	/* for passing to file_softmagic */
+ #define OFFNEGATIVE	0x80	/* relative to the end of file */
+-#define OFFPOSITIVE	0x100	/* relative to the beginning of file */
+ 
+-	uint8_t cont_level;	/* level of ">" */
+ 	uint8_t factor;
+ 
+ 	/* Word 2 */
+diff --git a/src/softmagic.c b/src/softmagic.c
+index 59300a69..adbc027a 100644
+--- a/src/softmagic.c
++++ b/src/softmagic.c
+@@ -1540,7 +1540,7 @@ msetoffset(struct magic_set *ms, struct magic *m, struct buffer *bb,
+ 		ms->eoffset = ms->offset = CAST(int32_t, b->elen - m->offset);
+ 	} else {
+ 		offset = m->offset;
+-		if ((m->flag & OFFPOSITIVE) || cont_level == 0) {
++		if (cont_level == 0) {
+ normal:
+ 			// XXX: Pass real fd, then who frees bb?
+ 			buffer_init(bb, -1, NULL, b->fbuf, b->flen);
+diff --git a/magic/Magdir/archive b/magic/Magdir/archive
+index b920f993..c8f440dc 100644
+--- a/magic/Magdir/archive
++++ b/magic/Magdir/archive
+@@ -1875,6 +1875,15 @@
+ >>>>>-22	string	PK\005\006
+ >>>>>>(-6.l-16)	string	APK\x20Sig\x20Block\x2042	\b, with APK Signing Block
+ 
++# Keyman Compiled Package File (keyman.com)
++# https://help.keyman.com/developer/current-version/reference/file-types/kmp
++# Find start of central directory
++>>>(-6.l)	string		PK\001\002
++# Scan central directory for string 'kmp.json', will suffice for a
++# package containing about 150 files
++>>>>(-6.l)	search/9000	kmp.json	Keyman Compiled Package File
++!:mime	application/vnd.keyman.kmp+zip
++!:ext kmp
+ 
+ # Specialised zip formats which start with a member named 'mimetype'
+ # (stored uncompressed, with no 'extra field') containing the file's MIME type.
+@@ -2114,36 +2123,25 @@
+ #>30	search/100/b application/epub+zip	EPUB document
+ #!:mime application/epub+zip
+ 
+-# APK Signing Block
++# Generic zip archives (Greg Roelofs, c/o zip-bugs@wkuvx1.wku.edu)
++#   Next line excludes specialized formats:
+ >(26.s+30)	leshort	!0xcafe
+ >>30	search/100/b !application/epub+zip
+->>>26    string          !\x8\0\0\0mimetype
+->>>>-22	string	PK\005\006
+->>>>>(-6.l-16)	string	APK\x20Sig\x20Block\x2042	Android package (APK), with APK Signing Block
++>>>26    string          !\x8\0\0\0mimetype	Zip archive data
++!:mime	application/zip
++>>>>4	beshort		x			\b, at least
++>>>>4	use		zipversion
++>>>>4	beshort		x			to extract
++>>>>8	beshort		x			\b, compression method=
++>>>>8	use		zipcompression
++>>>>0x161	string		WINZIP		\b, WinZIP self-extracting
++# APK Signing Block
++>0	default	x
++>>-22	string	PK\005\006
++>>>(-6.l-16)	string	APK\x20Sig\x20Block\x2042	Android package (APK), with APK Signing Block
+ !:mime	application/vnd.android.package-archive
+ !:ext	apk
+ 
+-# Keyman Compiled Package File (keyman.com)
+-# https://help.keyman.com/developer/current-version/reference/file-types/kmp
+-# Find start of central directory
+->>>>>(-6.l)	string		PK\001\002
+-# Scan central directory for string 'kmp.json', will suffice for a
+-# package containing about 150 files
+->>>>>>(-6.l)	search/9000	kmp.json	Keyman Compiled Package File
+-!:mime	application/vnd.keyman.kmp+zip
+-!:ext kmp
+-
+-# Generic zip archives (Greg Roelofs, c/o zip-bugs@wkuvx1.wku.edu)
+-#   Next line excludes specialized formats:
+->>>>+4	default		x
+->>>>>4	beshort		x			Zip archive data, at least
+-!:mime	application/zip
+->>>>>4	use		zipversion
+->>>>>4	beshort		x			to extract
+->>>>>8	beshort		x			\b, compression method=
+->>>>>8	use		zipcompression
+->>>>>0x161	string		WINZIP		\b, WinZIP self-extracting
+-
+ # Zip archives (Greg Roelofs, c/o zip-bugs@wkuvx1.wku.edu)
+ 0	string		PK\005\006	Zip archive data (empty)
+ !:mime application/zip
