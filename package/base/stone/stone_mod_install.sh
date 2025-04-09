@@ -727,7 +727,7 @@ EOT
 		cd /mnt; chroot . ./tmp/stone_postinst.sh
 		rm -fv ./tmp/stone_postinst.sh
 
-		kexec=$(type -p kexec >/dev/null)
+		kexec=$(type -p kexec)
 
 		if gui_yesno "Do you want to un-mount the filesystems and reboot${kexec:+ (via kexec)} now?"
 		then
