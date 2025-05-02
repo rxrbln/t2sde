@@ -132,7 +132,9 @@ part_mkfs() {
 	maybe_add ext2	'non-journaling'	'mkfs.ext2' '' '-L'
 	maybe_add jfs	'IBM journaling'	'mkfs.jfs' '' '-L'
 	maybe_add reiserfs 'journaling'		'mkfs.reiserfs' '' '-l'
-	maybe_add xfs	'SGI journaling'	'mkfs.xfs' '-f' '-l'
+	maybe_add xfs	'SGI journaling'	'mkfs.xfs' '-f' '-L'
+	[ "$fs" = xfs0 ] &&
+	maybe_add xfs0	'SGI journaling v0'	'mkfs.xfs' '-f -n ftype=0 -m crc=0' '-L'
 	maybe_add fat	'File Allocation Table'	'mkfs.fat' '' '-n'
 
 	[ "$fs" -a "$fs" != any ] && cmd="$opts $dev"
@@ -304,7 +306,7 @@ disk_partition() {
 
 	# if re-partition: reset size to all
 	[ "$si" = 0 ] && size=$(($(blockdev --getsz $dev) / 2 / 1024))
-	local swap=$((size / 20))
+	local swap=$((size / 20)) # TODO: better
 	local boot=512
 
 	local fdisk="sfdisk -W always"
@@ -352,19 +354,22 @@ size=$((size - _swap))m, type=83")
 		[ $_swap != 0 ] &&
 		    script+=("type=82") fs+=("${dev}4 swap")
 		;;
-	    mips64)
-		boot=8 # volhdr
-		# TODO: if rootfs too modern, or lvm, we need a /boot part
-		fs+=("${dev}1 $any /")
-		script+=("label:sgi
-start=${boot}m, size=$((size - _swap))m, type=83")
+	    mips64) # TODO: match Sgi only
+		local volhdr=8 i=1
 
-		# the rounding is way off, so - 20m rounding safety :-/
+		# the rounding is way off, so -20m at times rounding safety :-/
+		script+=("label:sgi")
+
+		[ $boot != 0 ] && script+=("start=$((volhdr))m, size=$((boot))m, type=83") && : $((i++))
+		script+=("start=$((volhdr + boot))m, size=$((size - boot - _swap - volhdr - 10))m, type=83")
+		fs+=("${dev}$((i++)) $any /")
+		[ $boot != 0 ] && fs+=("${dev}1 xfs0 /boot")
+
 		[ $_swap != 0 ] &&
-		    script+=("start=$((size - _swap + boot))m, size=$((_swap - boot - 20))m, type=82") &&
-		    fs+=("${dev}2 swap")
+		    script+=("start=$((volhdr + size - _swap - volhdr))m, size=$((_swap - 10))m, type=82") &&
+		    fs+=("${dev}$((i++)) swap")
 
-		script+=("9: size=8m, type=0
+		script+=("9: size=${volhdr}m, type=0
 11: type=6")
 		;;
 	    ppc*CHRP)
