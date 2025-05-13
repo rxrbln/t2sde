@@ -42,3 +42,64 @@
 
 [D] b5cbd96a243e0bfb63a91e347a1aa25803b7fbb7f5912650e3122c12 grub-2.12.tar.xz https://ftp.gnu.org/gnu/grub/
 [D] 2d14f9e62ff97cef56fb6ef4b2f04ba91187b037616b12f6e028689c unifont-13.0.06.ttf http://unifoundry.com/pub/unifont/unifont-13.0.06/font-builds/
+
+# *** No rule to make target '../grub-core/extra_deps.lst', needed by 'syminfo.lst'.
+hook_add premake 5 "touch grub-core/extra_deps.lst"
+
+grub_postmake() {
+	mkdir -p $root/boot/grub
+	cp docs/grub.cfg $root/boot/grub/grub.cfg.example
+}
+hook_add postmake 5 "grub_postmake"
+
+atstage toolchain && var_remove_regex confopt " " "--target=.*"
+hook_add preconf 5 "./autogen.sh" # for apple efi magic, ieee1275_fb, luks2-argon2, riscv64
+hook_add preconf 7 "cp -vf `match_source_file -p unifont` unifont.ttf"
+
+var_append confopt ' ' --enable-device-mapper
+var_append confopt ' ' --disable-libzfs
+
+var_remove GCC_WRAPPER_APPEND ' ' -c?:-s
+var_append GCC_WRAPPER_REMOVE ' ' "-Werror" # for clang
+
+case $arch in
+	arm)	var_append confopt ' ' '--with-platform=efi' ;;
+	sparc*)	export ac_cv_prog_TARGET_OBJCOPY=$OBJCOPY ;;
+	powerpc*) var_append GCC_WRAPPER_APPEND ' ' "-mno-altivec" ;;
+	x86*)	# 386-pc 1st: Decompressor is too big, keep in sync below!
+		[ "$SDECFG_DEFAULT_CC" = gcc ] &&
+			var_append GCC_WRAPPER_INSERT ' ' "-Wa,-mx86-used-note=no"
+		var_append GCC_WRAPPER_INSERT ' ' -Os
+		var_append GCC_WRAPPER_APPEND ' ' "-mno-avx -mno-avx2"
+		# TODO: fix grub's Makefile to always add -m32?
+		[ "$SDECFG_X8664_X32" = 1 ] && var_append GCC_WRAPPER_INSERT ' ' -m32
+		;;
+esac
+
+unset CPP
+var_remove_regex makeopt ' ' 'CPP=.*'
+
+pkg_grub_rebuild() {
+	var_append confopt ' ' --with-platform=efi
+
+	var_remove GCC_WRAPPER_INSERT ' ' "-Os -Wa,-mx86-used-note=no"
+	# looks like SSE, 2, 3 usually works within EFI?
+	var_append GCC_WRAPPER_REMOVE ' ' "-mno-sse -mno-sse2 -mno-sse3"
+	var_remove GCC_WRAPPER_INSERT ' ' -m32
+
+	eval $MAKE distclean
+	eval_config_command $confopt $confopt
+
+	# TODO: build x32 utils
+	[ "$SDECFG_X8664_X32" = 1 ] &&
+		var_append makeopt ' ' 'bin_PROGRAMS= sbin_PROGRAMS=' &&
+		var_append makeinstopt ' ' 'bin_PROGRAMS= sbin_PROGRAMS='
+
+	eval $MAKE $makeopt
+	eval $MAKE $makeinstopt
+}
+[[ "$arch" = x86* ]] && ! atstage toolchain && hook_add postmake 7 pkg_grub_rebuild
+
+var_append INSTALL_WRAPPER_FILTER '|' 'sed -e s,info/grub.info,info/grub2.info, \
+  -e s,man8/grub-install.8,man8/grub2-install.8, \
+  -e s,bin/grub-install,bin/grub2-install, -e s,bin/grub-set-default,bin/grub2-set-default,'

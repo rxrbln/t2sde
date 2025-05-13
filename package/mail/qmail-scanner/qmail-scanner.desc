@@ -42,3 +42,50 @@
 
 [D] 1400505392 qmail-scanner-2.00.tgz http://dl.sourceforge.net/sourceforge/qmail-scanner/
 [D] 3661380608 q-s-2.00st-20060416.patch.gz http://toribio.apollinare.org/qmail-scanner/download/
+
+# remove not applying part of the patch
+tmppatch=`mktemp`
+
+$compressor -d < $(match_source_file -p 'st.*patch') |
+	sed -e '/^--- .*qmail-scanner-queue.template.orig/,/^--- / {/^--- .*qmail-scanner-queue.template.orig/d;/^--- /b' \
+	    -e 'd;}' > $tmppatch
+hook_add preconf 5 'rm -vf qmail-scanner-queue.template.orig'
+
+var_append patchfiles ' ' $tmppatch
+var_append patchfiles ' ' $confdir/head-1-postst.diff
+#var_append patchfiles ' ' $confdir/no_magic.diff
+var_append patchfiles ' ' $confdir/configure_no_exit_on_fail.diff
+
+confopt='--batch'
+var_append confopt ' ' '--log-details yes'
+var_append confopt ' ' '--debug yes'
+var_append confopt ' ' '--virus-to-delete yes'
+
+scanners=
+pkginstalled clamav &&
+	var_append scanners ',' clamdscan
+pkginstalled spamassassin &&
+	var_append scanners ',' fast_spamassassin
+
+var_append confopt ' ' '--scanners ${scanners:-auto}'
+
+notify=admin
+var_append confopt ' ' '--notify $notify'
+
+qscan_main() {
+	# configure
+	eval "./configure $confopt"
+
+	# install
+	qscandir=$root/var/spool/qmailscan
+	mkdir -pv $qscandir/{quarantine,working,archive}/{new,tmp,cur}
+	cp -vf quarantine-*.txt $qscandir
+	chown -R qscand:qscand $qscandir
+
+	mkdir -pv $root/var/qmail/bin
+	cp qmail-scanner-queue.pl $root/var/qmail/bin/qmail-scanner-queue.pl
+	chown qscand:qscand $root/var/qmail/bin/qmail-scanner-queue.pl
+	chmod 4755  $root/var/qmail/bin/qmail-scanner-queue.pl
+}
+runmake=0
+hook_add postmake 5 "qscan_main"

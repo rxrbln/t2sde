@@ -29,3 +29,66 @@
 
 [CV-URL] https://ftp.mozilla.org/pub/security/nss/releases/
 [D] 3f71a642d9c0dfbd94a2d4738a7618c679e4d1df451dc2edf87c6f30 nss-3.93.tar.gz https://ftp.mozilla.org/pub/security/nss/releases/NSS_3_93_RTM/src/
+
+srcdir=nss-*/nss
+
+pkgprefix -t nspr
+
+libdir=$libdir #/nss
+includedir=$includedir/nss
+
+var_remove_regex GCC_WRAPPER_REMOVE ' ' '-march.*'
+var_remove_regex GCC_WRAPPER_INSERT ' ' '-march=.*'
+
+var_remove_regex makeopt ' ' 'AR=.*'
+var_append makeopt ' ' AS=$CC
+
+var_append makeopt ' ' BUILD_OPT=1
+[ $arch_sizeof_char_p = 8 ] && var_append makeopt ' ' USE_64=1
+
+var_append makeopt ' ' NSPR_INCLUDE_DIR=$root/usr/include/nspr
+var_append makeopt ' ' 'USE_SYSTEM_ZLIB=1 ZLIB_LIBS=-lz'
+var_append makeopt ' ' NSS_USE_SYSTEM_SQLITE=1
+var_append makeopt ' ' NSS_DISABLE_GTESTS=1
+
+if atstage cross; then
+	hook_add premake 5 '$MAKE -C coreconf/nsinstall CC=cc'
+	var_append makeopt ' ' 'NSINSTALL=$(echo $PWD/coreconf/nsinstall/*_cc_*OBJ/nsinstall)'
+fi
+
+makeinstopt=
+
+nss_install() {
+	cd ../dist
+	cp -L */lib/*.so $root$libdir
+	#cp -L */lib/*.chk $root$libdir
+	rm -vf */lib/libssl.a
+	cp -L */lib/*.a $root$libdir
+	cp -L {public,private}/nss/*.h $root$includedir
+
+	install -v -m755 */bin/{certutil,pk12util} $root$bindir
+
+	NSS_VMAJOR=`grep "#define.*NSS_VMAJOR" public/nss/nss.h | awk '{print $3}'`
+	NSS_VMINOR=`grep "#define.*NSS_VMINOR" public/nss/nss.h | awk '{print $3}'`
+	NSS_VPATCH=`grep "#define.*NSS_VPATCH" public/nss/nss.h | awk '{print $3}'`
+
+	sed -e "s,@libdir@,$libdir,g" \
+		-e "s,@prefix@,/$prefix,g" \
+		-e "s,@exec_prefix@,\$\{prefix},g" \
+		-e "s,@includedir@,\$\{prefix}/include/nss,g" \
+		-e "s,@MOD_MAJOR_VERSION@,$NSS_VMAJOR,g" \
+		-e "s,@MOD_MINOR_VERSION@,$NSS_VMINOR,g" \
+		-e "s,@MOD_PATCH_VERSION@,$NSS_VPATCH,g" \
+		$confdir/nss-config.in > ${root}${bindir}/nss-config
+	chmod 755 $root$bindir/nss-config
+
+	sed -e "s,@libdir@,$libdir,g" \
+	      -e "s,@prefix@,/$prefix,g" \
+	      -e "s,@exec_prefix@,\$\{prefix},g" \
+	      -e "s,@includedir@,\$\{prefix}/include/nss," \
+	      -e "s,@NSPR_VERSION@,`nspr-config --version`,g" \
+	      -e "s,@NSS_VERSION@,$NSS_VMAJOR.$NSS_VMINOR.$NSS_VPATCH,g" \
+	      $confdir/nss.pc.in > ${root}$(pkgprefix libdir pkgconfig)/pkgconfig/nss.pc
+	chmod 644 $root$(pkgprefix libdir pkgconfig)/pkgconfig/nss.pc
+}
+hook_add postmake 5 nss_install

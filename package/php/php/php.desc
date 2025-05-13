@@ -25,3 +25,114 @@
 
 [D] b9d79cd56e0ac807d4f1a9b617c4b49a32da76653c6b23b346dba957 php-8.4.7.tar.xz http://static.php.net/www.php.net/distributions/
 #[D] 2cc0762ee729950ff24f50c5d370f4f0d476d8ecdccfe390c96a0624 install-pear-nozlib-0.8.0-1.phar !http://pear.php.net/install-pear-nozlib.phar
+
+# seems not to handle --libdir...
+var_append confopt ' ' "--with-libdir=${libdir##*/}"
+#var_append confopt ' ' --with-pear=$root$libdir/php
+var_append confopt ' ' --without-pear
+var_remove_regex makeopt ' ' 'CC=.*'
+
+pkginstalled apache || var_append confopt ' ' --without-apache
+
+case "$SDECFG_PKG_PHP_CGIAPI" in
+  fastcgi)
+	var_append confopt ' ' --enable-fastcgi
+	var_append confopt ' ' --enable-force-cgi-redirect
+	;;
+  apache)
+	if pkginstalled apache; then
+		pkgprefix -t apache
+		var_append confopt ' ' "--with-apxs2=$(pkgprefix bindir apache)/apxs"
+	fi
+	;;
+  FPM)
+	var_append confopt ' ' --enable-fpm
+	;;
+esac
+
+if atstage cross; then
+	hook_add preconf 5 "echo 'ac_cv_c_bigendian_php=$arch_bigendian' >> config.cache"
+	var_append confopt ' ' --disable-phar
+	var_append confopt ' ' --without-pear
+	var_append confopt ' ' --disable-opcache
+fi
+
+var_append confopt ' ' "--with-zlib --with-bz2"
+[ "$SDECFG_PKG_PHP_BCMATH" = 1 ] && var_append confopt ' ' --enable-bcmath
+[ "$SDECFG_PKG_PHP_MBSTRING" = 1 ] && var_append confopt ' ' --enable-mbstring
+
+if pkginstalled mysql; then
+	pkgprefix -t mysql
+
+	if [ $? -eq 0 -o "$SDECFG_PKG_PHP_FORCESHARED" = 1 ]; then
+		pkg_php_shared="=$root/$(pkgprefix mysql)"
+		var_append CC_WRAPPER_APPEND ' ' "-Wl,--rpath $(pkgprefix libdir mysql)/mysql"
+	else
+		pkg_php_shared=
+	fi
+	var_append confopt ' ' --with-mysql$pkg_php_shared
+
+	var_append confopt ' ' --enable-mysqli
+	var_append confopt ' ' "--with-mysqli=$root/$(pkgprefix bindir mysql)/mysql_config"
+	var_append confopt ' ' --with-pdo-mysql$pkg_php_shared
+fi
+
+if pkginstalled postgresql; then
+	pkgprefix -t postgresql
+	var_append confopt ' ' "--with-pgsql=$root/$(pkgprefix postgresql)"
+	var_append confopt ' ' "--with-pdo-pgsql=$root/$(pkgprefix postgresql)"
+fi
+
+if pkginstalled openldap; then
+	pkgprefix -t openldap
+	var_append confopt ' ' "--with-ldap=$root/$(pkgprefix openldap)"
+fi
+
+pkginstalled openssl && var_append confopt ' ' --with-openssl
+
+pkginstalled libmcrypt && var_append confopt ' ' --with-mcrypt
+
+pkginstalled libmhash && var_append confopt ' ' --with-mhash
+
+pkginstalled gettext &&
+	var_append confopt ' ' --with-gettext
+
+pkginstalled libgd &&
+	var_append confopt ' ' "--with-gd --enable-gd-native-ttf"
+
+pkginstalled libjpeg && var_append confopt ' ' --with-jpeg-dir
+pkginstalled libpng && var_append confopt ' ' --with-png-dir
+
+pkginstalled libxml && var_append confopt ' ' "--with-libxml-dir=$root/$(pkgprefix libxml)"
+pkginstalled openssl && var_append confopt ' ' "--with-openssl=$root/$(pkgprefix openssl)"
+pkginstalled bzip2 && var_append confopt ' ' "--with-bz2=$root/$(pkgprefix bzip2)"
+
+pkginstalled pcre && var_append confopt ' ' "--with-pcre-regex=$root/$(pkgprefix pcre)"
+
+pkginstalled curl && var_append confopt ' ' --with-curl
+
+if pkginstalled freetype; then
+	pkgprefix -t freetype
+	var_append confopt ' ' "--with-freetype-dir=$root/$(pkgprefix freetype)"
+fi
+
+if [ "$SDECFG_PKG_PHP_EXTRACONFOPT" ]; then
+	var_append confopt ' ' $SDECFG_PKG_PHP_EXTRACONFOPT
+fi
+
+hook_add postmake 5 'cp php.ini-* $root$docdir'
+
+# if we don't inject this file php's Makefile will try to download it
+#hook_add premake  5 'cp -v `match_source_file -p install-pear-nozlib` pear/install-pear-nozlib.phar'
+
+# HACK ALERT
+fix_configure() {
+	sed -i "s,lib/lib,${libdir##*/}/lib,g" configure
+	for i in PHP_LDAP PHP_LDAP_SASL; do
+		sed -i "s,$i/lib,$i/${libdir##*/}," configure
+	done
+}
+[[ $libdir != *lib ]] && hook_add preconf 5 "fix_configure"
+
+# install into sysroot
+atstage cross && var_append makeinstopt ' ' INSTALL_ROOT=$root

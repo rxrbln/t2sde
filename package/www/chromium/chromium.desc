@@ -26,3 +26,168 @@
 [D] 011f8ac53aa52c581d0062661d5e2bdb56e22b64ec7a215dd8d1cc6c chromium-136.0.7103.59.tar.xz https://commondatastorage.googleapis.com/chromium-browser-official/
 [D] 4726b811fbb9dc996416b6fb00f259dee1fac07c272560423f3cd1ea chromium-136.0.7103.59-linux-testdata.tar.xz https://github.com/chromium-linux-tarballs/chromium-tarballs/releases/download/136.0.7103.59/
 [D] b28a9b58a6011ca0f82b8f78026f74c9c408b5037852a6c97899d81b test_fonts-336e775eec536b2d785cc80eff6ac39051931286.tar.gz !https://chromium-fonts.storage.googleapis.com/f26f29c9d3bfae588207bbc9762de8d142e58935c62a86f67332819b15203b35
+
+runmake=0
+prefix=opt/chromium
+
+CC=${CC/gcc/clang} CXX=${CXX/g++/clang++}
+CLANG_VERSION=$($CC --version | sed -n 's/.*version \([0-9]\+\)\..*/\1/p')
+CLANG_INCLUDE_PATH="-I$(pkgprefix libdir clang)/clang/${CLANG_VERSION}/include"
+
+var_append GCC_WRAPPER_APPEND ' ' -I$(pkgprefix includedir libx11)
+
+[ "$arch" = arm64 ] && var_remove GCC_WRAPPER_REMOVE ' ' "-march*"
+
+export RUSTC_BOOTSTRAP=1
+
+chromium_flags="
+	blink_enable_generated_code_formatting=false
+	build_dawn_tests=false
+	chrome_pgo_phase=0
+	clang_base_path=\"/$(pkgprefix clang)\"
+	clang_use_chrome_plugins=false
+	clang_version=\"${CLANG_VERSION}\"
+	custom_toolchain=\"//build/toolchain/linux/unbundle:default\"
+	disable_fieldtrial_testing_config=true
+	enable_freetype=true
+	enable_nacl=false
+	enable_nocompile_tests=false
+	enable_pseudolocales=false
+	enable_reading_list=false
+	enable_remoting=false
+	enable_reporting=false
+	enable_vr=false
+	enable_widevine=false
+	ffmpeg_branding=\"Chrome\"
+	host_toolchain=\"//build/toolchain/linux/unbundle:default\"
+	icu_use_data_file=false
+	is_asan=false
+	is_cfi=false
+	is_debug=false
+	is_official_build=true
+	link_pulseaudio=true
+	media_use_ffmpeg=true
+	media_use_libvpx=true
+	media_use_openh264=true
+	proprietary_codecs=true
+	rtc_build_json=false
+	rtc_build_libsrtp=true
+	rtc_build_libvpx=true
+	rtc_build_opus=false
+	rtc_build_ssl=true
+	rtc_link_pipewire=false
+	rtc_use_h264=false
+	rtc_use_pipewire=false
+	rust_bindgen_root=\"/$(pkgprefix rust-bindgen)\"
+	rust_sysroot_absolute=\"/$(pkgprefix rustc)\"
+	rustc_version=\"T2\"
+	safe_browsing_use_unrar=false
+	symbol_level=0
+	treat_warnings_as_errors=false
+	use_custom_libcxx=true
+	use_official_google_api_keys=false
+	use_pulseaudio=true
+	use_qt5=false
+	use_sysroot=false
+	use_system_libffi=true
+	use_thin_lto=false
+	use_unofficial_version_number=false
+	use_vaapi=true
+"
+
+system_libs=""
+pkginstalled brotli && var_append system_libs ' ' brotli
+pkginstalled dav1d && var_append system_libs ' ' dav1d
+pkginstalled flac && var_append system_libs ' ' flac
+pkginstalled fontconfig && var_append system_libs ' ' fontconfig
+pkginstalled freetype && var_append system_libs ' ' freetype
+pkginstalled libdrm && var_append system_libs ' ' libdrm
+pkginstalled libjpeg && var_append system_libs ' ' libjpeg
+pkginstalled libopus && var_append system_libs ' ' opus
+pkginstalled libopus && var_append patchfiles ' ' $confdir/hotfix-system-opus.diff
+pkginstalled libpng && var_append system_libs ' ' libpng
+pkginstalled libsecret && var_append system_libs ' ' libsecret
+pkginstalled libusb && var_append system_libs ' ' libusb
+pkginstalled libwebp && var_append system_libs ' ' libwebp
+pkginstalled libxml && var_append system_libs ' ' libxml
+pkginstalled libxslt && var_append system_libs ' ' libxslt
+pkginstalled openh264 && var_append system_libs ' ' openh264
+pkginstalled unrar && var_append system_libs ' ' unrar
+pkginstalled zstd && var_append system_libs ' ' zstd
+
+chromium_premake() {
+	echo "Unpacking test data"
+	tar xJf $archdir/chromium-*testdata.tar.xz -C ..
+	tar xzf $archdir/test_fonts*.tar.gz -C third_party/test_fonts/test_fonts
+
+	for x in $system_libs; do
+		echo "Removing buildscripts for system provided $x"
+		x="${x/swiftshader-/swiftshader/third_party/}"
+			find . -type f -path "*third_party/$x/*" \
+			\! -path "*third_party/$x/chromium/*" \
+			\! -path "*third_party/$x/google/*" \
+			\! -path './base/third_party/icu/*' \
+			\! -path './third_party/libxml/*' \
+			\! -path './third_party/pdfium/third_party/freetype/include/pstables.h' \
+			\! -path './third_party/harfbuzz-ng/utils/hb_scoped.h' \
+			\! -path './third_party/crashpad/crashpad/third_party/zlib/zlib_crashpad.h' \
+			\! -regex '.*\.\(gn\|gni\|isolate\|py\)' \
+			-delete
+	done
+
+	echo "Replacing gn files"
+	var_remove system_libs ' ' unrar
+	build/linux/unbundle/replace_gn_files.py --system-libraries $system_libs
+
+	mkdir -p third_party/node/linux/node-linux-x64/bin
+	ln -sf /usr/bin/node third_party/node/linux/node-linux-x64/bin/
+	
+	# allow system libs in official build
+	sed -i 's/OFFICIAL_BUILD/GOOGLE_CHROME_BUILD/' \
+		tools/generate_shim_headers/generate_shim_headers.py
+
+	sed -i "s|T2_CLANG_INCLUDE_PATH|$CLANG_INCLUDE_PATH|" build/config/compiler/BUILD.gn
+
+	# hack to force using the shim header files of tensorflow-text
+	rm -Rf ./third_party/tflite/src/tensorflow/core/lib/core
+
+	gn gen out/bld --args="$(echo $chromium_flags)"
+}
+hook_add premake 1 chromium_premake
+
+chromium_inmake() {
+	ninja -C out/bld chrome
+}
+hook_add inmake 1 chromium_inmake
+
+chromium_postmake() {
+	cd ./out/bld
+	mkdir -p $root/$prefix/bin
+	mkdir -p $root/$prefix/lib
+	
+	install chrome -t $root/$prefix/lib
+	install chrome_crashpad_handler -t $root/$prefix/lib
+	install v8_context_snapshot.bin -t $root/$prefix/lib
+	install xdg-mime -t $root/$prefix/lib
+	install xdg-settings -t $root/$prefix/lib
+	install libvulkan.so.1 -t $root/$prefix/lib
+	install libEGL.so -t $root/$prefix/lib
+	install libGLESv2.so -t $root/$prefix/lib
+	
+	ln -sfv ../lib/chrome $root/$prefix/bin/chromium-browser
+	ln -sfv $root/$prefix/bin/chromium-browser $root/usr/bin/chromium
+
+	for pak in *.pak; do
+		install "$pak" -t $root/$prefix/lib
+	done
+	
+	mkdir -p $root/$prefix/lib/locales
+	for pak in locales/*.pak; do
+		install "$pak" -t $root/$prefix/lib/locales
+	done
+
+	for json in *.json; do
+		install "$json" -t $root/$prefix/lib
+	done
+}
+hook_add postmake 1 chromium_postmake

@@ -35,3 +35,81 @@
 [P] X -----5---9 200.500
 
 [D] 0b889875c486dd21434e06b16c2f34787e2fc7c4a9ccd93f72463a53 samba-4.20.8.tar.gz https://download.samba.org/pub/samba/stable/
+
+if [ $prefix_auto = 1 ]; then
+	if [ "$SDECFG_PKG_SAMBA_CORE_PREFIX" ]; then
+		prefix="$SDECFG_PKG_SAMBA_CORE_PREFIX"
+	else
+		prefix="opt/samba"
+	fi
+	set_confopt
+fi
+[ "${prefix#opt/}" == "$prefix" ] && sysconfdir="$sysconfdir/samba"
+
+cleanconfopt=0
+var_remove confopt ' ' --disable-debug
+var_remove_regex confopt ' ' '--with-sysroot=.*'
+var_remove_regex confopt ' ' '--host=.*'
+var_remove_regex confopt ' ' '--build=.*'
+
+confopt=
+var_append confopt ' ' "--with-automount \
+--with-syslog --with-configdir=$sysconfdir \
+--with-privatedir=$sysconfdir/private \
+--with-quotas"
+
+if atstage cross; then
+	var_append confopt ' ' --disable-python
+fi
+
+pkginstalled pam && atstage native && var_append confopt ' ' --with-pam # --with-pam_smbpass"
+pkginstalled lmdb || var_append confopt ' ' --without-ldb-lmdb
+pkginstalled jansson || var_append confopt ' ' --without-json
+pkginstalled libarchive || var_append confopt ' ' --without-libarchive
+pkginstalled acl && var_append confopt ' ' --with-acl-support || var_append confopt ' ' --without-acl-support
+pkginstalled cups || var_append confopt ' ' --disable-cups
+pkginstalled glusterfs || var_append confopt ' ' --disable-glusterfs
+
+#var_append confopt ' ' --with-nisplus-home
+
+# let samba configure find ldap and enable ldapsam
+if pkginstalled openldap; then
+	pkgprefix -t openldap
+	var_append confopt ' ' --with-ldap
+	var_append confopt ' ' "CFLAGS=\"$CFLAGS${CFLAGS:+ }-I$(pkgprefix includedir openldap)\""
+	var_append confopt ' ' "CPPFLAGS=\"$CPPFLAGS${CPPFLAGS:+ }-I$(pkgprefix includedir openldap)\""
+	var_append confopt ' ' "LDFLAGS=\"$LDFLAGS${LDFLAGS:+ }-L$(pkgprefix libdir openldap)\""
+else
+	var_append confopt ' ' '--without-ldap --without-ads --without-ad-dc'
+fi
+
+samba_pm() {
+	# FIXME: this should be down with pkgprefix libdir cups
+	[ -d $root/usr/lib/cups/backend/ ] &&
+		ln -sf $bindir/smbspool $root/usr/lib/cups/backend/smb
+ 
+	chmod 755 smbadduser; cp -vf smbadduser $root$bindir/
+
+	cd ..
+	sed 's/;  encrypt passwords = yes/  encrypt passwords = yes/' \
+		examples/smb.conf.default > $root$docdir/smb.conf
+
+	cat > $root$sysconfdir/lmhosts <<'EOS'
+# T2: Samba lmhosts
+#
+# This file contains host maps for NetBIOS
+# It is similar to the /etc/hosts file format
+# See lmhosts (5) for more info.
+#
+# Format is:
+# 0.0.0.0 NetBIOS_Name
+
+EOS
+	
+	# xinetd integration readme
+	sed "s,D_sbindir,$sbindir," < $confdir/README.xinetd > $root$docdir/README.xinetd
+}
+#hook_add postmake 3 "samba_pm"
+
+# install examples
+hook_add postmake 5 "cp -vRf examples $root$docdir/"

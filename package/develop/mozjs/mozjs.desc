@@ -25,3 +25,95 @@
 . $base/package/*/*/mozilla-conf.in
 
 [D] 1caf006cc50ec478e32ff76432d80893c0306723eb3a1221c06e600f firefox-128.3.1esr.source.tar.xz https://ftp.mozilla.org/pub/firefox/releases/128.3.1esr/source/
+
+export MACH_USE_SYSTEM_PYTHON=1
+export HOME=$sysroot/root
+
+if [ $prefix_auto = 1 ]; then
+	prefix=$mozilla_prefix
+	set_confopt
+fi
+
+runmake=1
+makeopt=
+hook_add inmake 5 "./mach build"
+var_append makeinstopt ' ' '-C objs'
+
+firefox_config() {
+	cat <<-EOT >> .mozconfig
+export MOZ_PHOENIX=1
+mk_add_options MOZ_PHOENIX=1
+mk_add_options MOZ_OBJDIR=@TOPSRCDIR@/objs
+
+ac_add_options --enable-application=js
+ac_add_options --enable-shared-js
+
+ac_add_options --with-system-zlib
+EOT
+
+	[ "$SDECFG_DEBUG" != 1 ] && echo "ac_add_options --enable-strip" >> .mozconfig
+
+	pkginstalled icu4c && echo "ac_add_options --with-system-icu" >> .mozconfig
+
+	[ "$SDECFG_LTO" = 1 ] && case "$arch" in
+	arm64|x86-64)
+		echo "ac_add_options --enable-lto" >> .mozconfig ;;
+	esac
+
+	[ "$SDECFG_DEFAULT_CC" = clang ] &&
+		var_append GCC_WRAPPER_APPEND ' ' "-c?:-fuse-ld=lld" &&
+		echo "ac_add_options --disable-elf-hack" >> .mozconfig
+
+	#echo "ac_add_options --disable-sandbox" >> .mozconfig
+
+	# jit and sandbox?
+	case "$arch" in
+	x86)
+		# FF needs sse for jit on x86
+		if ! $CC -E -dM -x c /dev/null | grep -iq _sse; then
+			var_append patchfiles ' ' $confdir/no-jit.diff
+			echo "ac_add_options --disable-jit" >> .mozconfig
+		fi
+		;;
+	arm)
+		[[ $arch_machine = armv[678]* ]] || echo "ac_add_options --disable-jit" >> .mozconfig
+		;;
+	arm64|riscv64|x86-64)
+		: ;;
+
+	*)
+		echo "ac_add_options --disable-jit" >> .mozconfig ;;
+	esac
+}
+
+# compiler quirks
+case $arch in
+	x86)
+		# atomics crash on i486
+		GCC_WRAPPER_INSERT="${GCC_WRAPPER_INSERT/i486/i586}"
+		# float_t should be 32-bit, ..!? :-/
+		var_append GCC_WRAPPER_INSERT ' ' -D__FLT_EVAL_METHOD__=0
+		;;
+	arm)
+		var_append GCC_WRAPPER_APPEND ' ' -DLIBYUV_DISABLE_NEON=1
+		;;
+	arm64)
+		var_remove GCC_WRAPPER_REMOVE ' ' "-march*"
+		;;
+esac
+
+# don't pass CPU optimizations to clang w/ wasi
+GCC_WRAPPER_INSERT="${GCC_WRAPPER_INSERT/-march=/--target=wasm32-wasi?:-march=}"
+GCC_WRAPPER_INSERT="${GCC_WRAPPER_INSERT/-mcpu=/--target=wasm32-wasi?:-mcpu=}"
+GCC_WRAPPER_INSERT="${GCC_WRAPPER_INSERT/-mtune=/--target=wasm32-wasi?:-mtune=}"
+
+hook_add prepatch 5 "cargo_clear_cksum third_party/rust/*/.cargo-checksum.json"
+hook_add postpatch 5 "rust_update_arch_target third_party/rust/*/no_atomic*.rs"
+
+hook_add prepatch 4 "firefox_config"
+hook_add preconf 2 "mozilla_branding"
+
+# disable legacy component registration
+mozilla_register() {
+	:
+}

@@ -38,3 +38,76 @@
 
 [D] 3065767847 grub-0.97.tar.gz http://alpha.gnu.org/gnu/grub/
 [D] 546539329 grub-0.97-os.8.diff.gz http://os.inf.tu-dresden.de/~adam/grub/0.97/
+
+grub_prepatch() {
+	local f="`match_source_file -p diff`"
+	if [ "$f" ]; then
+		$(get_compressor $f) -d < $f | patch -p0
+	fi
+}
+
+grub_postmake() {
+	mkdir -p $root/boot/grub
+
+	trg=${arch_target/-linux-*}
+	trg=i386-${trg/i*-/}
+
+	cp -v $root$libdir/grub/$trg/* $root/boot/grub/
+	cp docs/menu.lst $root/boot/grub/menu.lst.example
+}
+
+grub_build_diskless() {
+	counter=1
+	var_append confopt ' ' '--enable-diskless --enable-pxe'
+	{	echo
+		echo "Driver-map for PXE and Etherboot 2nd stage GRUB images:"
+		echo "======================================================="
+		echo
+	} > $root/boot/grub/README.pxe_nb
+
+	# this is to work around very broken Makefiles in due the grub-os patch
+	var_append GCC_WRAPPER_INSERT ' ' ' -DCONGESTED=1 -DCONFIG_PCI -DNE_SCAN=0x280,0x300,0x320,0x340 -DWD_DEFAULT_MEM=0xCC000'
+	while read drivers
+	do
+		echo Running "./configure $confopt --enable-${drivers// / --enable-}"
+		eval "./configure $confopt --enable-${drivers// / --enable-}"
+		echo Running "make -C netboot clean; make"
+		make -C netboot clean; make
+		{	echo "pxegrub.$counter and nbgrub.$counter:"
+			echo "	$drivers"; echo
+		} >> $root/boot/grub/README.pxe_nb
+		cp stage2/pxegrub $root/boot/grub/pxegrub.$counter
+		cp stage2/nbgrub  $root/boot/grub/nbgrub.$counter
+		((counter++))
+	done < <(
+		./configure --help | grep ' driver$' |
+		cut -f4- -d- | cut -f1 -d' ' | sort -u |
+		paste -d' ' - - - - - - -
+	)
+}
+
+# for the bootsplash patch
+[ "$pkg" = "grub" ] && hook_add preconf 3 "autoreconf -fi"
+hook_add prepatch 5 "grub_prepatch"
+hook_add postmake 5 "grub_postmake"
+hook_add postmake 7 "grub_build_diskless"
+hook_add postmake 9 "cp -fv $base/package/*/grub/t2.xpm.gz $root/boot/"
+
+# Every other optimization would cause build errors like
+#
+# pre_stage2_exec-builtins.o: In function `terminfo_func':
+# pre_stage2_exec-builtins.o(.text+0x3b0e): undefined reference to `memcpy'
+#
+GCC_WRAPPER_INSERT="${GCC_WRAPPER_INSERT/-march=/-mtune=}"
+var_append GCC_WRAPPER_APPEND ' ' "-Os -march=i486 -fgnu89-inline"
+
+# gcc-4.6 et al.
+var_append GCC_WRAPPER_APPEND ' ' "-fno-strict-aliasing -fno-reorder-functions"
+
+if [ $arch = x86-64 ]; then
+	libdir=\$root/\$prefix/lib
+	var_insert GCC_WRAPPER_INSERT ' ' -m32
+	arch_target="`echo $arch_target | sed -e 's/[-_]*64//' -e 's/x86/i386/'`"
+	echo_status "Set arch_target to $arch_target"
+	set_confopt
+fi

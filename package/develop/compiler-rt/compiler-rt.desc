@@ -29,3 +29,45 @@
 [CV-GROUP] llvmorg
 [D] 7c085c82d65c64e6ff06fe4fec274a39c83f6180635dea4f106e1a92 compiler-rt-20.1.4.src.tar.xz https://github.com/llvm/llvm-project/releases/download/llvmorg-20.1.4/
 [D] a9713c0e19a33e061a143e6c6a7cd5c3d5706a8796c5507caa26469f llvm-cmake-20.1.4.src.tar.xz !https://github.com/llvm/llvm-project/releases/download/llvmorg-20.1.4/cmake-20.1.4.src.tar.xz
+
+atstage native || export DESTDIR="$root"
+
+cmake_mod() {
+	tar $taropt `match_source_file -p cmake` -C ..
+	mv -vf ../cmake-*src ../../cmake
+}
+hook_add preconf 5 cmake_mod
+
+build_minimal_cross() {
+	${arch_target}-clang -c ../lib/builtins/{muldc3,muldi3,mulsc3,mulxc3,mulsi3}.c
+	${arch_target}-ar r builtins.a *.o
+	${arch_target}-clang -fPIC -c ../lib/crt/crt{begin,end}.c
+	mkdir -p $sysroot/usr/lib/linux/
+	install builtins.a $sysroot/usr/lib/linux/libclang_rt.builtins-$arch.a
+	install crt*.o $sysroot/usr/libx32/
+}
+if atstage toolchain; then
+	runmake=0 runcmake=0
+	hook_add inmake 5 "build_minimal_cross" # -DCOMPILER_RT_BAREMETAL_BUILD=ON ?
+fi
+
+if [ $SDECFG_LIBC == "musl" ]; then
+	var_append cmakeopt ' ' "-DCOMPILER_RT_BUILD_SANITIZERS=OFF -DCOMPILER_RT_BUILD_XRAY=OFF"
+	var_append cmakeopt ' ' "-DCOMPILER_RT_BUILD_LIBFUZZER=OFF -DCOMPILER_RT_BUILD_PROFILER=OFF"
+fi
+
+#var_append cmakeopt ' ' -DCOMPILER_RT_STANDALONE_BUILD=ON
+
+if [ $stagelevel = 1 ]; then
+	# during initial bootstarp we don't have libcxx* yet
+	var_append GCC_WRAPPER_APPEND ' ' '-nostdlib -lc'
+	#var_append cmakeopt ' ' "-DCMAKE_C_COMPILER_WORKS=ON -DCMAKE_CXX_COMPILER_WORKS=ON"
+	var_append cmakeopt ' ' "-DCOMPILER_RT_BUILD_SANITIZERS=OFF -DCOMPILER_RT_BUILD_XRAY=OFF"
+	var_append cmakeopt ' ' "-DCOMPILER_RT_BUILD_MEMPROF=OFF -DCOMPILER_RT_BUILD_ORC=OFF"
+fi
+
+# currently fails even with gcc/glibc
+var_append cmakeopt ' ' -DCOMPILER_RT_BUILD_SANITIZERS=OFF
+
+[ "${libdir##*/lib}" ] && var_append cmakeopt ' ' "-DLLVM_LIBDIR_SUFFIX=${libdir##*/lib}"
+var_append cmakeopt ' ' "-DBUILD_SHARED_LIBS=ON .."

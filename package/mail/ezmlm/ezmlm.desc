@@ -46,3 +46,71 @@
 
 [D] 2180686433 ezmlm-0.53.tar.gz http://cr.yp.to/software/
 [D] 2764950623 ezmlm-idx-5.0.2.tar.gz http://ezmlm.org/archive/5.0.2/
+
+ezmlm_idx_prepatch() {
+	pkg_idx_ver=`echo $ver | sed -n 's,.*idx-\(.*\),\1,p'`
+	pkg_idx_src=`match_source_file -p ezmlm-idx-$pkg_idx_ver ezmlm`
+
+	# tempdir
+	pkg_idx_tempdir=`mktemp -d`
+
+	# extract ezmlm-idx sources to temp directory
+	tar -C $pkg_idx_tempdir $taropt $pkg_idx_src
+
+	# directory name of extracted sources
+	pkg_idx_tempsrc="$pkg_idx_tempdir/ezmlm-idx-$pkg_idx_ver"
+	# original idx patch distributed with the sources
+	pkg_idx_srcpatch="$pkg_idx_tempsrc/idx.patch"
+	# patch file we'll include
+	pkg_idx_patch="$pkg_idx_tempdir/ezmlm-idx.patch"
+
+	# fix original idx.patch and include it as ezmlm-idx.patch
+	cat $pkg_idx_srcpatch | sed \
+		-e "/^diff/d" \
+		-e "s/^\(---\|+++\) /\1 \.\//g" > $pkg_idx_patch
+
+	var_append patchfiles ' ' $pkg_idx_patch
+
+	# copy content of ezmlm-idx tarball to ezmlm builddir
+	cp -av $pkg_idx_tempsrc/* $builddir/$xsrcdir
+}
+
+ezmlm_idx_sub_db_conf() {
+	echo_status "Configuring ezmlm to use $SDECFG_PKG_EZMLM_SUB for storing subscribers"
+	echo "-I$root$sub_incdir" > sub_$sub_db/conf-sqlcc
+	echo "-L$root$sub_libdir $sub_db_ld" > sub_$sub_db/conf-sqlld
+	sed -i "s/^std/$sub_db/" conf-sub
+}
+
+ezmlm_conf() {
+	pkgprefix -t qmail
+
+	echo $bindir > conf-bin
+	echo $mandir > conf-man
+
+	echo /$(pkgprefix qmail) > conf-qmail
+}
+
+case "$SDECFG_PKG_EZMLM_SUB" in
+	postgresql)
+		pkgprefix -t postgresql
+		sub_db="pgsql"
+		sub_db_ld="-lpq"
+		sub_incdir="$(pkgprefix includedir postgresql)"
+		sub_libdir="$(pkgprefix libdir postgresql)"
+		hook_add preconf 5 "ezmlm_idx_sub_db_conf"
+		;;
+	mysql)
+		pkgprefix -t mysql
+		sub_db="mysql"
+		sub_db_ld="-lmysqlclient"
+		sub_incdir="$(pkgprefix includedir mysql)/mysql"
+		sub_libdir="$(pkgprefix libdir mysql)/mysql"
+		hook_add preconf 5 "ezmlm_idx_sub_db_conf"
+		;;
+esac
+
+hook_add prepatch 5 "ezmlm_idx_prepatch"
+hook_add preconf 5 'ezmlm_conf'
+
+makeinstopt="$makeopt setup"

@@ -27,3 +27,195 @@
 [SRC] linux-
 [D] 775b10e9a7a1ecc378e313a4e50354f80c348a093624a22702508087 linux-6.14.tar.xz http://www.kernel.org/pub/linux/kernel/v6.x/
 [D] e1a5381d4396ef502ede591f0ddc2540946f334b05f25cf2c1fad0f6 patch-6.14.6.xz https://cdn.kernel.org/pub/linux/kernel/v6.x/
+
+. $base/package/*/linux*/linux-conf.in
+
+autopatch=0
+
+[ "$SDECFG_DEBUG" = 1 ] && export STRIP_WRAPPER_BYPASS=1
+var_append CC_WRAPPER_APPEND ' ' crypto/jitterentropy.c?-O0:
+var_append KCC_WRAPPER_APPEND ' ' crypto/jitterentropy.c?-O0:
+var_append KCC_WRAPPER_APPEND ' ' '*/vdso/*?-O2:'
+
+var_append KCC_WRAPPER_INSERT ' ' '-std=gnu17'
+
+if [ "$SDECFG_DEFAULT_KCC" = clang -a "$SDECFG_LTO" = 1 ]; then
+	var_append makeopt ' ' 'LD=ld.lld AR=llvm-ar NM=llvm-nm'
+fi
+
+linux_prepatch() {
+	lx_patch
+}
+hook_add prepatch 5 linux_prepatch
+
+linux_preconf() {
+	lx_config
+	moduledir="$root/lib/modules/${lx_kernelrelease}"
+}
+hook_add preconf 5 linux_preconf
+
+linux_premake() {
+	# we need to rerun the oldconfig since the used .config
+	# might not match the one used in the last oldconfig run
+	# (e.g. the nomods is run last - and normally the module
+	# one is used)
+	yes '' | eval $MAKE $makeopt oldconfig > /dev/null
+
+	echo "Cleanup kernel ..."
+	eval $MAKE $makeopt clean > /dev/null
+
+	if [ "$SDECFG_PKG_LINUX_T2_LOGO" = 1 ]; then
+		cp -vf $base/package/*/linux/t2logo_mono.pbm drivers/video/logo/logo_linux_mono.pbm
+		cp -vf $base/package/*/linux/t2logo_vga16.ppm drivers/video/logo/logo_linux_vga16.ppm
+		cp -vf $base/package/*/linux/t2logo.ppm drivers/video/logo/logo_linux_clut224.ppm
+	fi
+
+	if [ $SDECFG_PKG_LINUX_KEEP_SRC = 1 ]; then
+		echo "Copying kernel source ..."
+		rm -rf $root/usr/src/linux-${lx_kernelrelease}
+		mkdir -p $root/usr/src/linux-${lx_kernelrelease}
+		cp -ar . $root/usr/src/linux-${lx_kernelrelease}
+	fi
+
+	case "$lx_cpu" in
+	avr32)	var_append makeopt ' ' 'vmlinux' ;; # TODO: ideally uImage, too
+	mips)	var_append makeopt ' ' 'vmlinux vmlinux.ecoff' ;;
+	nios2)	var_append makeopt ' ' 'vmlinux zImage' ;;
+	parisc)	var_append makeopt ' ' 'vmlinux bzImage' ;;
+	esac
+
+	if grep -q "CONFIG_MODULES=y" .config; then
+		[ "${makeopt% vmlinux*}" != "$makeopt" ] && var_append makeopt ' ' modules
+		var_append makeinstopt ' ' "INSTALL_MOD_PATH=$root DEPMOD=/bin/true modules_install"
+		#var_append makeinstopt ' ' "mod_compress_cmd='zstd -f --rm -18'"
+	else
+		makeinstopt=
+	fi
+}
+hook_add premake 5 linux_premake
+
+linux_install() {
+	echo "Installing the kernel ..."
+	cp -vf System.map $root/boot/System.map-${lx_kernelrelease}
+	ln -sfv System.map-${lx_kernelrelease} $root/boot/System.map
+
+	cp -vf .config $root/boot/kconfig-${lx_kernelrelease}
+	ln -sfv kconfig-${lx_kernelrelease} $root/boot/kconfig
+
+	# for debugging with oprofile, also used to boot on some arches
+	cp -vf vmlinux $root/boot/vmlinux-${lx_kernelrelease}
+	ln -sfv vmlinux-${lx_kernelrelease} $root/boot/vmlinux
+
+	case "$lx_cpu" in
+	  x86|x86_64|parisc|s390)
+		cp -vf arch/${lx_cpu}/boot/bzImage $root/boot/vmlinuz-${lx_kernelrelease}
+		ln -sfv vmlinuz-${lx_kernelrelease} $root/boot/vmlinuz
+		;;
+	  avr32)
+		: # cp -vf arch/${lx_cpu}/boot/images/uImage $root/boot/uImage-${lx_kernelrelease}
+		;;
+	  nios2)
+		cp -vf arch/${lx_cpu}/boot/zImage $root/boot/vmlinuz-${lx_kernelrelease}
+		ln -sfv vmlinuz-${lx_kernelrelease} $root/boot/vmlinuz
+		;;
+	  arm)
+		cp -vf arch/${lx_cpu}/boot/zImage $root/boot/vmlinuz-${lx_kernelrelease}
+		ln -sfv vmlinuz-${lx_kernelrelease} $root/boot/vmlinuz
+		;;
+	  arm64)
+		cp -vf arch/${lx_cpu}/boot/Image.gz $root/boot/vmlinuz-${lx_kernelrelease}
+		ln -sfv vmlinuz-${lx_kernelrelease} $root/boot/vmlinuz
+		;;
+	  riscv)
+		cp -vf arch/${lx_cpu}/boot/Image $root/boot/vmlinuz-${lx_kernelrelease}
+		ln -sfv vmlinuz-${lx_kernelrelease} $root/boot/vmlinuz
+		;;
+	  alpha|ia64)
+		[ $arch = ia64 ] &&
+			cp -vf vmlinux.gz $root/boot/vmlinuz-${lx_kernelrelease} ||
+			cp -vf arch/${lx_cpu}/boot/vmlinux.gz $root/boot/vmlinuz-${lx_kernelrelease}
+		ln -sfv vmlinuz-${lx_kernelrelease} $root/boot/vmlinuz
+		;;
+	  mips)
+		cp -vf arch/${lx_cpu}/boot/vmlinux.ecoff $root/boot/vmlinux-${lx_kernelrelease}.ecoff
+		ln -sfv vmlinux-${lx_kernelrelease}.ecoff $root/boot/vmlinux.ecoff
+		;;
+	  powerpc)
+		for i in arch/${lx_cpu}/boot/*Image*; do
+		  if [[ $i != *lds* ]]; then
+			cp -v $i $root/boot/${i##*/}-${lx_kernelrelease}
+			ln -sfv ${i##*/}-${lx_kernelrelease} $root/boot/${i##*/}
+		  fi
+		done
+		;;
+	  sh)
+		cp -vf arch/${lx_cpu}/boot/zImage $root/boot/vmlinuz-${lx_kernelrelease}
+		ln -sfv vmlinux-${lx_kernelrelease} $root/boot/vmlinuz
+		;;
+	  sparc)
+		cp -vf arch/${lx_cpu}/boot/image $root/boot/vmlinuz-${lx_kernelrelease}
+		ln -sfv vmlinuz-${lx_kernelrelease} $root/boot/vmlinuz
+		;;
+	esac
+
+	echo "Copying DTB ..."
+	find arch/$lx_cpu -name "*.dtb" | while read f; do
+		mkdir -p $root/boot/dtb
+		cp -vf $f $root/boot/dtb/
+	done
+
+	# iterate over the packages that provide 3rd party linux kernel modules
+	if grep -q "CONFIG_MODULES=y" .config; then
+		module_error=0
+		echo "Building registered 3rd party module packages ..."
+		for x in $lx_3rd_party_modules; do
+		  echo "Sub-building 3rd party module package $x ..."
+		  pushd $builddir
+		  # ugly, bash does not abort properly when we have this in a if
+		  # and without it the return 1 aborts immediatly ... :-(
+		  set +e
+		  build_package $x postlinux.conf
+		  error=$?
+		  set -e
+		  if [ $error -ne 0 ]; then
+			echo_warning "Failed building $x"
+			module_error=1
+		  fi
+		  echo "Done building $x"
+		  popd
+		done
+
+		# maybe fail hard
+		if ! atstage rebuild && [ $module_error = 1 ]; then
+			abort "At least one of the 3rd party kernel modules failed!"
+		fi
+
+		local depmod="depmod"
+		atstage native || depmod="${archprefix}depmod"
+		echo "Running $depmod -a -b $root/ -F $root/boot/System.map-${lx_kernelrelease} ${lx_kernelrelease}"
+		$depmod -a -b $root/ -F $root/boot/System.map-${lx_kernelrelease} ${lx_kernelrelease}
+
+		# due "mostly" static depmod :-(
+		for x in $moduledir/modules.*
+		do [ -f $x ] && add_flist $x; done
+
+		echo "Fixing /lib/modules/${ver}/{build,source} symlink ..."
+		rm -f $root/lib/modules/${lx_kernelrelease}/{build,source}
+		ln -sf ../../../usr/src/linux-${lx_kernelrelease} $root/lib/modules/${lx_kernelrelease}/build
+		ln -sf ../../../usr/src/linux-${lx_kernelrelease} $root/lib/modules/${lx_kernelrelease}/source
+	fi
+
+	local initrdopts=
+	atstage native || initrdopts="-R $root -a $archprefix"
+	if [ -e $root/sbin/mkinitrd ]; then
+		$root/sbin/mkinitrd $initrdopts ${lx_kernelrelease}
+		ln -sfv initrd-${lx_kernelrelease} $root/boot/initrd
+		$root/sbin/mkinitrd $initrdopts --minimal --network \
+			-o $root/boot/minird-${lx_kernelrelease} ${lx_kernelrelease}
+		ln -sfv minird-${lx_kernelrelease} $root/boot/minird
+	fi
+}
+hook_add postmake 5 linux_install
+
+# copy useful docs
+hook_add postmake 7 "cp -arv Documentation/{*.txt,fb,networking,power} $root$docdir/"

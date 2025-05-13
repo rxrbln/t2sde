@@ -25,3 +25,164 @@
 [CV-GROUP] rust
 [CV-URL] https://forge.rust-lang.org/infra/other-installation-methods.html
 [D] e5b11f2583f087c7ca35e5a06331ed0c35c8cf0fb20b50768e5128b2 rustc-1.86.0-src.tar.xz https://static.rust-lang.org/dist/
+
+if [ $stagelevel -gt 1 ] && [ $prefix_auto = 1 ]; then
+	prefix=opt/rust # TODO: maybe a config option
+	set_confopt
+fi
+
+confopt=
+cleanconfopt=0 runmake=0 runcargo=0
+
+cargo_config() {
+	mkdir -p $CARGO_HOME/
+
+	# TODO: $SDECFG_CC?
+	cat <<EOT > $CARGO_HOME/config.toml
+[target.${arch_target}] # /-t2-/-unknown-
+	#cc = "${archprefix}cc"
+	#cxx = "${archprefix}c++"
+	#ar = "${archprefix}ar"
+	#ranlib = "${archprefix}ranlib"
+	linker = "$CC"
+EOT
+}
+
+rustc_prepatch() {
+    # we need some hotfixes pre-patched
+    patchfiles=$confdir/*.prepatch apply_patchfiles
+
+    # add all t2 extra rustc targets
+    for a in "${!rust_t2_targets[@]}"; do
+	local b=${rust_t2_targets[$a]}
+	local _a=${a//-/_}
+	local _b=${b//-/_}
+
+	cp compiler/rustc_target/src/spec/targets/{$_b,$_a}.rs
+    done
+    rust_update_arch_target compiler/rustc_target/src/spec/mod.rs \
+	vendor/*/no_atomic*.rs vendor/cc*/src/lib.rs
+}
+hook_add prepatch 5 rustc_prepatch
+
+rustc_preconf() {
+	# -t2- default target
+	local orig_target="${rust_target/-t2-/-unknown-}"
+
+	# hotfix musl targets to not static link by default, TODO: review when upstream review
+	sed -i /crt_static_default.*true/d compiler/rustc_target/src/spec/targets/*linux*rs
+
+	# llvm_target and .vendor
+	sed 's/-unknown-/-t2-/; s/options:.*TargetOptions *{/&\nvendor: "t2".into(),/' \
+		compiler/rustc_target/src/spec/targets/${orig_target//-/_}.rs > \
+		compiler/rustc_target/src/spec/targets/${rust_target//-/_}.rs
+
+	cargo_clear_cksum vendor/*/.cargo-checksum.json
+}
+hook_add preconf 5 rustc_preconf
+
+# AArch64 AMDGPU ARM BPF Hexagon Lanai Mips MSP430 NVPTX PowerPC RISCV Sparc SystemZ WebAssembly X86 XCore
+# keep in sync w/ llvm!;-)
+targets="WebAssembly"
+case $arch in
+	arm) var_insert targets ';' 'ARM' ;;
+	arm64) var_insert targets ';' 'AArch64' ;;
+	mips*) var_insert targets ';' 'Mips' ;;
+	sparc*) var_insert targets ';' 'Sparc' ;;
+	powerpc*) var_insert targets ';' 'PowerPC' ;;
+	riscv*) var_insert targets ';' 'RISCV' ;;
+	x86*|*) var_insert targets ';' 'X86' ;;
+esac
+
+rustc_config() {
+    sed "s@^\[target\..*${rust_target}.*\]@&\n\
+	llvm-config = \"$(which llvm-config)\"@" -i config.toml
+}
+
+rustc_config_cross() {
+    sed "s@^\[target\..*${rust_target}.*\]@&\n\
+	cc = \"${archprefix}cc\"\n\
+	cxx = \"${archprefix}c++\"\n\
+	ar = \"${archprefix}ar\"\n\
+	ranlib = \"${archprefix}ranlib\"\n\
+	linker = \"${archprefix}cc\"\n\
+	llvm-config = \"$sysroot/TOOLCHAIN/cross/bin/llvm-config-x\"@;
+	s,^#*\(targets =\) .*,\1 \"$targets\"," -i config.toml
+
+    if [ $SDECFG_LIBC == "musl" ]; then
+	# TODO: pkgprefix libdir musl? then
+	sed "s@^\[target\..*${rust_target}.*\]@&\n\
+	crt-static = false\n\
+	musl-root = \"$root/usr\"@" -i config.toml
+    fi
+}
+
+[ $stagelevel -eq 1 ] &&
+	var_append confopt ' ' "--prefix=$sysroot/TOOLCHAIN/$toolsdir" ||
+	var_append confopt ' ' "--prefix=$root/$prefix --libdir=$root$libdir"
+
+rust_host=$(rustc -vV 2>/dev/null | sed -n 's/host: \(.*\)/\1/p')
+rust_version=$(rustc -vV 2>/dev/null | sed -n 's/release: \(.*\)/\1/p')
+
+# can we use the local rustc?
+[ "$rust_host" = "$rust_target" -a $stagelevel -le 1 ] && rust_version=
+
+[ "$rust_version" != "$ver" ] &&
+case "$rust_version" in
+    1.8[456].*)
+	: ;;
+    *)
+	rust_version= ;;
+esac
+
+export BOOTSTRAP_SKIP_TARGET_SANITY=1
+if [ "$rust_version" ]; then
+	var_append confopt ' ' --enable-local-rust
+else
+	echo_warning "No compatible rustc, Rust will download binaries to bootstrap"
+fi
+
+var_append confopt ' ' --release-channel=stable
+var_append confopt ' ' "--disable-codegen-tests" # needs llvm's FileCheck
+var_append confopt ' ' --disable-docs
+var_append confopt ' ' --enable-vendor
+var_append confopt ' ' "--disable-clang --disable-lld --disable-llvm-bitcode-linker"
+var_append confopt ' ' "--tools=" # "cargo", "rls", "clippy", "rustfmt", "analysis", src
+
+if [ $stagelevel -eq 1 ]; then
+    var_append confopt ' ' "--target=${rust_target},${arch_build}" # -t2-,-unknown-
+else
+    var_append confopt ' ' --target=${rust_target}
+fi
+
+if atstage native; then
+    var_append confopt ' ' "--llvm-config=$(which llvm-config) --host=${rust_target}" # -t2-
+    hook_add premake 5 "rustc_config"
+else
+    var_append confopt ' ' --llvm-config=$sysroot/TOOLCHAIN/cross/bin/llvm-config
+    var_append confopt ' ' "--build=${arch_build}" # -unknown-
+    hook_add premake 5 "rustc_config_cross"
+
+    # rustc specific pseudo toolchain
+    if [ $stagelevel -eq 1 ]; then
+	var_append confopt ' ' "--host=${arch_build}" # -unknown-
+	confopt="${confopt/--tools=/--tools=cargo}" # TODO: fix to work again?
+
+	hook_add postmake 5 "cargo_config"
+    else
+	var_append confopt ' ' "--host=${rust_target}" # -t2-
+    fi
+fi
+
+[ "$SDECFG_DEFAULT_CC" = clang -a $stagelevel -gt 1 ] &&
+	var_append GCC_WRAPPER_APPEND ' ' -c?:-fuse-ld=lld
+
+[ $stagelevel = 2 ] &&
+    hook_add premake 5 'var_append SYSCC_WRAPPER_APPEND ' ' "-c?:-Wl,-rpath,$PWD/build/$rust_host/stage1/${libdir##*/}"'
+atstage native &&
+    hook_add premake 5 'var_append GCC_WRAPPER_APPEND ' ' "-c?:-Wl,-rpath,$PWD/build/${rust_target/-t2-/-unknown-}/stage1/${libdir##*/}"'
+hook_add inmake 5 "./x.py build"
+hook_add postmake 5 "./x.py install"
+
+# hotfix armv6 linking /srv/t2/build/armv6-25.4-generic-arm-gnueabi-armv6-cross-linux/TOOLCHAIN/cross/lib/libz.so
+var_append GCC_WRAPPER_FILTER '|' "sed s,$sysroot/TOOLCHAIN/cross/lib,$root/$libdir,"

@@ -26,3 +26,59 @@
 
 [D] 96ad992ce92676e9b203c4229e0ea2129184612e424fcef6f71afc82 apache-ant-1.10.15-src.tar.xz http://www.apache.org/dist/ant/source/
 [D] 51a8e2f845056935fe9a6d8d56641cfb2e0040b7a89d799b1133c961 junit3.8.2.zip http://dl.sourceforge.net/sourceforge/junit/
+
+# Use jikes for faster compilation if it is available.
+if pkginstalled jikes; then
+	export ANT_OPTS="-Dbuild.compiler=jikes -Djavac.source=1.3"
+fi
+
+# Check if a java development kit was installed.
+if [ -z $JAVA_HOME ]; then
+	abort "JDK required for building $pkg"
+fi
+
+# We want Ant to be installed in its own directory.
+prefix=$prefix/apache-ant
+set_confopt
+export ANT_HOME=$root/$prefix
+export PATH=${PATH}:${ANT_HOME}/bin
+
+# extract junit source - needed since 1.7.0, so says the ant FAQ
+# NOTE: junit4 is incompatible, need to use junit3 here
+ant_junit_extract() {
+	local junit=`match_source_file -p junit`
+	mkdir -p lib/optional
+	unzip -j $junit junit*.jar -d lib/optional
+}
+hook_add premake 5 ant_junit_extract
+
+# Custom package building and installation.
+ant_postmake() {
+	# Todo check return value (building and installation success?).
+	# The next command will start the build and when finished
+	# it will automatically install the new build in ANT_HOME
+	./build.sh install
+	if [ $? -ne 0 ]; then
+		# Something went wrong.
+		abort "Building $pkg failed."
+	fi
+
+	# Now the ant commands need to be made available. This can
+	# be done is two ways. Add the bin directory to PATH or have
+	# links to the ant commands somewhere in the existing PATH.
+	# Here we choose the last option to prevent PATH becoming to
+	# large. We will place the links in the default java/bin
+	# directory.
+	bin_path=$(pkgprefix bindir java-dirtree)
+	for ant_command in $(find $ANT_HOME/bin -perm +o=x -type f); do
+		# Create a link for the current ant command.
+		ln -sf $ant_command $bin_path/$(basename $ant_command)
+	done
+
+	# Prepare necessary environment variables.
+	cat <<-EOF > $root/etc/profile.d/ant
+	ANT_HOME=/$prefix
+	export ANT_HOME
+	EOF
+}
+hook_add postmake 5 ant_postmake

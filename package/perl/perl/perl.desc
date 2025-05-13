@@ -37,3 +37,134 @@
 
 [CV-FLAGS] ODD-UNSTABLE
 [D] ce88c58b96c271e620440c6ffb4d87ab0404f945f5cf2ae292ce2a5d perl-5.40.2.tar.xz http://www.perl.com/CPAN/src/5.0/
+
+var_append GCC_WRAPPER_REMOVE ' ' -fstack-protector-strong
+
+perl_cross_bootstrap() {
+	# build a native miniperl
+	eval $MAKE generate_uudmap
+	eval $MAKE -j${SDECFG_PARALLEL} miniperl
+	cp -v miniperl miniperl.native
+	cp -v generate_uudmap generate_uudmap.native
+	$MAKE clean
+
+	eval sh Configure $confopt
+
+	# setup cross compiler
+	sed -e '/^d_futimes/d' -e '/^d_sockatmark/d' \
+		-e '/^d_stdstdio/d' -e '/^d_stdiobase/d' \
+		-i config.sh
+	cat >> config.sh <<-EOT
+cc='$CC'
+ccname='$CC'
+ld='$CC'
+hostperl=./miniperl.native
+hostgenerate=./generate_uudmap.native
+libs='-ldl -lm -lcrypt -lutil -lc'
+perllibs='-ldl -lm -lcrypt -lutil -lc'
+d_futimes='undef'
+d_sockatmark='undef'
+d_sockatmarkproto='undef'
+d_stdstdio='undef'
+d_stdiobase='undef'
+d_libm_lib_version='undef'
+i_xlocale='undef'
+EOT
+
+	# force config.h rebuild
+	eval $MAKE $makeopt config.h
+
+	# TODO: all as sed plus LONG_DOUBLEKIND?
+	[ $arch_sizeof_char_p = 4 ] &&
+		patch -p1 < $confdir/hotfix-x-32bit.diff
+	[ $arch_bigendian = yes ] &&
+		patch -p1 < $confdir/hotfix-x-bigendian.diff
+
+	sed -i -e '/define[[:space:]]HAS_LONG_DOUBLE/d' config.h
+
+	if [ "$SDECFG_LIBC" = "musl" ]; then
+		sed -i 's,/\*\(#define[[:space:]]I_FCNTL\).*,\1,p' config.h
+	elif [ "$SDECFG_LIBC" = "uclibc" ]; then
+		sed -i -e '/define[[:space:]]I_FENV/d' \
+		       -e '/define[[:space:]]HAS_FEGETROUND/d' \
+		       -e '/define[[:space:]]HAS_J/d' config.h
+	fi
+}
+
+perl_postmake() {
+	cat > $root/$bindir/cpan <<- EOT
+		#!/usr/bin/perl
+		use POSIX;
+		use locale;
+		use CPAN;
+
+		setlocale(LANGUAGE, "en_US");
+		setlocale(LC_ALL, "en_US");
+		shell;
+	EOT
+	chmod +x $root/$bindir/cpan
+
+	eval `perl -V:archlib`
+	touch ${archlib}/perllocal.pod
+
+	h2ph $(grep ' usr/include/.*\.h$' \
+		$root/var/adm/flists/glibc* | sed 's,^.*: ,/,')
+}
+atstage native && hook_add postmake 4 "perl_postmake"
+
+runconfig=0
+
+confopt="-des -Dcc=cc -Darchname=$arch_target -Dmyhostname=$SDECFG_PKG_PERL5_HOST_NAME"
+
+patch_libdir() {
+	sed "s,lib64,${libdir##*/},g" $confdir/libdir.diff > $builddir/libdir.diff
+	var_append patchfiles ' ' $builddir/libdir.diff
+}
+
+if atstage toolchain; then
+    var_append confopt ' ' "-Dprefix=$root/$prefix \
+	-Dsiteprefix=$root/$prefix -Dvendorprefix=$root/$prefix \
+	-Alibpth=$root$libdir"
+else
+    var_append confopt ' ' "-Dprefix=/$prefix \
+	-Dsiteprefix=/$SDECFG_PKG_PERL5_SITE_PREFIX \
+	-Dvendorprefix=/$SDECFG_PKG_PERL5_VENDOR_PREFIX"
+
+    [[ $libdir != */lib ]] && hook_add prepatch 5 patch_libdir
+    libpth="/usr/local/${libdir##*/} /${libdir##*/} /usr/${libdir##*/}"
+    for lp in $libpth; do
+	var_append confopt ' ' -Alibpth=$lp
+    done
+fi
+
+[ "$SDECFG_PKG_PERL5_THREADS" = '1' ] && var_append confopt ' ' -Dusethreads
+[ "$SDECFG_PKG_PERL5_USE_DB3" = "1" ] && patchfiles="$patchfiles $confdir/use_db3.diff"
+[ "$SDECFG_PKG_PERL5_SHARED" = '1' ] && var_append confopt ' ' -Duseshrplib
+
+hook_add preconf 2 "(rm -f config.sh Policy.sh; eval sh Configure \$confopt)"
+
+if atstage cross; then
+	var_append confopt ' ' -Dtargetdir=$root
+	var_append confopt ' ' -Ddynamic_ext=none
+	var_append confopt ' ' "-Dstatic_ext=\"Data/Dumper Cwd IO Fcntl POSIX\""
+	hook_add premake 3 "perl_cross_bootstrap"
+fi
+
+hook_add premake 5 'eval $MAKE $makeopt generate_uudmap'
+
+var_append makeopt ' ' LD=$CC
+
+PERL_CROSS_MODULES="File/Basename.pm Errno.pm Config.pm IO/File.pm Symbol.pm \
+	SelectSaver.pm IO/Seekable.pm IO/Handle.pm IO.pm XSLoader.pm \
+	DynaLoader.pm AutoLoader.pm Carp/Heavy.pm"
+
+perl_cross_modules() {
+	moddir=${root}/${SDECFG_PKG_PERL5_SITE_PREFIX}/lib/perl5/$ver
+	for mod in $PERL_CROSS_MODULES; do
+		[ -d $moddir/`dirname $mod` ] || mkdir -p $moddir/`dirname $mod`;
+		cp -vdpf lib/$mod $moddir/$mod
+	done
+}
+atstage cross && hook_add postmake 3 "perl_cross_modules"
+
+var_append confopt ' ' '-Dman1ext=perl -Dman3ext=perl'

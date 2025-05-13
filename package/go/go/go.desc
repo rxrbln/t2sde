@@ -26,3 +26,111 @@
 [D] eb6772b9b8b3116bb4884dda03a30a0df17094ce15a45d94b46007de go1.21.6.src.tar.gz https://golang.org/dl/
 [D] 31b1975512dff118de3bdc6c7bc12ba9357669ddb56ad48f2dfa2bd0 go1.19.10.src.tar.gz https://go.dev/dl/
 [D] 2d563fdfc04fbe785f8e359e373da2e6452a3fb6f83e9c929ed8e204 go1.4-bootstrap-20171003.tar.gz https://dl.google.com/go/
+
+runmake=0
+
+var_append CC_WRAPPER_APPEND ' ' -std=gnu17
+var_append SYSCC_WRAPPER_APPEND ' ' -std=gnu17
+var_remove GCC_WRAPPER_REMOVE ' ' "-gdwarf*"
+
+# map arch machine to go arch
+go_arch() {
+	local is_host=$1
+	local goarch=$2
+	local gover=$3
+
+	local endi
+	case $is_host in
+		host) endi=$(echo -n I | od -to2 | head -n1 | cut -f2 -d" " | cut -c6) ;;
+		*) endi=$arch_bigendian ;;
+	esac
+
+	local LE BE P32
+	case $arch_bigendian in
+		yes|0)	BE=be LE='' ;;
+		no|1)	BE='' LE=le ;;
+	esac
+	[ "$1" == "target" ] && [ "$arch_sizeof_char_p" = 4 ] && P32=p32
+
+	case $goarch in
+		arm*)	goarch=arm$BE ;;
+		aarch64)	goarch=arm64$BE ;;
+		loongarch*) goarch=${arch/arch} ;;
+		mips)	goarch=$goarch$LE ;;
+		mips*)	goarch=$goarch$P32$LE ;;
+		powerpc)	goarch=ppc ;;
+		powerpc64*)	goarch=ppc64$LE ;;
+		i?86)	goarch=386 ;;
+		x86_64) goarch=amd64$P32 ;;
+	esac
+
+	if [ $gover == "1.4" -o $gover == "1.19.10" ]; then
+		:
+	fi
+
+	echo $goarch
+}
+
+export CGO_ENABLED=0
+export GOOS=$SDECFG_KERNEL
+export GOROOT_FINAL=$root$libdir/go
+
+# Build every go versions until latest
+go_inmake() {
+	# Only bootstrap from C if host hasn't a Go compiler
+	local go_tarballs="."
+	which go 2>/dev/null ||
+		var_insert go_tarballs ' ' "$(match_source_file -p | tac | head -n -1)"
+
+	for x in $go_tarballs; do
+		local gover=${x##*/go}
+		gover=${gover%%-*}
+		gover=${gover%.src*}
+
+		# Extract additional, older bootstrap tarball
+		if [ "$x" != . ]; then
+			mkdir -pv ../go-$gover
+			tar $taropt $x -C ../go-$gover
+			cd ../go-$gover/go
+		fi
+
+		cd src
+
+		# In T2, "/bin/uname" provides information about the host system
+		# while "uname" is wrapped to provide target system information.
+		# We need to set these values on each loop round cpu namings
+		# changed troughout the history of the Go language.
+		export GOARCH="$(go_arch target $arch_machine $gover)"
+		export GOHOSTARCH="$(go_arch host $(/bin/uname -m) $gover)"
+
+		./make.bash
+		cd ..
+
+		# Use what we just built as the toolchain for the next loop round
+		if [ "$x" != "." ]; then
+			export GOROOT_BOOTSTRAP="$PWD"
+			cd $builddir/go
+		fi
+	done
+}
+hook_add inmake 5 "go_inmake"
+
+go_postmake() {
+	# Always delete previous Go installs to avoid conflicts
+	rm -rf $GOROOT_FINAL/
+
+	mkdir -pv $GOROOT_FINAL
+	cp -rfv api bin lib misc pkg src go.env $GOROOT_FINAL/
+
+	# Move the cross-compiled binary in the right place as go puts it in a subdirectory
+	if atstage cross; then
+		find "$GOROOT_FINAL/bin/${GOOS}_$GOARCH" -type f -perm /u+x | xargs -I {} mv -v {} $GOROOT_FINAL/bin/
+		rm -rfv "$GOROOT_FINAL/bin/${GOOS}_$GOARCH"
+	fi
+
+	# Symlink the binaries to the bindir
+	for bin in $GOROOT_FINAL/bin/* ; do
+		ln -srfv $bin $root/$bindir/${bin##*/}
+	done
+}
+hook_add postmake 5 "go_postmake"

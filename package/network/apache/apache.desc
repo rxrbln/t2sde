@@ -35,3 +35,105 @@
 [P] X -----5---9 150.000
 
 [D] 73215cd80596bec2888164e74703f897a35b29deeea8029e2968687c httpd-2.4.63.tar.gz http://www.apache.org/dist/httpd/
+
+if [ $prefix_auto = 1 ]; then
+	if [ "$SDECFG_PKG_APACHE_PREFIX" ]; then
+	  prefix="$SDECFG_PKG_APACHE_PREFIX"
+	else
+	  prefix="opt/apache"
+	fi
+	set_confopt
+fi
+[ "$sysconfdir" == "/etc" ] && sysconfdir=/etc/apache
+[ "$datadir" == "/var/lib" ] && datadir=/var/lib/apache
+
+if atstage "cross"; then
+	hook_add preconf 5 "echo 'ap_cv_void_ptr_lt_long=no' >> config.cache"
+	var_append makeopt ' ' LIBTOOL=$root/usr/bin/libtool
+fi
+
+# APR is mandatory, so no additional test needed.
+pkgprefix -t apr
+var_append confopt ' ' "--with-apr=$root/$(pkgprefix apr)"
+pkgprefix -t apr-util
+var_append confopt ' ' "--with-apr-util=$root/$(pkgprefix apr-util)"
+
+pkginstalled nghttp2 && var_append confopt ' ' --enable-http2
+
+pkginstalled pcre && var_append confopt ' ' "--with-pcre=$root/$(pkgprefix pcre)"
+
+if [ $pkg = "apache" ]; then
+	datadir="$localstatedir/lib"
+	# or maybe www would be nicer than lib ?!? ...
+
+	if [ "$SDECFG_PKG_APACHE_SUEXEC" == "1" ]; then
+		if [ "${SDECFG_PKG_APACHE_DOCROOT:0:1}" == "/" ]; then
+			docroot="$SDECFG_PKG_APACHE_DOCROOT"
+		else
+			docroot="$localstatedir/$SDECFG_PKG_APACHE_DOCROOT"
+		fi
+
+		var_append confopt ' ' \
+			"--with-suexec-docroot=${docroot#$root}"
+#		var_append confopt ' ' \
+#			"--with-suexec-userdir=$SDECFG_PKG_APACHE_USERDIR"
+		var_append confopt ' ' "--with-suexec-caller=http \
+			--enable-suexec"
+		hook_add postmake 5 "mv -vf $sbindir/suexec $bindir/"
+	fi
+
+	var_append confopt ' ' --enable-cgi
+
+	[ "$SDECFG_PKG_APACHE_MOD_SO" == 1 ] &&
+		var_append confopt ' ' --enable-so
+
+	[ "$SDECFG_PKG_APACHE_MOD_AUTH_ANON" == 1 ] &&
+		var_append confopt ' ' --enable-mod-auth-anon
+
+	[ "$SDECFG_PKG_APACHE_MOD_AUTH_DBM" == 1 ] &&
+		var_append confopt ' ' --enable-mod-auth-dbm
+
+	[ "$SDECFG_PKG_APACHE_MOD_AUTH_DIGEST" == 1 ] &&
+		var_append confopt ' ' --enable-auth-digest
+
+	if [ "$SDECFG_PKG_APACHE_MOD_AUTH_LDAP" == 1 ]; then
+		pkgprefix -t openldap
+	 	var_append confopt ' ' --with-ldap
+		var_append confopt ' ' --enable-ldap
+		var_append confopt ' ' --enable-auth-ldap
+		var_append CFLAGS   ' ' "-I$(pkgprefix includedir openldap)"
+		var_append CPPFLAGS ' ' "-I$(pkgprefix includedir openldap)"
+		var_append LDFLAGS  ' ' "-L$(pkgprefix libdir openldap)"
+		export CPPFLAGS CFLAGS LDFLAGS
+	fi
+	var_append confopt ' ' --enable-ssl
+
+	[ "$SDECFG_PKG_APACHE_MOD_DAV" == 1 ] &&
+		var_append confopt ' ' --enable-dav
+
+	[ "$SDECFG_PKG_APACHE_MOD_PROXY" == 1 ] &&
+		var_append confopt ' ' --enable-proxy
+
+	[ "$SDECFG_PKG_APACHE_MOD_REWRITE" == 1 ] &&
+		var_append confopt ' ' --enable-rewrite
+
+	[ "$SDECFG_PKG_APACHE_MOD_CACHE" == 1 ] &&
+		var_append confopt ' ' --enable-cache
+
+	[ "$SDECFG_PKG_APACHE_MOD_DISK_CACHE" == 1 ] &&
+		var_append confopt ' ' --enable-disk-cache
+
+	[ "$SDECFG_PKG_APACHE_MOD_DEFLATE" == 1 ] &&
+		var_append confopt ' ' --enable-deflate
+
+	[ "$SDECFG_PKG_APACHE_MOD_INFO" == 1 ] &&
+		var_append confopt ' ' --enable-info
+
+	[ "$SDECFG_PKG_APACHE_MOD_SPELLING" == 1 ] &&
+		var_append confopt ' ' --enable-spelling
+fi
+
+pkginstalled bdb &&
+	var_append confopt ' ' "--with-berkeley-db=$(pkgprefix includedir bdb)"
+
+[[ $libdir = *lib64 ]] && hook_add premake 3 "sed -i 's/usr\/lib$/usr\/lib64/' build/config_vars.mk"

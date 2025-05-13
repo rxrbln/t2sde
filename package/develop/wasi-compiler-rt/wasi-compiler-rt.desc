@@ -30,3 +30,57 @@
 [CV-GROUP] llvmorg
 [D] 7c085c82d65c64e6ff06fe4fec274a39c83f6180635dea4f106e1a92 compiler-rt-20.1.4.src.tar.xz https://github.com/llvm/llvm-project/releases/download/llvmorg-20.1.4/
 [D] a9713c0e19a33e061a143e6c6a7cd5c3d5706a8796c5507caa26469f llvm-cmake-20.1.4.src.tar.xz !https://github.com/llvm/llvm-project/releases/download/llvmorg-20.1.4/cmake-20.1.4.src.tar.xz
+
+CC_WRAPPER_BYPASS=1
+
+# TODO: sync w/ wasi-libc
+[ $prefix_auto = 1 ] && prefix=opt/wasi && set_confopt
+
+runmake=0
+
+prepare_sources() {
+	cd ..
+	tar $taropt `match_source_file -p llvm-cmake-$ver`
+	ln -svf cmake* cmake
+}
+hook_add preconf 5 prepare_sources
+
+. $base/package/*/*/wasi.in
+
+export CC=clang CXX=clang++ # LD=clang
+export CFLAGS="-fno-exceptions --sysroot=$root/opt/wasi"
+export CXXFLAGS="-fno-exceptions --sysroot=$root/opt/wasi"
+export DESTDIR=$root
+
+cmakeopt=
+var_append cmakeopt ' ' "-DUNIX=ON \
+-DCMAKE_TOOLCHAIN_FILE=$confdir/../wasi-libc/wasi-sdk.cmake \
+-DCMAKE_C_COMPILER_WORKS=ON -DCMAKE_CXX_COMPILER_WORKS=ON \
+-DCMAKE_STAGING_PREFIX=/opt/wasi"
+
+var_append cmakeopt ' ' "-DCOMPILER_RT_BAREMETAL_BUILD=ON \
+-DCOMPILER_RT_INCLUDE_TESTS=OFF \
+-DCOMPILER_RT_HAS_FPIC_FLAG=OFF \
+-DCOMPILER_RT_DEFAULT_TARGET_ONLY=ON \
+-DCOMPILER_RT_OS_DIR=wasi"
+
+# TODO: why does the camke module seach only fail for native builds?
+atstage native && var_append cmakeopt ' ' -DLLVM_CMAKE_DIR=$(pkgprefix libdir llvm)/cmake
+
+build_compiler_rt() {
+	eval cmake -B objs $cmakeopt compiler-rt-*/lib/builtins
+	cmake --build objs
+	cmake --install objs
+
+	clangver=${ver%%.*}
+
+	mkdir -p $root/usr/${libdir##*/}/clang/$clangver/lib/wasi/
+	cp -arv $root/$prefix/lib/wasi/libclang_rt.builtins-wasm32.a $root/usr/${libdir##*/}/clang/$clangver/lib/wasi/
+
+	if ! atstage native; then
+		mkdir -p $root/TOOLCHAIN/cross/lib/clang/$clangver/lib/wasi/
+		cp -arv $root/$prefix/lib/wasi/libclang_rt.builtins-wasm32.a \
+			$root/TOOLCHAIN/cross/lib/clang/$clangver/lib/wasi/
+	fi
+}
+hook_add inmake 5 build_compiler_rt
