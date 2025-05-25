@@ -233,7 +233,7 @@ CONFIG_SYSVIPC=y
 CONFIG_SUNRPC=y
 
 dnl Sound system
-dnl (module support is enought - default is y ...)
+dnl (module support is enough - default is y ...)
 dnl
 CONFIG_SOUND=m
 
@@ -242,6 +242,13 @@ CONFIG_SND_DYNAMIC_MINORS=y
 CONFIG_SND_HDA_HWDEP=y
 CONFIG_SND_HDA_RECONFIG=y
 CONFIG_SND_HDA_PATCH_LOADER=y
+CONFIG_SND_SOC_SOF_TOPLEVEL=y
+CONFIG_SND_SOC_SOF_PROBE_WORK_QUEUE=y
+CONFIG_SND_SOC_SOF_IPC3=y
+CONFIG_SND_SOC_SOF_IPC4=y
+CONFIG_SND_SOC_SOF_INTEL_TOPLEVEL=y
+CONFIG_SND_SOC_SOF_HDA_LINK=y
+CONFIG_SND_SOC_SOF_HDA_AUDIO_CODEC=y
 
 dnl Basic Input devices
 dnl Good old standard ports, classic serial, PS/2, should just work.
