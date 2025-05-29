@@ -24,6 +24,7 @@ CONFIG_MIPS32_O32=y
 CONFIG_MIPS32_N32=y
 
 dnl Sgi ip-* specific drivers, but they will only enable for that platform
+CONFIG_ARC_CONSOLE=y
 CONFIG_SGI_MFD_IOC3=y
 CONFIG_SERIO_SGI_IOC3=y
 CONFIG_SERIAL_8250_IOC3=y
@@ -37,7 +38,6 @@ include(`linux-block.conf.m4')
 include(`linux-net.conf.m4')
 include(`linux-fs.conf.m4')
 
-CONFIG_HZ_250=y
 CONFIG_PREEMPT_NONE=y
 
 dnl Could work for some generic boards, but prevents Sgi kernel to load
