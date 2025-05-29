@@ -1,0 +1,59 @@
+# --- T2-COPYRIGHT-BEGIN ---
+# t2/package/*/linux/hotfix-amd_nb.patch
+# Copyright (C) 2025 The T2 SDE Project
+# SPDX-License-Identifier: GPL-2.0 or patched project license
+# --- T2-COPYRIGHT-END ---
+
+bc7b2e629e0c "x86/amd_nb: Use topology info to get AMD node count" broke
+amd_cache_northbridges as iterating a next_northbridge or two is not
+identical to amd_num_nodes().
+
+Among other details, this causes amd64_agp nforce3_agp_init to oops w/
+null-ptr deref:
+
+BUG: kernel NULL pointer dereference, address: 0000000000000000
+#PF: supervisor read access in kernel mode
+#PF: error_code(0x0000) - not-present page
+PGD 2579067 P4D 2579067 PUD 2578067 PMD 0
+Oops: Oops: 0000 [#1] SMP NOPTI
+CPU: 0 UID: 0 PID: 56 Comm: kworker/0:2 Not tainted 6.15.0-t2 #1 PREEMPT(lazy)
+Hardware name: To Be Filled By O.E.M. To Be Filled By O.E.M./ALiveDual-eSATA2, BIOS P1.80 09/11/2009
+Workqueue: events work_for_cpu_fn
+RIP: 0010:amd64_fetch_size+0x1f/0xb0 [amd64_agp]
+Code: 90 90 90 90 90 90 90 90 90 90 90 f3 0f 1e fa 53 48 83 ec 10 65 48 8b 05 47 e7 05 e3 48 89 44 24 08 31 db 31 ff e8 e1 30 c
+d e1 <48> 8b 38 48 85 ff 74 5e 48 8d 54 24 04 c7 02 00 00 00 00 be 90 00
+RSP: 0018:ffffa1574019bd08 EFLAGS: 00010246
+RAX: 0000000000000000 RBX: 0000000000000000 RCX: 0000000000000000
+RDX: 0000000000000000 RSI: ffff8b0241365100 RDI: 0000000000000000
+RBP: 00000000000000c0 R08: 0000000000000004 R09: ffffa1574019bd54
+R10: 00000000ffffef01 R11: ffffffffa2818aa0 R12: ffff8b02419cd870
+R13: ffff8b024189d400 R14: ffff8b0241094000 R15: ffff8b0241094000
+FS:  0000000000000000(0000) GS:ffff8b02ba601000(0000) knlGS:0000000000000000
+CS:  0010 DS: 0000 ES: 0000 CR0: 0000000080050033
+CR2: 0000000000000000 CR3: 000000000257a000 CR4: 00000000000006f0
+Call Trace:
+ <TASK>
+ nforce3_agp_init+0x23/0x1d0 [amd64_agp]
+ agp_amd64_probe+0x3dd/0x470 [amd64_agp]
+
+Signed-off-by: Rene Rebe <rene@exactcode.de>
+
+--- ./arch/x86/kernel/amd_nb.c.vanilla	2025-05-29 11:53:25.952929235 +0200
++++ ./arch/x86/kernel/amd_nb.c	2025-05-29 13:00:02.191707970 +0200
+@@ -80,9 +82,13 @@
+ 		 * If not, then uninitialize everything.
+ 		 */
+ 		if (!node_to_amd_nb(i)->misc) {
+-			amd_northbridges.num = 0;
+-			kfree(nb);
+-			return -ENODEV;
++			if (i == 0) {
++				kfree(nb);
++				return -ENODEV;
++			}
++			pr_info("next amd_northbridge not found, limiting to: %d\n", i);
++			amd_northbridges.num = i;
++			break;
+ 		}
+ 
+ 		node_to_amd_nb(i)->link = amd_node_get_func(i, 4);
