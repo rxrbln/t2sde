@@ -9112,7 +9112,7 @@ index 000000000000..d39ee5f6c075
 +{
 +	struct buffer_head *head, *next, *bh;
 +
-+	if (page && page_has_buffers(page)) {
++	if (page && PagePrivate(page)) {
 +		head = page_buffers(page);
 +		bh = head;
 +		do {
@@ -20034,8 +20034,8 @@ index 000000000000..7e7b531fcc49
 +	return retval;
 +}
 +
-+static int reiserfs_mkdir(struct mnt_idmap *idmap, struct inode *dir,
-+			  struct dentry *dentry, umode_t mode)
++static struct dentry* reiserfs_mkdir(struct mnt_idmap *idmap, struct inode *dir,
++				      struct dentry *dentry, umode_t mode)
 +{
 +	int retval;
 +	struct inode *inode;
@@ -20052,7 +20052,7 @@ index 000000000000..7e7b531fcc49
 +
 +	retval = dquot_initialize(dir);
 +	if (retval)
-+		return retval;
++		return ERR_PTR(retval);
 +
 +#ifdef DISPLACE_NEW_PACKING_LOCALITIES
 +	/*
@@ -20063,19 +20063,19 @@ index 000000000000..7e7b531fcc49
 +#endif
 +	mode = S_IFDIR | mode;
 +	if (!(inode = new_inode(dir->i_sb))) {
-+		return -ENOMEM;
++		return ERR_PTR(-ENOMEM);
 +	}
 +	retval = new_inode_init(inode, dir, mode);
 +	if (retval) {
 +		drop_new_inode(inode);
-+		return retval;
++		return ERR_PTR(retval);
 +	}
 +
 +	jbegin_count += reiserfs_cache_default_acl(dir);
 +	retval = reiserfs_security_init(dir, inode, &dentry->d_name, &security);
 +	if (retval < 0) {
 +		drop_new_inode(inode);
-+		return retval;
++		return ERR_PTR(retval);
 +	}
 +	jbegin_count += retval;
 +	reiserfs_write_lock(dir->i_sb);
@@ -20131,7 +20131,7 @@ index 000000000000..7e7b531fcc49
 +out_failed:
 +	reiserfs_write_unlock(dir->i_sb);
 +	reiserfs_security_free(&security);
-+	return retval;
++	return retval ? ERR_PTR(retval) : NULL;
 +}
 +
 +static inline int reiserfs_empty_dir(struct inode *inode)
@@ -27693,7 +27693,7 @@ index 000000000000..5faf702f8d15
 +	unsigned long cur_index;
 +
 +	if (page) {
-+		if (page_has_buffers(page)) {
++		if (PagePrivate(page)) {
 +			tail_index = pos & (PAGE_SIZE - 1);
 +			cur_index = 0;
 +			head = page_buffers(page);
@@ -31503,7 +31503,7 @@ index 000000000000..998035a6388e
 +static int xattr_mkdir(struct inode *dir, struct dentry *dentry, umode_t mode)
 +{
 +	BUG_ON(!inode_is_locked(dir));
-+	return dir->i_op->mkdir(&nop_mnt_idmap, dir, dentry, mode);
++	return PTR_ERR_OR_ZERO(dir->i_op->mkdir(&nop_mnt_idmap, dir, dentry, mode));
 +}
 +
 +/*
@@ -33305,42 +33305,3 @@ index 000000000000..503ad018ce5b
 +};
 +
 +#endif  /*  _LINUX_REISERFS_XATTR_H  */
-diff --git a/scripts/selinux/mdp/mdp.c b/scripts/selinux/mdp/mdp.c
-index ea7fbe595971..52365921c043 100644
---- a/scripts/selinux/mdp/mdp.c
-+++ b/scripts/selinux/mdp/mdp.c
-@@ -167,6 +167,9 @@ int main(int argc, char *argv[])
- #ifdef CONFIG_JFS_SECURITY
- 	FS_USE("xattr", "jfs");
- #endif
-+#ifdef CONFIG_REISERFS_FS_SECURITY
-+	FS_USE("xattr", "reiserfs");
-+#endif
- #ifdef CONFIG_JFFS2_FS_SECURITY
- 	FS_USE("xattr", "jffs2");
- #endif
-diff --git a/tools/objtool/noreturns.h b/tools/objtool/noreturns.h
-index f37614cc2c1b..e7da92489167 100644
---- a/tools/objtool/noreturns.h
-+++ b/tools/objtool/noreturns.h
-@@ -11,6 +11,7 @@ NORETURN(__ia32_sys_exit)
- NORETURN(__ia32_sys_exit_group)
- NORETURN(__kunit_abort)
- NORETURN(__module_put_and_kthread_exit)
-+NORETURN(__reiserfs_panic)
- NORETURN(__stack_chk_fail)
- NORETURN(__tdx_hypercall_failed)
- NORETURN(__ubsan_handle_builtin_unreachable)
-diff --git a/tools/testing/selftests/filesystems/statmount/statmount_test.c b/tools/testing/selftests/filesystems/statmount/statmount_test.c
-index 8eb6aa606a0d..c773334bbcc9 100644
---- a/tools/testing/selftests/filesystems/statmount/statmount_test.c
-+++ b/tools/testing/selftests/filesystems/statmount/statmount_test.c
-@@ -27,7 +27,7 @@ static const char *const known_fs[] = {
- 	"ipathfs", "iso9660", "jffs2", "jfs", "minix", "mqueue", "msdos",
- 	"nfs", "nfs4", "nfsd", "nilfs2", "nsfs", "ntfs", "ntfs3", "ocfs2",
- 	"ocfs2_dlmfs", "ocxlflash", "omfs", "openpromfs", "overlay", "pipefs",
--	"proc", "pstore", "pvfs2", "qnx4", "qnx6", "ramfs",
-+	"proc", "pstore", "pvfs2", "qnx4", "qnx6", "ramfs", "reiserfs",
- 	"resctrl", "romfs", "rootfs", "rpc_pipefs", "s390_hypfs", "secretmem",
- 	"securityfs", "selinuxfs", "smackfs", "smb3", "sockfs", "spufs",
- 	"squashfs", "sysfs", "sysv", "tmpfs", "tracefs", "ubifs", "udf",
