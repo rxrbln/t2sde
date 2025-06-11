@@ -1,0 +1,131 @@
+diff --git a/src/aacs_aes.cpp b/src/aacs_aes.cpp
+index b1bb19b..b7b335f 100644
+--- a/src/aacs_aes.cpp
++++ b/src/aacs_aes.cpp
+@@ -113,14 +113,16 @@ int calculate_title_key_file_mac(const unsigned char *title_key_file, size_t len
+ 
+ 
+ int calculate_title_key_file_hash(const unsigned char *title_key_file, size_t length, /*out*/ unsigned char *title_key_file_hash) {
+-   EVP_MD_CTX mdctx;
++   EVP_MD_CTX* mdctx = NULL;
+    unsigned int md_len;
+ 
+-   EVP_MD_CTX_init(&mdctx);
++   mdctx = EVP_MD_CTX_new();
+ 
+-   EVP_DigestInit(&mdctx, EVP_sha1());
+-   EVP_DigestUpdate(&mdctx, title_key_file, length);
+-   EVP_DigestFinal_ex(&mdctx, title_key_file_hash, &md_len);
++   EVP_DigestInit(mdctx, EVP_sha1());
++   EVP_DigestUpdate(mdctx, title_key_file, length);
++   EVP_DigestFinal_ex(mdctx, title_key_file_hash, &md_len);
++
++   EVP_MD_CTX_free(mdctx);
+ 
+    return 1;
+ }
+diff --git a/src/aacs_ecdsa.cpp b/src/aacs_ecdsa.cpp
+index ff6e29c..ce1308d 100644
+--- a/src/aacs_ecdsa.cpp
++++ b/src/aacs_ecdsa.cpp
+@@ -155,9 +155,10 @@ int aacs_set_cert(/*out*/ EC_KEY *key, const unsigned char *cert) {
+ int aacs_verify(const unsigned char *cert, const unsigned char *signature, const unsigned char *nonce, const unsigned char *point) {
+    unsigned char md_value[EVP_MAX_MD_SIZE];
+    unsigned int md_len;
+-   EVP_MD_CTX mdctx;
++   EVP_MD_CTX* mdctx = NULL;
+    EC_KEY *key = NULL;
+    ECDSA_SIG *sig = NULL; // Can be freed before beeing intialized, initialize here
++   BIGNUM* r = NULL, *s = NULL;
+    int ret = -1;
+ 
+    if ((key = aacs_key()) == NULL) {
+@@ -170,21 +171,28 @@ int aacs_verify(const unsigned char *cert, const unsigned char *signature, const
+       goto err;
+    }
+ 
+-   EVP_MD_CTX_init(&mdctx);
++   mdctx = EVP_MD_CTX_new();
+ 
+-   EVP_DigestInit(&mdctx, EVP_ecdsa());
+-   EVP_DigestUpdate(&mdctx, nonce, 20);
+-   EVP_DigestUpdate(&mdctx, point, 40);
+-   EVP_DigestFinal_ex(&mdctx, md_value, &md_len);
++   EVP_DigestInit(mdctx, EVP_sha1());
++   EVP_DigestUpdate(mdctx, nonce, 20);
++   EVP_DigestUpdate(mdctx, point, 40);
++   EVP_DigestFinal_ex(mdctx, md_value, &md_len);
+ 
+-   if ((sig = ECDSA_SIG_new()) == NULL || BN_bin2bn(signature, 20, sig->r) == NULL || BN_bin2bn(signature+20, 20, sig->s) == NULL) {
++   r = BN_new();
++   s = BN_new();
++
++   if ((sig = ECDSA_SIG_new()) == NULL || BN_bin2bn(signature, 20, r) == NULL || BN_bin2bn(signature+20, 20, s) == NULL) {
+       ret = -4;
+       goto err;
+    }
+ 
++   ECDSA_SIG_set0(sig, r, s);
+    ret = ECDSA_do_verify(md_value, md_len, sig, key);
+ 
+ err:
++   if (mdctx)
++      EVP_MD_CTX_free(mdctx);
++
+    if (sig)
+       ECDSA_SIG_free(sig);
+ 
+@@ -197,9 +205,10 @@ err:
+ int aacs_sign(const unsigned char *cert, const unsigned char *priv_key, /*out*/ unsigned char *signature, const unsigned char *nonce, const unsigned char *point) {
+    unsigned char md_value[EVP_MAX_MD_SIZE];
+    unsigned int md_len;
+-   EVP_MD_CTX mdctx;
++   EVP_MD_CTX* mdctx = NULL;
+    EC_KEY *key = NULL;
+    ECDSA_SIG *sig = NULL;
++   const BIGNUM *r = NULL, *s = NULL;
+    BIGNUM *priv_key_bn = NULL;
+    int ret = -1;
+ 
+@@ -218,21 +227,24 @@ int aacs_sign(const unsigned char *cert, const unsigned char *priv_key, /*out*/
+       goto err;
+    }
+ 
+-   EVP_MD_CTX_init(&mdctx);
++   mdctx = EVP_MD_CTX_new();
+ 
+-   EVP_DigestInit(&mdctx, EVP_ecdsa());
+-   EVP_DigestUpdate(&mdctx, nonce, 20);
+-   EVP_DigestUpdate(&mdctx, point, 40);
+-   EVP_DigestFinal_ex(&mdctx, md_value, &md_len);
++   EVP_DigestInit(mdctx, EVP_sha1());
++   EVP_DigestUpdate(mdctx, nonce, 20);
++   EVP_DigestUpdate(mdctx, point, 40);
++   EVP_DigestFinal_ex(mdctx, md_value, &md_len);
+ 
+    sig = ECDSA_do_sign(md_value, md_len, key);
+ 
+-   if (BN_bn2bin(sig->r, signature) != 20) {
++   r = ECDSA_SIG_get0_r(sig);
++   s = ECDSA_SIG_get0_s(sig);
++
++   if (BN_bn2bin(r, signature) != 20) {
+       ret = -5;
+       goto err;
+    }
+ 
+-   if (BN_bn2bin(sig->s, signature+20) != 20) {
++   if (BN_bn2bin(s, signature+20) != 20) {
+       ret = -6;
+       goto err;
+    }
+@@ -241,6 +253,9 @@ int aacs_sign(const unsigned char *cert, const unsigned char *priv_key, /*out*/
+       ret = 1;
+ 
+ err:
++   if (mdctx)
++      EVP_MD_CTX_free(mdctx);
++
+    if (sig)
+       ECDSA_SIG_free(sig);
+ 
