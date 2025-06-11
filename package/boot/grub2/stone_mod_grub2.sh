@@ -161,8 +161,9 @@ EOT
 			--compression auto $grubmods
 
 		local dev=$(grep "$efi " /proc/mounts | sed 's/ .*//;q')
-		local d=${dev%[0-9]} # TODO: multi-digits
-		local p=${dev#$d}
+		local p=${dev##*[!0-9]}
+		local d=${dev%$p}
+		[ ! -e $d ] && d=${dev%p} # new-style, nvme p part separator?
 	    	efibootmgr -c -L "T2 Linux" -d $d -p $p -l "\\efi\\boot\\$exe"
 	    done
 
