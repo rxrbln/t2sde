@@ -1,0 +1,57 @@
+# --- T2-COPYRIGHT-BEGIN ---
+# t2/package/*/linux/hotfix-ps3-gelic.patch
+# Copyright (C) 2020 - 2025 The T2 SDE Project
+# SPDX-License-Identifier: GPL-2.0 or patched project license
+# --- T2-COPYRIGHT-END ---
+
+Since some MM rework around 5.x the ps3 gelic ethernet driver quickly runs
+out of memory to allocate. Tweak some defaults to avoid this as much as
+possible.
+
+Fix NULL-ptr deref oops if rx skb allocation fails, too.
+
+  René Rebe <rene@exactco.de>
+
+--- linux-6.10/mm/page_alloc.c.vanilla	2024-08-15 18:25:26.514273117 +0200
++++ linux-6.10/mm/page_alloc.c	2024-08-15 18:26:44.068278120 +0200
+@@ -269,9 +269,17 @@
+ #endif
+ };
+ 
++#ifdef CONFIG_PPC_PS3
++int min_free_kbytes = (6*1024);
++#else
+ int min_free_kbytes = 1024;
++#endif
+ int user_min_free_kbytes = -1;
++#ifdef CONFIG_PPC_PS3
++static int watermark_boost_factor __read_mostly;
++#else
+ static int watermark_boost_factor __read_mostly = 15000;
++#endif
+ static int watermark_scale_factor = 10;
+ 
+ /* movable_zone is the "real" zone pages in ZONE_MOVABLE are taken from */
+--- linux-6.15/drivers/net/ethernet/toshiba/ps3_gelic_net.c.vanilla	2025-06-11 10:00:03.561092735 +0200
++++ linux-6.15/drivers/net/ethernet/toshiba/ps3_gelic_net.c	2025-06-11 10:45:39.599799716 +0200
+@@ -994,7 +994,10 @@
+ 	}
+ 
+ 	/* netdevice select */
+-	if (card->vlan_required) {
++	if (card->vlan_required && !descr->skb) {
++		dev_info(ctodev(card), "vlan_required but no skb? %p\n", descr);
++		return 0; //netdev = card->netdev[GELIC_PORT_ETHERNET_0];
++	} else if (card->vlan_required) {
+ 		unsigned int i;
+ 		u16 vid;
+ 		vid = *(u16 *)(descr->skb->data) & VLAN_VID_MASK;
+@@ -1229,7 +1229,7 @@
+ 		cmd->base.speed = SPEED_1000;
+ 		break;
+ 	default:
+-		pr_info("%s: speed unknown\n", __func__);
++		pr_info("%s: speed unknown 0x%0x\n", __func__, card->ether_port_status & GELIC_LV1_ETHER_SPEED_MASK);
+ 		cmd->base.speed = SPEED_10;
+ 		break;
+ 	}
