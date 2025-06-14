@@ -9,36 +9,7 @@
 		define(`INTEL', `Intel X86 PCs')dnl
 
 		CONFIG_64BIT=y
-		
-		dnl CPU configuration
-		dnl
 	EOT
-
-	linux_arch=MK8 # default to orig. AMD
-	for x in "generic	GENERIC_CPU"	\
-		 "nocona	MPSC"		\
-	         "core2		MCORE2"		\
-		 "hehalem	MCORE2"		\
-		 "westmere	MCORE2"		\
-		 "sandybridge	MCORE2"		\
-		 "ivybridge	MCORE2"		\
-		 "haswell	MCORE2"		\
-		 "broadwell	MCORE2"		\
-		 "skylake	MCORE2"		\
-		 "skylake-avx512	MCORE2"		\
-		 "bonnel	ATOM"		\
-		 "silvermont	ATOM"
-	do
-		set $x
-		[[ "$SDECFG_X8664_OPT" = $1 ]] && linux_arch=$2
-	done
-
-	for x in GENERIC_CPU MK8 MPSC MCORE2 ATOM
-	do
-		if [ "$linux_arch" != "$x" ]
-		then echo "# CONFIG_$x is not set"
-		else echo "CONFIG_$x=y" ; fi
-	done
 
 	echo
 	cat <<- 'EOT'
@@ -50,7 +21,7 @@
 		include(`linux-fs.conf.m4')
 		include(`linux-x86.conf.m4')
 
-		CONFIG_NR_CPUS=128
+		CONFIG_NR_CPUS=512
 		CONFIG_HZ_1000=y
 
 		CONFIG_TRANSPARENT_HUGEPAGE=y
