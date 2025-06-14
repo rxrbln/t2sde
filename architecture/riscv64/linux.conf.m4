@@ -100,7 +100,6 @@ include(`linux-fs.conf.m4')
 # Sophgo Milk-V hotfixes:
 # CONFIG_ACPI is not set
 CONFIG_I2C=y
-CONFIG_HWMON=y
 # CONFIG_HIGHMEM is not set
 # CONFIG_SPARSEMEM_VMEMMAP is not set
 
