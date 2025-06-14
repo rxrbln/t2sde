@@ -24,6 +24,8 @@ dnl Default to thin LTO if the configured target supports it
 CONFIG_LTO_CLANG_THIN=y
 dnl CONFIG_LTO_CLANG_FULL=y
 
+CONFIG_EFI=y
+
 dnl Power management and ACPI options
 CONFIG_ACPI=y
 CONFIG_ACPI_SLEEP=y
