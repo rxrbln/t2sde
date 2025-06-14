@@ -6,6 +6,8 @@ dnl --- T2-COPYRIGHT-END ---
 
 CONFIG_SFI=y
 
+CONFIG_X86_REROUTE_FOR_BROKEN_BOOT_IRQS=y
+
 dnl Memory Type Range Register support
 dnl and other x86 goodies ...
 dnl
