@@ -22,7 +22,6 @@ include(`linux-net.conf.m4')
 include(`linux-fs.conf.m4')
 
 CONFIG_HZ_256=y
-# CONFIG_HZ_1024 is not set
 
 CONFIG_VERBOSE_MCHECK=y
 

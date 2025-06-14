@@ -69,5 +69,3 @@ include(`linux-common.conf.m4')
 include(`linux-block.conf.m4')
 include(`linux-net.conf.m4')
 include(`linux-fs.conf.m4')
-
-CONFIG_HZ_300=y

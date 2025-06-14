@@ -100,9 +100,8 @@ CONFIG_EDAC=y
 dnl No HZ and HPET, if the arch has it ...
 dnl
 CONFIG_HZ_100=y
-# CONFIG_HZ_250 is not set
-# CONFIG_HZ_300 is not set
-# CONFIG_HZ_1000 is not set
+CONFIG_HZ_250=y
+CONFIG_HZ_300=y
 CONFIG_HPET=y
 CONFIG_HPET_TIMER=y
 CONFIG_HIGH_RES_TIMERS=y

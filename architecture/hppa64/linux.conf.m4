@@ -40,7 +40,6 @@ include(`linux-fs.conf.m4')
 
 CONFIG_NR_CPUS=4
 CONFIG_SCHED_MC=y
-CONFIG_HZ_250=y
 
 # CONFIG_CHECKPOINT_RESTORE is not set
 

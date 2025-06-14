@@ -35,18 +35,18 @@
 		else echo "CONFIG_$x=y" ; fi
 	done
 
+	cat <<- 'EOT'
+ 		include(`linux.conf.m4')
+	EOT
+
 	if [ "$SDECFG_POWERPC64_ENDIANESS" = "le" ]; then
 		echo "CONFIG_CPU_LITTLE_ENDIAN=y"
 		echo "CONFIG_NR_CPUS=256"
 		echo "CONFIG_PPC_PSERIES=y"
+		echo "CONFIG_HZ_1000=y"
 	else
 		echo "CONFIG_CPU_BIG_ENDIAN=y"
 		echo "CONFIG_NR_CPUS=8"
 		echo "# CONFIG_PPC_PSERIES is not"
 	fi
-
-	echo
-	cat <<- 'EOT'
- 		include(`linux.conf.m4')
-	EOT
 } | m4 -I $base/architecture/$arch -I $base/architecture/powerpc -I $base/architecture/share
