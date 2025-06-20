@@ -1,3 +1,9 @@
+# --- T2-COPYRIGHT-BEGIN ---
+# t2/package/*/linux/up-next-arm64-x1e80100.patch
+# Copyright (C) 2025 The T2 SDE Project
+# SPDX-License-Identifier: GPL-2.0 or patched project license
+# --- T2-COPYRIGHT-END ---
+
 https://github.com/jhovold/linux
 
 diff --git a/Documentation/devicetree/bindings/arm/qcom.yaml b/Documentation/devicetree/bindings/arm/qcom.yaml
@@ -9476,111 +9482,6 @@ index d8633a596f8d..35b28c2fcd64 100644
  
  	/*
  	 * Set up transfer unit values and set controller state to send
-diff --git a/drivers/gpu/drm/msm/dp/dp_display.c b/drivers/gpu/drm/msm/dp/dp_display.c
-index bbc47d86ae9e..ab8c1f19dcb4 100644
---- a/drivers/gpu/drm/msm/dp/dp_display.c
-+++ b/drivers/gpu/drm/msm/dp/dp_display.c
-@@ -367,17 +367,21 @@ static int msm_dp_display_send_hpd_notification(struct msm_dp_display_private *d
- 	return 0;
- }
- 
--static void msm_dp_display_lttpr_init(struct msm_dp_display_private *dp)
-+static int msm_dp_display_lttpr_init(struct msm_dp_display_private *dp, u8 *dpcd)
- {
--	u8 lttpr_caps[DP_LTTPR_COMMON_CAP_SIZE];
--	int rc;
-+	int rc, lttpr_count;
- 
--	if (drm_dp_read_lttpr_common_caps(dp->aux, dp->panel->dpcd, lttpr_caps))
--		return;
-+	if (drm_dp_read_lttpr_common_caps(dp->aux, dpcd, dp->link->lttpr_common_caps))
-+		return 0;
- 
--	rc = drm_dp_lttpr_init(dp->aux, drm_dp_lttpr_count(lttpr_caps));
--	if (rc)
-+	lttpr_count = drm_dp_lttpr_count(dp->link->lttpr_common_caps);
-+	rc = drm_dp_lttpr_init(dp->aux, lttpr_count);
-+	if (rc) {
- 		DRM_ERROR("failed to set LTTPRs transparency mode, rc=%d\n", rc);
-+		return 0;
-+	}
-+
-+	return lttpr_count;
- }
- 
- static int msm_dp_display_process_hpd_high(struct msm_dp_display_private *dp)
-@@ -385,12 +389,17 @@ static int msm_dp_display_process_hpd_high(struct msm_dp_display_private *dp)
- 	struct drm_connector *connector = dp->msm_dp_display.connector;
- 	const struct drm_display_info *info = &connector->display_info;
- 	int rc = 0;
-+	u8 dpcd[DP_RECEIVER_CAP_SIZE];
- 
--	rc = msm_dp_panel_read_sink_caps(dp->panel, connector);
-+	rc = drm_dp_read_dpcd_caps(dp->aux, dpcd);
- 	if (rc)
- 		goto end;
- 
--	msm_dp_display_lttpr_init(dp);
-+	dp->link->lttpr_count = msm_dp_display_lttpr_init(dp, dpcd);
-+
-+	rc = msm_dp_panel_read_sink_caps(dp->panel, connector);
-+	if (rc)
-+		goto end;
- 
- 	msm_dp_link_process_request(dp->link);
- 
-diff --git a/drivers/gpu/drm/msm/dp/dp_link.h b/drivers/gpu/drm/msm/dp/dp_link.h
-index 8db5d5698a97..ba47c6d19fbf 100644
---- a/drivers/gpu/drm/msm/dp/dp_link.h
-+++ b/drivers/gpu/drm/msm/dp/dp_link.h
-@@ -7,6 +7,7 @@
- #define _DP_LINK_H_
- 
- #include "dp_aux.h"
-+#include <drm/display/drm_dp_helper.h>
- 
- #define DS_PORT_STATUS_CHANGED 0x200
- #define DP_TEST_BIT_DEPTH_UNKNOWN 0xFFFFFFFF
-@@ -60,6 +61,9 @@ struct msm_dp_link_phy_params {
- };
- 
- struct msm_dp_link {
-+	u8 lttpr_common_caps[DP_LTTPR_COMMON_CAP_SIZE];
-+	int lttpr_count;
-+
- 	u32 sink_request;
- 	u32 test_response;
- 
-diff --git a/drivers/gpu/drm/msm/dp/dp_panel.c b/drivers/gpu/drm/msm/dp/dp_panel.c
-index 92415bf8aa16..4e8ab75c771b 100644
---- a/drivers/gpu/drm/msm/dp/dp_panel.c
-+++ b/drivers/gpu/drm/msm/dp/dp_panel.c
-@@ -47,7 +47,7 @@ static void msm_dp_panel_read_psr_cap(struct msm_dp_panel_private *panel)
- 
- static int msm_dp_panel_read_dpcd(struct msm_dp_panel *msm_dp_panel)
- {
--	int rc;
-+	int rc, max_lttpr_lanes, max_lttpr_rate;
- 	struct msm_dp_panel_private *panel;
- 	struct msm_dp_link_info *link_info;
- 	u8 *dpcd, major, minor;
-@@ -75,6 +75,16 @@ static int msm_dp_panel_read_dpcd(struct msm_dp_panel *msm_dp_panel)
- 	if (link_info->rate > msm_dp_panel->max_dp_link_rate)
- 		link_info->rate = msm_dp_panel->max_dp_link_rate;
- 
-+	/* Limit data lanes from LTTPR capabilities, if any */
-+	max_lttpr_lanes = drm_dp_lttpr_max_lane_count(panel->link->lttpr_common_caps);
-+	if (max_lttpr_lanes && max_lttpr_lanes < link_info->num_lanes)
-+		link_info->num_lanes = max_lttpr_lanes;
-+
-+	/* Limit link rate from LTTPR capabilities, if any */
-+	max_lttpr_rate = drm_dp_lttpr_max_link_rate(panel->link->lttpr_common_caps);
-+	if (max_lttpr_rate && max_lttpr_rate < link_info->rate)
-+		link_info->rate = max_lttpr_rate;
-+
- 	drm_dbg_dp(panel->drm_dev, "version: %d.%d\n", major, minor);
- 	drm_dbg_dp(panel->drm_dev, "link_rate=%d\n", link_info->rate);
- 	drm_dbg_dp(panel->drm_dev, "lane_count=%d\n", link_info->num_lanes);
 diff --git a/drivers/gpu/drm/msm/msm_gpu_devfreq.c b/drivers/gpu/drm/msm/msm_gpu_devfreq.c
 index 6970b0f7f457..2e1d5c343272 100644
 --- a/drivers/gpu/drm/msm/msm_gpu_devfreq.c
