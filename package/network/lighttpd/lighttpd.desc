@@ -35,23 +35,21 @@ if [ $prefix_auto = 1 ]; then
 	set_confopt
 fi
 
+var_insert confopt ' ' "-C"
 var_append confopt ' ' --enable-fastcgi
 
 pkginstalled pcre && var_append confopt ' ' --with-pcre
 pkginstalled bzip2 && var_append confopt ' ' --with-bzip2
 pkginstalled openssl && var_append confopt ' ' --with-openssl
+var_append confopt ' ' "--enable-static=yes"
 
 if pkginstalled openldap; then
 	pkgprefix -t openldap
-	var_append confopt ' ' --with-ldap
 	var_append LDAP_LIB ':' "$(pkgprefix libdir openldap)"
 	var_append LBER_LIB ':' "$(pkgprefix libdir openldap)"
 	export LDAP_LIB LBER_LIB
 fi
 
-if pkginstalled mysql; then
-	var_append confopt ' ' --with-mysql
-fi
 
 if pkginstalled gdbm; then
 	var_append confopt ' ' --with-gdbm
@@ -67,10 +65,55 @@ fi
 
 if pkginstalled lua; then
 	var_append confopt ' ' --with-lua
+	var_append GCC_WRAPPER_APPEND ' ' '-c?:-llua'
 fi
 
 # copy default config file
-hook_add postmake 5 "cp -vp doc/config/lighttpd.conf $root$sysconfdir/"
+hook_add postmake 5 "cp -vp doc/config/* $root$sysconfdir/"
+hook_add postmake 6 "cp -vpr tests $root/$sysconfdir/"
 
 # pcre cross-build support, patched configure.in
-atstage cross && hook_add preconf 5 autoconf
+hook_add preconf 5 ./autogen.sh
+
+#manual for this until upstream fixes shared build
+runconf=0
+runcmake=0 runmeson=0 runscons=0
+
+hook_add preconf 6 " LIGHTTPD_STATIC=yes CPPFLAGS=\"-DLIGHTTPD_STATIC\" ./configure $confopt"
+
+make_as_static() {
+	cat > src/plugin-static.h << 'EOF'
+PLUGIN_INIT(mod_rewrite)
+PLUGIN_INIT(mod_redirect)
+PLUGIN_INIT(mod_access)
+PLUGIN_INIT(mod_alias)
+PLUGIN_INIT(mod_indexfile)
+PLUGIN_INIT(mod_staticfile)
+PLUGIN_INIT(mod_setenv)
+PLUGIN_INIT(mod_expire)
+PLUGIN_INIT(mod_simple_vhost)
+PLUGIN_INIT(mod_evhost)
+PLUGIN_INIT(mod_fastcgi)
+PLUGIN_INIT(mod_scgi)
+PLUGIN_INIT(mod_dirlisting)
+PLUGIN_INIT(mod_openssl)
+PLUGIN_INIT(mod_accesslog)
+PLUGIN_INIT(mod_ajp13)
+PLUGIN_INIT(mod_auth)
+PLUGIN_INIT(mod_authn_file)
+PLUGIN_INIT(mod_authn_pam)
+PLUGIN_INIT(mod_cgi)
+PLUGIN_INIT(mod_deflate)
+PLUGIN_INIT(mod_extforward)
+PLUGIN_INIT(mod_magnet)
+PLUGIN_INIT(mod_proxy)
+PLUGIN_INIT(mod_rrdtool)
+PLUGIN_INIT(mod_sockproxy)
+PLUGIN_INIT(mod_ssi)
+PLUGIN_INIT(mod_status)
+PLUGIN_INIT(mod_userdir)
+PLUGIN_INIT(mod_vhostdb)
+PLUGIN_INIT(mod_webdav)
+EOF
+}
+hook_add premake 4 make_as_static
