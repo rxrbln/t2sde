@@ -4,16 +4,8 @@
 # SPDX-License-Identifier: GPL-2.0 or patched project license
 # --- T2-COPYRIGHT-END ---
 
-
-From: https://github.com/sugarfillet/kexec-tools
-
-Nick Kossifidis <mick@ics.forth.gr>
-Pingfan Liu <piliu@redhat.com>
-Dave Young <dyoung@redhat.com>
-Simon Horman <horms@kernel.org>
-
 diff --git a/configure.ac b/configure.ac
-index d081c82..9204c37 100644
+index 8b79eef..cbd6edb 100644
 --- a/configure.ac
 +++ b/configure.ac
 @@ -61,6 +61,9 @@ case $target_cpu in
@@ -38,11 +30,26 @@ index 1c8d2cc..93a5ee5 100644
  #define EM_LOONGARCH	258		/* Loongson Loongarch*/
  #define EM_NUM		184
  
+diff --git a/include/pe.h b/include/pe.h
+index a1aa91e..9ab3e79 100644
+--- a/include/pe.h
++++ b/include/pe.h
+@@ -139,6 +139,10 @@ static int get_pehdr_offset(const char *buf)
+ 	int pe_hdr_offset;
+ 
+ 	pe_hdr_offset = *((int *)(buf + 0x3c));
++	if (pe_hdr_offset < 0 || pe_hdr_offset > 4096) {
++		printf("PE header offset is not a reasonable value\n");
++		return -1;
++	}
+ 	buf += pe_hdr_offset;
+ 	if (!!memcmp(buf, "PE\0\0", 4)) {
+ 		printf("Not a PE file\n");
 diff --git a/kexec/Makefile b/kexec/Makefile
-index 8a52e8d..405864a 100644
+index e969d1e..8b5851d 100644
 --- a/kexec/Makefile
 +++ b/kexec/Makefile
-@@ -88,6 +88,7 @@ include $(srcdir)/kexec/arch/mips/Makefile
+@@ -92,6 +92,7 @@ include $(srcdir)/kexec/arch/mips/Makefile
  include $(srcdir)/kexec/arch/cris/Makefile
  include $(srcdir)/kexec/arch/ppc/Makefile
  include $(srcdir)/kexec/arch/ppc64/Makefile
@@ -50,32 +57,47 @@ index 8a52e8d..405864a 100644
  include $(srcdir)/kexec/arch/s390/Makefile
  include $(srcdir)/kexec/arch/sh/Makefile
  include $(srcdir)/kexec/arch/x86_64/Makefile
+diff --git a/kexec/arch/mips/Makefile b/kexec/arch/mips/Makefile
+index 1fe7886..0a5ce19 100644
+--- a/kexec/arch/mips/Makefile
++++ b/kexec/arch/mips/Makefile
+@@ -13,6 +13,8 @@ mips_FS2DT_INCLUDE = \
+ 
+ mips_DT_OPS += kexec/dt-ops.c
+ 
++mips_MEM_REGIONS = kexec/mem_regions.c
++
+ include $(srcdir)/kexec/libfdt/Makefile.libfdt
+ 
+ libfdt_SRCS += $(LIBFDT_SRCS:%=kexec/libfdt/%)
 diff --git a/kexec/arch/riscv/Makefile b/kexec/arch/riscv/Makefile
 new file mode 100644
-index 0000000..37ef760
+index 0000000..18a997b
 --- /dev/null
 +++ b/kexec/arch/riscv/Makefile
-@@ -0,0 +1,37 @@
+@@ -0,0 +1,38 @@
 +#
 +# kexec riscv
 +#
-+riscv_KEXEC_SRCS =  kexec/arch/riscv/kexec-riscv.c
++riscv_KEXEC_SRCS = kexec/arch/riscv/crashdump-riscv.c
 +riscv_KEXEC_SRCS += kexec/arch/riscv/kexec-elf-riscv.c
 +riscv_KEXEC_SRCS += kexec/arch/riscv/kexec-image-riscv.c
-+riscv_KEXEC_SRCS += kexec/arch/riscv/crashdump-riscv.c
-+
-+riscv_MEM_REGIONS = kexec/mem_regions.c
++riscv_KEXEC_SRCS += kexec/arch/riscv/kexec-riscv.c
 +
 +riscv_DT_OPS += kexec/dt-ops.c
++
++riscv_MEM_REGIONS = kexec/mem_regions.c
 +
 +riscv_ARCH_REUSE_INITRD =
 +
 +riscv_CPPFLAGS += -I $(srcdir)/kexec/
 +
-+dist += kexec/arch/riscv/Makefile $(riscv_KEXEC_SRCS)			\
-+	kexec/arch/riscv/kexec-riscv.h					\
-+	kexec/arch/riscv/image-header.h					\
-+	kexec/arch/riscv/include/arch/options.h
++dist += $(riscv_KEXEC_SRCS)				\
++	kexec/arch/riscv/image-header.h			\
++	kexec/arch/riscv/include/arch/options.h		\
++	kexec/arch/riscv/iomem.h			\
++	kexec/arch/riscv/kexec-riscv.h			\
++	kexec/arch/riscv/Makefile
 +
 +ifdef HAVE_LIBFDT
 +
@@ -92,7 +114,6 @@ index 0000000..37ef760
 +riscv_KEXEC_SRCS += $(libfdt_SRCS)
 +
 +endif
-+
 diff --git a/kexec/arch/riscv/crashdump-riscv.c b/kexec/arch/riscv/crashdump-riscv.c
 new file mode 100644
 index 0000000..336d7a7
@@ -400,7 +421,7 @@ index 0000000..7671e26
 +#endif
 diff --git a/kexec/arch/riscv/kexec-elf-riscv.c b/kexec/arch/riscv/kexec-elf-riscv.c
 new file mode 100644
-index 0000000..49deedb
+index 0000000..434873c
 --- /dev/null
 +++ b/kexec/arch/riscv/kexec-elf-riscv.c
 @@ -0,0 +1,184 @@
@@ -518,7 +539,7 @@ index 0000000..49deedb
 +		  kernel_size / 1024, old_base_addr, old_start_addr);
 +
 +	/* Get a continuous physical region that can hold the kernel */
-+	ret = elf_riscv_find_pbase(info, &new_base_addr, kernel_size, KERNEL_ALIGN);
++	ret = riscv_find_pbase(info, &new_base_addr, kernel_size, KERNEL_ALIGN);
 +	if (ret < 0) {
 +		fprintf(stderr, "Could not find a memory region for the "
 +				"provided ELF image\n");
@@ -590,7 +611,7 @@ index 0000000..49deedb
 +}
 diff --git a/kexec/arch/riscv/kexec-image-riscv.c b/kexec/arch/riscv/kexec-image-riscv.c
 new file mode 100644
-index 0000000..8e0654c
+index 0000000..6ae7e57
 --- /dev/null
 +++ b/kexec/arch/riscv/kexec-image-riscv.c
 @@ -0,0 +1,95 @@
@@ -664,7 +685,7 @@ index 0000000..8e0654c
 +
 +	/* Setup the entry and segments */
 +
-+	ret = elf_riscv_find_pbase(info, &new_base_addr, image_size, text_offset);
++	ret = riscv_find_pbase(info, &new_base_addr, image_size, text_offset);
 +	if (ret < 0) {
 +		fprintf(stderr, "Could not find a memory region for the "
 +				"provided Image\n");
@@ -691,10 +712,10 @@ index 0000000..8e0654c
 +}
 diff --git a/kexec/arch/riscv/kexec-riscv.c b/kexec/arch/riscv/kexec-riscv.c
 new file mode 100644
-index 0000000..9536a95
+index 0000000..f34b468
 --- /dev/null
 +++ b/kexec/arch/riscv/kexec-riscv.c
-@@ -0,0 +1,479 @@
+@@ -0,0 +1,526 @@
 +/* SPDX-License-Identifier: GPL-2.0 */
 +/*
 + * Copyright (C) 2019 FORTH-ICS/CARV
@@ -713,14 +734,13 @@ index 0000000..9536a95
 +#include <libfdt.h>		/* For DeviceTree handling */
 +#include "kexec-riscv.h"
 +#include "iomem.h"
++#include <stdbool.h>
 +#include <sys/types.h>
 +#include <sys/stat.h>
 +#include <fcntl.h>
 +#ifndef _O_BINARY
 +#define _O_BINARY 0
 +#endif
-+
-+
 +
 +const struct arch_map_entry arches[] = {
 +	{ "riscv32", KEXEC_ARCH_RISCV },
@@ -758,7 +778,7 @@ index 0000000..9536a95
 + * memory ranges are sorted, so we'll return the first region
 + * that's big enough for holding the image.
 + */
-+int elf_riscv_find_pbase(struct kexec_info *info, off_t *addr,
++int riscv_find_pbase(struct kexec_info *info, off_t *addr,
 +				off_t size, off_t align)
 +{
 +	int i = 0;
@@ -881,7 +901,6 @@ index 0000000..9536a95
 +			       initrd_base + initrd_size);
 +
 +		dbgprintf("Base addr for initrd image: 0x%lX\n", initrd_base);
-+		min_usable = initrd_base;
 +		max_usable = initrd_base;
 +	}
 +
@@ -1104,17 +1123,36 @@ index 0000000..9536a95
 +
 +}
 +
++static bool to_be_excluded(char *str, unsigned long long start, unsigned long long end)
++{
++	if (!strncmp(str, CRASH_KERNEL, strlen(CRASH_KERNEL))) {
++		uint64_t load_start, load_end;
++
++		if (!get_crash_kernel_load_range(&load_start, &load_end) &&
++		    (load_start == start) && (load_end == end))
++			return false;
++
++		return true;
++	}
++
++	if (!strncmp(str, SYSTEM_RAM, strlen(SYSTEM_RAM)) ||
++	    !strncmp(str, KERNEL_CODE, strlen(KERNEL_CODE)) ||
++	    !strncmp(str, KERNEL_DATA, strlen(KERNEL_DATA)))
++		return false;
++	else
++		return true;
++}
++
 +int get_memory_ranges(struct memory_range **range, int *num_ranges,
 +		      unsigned long kexec_flags)
 +{
 +	struct memory_ranges sysmem_ranges = {0};
-+	int ret = 0;
-+
 +	const char *iomem = proc_iomem();
-+	char line[MAX_LINE], *str;
-+	FILE *fp;
++	struct memory_range excl_range;
 +	unsigned long long start, end;
-+	int consumed, count;
++	int consumed, count, ret = 0;
++	FILE *fp = NULL, *sp = NULL;
++	char line[MAX_LINE], *str;
 +
 +	fp = fopen(iomem, "r");
 +	if (!fp) {
@@ -1122,36 +1160,55 @@ index 0000000..9536a95
 +		return -1;
 +	}
 +
++	sp = fopen(iomem, "r");
++	if (!sp) {
++		fprintf(stderr, "Cannot open %s: %s\n", iomem, strerror(errno));
++		ret = -1;
++		goto err;
++	}
++
++	/*
++	 * Perform two passes: First add all System RAM, and then
++	 * exclude the "Reserved" ranges"
++	 */
 +	while (fgets(line, sizeof(line), fp) != 0) {
 +		count = sscanf(line, "%llx-%llx : %n", &start, &end, &consumed);
 +		if (count != 2)
 +			continue;
 +		str = line + consumed;
 +
-+		if (!strncmp(str, SYSTEM_RAM, strlen(SYSTEM_RAM))){
++		if (!strncmp(str, SYSTEM_RAM, strlen(SYSTEM_RAM))) {
 +			ret = mem_regions_alloc_and_add(&sysmem_ranges,
 +					start, end - start + 1, RANGE_RAM);
 +			if (ret) {
 +				fprintf(stderr,
 +					"Cannot allocate memory for ranges\n");
-+				fclose(fp);
-+				return -ENOMEM;
++				ret = -ENOMEM;
++				goto err;
 +			}
 +
-+		} else if (!strncmp(str, IOMEM_RESERVED, strlen(IOMEM_RESERVED))){
-+			ret = mem_regions_alloc_and_add(&sysmem_ranges,
-+					start, end - start + 1, RANGE_RESERVED);
-+			if (ret) {
-+				fprintf(stderr,
-+					"Cannot allocate memory for ranges\n");
-+				fclose(fp);
-+				return -ENOMEM;
-+			}
-+		} else
-+			continue;
++		}
 +	}
 +
-+	fclose(fp);
++	while (fgets(line, sizeof(line), sp) != 0) {
++		count = sscanf(line, "%llx-%llx : %n", &start, &end, &consumed);
++		if (count != 2)
++			continue;
++		str = line + consumed;
++
++		if (to_be_excluded(str, start, end)) {
++			excl_range.start = start;
++			excl_range.end = end;
++
++			ret = mem_regions_alloc_and_exclude(&sysmem_ranges, &excl_range);
++			if (ret) {
++				fprintf(stderr,
++					"Cannot allocate memory for ranges (exclude)\n");
++				ret = -ENOMEM;
++				goto err;
++			}
++		}
++	}
 +
 +	*range = sysmem_ranges.ranges;
 +	*num_ranges = sysmem_ranges.size;
@@ -1159,7 +1216,13 @@ index 0000000..9536a95
 +	dbgprint_mem_range("System RAM ranges;",
 +				sysmem_ranges.ranges, sysmem_ranges.size);
 +
-+	return 0;
++	ret = 0;
++ err:
++	if (fp)
++		fclose(fp);
++	if (sp)
++		fclose(sp);
++	return ret;
 +}
 +
 +/*******\
@@ -1174,9 +1237,14 @@ index 0000000..9536a95
 +void arch_update_purgatory(struct kexec_info *UNUSED(info))
 +{
 +}
++
++int arch_do_exclude_segment(struct kexec_info *UNUSED(info), struct kexec_segment *UNUSED(segment))
++{
++	return 0;
++}
 diff --git a/kexec/arch/riscv/kexec-riscv.h b/kexec/arch/riscv/kexec-riscv.h
 new file mode 100644
-index 0000000..324a251
+index 0000000..cfb0377
 --- /dev/null
 +++ b/kexec/arch/riscv/kexec-riscv.h
 @@ -0,0 +1,53 @@
@@ -1219,7 +1287,7 @@ index 0000000..324a251
 +int prepare_kexec_file_options(struct kexec_info *info);
 +int load_extra_segments(struct kexec_info *info, uint64_t kernel_base,
 +			uint64_t kernel_size, uint64_t max_addr);
-+int elf_riscv_find_pbase(struct kexec_info *info, off_t *addr,
++int riscv_find_pbase(struct kexec_info *info, off_t *addr,
 +				off_t size, off_t align);
 +
 +/* kexec-elf-riscv.c */
@@ -1716,8 +1784,24 @@ index 03659ce..3014205 100644
 +			  struct memory_ranges *extra_ranges);
 +
  #endif
+diff --git a/kexec/kexec-pe-zboot.c b/kexec/kexec-pe-zboot.c
+index 8e17b4e..c09f2ae 100644
+--- a/kexec/kexec-pe-zboot.c
++++ b/kexec/kexec-pe-zboot.c
+@@ -100,7 +100,10 @@ int pez_prepare(const char *crude_buf, off_t buf_sz, int *kernel_fd,
+ 	dbgprintf("%s: decompressed size %ld\n", __func__, decompressed_size);
+ 
+ 	/* Makefile.zboot pads Image with zero, but the trailing zero is not part of PE file */
+-	parse = kernel_uncompressed_buf + get_pehdr_offset(kernel_uncompressed_buf);
++	ret = get_pehdr_offset(kernel_uncompressed_buf);
++	if (ret < 0)
++		goto fail_bad_header;
++	parse = kernel_uncompressed_buf + ret;
+ 	parse += sizeof(struct pe_hdr);
+ 	opt_hdr = (struct pe32plus_opt_hdr*)parse;
+ 	parse += sizeof(struct pe32plus_opt_hdr);
 diff --git a/kexec/kexec-syscall.h b/kexec/kexec-syscall.h
-index be6ccd5..2310b98 100644
+index cc32c01..9b17578 100644
 --- a/kexec/kexec-syscall.h
 +++ b/kexec/kexec-syscall.h
 @@ -80,6 +80,9 @@
@@ -1730,7 +1814,7 @@ index be6ccd5..2310b98 100644
  
  #ifndef __NR_kexec_file_load
  /* system call not available for the arch */
-@@ -137,6 +140,7 @@ static inline long kexec_file_load(int kernel_fd, int initrd_fd,
+@@ -140,6 +143,7 @@ static inline long kexec_file_load(int kernel_fd, int initrd_fd,
  #define KEXEC_ARCH_MIPS_LE (10 << 16)
  #define KEXEC_ARCH_MIPS    ( 8 << 16)
  #define KEXEC_ARCH_CRIS    (76 << 16)
@@ -1738,7 +1822,7 @@ index be6ccd5..2310b98 100644
  #define KEXEC_ARCH_LOONGARCH	(258 << 16)
  
  #define KEXEC_MAX_SEGMENTS 16
-@@ -184,5 +188,8 @@ static inline long kexec_file_load(int kernel_fd, int initrd_fd,
+@@ -187,5 +191,8 @@ static inline long kexec_file_load(int kernel_fd, int initrd_fd,
  #if defined(__loongarch__)
  #define KEXEC_ARCH_NATIVE	KEXEC_ARCH_LOONGARCH
  #endif
@@ -1747,6 +1831,18 @@ index be6ccd5..2310b98 100644
 +#endif
  
  #endif /* KEXEC_SYSCALL_H */
+diff --git a/kexec/zstd.c b/kexec/zstd.c
+index 79d5bf3..eaa76b9 100644
+--- a/kexec/zstd.c
++++ b/kexec/zstd.c
+@@ -21,6 +21,7 @@
+  * Reimplementation of private function available if zstd is
+  * statically linked. Remove when it becomes public.
+  */
++__attribute__((weak))
+ unsigned ZSTD_isFrame(const void* buffer, size_t size)
+ {
+ 	uint8_t *buf = (uint8_t *)buffer;
 diff --git a/purgatory/Makefile b/purgatory/Makefile
 index 4d2d071..7d1175f 100644
 --- a/purgatory/Makefile
