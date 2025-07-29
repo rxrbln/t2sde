@@ -4,26 +4,36 @@
 # SPDX-License-Identifier: GPL-2.0 or patched project license
 # --- T2-COPYRIGHT-END ---
 
-root@t2:~# glxgears
-LLVM ERROR: Relocation type 0x%x not implemented yet!
+root@g4:~# glxgears
+LLVM ERROR: Relocation type 0xa not implemented yet!
+Aborted                    (core dumped) glxgears
+
+root@g5:~# glxgears
+LLVM ERROR: Relocation type 0x1a not implemented yet!
 Aborted                    (core dumped) glxgears
 
 Signed-off-by: Rene Rebe <rene@t2linux.com>
 
---- llvm-20.1.8.src/lib/ExecutionEngine/RuntimeDyld/RuntimeDyldELF.cpp.orig	2025-07-09 01:06:32.000000000 +0200
-+++ llvm-20.1.8.src/lib/ExecutionEngine/RuntimeDyld/RuntimeDyldELF.cpp	2025-07-28 17:17:23.997152821 +0200
-@@ -1028,7 +1030,13 @@
+--- llvm-20.1.8.src/lib/ExecutionEngine/RuntimeDyld/RuntimeDyldELF.cpp.orig	2025-07-29 16:55:20.031535540 +0200
++++ llvm-20.1.8.src/lib/ExecutionEngine/RuntimeDyld/RuntimeDyldELF.cpp	2025-07-29 17:29:41.227966195 +0200
+@@ -1029,6 +1029,20 @@
    case ELF::R_PPC_ADDR16_HA:
      writeInt16BE(LocalAddress, applyPPCha(Value + Addend));
      break;
--  }
++  case ELF::R_PPC_REL24: {
++    uint32_t FinalAddress = Section.getLoadAddressWithOffset(Offset);
++    int32_t delta = static_cast<int32_t>(Value - FinalAddress + Addend);
++    if (SignExtend32<26>(delta) != delta)
++      llvm_unreachable("Relocation R_PPC_REL24 overflow");
++    // We preserve bits other than LI field, i.e. PO and AA/LK fields.
++    uint32_t Inst = readBytesUnaligned(LocalAddress, 4);
++    writeInt32BE(LocalAddress, (Inst & 0xFC000003) | (delta & 0x03FFFFFC));
++  } break;
 +  case ELF::R_PPC_REL32: {
 +    uint32_t FinalAddress = Section.getLoadAddressWithOffset(Offset);
 +    int32_t delta = static_cast<int32_t>(Value - FinalAddress + Addend);
 +    writeInt32BE(LocalAddress, delta);
 +  } break;
-+ }
-+
+   }
  }
  
- void RuntimeDyldELF::resolvePPC64Relocation(const SectionEntry &Section,
