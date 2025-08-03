@@ -68,3 +68,6 @@ CONFIG_USB_AUTOSUSPEND_DELAY=67890
 
 # CONFIG_NET_VENDOR_NETRONOME is not set
 # CONFIG_DRM_NOUVEAU is not set
+
+dnl Oopses null pointer dereference
+# CONFIG_PCI_PWRCTL_SLOT is not set
