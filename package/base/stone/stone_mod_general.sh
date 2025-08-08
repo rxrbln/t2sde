@@ -123,7 +123,7 @@ set_tmzone() {
 		cmd="$cmd 'Current: $tz' 'ln -sf ../usr/share/zoneinfo/$1/$tz \
 			/etc/localtime'"
 	fi
-	cmd="$cmd $( grep "$1/" /usr/share/zoneinfo/zone.tab | cut -f3 | \
+	cmd="$cmd $(grep "$1/" /usr/share/zoneinfo/zone.tab | cut -f3 |
 		cut -f2 -d/ | sort -u | tr '\n' ' ' | sed 's,[^ ]\+,& '`
 		`'"ln -sf ../usr/share/zoneinfo/$1/& /etc/localtime",g' )"
 
@@ -135,7 +135,7 @@ set_tmarea() {
 	cmd="gui_menu 'general_tmarea' 'Select one of the following time areas.'"
 
 	cmd="$cmd 'Current: $tz' 'if set_tmzone $tz; then tzset=1; fi'"
-	cmd="$cmd $( grep '^[^#]' /usr/share/zoneinfo/zone.tab | cut -f3 | \
+	cmd="$cmd $(grep '^[^#]' /usr/share/zoneinfo/zone.tab | cut -f3 |
 		cut -f1 -d/ | sort -u | tr '\n' ' ' | sed 's,[^ ]\+,& '`
 		`'"if set_tmzone &; then tzset=1; fi",g' )"
 
@@ -179,7 +179,8 @@ set_locale() {
 	locale="${LANG:-none}" ; cmd="gui_menu 'general_locale' 'Select one of the following locales.'"
 
 	if [ "$locale" != none ]; then
-		title=$(grep -a ^title /usr/share/i18n/locales/${locale%.*} | \
+		title=$(awk 'FNR>128 { nextfile } $0 ~ /^title/ { print FILENAME ":" $0; nextfile }' \
+		  /usr/share/i18n/locales/${locale%.*} |
 		  sed -e 's,.*"\(.*\)".*,\1,g' -e "s,',´,g")
 		x="$( echo -e "Current: ${title:0:41}\t$locale" | expand -t52 )"
 		cmd="$cmd '$x' 'true'"
@@ -189,7 +190,8 @@ set_locale() {
 
 	x="$( echo -e "POSIX\tC" | expand -t52 )"
 	cmd="$cmd '$x' 'set_locale_sub C' $(
-		grep -Ha ^title /usr/share/i18n/locales/* | \
+		awk 'FNR>128 { nextfile } $0 ~ /^title/ { print FILENAME ":" $0; nextfile }' \
+		  /usr/share/i18n/locales/* |
 		  sed -e 's,.*/\(.*\):.*"\(.*\)",\1\t\2,g' \
 		      -e "s,',´,g" | while read key title; do
 			key="$key.UTF-8"
