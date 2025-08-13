@@ -1,0 +1,138 @@
+commit ad4caba4146583fc543cd434221dec7113c03e09
+Author: Wilco Dijkstra <wilco.dijkstra@arm.com>
+Date:   Thu Jul 17 14:31:06 2025 +0000
+
+    malloc: Fix MAX_TCACHE_SMALL_SIZE
+    
+    MAX_TCACHE_SMALL_SIZE should use chunk size since it is used after
+    checked_request2size.  Increase limit of tcache_max_bytes by 1 since all
+    comparisons use '<'.  As a result, the last tcache entry is now used as
+    expected.
+    
+    Reviewed-by: DJ Delorie <dj@redhat.com>
+
+diff --git a/malloc/malloc.c b/malloc/malloc.c
+index ee4ea71d73..8a7a68c394 100644
+--- a/malloc/malloc.c
++++ b/malloc/malloc.c
+@@ -294,9 +294,9 @@
+ # define TCACHE_SMALL_BINS		64
+ # define TCACHE_LARGE_BINS		12 /* Up to 4M chunks */
+ # define TCACHE_MAX_BINS	(TCACHE_SMALL_BINS + TCACHE_LARGE_BINS)
+-# define MAX_TCACHE_SMALL_SIZE	tidx2usize (TCACHE_SMALL_BINS-1)
++# define MAX_TCACHE_SMALL_SIZE	tidx2csize (TCACHE_SMALL_BINS-1)
+ 
+-/* Only used to pre-fill the tunables.  */
++# define tidx2csize(idx)	(((size_t) idx) * MALLOC_ALIGNMENT + MINSIZE)
+ # define tidx2usize(idx)	(((size_t) idx) * MALLOC_ALIGNMENT + MINSIZE - SIZE_SZ)
+ 
+ /* When "x" is from chunksize().  */
+@@ -1934,7 +1934,7 @@ static struct malloc_par mp_ =
+   ,
+   .tcache_count = TCACHE_FILL_COUNT,
+   .tcache_small_bins = TCACHE_SMALL_BINS,
+-  .tcache_max_bytes = MAX_TCACHE_SMALL_SIZE,
++  .tcache_max_bytes = MAX_TCACHE_SMALL_SIZE + 1,
+   .tcache_unsorted_limit = 0 /* No limit.  */
+ #endif
+ };
+@@ -5593,15 +5593,13 @@ do_set_arena_max (size_t value)
+ static __always_inline int
+ do_set_tcache_max (size_t value)
+ {
++  if (value > PTRDIFF_MAX)
++    return 0;
++
+   size_t nb = request2size (value);
+   size_t tc_idx = csize2tidx (nb);
+ 
+-  /* To check that value is not too big and request2size does not return an
+-     overflown value.  */
+-  if (value > nb)
+-    return 0;
+-
+-  if (nb > MAX_TCACHE_SMALL_SIZE)
++  if (tc_idx >= TCACHE_SMALL_BINS)
+     tc_idx = large_csize2tidx (nb);
+ 
+   LIBC_PROBE (memory_tunable_tcache_max_bytes, 2, value, mp_.tcache_max_bytes);
+@@ -5610,7 +5608,7 @@ do_set_tcache_max (size_t value)
+     {
+       if (tc_idx < TCACHE_SMALL_BINS)
+ 	mp_.tcache_small_bins = tc_idx + 1;
+-      mp_.tcache_max_bytes = nb;
++      mp_.tcache_max_bytes = nb + 1;
+       return 1;
+     }
+ 
+commit 2536c4f8584082a1ac4c5e0a2a6222e290d43983
+Author: Samuel Thibault <samuel.thibault@ens-lyon.org>
+Date:   Wed Jul 30 01:55:22 2025 +0200
+
+    malloc: Make sure tcache_key is odd enough
+    
+    We want tcache_key not to be a commonly-occurring value in memory, so ensure
+    a minimum amount of one and zero bits.
+    
+    And we need it non-zero, otherwise even if tcache_double_free_verify sets
+    e->key to 0 before calling __libc_free, it gets called again by __libc_free,
+    thus looping indefinitely.
+    
+    Fixes: c968fe50628db74b52124d863cd828225a1d305c ("malloc: Use tailcalls in __libc_free")
+
+diff --git a/malloc/malloc.c b/malloc/malloc.c
+index 3a8aaeb665..c135916d32 100644
+--- a/malloc/malloc.c
++++ b/malloc/malloc.c
+@@ -230,6 +230,9 @@
+ /* For uintptr_t.  */
+ #include <stdint.h>
+ 
++/* For stdc_count_ones.  */
++#include <stdbit.h>
++
+ /* For va_arg, va_start, va_end.  */
+ #include <stdarg.h>
+ 
+@@ -3095,6 +3098,19 @@ tcache_key_initialize (void)
+   if (__getrandom_nocancel_nostatus_direct (&tcache_key, sizeof(tcache_key),
+ 					    GRND_NONBLOCK)
+       != sizeof (tcache_key))
++    tcache_key = 0;
++
++  /* We need tcache_key to be non-zero (otherwise tcache_double_free_verify's
++     clearing of e->key would go unnoticed and it would loop getting called
++     through __libc_free), and we want tcache_key not to be a
++     commonly-occurring value in memory, so ensure a minimum amount of one and
++     zero bits.  */
++  int minimum_bits = __WORDSIZE / 4;
++  int maximum_bits = __WORDSIZE - minimum_bits;
++
++  while (labs (tcache_key) <= 0x1000000
++      || stdc_count_ones (tcache_key) < minimum_bits
++      || stdc_count_ones (tcache_key) > maximum_bits)
+     {
+       tcache_key = random_bits ();
+ #if __WORDSIZE == 64
+commit 8543577b04ded6d979ffcc5a818930e4d74d0645
+Author: Samuel Thibault <samuel.thibault@ens-lyon.org>
+Date:   Sun Aug 10 23:43:37 2025 +0200
+
+    malloc: Fix checking for small negative values of tcache_key
+    
+    tcache_key is unsigned so we should turn it explicitly to signed before
+    taking its absolute value.
+
+diff --git a/malloc/malloc.c b/malloc/malloc.c
+index c135916d32..e08873cad5 100644
+--- a/malloc/malloc.c
++++ b/malloc/malloc.c
+@@ -3108,7 +3108,7 @@ tcache_key_initialize (void)
+   int minimum_bits = __WORDSIZE / 4;
+   int maximum_bits = __WORDSIZE - minimum_bits;
+ 
+-  while (labs (tcache_key) <= 0x1000000
++  while (labs ((intptr_t) tcache_key) <= 0x1000000
+       || stdc_count_ones (tcache_key) < minimum_bits
+       || stdc_count_ones (tcache_key) > maximum_bits)
+     {
