@@ -70,4 +70,4 @@ CONFIG_USB_AUTOSUSPEND_DELAY=67890
 # CONFIG_DRM_NOUVEAU is not set
 
 dnl Oopses null pointer dereference
-# CONFIG_PCI_PWRCTL_SLOT is not set
+# CONFIG_PCI_PWRCTRL_SLOT is not set
