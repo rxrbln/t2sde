@@ -391,7 +391,9 @@ main() {
 
 	# lvm device-mapper?
 	if [[ "$(readlink $bootdev)" = *mapper* ]]; then
-	        grubdev="${bootdev#/dev/}" grubdev="(lvm/${grubdev//\//-})"
+	        grubdev="${bootdev#/dev/}"
+		grubdev="${grubdev//-/--}"
+		grubdev="(lvm/${grubdev//\//-})"
 		[ "$cryptdev" ] && rootdev="$cryptdev,$rootdev"
 	else
 		grubdev="${bootdev##*/}"
