@@ -9,6 +9,9 @@
 # - check error, esp. of cryptsetup and lvm commands and display red alert on error
 # - avoid all direct user input, so the installer works in GUI variants
 
+. /etc/os-release
+vg0=$(printf t2-$VERSION_ID-%x $RANDOM)
+
 # detect platform once
 platform=$(uname -m)
 platform2=$(grep '\(platform\|type\)' /proc/cpuinfo) platform2=${platform2##*: }
@@ -176,8 +179,8 @@ part_crypt() {
 }
 
 vg_add_pv() {
-	vg="$2"
-	[ "$vg" ] || gui_input "Add physical volume $1 to logical volume group:" "vg0" vg
+	local vg="$2"
+	[ "$vg" ] || gui_input "Add physical volume $1 to logical volume group:" $vg vg
 	if [ "$vg" ]; then
 	    if vgs $vg 2>/dev/null; then
 		vgextend $vg $1
@@ -479,11 +482,11 @@ start=0, type=W")
 	    fi
 
 	    case $fs in
-		lvm)	part_pvcreate $d vg0
-			lv_create vg0 linear ${swap}m swap
-			lv_create vg0 linear 100%FREE root
-			part_mkswap /dev/vg0/swap
-			part_mkfs /dev/vg0/root any /
+		lvm)	part_pvcreate $d $vg0
+			lv_create $vg0 linear ${swap}m swap
+			lv_create $vg0 linear 100%FREE root
+			part_mkswap /dev/$vg0/swap
+			part_mkfs /dev/$vg0/root any /
 			;;
 		swap)	part_mkswap $d
 			;;
@@ -724,8 +727,8 @@ EOT
 		    echo "$dev $x"
 		done > /mnt/etc/mtab
 
-		cd /mnt; chroot . ./tmp/stone_postinst.sh
-		rm -fv ./tmp/stone_postinst.sh
+		chroot /mnt /tmp/stone_postinst.sh
+		rm -fv /mnt/tmp/stone_postinst.sh
 
 		kexec=$(type -p kexec)
 
