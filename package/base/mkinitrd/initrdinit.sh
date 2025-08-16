@@ -8,7 +8,7 @@ function mapper2lvm {
 	# support both, direct vg/lv or mapper/...
 	x=${1#mapper/}
 	if [ "$x" != "$1" -a "${x#*-}" != "$x" ]; then
-		x="${x//--/	}" x="${x/-//}" x="${x/	/-}"
+		x="${x//--/	}" x="${x/-//}" x="${x//	/-}"
 	fi
 	echo $x
 }
