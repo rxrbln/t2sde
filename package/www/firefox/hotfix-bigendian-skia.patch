@@ -1,0 +1,213 @@
+--- ./gfx/webrender_bindings/RenderTextureHostSWGL.cpp.vanilla	2025-08-20 14:30:47.097092318 +0200
++++ ./gfx/webrender_bindings/RenderTextureHostSWGL.cpp	2025-08-20 14:32:02.379998860 +0200
+@@ -38,6 +38,8 @@
+     switch (format) {
+       case gfx::SurfaceFormat::B8G8R8A8:
+       case gfx::SurfaceFormat::B8G8R8X8:
++      case gfx::SurfaceFormat::A8R8G8B8:
++      case gfx::SurfaceFormat::X8R8G8B8:
+         MOZ_ASSERT(colorDepth == gfx::ColorDepth::COLOR_8);
+         internalFormat = LOCAL_GL_RGBA8;
+         break;
+--- ./gfx/2d/HelpersSkia.h.vanilla	2025-08-20 14:16:14.127395990 +0200
++++ ./gfx/2d/HelpersSkia.h	2025-08-20 14:17:08.128571447 +0200
+@@ -37,7 +37,6 @@
+     case SurfaceFormat::R8G8B8A8:
+       return kRGBA_8888_SkColorType;
+     case SurfaceFormat::A8R8G8B8:
+-      MOZ_DIAGNOSTIC_CRASH("A8R8G8B8 unsupported by Skia");
+       return kRGBA_8888_SkColorType;
+     default:
+       MOZ_DIAGNOSTIC_CRASH("Unknown surface format");
+
+Sparc DEBUG build only issue:
+
+[GFX2-]: Failed to lock WindowSurface, falling back to XPutImage backend.
+Crash Annotation GraphicsCriticalError: |[0][GFX1]: RGBX corner pixel at (0,0) in 921x691 surface, bounded by (0,0,921,691) is not opaque: 255,162,162,162 (t=7.19982) [GFX1]: RGBX corner pixel at (0,0) in 921x691 surface, bounded by (0,0,921,691) is not opaque: 255,162,162,162
+Assertion failure: [GFX1]: RGBX corner pixel at (0,0) in 921x691 surface, bounded by (0,0,921,691) is not opaque: 255,162,162,162, at /scratch/firefox/gfx/2d/Logging.h:727
+
+https://bugzilla.mozilla.org/show_bug.cgi?id=1325259
+
+--- firefox-140.1.0/gfx/2d/DrawTargetSkia.cpp
++++ firefox-140.1.0/gfx/2d/DrawTargetSkia.cpp
+@@ -159,8 +159,12 @@ }
+   return surfaceBounds.Intersect(bounds);
+ }
+ 
++#if MOZ_BIG_ENDIAN()
++static const int kARGBAlphaOffset = 0;
++#else
+ static const int kARGBAlphaOffset =
+     SurfaceFormat::A8R8G8B8_UINT32 == SurfaceFormat::B8G8R8A8 ? 3 : 0;
++#endif
+ 
+ static bool VerifyRGBXFormat(uint8_t* aData, const IntSize& aSize,
+                              const int32_t aStride, SurfaceFormat aFormat) {
+# HG changeset patch
+# User Petr Sumbera <petr.sumbera@oracle.com>
+# Date 1648114576 25200
+#      Thu Mar 24 02:36:16 2022 -0700
+# Node ID 903e5f164c0ed424492eec6f388c03cbbcf99913
+# Parent  20d81e68da033746bf81acbb08490f16679853da
+Bug 1716707 [s390x] Software WebRender does not support big endian
+
+--- firefox-140.1.0/gfx/webrender_bindings/RenderCompositorSWGL.cpp
++++ firefox-140.1.0/gfx/webrender_bindings/RenderCompositorSWGL.cpp
+@@ -7,6 +7,7 @@ * file, You can obtain one at http://moz
+ #include "RenderCompositorSWGL.h"
+ 
+ #include "mozilla/gfx/Logging.h"
++#include "mozilla/gfx/Swizzle.h"
+ #include "mozilla/widget/CompositorWidget.h"
+ 
+ #ifdef MOZ_WIDGET_GTK
+@@ -240,6 +241,17 @@ mDT->ReleaseBits(mMappedData);
+   }
+   mDT->Flush();
+ 
++#if MOZ_BIG_ENDIAN()
++  // One swizzle to rule them all.
++  // With exception to certain text boxes with 1 line (46 pixels) and 2 lines
++  // (64 pixels) in Firefox 115. Per following bug:
++  // https://bugzilla.mozilla.org/show_bug.cgi?id=1900574
++  if ((int)mDT->GetSize().height != 46 && mDT->GetSize().height != 64)
++    gfx::SwizzleData(mMappedData, mMappedStride, gfx::SurfaceFormat::B8G8R8A8,
++                     mMappedData, mMappedStride, gfx::SurfaceFormat::A8R8G8B8,
++                     mDT->GetSize());
++#endif
++
+   // Done with the DT. Hand it back to the widget and clear out any trace of it.
+   mWidget->EndRemoteDrawingInRegion(mDT, mDirtyRegion);
+   mDirtyRegion.SetEmpty();
+--- firefox-140.1.0/image/imgFrame.cpp
++++ firefox-140.1.0/image/imgFrame.cpp
+@@ -382,6 +382,17 @@ mAborted = true;
+     return NS_ERROR_OUT_OF_MEMORY;
+   }
+ 
++#if MOZ_BIG_ENDIAN()
++  if (aBackend == gfx::BackendType::SKIA && canUseDataSurface) {
++      // SKIA is lying about what format it returns on big endian
++      for (int ii=0; ii < mRawSurface->GetSize().Height()*mRawSurface->Stride() / 4; ++ii) {
++        uint32_t *vals = (uint32_t*)(mRawSurface->GetData());
++        uint32_t val = ((vals[ii] << 8) & 0xFF00FF00 ) | ((vals[ii] >> 8) & 0xFF00FF );
++        vals[ii] = (val << 16) | (val >> 16);
++      }
++  }
++#endif
++
+   if (!canUseDataSurface) {
+     // We used an offscreen surface, which is an "optimized" surface from
+     // imgFrame's perspective.
+https://bugzilla.mozilla.org/show_bug.cgi?id=1888396
+
+--- firefox-140.1.0/gfx/skia/skia/src/core/SkBlitRow_D32.cpp
++++ firefox-140.1.0/gfx/skia/skia/src/core/SkBlitRow_D32.cpp
+@@ -554,7 +554,7 @@ }
+ void SkBlitRow::Color32(SkPMColor dst[], int count, SkPMColor color) {
+     switch (SkGetPackedA32(color)) {
+         case   0: /* Nothing to do */                  return;
+-        case 255: SkOpts::memset32(dst, color, count); return;
++        case 255: SkOpts::memset32(dst, BE_CONVERT(color), count); return;
+     }
+-    return SkOpts::blit_row_color32(dst, count, color);
++    return SkOpts::blit_row_color32(dst, count, BE_CONVERT(color));
+ }
+--- firefox-140.1.0/gfx/skia/skia/src/core/SkBlitter_ARGB32.cpp
++++ firefox-140.1.0/gfx/skia/skia/src/core/SkBlitter_ARGB32.cpp
+@@ -1495,17 +1495,17 @@ void SkARGB32_Blitter::blitAntiH2(int x,
+     uint32_t* device = fDevice.writable_addr32(x, y);
+     SkDEBUGCODE((void)fDevice.writable_addr32(x + 1, y);)
+ 
+-    device[0] = SkBlendARGB32(fPMColor, device[0], a0);
+-    device[1] = SkBlendARGB32(fPMColor, device[1], a1);
++    device[0] = BE_CONVERT(SkBlendARGB32(fPMColor, BE_CONVERT(device[0]), a0));
++    device[1] = BE_CONVERT(SkBlendARGB32(fPMColor, BE_CONVERT(device[1]), a1));
+ }
+ 
+ void SkARGB32_Blitter::blitAntiV2(int x, int y, U8CPU a0, U8CPU a1) {
+     uint32_t* device = fDevice.writable_addr32(x, y);
+     SkDEBUGCODE((void)fDevice.writable_addr32(x, y + 1);)
+ 
+-    device[0] = SkBlendARGB32(fPMColor, device[0], a0);
++    device[0] = BE_CONVERT(SkBlendARGB32(fPMColor, BE_CONVERT(device[0]), a0));
+     device = (uint32_t*)((char*)device + fDevice.rowBytes());
+-    device[0] = SkBlendARGB32(fPMColor, device[0], a1);
++    device[0] = BE_CONVERT(SkBlendARGB32(fPMColor, BE_CONVERT(device[0]), a1));
+ }
+ 
+ //////////////////////////////////////////////////////////////////////////////////////
+@@ -1608,7 +1608,7 @@ return;
+         }
+         SkAlpha aa = antialias[0];
+         if (aa == 255) {
+-            SkOpts::memset32(device, fPMColor, count);
++            SkOpts::memset32(device, BE_CONVERT(fPMColor), count);
+         } else if (aa > 0) {
+             SkPMColor sc = SkAlphaMulQ(fPMColor, SkAlpha255To256(aa));
+             SkBlitRow::Color32(device, count, sc);
+@@ -1623,17 +1623,17 @@ void SkARGB32_Opaque_Blitter::blitAntiH2
+     uint32_t* device = fDevice.writable_addr32(x, y);
+     SkDEBUGCODE((void)fDevice.writable_addr32(x + 1, y);)
+ 
+-    device[0] = SkFastFourByteInterp(fPMColor, device[0], a0);
+-    device[1] = SkFastFourByteInterp(fPMColor, device[1], a1);
++    device[0] = BE_CONVERT(SkFastFourByteInterp(fPMColor, BE_CONVERT(device[0]), a0));
++    device[1] = BE_CONVERT(SkFastFourByteInterp(fPMColor, BE_CONVERT(device[1]), a1));
+ }
+ 
+ void SkARGB32_Opaque_Blitter::blitAntiV2(int x, int y, U8CPU a0, U8CPU a1) {
+     uint32_t* device = fDevice.writable_addr32(x, y);
+     SkDEBUGCODE((void)fDevice.writable_addr32(x, y + 1);)
+ 
+-    device[0] = SkFastFourByteInterp(fPMColor, device[0], a0);
++    device[0] = BE_CONVERT(SkFastFourByteInterp(fPMColor, BE_CONVERT(device[0]), a0));
+     device = (uint32_t*)((char*)device + fDevice.rowBytes());
+-    device[0] = SkFastFourByteInterp(fPMColor, device[0], a1);
++    device[0] = BE_CONVERT(SkFastFourByteInterp(fPMColor, BE_CONVERT(device[0]), a1));
+ }
+ 
+ ///////////////////////////////////////////////////////////////////////////////
+@@ -1653,7 +1653,7 @@ }
+     const unsigned dst_scale = SkAlpha255To256(255 - SkGetPackedA32(color));
+     const size_t rowBytes = fDevice.rowBytes();
+     while (--height >= 0) {
+-        device[0] = color + SkAlphaMulQ(device[0], dst_scale);
++        device[0] = BE_CONVERT(color + SkAlphaMulQ(BE_CONVERT(device[0]), dst_scale));
+         device = (uint32_t*)((char*)device + rowBytes);
+     }
+ }
+@@ -1669,7 +1669,7 @@ uint32_t* device = fDevice.writable_addr
+     const size_t rowBytes = fDevice.rowBytes();
+ 
+     if (SkGetPackedA32(fPMColor) == 0xFF) {
+-        SkOpts::rect_memset32(device, fPMColor, width, rowBytes, height);
++        SkOpts::rect_memset32(device, BE_CONVERT(fPMColor), width, rowBytes, height);
+     } else {
+         while (height --> 0) {
+             SkBlitRow::Color32(device, width, fPMColor);
+@@ -1698,7 +1698,7 @@ }
+         unsigned aa = antialias[0];
+         if (aa) {
+             if (aa == 255) {
+-                SkOpts::memset32(device, kBlack, count);
++                SkOpts::memset32(device, BE_CONVERT(kBlack), count);
+             } else {
+                 const SkPMColor src = aa << SK_A32_SHIFT;
+                 const unsigned dst_scale = SkAlpha255To256(255 - aa);
+--- firefox-140.1.0/gfx/skia/skia/src/core/SkColorData.h
++++ firefox-140.1.0/gfx/skia/skia/src/core/SkColorData.h
+@@ -18,6 +18,13 @@ #include "src/core/SkColorPriv.h"
+ 
+ #include <cstdint>
+ 
++/* Macro to covert between big endian and little endian memory order. */
++#ifdef SK_CPU_BENDIAN
++#define BE_CONVERT(c) ((((c) & 0xff)<<24) | (((c) & 0xff00)<<8) | (((c) & 0xff0000)>>8) | (((c) & 0xff000000)>>24))
++#else
++#define BE_CONVERT(c) c
++#endif
++
+ ////////////////////////////////////////////////////////////////////////////////////////////
+ // Convert a 16bit pixel to a 32bit pixel
+ 
