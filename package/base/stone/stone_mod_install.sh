@@ -309,16 +309,19 @@ disk_partition() {
 
 	# if re-partition: reset size to all
 	[ "$si" = 0 ] && size=$(($(blockdev --getsz $dev) / 2 / 1024))
-	local swap=$((size / 20)) # TODO: better
-	local boot=512
 
+	# swap based on RAM for suspend-to-disk
+	local swap=$(($(sed -n 's/MemTotal: *\([0-9]*\).*/\1/p' /proc/meminfo) / 1024 * 3 / 4))
+	[ $swap -lt 128 ] && swap=128
+	[ $swap -gt $((size / 16)) ] && swap=$((size / 16))
+
+	local boot=512
 	local fdisk="sfdisk -W always"
 	local script=()
 	local postscript=()
 	local fs=()
 	local any=any
 
-	[ $swap -gt 1024 ] && swap=1024
 	# dedicated swap partition or lvm?
 	local _swap=$swap
 	[[ "$typ" = *lvm* ]] && _swap=0 && any=lvm
