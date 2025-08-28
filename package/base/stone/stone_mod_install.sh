@@ -389,20 +389,16 @@ size=$((size - _swap))m, type=83")
 		    script+=("type=82") fs+=("${dev}3 swap")
 		;;
 	    ppc*PowerMac)
-		fdisk=mac-fdisk
+		fdisk="parted -f"
 		fs+=("${dev}3 $any /")
-		script+=("i
-
-b 2p
-c 3p $((size - _swap))m linux")
+		script+=("mklabel mac
+y
+mkpart bootstrap 1m 4m
+toggle 2 boot
+mkpart linux 4m $(($size - $_swap))m")
 
 		[ $_swap != 0 ] &&
-		    script+=("c 4p 4p swap") fs+=("${dev}4 swap")
-
-		script+=("w
-y
-q
-")
+		    script+=("mkpart swap $(($size - $_swap))m 100%") fs+=("${dev}4 swap")
 		;;
 	    sparc*-gpt)
 		script+=("label:gpt")
