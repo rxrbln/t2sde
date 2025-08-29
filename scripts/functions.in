@@ -539,9 +539,27 @@ pkgbuildtime() {
 		buildtime=$(sed -n "s/\[BUILDTIME\] \([^ ]*\).*/\1/p" $base/package/*/$pkg//$pkg.cache)
 	[ "$buildtime" = 0 ] && buildtime=1 # old quantizised to 0, or just fast: at least something
 
+	local parallel=${SDECFG_PARALLEL:-1}
+	# scale massive RISC server SMT
+	if [ -e /sys/devices/system/cpu/cpu0/topology/thread_siblings_list ]; then
+	    if [ ! "$smt" ]; then
+		local smt=$(cat /sys/devices/system/cpu/cpu0/topology/thread_siblings_list)
+		if [[ "$smt" = *-* ]]; then # expand range
+			smt=$(seq ${smt%-*} ${smt#*-})
+			smt=${smt//
+/,}
+		fi
+		smt="${smt//[^,]/}" # count commas, convert to number
+		smt=$((${#smt} + 1))
+	    fi
+
+	    parallel=$((parallel / smt)) # TODO: scale
+	    [ $parallel -lt 1 ] && parallel=1
+	fi
+
 	[ "$reftime" -a "$buildtime" ] &&
 		gawk "BEGIN { parallel=.95; buildtime=$reftime * $buildtime / 100 / 100; \
-			time = int(buildtime * (1-parallel) + buildtime * parallel / ${SDECFG_PARALLEL:-1}); \
+			time = int(buildtime * (1-parallel) + buildtime * parallel / $parallel); \
 			printf(\"%d\n\", time > 0 ? time : 1); }"
 }
 
