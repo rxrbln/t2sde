@@ -87,6 +87,9 @@ dnl
 CONFIG_NAMESPACES=y
 CONFIG_USER_NS=y
 
+dnl Firefox JS etc.
+CONFIG_ANON_VMA_NAME=y
+
 dnl Default kernel and initrd compression (if available)
 dnl
 CONFIG_KERNEL_ZSTD=y
