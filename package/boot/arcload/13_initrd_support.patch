@@ -720,3 +720,129 @@ diff -urNad arcload-0.5~/loader/main.c arcload-0.5/loader/main.c
  	if(ret != 0)
  		goto rd_close;
  
+--- arcload-0.5/loader/main.c	2025-09-10 20:56:01.831080982 +0200
++++ arcload-0.5-debug/loader/main.c	2025-09-10 21:29:07.967401219 +0200
+@@ -1,6 +1,7 @@
+ /*
+  * ARCload (c) 2005 Stanislaw Skowronek
+  * Copyright (C) 2007 Julien BLACHE
++ * Copyright (C) 2018-2025 Rene Rebe
+  */
+ 
+ #include <arclib/arc.h>
+@@ -112,13 +113,13 @@
+ #endif
+ }
+ 
+-static int load_file(BDEV *file, UCHAR *ptr, LONG size)
++static int load_file(BDEV *file, UCHAR *ptr, LONG size, int size_unknown)
+ {
+ 	INT i;
+ 	ULONG pos = 0;
+ 
+-	while(size) {
+-		if (size < 0) i = READBLOCK;
++	while(size > 0) {
++		if (size_unknown) i = READBLOCK;
+ 		else i = ((size > READBLOCK) ? READBLOCK : size);
+ 		if((i = bread(file, i, ptr)) < 0) {
+ 			printf("failed at %u!\n\r", pos);
+@@ -127,11 +128,15 @@
+ 		size -= i;
+ 		ptr += i;
+ 		pos += i;
+-		if ((size < 0) && (i < READBLOCK)) {
++		if ((size_unknown) && (i < READBLOCK)) {
+ 			file->size = pos;
+ 			break;
+ 		}
+ 	}
++	if(size <= 0 && size_unknown) {
++		printf("Out of memory loading file of unknown size!\n\r");
++		return 1;
++	}
+ 	printf("OK.\n\r");
+ 
+ 	return 0;
+@@ -206,7 +211,7 @@
+ 		printf("Loading kernel at 0x%p; reading %u bytes... ", ptr, (ULONG)ph[i].p_filesz);
+ 
+ 		bseek(file, ph[i].p_offset);
+-		ret = load_file(file, ptr, ph[i].p_filesz);
++		ret = load_file(file, ptr, ph[i].p_filesz, 0);
+ 
+ 		if(ret != 0)
+ 			return 0;
+@@ -296,7 +301,7 @@
+ 		printf("Loading kernel at 0x%p; reading %u bytes... ", ptr, (ULONG)ph[i].p_filesz);
+ 
+ 		bseek(file, ph[i].p_offset);
+-		ret = load_file(file, ptr, ph[i].p_filesz);
++		ret = load_file(file, ptr, ph[i].p_filesz, 0);
+ 
+ 		if(ret != 0)
+ 			return 0;
+@@ -388,7 +393,9 @@
+ {
+ 	BDEV file;
+ 
+-	ULONG initrd_addr;
++#define INITRD_UNKNOWN 0x80000000
++	ULONG initrd_addr = 0;
++	ULONG initrd_max = 0;
+ 	ULONG initrd_size;
+ 
+ 	char buf[64];
+@@ -414,7 +421,7 @@
+ 		printf("Opening %s failed.\n\r", fname);
+ 		return 1;
+ 	}
+-	initrd_size = file.size ? file.size : 32*1024*1024; /* zero for bootp(): */
++	initrd_size = file.size ? file.size : INITRD_UNKNOWN; /* zero for bootp(): */
+ 	/* Find a free memory region big enough to hold the initrd image */
+ 	current = ArcGetMemoryDescriptor(current);
+ 	if(!current) {
+@@ -449,6 +456,12 @@
+ 				start = (kernel_end + (1 << PAGESHIFT)) & ~((1 << PAGESHIFT) - 1);
+ 			}
+ 
++			/* For unknown size, save largest region */
++			if((initrd_size == INITRD_UNKNOWN) && (end - start) > initrd_max) {
++				initrd_addr = start;
++				initrd_max = (end - start);
++			}
++
+ 			if((end < start) || (end - start) < (initrd_size + max_page_size)) {
+ #ifdef RD_DEBUG
+ 				printf("RD: area too small: %u needs %u\n\r", (end - start), (initrd_size + max_page_size));
+@@ -463,6 +476,12 @@
+ 		}
+ 	}
+ 
++	/* use largest free region for unknown bootp() initrd size */
++	if(initrd_size == INITRD_UNKNOWN) {
++		start = initrd_addr;
++		initrd_size = initrd_max;
++	}
++
+ 	if(start == 0) {
+ 		printf("initrd can't be loaded into current memory map\n\r");
+ 		goto rd_close;
+@@ -489,7 +508,7 @@
+ 	/* Load the initrd image into memory */
+ 	printf("Loading initrd at 0x%p; reading %u bytes... ", initrd_addr, initrd_size);
+ 
+-	ret = load_file(&file, (UCHAR *)initrd_addr, file.size ? file.size : -1);
++	ret = load_file(&file, (UCHAR *)initrd_addr, initrd_size, !file.size);
+ 	if(ret != 0)
+ 		goto rd_close;
+ 
+@@ -549,6 +568,8 @@
+ 
+ 	bclose(&file);
+ 
++	printf("done.\n\r");
++
+ 	return 0;
+ 
+ /* Failed to do something, close and return */
