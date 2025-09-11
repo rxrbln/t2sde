@@ -4,7 +4,7 @@ PATH=/sbin:/bin:/usr/bin:/usr/sbin
 
 echo "T2 SDE early userspace (c)2005-2025 Rene Rebe, ExactCODE GmbH; Germany."
 
-function mapper2lvm {
+mapper2lvm {
 	# support both, direct vg/lv or mapper/...
 	x=${1#mapper/}
 	if [ "$x" != "$1" -a "${x#*-}" != "$x" ]; then
@@ -13,7 +13,7 @@ function mapper2lvm {
 	echo $x
 }
 
-function boot {
+boot {
 	mount -t none -o move {,/mnt}/dev
 	mount -t none -o move {,/mnt}/proc
 	mount -t none -o move {,/mnt}/sys

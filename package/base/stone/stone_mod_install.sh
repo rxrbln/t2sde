@@ -278,7 +278,7 @@ part_add() {
 	cmd="$cmd '`printf "%-6s %-24s %-10s" $dev "$location" "$size"` ${type//_/ }' 'part_${action}_action $1 $2'"
 }
 
-function join() {
+join() {
 	local IFS="$1"; shift
 	echo "$*"
 }
