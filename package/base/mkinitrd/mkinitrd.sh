@@ -30,9 +30,7 @@ vitalmods[r8169.ko]=1
 # TODO: defauls for vintage vs. latest, usb, pata, etc.
 filter="-e /loop -e ext2 -e ext4 -e /xfs -e isofs -e nfsv4 -e zram -e pata_legacy
 -e pata_.*platform -e pata_macio -e mac_esp -e sym53c8xx -e /aic7xxx -e qla1280
--e pci-host-generic -e virtio_pci_.*_dev -e virtio_pci -e virtio_blk -e sunvdc
--e s[rd]_mod -e /ahci.ko -e /nvme.ko -e [uoex]hci-[ph][c][id] -e usbhid
--e /offb -e /bochs -e ps3fb"
+-e s[rd]_mod -e /ahci.ko -e [uo]hci-[ph][c][id] -e usbhid -e /offb -e ps3fb"
 
 declare -A added
 
@@ -60,16 +58,20 @@ done
 
 # -e ps3vram -e net/phy
 [ -z "$minimal" ] && filter="$filter -e reiserfs -e btrfs -e /jfs -e /xfs -e jffs2
--e /udf -e overlayfs -e ntfs -e /fat -e /hfs -e floppy -e efivarfs
+-e /udf -e overlayfs -e ntfs -e /fat -e /hfs -e floppy -e efivarfs -e watchdog
 -e pci/controller -e /ata/ -e /scsi/ -e /fusion/ -e /sdhci/ -e nvme/host -e /mmc/
 -e virtio.\(blk\|scsi\|net\|console\|input\|gpu\|pci\) -e ps3disk -e drivers/pcmcia
+-e /nvme.ko -e pci-host-generic -e virtio_pci_.*_dev -e sunvdc 
 -e dm-mod -e dm-raid -e md/raid -e dm/mirror -e dm/linear -e dm-crypt -e dm-cache
 -e /aes -e /sha -e /blake -e /cbc -e /ecb -e xts
 -e nls_cp437 -e nls_iso8859-1 -e nls_utf8
 -e usb/host -e usb-common -e usb-storage -e firewire-ohci -e sbp2 -e uas -e thunderbolt\.
--e i2c-hid -e hid-generic -e hid-multitouch
+-e [ex]hci-[ph][c][id] -e i2c-hid -e hid-generic -e hid-multitouch
 -e hid-apple[^i] -e hid-microsoft -e hyperv-keyboard
--e cpufreq/[^_]\+$ -e hwmon.*temp -e /rtc/ -e input-leds -e /ast/"
+-e cpufreq/[^_]\+$ -e hwmon.*temp -e /rtc/ -e input-leds -e /ast/ -e /bochs -e msm
+-e phy.qcom.qmp.pcie -e tcsrcc.x1e80100 -e qcom -e leds_qcom_lpg -e pwm_bl -e qrtr
+-e pmic_glink_altmode -e gpio_sbu_mux -e phy_qcom_qmp_combo -e gpucc_sc8280xp
+-e dispcc_sc8280xp -e phy_qcom_edp -e panel_edp -e typec -e i2c_hid_of -e ufshcd"
 
 [ "$network" ] && filter="$filter -e '/ipv4\.' -e '/ipv6\.' -e ethernet
 -e aqc111 -e asix -e ax88179_178a -e cdc_ether -e /cdc_ncm -e cx82310_eth -e r8153_ecm -e rtl8150 -e r8152"
