@@ -27,6 +27,11 @@ vitalmods[xhci-pci.ko]=1 # probably every modern machine
 vitalmods[r8152.ko]=1
 vitalmods[r8169.ko]=1
 
+# firmware only needed for rare / embedded variants
+declare -A fwopt
+fwopt[e100.ko]=1    # popular vintage
+
+
 # TODO: defauls for vintage vs. latest, usb, pata, etc.
 filter="-e /loop -e ext2 -e ext4 -e /xfs -e isofs -e nfsv4 -e zram -e pata_legacy
 -e pata_.*platform -e pata_macio -e mac_esp -e sym53c8xx -e /aic7xxx -e qla1280
@@ -177,6 +182,8 @@ if [ "$moddir" ]; then
 		    fi
 		done
 		echo
+	     elif [ "${fwopt[$module]}" ]; then
+		echo " (optional)"
 	     else
 		echo ", skipped"
 		skipped=1
