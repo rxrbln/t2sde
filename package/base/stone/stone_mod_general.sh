@@ -15,9 +15,7 @@ set_keymap() {
 	keymap=$(ls -l /etc/default.keymap 2> /dev/null | sed 's,.*/,,')
 	[ -z "$keymap" ] && keymap="none" ; keymap="${keymap%.map.gz}"
 
-	# ReneR: Attention: although this reads i386, this is nowadays valid
-	#        for all (? - at least also on PowerPC where this was a long ugly
-	#        bug in ROCK times) - the input layer does pass "unified" events ...
+	# i386 is basically general "unified " input layer events ...
 	mapdir="`echo /usr/share/kbd/keymaps/i386`"
 
 	cmd="gui_menu 'general_keymap' 'Select one of the following keyboard mappings.'"
@@ -98,20 +96,17 @@ store_con() {
 }
 
 set_con_term() {
-	gui_input "Set new console screen terminal type" \
-		  "$con_term" "con_term"
+	gui_input "Set new console screen terminal type" "$con_term" "con_term"
 	store_con
 }
 
 set_con_blank() {
-	gui_input "Set new console screen blank interval" \
-		  "$con_blank" "con_blank"
+	gui_input "Set new console screen blank interval" "$con_blank" "con_blank"
 	store_con
 }
 
 set_con_blength() {
-	gui_input "Set new console screen beep interval" \
-		  "$con_blength" "con_blength"
+	gui_input "Set new console screen beep interval" "$con_blength" "con_blength"
 	store_con
 }
 
