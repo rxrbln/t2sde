@@ -641,7 +641,7 @@ vg_add() {
 }
 
 main() {
-	$STONE general set_keymap
+	[[ $(tty) = /dev/tty[0-9] ]] && $STONE general set_keymap
 
 	local install_now=0
 	while [ $install_now = 0 ]; do
@@ -726,6 +726,7 @@ EOT
 		    echo "$dev $x"
 		done > /mnt/etc/mtab
 
+		cp -f /etc/default.keymap /mnt/etc/ 2>/dev/null
 		chroot /mnt /tmp/stone_postinst.sh
 		rm -fv /mnt/tmp/stone_postinst.sh
 
