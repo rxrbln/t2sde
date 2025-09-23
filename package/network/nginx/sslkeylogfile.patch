@@ -1,0 +1,171 @@
+# --- T2-COPYRIGHT-BEGIN ---
+# t2/package/*/nginx/sslkeylogfile.patch
+# Copyright (C) 2025 The T2 SDE Project
+# SPDX-License-Identifier: GPL-2.0 or patched project license
+# --- T2-COPYRIGHT-END ---
+
+# HG changeset patch
+# User J Carter <jordanc.carter at outlook.com>
+# Date 1705832811 0
+#      Sun Jan 21 10:26:51 2024 +0000
+# Node ID b00332a5253eefb53bacc024c72f55876c2eac6e
+# Parent  ee40e2b1d0833b46128a357fbc84c6e23be9be07
+SSL: Added SSLKEYLOGFILE key material to debug logging.
+
+This patch also introduces the debug_keylog error log level flag, which
+may be used to graunually enable or ommit logging of key material via
+error level flags (note, it's always enabled when using
+debug_connection).
+
+Each line of key material is output to the error log as separate log
+message, and is prepended with 'ssl keylog: ' for convenient extraction.
+
+The purpose of logging key material is to allow external tools, such as
+wireshark/tshark, to decrypt captured TLS connections in all situations.
+
+Previously, only TLS 1.2 (and below) connections could be decrypted
+when specific ciphers suites were used, and when the decrypter had
+access to the acting server's TLS certificates and keys. It was not
+possible to decrypt TLS 1.3 traffic without generating SSLKEYLOGFILE on
+peer, or by using other hacks on nginx host (using GDB, or patched ssl
+libraries).
+
+Decrypting inbound and outbound TLS connections is useful when
+debugging for a few reasons:
+
+1) Nginx does not have a convenient mechanism for logging response body
+sent to client, or response body received from upstream while proxying.
+Packet captures provide a convenient mechanism for viewing this
+traffic. This same use-case applies to client request body in various
+scenarios where it cannot be logged using $request_body.
+
+2) It is often convenient to use wireshark to dissect non-http traffic
+proxied via stream module. This will now work in all scenarios,
+including when stream module is used to perform TLS offloading, and
+then proxies to the upstream over TLS.
+
+3) Many post-handshake TLS issues are better diagnosed through analysis
+of decypted TLS traffic rather than openssl's often ambiguous
+alert/error messages.
+
+4) It's a convenient way to debug third party modules that initiate or
+accept TLS connections (provided they utilize nginx's native networking
+facilities).
+
+Example usage:
+
+error_log /var/log/nginx/error.log debug;
+
+or
+
+error_log /var/log/nginx/error.log debug_keylog;
+
+Live extraction:
+
+tail -f -n0 /var/log/nginx/error.log |\
+  grep -Poa --line-buffered '(?<=ssl keylog: ).*' |\
+  tee -a /tmp/keylog.log
+
+Wireshark:
+
+1) Navigate 'Edit -> Preferences -> Protocols -> TLS'.
+2) Set '(Pre)-Master-Secret log filename' to '/tmp/keylog.log'.
+
+diff -r ee40e2b1d083 -r b00332a5253e src/core/ngx_log.c
+--- a/src/core/ngx_log.c	Mon Dec 25 21:15:48 2023 +0400
++++ b/src/core/ngx_log.c	Sun Jan 21 10:26:51 2024 +0000
+@@ -86,7 +86,7 @@
+ 
+ static const char *debug_levels[] = {
+     "debug_core", "debug_alloc", "debug_mutex", "debug_event",
+-    "debug_http", "debug_mail", "debug_stream"
++    "debug_http", "debug_mail", "debug_stream", "debug_keylog"
+ };
+ 
+ 
+diff -r ee40e2b1d083 -r b00332a5253e src/core/ngx_log.h
+--- a/src/core/ngx_log.h	Mon Dec 25 21:15:48 2023 +0400
++++ b/src/core/ngx_log.h	Sun Jan 21 10:26:51 2024 +0000
+@@ -30,6 +30,7 @@
+ #define NGX_LOG_DEBUG_HTTP        0x100
+ #define NGX_LOG_DEBUG_MAIL        0x200
+ #define NGX_LOG_DEBUG_STREAM      0x400
++#define NGX_LOG_DEBUG_KEYLOG      0x800
+ 
+ /*
+  * do not forget to update debug_levels[] in src/core/ngx_log.c
+@@ -37,7 +38,7 @@
+  */
+ 
+ #define NGX_LOG_DEBUG_FIRST       NGX_LOG_DEBUG_CORE
+-#define NGX_LOG_DEBUG_LAST        NGX_LOG_DEBUG_STREAM
++#define NGX_LOG_DEBUG_LAST        NGX_LOG_DEBUG_KEYLOG
+ #define NGX_LOG_DEBUG_CONNECTION  0x80000000
+ #define NGX_LOG_DEBUG_ALL         0x7ffffff0
+ 
+diff -r ee40e2b1d083 -r b00332a5253e src/event/ngx_event_openssl.c
+--- a/src/event/ngx_event_openssl.c	Mon Dec 25 21:15:48 2023 +0400
++++ b/src/event/ngx_event_openssl.c	Sun Jan 21 10:26:51 2024 +0000
+@@ -10,6 +10,11 @@
+ #include <ngx_event.h>
+ 
+ 
++#if (NGX_DEBUG && OPENSSL_VERSION_NUMBER >= 0x10101000L                       \
++     && !defined LIBRESSL_VERSION_NUMBER)
++#define NGX_SSL_KEYLOG 1
++#endif
++
+ #define NGX_SSL_PASSWORD_BUFFER_SIZE  4096
+ 
+ 
+@@ -27,6 +27,9 @@
+ static int ngx_ssl_verify_callback(int ok, X509_STORE_CTX *x509_store);
+ static void ngx_ssl_info_callback(const ngx_ssl_conn_t *ssl_conn, int where,
+     int ret);
++#ifdef NGX_SSL_KEYLOG
++static void ngx_ssl_keylog_callback(const SSL *ssl, const char *line);
++#endif
+ static int ngx_ssl_cmp_x509_name(const X509_NAME *const *a,
+     const X509_NAME *const *b);
+ static void ngx_ssl_passwords_cleanup(void *data);
+@@ -426,10 +434,28 @@
+ 
+     SSL_CTX_set_info_callback(ssl->ctx, ngx_ssl_info_callback);
+ 
++#ifdef NGX_SSL_KEYLOG
++    SSL_CTX_set_keylog_callback(ssl->ctx, ngx_ssl_keylog_callback);
++#endif
++
+     return NGX_OK;
+ }
+ 
+ 
++#ifdef NGX_SSL_KEYLOG
++
++static void
++ngx_ssl_keylog_callback(const SSL *ssl, const char *line)
++{
++    ngx_connection_t  *c;
++
++    c = ngx_ssl_get_connection(ssl);
++    ngx_log_debug(NGX_LOG_DEBUG_KEYLOG, c->log, 0, "ssl keylog: %s", line);
++}
++
++#endif
++
++
+ ngx_int_t
+ ngx_ssl_certificates(ngx_conf_t *cf, ngx_ssl_t *ssl, ngx_array_t *certs,
+     ngx_array_t *keys, ngx_array_t *passwords)
+diff -r ee40e2b1d083 -r b00332a5253e src/event/quic/ngx_event_quic_openssl_compat.c
+--- a/src/event/quic/ngx_event_quic_openssl_compat.c	Mon Dec 25 21:15:48 2023 +0400
++++ b/src/event/quic/ngx_event_quic_openssl_compat.c	Sun Jan 21 10:26:51 2024 +0000
+@@ -118,6 +118,8 @@
+         return;
+     }
+ 
++    ngx_log_debug(NGX_LOG_DEBUG_KEYLOG, c->log, 0, "ssl keylog: %s", line);
++
+     p = (u_char *) line;
+ 
+     for (start = p; *p && *p != ' '; p++);
