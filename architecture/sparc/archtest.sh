@@ -5,10 +5,10 @@
 # --- T2-COPYRIGHT-END ---
 
 case "$SDECFG_SPARC_OPT" in
-    *) arch_machine="sparc" ;;
-    v8) arch_machine="sparcv8" ;;
+    v8|leon*) arch_machine="sparcv8" ;;
     v9) arch_machine="sparcv9" ;;
     v9vis) arch_machine="sparcv9b" ;;
+    *) arch_machine="sparc" ;;
 esac
 
 arch_target="${arch_machine}-t2-linux-gnu"
