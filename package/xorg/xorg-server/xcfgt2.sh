@@ -35,10 +35,10 @@ xdrv= depth= fbdev=
 
 # start by mapping primary RISC workstation framebuffers
 while read fb; do
-    n=${fb%% *}
+    i=${fb%% *}
     fb=${fb#* }
     case "${fb,,}" in
-	elite\ 3d|creator) xdrv=sunffb fbdev=fb$fb ;;
+	elite\ 3d|creator) xdrv=sunffb fbdev=fb$i ;;
     esac
 done < <(cat /proc/fb)
 
