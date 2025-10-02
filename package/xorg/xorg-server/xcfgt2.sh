@@ -31,18 +31,22 @@ fi
 # ASUSTeK Computer INC.:900:ASUSTeK Computer INC.:900:EeePC-1234567890:EeePC
 echo "SystemID: $sysid"
 
-xdrv= depth=
-card="`lspci | sed -n 's/.*[^-]VGA[^:]*: //p'`" # not Non-VGA
-[ "$card" ] || card="`cat /sys/class/graphics/fb0/name 2>/dev/null`"
-
-echo "Video card: $card"
+xdrv= depth= fbdev=
 
 # start by mapping primary RISC workstation framebuffers
 while read fb; do
+    n=${fb%% *}
+    fb=${fb#* }
     case "${fb,,}" in
-	*elite\ 3d|creator) xdrv=sunffb ;;
+	elite\ 3d|creator) xdrv=sunffb fbdev=fb$fb ;;
     esac
 done < <(cat /proc/fb)
+
+[ "$fbdev" ] &&
+	card=$(cat /sys/class/graphics/$fbdev/name 2>/dev/null) ||
+	card=$(lspci | sed -n 's/.*[^-]VGA[^:]*: //p') # not Non-VGA
+
+echo "Video card: $card"
 
 # map from pci
 [ "$xdrv" ] ||
@@ -190,7 +194,7 @@ fi
 # non PC workstations / embedded devices with system FB)
 if [ -z "$modes" ]; then
 	for mode in `sed -n 's/.:\([[:digit:]]\+x[[:digit:]]\+\)[[:alpha:]]*-[[:digit:]]\+/\1/p' \
-		/sys/class/graphics/fb0/modes 2>/dev/null | sort -r -n -u`; do
+		/sys/class/graphics/$fbdev/modes 2>/dev/null | sort -r -n -u`; do
 		modes="$modes \"$mode\""
 	done
 	modes="${modes# *}"
