@@ -12352,7 +12352,7 @@ index 000000000000..dd33f8cc6eda
 +#include <linux/compat.h>
 +#include <linux/fileattr.h>
 +
-+int reiserfs_fileattr_get(struct dentry *dentry, struct fileattr *fa)
++int reiserfs_fileattr_get(struct dentry *dentry, struct file_kattr *fa)
 +{
 +	struct inode *inode = d_inode(dentry);
 +
@@ -12365,7 +12365,7 @@ index 000000000000..dd33f8cc6eda
 +}
 +
 +int reiserfs_fileattr_set(struct mnt_idmap *idmap,
-+			  struct dentry *dentry, struct fileattr *fa)
++			  struct dentry *dentry, struct file_kattr *fa)
 +{
 +	struct inode *inode = d_inode(dentry);
 +	unsigned int flags = fa->flags;
@@ -25916,9 +25916,9 @@ index 000000000000..12fc20af8e17
 +#define SPARE_SPACE 500
 +
 +/* prototypes from ioctl.c */
-+int reiserfs_fileattr_get(struct dentry *dentry, struct fileattr *fa);
++int reiserfs_fileattr_get(struct dentry *dentry, struct file_kattr *fa);
 +int reiserfs_fileattr_set(struct mnt_idmap *idmap,
-+			  struct dentry *dentry, struct fileattr *fa);
++			  struct dentry *dentry, struct file_kattr *fa);
 +long reiserfs_ioctl(struct file *filp, unsigned int cmd, unsigned long arg);
 +long reiserfs_compat_ioctl(struct file *filp,
 +		   unsigned int cmd, unsigned long arg);
@@ -33303,3 +33303,73 @@ index 000000000000..503ad018ce5b
 +};
 +
 +#endif  /*  _LINUX_REISERFS_XATTR_H  */
+--- linux-6.17/fs/reiserfs/inode.c.vanilla	2025-10-05 19:57:56.454018155 +0200
++++ linux-6.17/fs/reiserfs/inode.c	2025-10-05 20:45:43.273329102 +0200
+@@ -589,7 +589,7 @@
+ 	 * that we cannot get here if we write with O_DIRECT into tail page
+ 	 */
+ 	if (!hole_page || index != hole_page->__folio_index) {
+-		tail_page = grab_cache_page(inode->i_mapping, index);
++		tail_page = find_or_create_page(inode->i_mapping, index, mapping_gfp_mask(inode->i_mapping));
+ 		retval = -ENOMEM;
+ 		if (!tail_page) {
+ 			goto out;
+@@ -2320,7 +2320,7 @@
+ 		/* if we are not on a block boundary */
+ 		if (length) {
+ 			length = blocksize - length;
+-			zero_user(page, offset, length);
++			memzero_page(page, offset, length);
+ 			if (buffer_mapped(bh) && bh->b_blocknr != 0) {
+ 				mark_buffer_dirty(bh);
+ 			}
+@@ -2732,7 +2732,7 @@
+ 	reiserfs_truncate_file(inode, 0);
+ }
+ 
+-static int reiserfs_write_begin(struct file *file,
++static int reiserfs_write_begin(const struct kiocb *iocb,
+ 				struct address_space *mapping,
+ 				loff_t pos, unsigned len,
+ 				struct folio **foliop, void **fsdata)
+@@ -2860,7 +2860,7 @@
+ 	return generic_block_bmap(as, block, reiserfs_bmap);
+ }
+ 
+-static int reiserfs_write_end(struct file *file, struct address_space *mapping,
++static int reiserfs_write_end(const struct kiocb *iocb, struct address_space *mapping,
+ 			      loff_t pos, unsigned len, unsigned copied,
+ 			      struct folio *folio, void *fsdata)
+ {
+--- linux-6.17/fs/reiserfs/ioctl.c.vanilla	2025-10-05 20:16:54.865849735 +0200
++++ linux-6.17/fs/reiserfs/ioctl.c	2025-10-05 20:17:29.580863031 +0200
+@@ -196,7 +196,7 @@
+ 	 */
+ 	index = inode->i_size >> PAGE_SHIFT;
+ 	mapping = inode->i_mapping;
+-	page = grab_cache_page(mapping, index);
++	page = find_or_create_page(mapping, index, mapping_gfp_mask(mapping));
+ 	retval = -ENOMEM;
+ 	if (!page) {
+ 		goto out;
+--- linux-6.17/fs/reiserfs/xattr.c.vanilla	2025-10-05 20:50:28.339430678 +0200
++++ linux-6.17/fs/reiserfs/xattr.c	2025-10-05 21:07:15.199372655 +0200
+@@ -978,7 +978,7 @@
+ 	dentry = lookup_noperm(&QSTR(PRIVROOT_NAME), s->s_root);
+ 	if (!IS_ERR(dentry)) {
+ 		REISERFS_SB(s)->priv_root = dentry;
+-		d_set_d_op(dentry, &xattr_lookup_poison_ops);
++		d_splice_alias_ops(d_inode(dentry), dentry, &xattr_lookup_poison_ops);
+ 		if (d_really_is_positive(dentry))
+ 			reiserfs_init_priv_inode(d_inode(dentry));
+ 	} else
+--- linux-6.17/fs/dcache.c.vanilla	2025-10-05 21:09:55.503992824 +0200
++++ linux-6.17/fs/dcache.c	2025-10-05 21:10:14.516209613 +0200
+@@ -3034,6 +3034,7 @@
+ 	__d_add(dentry, inode, ops);
+ 	return NULL;
+ }
++EXPORT_SYMBOL(d_splice_alias_ops);
+ 
+ /**
+  * d_splice_alias - splice a disconnected dentry into the tree if one exists
