@@ -603,7 +603,7 @@ diff --git a/drivers/video/fbdev/core/fbcon.c b/drivers/video/fbdev/core/fbcon.c
 index e8b4e8c119b5..e6818f5fa629 100644
 --- a/drivers/video/fbdev/core/fbcon.c
 +++ b/drivers/video/fbdev/core/fbcon.c
-@@ -126,6 +126,12 @@ static int logo_lines;
+@@ -132,6 +132,12 @@
  /* logo_shown is an index to vc_cons when >= 0; otherwise follows FBCON_LOGO
     enums.  */
  static int logo_shown = FBCON_LOGO_CANSHOW;
@@ -616,7 +616,7 @@ index e8b4e8c119b5..e6818f5fa629 100644
  /* console mappings */
  static unsigned int first_fb_vc;
  static unsigned int last_fb_vc = MAX_NR_CONSOLES - 1;
-@@ -165,8 +171,12 @@ static int margin_color;
+@@ -170,8 +176,12 @@
  
  static const struct consw fb_con;
  
@@ -626,11 +626,11 @@ index e8b4e8c119b5..e6818f5fa629 100644
  
 +static int fbcon_set_origin(struct vc_data *);
 +
- static int fbcon_cursor_noblink;
+ static bool fbcon_cursor_blink = true;
  
  #define divides(a, b)	((!(a) || (b)%(a)) ? 0 : 1)
-@@ -359,13 +369,25 @@ static int get_color(struct vc_data *vc, struct fb_info *info,
- 	return color;
+@@ -374,13 +384,25 @@
+ 	return get_color(vc, info, c, false);
  }
  
 +static void fbcon_update_softback(struct vc_data *vc)
@@ -656,19 +656,19 @@ index e8b4e8c119b5..e6818f5fa629 100644
  	int ret;
  
  	/* FIXME: we should sort out the unbind locking instead */
-@@ -389,8 +411,9 @@ static void fb_flashcursor(struct work_struct *work)
+@@ -404,8 +426,9 @@
  	}
  
  	c = scr_readw((u16 *) vc->vc_pos);
 -	enable = ops->cursor_flash && !ops->cursor_state.enable;
--	ops->cursor(vc, info, enable, get_color(vc, info, c, 1),
+-	ops->cursor(vc, info, enable,
 +	mode = (!ops->cursor_flash || ops->cursor_state.enable) ?
 +		CM_ERASE : CM_DRAW;
-+	ops->cursor(vc, info, mode, softback_lines, get_color(vc, info, c, 1),
- 		    get_color(vc, info, c, 0));
++	ops->cursor(vc, info, mode, softback_lines,
+ 		    get_fg_color(vc, info, c),
+ 		    get_bg_color(vc, info, c));
  	console_unlock();
- 
-@@ -430,7 +453,13 @@ static int __init fb_console_setup(char *this_opt)
+@@ -446,7 +469,13 @@
  		}
  
  		if (!strncmp(options, "scrollback:", 11)) {
@@ -683,7 +683,7 @@ index e8b4e8c119b5..e6818f5fa629 100644
  			continue;
  		}
  
-@@ -977,6 +1006,31 @@ static const char *fbcon_startup(void)
+@@ -994,6 +1023,31 @@
  
  	set_blitting_type(vc, info);
  
@@ -715,7 +715,7 @@ index e8b4e8c119b5..e6818f5fa629 100644
  	/* Setup default font */
  	if (!p->fontdata) {
  		if (!fontname[0] || !(font = find_font(fontname)))
-@@ -1145,6 +1199,9 @@ static void fbcon_init(struct vc_data *vc, bool init)
+@@ -1162,6 +1216,9 @@
  	if (logo)
  		fbcon_prepare_logo(vc, info, cols, rows, new_cols, new_rows);
  
@@ -725,7 +725,7 @@ index e8b4e8c119b5..e6818f5fa629 100644
  	if (ops->rotate_font && ops->rotate_font(info, vc)) {
  		ops->rotate = FB_ROTATE_UR;
  		set_blitting_type(vc, info);
-@@ -1319,10 +1376,11 @@ static void fbcon_clear_margins(struct vc_data *vc, int bottom_only)
+@@ -1338,10 +1395,11 @@
  		ops->clear_margins(vc, info, margin_color, bottom_only);
  }
  
@@ -738,7 +738,7 @@ index e8b4e8c119b5..e6818f5fa629 100644
   	int c = scr_readw((u16 *) vc->vc_pos);
  
  	ops->cur_blink_jiffies = msecs_to_jiffies(vc->vc_cur_blink_ms);
-@@ -1335,12 +1393,21 @@ static void fbcon_cursor(struct vc_data *vc, bool enable)
+@@ -1354,12 +1412,21 @@
  	else
  		fbcon_add_cursor_work(info);
  
@@ -748,7 +748,7 @@ index e8b4e8c119b5..e6818f5fa629 100644
  	if (!ops->cursor)
  		return;
  
--	ops->cursor(vc, info, enable, get_color(vc, info, c, 1),
+-	ops->cursor(vc, info, enable,
 +	if (mode & CM_SOFTBACK) {
 +		mode &= ~CM_SOFTBACK;
 +		y = softback_lines;
@@ -758,11 +758,13 @@ index e8b4e8c119b5..e6818f5fa629 100644
 +		y = 0;
 +	}
 +
-+	ops->cursor(vc, info, mode, y, get_color(vc, info, c, 1),
- 		    get_color(vc, info, c, 0));
++	ops->cursor(vc, info, mode, y,
+ 		    get_fg_color(vc, info, c),
+ 		    get_bg_color(vc, info, c));
  }
- 
-@@ -1410,5 +1477,8 @@ static void fbcon_set_disp(struct fb_info *info, struct fb_var_screeninfo *var,
+@@ -1429,8 +1496,11 @@
+ 	rows /= vc->vc_font.height;
+ 	ret = vc_resize(vc, cols, rows);
  
 -	if (con_is_visible(vc) && !ret)
 +	if (con_is_visible(vc) && !ret) {
@@ -772,7 +774,8 @@ index e8b4e8c119b5..e6818f5fa629 100644
 +	}
  }
  
-@@ -1547,6 +1616,99 @@ static __inline__ void ypan_down_redraw(struct vc_data *vc, int t, int count)
+ static __inline__ void ywrap_up(struct vc_data *vc, int count)
+@@ -1567,6 +1637,99 @@
  	scrollback_current = 0;
  }
  
@@ -872,7 +875,7 @@ index e8b4e8c119b5..e6818f5fa629 100644
  static void fbcon_redraw_move(struct vc_data *vc, struct fbcon_display *p,
  			      int line, int count, int dy)
  {
-@@ -1750,6 +1912,31 @@ static void fbcon_bmove(struct vc_data *vc, int sy, int sx, int dy, int dx,
+@@ -1770,6 +1933,31 @@
  			p->vrows - p->yscroll);
  }
  
@@ -904,8 +907,8 @@ index e8b4e8c119b5..e6818f5fa629 100644
  static bool fbcon_scroll(struct vc_data *vc, unsigned int t, unsigned int b,
  		enum con_scroll dir, unsigned int count)
  {
-@@ -1760,7 +1947,7 @@ static bool fbcon_scroll(struct vc_data *vc, unsigned int t, unsigned int b,
- 	if (fbcon_is_inactive(vc, info))
+@@ -1780,7 +1968,7 @@
+ 	if (!fbcon_is_active(vc, info))
  		return true;
  
 -	fbcon_cursor(vc, false);
@@ -913,7 +916,7 @@ index e8b4e8c119b5..e6818f5fa629 100644
  
  	/*
  	 * ++Geert: Only use ywrap/ypan if the console is in text mode
-@@ -1772,6 +1959,8 @@ static bool fbcon_scroll(struct vc_data *vc, unsigned int t, unsigned int b,
+@@ -1792,6 +1980,8 @@
  	case SM_UP:
  		if (count > vc->vc_rows)	/* Maximum realistic size */
  			count = vc->vc_rows;
@@ -922,7 +925,7 @@ index e8b4e8c119b5..e6818f5fa629 100644
  		switch (fb_scrollmode(p)) {
  		case SCROLL_MOVE:
  			fbcon_redraw_blit(vc, info, p, t, b - t - count,
-@@ -2086,6 +2275,14 @@ static bool fbcon_switch(struct vc_data *vc)
+@@ -2106,6 +2296,14 @@
  	info = fbcon_info_from_console(vc->vc_num);
  	ops = info->fbcon_par;
  
@@ -937,8 +940,8 @@ index e8b4e8c119b5..e6818f5fa629 100644
  	if (logo_shown >= 0) {
  		struct vc_data *conp2 = vc_cons[logo_shown].d;
  
-@@ -2240,7 +2437,7 @@ static bool fbcon_blank(struct vc_data *vc, enum vesa_blank_mode blank,
-  	if (!fbcon_is_inactive(vc, info)) {
+@@ -2260,7 +2458,7 @@
+ 	if (fbcon_is_active(vc, info)) {
  		if (ops->blank_state != blank) {
  			ops->blank_state = blank;
 -			fbcon_cursor(vc, !blank);
@@ -946,7 +949,7 @@ index e8b4e8c119b5..e6818f5fa629 100644
  			ops->cursor_flash = (!blank);
  
  			if (fb_blank(info, blank))
-@@ -2417,6 +2614,9 @@ static int fbcon_do_set_font(struct vc_data *vc, int w, int h, int charcount,
+@@ -2437,6 +2635,9 @@
  	int resize, ret, old_userfont, old_width, old_height, old_charcount;
  	u8 *old_data = vc->vc_font.data;
  
@@ -956,7 +959,7 @@ index e8b4e8c119b5..e6818f5fa629 100644
  	resize = (w != vc->vc_font.width) || (h != vc->vc_font.height);
  	vc->vc_font.data = (void *)(p->fontdata = data);
  	old_userfont = p->userfont;
-@@ -2445,6 +2645,8 @@ static int fbcon_do_set_font(struct vc_data *vc, int w, int h, int charcount,
+@@ -2465,6 +2666,8 @@
  		ret = vc_resize(vc, cols, rows);
  		if (ret)
  			goto err_out;
@@ -965,7 +968,7 @@ index e8b4e8c119b5..e6818f5fa629 100644
  	} else if (con_is_visible(vc)
  		   && vc->vc_mode == KD_TEXT) {
  		fbcon_clear_margins(vc, 0);
-@@ -2610,6 +2811,62 @@ static void fbcon_set_palette(struct vc_data *vc, const unsigned char *table)
+@@ -2637,6 +2840,62 @@
  	fb_set_cmap(&palette_cmap, info);
  }
  
@@ -1028,7 +1031,7 @@ index e8b4e8c119b5..e6818f5fa629 100644
  /* As we might be inside of softback, we may work with non-contiguous buffer,
     that's why we have to use a separate routine. */
  static void fbcon_invert_region(struct vc_data *vc, u16 * p, int cnt)
-@@ -2625,7 +2882,107 @@ static void fbcon_invert_region(struct vc_data *vc, u16 * p, int cnt)
+@@ -2652,7 +2911,107 @@
  			a = ((a) & 0x88ff) | (((a) & 0x7000) >> 4) |
  			    (((a) & 0x0700) << 4);
  		scr_writew(a, p++);
@@ -1136,7 +1139,7 @@ index e8b4e8c119b5..e6818f5fa629 100644
  }
  
  void fbcon_suspended(struct fb_info *info)
-@@ -2638,7 +2995,7 @@ void fbcon_suspended(struct fb_info *info)
+@@ -2665,7 +3024,7 @@
  	vc = vc_cons[ops->currcon].d;
  
  	/* Clear cursor, restore saved data */
@@ -1145,7 +1148,7 @@ index e8b4e8c119b5..e6818f5fa629 100644
  }
  
  void fbcon_resumed(struct fb_info *info)
-@@ -2688,6 +3045,8 @@ static void fbcon_modechanged(struct fb_info *info)
+@@ -2715,6 +3074,8 @@
  
  		fbcon_set_palette(vc, color_table);
  		update_screen(vc);
@@ -1154,7 +1157,7 @@ index e8b4e8c119b5..e6818f5fa629 100644
  	}
  }
  
-@@ -3151,7 +3510,11 @@ static const struct consw fb_con = {
+@@ -3178,7 +3539,11 @@
  	.con_font_get 		= fbcon_get_font,
  	.con_font_default	= fbcon_set_def_font,
  	.con_set_palette 	= fbcon_set_palette,
@@ -1166,8 +1169,8 @@ index e8b4e8c119b5..e6818f5fa629 100644
  	.con_resize             = fbcon_resize,
  	.con_debug_enter	= fbcon_debug_enter,
  	.con_debug_leave	= fbcon_debug_leave,
-@@ -3412,6 +3775,9 @@ void __exit fb_console_exit(void)
- 	fbcon_deinit_device();
+@@ -3410,6 +3775,9 @@
+ 	console_lock();
  	device_destroy(fb_class, MKDEV(0, 0));
  
 +	kvfree((void *)softback_buf);
