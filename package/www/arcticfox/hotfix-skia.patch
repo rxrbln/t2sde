@@ -1,0 +1,176 @@
+# --- T2-COPYRIGHT-BEGIN ---
+# t2/package/*/arcticfox/hotfix-skia.patch
+# Copyright (C) 2025 The T2 SDE Project
+# SPDX-License-Identifier: GPL-2.0 or patched project license
+# --- T2-COPYRIGHT-END ---
+
+Bug 1319374 - Wrap PaintCounter with ifdef USE_SKIA. r=mchang, a=jcristau
+author	Lee Salzman <lsalzman@mozilla.com>
+	Thu, 19 Jan 2017 14:32:51 -0500 (2017-01-19)
+changeset 350349 	42afdb8f7e6b3e8a465042f64c6c49782f231af4
+parent 350348 	970562d09078d50c968a06471184fc9f7e330a38
+child 350350 	773f4844d11b299cce30a516fb73da281cc00c7e
+push id	10612
+push user	ryanvm@gmail.com
+push date	Fri, 20 Jan 2017 22:41:49 +0000 (2017-01-20)
+treeherder	mozilla-aurora@ccec56819e76 [default view] [failures only]
+perfherder	[talos] [build metrics] [platform microbench] (compared to previous push)
+reviewers	mchang, jcristau
+bugs	1319374
+
+Bug 1319374 - Wrap PaintCounter with ifdef USE_SKIA. r=mchang, a=jcristau
+
+--- Arctic-Fox-46.3/gfx/2d/BorrowedContext.h.vanilla	2025-10-09 00:27:45.630000000 +0200
++++ Arctic-Fox-46.3/gfx/2d/BorrowedContext.h	2025-10-09 00:29:39.663019704 +0200
+@@ -194,8 +194,18 @@
+ 
+   CGContextRef cg;
+ private:
++#ifdef USE_SKIA
+   static CGContextRef BorrowCGContextFromDrawTarget(DrawTarget *aDT);
+   static void ReturnCGContextToDrawTarget(DrawTarget *aDT, CGContextRef cg);
++#else
++  static CGContextRef BorrowCGContextFromDrawTarget(DrawTarget *aDT) {
++    MOZ_CRASH("Not supported without Skia");
++  }
++
++  static void ReturnCGContextToDrawTarget(DrawTarget *aDT, CGContextRef cg) {
++    MOZ_CRASH("not supported without Skia");
++  }
++#endif
+   DrawTarget *mDT;
+ };
+ #endif
+--- Arctic-Fox-46.3/gfx/layers/composite/LayerManagerComposite.cpp.vanilla	2025-10-09 00:29:50.375383099 +0200
++++ Arctic-Fox-46.3/gfx/layers/composite/LayerManagerComposite.cpp	2025-10-09 00:32:44.261000000 +0200
+@@ -12,7 +12,6 @@
+ #include "CompositableHost.h"           // for CompositableHost
+ #include "ContainerLayerComposite.h"    // for ContainerLayerComposite, etc
+ #include "FPSCounter.h"                 // for FPSState, FPSCounter
+-#include "PaintCounter.h"               // For PaintCounter
+ #include "FrameMetrics.h"               // for FrameMetrics
+ #include "GeckoProfiler.h"              // for profiler_set_frame_number, etc
+ #include "ImageLayerComposite.h"        // for ImageLayerComposite
+@@ -73,6 +72,10 @@
+ #include "mozilla/layers/CompositorBridgeParent.h"
+ #include "TreeTraversal.h"              // for ForEachNode
+ 
++#ifdef USE_SKIA
++#include "PaintCounter.h"               // For PaintCounter
++#endif
++
+ class gfxContext;
+ 
+ namespace mozilla {
+@@ -151,8 +154,10 @@
+     }
+     mRoot = nullptr;
+     mClonedLayerTreeProperties = nullptr;
+-    mPaintCounter = nullptr;
+     mDestroyed = true;
++#ifdef USE_SKIA
++    mPaintCounter = nullptr;
++#endif
+   }
+ }
+ 
+@@ -564,7 +569,6 @@
+   bool drawFps = gfxPrefs::LayersDrawFPS();
+   bool drawFrameCounter = gfxPrefs::DrawFrameCounter();
+   bool drawFrameColorBars = gfxPrefs::CompositorDrawColorBars();
+-  bool drawPaintTimes = gfxPrefs::AlwaysPaint();
+ 
+   if (drawFps || drawFrameCounter) {
+     aInvalidRegion.Or(aInvalidRegion, nsIntRect(0, 0, 256, 256));
+@@ -572,11 +576,15 @@
+   if (drawFrameColorBars) {
+     aInvalidRegion.Or(aInvalidRegion, nsIntRect(0, 0, 10, aBounds.height));
+   }
++#ifdef USE_SKIA
++ bool drawPaintTimes = gfxPrefs::AlwaysPaint();
+   if (drawPaintTimes) {
+     aInvalidRegion.Or(aInvalidRegion, nsIntRect(PaintCounter::GetPaintRect()));
+   }
++#endif
+ }
+ 
++#ifdef USE_SKIA
+ void
+ LayerManagerComposite::DrawPaintTimes(Compositor* aCompositor)
+ {
+@@ -587,6 +595,7 @@
+   TimeDuration compositeTime = TimeStamp::Now() - mRenderStartTime;
+   mPaintCounter->Draw(aCompositor, mLastPaintTime, compositeTime);
+ }
++#endif
+ 
+ static uint16_t sFrameCount = 0;
+ void
+@@ -595,7 +604,6 @@
+   bool drawFps = gfxPrefs::LayersDrawFPS();
+   bool drawFrameCounter = gfxPrefs::DrawFrameCounter();
+   bool drawFrameColorBars = gfxPrefs::CompositorDrawColorBars();
+-  bool drawPaintTimes = gfxPrefs::AlwaysPaint();
+ 
+   TimeStamp now = TimeStamp::Now();
+ 
+@@ -736,9 +744,12 @@
+     sFrameCount++;
+   }
+ 
++#ifdef USE_SKIA
++ bool drawPaintTimes = gfxPrefs::AlwaysPaint();
+   if (drawPaintTimes) {
+     DrawPaintTimes(mCompositor);
+   }
++#endif
+ }
+ 
+ RefPtr<CompositingRenderTarget>
+--- Arctic-Fox-46.3/gfx/layers/composite/LayerManagerComposite.h.vanilla	2025-10-09 00:32:49.454320858 +0200
++++ Arctic-Fox-46.3/gfx/layers/composite/LayerManagerComposite.h	2025-10-09 00:33:33.831445036 +0200
+@@ -331,11 +331,6 @@
+ #endif
+ 
+   /**
+-   * Render paint and composite times above the frame.
+-   */
+-  void DrawPaintTimes(Compositor* aCompositor);
+-
+-  /**
+    * We need to know our invalid region before we're ready to render.
+    */
+   void InvalidateDebugOverlay(nsIntRegion& aInvalidRegion, const gfx::IntRect& aBounds);
+@@ -391,9 +386,12 @@
+   bool mLastFrameMissedHWC;
+ 
+   bool mWindowOverlayChanged;
+-  RefPtr<PaintCounter> mPaintCounter;
+   TimeDuration mLastPaintTime;
+   TimeStamp mRenderStartTime;
++#ifdef USE_SKIA
++  void DrawPaintTimes(Compositor* aCompositor);
++  RefPtr<PaintCounter> mPaintCounter;
++#endif
+ };
+ 
+ /**
+--- Arctic-Fox-46.3/gfx/layers/moz.build.vanilla	2025-10-09 00:33:43.880537055 +0200
++++ Arctic-Fox-46.3/gfx/layers/moz.build	2025-10-09 00:34:05.061000000 +0200
+@@ -337,7 +337,6 @@
+     'composite/ImageHost.cpp',
+     'composite/ImageLayerComposite.cpp',
+     'composite/LayerManagerComposite.cpp',
+-    'composite/PaintCounter.cpp',
+     'composite/PaintedLayerComposite.cpp',
+     'composite/TextRenderer.cpp',
+     'composite/TextureHost.cpp',
+@@ -481,3 +480,8 @@
+ 
+ if CONFIG['GNU_CXX']:
+     CXXFLAGS += ['-Wno-error=shadow']
++
++if CONFIG['MOZ_ENABLE_SKIA']:
++  UNIFIED_SOURCES += [
++    'composite/PaintCounter.cpp',
++  ]
