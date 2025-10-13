@@ -71,3 +71,8 @@ CONFIG_USB_AUTOSUSPEND_DELAY=67890
 
 dnl Oopses null pointer dereference
 # CONFIG_PCI_PWRCTRL_SLOT is not set
+
+dnl LDOM bugs
+# CONFIG_SCHED_CORE is not set
+CONFIG_MQ_IOSCHED_DEADLINE=y
+
