@@ -105,7 +105,8 @@ static void handle_file_access_before(const char *, const char *, struct status_
 static void handle_file_access_after(const char *, const char *, struct status_t *);
 
 char *cmdname = "unkown";
-char wlog[PATH_MAX], rlog[PATH_MAX], filterdir[PATH_MAX], atpath[PATH_MAX];
+char wlog[PATH_MAX], rlog[PATH_MAX], filterdir[PATH_MAX];
+__thread char atpath[PATH_MAX];
 
 const char* getatpath(int dirfd, const char* pathname) {
   int ret;
@@ -120,9 +121,11 @@ const char* getatpath(int dirfd, const char* pathname) {
   }
   atpath[ret] = 0;
 
-  strncat(atpath, "/", sizeof(atpath) - 1);
-  strncat(atpath, pathname, sizeof(atpath) - 1);
-  /* TODO: short buffer handling */
+  if (pathname) {
+    strncat(atpath, "/", sizeof(atpath) - 1);
+    strncat(atpath, pathname, sizeof(atpath) - 1);
+    /* TODO: short buffer handling */
+  }
 
   return atpath;
 }
@@ -433,7 +436,7 @@ void __attribute__ ((constructor)) fl_wrapper_init()
 	cmdname = strdup(cmdtxt);
 
 	/* we copy the vars, so evil code can not unset them ... e.g.
-	   the perl/spamassassin build ... -ReneR */
+	   the perl/spamassassin build ... */
 	copy_getenv(wlog, "FLWRAPPER_WLOG", sizeof(wlog), 0);
 	copy_getenv(rlog, "FLWRAPPER_RLOG", sizeof(rlog), 0);
 	copy_getenv(filterdir, "FLWRAPPER_FILTERDIR", sizeof(filterdir), 1);
@@ -554,7 +557,7 @@ static void handle_file_access_after(const char * func, const char * file,
 
 	/* We ignore access inside the collon seperated directory list
 	   $FLWRAPPER_BASE, to keep the log smaller and reduce post
-	   processing time. -ReneR */
+	   processing time. */
 	for (tfilterdir = filterdir; (len = strlen(tfilterdir)) > 0; tfilterdir += len + 1) {
 		if (!strncmp(absfile, tfilterdir, len)) {
 #if DEBUG == 1
