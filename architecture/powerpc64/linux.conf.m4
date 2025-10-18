@@ -107,3 +107,5 @@ CONFIG_GELIC_WIRELESS=y
 dnl Console support for IBM PowerVM LPARs
 CONFIG_HVC_CONSOLE=y
 
+dnl Allow GRUB to set Open Firmware boot settings
+CONFIG_NVRAM=y
