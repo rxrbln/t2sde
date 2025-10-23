@@ -111,12 +111,11 @@ set_con_blength() {
 }
 
 set_tmzone() {
-	tz="$( ls -l /etc/localtime | cut -f8 -d/ )"
+	tz="$(ls -l /etc/localtime 2>/dev/null | cut -f8 -d/)"
 	cmd="gui_menu 'general_tmzone' 'Select one of the following time zones.'"
 
 	if [ -n "$tz" -a -f ../usr/share/zoneinfo/$1/$tz ]; then
-		cmd="$cmd 'Current: $tz' 'ln -sf ../usr/share/zoneinfo/$1/$tz \
-			/etc/localtime'"
+		cmd="$cmd 'Current: $tz' 'ln -sf ../usr/share/zoneinfo/$1/$tz /etc/localtime'"
 	fi
 	cmd="$cmd $(grep "$1/" /usr/share/zoneinfo/zone.tab | cut -f3 |
 		cut -f2 -d/ | sort -u | tr '\n' ' ' | sed 's,[^ ]\+,& '`
@@ -126,7 +125,7 @@ set_tmzone() {
 }
 
 set_tmarea() {
-	tz="$( ls -l /etc/localtime | cut -f7 -d/ )"
+	tz="$(ls -l /etc/localtime 2>/dev/null | cut -f7 -d/)"
 	cmd="gui_menu 'general_tmarea' 'Select one of the following time areas.'"
 
 	cmd="$cmd 'Current: $tz' 'if set_tmzone $tz; then tzset=1; fi'"
@@ -183,7 +182,7 @@ set_locale() {
 	x="$( echo -e "none\tnone" | expand -t52 )"
 	cmd="$cmd '$x' 'set_locale_sub none'"
 
-	x="$( echo -e "POSIX\tC" | expand -t52 )"
+	x="$(echo -e "POSIX\tC.UTF-8" | expand -t52)"
 	cmd="$cmd '$x' 'set_locale_sub C' $(
 		awk 'FNR>128 { nextfile } $0 ~ /^title/ { print FILENAME ":" $0; nextfile }' \
 		  /usr/share/i18n/locales/* |
@@ -200,7 +199,7 @@ set_locale() {
 main() {
     while
 	unset LANG ; [ -f /etc/profile.d/locale ] && . /etc/profile.d/locale
-	locale="${LANG:-none}" ; tz="$( ls -l /etc/localtime | cut -f7- -d/ )"
+	locale="${LANG:-none}"; tz="$(ls -l /etc/localtime 2>/dev/null | cut -f7- -d/)"
 	keymap=$(ls -l /etc/default.keymap 2> /dev/null | sed 's,.*/,,')
 	[ "$keymap" ] || keymap="none" ; keymap="${keymap%.map.gz}"
 	vcfont=$(ls -l /etc/default.vcfont 2> /dev/null | sed 's,.*/,,')
