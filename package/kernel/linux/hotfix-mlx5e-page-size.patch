@@ -1,0 +1,50 @@
+# --- T2-COPYRIGHT-BEGIN ---
+# t2/package/*/linux/hotfix-mlx5e-page-size.patch
+# Copyright (C) 2025 The T2 SDE Project
+# SPDX-License-Identifier: GPL-2.0 or patched project license
+# --- T2-COPYRIGHT-END ---
+
+From	Mingrui Cui <>
+Subject	[PATCH] net/mlx5e: Make DEFAULT_FRAG_SIZE relative to page size
+Date	Tue, 2 Sep 2025 21:00:16 +0800
+
+When page size is 4K, DEFAULT_FRAG_SIZE of 2048 ensures that with 3
+fragments per WQE, odd-indexed WQEs always share the same page with
+their subsequent WQE. However, this relationship does not hold for page
+sizes larger than 8K. In this case, wqe_index_mask cannot guarantee that
+newly allocated WQEs won't share the same page with old WQEs.
+
+If the last WQE in a bulk processed by mlx5e_post_rx_wqes() shares a
+page with its subsequent WQE, allocating a page for that WQE will
+overwrite mlx5e_frag_page, preventing the original page from being
+recycled. When the next WQE is processed, the newly allocated page will
+be immediately recycled.
+
+In the next round, if these two WQEs are handled in the same bulk,
+page_pool_defrag_page() will be called again on the page, causing
+pp_frag_count to become negative.
+
+Fix this by making DEFAULT_FRAG_SIZE always equal to half of the page
+size.
+
+Signed-off-by: Mingrui Cui <mingruic@outlook.com>
+---
+ drivers/net/ethernet/mellanox/mlx5/core/en/params.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/drivers/net/ethernet/mellanox/mlx5/core/en/params.c b/drivers/net/ethernet/mellanox/mlx5/core/en/params.c
+index 3cca06a74cf9..d96a3cbea23c 100644
+--- a/drivers/net/ethernet/mellanox/mlx5/core/en/params.c
++++ b/drivers/net/ethernet/mellanox/mlx5/core/en/params.c
+@@ -666,7 +666,7 @@ static void mlx5e_rx_compute_wqe_bulk_params(struct mlx5e_params *params,
+ 	info->refill_unit = DIV_ROUND_UP(info->wqe_bulk, split_factor);
+ }
+ 
+-#define DEFAULT_FRAG_SIZE (2048)
++#define DEFAULT_FRAG_SIZE (PAGE_SIZE / 2)
+ 
+ static int mlx5e_build_rq_frags_info(struct mlx5_core_dev *mdev,
+ 				     struct mlx5e_params *params,
+-- 
+2.43.0
+
