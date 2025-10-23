@@ -178,10 +178,9 @@ EOT
     else
       [ -e $instdev ] || instdev=/dev/sda # TODO: fix LVM setup
 
-      if [[ "$arch" = *CHRP ]]; then
+      if [[ "$arch" = *CHRP || "$arch" = *pSeries ]]; then
 	# IBM CHRP install into FW read-able RAW partition
-	local bootstrap=$instdev$(disktype $instdev | grep "PReP Boot" -B 1 |
-		sed -n 's/Partition \(.*\):.*/\1/p')
+	local bootstrap=$(fdisk -l $instdev | sed -n '/PReP boot/s/ .*//p')
 	if [ "$bootstrap" = "$instdev" ]; then
 		echo "No CHRP PReP bootstrap partition found!"
 		return
@@ -195,6 +194,9 @@ EOT
 	dd if=/dev/zero of=$bootstrap bs=4096
 	dd if=/tmp/grub of=$bootstrap bs=4096
 	rm -f /tmp/grub
+
+	# update OF boot-device
+	nvsetenv boot-device "$(ofpathname $bootstrap)"
       else
 	# Apple PowerPC - install into FW read-able HFS partition
 	local bootstrap=$instdev$(disktype $instdev | grep Apple_Bootstrap -B 1 |

@@ -29,7 +29,7 @@ case $platform in
 	ppc*)
 		# TODO: prep, ps3, opal, ...
 		case "$platform2" in
-		    CHRP|PowerMac|PS3)
+		    CHRP|PowerMac|pSeries|PS3)
 				platform="$platform-$platform2" ;;
 		    *)		platform= ;;
 		esac
@@ -382,7 +382,7 @@ size=$((size - _swap))m, type=83")
 		# TODO: typ, luks, lvm, ...
 		fs+=("${dev}2 $any /")
 		script+=("label:dos
-size=4m, type=41
+size=4m, type=41, bootable
 size=$((size - _swap))m, type=83")
 
 		[ $_swap != 0 ] &&
@@ -400,14 +400,16 @@ mkpart linux 4m $(($size - $_swap))m")
 		[ $_swap != 0 ] &&
 		    script+=("mkpart swap $(($size - $_swap))m 100%") fs+=("${dev}4 swap")
 		;;
-	    sparc*-gpt)
+	    sparc*-gpt|ppc*pSeries)
 		script+=("label:gpt")
-		script+=("size=2m, type=biosboot")
+		[[ $platform = sparc* ]] &&
+		  script+=("size=2m, type=biosboot, bootable") ||
+		  script+=("size=4m, type=PowerPCPRePboot, bootable")
 		script+=("size=$((size - _swap))m, type=linux")
-		fs+=("${dev}$((si + 1)) $any /")
+		fs+=("${dev}$((si + 2)) $any /")
 
 		[ $_swap != 0 ] &&
-		    script+=("type=swap") fs+=("${dev}$((si + 2)) swap")
+		    script+=("type=swap") fs+=("${dev}$((si + 3)) swap")
 		;;
 	    sparc*)
 		# TODO: silo vs grub2 have different requirements
