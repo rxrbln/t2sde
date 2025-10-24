@@ -1,0 +1,95 @@
+# --- T2-COPYRIGHT-BEGIN ---
+# t2/package/*/xkbcommon/hotfix-cross.patch
+# Copyright (C) 2025 The T2 SDE Project
+# SPDX-License-Identifier: GPL-2.0 or patched project license
+# --- T2-COPYRIGHT-END ---
+
+From 784b7902c68d7e27eb5fc31ddf51d17e3674baf9 Mon Sep 17 00:00:00 2001
+From: Pierre Le Marre <dev@wismill.eu>
+Date: Tue, 21 Oct 2025 13:40:06 +0200
+Subject: [PATCH] build: Restrict Compose fallback test in cross-compiling
+
+Do not perform the test if the build machine cannot run host binaries.
+Instead fallback to detect if the `newlocale` lib is *known* to fail on
+missing locales, as we expect.
+---
+ changes/build/885.bugfix.md |  2 ++
+ meson.build                 | 39 ++++++++++++++++++++++++++-----------
+ 2 files changed, 30 insertions(+), 11 deletions(-)
+ create mode 100644 changes/build/885.bugfix.md
+
+diff --git a/changes/build/885.bugfix.md b/changes/build/885.bugfix.md
+new file mode 100644
+index 000000000..4add4634e
+--- /dev/null
++++ b/changes/build/885.bugfix.md
+@@ -0,0 +1,2 @@
++Fixed build setup failing in cross-compiling setups where the build
++machine cannot run the host binaries.
+diff --git a/meson.build b/meson.build
+index cfe8d9491..75ffd3439 100644
+--- a/meson.build
++++ b/meson.build
+@@ -185,19 +185,34 @@ if not cc.has_header_symbol('limits.h', 'PATH_MAX', prefix: system_ext_define)
+         configh_data.set('PATH_MAX', 4096)
+     endif
+ endif
++has_glibc = cc.has_function(
++    'gnu_get_libc_version',
++    prefix: '#include <gnu/libc-version.h>'
++)
++has_compose_locale_fallback = false
+ if cc.has_header_symbol('locale.h', 'newlocale', prefix: system_ext_define)
+     # Use newlocale only if it fails on missing locales
+-    r = cc.run(
+-        '''
+-        #define _GNU_SOURCE
+-        #include <locale.h>
+-        int main(void){
+-            locale_t loc = newlocale(LC_ALL_MASK, "¡NONSENSE!", (locale_t) 0);
+-            return (loc != (locale_t) 0);
+-        }''',
+-        name: 'newlocale fails on invalid locales',
+-    )
+-    if r.compiled() and r.returncode() == 0
++    if meson.can_run_host_binaries()
++        # Check newlocale implementation
++        r = cc.run(
++            '''
++            #define _GNU_SOURCE
++            #include <locale.h>
++            int main(void){
++                locale_t loc = newlocale(LC_ALL_MASK, "¡NONSENSE!", (locale_t) 0);
++                return (loc != (locale_t) 0);
++            }''',
++            name: 'newlocale fails on invalid locales',
++        )
++        if r.compiled() and r.returncode() == 0
++            has_compose_locale_fallback = true
++        endif
++    elif has_glibc
++        # Cannot check implementation, so enable only for implementations
++        # known to failed on missing locales.
++        has_compose_locale_fallback = true
++    endif
++    if has_compose_locale_fallback
+         configh_data.set('HAVE_NEWLOCALE', 1)
+     endif
+ endif
+@@ -1350,6 +1365,7 @@ if meson.version().version_compare('>=0.62.0')
+       'c_args': get_option('c_args'),
+       'c_link_args': get_option('c_link_args'),
+       'yacc': yacc.full_path() + ' ' + yacc.version(),
++      'glibc': has_glibc,
+     }, section: 'Compiler')
+     summary({
+       'prefix': get_option('prefix'),
+@@ -1365,6 +1381,7 @@ if meson.version().version_compare('>=0.62.0')
+       'tools': get_option('enable-tools'),
+       'wayland': get_option('enable-wayland'),
+       'x11': get_option('enable-x11'),
++      'compose locale fallback': has_compose_locale_fallback,
+     }, section: 'Features')
+     summary({
+       'layout': get_option('default-layout'),
+
