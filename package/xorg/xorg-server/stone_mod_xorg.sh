@@ -35,7 +35,7 @@ main() {
 
 		cmd="$cmd '' ''"
 
-		for x in /usr/share/registry/xdm/*; do
+		for x in /{usr,opt/*}/share/registry/xdm/*; do
 		  if [ -f $x ]; then
 			. $x # TODO: parse file!
 
@@ -49,7 +49,7 @@ main() {
 
 		cmd="$cmd '' ''"
 
-		for x in /usr/share/xsessions/*; do
+		for x in /{usr,opt/*}/share/xsessions/*; do
 		  if [ -f $x ]; then
 			name=$(sed -n '/^Name=/{ s///p; q }' $x)
 			exec=$(sed -n '/^Exec=/{ s///p; q }' $x)
