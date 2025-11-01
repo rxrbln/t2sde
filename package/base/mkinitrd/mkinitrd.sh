@@ -72,7 +72,7 @@ done
 -e nls_cp437 -e nls_iso8859-1 -e nls_utf8
 -e usb/host -e usb-common -e usb-storage -e firewire-ohci -e sbp2 -e uas -e thunderbolt\.
 -e [ex]hci-[ph][c][id] -e i2c-hid -e hid-generic -e hid-multitouch
--e hid-apple[^i] -e hid-microsoft -e hyperv-keyboard
+-e hid-apple[^i] -e hid-cherry -e hid-microsoft -e hyperv-keyboard
 -e cpufreq/[^_]\+$ -e hwmon.*temp -e /rtc/ -e input-leds -e /ast/ -e /bochs -e msm
 -e phy.qcom.qmp.pcie -e tcsrcc.x1e80100 -e qcom -e leds_qcom_lpg -e pwm_bl -e qrtr
 -e pmic_glink_altmode -e gpio_sbu_mux -e phy_qcom_qmp_combo -e gpucc_sc8280xp
