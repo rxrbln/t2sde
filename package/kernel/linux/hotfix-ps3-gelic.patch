@@ -4,8 +4,10 @@
 # SPDX-License-Identifier: GPL-2.0 or patched project license
 # --- T2-COPYRIGHT-END ---
 
-Gracefully handle SKB allocation failures, by keeping napi polling.
-And use napi* functions instead of net* to receive and alloc SKBs.
+Since some MM rework around 5.x the ps3 gelic ethernet driver quickly runs
+out of memory to allocate. Fix this by gracefully handling SKB allocation
+failures, and keep napi polling. To improve performance, use napi* functions
+instead of net* to receive and allocate SKBs.
 
 Before:	[  5]   0.00-10.00  sec   752 MBytes   631 Mbits/sec  3917             sender
 After:	[  5]   0.00-10.00  sec  1.09 GBytes   940 Mbits/sec   40             sender
@@ -14,7 +16,16 @@ Signed-off-by: Florian Fuchs <fuchsfl@gmail.com>
 Tested-By: René Rebe <rene@exactcode.de>
 
 --- linux-6.17/drivers/net/ethernet/toshiba/ps3_gelic_net.c.vanilla	2025-11-02 01:26:59.998000000 +0100
-+++ linux-6.17/drivers/net/ethernet/toshiba/ps3_gelic_net.c	2025-11-03 22:51:18.828000000 +0100
++++ linux-6.17/drivers/net/ethernet/toshiba/ps3_gelic_net.c	2025-11-04 18:52:39.602000000 +0100
+@@ -364,7 +364,7 @@
+  * @card: card structure
+  * @descr: descriptor to re-init
+  *
+- * return 0 on success, <0 on failure
++ * return 0 on success, <0 on failure, -ENOMEM if SKB allocation fails
+  *
+  * allocates a new rx skb, iommu-maps it and attaches it to the descriptor.
+  * Activate the descriptor state-wise
 @@ -373,7 +373,8 @@
   * must be a multiple of GELIC_NET_RXBUF_ALIGN.
   */
@@ -25,7 +36,7 @@ Tested-By: René Rebe <rene@exactcode.de>
  {
  	static const unsigned int rx_skb_size =
  		ALIGN(GELIC_NET_MAX_FRAME, GELIC_NET_RXBUF_ALIGN) +
-@@ -391,9 +392,15 @@
+@@ -391,9 +392,16 @@
  	descr->hw_regs.payload.dev_addr = 0;
  	descr->hw_regs.payload.size = 0;
  
@@ -38,11 +49,12 @@ Tested-By: René Rebe <rene@exactcode.de>
 +	
  	if (!descr->skb) {
  		descr->hw_regs.payload.dev_addr = 0; /* tell DMAC don't touch memory */
-+		net_err_ratelimited("SKB allocation failed\n");
++		if (printk_ratelimit())
++			dev_info(ctodev(card), "%s: SKB allocation failed ", __func__);
  		return -ENOMEM;
  	}
  
-@@ -456,14 +463,14 @@
+@@ -456,14 +464,14 @@
   * and iommu-maps them.
   * returns 0 on success, < 0 on failure
   */
@@ -59,7 +71,7 @@ Tested-By: René Rebe <rene@exactcode.de>
  			if (ret)
  				goto rewind;
  		}
-@@ -482,12 +489,12 @@
+@@ -482,12 +490,12 @@
   *
   * returns 0 on success, < 0 on failure
   */
@@ -74,7 +86,7 @@ Tested-By: René Rebe <rene@exactcode.de>
  	chain->tail = card->rx_top->prev; /* point to the last */
  	return ret;
  }
-@@ -963,7 +970,7 @@
+@@ -963,25 +971,27 @@
  	netdev->stats.rx_bytes += skb->len;
  
  	/* pass skb up to stack */
@@ -83,7 +95,13 @@ Tested-By: René Rebe <rene@exactcode.de>
  }
  
  /**
-@@ -975,13 +982,14 @@
+  * gelic_card_decode_one_descr - processes an rx descriptor
+  * @card: card structure
+  *
+- * returns 1 if a packet has been sent to the stack, otherwise 0
++ * returns 1 if a packet has been sent to the stack, -ENOMEM
++ * if SKB allocation failed, otherwise 0
+  *
   * processes an rx descriptor by iommu-unmapping the data buffer and passing
   * the packet up to the stack
   */
@@ -99,28 +117,26 @@ Tested-By: René Rebe <rene@exactcode.de>
  
  	status = gelic_descr_get_status(descr);
  
-@@ -993,6 +1001,12 @@
+@@ -993,6 +1003,11 @@
  		return 0;
  	}
  
 +	if(!descr->skb) { 
 +		no_pkg_processed = true;
-+                net_err_ratelimited("SKB is not set, refilling..\n");
 +		goto refill;
 +	}
 +
  	/* netdevice select */
  	if (card->vlan_required) {
  		unsigned int i;
-@@ -1065,7 +1079,11 @@
+@@ -1065,7 +1080,10 @@
  	 * this call can fail, but for now, just leave this
  	 * descriptor without skb
  	 */
 -	gelic_descr_prepare_rx(card, descr);
 +	int ret = gelic_descr_prepare_rx(card, descr, napi_mode);
 +	if (ret) {
-+                net_err_ratelimited("Refill SKB allocation failed\n");
-+		return -1;
++		return -ENOMEM;
 +	}
  
  	chain->tail = descr;
@@ -134,7 +150,7 @@ Tested-By: René Rebe <rene@exactcode.de>
  }
  
  /**
-@@ -1099,15 +1117,24 @@
+@@ -1099,15 +1117,23 @@
  {
  	struct gelic_card *card = container_of(napi, struct gelic_card, napi);
  	int packets_done = 0;
@@ -143,8 +159,7 @@ Tested-By: René Rebe <rene@exactcode.de>
  	while (packets_done < budget) {
 -		if (!gelic_card_decode_one_descr(card))
 +		int err = gelic_card_decode_one_descr(card, true);
-+		if (err == -1) {
-+			net_err_ratelimited("get_net_poll: SKB allocation failed\n");
++		if (err == -ENOMEM) {
 +			alloc_failed = true;
  			break;
 +		}
@@ -160,7 +175,7 @@ Tested-By: René Rebe <rene@exactcode.de>
  		napi_complete_done(napi, packets_done);
  		gelic_card_rx_irq_on(card);
  	}
-@@ -1814,7 +1841,7 @@
+@@ -1814,7 +1840,7 @@
  		card->rx_top, card->tx_top, sizeof(struct gelic_descr),
  		GELIC_NET_RX_DESCRIPTORS);
  	/* allocate rx skbs */
