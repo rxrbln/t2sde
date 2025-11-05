@@ -1,0 +1,153 @@
+Based on Dennis Clarke patch at https://bugs.gentoo.org/962999#c19
+
+--- linux-6.17/arch/sparc/include/asm/spitfire.h	2025-09-28 23:39:22.000000000 +0200
++++ linux-6.17/arch/sparc/include/asm/spitfire.h	2025-11-05 11:28:32.545448679 +0100
+@@ -49,6 +49,7 @@
+ #define SUN4V_CHIP_SPARC_M6	0x06
+ #define SUN4V_CHIP_SPARC_M7	0x07
+ #define SUN4V_CHIP_SPARC_M8	0x08
++#define SUN4V_CHIP_SPARC_S7	0x7a
+ #define SUN4V_CHIP_SPARC64X	0x8a
+ #define SUN4V_CHIP_SPARC_SN	0x8b
+ #define SUN4V_CHIP_UNKNOWN	0xff
+--- linux-6.17/arch/sparc/kernel/cpu.c	2025-11-05 11:27:16.050514424 +0100
++++ linux-6.17/arch/sparc/kernel/cpu.c	2025-11-05 11:28:32.545703605 +0100
+@@ -513,6 +513,12 @@
+ 		sparc_pmu_type = "sparc-m8";
+ 		break;
+ 
++       case SUN4V_CHIP_SPARC_S7:
++               sparc_cpu_type = "SPARC-S7 (Sonoma)";
++               sparc_fpu_type = "SPARC-S7 integrated FPU";
++               sparc_pmu_type = "sparc-s7";
++               break;
++
+ 	case SUN4V_CHIP_SPARC_SN:
+ 		sparc_cpu_type = "SPARC-SN";
+ 		sparc_fpu_type = "SPARC-SN integrated FPU";
+--- linux-6.17/arch/sparc/kernel/head_64.S	2025-11-05 11:27:16.050699099 +0100
++++ linux-6.17/arch/sparc/kernel/head_64.S	2025-11-05 11:28:32.545872679 +0100
+@@ -421,6 +421,7 @@
+ 	 cmp	%g2, 'M'
+ 	be,pt	%xcc, 70f
+ 	 cmp	%g2, 'S'
++       be,pt   %xcc, 71f
+ 	bne,pn	%xcc, 49f
+ 	 nop
+ 
+@@ -443,9 +444,13 @@
+ 	cmp	%g2, CPU_ID_M8
+ 	be,pt	%xcc, 5f
+ 	 mov	SUN4V_CHIP_SPARC_M8, %g4
+-	cmp	%g2, CPU_ID_SONOMA1
++       ba,pt   %xcc, 49f
++        nop
++71:
++       ldub    [%g1 + 7], %g2
++       cmp     %g2, '7'
+ 	be,pt	%xcc, 5f
+-	 mov	SUN4V_CHIP_SPARC_SN, %g4
++        mov     SUN4V_CHIP_SPARC_S7, %g4
+ 	ba,pt	%xcc, 49f
+ 	 nop
+ 
+--- linux-6.17/arch/sparc/kernel/pcr.c	2025-11-05 11:27:16.050855802 +0100
++++ linux-6.17/arch/sparc/kernel/pcr.c	2025-11-05 11:28:32.546021283 +0100
+@@ -275,6 +275,7 @@
+ 			break;
+ 
+ 		case SUN4V_CHIP_SPARC_M7:
++               case SUN4V_CHIP_SPARC_S7:
+ 			perf_hsvc_group = HV_GRP_M7_PERF;
+ 			break;
+ 
+@@ -324,6 +325,7 @@
+ 		break;
+ 
+ 	case SUN4V_CHIP_SPARC_M7:
++       case SUN4V_CHIP_SPARC_S7:
+ 		pcr_ops = &m7_pcr_ops;
+ 		break;
+ 
+--- linux-6.17/arch/sparc/kernel/perf_event.c	2025-11-05 11:27:16.051074868 +0100
++++ linux-6.17/arch/sparc/kernel/perf_event.c	2025-11-05 11:28:32.546151516 +0100
+@@ -1701,7 +1701,9 @@
+ 		return true;
+ 	}
+ 	if (!strcmp(sparc_pmu_type, "niagara4") ||
+-	    !strcmp(sparc_pmu_type, "niagara5")) {
++        !strcmp(sparc_pmu_type, "niagara5") ||
++        !strcmp(sparc_pmu_type, "sparc-m7") ||
++        !strcmp(sparc_pmu_type, "sparc-s7")) {
+ 		sparc_pmu = &niagara4_pmu;
+ 		return true;
+ 	}
+--- linux-6.17/arch/sparc/kernel/setup_64.c	2025-11-05 11:27:16.061314504 +0100
++++ linux-6.17/arch/sparc/kernel/setup_64.c	2025-11-05 11:28:32.546337480 +0100
+@@ -278,7 +278,7 @@
+ 	switch (sun4v_chip_type) {
+ 	case SUN4V_CHIP_SPARC_M7:
+ 	case SUN4V_CHIP_SPARC_M8:
+-	case SUN4V_CHIP_SPARC_SN:
++       case SUN4V_CHIP_SPARC_S7:
+ 		sun4v_patch_1insn_range(&__sun_m7_1insn_patch,
+ 					&__sun_m7_1insn_patch_end);
+ 		sun_m7_patch_2insn_range(&__sun_m7_2insn_patch,
+@@ -531,6 +531,7 @@
+ 		    sun4v_chip_type == SUN4V_CHIP_SPARC_M6 ||
+ 		    sun4v_chip_type == SUN4V_CHIP_SPARC_M7 ||
+ 		    sun4v_chip_type == SUN4V_CHIP_SPARC_M8 ||
++                   sun4v_chip_type == SUN4V_CHIP_SPARC_S7 ||
+ 		    sun4v_chip_type == SUN4V_CHIP_SPARC_SN ||
+ 		    sun4v_chip_type == SUN4V_CHIP_SPARC64X)
+ 			cap |= HWCAP_SPARC_BLKINIT;
+@@ -541,6 +542,7 @@
+ 		    sun4v_chip_type == SUN4V_CHIP_SPARC_M6 ||
+ 		    sun4v_chip_type == SUN4V_CHIP_SPARC_M7 ||
+ 		    sun4v_chip_type == SUN4V_CHIP_SPARC_M8 ||
++                   sun4v_chip_type == SUN4V_CHIP_SPARC_S7 ||
+ 		    sun4v_chip_type == SUN4V_CHIP_SPARC_SN ||
+ 		    sun4v_chip_type == SUN4V_CHIP_SPARC64X)
+ 			cap |= HWCAP_SPARC_N2;
+@@ -572,6 +574,7 @@
+ 			    sun4v_chip_type == SUN4V_CHIP_SPARC_M6 ||
+ 			    sun4v_chip_type == SUN4V_CHIP_SPARC_M7 ||
+ 			    sun4v_chip_type == SUN4V_CHIP_SPARC_M8 ||
++                           sun4v_chip_type == SUN4V_CHIP_SPARC_S7 ||
+ 			    sun4v_chip_type == SUN4V_CHIP_SPARC_SN ||
+ 			    sun4v_chip_type == SUN4V_CHIP_SPARC64X)
+ 				cap |= (AV_SPARC_VIS | AV_SPARC_VIS2 |
+@@ -583,6 +586,7 @@
+ 			    sun4v_chip_type == SUN4V_CHIP_SPARC_M6 ||
+ 			    sun4v_chip_type == SUN4V_CHIP_SPARC_M7 ||
+ 			    sun4v_chip_type == SUN4V_CHIP_SPARC_M8 ||
++                           sun4v_chip_type == SUN4V_CHIP_SPARC_S7 ||
+ 			    sun4v_chip_type == SUN4V_CHIP_SPARC_SN ||
+ 			    sun4v_chip_type == SUN4V_CHIP_SPARC64X)
+ 				cap |= (AV_SPARC_VIS3 | AV_SPARC_HPC |
+--- linux-6.17/arch/sparc/mm/init_64.c	2025-11-05 11:27:15.394523868 +0100
++++ linux-6.17/arch/sparc/mm/init_64.c	2025-11-05 11:28:32.546542905 +0100
+@@ -2000,6 +2000,7 @@
+ 			max_phys_bits = 47;
+ 			break;
+ 		case SUN4V_CHIP_SPARC_M7:
++               case SUN4V_CHIP_SPARC_S7:
+ 		case SUN4V_CHIP_SPARC_SN:
+ 			/* M7 and later support 52-bit virtual addresses.  */
+ 			sparc64_va_hole_top =    0xfff8000000000000UL;
+@@ -2229,6 +2230,7 @@
+ 	switch (sun4v_chip_type) {
+ 	case SUN4V_CHIP_SPARC_M7:
+ 	case SUN4V_CHIP_SPARC_M8:
++       case SUN4V_CHIP_SPARC_S7:
+ 	case SUN4V_CHIP_SPARC_SN:
+ 		pagecv_flag = 0x00;
+ 		break;
+@@ -2344,6 +2346,7 @@
+ 	switch (sun4v_chip_type) {
+ 	case SUN4V_CHIP_SPARC_M7:
+ 	case SUN4V_CHIP_SPARC_M8:
++       case SUN4V_CHIP_SPARC_S7:
+ 	case SUN4V_CHIP_SPARC_SN:
+ 		page_cache4v_flag = _PAGE_CP_4V;
+ 		break;
