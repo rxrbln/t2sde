@@ -117,9 +117,10 @@ set_tmzone() {
 	if [ -n "$tz" -a -f ../usr/share/zoneinfo/$1/$tz ]; then
 		cmd="$cmd 'Current: $tz' 'ln -sf ../usr/share/zoneinfo/$1/$tz /etc/localtime'"
 	fi
-	cmd="$cmd $(grep "$1/" /usr/share/zoneinfo/zone.tab | cut -f3 |
-		cut -f2 -d/ | sort -u | tr '\n' ' ' | sed 's,[^ ]\+,& '`
-		`'"ln -sf ../usr/share/zoneinfo/$1/& /etc/localtime",g' )"
+	cmd="$cmd $( ([ $1 = Etc ] && (cd /usr/share/zoneinfo/Etc/; ls *) ||
+		grep "$1/" /usr/share/zoneinfo/zone.tab | cut -f3 |
+		cut -f2 -d/) | sort -u | tr '\n' ' ' |
+		sed 's,[^ ]\+,& "ln -sf ../usr/share/zoneinfo/$1/& /etc/localtime",g' )"
 
 	eval "$cmd"
 }
@@ -129,9 +130,9 @@ set_tmarea() {
 	cmd="gui_menu 'general_tmarea' 'Select one of the following time areas.'"
 
 	cmd="$cmd 'Current: $tz' 'if set_tmzone $tz; then tzset=1; fi'"
-	cmd="$cmd $(grep '^[^#]' /usr/share/zoneinfo/zone.tab | cut -f3 |
-		cut -f1 -d/ | sort -u | tr '\n' ' ' | sed 's,[^ ]\+,& '`
-		`'"if set_tmzone &; then tzset=1; fi",g' )"
+	cmd="$cmd $( (echo Etc; grep '^[^#]' /usr/share/zoneinfo/zone.tab | cut -f3 |
+		cut -f1 -d/ | sort -u) | tr '\n' ' ' |
+		sed 's,[^ ]\+,& "if set_tmzone &; then tzset=1; fi",g' )"
 
 	tzset=0
 	while eval "$cmd" && [ $tzset = 0 ] ; do : ; done
