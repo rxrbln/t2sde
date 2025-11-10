@@ -17,14 +17,14 @@
 
 [C] extra/office
 [F] CROSS NO-LIBTOOL-FIX CUSTOM-LTO LATOMIC.x86 LATOMIC.sparc LATOMIC.sparc64
-[R] - alpha hppa hppa64 ia64 riscv
+[R] - alpha hppa hppa64 ia64 m68k riscv
 
 [L] MPL
 [S] Stable
-[V] 144.0.2
+[V] 145.0
 [P] X -----5---9 202.000
 
-[D] 5d1c9b5337046ed64c975be983172979c6e319c1cd704342fd0e0628 firefox-144.0.2.source.tar.xz https://ftp.mozilla.org/pub/firefox/releases/144.0.2/source/
+[D] 45bfe2dbd7cf4c9fb18007b8446da1ad04deead791d99998f7734c72 firefox-145.0.source.tar.xz https://ftp.mozilla.org/pub/firefox/releases/145.0/source/
 
 . $base/package/*/*/mozilla-conf.in
 
@@ -77,9 +77,13 @@ pkginstalled icu4c && echo "ac_add_options --with-system-icu" >> .mozconfig
 pkginstalled pulseaudio || echo "ac_add_options --disable-pulseaudio" >> .mozconfig
 pkginstalled alsa-lib && echo "ac_add_options --enable-alsa" >> .mozconfig
 pkginstalled libevent && echo "ac_add_options --with-system-libevent" >> .mozconfig
-pkginstalled wasi-libc &&
-	echo "ac_add_options --with-wasi-sysroot=$root/$(pkgprefix wasi-libc)" >> .mozconfig ||
-	echo "ac_add_options --without-wasm-sandboxed-libraries" >> .mozconfig
+
+	# currently little-endian only
+	if [ $arch_bigendian != yes ] && pkginstalled wasi-libc; then
+		echo "ac_add_options --with-wasi-sysroot=$root/$(pkgprefix wasi-libc)" >> .mozconfig
+	else
+		echo "ac_add_options --without-wasm-sandboxed-libraries" >> .mozconfig
+	fi
 
 	[ "$SDECFG_DEFAULT_CC" = clang ] &&
 		var_append GCC_WRAPPER_APPEND ' ' "-c?:-fuse-ld=lld" &&
@@ -89,7 +93,6 @@ pkginstalled wasi-libc &&
 		var_append patchfiles ' ' $confdir/hotfix-ppc-not-power8.diff
 
 	# jit and sandbox?
-	#echo "ac_add_options --disable-sandbox" >> .mozconfig
 	case "$arch" in
 	x86)
 		# jit needs sse on x86
@@ -101,11 +104,14 @@ pkginstalled wasi-libc &&
 	arm)
 		[[ $arch_machine = armv[678]* ]] || echo "ac_add_options --disable-jit" >> .mozconfig
 		;;
-	arm64|riscv64|x86-64)
-		: ;;
-
+	arm64|loongarch64|riscv64|x86-64)
+		# no jit yet for x32 ABI variants
+		if [ "$SDECFG_X8664_X32" = 1 -o "$SDECFG_MIPS64_N32" = 1 ]; then
+			echo "ac_add_options --disable-jit" >> .mozconfig
+		fi
+		;;
 	*)
-		echo "ac_add_options --disable-jit --disable-webrtc" >> .mozconfig ;;
+		echo "ac_add_options --disable-jit" >> .mozconfig ;;
 	esac
 }
 
@@ -114,6 +120,7 @@ GCC_WRAPPER_INSERT="${GCC_WRAPPER_INSERT/-march=/--target=wasm32-wasi?:-march=}"
 GCC_WRAPPER_INSERT="${GCC_WRAPPER_INSERT/-mcpu=/--target=wasm32-wasi?:-mcpu=}"
 GCC_WRAPPER_INSERT="${GCC_WRAPPER_INSERT/-mtune=/--target=wasm32-wasi?:-mtune=}"
 GCC_WRAPPER_INSERT="${GCC_WRAPPER_INSERT/-mfpu=/--target=wasm32-wasi?:-mfpu=}"
+GCC_WRAPPER_INSERT="${GCC_WRAPPER_INSERT/-c?:-pie/--target=wasm32-wasi?:-c?:-pie}"
 
 hook_add prepatch 5 "cargo_clear_cksum third_party/rust/*/.cargo-checksum.json"
 hook_add postpatch 5 "rust_update_arch_target third_party/rust/*/no_atomic*.rs"
