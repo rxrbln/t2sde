@@ -310,6 +310,10 @@ disk_partition() {
 	# if re-partition: reset size to all
 	[ "$si" = 0 ] && size=$(($(blockdev --getsz $dev) / 2 / 1024))
 
+	# how much of free space to use?
+	gui_input "How many megabytes to allocated for the installation:" "$size" _size
+	[ "$_size" -lt "$size" ] && size=$_size
+
 	# swap based on RAM for suspend-to-disk
 	local swap=$(($(sed -n 's/MemTotal: *\([0-9]*\).*/\1/p' /proc/meminfo) / 1024 * 3 / 4))
 	[ $swap -lt 128 ] && swap=128
