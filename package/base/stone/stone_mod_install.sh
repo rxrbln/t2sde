@@ -616,7 +616,7 @@ disk_add() {
 		cmd="$cmd 'Warning: formated w/ unsupported sector size ($lbs)!' ''"
 
 	# TODO: maybe better /sys/block/$1/$1* ?
-	for x in $(cd /dev; ls $1[0-9p]* 2> /dev/null); do
+	for x in $(cd /dev; ls -v $1[0-9p]* 2> /dev/null); do
 		part_add $x
 		found=1
 	done
