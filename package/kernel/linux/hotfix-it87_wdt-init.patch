@@ -4,15 +4,64 @@
 # SPDX-License-Identifier: GPL-2.0 or patched project license
 # --- T2-COPYRIGHT-END ---
 
---- linux-6.17/drivers/watchdog/it87_wdt.c.vanilla	2025-11-06 16:36:17.474866809 +0100
-+++ linux-6.17/drivers/watchdog/it87_wdt.c	2025-11-06 16:43:56.756190409 +0100
-@@ -374,6 +374,9 @@
+--- linux-6.17/drivers/watchdog/it87_wdt.c.orig	2025-09-28 23:39:22.000000000 +0200
++++ linux-6.17/drivers/watchdog/it87_wdt.c	2025-11-16 14:18:24.759115286 +0100
+@@ -4,6 +4,7 @@
+  *	   for ITE IT87xx Environment Control - Low Pin Count Input / Output
+  *
+  *	(c) Copyright 2007  Oliver Schuster <olivers137@aol.com>
++ *	(c) Copyright 2025  René Rebe <rene@exactco.de>
+  *
+  *	Based on softdog.c	by Alan Cox,
+  *		 83977f_wdt.c	by Jose Goncalves,
+@@ -188,6 +189,15 @@
+ 		superio_outb(t >> 8, WDTVALMSB);
+ }
+ 
++/* Internal function, should be called after superio_select(GPIO) */
++static unsigned int _wdt_get_timeout(void)
++{
++	unsigned int ret = superio_inb(WDTVALLSB);
++	if (max_units > 255)
++		ret |= superio_inb(WDTVALMSB) << 8;
++	return ret;
++}
++
+ static int wdt_update_timeout(unsigned int t)
+ {
+ 	int ret;
+@@ -292,6 +302,7 @@
+ 	u8 ctrl;
+ 	int quirks = 0;
+ 	int rc;
++	unsigned int _timeout;
+ 
+ 	rc = superio_enter();
+ 	if (rc)
+@@ -374,8 +385,6 @@
  		}
  	}
  
-+	/* disable, might be left active by the fw, e.g. ugreen dxp4800 */
-+	_wdt_update_timeout(0);
-+
- 	superio_exit();
- 
+-	superio_exit();
+-
  	if (timeout < 1 || timeout > max_units * 60) {
+ 		timeout = DEFAULT_TIMEOUT;
+ 		pr_warn("Timeout value out of range, use default %d sec\n",
+@@ -388,6 +397,17 @@
+ 	wdt_dev.timeout = timeout;
+ 	wdt_dev.max_timeout = max_units * 60;
+ 
++	/* wdt already left running by fw bios? */
++	_timeout = _wdt_get_timeout();
++	if (_timeout) {
++		pr_warn("Left running by firmware.\n");
++		wdt_dev.max_hw_heartbeat_ms = timeout * 1000;
++		set_bit(WDOG_HW_RUNNING, &wdt_dev.status);
++		_wdt_update_timeout(timeout);
++	}
++
++	superio_exit();
++
+ 	watchdog_stop_on_reboot(&wdt_dev);
+ 	rc = watchdog_register_device(&wdt_dev);
+ 	if (rc)
