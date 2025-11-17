@@ -4,31 +4,24 @@
 # SPDX-License-Identifier: GPL-2.0 or patched project license
 # --- T2-COPYRIGHT-END ---
 
---- linux-6.17/drivers/watchdog/it87_wdt.c.orig	2025-09-28 23:39:22.000000000 +0200
-+++ linux-6.17/drivers/watchdog/it87_wdt.c	2025-11-16 20:05:01.650672740 +0100
-@@ -188,6 +190,21 @@
+diff --git a/drivers/watchdog/it87_wdt.c b/drivers/watchdog/it87_wdt.c
+index 3b8488c86a2f..8ba7e03857ca 100644
+--- a/drivers/watchdog/it87_wdt.c
++++ b/drivers/watchdog/it87_wdt.c
+@@ -188,6 +188,12 @@ static void _wdt_update_timeout(unsigned int t)
  		superio_outb(t >> 8, WDTVALMSB);
  }
  
 +/* Internal function, should be called after superio_select(GPIO) */
-+static unsigned int _wdt_get_timeout(void)
++static bool _wdt_running(void)
 +{
-+	unsigned int t;
-+	u8 cfg;
-+
-+	cfg = superio_inb(WDTCFG);
-+	t = superio_inb(WDTVALLSB);
-+	if (max_units > 255)
-+		t |= superio_inb(WDTVALMSB) << 8;
-+	if (cfg & WDT_TOV1)
-+		t *= 60;
-+	return t;
++	return superio_inb(WDTVALLSB) || (max_units > 255 && superio_inb(WDTVALMSB));
 +}
 +
  static int wdt_update_timeout(unsigned int t)
  {
  	int ret;
-@@ -292,6 +309,7 @@
+@@ -292,6 +298,7 @@ static int __init it87_wdt_init(void)
  	u8 ctrl;
  	int quirks = 0;
  	int rc;
@@ -36,28 +29,17 @@
  
  	rc = superio_enter();
  	if (rc)
-@@ -374,8 +392,6 @@
+@@ -374,6 +381,13 @@ static int __init it87_wdt_init(void)
  		}
  	}
  
--	superio_exit();
--
- 	if (timeout < 1 || timeout > max_units * 60) {
- 		timeout = DEFAULT_TIMEOUT;
- 		pr_warn("Timeout value out of range, use default %d sec\n",
-@@ -388,6 +404,15 @@
- 	wdt_dev.timeout = timeout;
- 	wdt_dev.max_timeout = max_units * 60;
- 
 +	/* wdt already left running by fw bios? */
-+	_timeout = _wdt_get_timeout();
++	_timeout = _wdt_running();
 +	if (_timeout) {
 +		pr_info("Left running by firmware.\n");
 +		set_bit(WDOG_HW_RUNNING, &wdt_dev.status);
 +	}
 +
-+	superio_exit();
-+
- 	watchdog_stop_on_reboot(&wdt_dev);
- 	rc = watchdog_register_device(&wdt_dev);
- 	if (rc)
+ 	superio_exit();
+ 
+ 	if (timeout < 1 || timeout > max_units * 60) {
