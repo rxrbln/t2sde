@@ -1,0 +1,73 @@
+# --- T2-COPYRIGHT-BEGIN ---
+# t2/package/*/libpciaccess/hotfix-pci_sys-refcnt.patch
+# Copyright (C) 2025 The T2 SDE Project
+# SPDX-License-Identifier: GPL-2.0 or patched project license
+# --- T2-COPYRIGHT-END ---
+
+Patch for libpciaccess 0.13.2 to "reference count" init/cleanup calls.
+
+Fix X crashing w/ at least the legacy i915 driver:
+
+Thread 1 "X" received signal SIGSEGV, Segmentation fault.
+0x0000148f0e14c369 in pci_device_vgaarb_set_target (dev=0x0) at ../src/common_vgaarb.c:235
+235             dev = pci_sys->vga_default_dev;
+(gdb) bt
+#0  0x0000148f0e14c369 in pci_device_vgaarb_set_target (dev=0x0) at ../src/common_vgaarb.c:235
+#1  0x0000560899901ba7 in xf86VGAarbiterLock (pScrn=pScrn@entry=0x5608a94018d0) at xf86VGAarbiter.c:92
+#2  0x00005608998e86b8 in xf86DPMS (pScreen=<optimized out>, level=0) at xf86DPMS.c:56
+#3  0x0000560899955eae in DPMSSet (client=<optimized out>, level=level@entry=0) at dpms.c:106
+#4  0x0000560899955f1a in DPMSCloseDownExtension (e=<optimized out>) at dpms.c:429
+#5  0x00005608998bbe5e in CloseDownExtensions () at extension.c:201
+#6  0x00005608998ac28e in dix_main (argc=1, argv=0x7ffc9f329d98, envp=<optimized out>) at main.c:285
+#7  0x0000560899895cdf in main (argc=<optimized out>, argv=<optimized out>, envp=<optimized out>) at stubmain.c:34
+
+--- a/src/common_init.c	2014-09-14 03:17:38.628195344 +0400
++++ b/src/common_init.c	2014-09-14 03:19:31.402246351 +0400
+@@ -36,6 +36,7 @@
+ #include "pciaccess_private.h"
+ 
+ _pci_hidden struct pci_system * pci_sys;
++static int pci_sys_refcnt = 0;
+ 
+ /**
+  * Initialize the PCI subsystem for access.
+@@ -52,6 +53,11 @@ pci_system_init( void )
+ {
+     int err = ENOSYS;
+ 
++    if ( pci_sys_refcnt > 0 ) {
++       pci_sys_refcnt++;
++       return 0;
++    }
++
+ #ifdef __linux__
+     err = pci_system_linux_sysfs_create();
+ #elif defined(__FreeBSD__) || defined(__FreeBSD_kernel__) || defined(__DragonFly__)
+@@ -66,6 +72,10 @@ pci_system_init( void )
+     err = pci_system_x86_create();
+ #endif
+ 
++    if ( pci_sys ) {
++	pci_sys_refcnt = 1;
++    }
++
+     return err;
+ }
+ 
+@@ -91,6 +101,9 @@ pci_system_cleanup( void )
+ 
+     if ( pci_sys == NULL ) {
+ 	return;
++    } else if ( pci_sys_refcnt > 1 ) {
++	pci_sys_refcnt--;
++	return;
+     }
+ 
+     pci_io_cleanup();
+@@ -123,4 +136,5 @@ pci_system_cleanup( void )
+ 
+     free( pci_sys );
+     pci_sys = NULL;
++    pci_sys_refcnt = 0;
+ }
+
