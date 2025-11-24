@@ -73,10 +73,12 @@ done
 -e usb/host -e usb-common -e usb-storage -e firewire-ohci -e sbp2 -e uas -e thunderbolt\.
 -e [ex]hci-[ph][c][id] -e i2c-hid -e hid-generic -e hid-multitouch
 -e hid-apple[^i] -e hid-cherry -e hid-microsoft -e hyperv-keyboard
--e cpufreq/[^_]\+$ -e hwmon.*temp -e /rtc/ -e input-leds -e /ast/ -e /bochs -e msm
+-e cpufreq/[^_]\+$ -e hwmon.*temp -e /rtc/ -e input-leds
+-e simpledrm -e /ast/ -e /bochs -e msm
 -e phy.*.pcie -e tcsrcc.x1e80100 -e qcom -e leds_qcom_lpg -e pwm_bl -e qrtr
 -e pmic_glink_altmode -e gpio_sbu_mux -e phy_qcom_qmp_combo -e gpucc_sc8280xp
--e dispcc_sc8280xp -e phy_qcom_edp -e panel_edp -e typec -e i2c_hid_of -e ufshcd"
+-e dispcc_sc8280xp -e phy_qcom_edp -e panel_edp -e typec -e i2c_hid_of -e ufshcd
+-e dw-axi-dmac"
 
 [ "$network" ] && filter="$filter -e '/ipv4\.' -e '/ipv6\.' -e ethernet
 -e aqc111 -e asix -e ax88179_178a -e cdc_ether -e /cdc_ncm -e cx82310_eth -e r8153_ecm -e rtl8150 -e r8152"
