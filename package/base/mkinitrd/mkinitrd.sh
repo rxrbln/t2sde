@@ -64,9 +64,9 @@ done
 # -e ps3vram -e net/phy
 [ -z "$minimal" ] && filter="$filter -e reiserfs -e btrfs -e /jfs -e /xfs -e jffs2
 -e /udf -e overlayfs -e ntfs -e /fat -e /hfs -e floppy -e efivarfs -e watchdog
--e pci/controller -e /ata/ -e /scsi/ -e /fusion/ -e /sdhci/ -e nvme/host -e /mmc/
+-e pci/controller -e /ata/ -e /scsi/ -e /fusion/ -e nvme/host -e mmc/host -e mmc_block
 -e virtio.\(blk\|scsi\|net\|console\|input\|gpu\|pci\) -e ps3disk -e drivers/pcmcia
--e /nvme.ko -e pci-host-generic -e virtio_pci_.*_dev -e sunvdc 
+-e /nvme.ko -e pci-host-generic -e virtio_pci_.*_dev -e sunvdc
 -e dm-mod -e dm-raid -e md/raid -e dm/mirror -e dm/linear -e dm-crypt -e dm-cache
 -e /aes -e /sha -e /blake -e /cbc -e /ecb -e xts
 -e nls_cp437 -e nls_iso8859-1 -e nls_utf8
@@ -78,7 +78,7 @@ done
 -e phy.*.pcie -e tcsrcc.x1e80100 -e qcom -e leds_qcom_lpg -e pwm_bl -e qrtr
 -e pmic_glink_altmode -e gpio_sbu_mux -e phy_qcom_qmp_combo -e gpucc_sc8280xp
 -e dispcc_sc8280xp -e phy_qcom_edp -e panel_edp -e typec -e i2c_hid_of -e ufshcd
--e dw-axi-dmac"
+-e dw-axi-dmac -e gpio-regulator"
 
 [ "$network" ] && filter="$filter -e '/ipv4\.' -e '/ipv6\.' -e ethernet
 -e aqc111 -e asix -e ax88179_178a -e cdc_ether -e /cdc_ncm -e cx82310_eth -e r8153_ecm -e rtl8150 -e r8152"
