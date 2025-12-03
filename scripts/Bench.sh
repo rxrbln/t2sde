@@ -120,7 +120,7 @@ reftime=$(ls build/default-*/TOOLCHAIN/reftime 2>/dev/null || true)
 #fi
 
 built=
-for p in lua bash binutils; do
+for p in lua lua bash binutils; do
 	scripts/Emerge-Pkg -optional-deps=no -f $p
 	bt=$(get_build_time $p)
 	built="$p $built"
