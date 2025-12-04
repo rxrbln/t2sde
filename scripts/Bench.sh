@@ -89,7 +89,7 @@ get_signature() {
 	local lto=$(get_cfg_val SDECFG_LTO)
 	[ "$lto" = 1 ] && opt="$opt, LTO"
 
-	findmnt / | grep -q " nfs" && opt="$opt, nfsroot"
+	[ "$nfsroot" ] && opt="$opt, nfsroot"
 	local tmpfs=$(get_cfg_val SDECFG_TMPFS_MAX_SIZE)
  	[ "$tmpfs" ] && opt="$opt, tmpfs[$tmpfs]"
 
@@ -101,6 +101,8 @@ get_signature() {
 
 sys=$(get_system)
 [ -z "$sys" ] && echo "No system ID" && exit 1
+nfsroot=
+findmnt / | grep -q " nfs" && nfsroot=1
 
 echo "$sys"
 
@@ -120,7 +122,7 @@ reftime=$(ls build/default-*/TOOLCHAIN/reftime 2>/dev/null || true)
 #fi
 
 built=
-for p in lua lua bash binutils; do
+for p in ${nfsroot:+lua} lua bash binutils; do
 	[ "$p" = lua ] && built= # reset to hide 1st cache warmup
 	scripts/Emerge-Pkg -optional-deps=no -f $p
 	bt=$(get_build_time $p)
