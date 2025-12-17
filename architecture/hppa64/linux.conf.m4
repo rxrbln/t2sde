@@ -51,3 +51,6 @@ dnl gcc-13.2 ICE
 
 dnl "__multi3" [fs/bcachefs/bcachefs.ko] undefined!
 # CONFIG_BCACHEFS_FS is not set
+
+dnl fails to compile static assertion failed
+# CONFIG_IDPF is not set
