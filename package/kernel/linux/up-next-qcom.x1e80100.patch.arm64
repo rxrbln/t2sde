@@ -199,9 +199,9 @@ index 87555a119d94..3a652c3da52c 100644
  #include <dt-bindings/clock/qcom,sc8280xp-camcc.h>
  #include <dt-bindings/clock/qcom,sc8280xp-lpasscc.h>
 +#include <dt-bindings/clock/qcom,sm8350-videocc.h>
+ #include <dt-bindings/dma/qcom-gpi.h>
  #include <dt-bindings/interconnect/qcom,osm-l3.h>
  #include <dt-bindings/interconnect/qcom,sc8280xp.h>
- #include <dt-bindings/interrupt-controller/arm-gic.h>
 @@ -690,6 +691,11 @@ reserved-region@85b00000 {
  			no-map;
  		};
@@ -332,173 +332,6 @@ index 06f42875702f..c664510d2b2a 100644
  		if (!(pad->flags & MEDIA_PAD_FL_SINK))
  			return NULL;
  
-diff --git a/drivers/media/platform/qcom/venus/core.c b/drivers/media/platform/qcom/venus/core.c
-index d305d74bb152..e73f7c88fa91 100644
---- a/drivers/media/platform/qcom/venus/core.c
-+++ b/drivers/media/platform/qcom/venus/core.c
-@@ -393,6 +393,15 @@ static int venus_probe(struct platform_device *pdev)
- 	if (IS_ERR(core->cpucfg_path))
- 		return PTR_ERR(core->cpucfg_path);
- 
-+	core->llcc_path = devm_of_icc_get(dev, "video-llcc");
-+	if (IS_ERR(core->llcc_path)) {
-+		/* LLCC path is optional */
-+		if (PTR_ERR(core->llcc_path) == -ENODATA)
-+			core->llcc_path = NULL;
-+		else
-+			return PTR_ERR(core->llcc_path);
-+	}
-+
- 	core->irq = platform_get_irq(pdev, 0);
- 	if (core->irq < 0)
- 		return core->irq;
-@@ -581,12 +590,18 @@ static __maybe_unused int venus_runtime_suspend(struct device *dev)
- 	if (ret)
- 		goto err_cpucfg_path;
- 
-+	ret = icc_set_bw(core->llcc_path, 0, 0);
-+	if (ret)
-+		goto err_llcc_path;
-+
- 	ret = icc_set_bw(core->video_path, 0, 0);
- 	if (ret)
- 		goto err_video_path;
- 
- 	return ret;
- 
-+err_llcc_path:
-+	icc_set_bw(core->video_path, kbps_to_icc(20000), 0);
- err_video_path:
- 	icc_set_bw(core->cpucfg_path, kbps_to_icc(1000), 0);
- err_cpucfg_path:
-@@ -626,6 +641,10 @@ static __maybe_unused int venus_runtime_resume(struct device *dev)
- 	if (ret)
- 		return ret;
- 
-+	ret = icc_set_bw(core->llcc_path, kbps_to_icc(20000), 0);
-+	if (ret)
-+		return ret;
-+
- 	ret = icc_set_bw(core->cpucfg_path, kbps_to_icc(1000), 0);
- 	if (ret)
- 		return ret;
-@@ -993,6 +1012,44 @@ static const struct venus_resources sm8250_res = {
- 	.enc_nodename = "video-encoder",
- };
- 
-+static const struct reg_val sm8350_reg_preset[] = {
-+	{ 0xb0088, 0, 0x11 },
-+};
-+
-+static const struct venus_resources sm8350_res = {
-+	.freq_tbl = sm8250_freq_table,
-+	.freq_tbl_size = ARRAY_SIZE(sm8250_freq_table),
-+	.reg_tbl = sm8350_reg_preset,
-+	.reg_tbl_size = ARRAY_SIZE(sm8350_reg_preset),
-+	.bw_tbl_enc = sm8250_bw_table_enc,
-+	.bw_tbl_enc_size = ARRAY_SIZE(sm8250_bw_table_enc),
-+	.bw_tbl_dec = sm8250_bw_table_dec,
-+	.bw_tbl_dec_size = ARRAY_SIZE(sm8250_bw_table_dec),
-+	.clks = { "core", "iface" },
-+	.clks_num = 2,
-+	.resets = { "core" },
-+	.resets_num = 1,
-+	.vcodec0_clks = { "vcodec0_core" },
-+	.vcodec_clks_num = 1,
-+	.vcodec_pmdomains = (const char *[]) { "venus", "vcodec0" },
-+	.vcodec_pmdomains_num = 2,
-+	.opp_pmdomain = (const char *[]) { "mx", NULL },
-+	.vcodec_num = 1,
-+	.max_load = 7833600, /* 7680x4320@60fps */
-+	.hfi_version = HFI_VERSION_6XX,
-+	.vpu_version = VPU_VERSION_IRIS2,
-+	.num_vpp_pipes = 4,
-+	.vmem_id = VIDC_RESOURCE_NONE,
-+	.vmem_size = 0,
-+	.vmem_addr = 0,
-+	.dma_mask = GENMASK(31, 29) - 1,
-+	.cp_start = 0,
-+	.cp_size = 0x25800000,
-+	.cp_nonpixel_start = 0x1000000,
-+	.cp_nonpixel_size = 0x24800000,
-+	.fwname = "qcom/vpu-2.0/venus.mbn",
-+};
-+
- static const struct freq_tbl sc7280_freq_table[] = {
- 	{ 0, 460000000 },
- 	{ 0, 424000000 },
-@@ -1057,16 +1114,62 @@ static const struct venus_resources sc7280_res = {
- 	.enc_nodename = "video-encoder",
- };
- 
-+static const struct freq_tbl sc8280xp_freq_table[] = {
-+	{ 0, 239999999 },
-+	{ 0, 338000000 },
-+	{ 0, 366000000 },
-+	{ 0, 444000000 },
-+	{ 0, 533000000 },
-+	{ 0, 560000000 },
-+};
-+
-+static const struct venus_resources sc8280xp_res = {
-+	.freq_tbl = sc8280xp_freq_table,
-+	.freq_tbl_size = ARRAY_SIZE(sc8280xp_freq_table),
-+	.reg_tbl = sm8350_reg_preset,
-+	.reg_tbl_size = ARRAY_SIZE(sm8350_reg_preset),
-+	.bw_tbl_enc = sm8250_bw_table_enc,
-+	.bw_tbl_enc_size = ARRAY_SIZE(sm8250_bw_table_enc),
-+	.bw_tbl_dec = sm8250_bw_table_dec,
-+	.bw_tbl_dec_size = ARRAY_SIZE(sm8250_bw_table_dec),
-+	.clks = { "core", "iface" },
-+	.clks_num = 2,
-+	.resets = { "core" },
-+	.resets_num = 1,
-+	.vcodec0_clks = { "vcodec0_core" },
-+	.vcodec_clks_num = 1,
-+	.vcodec_pmdomains = (const char *[]) { "venus", "vcodec0" },
-+	.vcodec_pmdomains_num = 2,
-+	.opp_pmdomain = (const char *[]) { "mx", NULL },
-+	.vcodec_num = 1,
-+	.max_load = 7833600, /* 7680x4320@60fps */
-+	.hfi_version = HFI_VERSION_6XX,
-+	.vpu_version = VPU_VERSION_IRIS2,
-+	.num_vpp_pipes = 4,
-+	.vmem_id = VIDC_RESOURCE_NONE,
-+	.vmem_size = 0,
-+	.vmem_addr = 0,
-+	.dma_mask = GENMASK(31, 29) - 1,
-+	.cp_start = 0,
-+	.cp_size = 0x25800000,
-+	.cp_nonpixel_start = 0x1000000,
-+	.cp_nonpixel_size = 0x24800000,
-+	.fwname = "qcom/vpu-2.0/venus.mbn",
-+};
-+
-+
- static const struct of_device_id venus_dt_match[] = {
--	{ .compatible = "qcom,msm8916-venus", .data = &msm8916_res, },
--	{ .compatible = "qcom,msm8996-venus", .data = &msm8996_res, },
--	{ .compatible = "qcom,msm8998-venus", .data = &msm8998_res, },
--	{ .compatible = "qcom,sdm660-venus", .data = &sdm660_res, },
--	{ .compatible = "qcom,sdm845-venus", .data = &sdm845_res, },
--	{ .compatible = "qcom,sdm845-venus-v2", .data = &sdm845_res_v2, },
--	{ .compatible = "qcom,sc7180-venus", .data = &sc7180_res, },
--	{ .compatible = "qcom,sc7280-venus", .data = &sc7280_res, },
--	{ .compatible = "qcom,sm8250-venus", .data = &sm8250_res, },
-+	{ .compatible = "qcom,msm8916-venus", .data = &msm8916_res },
-+	{ .compatible = "qcom,msm8996-venus", .data = &msm8996_res },
-+	{ .compatible = "qcom,msm8998-venus", .data = &msm8998_res },
-+	{ .compatible = "qcom,sdm660-venus", .data = &sdm660_res },
-+	{ .compatible = "qcom,sdm845-venus", .data = &sdm845_res },
-+	{ .compatible = "qcom,sdm845-venus-v2", .data = &sdm845_res_v2 },
-+	{ .compatible = "qcom,sc7180-venus", .data = &sc7180_res },
-+	{ .compatible = "qcom,sc7280-venus", .data = &sc7280_res },
-+	{ .compatible = "qcom,sc8280xp-venus", .data = &sc8280xp_res },
-+	{ .compatible = "qcom,sm8250-venus", .data = &sm8250_res },
-+	{ .compatible = "qcom,sm8350-venus", .data = &sm8350_res },
- 	{ }
- };
- MODULE_DEVICE_TABLE(of, venus_dt_match);
 diff --git a/drivers/media/platform/qcom/venus/core.h b/drivers/media/platform/qcom/venus/core.h
 index b412e0c5515a..868318d65c42 100644
 --- a/drivers/media/platform/qcom/venus/core.h
@@ -600,9 +433,9 @@ index c789e3f85655..33a5167090b5 100644
 +#include <linux/module.h>
 +#include <linux/notifier.h>
  #include <linux/of.h>
+ #include <linux/of_pci.h>
  #include <linux/pci.h>
- #include <linux/pm_opp.h>
-@@ -244,7 +246,6 @@ struct qcom_pcie_ops {
+@@ -247,7 +249,6 @@
  	int (*get_resources)(struct qcom_pcie *pcie);
  	int (*init)(struct qcom_pcie *pcie);
  	int (*post_init)(struct qcom_pcie *pcie);
@@ -610,7 +443,7 @@ index c789e3f85655..33a5167090b5 100644
  	void (*deinit)(struct qcom_pcie *pcie);
  	void (*ltssm_enable)(struct qcom_pcie *pcie);
  	int (*config_sid)(struct qcom_pcie *pcie);
-@@ -274,6 +275,7 @@ struct qcom_pcie {
+@@ -282,6 +283,7 @@
  	struct icc_path *icc_cpu;
  	const struct qcom_pcie_cfg *cfg;
  	struct dentry *debugfs;
@@ -618,7 +451,7 @@ index c789e3f85655..33a5167090b5 100644
  	struct list_head ports;
  	bool suspended;
  	bool use_pm_opp;
-@@ -1016,25 +1018,6 @@ static int qcom_pcie_post_init_2_7_0(struct qcom_pcie *pcie)
+@@ -1039,25 +1041,6 @@
  	return 0;
  }
  
@@ -644,7 +477,7 @@ index c789e3f85655..33a5167090b5 100644
  static void qcom_pcie_deinit_2_7_0(struct qcom_pcie *pcie)
  {
  	struct qcom_pcie_resources_2_7_0 *res = &pcie->res.v2_7_0;
-@@ -1285,19 +1268,9 @@ static void qcom_pcie_host_deinit(struct dw_pcie_rp *pp)
+@@ -1332,19 +1315,9 @@
  	pcie->cfg->ops->deinit(pcie);
  }
  
@@ -664,7 +497,7 @@ index c789e3f85655..33a5167090b5 100644
  };
  
  /* Qcom IP rev.: 2.1.0	Synopsys IP rev.: 4.01a */
-@@ -1359,7 +1332,6 @@ static const struct qcom_pcie_ops ops_1_9_0 = {
+@@ -1406,7 +1379,6 @@
  	.get_resources = qcom_pcie_get_resources_2_7_0,
  	.init = qcom_pcie_init_2_7_0,
  	.post_init = qcom_pcie_post_init_2_7_0,
@@ -672,7 +505,7 @@ index c789e3f85655..33a5167090b5 100644
  	.deinit = qcom_pcie_deinit_2_7_0,
  	.ltssm_enable = qcom_pcie_2_3_2_ltssm_enable,
  	.config_sid = qcom_pcie_config_sid_1_9_0,
-@@ -1370,7 +1342,6 @@ static const struct qcom_pcie_ops ops_1_21_0 = {
+@@ -1417,7 +1389,6 @@
  	.get_resources = qcom_pcie_get_resources_2_7_0,
  	.init = qcom_pcie_init_2_7_0,
  	.post_init = qcom_pcie_post_init_2_7_0,
@@ -680,8 +513,8 @@ index c789e3f85655..33a5167090b5 100644
  	.deinit = qcom_pcie_deinit_2_7_0,
  	.ltssm_enable = qcom_pcie_2_3_2_ltssm_enable,
  };
-@@ -1579,6 +1550,38 @@ static irqreturn_t qcom_pcie_global_irq_thread(int irq, void *data)
- 	return IRQ_HANDLED;
+@@ -1764,6 +1735,38 @@
+ 	return 0;
  }
  
 +static int qcom_pcie_enable_aspm(struct pci_dev *pdev)
@@ -719,7 +552,7 @@ index c789e3f85655..33a5167090b5 100644
  static int qcom_pcie_probe(struct platform_device *pdev)
  {
  	const struct qcom_pcie_cfg *pcie_cfg;
-@@ -1709,10 +1712,15 @@ static int qcom_pcie_probe(struct platform_device *pdev)
+@@ -1931,10 +1934,15 @@
  	if (irq > 0)
  		pp->use_linkup_irq = true;
  
@@ -736,22 +569,23 @@ index c789e3f85655..33a5167090b5 100644
  	}
  
  	name = devm_kasprintf(dev, GFP_KERNEL, "qcom_pcie_global_irq%d",
-@@ -1745,6 +1753,8 @@ static int qcom_pcie_probe(struct platform_device *pdev)
+@@ -1967,6 +1975,8 @@
  
  err_host_deinit:
  	dw_pcie_host_deinit(pp);
 +err_unregister_notifier:
 +	bus_unregister_notifier(&pci_bus_type, &pcie->nb);
  err_phy_exit:
- 	phy_exit(pcie->phy);
- err_pm_runtime_put:
-@@ -1754,6 +1764,23 @@ static int qcom_pcie_probe(struct platform_device *pdev)
+ 	list_for_each_entry_safe(port, tmp, &pcie->ports, list) {
+ 		phy_exit(port->phy);
+@@ -1979,6 +1989,27 @@
  	return ret;
  }
  
 +static void qcom_pcie_remove(struct platform_device *pdev)
 +{
 +	struct qcom_pcie *pcie = platform_get_drvdata(pdev);
++	struct qcom_pcie_port *port, *tmp;
 +	struct device *dev = &pdev->dev;
 +
 +	qcom_pcie_deinit_debugfs(pcie);
@@ -760,7 +594,10 @@ index c789e3f85655..33a5167090b5 100644
 +
 +	bus_unregister_notifier(&pci_bus_type, &pcie->nb);
 +
-+	phy_exit(pcie->phy);
++	list_for_each_entry_safe(port, tmp, &pcie->ports, list) {
++		phy_exit(port->phy);
++		list_del(&port->list);
++	}
 +
 +	pm_runtime_put_sync(dev);
 +	pm_runtime_disable(dev);
@@ -768,8 +605,8 @@ index c789e3f85655..33a5167090b5 100644
 +
  static int qcom_pcie_suspend_noirq(struct device *dev)
  {
- 	struct qcom_pcie *pcie = dev_get_drvdata(dev);
-@@ -1865,6 +1892,7 @@ static const struct of_device_id qcom_pcie_match[] = {
+ 	struct qcom_pcie *pcie;
+@@ -2099,6 +2130,7 @@
  	{ .compatible = "qcom,pcie-x1e80100", .data = &cfg_sc8280xp },
  	{ }
  };
@@ -777,7 +614,7 @@ index c789e3f85655..33a5167090b5 100644
  
  static void qcom_fixup_class(struct pci_dev *dev)
  {
-@@ -1884,12 +1912,16 @@ static const struct dev_pm_ops qcom_pcie_pm_ops = {
+@@ -2118,12 +2150,16 @@
  
  static struct platform_driver qcom_pcie_driver = {
  	.probe = qcom_pcie_probe,
