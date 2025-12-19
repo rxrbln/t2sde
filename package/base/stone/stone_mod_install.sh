@@ -288,30 +288,31 @@ disk_partition() {
 	local typ=$2
 
 	# sizes in MB
-	local size=$(($(blockdev --getsz $dev) / 2 / 1024))
-	si=0
-	for p in $dev[0-9]*; do
-		[ -e $p ] || continue
-		size=$((size - $(blockdev --getsz $p) / 2 / 1024))
-		# determine last used partition, too
-		local i=${p#$dev}
-		[ $i -gt $si ] && si=$i
-	done
+	local size=$(($(blockdev --getsz $dev) / 2048))
+	local si=0 # start-index
+
+	# free space, index and size, extract si from prev part, as parted prints 1 for all free
+	local fsize=$(parted -sm $dev "unit s print free" | grep '^[0-9]' | grep free -B 1 | tail -2)
+	if [ ! "$fsize" ]; then
+		fsize=0
+	else
+		si=${fsize%%:*} fsize=${fsize%s:*} # split
+		fsize=$((${fsize##*:} / 2048))
+	fi
 
 	local cmd="gui_menu part 'Partition $dev bootable for this platform?'"
-
 	cmd="$cmd 'Erasing all data' 'si=0'"
-	# TODO: check patform is efi and type is GPT?
-	[ $si -gt 0 -a $size -gt 4096 ] &&
-		cmd="$cmd 'Adding partitions in free space' si=$si"
+	# TODO: check platform is efi and type is GPT?
+	[ $si -gt 0 -a $fsize -gt 4096 ] &&
+		cmd="$cmd 'Adding partitions in free space' 'si=$si; size=$fsize'"
 
 	eval $cmd || return
 
 	# if re-partition: reset size to all
-	[ "$si" = 0 ] && size=$(($(blockdev --getsz $dev) / 2 / 1024))
+	[ "$si" = 0 ] && size=$(($(blockdev --getsz $dev) / 2048))
 
 	# how much of free space to use?
-	gui_input "How many megabytes to allocated for the installation:" "$size" _size
+	gui_input "How many megabytes to allocate for the installation:" "$size" _size
 	[ "$_size" -lt "$size" ] && size=$_size
 
 	# swap based on RAM for suspend-to-disk
@@ -332,11 +333,10 @@ disk_partition() {
 
 	case $platform in
 	    alpha)
-		fdisk="parted -f"
+		fdisk="parted -sf"
 		fs+=("${dev}2 $any /")
 		fs+=("${dev}1 ext3 /boot")
 		script+=("mklabel bsd
-y
 mkpart 2048s ${boot}m
 mkpart ${boot}m $(($size - $boot - $_swap))m")
 
@@ -393,16 +393,28 @@ size=$((size - _swap))m, type=83")
 		    script+=("type=82") fs+=("${dev}3 swap")
 		;;
 	    ppc*PowerMac)
-		fdisk="parted -f"
-		fs+=("${dev}3 $any /")
-		script+=("mklabel mac
-y
-mkpart bootstrap 1m 4m
-toggle 2 boot
-mkpart linux 4m $(($size - $_swap))m")
+		fdisk="parted -sf"
+		# precisely partition in sectors
+		local lasts
+		# reformat with fresh Apple partition?
+		if [ $si = 0 ]; then
+			si=1 # Apple partition
+			lasts=64
+			script+=("mklabel mac")
+		else
+			lasts=$(parted -ms $dev "unit s print free" | cut -d : -f 2 | tail -1)
+			lasts=${lasts%s} 
+		fi
+
+		script+=("mkpart bootstrap $((lasts))s $((lasts + 4096*2))s")
+		script+=("toggle $((++si)) boot")
+		lasts=$((lasts + 4096*2 + 1))
+
+		script+=("mkpart linux $((lasts))s $((lasts / 2048 + size - _swap))MiB") fs+=("${dev}$((++si)) $any /")
+		lasts=$((lasts / 2048 + size - _swap))
 
 		[ $_swap != 0 ] &&
-		    script+=("mkpart swap $(($size - $_swap))m 100%") fs+=("${dev}4 swap")
+		    script+=("mkpart swap $((lasts))MiB $((lasts + _swap))MiB") fs+=("${dev}$((++si)) swap")
 		;;
 	    sparc*-gpt|ppc*pSeries)
 		script+=("label:gpt")
@@ -458,11 +470,17 @@ start=0, type=W")
 		wipefs --all $dev
 		dd if=/dev/zero of=$dev seek=1 count=1 # mostly for Apple PowerPac parts
 	else
-		fdisk="$fdisk -a"
-		script=("${script[@]:1}") # removed 1st "label:*"
+		if [[ "$fdisk" != parted* ]]; then
+			fdisk="$fdisk -a"
+			script=("${script[@]:1}") # removed 1st "label:*"
+		fi
 	fi
 
-	join $'\n' "${script[@]}" | $fdisk $dev
+	if [[ "$fdisk" != parted* ]]; then
+		join $'\n' "${script[@]}" | $fdisk $dev
+	else
+		$fdisk $dev -- $(join ' ' "${script[@]}")
+	fi
 
 	# postscript fixup, due less than stellar sfdisk
 	for cmd in "${postscript[@]}"; do
