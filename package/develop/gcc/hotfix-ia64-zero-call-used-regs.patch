@@ -1,0 +1,140 @@
+# --- T2-COPYRIGHT-BEGIN ---
+# t2/package/*/gcc/hotfix-ia64-zero-call-used-regs.patch
+# Copyright (C) 2025 The T2 SDE Project
+# SPDX-License-Identifier: GPL-2.0 or patched project license
+# --- T2-COPYRIGHT-END ---
+
+From ae5dbce1103ca9dae5560b88d404e2bf710bc195 Mon Sep 17 00:00:00 2001
+From: Tomas Glozar <tglozar@gmail.com>
+Date: Sat, 8 Nov 2025 09:55:23 +0100
+Subject: [PATCH 1/2] ia64: Fix zero_call_used_regs for PRs [PR121535]
+
+ia64 uses default_zero_call_used_regs(), which uses emit_move_insn()
+to zero out registers. ia64 predicate registers use BImode, which is not
+supported by emit_move_insn().
+
+Implement ia64_zero_call_used_regs() to zero PRs by manually emitting
+a CCImode move. default_zero_call_used_regs() is then called to handle
+the remaining registers.
+
+	PR target/121535
+
+gcc/ChangeLog:
+
+	* config/ia64/ia64.cc (TARGET_ZERO_CALL_USED_REGS): Override
+	function with target-specific one.
+	(struct gcc_target): Move to end of file.
+	(ia64_zero_call_used_regs): Add target-specific function.
+
+gcc/testsuite/ChangeLog:
+
+	* gcc.target/ia64/pr121535.c: New test.
+
+Signed-off-by: Tomas Glozar <tglozar@gmail.com>
+---
+ gcc/config/ia64/ia64.cc                  | 55 +++++++++++++++++++++++-
+ gcc/testsuite/gcc.target/ia64/pr121535.c |  7 +++
+ 2 files changed, 60 insertions(+), 2 deletions(-)
+ create mode 100644 gcc/testsuite/gcc.target/ia64/pr121535.c
+
+diff --git a/gcc/config/ia64/ia64.cc b/gcc/config/ia64/ia64.cc
+index 8dab9279fe7..886d5a1055a 100644
+--- a/gcc/config/ia64/ia64.cc
++++ b/gcc/config/ia64/ia64.cc
+@@ -578,6 +578,9 @@ static const scoped_attribute_specs *const ia64_attribute_table[] =
+ #undef TARGET_FUNCTION_VALUE_REGNO_P
+ #define TARGET_FUNCTION_VALUE_REGNO_P ia64_function_value_regno_p
+ 
++#undef TARGET_ZERO_CALL_USED_REGS
++#define TARGET_ZERO_CALL_USED_REGS ia64_zero_call_used_regs
++
+ #undef TARGET_STRUCT_VALUE_RTX
+ #define TARGET_STRUCT_VALUE_RTX ia64_struct_value_rtx
+ #undef TARGET_RETURN_IN_MEMORY
+@@ -688,8 +691,6 @@ static const scoped_attribute_specs *const ia64_attribute_table[] =
+ 
+ #undef TARGET_DOCUMENTATION_NAME
+ #define TARGET_DOCUMENTATION_NAME "IA-64"
+-
+-struct gcc_target targetm = TARGET_INITIALIZER;
+ 
+ /* Returns TRUE iff the target attribute indicated by ATTR_ID takes a plain
+    identifier as an argument, so the front end shouldn't look it up.  */
+@@ -5330,6 +5331,54 @@ ia64_function_value_regno_p (const unsigned int regno)
+           || (regno >= FR_RET_FIRST && regno <= FR_RET_LAST));
+ }
+ 
++/* TARGET_ZERO_CALL_USED_REGS.  */
++/* Generate a sequence of instructions that zero registers specified by
++   NEED_ZEROED_HARDREGS.  Return the ZEROED_HARDREGS that are actually
++   zeroed.  */
++static HARD_REG_SET
++ia64_zero_call_used_regs (HARD_REG_SET need_zeroed_hardregs)
++{
++  HARD_REG_SET nonpredicate, failed;
++
++  CLEAR_HARD_REG_SET (nonpredicate);
++  CLEAR_HARD_REG_SET (failed);
++
++  /* Mark all non-predicate registers.  */
++  for (int regno = 0; regno < FIRST_PSEUDO_REGISTER; ++regno)
++    if (TEST_HARD_REG_BIT (need_zeroed_hardregs, regno)
++	&& !PR_REGNO_P (regno))
++      SET_HARD_REG_BIT (nonpredicate, regno);
++
++  /* Let the generic helper emit zeroing for the remaining hard regs.
++     It returns the subset it actually managed to zero.  */
++  if (!hard_reg_set_empty_p (nonpredicate))
++    failed = default_zero_call_used_regs (nonpredicate);
++
++  /* Finally, emit zeroing of predicate registers.  */
++  for (unsigned int regno = 0; regno < FIRST_PSEUDO_REGISTER; regno++)
++    if (TEST_HARD_REG_BIT (need_zeroed_hardregs, regno)
++	&& PR_REGNO_P (regno))
++      {
++	rtx_insn *last_insn = get_last_insn ();
++	/* Prepare PR0 register, which is hardwired to 1 */
++	rtx zero = gen_rtx_REG (CCImode, PR_REG (0));
++	rtx regno_rtx = gen_rtx_REG (CCImode, regno);
++	enum insn_code code = optab_handler (mov_optab, CCImode);
++
++	gcc_assert (code != CODE_FOR_nothing);
++
++	rtx_insn *insn = emit_insn (GEN_FCN (code) (regno_rtx, zero));
++
++	if (!valid_insn_p (insn))
++	  {
++	    SET_HARD_REG_BIT (failed, regno);
++	    delete_insns_since (last_insn);
++	  }
++      }
++
++  return failed;
++}
++
+ /* This is called from dwarf2out.cc via TARGET_ASM_OUTPUT_DWARF_DTPREL.
+    We need to emit DTP-relative relocations.  */
+ 
+@@ -11960,4 +12009,6 @@ ia64_can_change_mode_class (machine_mode from, machine_mode to,
+   return true;
+ }
+ 
++struct gcc_target targetm = TARGET_INITIALIZER;
++
+ #include "gt-ia64.h"
+diff --git a/gcc/testsuite/gcc.target/ia64/pr121535.c b/gcc/testsuite/gcc.target/ia64/pr121535.c
+new file mode 100644
+index 00000000000..134120c019a
+--- /dev/null
++++ b/gcc/testsuite/gcc.target/ia64/pr121535.c
+@@ -0,0 +1,7 @@
++/* { dg-do compile } */
++__attribute__ ((zero_call_used_regs("used"))) int f(int x)
++{
++  if (x == 1)
++    return 0;
++  return 1;
++}
+-- 
+2.52.0
+
