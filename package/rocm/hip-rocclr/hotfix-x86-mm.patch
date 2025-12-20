@@ -4,34 +4,58 @@
 # SPDX-License-Identifier: GPL-2.0 or patched project license
 # --- T2-COPYRIGHT-END ---
 
---- clr-rocm-6.3.3/hipamd/src/hip_graph_internal.cpp.vanilla	2025-03-23 20:01:54.891492459 +0100
-+++ clr-rocm-6.3.3/hipamd/src/hip_graph_internal.cpp	2025-03-23 20:10:18.702370859 +0100
-@@ -979,9 +979,13 @@
-       address dev_ptr =
-           kernarg_graph_.back().kernarg_pool_addr_ + kernarg_graph_.back().kernarg_pool_size_;
-       auto kSentinel = *reinterpret_cast<volatile unsigned char*>(dev_ptr - 1);
+--- clr-rocm-7.1.1/hipamd/src/hip_graph_internal.cpp.vanilla	2025-12-20 16:18:31.774814438 +0100
++++ clr-rocm-7.1.1/hipamd/src/hip_graph_internal.cpp	2025-12-20 16:19:50.653567265 +0100
+@@ -1074,9 +1074,25 @@
+       
+       // Read-modify-write sequence with memory barriers
+       volatile unsigned char kSentinel = *sentinel_ptr;
 +#if defined(__i386__) || defined(__x86_64__)
        _mm_sfence();
++#elif defined(__aarch64__)
++      __asm__ __volatile__ ("\tdmb oshst" : : : "memory");
++#elif defined(__riscv64)
++      __asm__ __volatile__ ("\tfence ow, ow" : : : "memory");
++#else
++      #error "Please add support for your architecture"
 +#endif
-       *(dev_ptr - 1) = kSentinel;
+       *sentinel_ptr = kSentinel;
 +#if defined(__i386__) || defined(__x86_64__)
        _mm_mfence();
++#elif defined(__aarch64__)
++      __asm__ __volatile__ ("\tdmb oshld" : : : "memory");
++#elif defined(__riscv64)
++      __asm__ __volatile__ ("\tfence ir, ir" : : : "memory");
++#else
++      #error "Please add support for your architecture"
 +#endif
-       kSentinel = *reinterpret_cast<volatile unsigned char*>(dev_ptr - 1);
+       kSentinel = *sentinel_ptr;
+       (void)kSentinel; // Suppress unused variable warning
      }
-   }
 --- clr-rocm-7.0.0/rocclr/device/rocm/rocvirtual.cpp.vanilla	2025-09-16 20:24:47.149169562 +0200
 +++ clr-rocm-7.0.0/rocclr/device/rocm/rocvirtual.cpp	2025-09-16 20:25:58.276977569 +0200
-@@ -3555,9 +3555,13 @@
+@@ -3555,9 +3555,25 @@
          *dev().info().hdpMemFlushCntl = 1u;
          auto kSentinel = *reinterpret_cast<volatile int*>(dev().info().hdpMemFlushCntl);
        } else if (kernArgImpl == KernelArgImpl::DeviceKernelArgsReadback && argSize != 0) {
 +#if defined(__i386__) || defined(__x86_64__)
          _mm_sfence();
++#elif defined(__aarch64__)
++        __asm__ __volatile__ ("\tdmb oshst" : : : "memory");
++#elif defined(__riscv64)
++        __asm__ __volatile__ ("\tfence ow, ow" : : : "memory");
++#else
++        #error "Please add support for your architecture"
 +#endif
          *(argBuffer + argSize - 1) = *(parameters + argSize - 1);
 +#if defined(__i386__) || defined(__x86_64__)
          _mm_mfence();
++#elif defined(__aarch64__)
++        __asm__ __volatile__ ("\tdmb oshld" : : : "memory");
++#elif defined(__riscv64)
++        __asm__ __volatile__ ("\tfence ir, ir" : : : "memory");
++#else
++        #error "Please add support for your architecture"
 +#endif
          auto kSentinel = *reinterpret_cast<volatile unsigned char*>(argBuffer + argSize - 1);
        }
