@@ -477,6 +477,13 @@ create_cmake_toolchain_file() {
 EOT
 }
 
+create_setup_hs() {
+	cat <<-EOT
+import Distribution.Simple
+main = defaultMain
+EOT
+}
+
 # Abort build before actual build starts
 # (is overwritten in Build-Pkg)
 #
@@ -988,6 +995,13 @@ build_this_package() {
 					autoconf
 				fi
 			fi
+
+			# Maybe generate a Setup.hs first
+			#
+			if [ "$setuphsgen" = 1 -a ! -f Setup.hs ]; then
+				create_setup_hs > Setup.hs
+			fi
+
 			# Run configure scripts etc.
 			#
 			if [ "$runconf" = 1 ]; then
@@ -1039,6 +1053,17 @@ build_this_package() {
 				hook_eval inmake
 				eval echo "Running ${pyscript:-python} -m pip install ."
 				eval ${pyscript:-python} -m pip install --break-system-packages .
+				hook_eval postmake
+			elif [ -f Setup.*hs -a "$runsetuphs" = 1 ]; then
+				eval echo "Running runhaskell Setup configure $setuphsopt"
+				eval runhaskell Setup configure $setuphsopt
+				hook_eval premake
+				eval echo "Running runhaskell Setup build -j${SDECFG_PARALLEL}"
+				eval runhaskell Setup build -j${SDECFG_PARALLEL}
+				hook_eval inmake
+				eval echo "Running runhaskell Setup copy"
+				runhaskell Setup copy
+				runhaskell Setup register
 				hook_eval postmake
 			elif [ -f meson.build -a "$runmeson" = 1 ]; then
 				if atstage cross; then
@@ -1332,6 +1357,7 @@ init_vars_and_hooks() {
 	cargoinstopt='install --path . --root $root/$prefix --no-track --force' # -Z no-index-update
 	goconfopt='-buildmode=pie -trimpath -mod=readonly'
 	zigconfopt='--prefix $root/$prefix'
+	setuphsopt='--enable-shared --enable-debug-info --enable-executable-dynamic --disable-library-vanilla --prefix=$root/$prefix --bindir=$root$bindir --libdir=$root$libdir --libsubdir=\$compiler/site-local/\$pkgid --dynlibdir=$root$libdir --datadir=$root$datadir --docdir=$root$docdir --sysconfdir=$root$sysconfdir'
 	justopt='prefix=/$prefix'
 
 	# support both lowercase GNU and uppercase BSD conventions
@@ -1400,7 +1426,8 @@ init_vars_and_hooks() {
 	mainfunction="build_this_package"
 	runconf=1 runmake=1 runxmkmf=1 runmkpl=1 runpysetup=1 runpipinstall=0 rungpepinstall=1
 	runcmake=1 runmaven=1 runmeson=1 runninja=1 runcargo=1 runjust=1 rungo=1 runscons=1 runzig=1
-	runzef=1 autopatch=1 autoextract=1 chownsrcdir=1 nocvsinsrcdir=1 cleanconfopt=1
+	runzef=1 autopatch=1 autoextract=1 chownsrcdir=1 nocvsinsrcdir=1 cleanconfopt=1 runsetuphs=1
+	setuphsgen=0
 	patchopt="-bfp1 -z .orig"
 	createprefix=1 createdocs="" rmemptydir=""
 
