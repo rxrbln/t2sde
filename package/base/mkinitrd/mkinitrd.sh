@@ -80,8 +80,9 @@ done
 -e dispcc_sc8280xp -e phy_qcom_edp -e panel_edp -e typec -e i2c_hid_of -e ufshcd
 -e dw-axi-dmac -e gpio-regulator"
 
-[ "$network" ] && filter="$filter -e '/ipv4\.' -e '/ipv6\.' -e ethernet
--e aqc111 -e asix -e ax88179_178a -e cdc_ether -e /cdc_ncm -e cx82310_eth -e r8153_ecm -e rtl8150 -e r8152"
+[ "$network" ] && filter="$filter -e '/ipv4\.' -e '/ipv6\.' -e netconsole
+-e ethernet -e aqc111 -e asix -e ax88179_178a -e cdc_ether -e /cdc_ncm
+-e cx82310_eth -e r8153_ecm -e rtl8150 -e r8152"
 
 [ "$kernelver" ] || kernelver=`uname -r`
 [ "$moddir" ] || moddir="$root/lib/modules/$kernelver"

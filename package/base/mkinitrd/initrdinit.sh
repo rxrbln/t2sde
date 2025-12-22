@@ -30,6 +30,8 @@ mkdir -p /tmp /mnt /run /var/run
 ln -sf /proc/self/fd /dev/fd
 
 udevd &
+modules="rd.modprobe= $cmdline" modules=${modules##*rd.modprobe=} modules=${modules%% *}
+for m in ${modules//,/ }; do modprobe $m; done
 udevadm trigger --action=add
 udevadm settle
 
