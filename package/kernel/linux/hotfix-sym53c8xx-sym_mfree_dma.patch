@@ -1,0 +1,70 @@
+# --- T2-COPYRIGHT-BEGIN ---
+# t2/package/*/linux/hotfix-sym53c8xx-sym_mfree_dma.patch
+# Copyright (C) 2025 The T2 SDE Project
+# SPDX-License-Identifier: GPL-2.0 or patched project license
+# --- T2-COPYRIGHT-END ---
+
+From:   Tong Zhang <ztong0001@gmail.com>
+To:     Matthew Wilcox <willy@infradead.org>,
+        "James E.J. Bottomley" <jejb@linux.ibm.com>,
+        "Martin K. Petersen" <martin.petersen@oracle.com>,
+        linux-scsi@vger.kernel.org, linux-kernel@vger.kernel.org
+Cc:     Tong Zhang <ztong0001@gmail.com>
+Subject: [PATCH] scsi: sym53c8xx_2: Fix WARN_ON in __sym_mfree_dma
+Date:   Sun, 21 Mar 2021 01:33:48 -0400
+Message-Id: <20210321053347.312135-1-ztong0001@gmail.com>
+X-Mailer: git-send-email 2.25.1
+MIME-Version: 1.0
+Content-Transfer-Encoding: 8bit
+Precedence: bulk
+List-ID: <linux-kernel.vger.kernel.org>
+X-Mailing-List: linux-kernel@vger.kernel.org
+
+This fix is similar to b36522150e5b. The WARN_ON is triggered due to
+irq being disabled while dma_free_coherent expect it enabled.
+
+[    1.501363] WARNING: CPU: 0 PID: 179 at kernel/dma/mapping.c:467 dma_free_attrs+0x38/0x50
+[    1.503940] RIP: 0010:dma_free_attrs+0x38/0x50
+[    1.509138] Call Trace:
+[    1.509273]  ___free_dma_mem_cluster+0x60/0x90 [sym53c8xx]
+[    1.509570]  __sym_mfree+0xb2/0xd0 [sym53c8xx]
+[    1.509811]  __sym_mfree_dma+0x65/0xa0 [sym53c8xx]
+[    1.510070]  sym_hcb_free+0x8b/0x1e0 [sym53c8xx]
+[    1.510320]  sym_free_resources+0x5c/0x7e [sym53c8xx]
+[    1.510592]  sym2_probe.cold+0x3e3/0x555 [sym53c8xx]
+
+Signed-off-by: Tong Zhang <ztong0001@gmail.com>
+---
+ drivers/scsi/sym53c8xx_2/sym_malloc.c | 6 +-----
+ 1 file changed, 1 insertion(+), 5 deletions(-)
+
+diff --git a/drivers/scsi/sym53c8xx_2/sym_malloc.c b/drivers/scsi/sym53c8xx_2/sym_malloc.c
+index eb5c045c7c59..54ec7e7bf87f 100644
+--- a/drivers/scsi/sym53c8xx_2/sym_malloc.c
++++ b/drivers/scsi/sym53c8xx_2/sym_malloc.c
+@@ -321,20 +321,16 @@ void *__sym_calloc_dma(m_pool_ident_t dev_dmat, int size, char *name)
+ 
+ void __sym_mfree_dma(m_pool_ident_t dev_dmat, void *m, int size, char *name)
+ {
+-	unsigned long flags;
+ 	m_pool_p mp;
+ 
+-	spin_lock_irqsave(&sym53c8xx_lock, flags);
+ 	mp = ___get_dma_pool(dev_dmat);
+ 	if (!mp)
+-		goto out;
++		return;
+ 	__sym_mfree(mp, m, size, name);
+ #ifdef	SYM_MEM_FREE_UNUSED
+ 	if (!mp->nump)
+ 		___del_dma_pool(mp);
+ #endif
+- out:
+-	spin_unlock_irqrestore(&sym53c8xx_lock, flags);
+ }
+ 
+ /*
+-- 
+2.25.1
+
+
