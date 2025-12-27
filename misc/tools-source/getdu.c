@@ -13,6 +13,16 @@
 #include <inttypes.h>
 #include <limits.h>
 
+#ifndef PATH_MAX
+/*
+ * Some systems (e.g. GNU Hurd) do not have the concept of PATH_MAX.
+ *
+ * Set it manually in such case, the implementation is unsafe anyway.
+ * (TODO: Safe implementation of getdu parsing)
+ */
+#define PATH_MAX 4096
+#endif
+
 int main(int argc, char ** argv) {
 	uint64_t size=0;
 	struct stat st;
