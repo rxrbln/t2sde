@@ -382,10 +382,17 @@ static void addptree(int *txtpos, char *cmdtxt, int pid, int basepid)
 {
 	static char l[512] = "";
 	char *p;
+	int ppid;
 
 	if (!pid || pid == basepid) return;
 
-	addptree(txtpos, cmdtxt, pid2ppid(pid), basepid);
+	ppid = pid2ppid(pid);
+	if (pid == ppid)
+		/* On GNU Hurd, the parent of init (PID 1) is itself.
+		 * Avoid infinite recursion. */
+		return;
+
+	addptree(txtpos, cmdtxt, ppid, basepid);
 
 	p = getpname(pid);
 
