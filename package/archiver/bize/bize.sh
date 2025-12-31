@@ -6,7 +6,7 @@
 # --- T2-COPYRIGHT-END ---
 
 bize_usage() {
-	echo "usage: bize -i [-t] [-v] [-f] [-R root] package1.tar.bz2 ..." >&2
+	echo "usage: bize -i [-t] [-v] [-f] [-R root] package1.tar.* ..." >&2
 	echo "       bize -r [-t] [-v] [-f] [-R root] package1 ..." >&2
 }
 
@@ -64,9 +64,9 @@ bize_install() {
 		return
 	fi
 
-	pkg="${arch%.tar.bz2}"
+	pkg="${arch%.tar.*}"
 	if [ "$arch" = "$pkg" ]; then
-		echo "$0: $arch: not a .tar.bz2 file" >&2
+		echo "$0: $arch: not a .tar file?" >&2
 		return
 	fi
 	pkg="${pkg%-[0-9]*}"
@@ -76,7 +76,6 @@ bize_install() {
 		echo "$0: $arch: missing package name" >&2
 		return
 	fi
-	[ "${arch#-}" = "$arch" ] || arch="./$arch"
 	
 	list="$adm/flists/$pkg"
 	if [ -f "$list" ]; then
@@ -88,9 +87,9 @@ bize_install() {
 
 	$test mkdir -p$verbose "$root/"
 	if [ "$test" ]; then
-		echo "bzip2 -c -d $arch | tar $taropt -C $root/"
+		echo "zstd -d < $arch | tar $taropt -C $root/"
 	else
-		bzip2 -c -d "$arch" | tar $taropt -C "$root/"
+		zstd -d < "$arch" | tar $taropt -C "$root/"
 	fi
 }
 
@@ -124,7 +123,7 @@ bize_bundle() {
 }
 
 bize_main() {
-	local which=which file arch list="sort rm rmdir mkdir tar bzip2"
+	local which=which file arch list="sort rm rmdir mkdir tar"
 	local install remove bundle test verbose voption keep=k root=/ taropt
 
 	while [ "$1" ]; do
