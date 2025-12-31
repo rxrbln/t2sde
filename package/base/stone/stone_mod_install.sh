@@ -406,15 +406,19 @@ size=$((size - _swap))m, type=83")
 			lasts=${lasts%s} 
 		fi
 
-		script+=("mkpart bootstrap $((lasts))s $((lasts + 4096*2))s")
+		local ends=$((lasts + 4096*2 - 1))
+		script+=("mkpart bootstrap ${lasts}s ${ends}s")
 		script+=("toggle $((++si)) boot")
-		lasts=$((lasts + 4096*2 + 1))
-
-		script+=("mkpart linux $((lasts))s $((lasts / 2048 + size - _swap))MiB") fs+=("${dev}$((++si)) $any /")
-		lasts=$((lasts / 2048 + size - _swap))
+		lasts=$((++ends))
+	
+		ends=$((lasts + (size - 4 - _swap) * 2048 - 1))
+		script+=("mkpart linux ${lasts}s ${ends}s") fs+=("${dev}$((++si)) $any /")
+		lasts=$((++ends))
 
 		[ $_swap != 0 ] &&
-		    script+=("mkpart swap $((lasts))MiB $((lasts + _swap))MiB") fs+=("${dev}$((++si)) swap")
+		    ends=$((lasts + _swap * 2048 - 1))  &&
+		    script+=("mkpart swap ${lasts}s ${ends}s") fs+=("${dev}$((++si)) swap")
+set +x
 		;;
 	    sparc*-gpt|ppc*pSeries)
 		script+=("label:gpt")
@@ -429,7 +433,6 @@ size=$((size - _swap))m, type=83")
 		;;
 	    sparc*)
 		# TODO: silo vs grub2 have different requirements
-		# TODO: support sun4v-gpt
 		script+=("label:sun
 size=$((boot))m, type=83
 type=82
