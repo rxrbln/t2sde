@@ -1,56 +1,72 @@
 # --- T2-COPYRIGHT-BEGIN ---
 # t2/package/*/stone/stone_mod_gas.sh
-# Copyright (C) 2004 - 2025 The T2 SDE Project
-# Copyright (C) 1998 - 2003 ROCK Linux Project
+# Copyright (C) 2004 - 2026 The T2 SDE Project
 # SPDX-License-Identifier: GPL-2.0
 # --- T2-COPYRIGHT-END ---
 
-select_packages() {
-	local namever installed uninstalled
+# TODO: remote fget
 
-	for (( ; ; )); do
-		cmd="gui_menu gastone 'Install/Remove packages: $5
+extract() {
+    $packager -i -R $root $mnt/$id/pkgs/$pkg-$ver.tar.zst 
+}
 
-Note: any (un)installations are done immediately'"
+inst() {
+    local pkgsel=$1
 
-		installed= uninstalled=
-		for (( i=${#pkgs[@]} - 1; i >= 0; i-- )); do
-			if echo "${cats[$i]}" | grep -q -F "$5"; then
-				namever="${pkgs[$i]}-${vers[$i]}"
-				if [ -f $2/var/adm/packages/${pkgs[$i]} ]; then
-					cmd="$cmd '[*] $namever' '$packager -r -R $2 ${pkgs[$i]}'"
-					installed="$installed ${pkgs[$i]}"
-				elif [ -f "$4/$1/pkgs/$namever$ext" ]; then
-					cmd="$cmd '[ ] $namever' '$packager -i -R $2 $4/$1/pkgs/$namever$ext'"
-					uninstalled="$uninstalled $namever$ext"
-				elif [ -f "$4/$1/pkgs/${pkgs[$i]}$ext" ]; then
-					cmd="$cmd '[ ] $namever' '$packaher -i -R $2 $4/$1/pkgs/${pkgs[$i]}$ext'"
-					uninstalled="$uninstalled ${pkgs[$i]}$ext"
-				fi
-			fi
-		done
-		[ "$uninstalled$installed" ] && cmd="$cmd '' ''"
-		[ "$uninstalled" ] &&
-			cmd="$cmd 'Install all packages marked as [ ]' '(cd $4/$1/pkgs; $packager -i -R $2 $uninstalled)'"
-		[ "$installed" ] &&
-			cmd="$cmd 'Uninstall all packages marked as [*]' '$packager -r -R $2 $installed'"
+    cat $mnt/$id/pkgs/packages.db | gunzip -d |
+    while read line; do
+        if [ "${line}" = $'\004' ]; then
+                section=0
+                [ $selected = 1 ] && extract
+        elif [ "${line}" = $'\027' ]; then
+                ((++section))
+        else
+                # each 1st new section line pkg name
+                if [ $section = 0 ]; then
+                        pkg=$line
+                        selected=0
+                else
+                        if [[ $section = 1 && "$line" = "[V]"* ]]; then
+                                ver=${line#\[V\] }
+                        elif [[ $section = 1 && "$line" = "[C]"* ]]; then
+                                cat=${line#\[C\] }
+                                # TODO: iterate multiple Categories!
+                                #echo "$pkg> $cat"
 
-		eval "$cmd" || break
-	done
+                                selected=1
+                                case "$cat" in
+                                */kernel*|*/firmware*|*/boot*)
+                                        [ $pkgsel = minimal-container ] && selected=0 ;;
+                                *base/x11*)
+                                        [ $pkgsel = minimal -o $pkgsel = minimal-container ] && selected=0 ;;
+                                *base/*)
+                                        : ;;
+                                *)
+                                        [ $pkgsel = all ] || selected=0
+                                esac
+                        fi
+                fi
+        fi
+    done
 }
 
 main() {
-	if ! [ -f $4/$1/pkgs/packages.db ]; then
+	id=$1
+	root=$2
+	dev=$3
+	mnt=$4
+
+	if ! [ -f $mnt/$id/pkgs/packages.db ]; then
 		gui_message "gas: package database not accessible."
 		return
 	fi
 
-	if ! [ -d $2 ]; then
+	if ! [ -d $root ]; then
 		gui_message "gas: target directory not accessible."
 		return
 	fi
 
-	if [ $2 = "${2#/}" ]; then
+	if [ $root = "${root#/}" ]; then
 		gui_message "gas: target directory not absolute."
 		return
 	fi
@@ -61,28 +77,10 @@ main() {
 		packager=bize
 	fi
 
-	declare -a pkgs vers cats
-	local a b category
-	unset package
+	cmd="gui_menu pkgsel 'Package set to install'"
+	cmd="$cmd 'Minimal base' 'inst minimal'"
+	cmd="$cmd 'Minimal X11' 'inst minimal-xorg'"
+	cmd="$cmd 'All available' 'inst all'"
 
-	while read a b; do
-		if [ "$a" = "[C]" ]; then cats[${#pkgs[@]}]="${cats[${#pkgs[@]}]} $b"
-		elif [ "$a" = "[V]" ]; then vers[${#pkgs[@]}]="$b"
-		elif [ -z "$b" ]; then
-			pkgs[${#pkgs[@]}]="$package"
-			vers[${#pkgs[@]}]="0.0"
-			cats[${#pkgs[@]}]="all/all"
-			package="$a"
-		else
-			gui_message "gas: invalid package database input '$a $b'."
-			return
-		fi
-	done < <( gzip -d < $4/$1/pkgs/packages.db | grep "^[a-zA-Z0-9_+.-]\+$\|^\[[CV]\]")
-	[ "$package" ] && pkgs[${#pkgs[@]}]="$package"
-
-	category="gui_menu category 'Select category'"
-	for i in `echo ${cats[@]} | sed -e 's/ /\n/g' | sort -u`; do
-		category="$category $i 'select_packages $1 $2 $3 $4 $i'"
-	done
-	while eval "$category"; do : ; done
+	eval "$cmd"
 }
