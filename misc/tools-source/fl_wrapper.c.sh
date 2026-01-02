@@ -103,6 +103,8 @@ static void handle_file_access_after(const char *, const char *, struct status_t
 
 char *cmdname = "unkown";
 char wlog[PATH_MAX], rlog[PATH_MAX], filterdir[PATH_MAX];
+
+#ifndef __gnu_hurd__
 __thread char atpath[PATH_MAX];
 
 const char* getatpath(int dirfd, const char* pathname) {
@@ -126,6 +128,7 @@ const char* getatpath(int dirfd, const char* pathname) {
 
   return atpath;
 }
+#endif
 
 /* Wrapper Functions */
 EOT
@@ -168,7 +171,7 @@ $ret_type $function($p1)
 	$ret_type rc;
 	mode_t b = 0;
 
-#ifdef AT_FDCWD
+#if defined AT_FDCWD && !defined(__gnu_hurd__)
 	$atcheck
 #endif
 
@@ -235,7 +238,7 @@ $ret_type $function($p1)
 	int old_errno=errno;
 	$ret_type rc;
 
-#ifdef AT_FDCWD
+#if defined AT_FDCWD && !defined(__gnu_hurd__)
 	$atcheck
 #endif
 
