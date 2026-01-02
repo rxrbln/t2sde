@@ -8,7 +8,7 @@ cat << EOT
  * --- T2-COPYRIGHT-BEGIN ---
  * t2/misc/tools-source/fl_wrapper.c.sh
  * Copyright (C) 2006 - 2023 René Rebe <rene@exactcode.de>
- * Copyright (C) 2004 - 2025 The T2 SDE Project
+ * Copyright (C) 2004 - 2026 The T2 SDE Project
  * Copyright (C) 1998 - 2003 ROCK Linux Project
  * SPDX-License-Identifier: GPL-2.0
  * --- T2-COPYRIGHT-END ---
@@ -64,7 +64,9 @@ cat << EOT
 #include <linux/limits.h>
 #endif
 #ifndef PATH_MAX
+#ifndef __gnu_hurd__
 #warning "PATH_MAX was not defined - BUG in your system headers?"
+#endif
 #define PATH_MAX 4095
 #endif
 #include <libgen.h>
