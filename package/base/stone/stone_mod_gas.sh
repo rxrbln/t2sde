@@ -12,6 +12,7 @@ extract() {
 
 inst() {
     local pkgsel=$1
+    local section=0 selected pkg ver
 
     cat $mnt/$id/pkgs/packages.db | gunzip -d |
     while read line; do
