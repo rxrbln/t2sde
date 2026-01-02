@@ -7,7 +7,8 @@
 # TODO: remote fget
 
 extract() {
-    $packager -i -R $root $mnt/$id/pkgs/$pkg-$ver.tar.zst 
+    echo "Installing $pkg ($ver) ..."
+    $packager -i -R $root $mnt/$id/pkgs/$pkg-$ver.tar.zst
 }
 
 inst() {
