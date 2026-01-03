@@ -7,15 +7,16 @@
 # TODO: remote fget
 
 extract() {
+    ver=${ver% *}
     echo "Installing $pkg ($ver) ..."
-    $packager -i -R $root $mnt/$id/pkgs/$pkg-$ver.tar.zst
+    $packager -i -R $root $mnt/$iver/pkgs/$pkg-${ver/ /-}.$ext
 }
 
 inst() {
     local pkgsel=$1
     local section=0 selected pkg ver
 
-    cat $mnt/$id/pkgs/packages.db | gunzip -d |
+    cat $mnt/$iver/pkgs/packages.db | gunzip -d |
     while read line; do
         if [ "${line}" = $'\004' ]; then
                 section=0
@@ -53,12 +54,9 @@ inst() {
 }
 
 main() {
-	id=$1
-	root=$2
-	dev=$3
-	mnt=$4
+	local iver=$1 root=$2 dev=$3 mnt=$4
 
-	if ! [ -f $mnt/$id/pkgs/packages.db ]; then
+	if ! [ -f $mnt/$iver/pkgs/packages.db ]; then
 		gui_message "gas: package database not accessible."
 		return
 	fi
@@ -73,8 +71,7 @@ main() {
 		return
 	fi
 
-	local packager=mine
-	local ext=.tar.*
+	local packager=mine ext=tar.*
 	if type -p bize >/dev/null && ! type -p mine >/dev/null; then
 		packager=bize
 	fi
