@@ -139,6 +139,7 @@ bize_query() {
 		l) cat $(awk '$0 ~ /flists/' <<< "$files") ;;
 		m) cat $(awk '$0 ~ /md5sums/' <<< "$files") ;;
 		d) cat $(awk '$0 ~ /dependencies/' <<< "$files") ;;
+		y) md5sum --check --quiet $(awk '$0 ~ /md5sum/' <<< "$files") ;;
 	esac
 }
 
@@ -156,7 +157,7 @@ bize_main() {
 			-R) shift ; root="$1" ;;
 			-R*) root="${1#-R}" ;;
 			-b) bundle=1; remove=0 ;; # quick hack for the if install = remove
-			-q|-p|-l|-m|-d) query=1; query_type="${1#-}" ;;
+			-q|-p|-l|-m|-d|-y) query=1; query_type="${1#-}" ;;
 			--) break ;;
 			-*) bize_usage ; return 1 ;;
 			*) break ;;
