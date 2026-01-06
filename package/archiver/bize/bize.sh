@@ -1,7 +1,7 @@
 #!/bin/bash
 # --- T2-COPYRIGHT-BEGIN ---
 # t2/package/*/bize/bize.sh
-# Copyright (C) 2004 - 2025 The T2 SDE Project
+# Copyright (C) 2004 - 2026 The T2 SDE Project
 # SPDX-License-Identifier: GPL-2.0
 # --- T2-COPYRIGHT-END ---
 
@@ -122,9 +122,29 @@ bize_bundle() {
 	) > ./$pkg-$ver.tar.$ext
 }
 
+bize_query() {
+	local files
+	if [ -z "$pkg" ]; then
+		files=$(ls -r $adm/*/*)
+	else
+		if [ ! -f "$adm/flists/$pkg" ]; then
+			echo "$0: No such package: $pkg" >&2
+			return
+		fi
+		files=$(ls $adm/*/$pkg)
+	fi
+	case "$query_type" in
+		q) awk -F': ' 'FNR==1 { print $2 }' $(echo "$files" | awk '$0 ~ /packages/') ;;
+		p) cat $(awk '$0 ~ /packages/' <<< "$files") ;;
+		l) cat $(awk '$0 ~ /flists/' <<< "$files") ;;
+		m) cat $(awk '$0 ~ /md5sums/' <<< "$files") ;;
+		d) cat $(awk '$0 ~ /dependencies/' <<< "$files") ;;
+	esac
+}
+
 bize_main() {
-	local which=which file arch list="sort rm rmdir mkdir tar"
-	local install remove bundle test verbose voption keep=k root=/ taropt
+	local which=which file arch list="sort rm rmdir mkdir tar awk cat ls"
+	local install remove bundle test verbose voption keep=k root=/ taropt query
 
 	while [ "$1" ]; do
 		case "$1" in
@@ -136,6 +156,7 @@ bize_main() {
 			-R) shift ; root="$1" ;;
 			-R*) root="${1#-R}" ;;
 			-b) bundle=1; remove=0 ;; # quick hack for the if install = remove
+			-q|-p|-l|-m|-d) query=1; query_type="${1#-}" ;;
 			--) break ;;
 			-*) bize_usage ; return 1 ;;
 			*) break ;;
@@ -158,7 +179,11 @@ bize_main() {
 		fi
 	done
 
-	if [ "$install" = "$remove" -o -z "$root" -o -z "$*" ]; then
+	if [ "$install$remove$query" != "1" -o -z "$root" ]; then
+		bize_usage
+		return 1
+	fi
+	if [ -z "$*" -a -z "$query" ]; then
 		bize_usage
 		return 1
 	fi
@@ -172,6 +197,13 @@ bize_main() {
 		taropt="xp${verbose}${keep}"
 		for arch do
 			bize_install
+		done
+	elif [ "$query" ]; then
+		if [ -z "$*" ]; then
+			bize_query
+		fi
+		for pkg do
+			bize_query
 		done
 	elif [ "$bundle" ]; then
 		for pkg do
