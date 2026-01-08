@@ -2,7 +2,7 @@
 #
 # --- T2-COPYRIGHT-BEGIN ---
 # t2/scripts/Emerge-Pkg
-# Copyright (C) 2004 - 2025 The T2 SDE Project
+# Copyright (C) 2004 - 2026 The T2 SDE Project
 # Copyright (C) 2004 - 2006 Rene Rebe <rene@exactcode.de>
 # SPDX-License-Identifier: GPL-2.0
 # --- T2-COPYRIGHT-END ---
@@ -173,15 +173,17 @@ add_if_req() {
 }
 
 add_if_updated() {
-	local pkg=$1
-	local typ=$2
+    local typ=$1; shift
+    local -A deferred
+    local -A deferred_opt
 
+    for pkg; do
 	local scanned=${deplist[$pkg]}
 	if [ "$scanned" ]; then
 		[ $debug = 1 ] && echo "already been at $pkg ..."
 
 		# if prevously only an unselected opt dep, re-check if hard dep now
-		[ "$scanned" = o -a "$typ" != "[OPT]" ] || return
+		[ "$scanned" = o -a "$typ" != "[OPT]" ] || continue
 	else
 		deplist[$pkg]=n # not yet, but been here marker
 	fi
@@ -194,7 +196,7 @@ add_if_updated() {
 	for x in package/*/$pkg/$pkg.desc; do
 	    if [ -f "$x" ]; then
 		confdir=${x/$pkg.desc/}
-		break # return 1st match, let other code check for duplicate dirs
+		break # use 1st match, let other code check for duplicate dirs
 	    fi
 	done
 	if [ -z "$confdir" ]; then
@@ -202,8 +204,8 @@ add_if_updated() {
 		# is it a CV-GROUP?
 		local pkgs=$(grep "^\[CV-GROUP\] $pkg" package/*/*/*.desc | cut -d / -f 3)
 		if [ "$pkgs" ]; then
-			for p in $pkgs; do add_if_updated $p; done
-			return
+			add_if_updated "" $pkgs
+			continue
 		fi
 
 		local pkg="$(pkgsimilar $pkg)"
@@ -215,13 +217,13 @@ add_if_updated() {
 		exit 1
 	    else
 		echo " Warning: No such package."
-		return
+		continue
 	    fi
 	fi
 
 	if [ ${excludes[$pkg]} ]; then
 		echo " Excluded."
-		return
+		continue
 	fi
 
 	# TODO: keep unselected in the config, to avoid re-config for masked pkgs
@@ -240,20 +242,20 @@ add_if_updated() {
 		fi
 	    else
 		echo " Warning: No such package."
-		return
+		continue
 	    fi
 	fi
 
 	if [ "${packages[$pkg]}" != X ]; then
 		# switch to alternative pkg, if selected
-		local alt="${alternatives[$pkg]}" 
+		local alt="${alternatives[$pkg]}"
 		if [ "$alt" ] && [ "${packages[$alt]}" = X ]; then
 			echo -ne "\b($alt):"
 			pkg=$alt
 			confdir=package/*/$pkg
 		else
 			echo " Not selected."
-			return
+			continue
 		fi
 	fi
 
@@ -265,11 +267,11 @@ add_if_updated() {
 
 	if [ ! -f /var/adm/packages/$pkg ]; then
 		if [ "$typ" = "[OPT]" ]; then
-			add_if_req $pkg " Not installed ($n_ver)." $typ
+			deferred_opt[$pkg]=" Not installed ($n_ver)."
 		else
-			add_if_req $pkg " Not installed ($n_ver)."
+			deferred[$pkg]=" Not installed ($n_ver)."
 		fi
-		return
+		continue
 	fi
 
 	local o_ver=$(sed -n '/Package Name and Version: [^ ]* /{s///p; q}' /var/adm/packages/$pkg)
@@ -277,31 +279,31 @@ add_if_updated() {
 	*' '*-svn|*' '*.*) o_ver=${o_ver% *} ;;
 	esac
 	if [ "$o_ver" != "$n_ver" -a "$n_ver" != "0000" ]; then
-		add_if_req $pkg " New version ($o_ver -> $n_ver)."
-		return
+		deferred[$pkg]=" New version ($o_ver -> $n_ver)."
+		continue
 	fi
 
 	o_ck=$(grep -a '^\(ROCK Linux\|T2\) Package Source Checksum' /var/adm/packages/$pkg | sed 's,.*: ,,')
 	n_ck=$(pkgchksum $confdir)
 	if [ $ignore_chksum = 0 -a "$o_ck" != "$n_ck" ]; then
-		add_if_req $pkg " New source checksum."
-		return
+		deferred[$pkg]=" New source checksum."
+		continue
 	fi
 
 	if [ -f /var/adm/cache/$pkg ] &&
 	   grep -a -q '\[BUILDTIME\] .* ERROR' /var/adm/cache/$pkg; then
 		[ $verbose = 1 ] && echo -n " Former build was broken ($n_ver)."
 		if [ $rebuild = 1 ]; then
-			add_if_req $pkg
+			deferred[$pkg]="_Was broken_"
 		else
 			[ $verbose = 1 ] && echo " Skipped."
 		fi
-		return
+		continue
 	fi
 
 	if [ $force = 1 -a $depth = 0 ]; then
-		add_if_req $pkg " Build forced ($n_ver)."
-		return
+		deferred[$pkg]=" Build forced ($n_ver)."
+		continue
 	fi
 
 	if [ $debug = 1 ]; then
@@ -310,6 +312,15 @@ add_if_updated() {
 		echo -ne \
 "\r                                                                          \r"
 	fi
+    done
+
+    for pkg in "${!deferred[@]}"; do
+	add_if_req $pkg "${deferred[$pkg]}"
+    done
+
+    for pkg in "${!deferred_opt[@]}"; do
+	add_if_req $pkg "${deferred_opt[$pkg]}" "[OPT]"
+    done
 }
 
 dep4pkg() {
@@ -318,8 +329,8 @@ dep4pkg() {
 	deptree="$deptree$1|"
 
 	local IFS=$'\n'
-	for dep in `grep -a '\[\(DEP\|OPT\)\]' package/*/$1/$1.cache 2>/dev/null`; do
-		add_if_updated ${dep#* } ${dep% *}
+	for dep in $(grep -a '\[\(DEP\|OPT\)\]' package/*/$1/$1.cache 2>/dev/null); do
+		add_if_updated ${dep% *} ${dep#* }
 	done
 
 	deptree="$_deptree"
@@ -327,25 +338,17 @@ dep4pkg() {
 }
 
 # the remaining arguments are packages to be built
-for pkg in $*; do
-	[ "${deplist[$pkg]}" != y ] && unset deplist[$pkg];
-	add_if_updated $pkg
-done
+add_if_updated "" $*
 
 # packages from repositories
 for x in $repositories; do
-	for pkg in `egrep -a "^X .* $x .*" config/$config/packages |
-	         cut -d ' ' -f 5`; do
-		add_if_updated $pkg
-	done
+	add_if_updated "" $(egrep -a "^X .* $x .*" config/$config/packages | cut -d ' ' -f 5)
 done
 
 # all installed packages if a system update
 if [ "$system" ]; then
 	depth=-1
-	for pkg in `cd /var/adm/packages/; ls *`; do
-		add_if_updated $pkg
-	done
+	add_if_updated "" $(cd /var/adm/packages/; ls *)
 	depth=0
 fi
 
