@@ -7,6 +7,9 @@
 # SPDX-License-Identifier: GPL-2.0
 # --- T2-COPYRIGHT-END ---
 
+# TODO:
+# - trap C-c and end pkg builds, too
+
 exec 2>&1
 
 options=
@@ -27,6 +30,7 @@ depth=0
 updates=
 optional='ask'
 maxdepth=9
+parallel=
 
 deptree=
 esttime=0
@@ -78,6 +82,7 @@ while [ "$1" ]; do
 		-noclearsrc) options="$options -noclearsrc" ;;
 		-xtrace) options="$options -xtrace" ;;
 		-system) system=1 deps=none ;;
+		-parallel) parallel=1 ;;
 		-*) help_msg; exit 1 ;;
 		*/\*) repositories="$repositories ${1%/*}" ;;
 		*)  break ;;
@@ -254,7 +259,7 @@ add_if_updated() {
 
 	if [ "${packages[$pkg]}" != X ]; then
 		# switch to alternative pkg, if selected
-		local alt="${alternatives[$pkg]}" 
+		local alt="${alternatives[$pkg]}"
 		if [ "$alt" ] && [ "${packages[$alt]}" = X ]; then
 			echo -ne "\b($alt):"
 			pkg=$alt
@@ -348,13 +353,13 @@ fi
 
 # deplist is unsorted: remove unselected and sort by priority
 for pkg in ${!deplist[@]}; do [ ${deplist[$pkg]} != y ] && unset deplist[$pkg]; done
-deplist=${!deplist[@]}
-deplist=$(grep -a "^. .* .* .* \\(${deplist// /\\|}\\) " config/$config/packages |
+targets=${!deplist[@]}
+targets=$(grep -a "^. .* .* .* \\(${targets// /\\|}\\) " config/$config/packages |
 	sort -k 3 | cut -d ' ' -f 5 | tr '\n' ' ')
 
-if [ "$deplist" ]; then
-	echo "$(echo "$deplist" |
-		wc -w) packages scheduled to build$(fmt_time $esttime): $deplist" | fold -s
+if [ "$targets" ]; then
+	echo "$(echo "$targets" |
+		wc -w) packages scheduled to build$(fmt_time $esttime): $targets" | fold -s
 	echo
 else
 	echo "No package scheduled to build."
@@ -363,22 +368,181 @@ fi
 [ $dryrun = 1 ] && exit
 [ $backup = 1 ] && options="$options -update"
 
-i=0
-pkgs=$(echo "$deplist" | wc -w)
-for pkg in $deplist; do
-	if scripts/Download -cfg $config $dloptions $pkg; then
-		if [ $downloadonly != 1 ] &&
-		   ! scripts/Build-Pkg $options -progress $((++i))/$pkgs $pkg; then
-			if [ $SDECFG_CONTINUE_ON_ERROR_AFTER -gt 8 ]; then
-				echo "Aborting further builds due to config setting CONTINUE_ON_ERROR_AFTER."
-				exit 1
-			fi
-		fi
-	else
+i=0 pkgs=$(echo "$targets" | wc -w) # build progress
+
+if [ ! "$parallel" ]; then
+  for pkg in $targets; do
+    if scripts/Download -cfg $config $dloptions $pkg; then
+	if [ $downloadonly != 1 ] &&
+	   ! scripts/Build-Pkg $options -progress $((++i))/$pkgs $pkg; then
+	    if [ $SDECFG_CONTINUE_ON_ERROR_AFTER -gt 8 ]; then
+		echo "Aborting further builds due to config setting CONTINUE_ON_ERROR_AFTER."
+		exit 1
+	    fi
+	fi
+    fi
+  done
+  exit 0
+fi
+
+JOBS="$SDECFG_PARALLEL"
+
+# Build command per component (could also be a single function with a case)
+build() {
+	local pkg=$1
+	if ! scripts/Download -cfg $config $dloptions $pkg; then
 		echo "The download for package $pkg failed!"
-		#exit 1
+		exit 1
 	fi
 
-	[ "${dloptions/-quiet-mirror/}" != "$dloptions" ] ||
-		var_append dloptions ' ' -quiet-mirror
+	if [ $downloadonly != 1 ] && ! scripts/Build-Pkg $options -progress $i/$pkgs $pkg; then
+		if [ $SDECFG_CONTINUE_ON_ERROR_AFTER -gt 8 ]; then
+			echo "Aborting further builds due to config setting CONTINUE_ON_ERROR_AFTER."
+		fi
+		exit 1 # TODO: config
+	fi
+}
+
+# -------------------------------------
+# 2) Scheduler: run when deps complete
+# -------------------------------------
+declare -A state pid_of target_of # state: pending | running | done | failed
+
+# clean/sync deps w/ actually built targets
+for t in ${!deplist[@]}; do
+	state["$t"]=pending
+	deps=
+	for d in ${dependencies["$t"]}; do
+		[ "${deplist["$d"]}" ] && deps="$deps $d"
+	done
+	dependencies[$t]="$deps "
+done
+
+is_ready() {
+  local ready=0
+  #echo -n "$1 ready?"
+  for d in ${dependencies["$1"]}; do
+    # echo -n " $d ${state["$d"]}"
+    [[ "${state["$d"]}" != "done" ]] && ready=1 && break
+  done
+  #echo " $ready"
+  return $ready
+}
+
+running_count() {
+  local n=0
+  for t in ${!deplist[@]}; do
+    [[ "${state["$t"]}" == "running" ]] && ((n++)) || true
+  done
+  echo "$n"
+}
+
+start_target() {
+  local t="$1"
+  #echo "==> START $t"
+
+  [ $((++i)) = 1 ] &&
+	scripts/Build-Tools -9 -cfg $config
+  build "$t" &
+
+  local p=$!
+  pid_of["$t"]=$p
+  target_of["$p"]=$t
+  state["$t"]=running
+
+  [ "${dloptions/-quiet-mirror/}" != "$dloptions" ] || var_append dloptions ' ' -quiet-mirror
+}
+
+end_target() {
+  local p="$1" rc="$2"
+  local t="${target_of["$p"]}"
+
+  if [[ "$rc" -eq 0 ]]; then
+    #echo "==> DONE  $t"
+    state["$t"]=done
+
+    # remove target t from dependencies
+    targets=" $targets "
+    targets="${targets/ $t/ }"
+
+    unset deplist[$t] dependencies[$t]
+    for d in ${!deplist[@]}; do
+	dependencies[$d]="${dependencies["$d"]/ $t / }"
+    done
+  else
+    #echo "==> FAIL  $t (rc=$rc)" >&2
+    state["$t"]=failed
+  fi
+}
+
+# Main loop
+while :; do
+  # If any failed, stop early
+  for t in ${!deplist[@]}; do
+    if [[ "${state["$t"]}" == "failed" ]]; then
+      echo "Aborting due to failure." >&2
+      wait
+      exit 1
+    fi
+  done
+
+  # Launch as many ready jobs as possible up to JOBS
+  for t in ${!deplist[@]}; do
+      [[ "$(running_count)" -gt "$JOBS" ]] && break
+
+      if [[ "${state["$t"]}" == "pending" ]] && is_ready "$t"; then
+        start_target "$t"
+        progress=1
+        [[ "$(running_count)" -ge "$JOBS" ]] && break
+      fi
+  done
+
+  # Are we finished?
+  all_done=1
+  for t in ${!deplist[@]}; do
+    [[ "${state["$t"]}" == "done" ]] || { all_done=0; break; }
+  done
+  [[ "$all_done" -eq 1 ]] && {
+	# echo "All components built."
+	exit 0
+  }
+
+  # No running jobs but not all done => dependency cycle or missing target
+  if [[ "$(running_count)" -eq 0 ]]; then
+    echo "No runnable targets. Check for cycles or missing deps:" >&2
+    echo "States:" >&2
+    first=
+    for t in $targets; do
+	if [ ${state["$t"]} = pending ]; then
+		 echo "  $t: ${state["$t"]} (deps: ${dependencies["$t"]})" >&2
+		 [ "$first" ] || first=$t
+	fi
+    done
+
+    echo "Starting 1st: $first"
+    start_target "$first"
+  fi
+
+  # Wait for one job to finish, then continue scheduling
+  # Requires bash >= 4.3 for wait -n
+  set +e
+  wait -n
+  rc=$?
+  set -e
+
+  # Determine which PID finished by checking running PIDs
+  # (bash doesn't directly tell you which one with wait -n)
+  for t in ${!deplist[@]}; do
+    if [[ "${state["$t"]}" == "running" ]]; then
+      p="${pid_of["$t"]}"
+      if ! kill -0 "$p" 2>/dev/null; then
+        # Reap it to get real rc
+        set +e
+        wait "$p"
+        rc2=$?
+        set -e
+	end_target "$p" "$rc2"
+      fi
+    fi
+  done
 done
