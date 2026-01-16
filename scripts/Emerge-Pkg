@@ -102,6 +102,7 @@ noautolist=" 00-dirtree $SDECFG_DEFAULT_CC $SDECFG_LIBC ${SDECFG_LIBC}32 python 
 declare -A packages
 declare -A alternatives
 declare -A deplist
+declare -A dependencies
 
 read_packages() {
 	local sel pkg _
@@ -117,10 +118,18 @@ read_alternatives() {
 	done < <(cat misc/share/PKG-ALTERNATIVES)
 }
 
+add_pkg() {
+	local pkg="$1"
+	deplist[$pkg]=y
+	dependencies["$pkg"]=$(grep -a '\[\(DEP\|OPT\)\]' package/*/$pkg/$pkg.cache | cut -d' ' -f 2 | tr '\n' ' ')
+	esttime=$((esttime + buildtime))
+	[ "$deps" = indirect ] && deferred[$pkg]=1
+	[ "$deps" = indirect2 -a $depth -le $maxdepth ] && deferred[$pkg]=1
+}
+
 add_if_req() {
 	local pkg=$1 msg="$2" typ=$3
 	local buildtime=$(pkgbuildtime $pkg)
-
 	[ "$verbose" = 1 ] && echo -n "$msg"
 
 	# do not auto-update vital no-update packages
@@ -145,10 +154,8 @@ add_if_req() {
 			fi
 
 			if [[ "$in" = y* ]]; then
-				deplist[$pkg]=y
-				esttime=$((esttime + buildtime))
-				[ "$deps" = indirect ] && deferred[$pkg]=1
-				[ "$deps" = indirect2 -a $depth -le $maxdepth ] && deferred[$pkg]=1
+				add_pkg $pkg
+				
 			else
 				deplist[$pkg]=o
 			fi
@@ -166,10 +173,7 @@ add_if_req() {
 	fi
 
 	[ $verbose = 1 ] && echo " Added.$(fmt_time $buildtime)"
-	deplist[$pkg]=y
-	esttime=$((esttime + buildtime))
-	[ "$deps" = indirect ] && deferred[$pkg]=1
-	[ "$deps" = indirect2 -a $depth -le $maxdepth ] && deferred[$pkg]=1
+	add_pkg $pkg
 }
 
 add_if_updated() {
@@ -317,18 +321,14 @@ add_if_updated() {
     done
 
     # all deferred, indirect deps
-    for pkg in "${!deferred[@]}"; do
-	    dep4pkg $pkg
-    done
+    for pkg in "${!deferred[@]}"; do dep4pkg $pkg; done
 }
 
 dep4pkg() {
-	((depth++))
+	local depth=$((++depth))
 	local deptree="$deptree$1|"
 
 	add_if_updated $(grep -a '\[\(DEP\|OPT\)\]' package/*/$1/$1.cache 2>/dev/null)
-
-	((depth--))
 }
 
 # the remaining arguments are packages to be built
