@@ -1,6 +1,6 @@
 # --- T2-COPYRIGHT-BEGIN ---
 # t2/target/share/install/build_stage2.sh
-# Copyright (C) 2004 - 2025 The T2 SDE Project
+# Copyright (C) 2004 - 2026 The T2 SDE Project
 # SPDX-License-Identifier: GPL-2.0
 # --- T2-COPYRIGHT-END ---
 
@@ -38,7 +38,7 @@ netkit-base        netkit-telnet      netkit-tftp        netcat
 sysfiles           libpcap            iptables           tcp_wrappers
 stone              rocknet            kexec-tools        memtest86
 kbd                ntfsprogs          libol              memtester
-openssl            openssh
+openssl            openssh            ed
 iproute2           libmnl             libtirpc           watchdog"
 
 # TODO: a global multilib package multiplexer that allows distrinct control
@@ -49,13 +49,9 @@ else
 	package_map="$package_map ${SDECFG_LIBC}"
 fi
 
-if pkginstalled mine; then
-	packager=mine
-else
-	packager=bize
-fi
+pkginstalled mine && packager=mine || packager=bize
 
-package_map=" $( echo "$packager $package_map" | tr '\n' ' ' | tr '\t' ' ' | tr -s ' ' ) "
+package_map=" $(echo "$packager $package_map" | tr '\n' ' ' | tr '\t' ' ' | tr -s ' ') "
 
 echo_status "Copying files:"
 for pkg in `grep '^X ' $base/config/$config/packages | cut -d ' ' -f 5`; do
@@ -113,17 +109,12 @@ progs="agetty sh bash cat cp date dd df dmesg ifconfig ln ls $packager mkdir \
        head tail wc fmt"
 
 progs="$progs parted fdisk sfdisk"
+[[ $arch = powerpc* ]] && progs="$progs mac-fdisk pdisk"
 
-if [[ $arch = powerpc* ]]; then
-	progs="$progs mac-fdisk pdisk"
-fi
-
-if [ $packager = bize ]; then
-	progs="$progs md5sum"
-fi
+[ $packager = bize ] && progs="$progs md5sum"
 
 for x in $progs; do
-	fn=""
+	fn=
 	for f in ../2nd_stage/{,usr/}{s,}bin/$x; do
 		[ -e $f ] && fn=${f#../2nd_stage/} && break
 	done
@@ -140,11 +131,11 @@ found=1
 while [ $found = 1 ]; do
 	found=0
 	for x in ../2nd_stage/{,usr/}lib{64,}; do
-		for y in $( cd $x 2>/dev/null && ls *.so.* 2>/dev/null ); do
+		for y in $(cd $x 2>/dev/null && ls *.so.* 2>/dev/null); do
 			dir=${x#../2nd_stage/}
 			# TODO: maybe use readelf, too?
 			if [ ! -e $dir/$y ] &&
-			   grep -q $y {s,}bin/* usr/{s,}bin/* lib{64,}/* 2> /dev/null
+			   grep -q $y {s,}bin/* usr/{s,}bin/* lib{64,}/* 2>/dev/null
 			then
 				echo_status "\`- Found $dir/$y"
 				mkdir -p $dir
