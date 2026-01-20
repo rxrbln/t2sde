@@ -50,7 +50,6 @@ else
 fi
 
 pkginstalled mine && packager=mine || packager=bize
-
 package_map=" $(echo "$packager $package_map" | tr '\n' ' ' | tr '\t' ' ' | tr -s ' ') "
 
 echo_status "Copying files:"
@@ -105,12 +104,13 @@ progs="agetty sh bash cat cp date dd df dmesg ifconfig ln ls $packager mkdir \
        mkswap mount mv rm reboot route sleep swapoff swapon sync umount cut \
        setsid eject chmod chroot grep halt rmdir init shutdown uname killall5 \
        install stone tar mktemp sort fold sed wipefs blockdev blkid disktype \
-       login-shell stat gzip mkfs.ext3 mkfs.fat gasgui dialog stty  \
+       login-shell stat gzip mkfs.ext3 mkfs.fat dialog stty \
        head tail wc fmt"
 
 progs="$progs parted fdisk sfdisk"
 [[ $arch = powerpc* ]] && progs="$progs mac-fdisk pdisk"
 
+[ $packager = mine ] && progs="$progs gasgui"
 [ $packager = bize ] && progs="$progs md5sum"
 
 for x in $progs; do
