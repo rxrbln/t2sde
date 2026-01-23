@@ -1,6 +1,6 @@
 # --- T2-COPYRIGHT-BEGIN ---
 # t2/package/*/llvm/hotfix-ppc-jit.patch
-# Copyright (C) 2025 The T2 SDE Project
+# Copyright (C) 2025 - 2026 The T2 SDE Project
 # SPDX-License-Identifier: GPL-2.0 or patched project license
 # --- T2-COPYRIGHT-END ---
 
@@ -37,3 +37,101 @@ Signed-off-by: Rene Rebe <rene@t2linux.com>
    }
  }
  
+@@ -1952,7 +1952,96 @@
+       processSimpleRelocation(SectionID, Offset, RelType, Value);
+     }
+ 
+-  } else if (Arch == Triple::ppc64 || Arch == Triple::ppc64le) {
++  } else if (Arch == Triple::ppc || Arch == Triple::ppcle) {
++    if (RelType == ELF::R_PPC_REL24) {
++      // Determine ABI variant in use for this object.
++      unsigned AbiVariant = 1; // Obj.getPlatformFlags();
++      //AbiVariant &= ELF::EF_PPC64_ABI;
++      // A PPC branch relocation will need a stub function if the target is
++      // an external symbol (either Value.SymbolName is set, or SymType is
++      // Symbol::ST_Unknown) or if the target address is not within the
++      // signed 24-bits branch address.
++      SectionEntry &Section = Sections[SectionID];
++      uint8_t *Target = Section.getAddressWithOffset(Offset);
++      bool RangeOverflow = true; //false;
++      bool IsExtern = Value.SymbolName || SymType == SymbolRef::ST_Unknown;
++      if (!IsExtern) {
++        // In the ELFv1 ABI, a function call may point to the .opd entry,
++        // so the final symbol value is calculated based on the relocation
++        // values in the .opd section.
++        if (auto Err = findOPDEntrySection(Obj, ObjSectionToID, Value))
++          return std::move(Err);
++        uint8_t *RelocTarget =
++            Sections[Value.SectionID].getAddressWithOffset(Value.Addend);
++        int64_t delta = static_cast<int64_t>(Target - RelocTarget);
++        // If it is within 26-bits branch range, just set the branch target
++        if (SignExtend64<26>(delta) != delta) {
++          RangeOverflow = true;
++        } else {
++          RelocationEntry RE(SectionID, Offset, RelType, Value.Addend);
++          addRelocationForSection(RE, Value.SectionID);
++        }
++      }
++      if (IsExtern || RangeOverflow) {
++        // It is an external symbol (either Value.SymbolName is set, or
++        // SymType is SymbolRef::ST_Unknown) or out of range.
++        auto [It, Inserted] = Stubs.try_emplace(Value);
++        if (!Inserted) {
++          // Symbol function stub already created, just relocate to it
++          resolveRelocation(Section, Offset,
++                            Section.getLoadAddressWithOffset(It->second),
++                            RelType, 0);
++          LLVM_DEBUG(dbgs() << " Stub function found\n");
++        } else {
++          // Create a new stub function.
++          LLVM_DEBUG(dbgs() << " Create a new stub function\n");
++          It->second = Section.getStubOffset();
++          uint8_t *StubTargetAddr = createStubFunction(
++              Section.getAddressWithOffset(Section.getStubOffset()),
++              AbiVariant);
++          RelocationEntry RE(SectionID, StubTargetAddr - Section.getAddress(),
++                             ELF::R_PPC64_ADDR32, Value.Addend);
++
++          // Generates the 32-bits address loads as exemplified in the
++          // PPC ELF ABI.  Note that the relocations need to
++          // apply to the low part of the instructions, so we have to update
++          // the offset according to the target endianness.
++          uint64_t StubRelocOffset = StubTargetAddr - Section.getAddress();
++          if (!IsTargetLittleEndian)
++            StubRelocOffset += 2;
++
++          RelocationEntry REh(SectionID, StubRelocOffset + 0,
++                              ELF::R_PPC64_ADDR16_HI, Value.Addend);
++          RelocationEntry REl(SectionID, StubRelocOffset + 4,
++                              ELF::R_PPC64_ADDR16_LO, Value.Addend);
++
++          if (Value.SymbolName) {
++            addRelocationForSymbol(REh, Value.SymbolName);
++            addRelocationForSymbol(REl, Value.SymbolName);
++          } else {
++            addRelocationForSection(REh, Value.SectionID);
++            addRelocationForSection(REl, Value.SectionID);
++          }
++
++          resolveRelocation(
++              Section, Offset,
++              Section.getLoadAddressWithOffset(Section.getStubOffset()),
++              RelType, 0);
++          Section.advanceStubOffset(getMaxStubSize());
++        }
++        if (IsExtern) {
++          writeInt32BE(Target + 4, 0x80410028); // lw r2,40(r1)
++        }
++      }
++   } else {
++      RelocationEntry RE(SectionID, Offset, RelType, Value.Addend);
++
++      if (Value.SymbolName)
++        addRelocationForSymbol(RE, Value.SymbolName);
++      else
++        addRelocationForSection(RE, Value.SectionID);
++     }
++   } else if (Arch == Triple::ppc64 || Arch == Triple::ppc64le) {
+     if (RelType == ELF::R_PPC64_REL24) {
+       // Determine ABI variant in use for this object.
+       unsigned AbiVariant = Obj.getPlatformFlags();
