@@ -1,0 +1,89 @@
+From 2e22ffe5de54ac245c7c9fa6a0918a5729f71deb Mon Sep 17 00:00:00 2001
+From: Jakub Jelinek <jakub@redhat.com>
+Date: Tue, 11 Nov 2025 08:29:22 +0100
+Subject: gimplify-me: Fix regimplification of gimple-reg-type clobbers
+ [PR122620]
+
+Since r11-2238-ge443d8213864ac337c29092d4767224f280d2062 the C++ FE
+emits clobbers like *_1 = {CLOBBER}; where *_1 MEM_REF has some scalar
+type like int for -flifetime-dse={1,2} and most of the compiler manages
+to cope with that.
+If we are very unlucky, we trigger an ICE while trying to regimplify it
+(at least during inlining), as happens with GCC 15.2 on firefox-145.0
+built with LTO+PGO.
+I haven't managed to reduce that to a small testcase that would ICE though,
+the clobber certainly appears in code like
+template <typename T>
+struct S {
+  T *p;
+  union { char a; T b; };
+  static S foo (T *x) { S s; s.p = x; s.b.~T (); return s; }
+  ~S ();
+};
+
+void
+bar ()
+{
+  int i = 42;
+  S <int> s = S <int>::foo (&i);
+}
+but convincing inliner that it should id->regimplify = true; on exactly
+that stmt has been difficult.
+
+The ICE is because we try (in two spots) to regimplify the rhs of the
+gimple_clobber_p stmt if gimple-reg-type type (i.e. the TREE_CLOBBER),
+because it doesn't satisfy the is_gimple_mem_rhs_or_call predicate
+returned by rhs_predicate_for for the MEM_REF lhs.  And regimplify it
+by trying to gimplify SSA_NAME = {CLOBBER}; INIT_EXPR and in there reach
+a special case which stores that freshly made SSA_NAME into memory and
+loads it from memory, so uses a SSA_NAME without SSA_NAME_DEF_STMT.
+
+Fixed thusly by saying clobbers are ok even for the gimple-reg-types.
+
+2025-11-11  Jakub Jelinek  <jakub@redhat.com>
+
+	PR lto/122620
+	* gimplify-me.cc (gimple_regimplify_operands): Don't try to regimplify
+	TREE_CLOBBER on rhs of gimple_clobber_p if it has gimple_reg_type.
+
+(cherry picked from commit 8f3242ce5c03c30f806f54ceaff2a15d6e5b5ee6)
+---
+ gcc/gimplify-me.cc | 15 ++++++++++-----
+ 1 file changed, 10 insertions(+), 5 deletions(-)
+
+diff --git a/gcc/gimplify-me.cc b/gcc/gimplify-me.cc
+index 740782281efa..d94bbb071404 100644
+--- a/gcc/gimplify-me.cc
++++ b/gcc/gimplify-me.cc
+@@ -232,9 +232,13 @@ gimple_regimplify_operands (gimple *stmt, gimple_stmt_iterator *gsi_p)
+ 	  else if (i == 2
+ 		   && gimple_assign_single_p (stmt)
+ 		   && num_ops == 2)
+-	    gimplify_expr (&op, &pre, NULL,
+-			   rhs_predicate_for (gimple_assign_lhs (stmt)),
+-			   fb_rvalue);
++	    {
++	      if (gimple_clobber_p (stmt))
++		continue;
++	      gimplify_expr (&op, &pre, NULL,
++			     rhs_predicate_for (gimple_assign_lhs (stmt)),
++			     fb_rvalue);
++	    }
+ 	  else if (i == 2 && is_gimple_call (stmt))
+ 	    {
+ 	      if (TREE_CODE (op) == FUNCTION_DECL)
+@@ -253,8 +257,9 @@ gimple_regimplify_operands (gimple *stmt, gimple_stmt_iterator *gsi_p)
+ 	{
+ 	  bool need_temp = false;
+ 
+-	  if (gimple_assign_single_p (stmt)
+-	      && num_ops == 2)
++	  if (gimple_clobber_p (stmt))
++	    ;
++	  else if (gimple_assign_single_p (stmt) && num_ops == 2)
+ 	    gimplify_expr (gimple_assign_rhs1_ptr (stmt), &pre, NULL,
+ 			   rhs_predicate_for (gimple_assign_lhs (stmt)),
+ 			   fb_rvalue);
+-- 
+cgit 
+
