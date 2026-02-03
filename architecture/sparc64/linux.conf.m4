@@ -60,7 +60,6 @@ include(`linux-fs.conf.m4')
 dnl Oppses dma_supported
 # CONFIG_UDMABUF is not set
 
-CONFIG_NR_CPUS=128
 CONFIG_NUMA=y
 
 CONFIG_USB_PCI_AMD=y
@@ -75,4 +74,3 @@ dnl Oopses null pointer dereference
 dnl LDOM bugs
 # CONFIG_SCHED_CORE is not set
 CONFIG_MQ_IOSCHED_DEADLINE=y
-
