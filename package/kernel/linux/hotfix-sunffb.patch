@@ -1,0 +1,69 @@
+# --- T2-COPYRIGHT-BEGIN ---
+# t2/package/*/linux/hotfix-sunffb.patch
+# Copyright (C) 2026 The T2 SDE Project
+# SPDX-License-Identifier: GPL-2.0 or patched project license
+# --- T2-COPYRIGHT-END ---
+
+Fix early Sun FFB1 corrupted video out [1] by disabling overlay and
+initializing window mode to a known good state.
+
+/SUNW,ffb@1e,0: FFB at 000001fc00000000, type 11, DAC pnum[236c] rev[10] manuf_rev[4]
+X (II) /dev/fb0: Detected FFB1, Z-buffer, Single-buffered.
+X (II) /dev/fb0: BT9068 (PAC1) ramdac detected (with normal cursor control)
+X (II) /dev/fb0: Detected Creator/Creator3D
+
+[1] https://www.instagram.com/p/DUTcSmSjSem/
+
+Signed-off-by: René Rebe <rene@exactco.de>
+Cc: stable@kernel.org
+---
+Tested on Sun Ultra 2 w/ FFB1 BT9068 (PAC1) ramdac running T2/Linux.
+---
+diff --git a/drivers/video/fbdev/ffb.c b/drivers/video/fbdev/ffb.c
+index 34b6abff9493..8d77f102dd82 100644
+--- a/drivers/video/fbdev/ffb.c
++++ b/drivers/video/fbdev/ffb.c
+@@ -335,6 +335,9 @@ struct ffb_dac {
+ };
+ 
+ #define FFB_DAC_UCTRL		0x1001 /* User Control */
++#define FFB_DAC_UCTRL_OVENAB	0x00000008 /* Overlay Enable */
++#define FFB_DAC_UCTRL_WMODE	0x00000030 /* Window Mode */
++#define FFB_DAC_UCTRL_WM_COMB	0x00000000 /* Window Mode = Combined */
+ #define FFB_DAC_UCTRL_MANREV	0x00000f00 /* 4-bit Manufacturing Revision */
+ #define FFB_DAC_UCTRL_MANREV_SHIFT 8
+ #define FFB_DAC_TGEN		0x6000 /* Timing Generator */
+@@ -425,7 +428,7 @@ static void ffb_switch_from_graph(struct ffb_par *par)
+ {
+ 	struct ffb_fbc __iomem *fbc = par->fbc;
+ 	struct ffb_dac __iomem *dac = par->dac;
+-	unsigned long flags;
++	unsigned long flags, uctrl;
+ 
+ 	spin_lock_irqsave(&par->lock, flags);
+ 	FFBWait(par);
+@@ -442,7 +445,7 @@ static void ffb_switch_from_graph(struct ffb_par *par)
+ 	upa_writel(par->bg_cache, &fbc->bg);
+ 	FFBWait(par);
+ 
+-	/* Disable cursor.  */
++	/* Disable cursor. */
+ 	upa_writel(FFB_DAC_CUR_CTRL, &dac->type2);
+ 	if (par->flags & FFB_FLAG_INVCURSOR)
+ 		upa_writel(0, &dac->value2);
+@@ -450,6 +453,15 @@ static void ffb_switch_from_graph(struct ffb_par *par)
+ 		upa_writel((FFB_DAC_CUR_CTRL_P0 |
+ 			    FFB_DAC_CUR_CTRL_P1), &dac->value2);
+ 
++	/* Disable overlay and window modes. */
++	upa_writel(FFB_DAC_UCTRL, &dac->type);
++	uctrl = upa_readl(&dac->value);
++	uctrl &= ~FFB_DAC_UCTRL_WMODE;
++	uctrl |= FFB_DAC_UCTRL_WM_COMB;
++	uctrl &= ~FFB_DAC_UCTRL_OVENAB;
++	upa_writel(FFB_DAC_UCTRL, &dac->type);
++	upa_writel(uctrl, &dac->value);
++
+ 	spin_unlock_irqrestore(&par->lock, flags);
+ }
+ 
