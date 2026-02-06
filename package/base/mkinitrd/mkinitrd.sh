@@ -1,7 +1,7 @@
 #!/bin/bash
 # --- T2-COPYRIGHT-BEGIN ---
 # t2/package/*/mkinitrd/mkinitrd.sh
-# Copyright (C) 2005 - 2025 The T2 SDE Project
+# Copyright (C) 2005 - 2026 The T2 SDE Project
 # Copyright (C) 2005 - 2021 René Rebe <rene@exactcode.de>
 # SPDX-License-Identifier: GPL-2.0
 # --- T2-COPYRIGHT-END ---
@@ -33,7 +33,7 @@ fwopt[e100.ko]=1    # popular vintage
 
 
 # TODO: defauls for vintage vs. latest, usb, pata, etc.
-filter="-e /loop -e ext2 -e ext4 -e /xfs -e isofs -e nfsv4 -e zram -e pata_legacy
+filter="-e /loop -e ext2 -e ext4 -e /xfs -e isofs -e zram -e pata_legacy
 -e pata_.*platform -e pata_macio -e mac_esp -e sym53c8xx -e /aic7xxx -e qla1280
 -e s[rd]_mod -e /ahci.ko -e [uo]hci-[ph][c][id] -e usbhid -e /offb -e ps3fb"
 
@@ -80,9 +80,13 @@ done
 -e dispcc_sc8280xp -e phy_qcom_edp -e panel_edp -e typec -e i2c_hid_of -e ufshcd
 -e dw-axi-dmac -e gpio-regulator"
 
-[ "$network" ] && filter="$filter -e '/ipv4\.' -e '/ipv6\.' -e netconsole
--e ethernet -e aqc111 -e asix -e ax88179_178a -e cdc_ether -e /cdc_ncm
--e cx82310_eth -e r8153_ecm -e rtl8150 -e r8152"
+if [ "$network" ]; then
+	filter="$filter -e '/ipv4\.' -e nfsv4"
+
+	[ -z "$minimal" ] && filter="$filter -e '/ipv6\.' -e netconsole -e ethernet \
+-e aqc111 -e asix -e ax88179_178a -e cdc_ether -e /cdc_ncm -e cx82310_eth -e r8153_ecm \
+-e rtl8150 -e r8152"
+fi
 
 [ "$kernelver" ] || kernelver=`uname -r`
 [ "$moddir" ] || moddir="$root/lib/modules/$kernelver"
