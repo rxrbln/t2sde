@@ -1,7 +1,7 @@
 #!/bin/bash
 # --- T2-COPYRIGHT-BEGIN ---
 # t2/target/share/install/build_initrd.sh
-# Copyright (C) 2004 - 2025 The T2 SDE Project
+# Copyright (C) 2004 - 2026 The T2 SDE Project
 # SPDX-License-Identifier: GPL-2.0
 # --- T2-COPYRIGHT-END ---
 
@@ -53,15 +53,17 @@ for kernel in `egrep 'X .* KERNEL .*' $base/config/$config/packages |
     arch_boot_cd_add $isofsdir $kernelver "$boot_title" \
                      /boot/$kernel /boot/$initrd
 
-    # copy a minird, too?
-    initrd=${initrd/initrd/minird}
-    if [ -e $build_root/boot/$initrd ]; then
-      cp -a $build_root/boot/$initrd $isofsdir/boot/
+    # copy a initrd variants, too?
+    for initrd in ${initrd/initrd/netrd} ${initrd/initrd/minird}; do
+     
+      if [ -e $build_root/boot/$initrd ]; then
+	cp -a $build_root/boot/$initrd $isofsdir/boot/
 
-      extend_initrd $isofsdir/boot/$initrd $build_toolchain/initramfs
-      arch_boot_cd_add $isofsdir $kernelver "$boot_title (minird)" \
-                       /boot/$kernel /boot/$initrd
-    fi
+	extend_initrd $isofsdir/boot/$initrd $build_toolchain/initramfs
+	arch_boot_cd_add $isofsdir $kernelver "$boot_title (${initrd##*/})" \
+		/boot/$kernel /boot/$initrd
+      fi
+    done
   done
 done
 
