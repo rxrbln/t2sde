@@ -1,0 +1,2244 @@
+diff --git a/Makefile.am b/Makefile.am
+index 4c278ba..40ad32b 100644
+--- a/Makefile.am
++++ b/Makefile.am
+@@ -18,7 +18,7 @@
+ #  IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
+ #  CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+ 
+-SUBDIRS = src man
++SUBDIRS = src
+ MAINTAINERCLEANFILES = ChangeLog INSTALL
+ 
+ .PHONY: ChangeLog INSTALL
+diff --git a/configure.ac b/configure.ac
+index 6170c94..c62064b 100644
+--- a/configure.ac
++++ b/configure.ac
+@@ -195,6 +195,27 @@ if test "x$have_exa_h" = xyes; then
+         fi
+ fi
+ 
++AC_ARG_ENABLE(xaa,
++              AS_HELP_STRING([--enable-xaa],
++                             [Enable legacy X Acceleration Architecture (XAA) [default=auto]]),
++              [XAA="$enableval"],
++              [XAA=auto])
++if test "x$XAA" != xno; then
++        save_CFLAGS=$CFLAGS
++        save_CPPFLAGS=$CPPFLAGS
++        CFLAGS=$XORG_CFLAGS
++        CPPFLAGS="$XORG_CFLAGS"
++        AC_CHECK_HEADERS([xaa.h], XAA=yes, XAA=no)
++        CFLAGS=$save_CFLAGS
++        CPPFLAGS=$save_CPPFLAGS
++fi
++AC_MSG_CHECKING([whether to include XAA support])
++AM_CONDITIONAL(XAA, test "x$XAA" = xyes)
++if test "x$XAA" = xyes; then
++        AC_DEFINE(USE_XAA, test "x$XAA" = xyes, [Build support for XAA])
++fi
++AC_MSG_RESULT([$XAA])
++
+ AC_CHECK_DECL(XSERVER_LIBPCIACCESS,
+ 	      [XSERVER_LIBPCIACCESS=yes],[XSERVER_LIBPCIACCESS=no],
+ 	      [#include "xorg-server.h"])
+@@ -228,6 +249,5 @@ AC_MSG_NOTICE(
+ AC_CONFIG_FILES([
+                 Makefile
+                 src/Makefile
+-                man/Makefile
+ ])
+ AC_OUTPUT
+diff --git a/man/Makefile.am b/man/Makefile.am
+deleted file mode 100644
+index 8c7fd66..0000000
+--- a/man/Makefile.am
++++ /dev/null
+@@ -1,41 +0,0 @@
+-#
+-# Copyright (c) 2005, Oracle and/or its affiliates.
+-#
+-# Permission is hereby granted, free of charge, to any person obtaining a
+-# copy of this software and associated documentation files (the "Software"),
+-# to deal in the Software without restriction, including without limitation
+-# the rights to use, copy, modify, merge, publish, distribute, sublicense,
+-# and/or sell copies of the Software, and to permit persons to whom the
+-# Software is furnished to do so, subject to the following conditions:
+-#
+-# The above copyright notice and this permission notice (including the next
+-# paragraph) shall be included in all copies or substantial portions of the
+-# Software.
+-#
+-# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+-# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+-# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL
+-# THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+-# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+-# FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+-# DEALINGS IN THE SOFTWARE.
+-#
+-
+-drivermandir = $(DRIVER_MAN_DIR)
+-
+-driverman_PRE =
+-
+-driverman_DATA = $(driverman_PRE:man=@DRIVER_MAN_SUFFIX@)
+-
+-EXTRA_DIST =
+-
+-CLEANFILES = $(driverman_DATA)
+-
+-
+-# String replacements in MAN_SUBSTS now come from xorg-macros.m4 via configure
+-
+-
+-SUFFIXES = .$(DRIVER_MAN_SUFFIX) .man
+-
+-.man.$(DRIVER_MAN_SUFFIX):
+-	$(AM_V_GEN)$(SED) $(MAN_SUBSTS) < $< > $@
+diff --git a/src/atiadjust.c b/src/atiadjust.c
+index 2c59d9c..a6a7b56 100644
+--- a/src/atiadjust.c
++++ b/src/atiadjust.c
+@@ -85,8 +85,9 @@ ATIAdjustPreInit
+  * window.
+  */
+ void
+-ATIAdjustFrame(ScrnInfoPtr pScreenInfo, int x, int y)
++ATIAdjustFrame(ADJUST_FRAME_ARGS_DECL)
+ {
++    SCRN_INFO_PTR(arg);
+     ATIPtr      pATI = ATIPTR(pScreenInfo);
+     int         Base;
+ 
+diff --git a/src/atiadjust.h b/src/atiadjust.h
+index dd15f74..9509596 100644
+--- a/src/atiadjust.h
++++ b/src/atiadjust.h
+@@ -26,6 +26,6 @@
+ #include "atipriv.h"
+ 
+ extern void ATIAdjustPreInit(ATIPtr);
+-extern void ATIAdjustFrame(ScrnInfoPtr pScrn, int x, int y);
++extern void ATIAdjustFrame(ADJUST_FRAME_ARGS_DECL);
+ 
+ #endif /* ___ATIADJUST_H___ */
+diff --git a/src/aticonfig.c b/src/aticonfig.c
+index 15b7fb3..3f5f141 100644
+--- a/src/aticonfig.c
++++ b/src/aticonfig.c
+@@ -481,11 +481,26 @@ ATIProcessOptions
+     {
+         MessageType from = X_DEFAULT;
+ #if defined(USE_EXA)
++#if defined(USE_XAA)
++        if (AccelMethod != NULL)
++        {
++            from = X_CONFIG;
++            if (xf86NameCmp(AccelMethod, "EXA") == 0)
++                pATI->useEXA = TRUE;
++        }
++#else /* USE_XAA */
+         pATI->useEXA = TRUE;
++#endif /* !USE_XAA */
+ #endif /* USE_EXA */
+         xf86DrvMsg(pScreenInfo->scrnIndex, from,
+             "Using %s acceleration architecture\n",
+-            pATI->useEXA ? "EXA" : "no");
++            pATI->useEXA ? "EXA" :
++#if defined(USE_XAA)
++                   "XAA"
++#else
++                   "no"
++#endif
++            );
+ 
+ #if defined(USE_EXA)
+         if (pATI->useEXA && pATI->Chip >= ATI_CHIP_264GTPRO)
+diff --git a/src/aticonsole.c b/src/aticonsole.c
+index cf9da08..47e9edd 100644
+--- a/src/aticonsole.c
++++ b/src/aticonsole.c
+@@ -558,8 +558,8 @@ ATIEnterGraphics
+        (void)ATISaveScreen(pScreen, SCREEN_SAVER_ON);
+ 
+     /* Position the screen */
+-    (*pScreenInfo->AdjustFrame)(pScreenInfo,
+-        pScreenInfo->frameX0, pScreenInfo->frameY0);
++    (*pScreenInfo->AdjustFrame)(ADJUST_FRAME_ARGS(pScreenInfo,
++        pScreenInfo->frameX0, pScreenInfo->frameY0));
+ 
+     SetTimeSinceLastInputEvent();
+ 
+@@ -675,11 +675,15 @@ ATISwitchMode(SWITCH_MODE_ARGS_DECL)
+  * This function sets the server's virtual console to a graphics video state.
+  */
+ Bool
+-ATIEnterVT(ScrnInfoPtr pScreenInfo)
++ATIEnterVT(VT_FUNC_ARGS_DECL)
+ {
++    SCRN_INFO_PTR(arg);
+     ScreenPtr   pScreen     = pScreenInfo->pScreen;
+     ATIPtr      pATI        = ATIPTR(pScreenInfo);
+     PixmapPtr   pScreenPixmap;
++#if (XORG_VERSION_CURRENT < XORG_VERSION_NUMERIC(1, 9, 99, 1, 0))
++    DevUnion    PixmapPrivate;
++#endif
+     Bool        Entered;
+ 
+     if (!ATIEnterGraphics(NULL, pScreenInfo, pATI))
+@@ -705,10 +709,24 @@ ATIEnterVT(ScrnInfoPtr pScreenInfo)
+ 
+     pScreenPixmap = (*pScreen->GetScreenPixmap)(pScreen);
+ 
++#if (XORG_VERSION_CURRENT < XORG_VERSION_NUMERIC(1, 9, 99, 1, 0))
++    PixmapPrivate = pScreenPixmap->devPrivate;
++    if (!PixmapPrivate.ptr)
++        pScreenPixmap->devPrivate = pScreenInfo->pixmapPrivate;
++#endif
++
+     /* Tell framebuffer about remapped aperture */
+     Entered = (*pScreen->ModifyPixmapHeader)(pScreenPixmap,
+         -1, -1, -1, -1, -1, pATI->pMemory);
+ 
++#if (XORG_VERSION_CURRENT < XORG_VERSION_NUMERIC(1, 9, 99, 1, 0))
++    if (!PixmapPrivate.ptr)
++    {
++        pScreenInfo->pixmapPrivate = pScreenPixmap->devPrivate;
++        pScreenPixmap->devPrivate.ptr = NULL;
++    }
++#endif
++
+ #ifdef XF86DRI_DEVEL
+ 
+     if (pATI->directRenderingEnabled) 
+@@ -730,8 +748,9 @@ ATIEnterVT(ScrnInfoPtr pScreenInfo)
+  * entry.
+  */
+ void
+-ATILeaveVT(ScrnInfoPtr pScreenInfo)
++ATILeaveVT(VT_FUNC_ARGS_DECL)
+ {
++    SCRN_INFO_PTR(arg);
+     ScreenPtr   pScreen     = pScreenInfo->pScreen;
+     ATIPtr      pATI        = ATIPTR(pScreenInfo);
+ 
+@@ -754,8 +773,9 @@ ATILeaveVT(ScrnInfoPtr pScreenInfo)
+  * This function frees all driver data related to a screen.
+  */
+ void
+-ATIFreeScreen(ScrnInfoPtr pScreenInfo)
++ATIFreeScreen(FREE_SCREEN_ARGS_DECL)
+ {
++    SCRN_INFO_PTR(arg);
+     ATIPtr      pATI        = ATIPTR(pScreenInfo);
+ 
+     ATII2CFreeScreen(pScreenInfo->scrnIndex);
+diff --git a/src/aticonsole.h b/src/aticonsole.h
+index 1733efd..0dd18cc 100644
+--- a/src/aticonsole.h
++++ b/src/aticonsole.h
+@@ -35,9 +35,9 @@ extern void ATILeaveGraphics(ScrnInfoPtr, ATIPtr);
+ 
+ extern Bool ATISwitchMode(SWITCH_MODE_ARGS_DECL);
+ 
+-extern Bool ATIEnterVT(ScrnInfoPtr pScrn);
+-extern void ATILeaveVT(ScrnInfoPtr pScrn);
++extern Bool ATIEnterVT(VT_FUNC_ARGS_DECL);
++extern void ATILeaveVT(VT_FUNC_ARGS_DECL);
+ 
+-extern void ATIFreeScreen(ScrnInfoPtr pScrn);
++extern void ATIFreeScreen(FREE_SCREEN_ARGS_DECL);
+ 
+ #endif /* ___ATICONSOLE_H___ */
+diff --git a/src/atidga.c b/src/atidga.c
+index 205e6f6..166fd26 100644
+--- a/src/atidga.c
++++ b/src/atidga.c
+@@ -130,7 +130,7 @@ ATIDGASetMode
+         return FALSE;
+     if (!pDGAMode)
+         pATI->currentMode = NULL;
+-    (*pScreenInfo->AdjustFrame)(pScreenInfo, frameX0, frameY0);
++    (*pScreenInfo->AdjustFrame)(ADJUST_FRAME_ARGS(pScreenInfo, frameX0, frameY0));
+ 
+     return TRUE;
+ }
+@@ -149,7 +149,7 @@ ATIDGASetViewport
+     int         flags
+ )
+ {
+-    (*pScreenInfo->AdjustFrame)(pScreenInfo, x, y);
++    (*pScreenInfo->AdjustFrame)(ADJUST_FRAME_ARGS(pScreenInfo, x, y));
+ }
+ 
+ /*
+@@ -167,6 +167,113 @@ ATIDGAGetViewport
+     return 0;   /* There are never any pending requests */
+ }
+ 
++#ifdef USE_XAA
++/*
++ * ATIDGAFillRect --
++ *
++ * This function calls XAA solid fill primitives to fill a rectangle.
++ */
++static void
++ATIDGAFillRect
++(
++    ScrnInfoPtr   pScreenInfo,
++    int           x,
++    int           y,
++    int           w,
++    int           h,
++    unsigned long colour
++)
++{
++    ATIPtr        pATI     = ATIPTR(pScreenInfo);
++/*FIXME : use EXA if available */
++#ifdef USE_XAA
++    XAAInfoRecPtr pXAAInfo = pATI->pXAAInfo;
++
++    (*pXAAInfo->SetupForSolidFill)(pScreenInfo, (int)colour, GXcopy,
++                                   (CARD32)(~0));
++    (*pXAAInfo->SubsequentSolidFillRect)(pScreenInfo, x, y, w, h);
++
++    if (pScreenInfo->bitsPerPixel == pATI->bitsPerPixel)
++        SET_SYNC_FLAG(pXAAInfo);
++#endif
++}
++
++/*
++ * ATIDGABlitRect --
++ *
++ * This function calls XAA screen-to-screen copy primitives to copy a
++ * rectangle.
++ */
++static void
++ATIDGABlitRect
++(
++    ScrnInfoPtr pScreenInfo,
++    int         xSrc,
++    int         ySrc,
++    int         w,
++    int         h,
++    int         xDst,
++    int         yDst
++)
++{
++    ATIPtr        pATI     = ATIPTR(pScreenInfo);
++/*FIXME : use EXA if available */
++#ifdef USE_XAA
++    XAAInfoRecPtr pXAAInfo = pATI->pXAAInfo;
++    int           xdir     = ((xSrc < xDst) && (ySrc == yDst)) ? -1 : 1;
++    int           ydir     = (ySrc < yDst) ? -1 : 1;
++
++    (*pXAAInfo->SetupForScreenToScreenCopy)(pScreenInfo,
++        xdir, ydir, GXcopy, (CARD32)(~0), -1);
++    (*pXAAInfo->SubsequentScreenToScreenCopy)(pScreenInfo,
++        xSrc, ySrc, xDst, yDst, w, h);
++
++    if (pScreenInfo->bitsPerPixel == pATI->bitsPerPixel)
++        SET_SYNC_FLAG(pXAAInfo);
++#endif
++}
++
++/*
++ * ATIDGABlitTransRect --
++ *
++ * This function calls XAA screen-to-screen copy primitives to transparently
++ * copy a rectangle.
++ */
++static void
++ATIDGABlitTransRect
++(
++    ScrnInfoPtr   pScreenInfo,
++    int           xSrc,
++    int           ySrc,
++    int           w,
++    int           h,
++    int           xDst,
++    int           yDst,
++    unsigned long colour
++)
++{
++    ATIPtr        pATI     = ATIPTR(pScreenInfo);
++/*FIXME : use EXA if available */
++#ifdef USE_XAA
++    XAAInfoRecPtr pXAAInfo = pATI->pXAAInfo;
++    int           xdir     = ((xSrc < xDst) && (ySrc == yDst)) ? -1 : 1;
++    int           ydir     = (ySrc < yDst) ? -1 : 1;
++
++    pATI->XAAForceTransBlit = TRUE;
++
++    (*pXAAInfo->SetupForScreenToScreenCopy)(pScreenInfo,
++        xdir, ydir, GXcopy, (CARD32)(~0), (int)colour);
++
++    pATI->XAAForceTransBlit = FALSE;
++
++    (*pXAAInfo->SubsequentScreenToScreenCopy)(pScreenInfo,
++        xSrc, ySrc, xDst, yDst, w, h);
++
++    if (pScreenInfo->bitsPerPixel == pATI->bitsPerPixel)
++        SET_SYNC_FLAG(pXAAInfo);
++#endif
++}
++#endif /* USE_XAA */
+ 
+ /*
+  * ATIDGAAddModes --
+@@ -235,6 +342,10 @@ ATIDGAAddModes
+                     pDGAMode->flags |= DGA_PIXMAP_AVAILABLE;
+                     pDGAMode->address = pATI->pMemory;
+ 
++#ifdef USE_XAA
++                    if (pATI->pXAAInfo)
++                        pDGAMode->flags &= ~DGA_CONCURRENT_ACCESS;
++#endif
+                 }
+                 if ((pMode->Flags & V_DBLSCAN) || (pMode->VScan > 1))
+                     pDGAMode->flags |= DGA_DOUBLESCAN;
+@@ -295,6 +406,9 @@ ATIDGAInit
+     ATIPtr      pATI
+ )
+ {
++#ifdef USE_XAA
++    XAAInfoRecPtr pXAAInfo;
++#endif
+     int           flags;
+ 
+     if (!pATI->nDGAMode)
+@@ -306,6 +420,25 @@ ATIDGAInit
+         pATI->ATIDGAFunctions.GetViewport     = ATIDGAGetViewport;
+ 
+         flags = 0;
++#ifdef USE_XAA
++        if ((pXAAInfo = pATI->pXAAInfo))
++        {
++            pATI->ATIDGAFunctions.Sync = pXAAInfo->Sync;
++            if (pXAAInfo->SetupForSolidFill &&
++                pXAAInfo->SubsequentSolidFillRect)
++            {
++                flags |= DGA_FILL_RECT;
++                pATI->ATIDGAFunctions.FillRect = ATIDGAFillRect;
++            }
++            if (pXAAInfo->SetupForScreenToScreenCopy &&
++                pXAAInfo->SubsequentScreenToScreenCopy)
++            {
++                flags |= DGA_BLIT_RECT | DGA_BLIT_RECT_TRANS;
++                pATI->ATIDGAFunctions.BlitRect      = ATIDGABlitRect;
++                pATI->ATIDGAFunctions.BlitTransRect = ATIDGABlitTransRect;
++            }
++        }
++#endif
+         if (!flags)
+             flags = DGA_CONCURRENT_ACCESS;
+ 
+diff --git a/src/atidri.c b/src/atidri.c
+index 2d42bc6..35cbb99 100644
+--- a/src/atidri.c
++++ b/src/atidri.c
+@@ -126,6 +126,75 @@ static void ATIDRISwapContext( ScreenPtr pScreen,
+    }
+ }
+ 
++#ifdef USE_XAA
++static void ATIDRITransitionTo2d(ScreenPtr pScreen)
++{
++   ScrnInfoPtr pScreenInfo = xf86ScreenToScrn(pScreen);
++   ATIPtr pATI = ATIPTR(pScreenInfo);
++
++   if (pATI->backArea) {
++      xf86FreeOffscreenArea(pATI->backArea);
++      pATI->backArea = NULL;
++   }
++   if (pATI->depthTexArea) {
++      xf86FreeOffscreenArea(pATI->depthTexArea);
++      pATI->depthTexArea = NULL;
++   }
++   pATI->have3DWindows = FALSE;
++}
++
++static void ATIDRITransitionTo3d(ScreenPtr pScreen)
++{
++   ScrnInfoPtr pScreenInfo = xf86ScreenToScrn(pScreen);
++   ATIPtr pATI = ATIPTR(pScreenInfo);
++   FBAreaPtr fbArea;
++   int width, height;
++
++   xf86PurgeUnlockedOffscreenAreas(pScreen);
++
++   xf86QueryLargestOffscreenArea(pScreen, &width, &height, 0, 0, 0);
++
++   xf86DrvMsg(pScreenInfo->scrnIndex, X_INFO,
++	      "Largest offscreen area available: %d x %d\n",
++	      width, height);
++
++   fbArea = xf86AllocateOffscreenArea(pScreen, pScreenInfo->displayWidth,
++				      height - pATI->depthTexLines - 
++				      pATI->backLines,
++				      pScreenInfo->displayWidth, NULL, NULL, NULL);
++
++   if (!fbArea)
++      xf86DrvMsg(pScreen->myNum, X_ERROR, "Unable to reserve placeholder "
++		 "offscreen area, you might experience screen corruption\n");
++
++   if (!pATI->backArea) {
++      pATI->backArea = 
++	 xf86AllocateOffscreenArea(pScreen, pScreenInfo->displayWidth,
++				   pATI->backLines,
++				   pScreenInfo->displayWidth,
++				   NULL, NULL, NULL);
++   }
++   if (!pATI->backArea)
++      xf86DrvMsg(pScreen->myNum, X_ERROR, "Unable to reserve offscreen area "
++		 "for back buffer, you might experience screen corruption\n");
++
++   if (!pATI->depthTexArea) {
++      pATI->depthTexArea = 
++	 xf86AllocateOffscreenArea(pScreen, pScreenInfo->displayWidth,
++				   pATI->depthTexLines,
++				   pScreenInfo->displayWidth,
++				   NULL, NULL, NULL);
++   }
++   if (!pATI->depthTexArea)
++      xf86DrvMsg(pScreen->myNum, X_ERROR, "Unable to reserve offscreen area "
++		 "for depth buffer and textures, you might experience screen corruption\n");
++
++   if (fbArea)
++      xf86FreeOffscreenArea(fbArea);
++
++   pATI->have3DWindows = TRUE;
++}
++#endif /* USE_XAA */
+ 
+ #ifdef USE_EXA
+ static void ATIDRITransitionTo2d_EXA(ScreenPtr pScreen)
+@@ -134,11 +203,11 @@ static void ATIDRITransitionTo2d_EXA(ScreenPtr pScreen)
+    ATIPtr pATI = ATIPTR(pScreenInfo);
+    ATIDRIServerInfoPtr pATIDRIServer = pATI->pDRIServerInfo;
+ 
+-   exaEnableDisableFBAccess(pScreen, FALSE);
++   exaEnableDisableFBAccess(SCREEN_ARG(pScreen), FALSE);
+ 
+    pATI->pExa->offScreenBase = pATIDRIServer->backOffset;
+ 
+-   exaEnableDisableFBAccess(pScreen, TRUE);
++   exaEnableDisableFBAccess(SCREEN_ARG(pScreen), TRUE);
+ 
+    pATI->have3DWindows = FALSE;
+ }
+@@ -149,12 +218,12 @@ static void ATIDRITransitionTo3d_EXA(ScreenPtr pScreen)
+    ATIPtr pATI = ATIPTR(pScreenInfo);
+    ATIDRIServerInfoPtr pATIDRIServer = pATI->pDRIServerInfo;
+ 
+-   exaEnableDisableFBAccess(pScreen, FALSE);
++   exaEnableDisableFBAccess(SCREEN_ARG(pScreen), FALSE);
+ 
+    pATI->pExa->offScreenBase = pATIDRIServer->textureOffset +
+ 			       pATIDRIServer->textureSize;
+ 
+-   exaEnableDisableFBAccess(pScreen, TRUE);
++   exaEnableDisableFBAccess(SCREEN_ARG(pScreen), TRUE);
+ 
+    pATI->have3DWindows = TRUE;
+ }
+@@ -163,6 +232,59 @@ static void ATIDRITransitionTo3d_EXA(ScreenPtr pScreen)
+ /* Initialize the state of the back and depth buffers. */
+ static void ATIDRIInitBuffers( WindowPtr pWin, RegionPtr prgn, CARD32 indx )
+ {
++#ifdef USE_XAA
++   ScreenPtr   pScreen = pWin->drawable.pScreen;
++   ScrnInfoPtr pScreenInfo   = xf86ScreenToScrn(pScreen);
++   ATIPtr pATI = ATIPTR(pScreenInfo);
++   ATIDRIServerInfoPtr pATIDRIServer = pATI->pDRIServerInfo;
++   XAAInfoRecPtr pXAAInfo = pATI->pXAAInfo;
++   BoxPtr      pbox, pboxSave;
++   int         nbox, nboxSave;
++   int         depth;
++
++   depth = 0x0000ffff;
++
++   if (!pXAAInfo)
++      return;
++
++   if (!pXAAInfo->SetupForSolidFill)
++      return;
++   
++   /* FIXME: Only initialize the back and depth buffers for contexts
++      that request them */
++
++   /* FIXME: Use drm clear? (see Radeon driver) */
++
++   pboxSave = pbox = REGION_RECTS(prgn);
++   nboxSave = nbox = REGION_NUM_RECTS(prgn);
++
++   (*pXAAInfo->SetupForSolidFill)(pScreenInfo, 0, GXcopy, (CARD32)(-1));
++   for (; nbox; nbox--, pbox++) {
++      (*pXAAInfo->SubsequentSolidFillRect)(pScreenInfo,
++					      pbox->x1 + pATIDRIServer->fbX,
++					      pbox->y1 + pATIDRIServer->fbY,
++					      pbox->x2 - pbox->x1,
++					      pbox->y2 - pbox->y1);
++      (*pXAAInfo->SubsequentSolidFillRect)(pScreenInfo,
++					      pbox->x1 + pATIDRIServer->backX,
++					      pbox->y1 + pATIDRIServer->backY,
++					      pbox->x2 - pbox->x1,
++					      pbox->y2 - pbox->y1);
++   }
++
++   pbox = pboxSave;
++   nbox = nboxSave;
++
++   (*pXAAInfo->SetupForSolidFill)(pScreenInfo, depth, GXcopy, (CARD32)(-1));
++   for (; nbox; nbox--, pbox++)
++      (*pXAAInfo->SubsequentSolidFillRect)(pScreenInfo,
++					      pbox->x1 + pATIDRIServer->depthX,
++					      pbox->y1 + pATIDRIServer->depthY,
++					      pbox->x2 - pbox->x1,
++					      pbox->y2 - pbox->y1);
++
++   ATIDRIMarkSyncInt(pScreenInfo);
++#endif
+ }
+ 
+ /* Copy the back and depth buffers when the X server moves a window.
+@@ -177,6 +299,172 @@ static void ATIDRIInitBuffers( WindowPtr pWin, RegionPtr prgn, CARD32 indx )
+ static void ATIDRIMoveBuffers( WindowPtr pWin, DDXPointRec ptOldOrg,
+ 			       RegionPtr prgnSrc, CARD32 indx )
+ {
++#ifdef USE_XAA
++    ScreenPtr pScreen = pWin->drawable.pScreen;
++    ScrnInfoPtr pScreenInfo = xf86ScreenToScrn(pScreen);
++    ATIPtr pATI = ATIPTR(pScreenInfo);
++    XAAInfoRecPtr pXAAInfo = pATI->pXAAInfo;
++
++    int backOffsetPitch =  (((pATI->pDRIServerInfo->backPitch/8) << 22) |
++					   (pATI->pDRIServerInfo->backOffset >> 3));
++#if 0
++    int depthOffsetPitch = (((pATI->pDRIServerInfo->depthPitch/8) << 22) |
++					   (pATI->pDRIServerInfo->depthOffset >> 3));
++#endif
++    BoxPtr        pboxTmp, pboxNext, pboxBase;
++    DDXPointPtr   pptTmp;
++    int           xdir, ydir;
++
++    int           screenwidth = pScreenInfo->virtualX;
++    int           screenheight = pScreenInfo->virtualY;
++
++    BoxPtr        pbox     = REGION_RECTS(prgnSrc);
++    int           nbox     = REGION_NUM_RECTS(prgnSrc);
++
++    BoxPtr        pboxNew1 = NULL;
++    BoxPtr        pboxNew2 = NULL;
++    DDXPointPtr   pptNew1  = NULL;
++    DDXPointPtr   pptNew2  = NULL;
++    DDXPointPtr   pptSrc   = &ptOldOrg;
++
++    int           dx       = pWin->drawable.x - ptOldOrg.x;
++    int           dy       = pWin->drawable.y - ptOldOrg.y;
++
++   if (!pXAAInfo)
++      return;
++
++   if (!pXAAInfo->SetupForScreenToScreenCopy)
++      return;
++
++    /* FIXME: Only move the back and depth buffers for contexts
++     * that request them.
++     */
++
++    /* If the copy will overlap in Y, reverse the order */
++    if (dy > 0) {
++	ydir = -1;
++
++	if (nbox > 1) {
++	    /* Keep ordering in each band, reverse order of bands */
++	    pboxNew1 = (BoxPtr)malloc(sizeof(BoxRec)*nbox);
++	    if (!pboxNew1) return;
++	    pptNew1 = (DDXPointPtr)malloc(sizeof(DDXPointRec)*nbox);
++	    if (!pptNew1) {
++		free(pboxNew1);
++		return;
++	    }
++	    pboxBase = pboxNext = pbox+nbox-1;
++	    while (pboxBase >= pbox) {
++		while ((pboxNext >= pbox) && (pboxBase->y1 == pboxNext->y1))
++		    pboxNext--;
++		pboxTmp = pboxNext+1;
++		pptTmp  = pptSrc + (pboxTmp - pbox);
++		while (pboxTmp <= pboxBase) {
++		    *pboxNew1++ = *pboxTmp++;
++		    *pptNew1++  = *pptTmp++;
++		}
++		pboxBase = pboxNext;
++	    }
++	    pboxNew1 -= nbox;
++	    pbox      = pboxNew1;
++	    pptNew1  -= nbox;
++	    pptSrc    = pptNew1;
++	}
++    } else {
++	/* No changes required */
++	ydir = 1;
++    }
++
++    /* If the regions will overlap in X, reverse the order */
++    if (dx > 0) {
++	xdir = -1;
++
++	if (nbox > 1) {
++	    /* reverse order of rects in each band */
++	    pboxNew2 = (BoxPtr)malloc(sizeof(BoxRec)*nbox);
++	    pptNew2  = (DDXPointPtr)malloc(sizeof(DDXPointRec)*nbox);
++	    if (!pboxNew2 || !pptNew2) {
++		free(pptNew2);
++		free(pboxNew2);
++		free(pptNew1);
++		free(pboxNew1);
++		return;
++	    }
++	    pboxBase = pboxNext = pbox;
++	    while (pboxBase < pbox+nbox) {
++		while ((pboxNext < pbox+nbox)
++		       && (pboxNext->y1 == pboxBase->y1))
++		    pboxNext++;
++		pboxTmp = pboxNext;
++		pptTmp  = pptSrc + (pboxTmp - pbox);
++		while (pboxTmp != pboxBase) {
++		    *pboxNew2++ = *--pboxTmp;
++		    *pptNew2++  = *--pptTmp;
++		}
++		pboxBase = pboxNext;
++	    }
++	    pboxNew2 -= nbox;
++	    pbox      = pboxNew2;
++	    pptNew2  -= nbox;
++	    pptSrc    = pptNew2;
++	}
++    } else {
++	/* No changes are needed */
++	xdir = 1;
++    }
++
++    (*pXAAInfo->SetupForScreenToScreenCopy)(pScreenInfo, xdir, ydir, GXcopy,
++					       (CARD32)(-1), -1);
++
++    for (; nbox-- ; pbox++) {
++	int xa    = pbox->x1;
++	int ya    = pbox->y1;
++	int destx = xa + dx;
++	int desty = ya + dy;
++	int w     = pbox->x2 - xa + 1;
++	int h     = pbox->y2 - ya + 1;
++
++	if (destx < 0)                xa -= destx, w += destx, destx = 0;
++	if (desty < 0)                ya -= desty, h += desty, desty = 0;
++	if (destx + w > screenwidth)  w = screenwidth  - destx;
++	if (desty + h > screenheight) h = screenheight - desty;
++
++	if (w <= 0) continue;
++	if (h <= 0) continue;
++
++	ATIMach64WaitForFIFO(pATI, 2);
++	outf(SRC_OFF_PITCH, backOffsetPitch);
++	outf(DST_OFF_PITCH, backOffsetPitch);
++
++	(*pXAAInfo->SubsequentScreenToScreenCopy)(pScreenInfo,
++						     xa, ya,
++						     destx, desty,
++						     w, h);
++#if 0
++	/* FIXME: Move depth buffers? */
++	ATIMach64WaitForFIFO(pATI, 2);
++	outf(SRC_OFF_PITCH, depthOffsetPitch);
++	outf(DST_OFF_PITCH, depthOffsetPitch);
++
++	if (pATI->depthMoves)
++	    ATIScreenToScreenCopyDepth(pScreenInfo,
++					  xa, ya,
++					  destx, desty,
++					  w, h);
++#endif
++    }
++
++    ATIMach64WaitForFIFO(pATI, 2);
++    outf(SRC_OFF_PITCH, pATI->NewHW.dst_off_pitch);
++    outf(DST_OFF_PITCH, pATI->NewHW.src_off_pitch);
++
++    free(pptNew2);
++    free(pboxNew2);
++    free(pptNew1);
++    free(pboxNew1);
++
++    ATIDRIMarkSyncInt(pScreenInfo);
++#endif
+ }
+ 
+ /* Compute log base 2 of val. */
+@@ -805,6 +1093,12 @@ Bool ATIDRIScreenInit( ScreenPtr pScreen )
+    pDRIInfo->SwapContext	= ATIDRISwapContext;
+    pDRIInfo->InitBuffers	= ATIDRIInitBuffers;
+    pDRIInfo->MoveBuffers	= ATIDRIMoveBuffers;
++#ifdef USE_XAA
++   if (!pATI->useEXA) {
++      pDRIInfo->TransitionTo2d  = ATIDRITransitionTo2d;
++      pDRIInfo->TransitionTo3d  = ATIDRITransitionTo3d;
++   }
++#endif /* USE_XAA */
+ #ifdef USE_EXA
+    if (pATI->useEXA) {
+       pDRIInfo->TransitionTo2d  = ATIDRITransitionTo2d_EXA;
+diff --git a/src/atiload.c b/src/atiload.c
+index 68c2b7d..b96ed4b 100644
+--- a/src/atiload.c
++++ b/src/atiload.c
+@@ -82,6 +82,16 @@ ATILoadModules
+         }
+     }
+ #endif
++#ifdef USE_XAA
++    /* Load XAA if needed */
++    if (!pATI->useEXA && pATI->OptionAccel &&
++        !xf86LoadSubModule(pScreenInfo, "xaa")) {
++	xf86DrvMsg(pScreenInfo->scrnIndex, X_INFO,
++		   "Falling back to shadowfb\n");
++	pATI->OptionAccel = 0;
++	pATI->OptionShadowFB = 1;
++    }
++#endif
+ 
+     /* Load shadow frame buffer code if needed */
+     if (pATI->OptionShadowFB &&
+diff --git a/src/atimach64.c b/src/atimach64.c
+index 7a229d4..e3897ea 100644
+--- a/src/atimach64.c
++++ b/src/atimach64.c
+@@ -248,6 +248,20 @@ ATIMach64PreInit
+         pATIHW->src_cntl = SRC_LINE_X_DIR;
+ 
+         /* Initialise scissor, allowing for offscreen areas */
++#ifdef USE_XAA
++        if (!pATI->useEXA)
++        {
++            int width, height, total;
++
++            pATIHW->sc_right = (pATI->displayWidth * pATI->XModifier) - 1;
++            width = pATI->displayWidth * pATI->bitsPerPixel;
++            total = pScreenInfo->videoRam * (1024 * 8);
++            height = (total + width - 1) / width;
++            if (height > ATIMach64MaxY + 1)
++                height = ATIMach64MaxY + 1;
++            pATIHW->sc_bottom = height - 1;
++        }
++#endif /* USE_XAA */
+ 
+ #ifdef USE_EXA
+         if (pATI->useEXA)
+diff --git a/src/atimach64accel.c b/src/atimach64accel.c
+index 8a4ad75..9293c5e 100644
+--- a/src/atimach64accel.c
++++ b/src/atimach64accel.c
+@@ -262,6 +262,10 @@ ATIMach64Sync
+     /* EXA sets pEXA->needsSync to FALSE on its own */
+ #endif
+ 
++#ifdef USE_XAA
++    if (pATI->pXAAInfo)
++        pATI->pXAAInfo->NeedToSync = FALSE;
++#endif
+ 
+     if (pATI->Chip >= ATI_CHIP_264VTB)
+     {
+@@ -398,3 +402,668 @@ TestRegisterCachingXV(ScrnInfoPtr pScreenInfo)
+     TestRegisterCaching(SCALER_BUF1_OFFSET_V);
+ }
+ 
++#ifdef USE_XAA
++/*
++ * ATIMach64SetupForScreenToScreenCopy --
++ *
++ * This function sets up the draw engine for a series of screen-to-screen copy
++ * operations.
++ */
++static void
++ATIMach64SetupForScreenToScreenCopy
++(
++    ScrnInfoPtr  pScreenInfo,
++    int          xdir,
++    int          ydir,
++    int          rop,
++    unsigned int planemask,
++    int          TransparencyColour
++)
++{
++    ATIPtr pATI = ATIPTR(pScreenInfo);
++
++    ATIDRISync(pScreenInfo);
++
++    ATIMach64WaitForFIFO(pATI, 3);
++    outf(DP_WRITE_MASK, planemask);
++    outf(DP_SRC, DP_MONO_SRC_ALLONES |
++        SetBits(SRC_BLIT, DP_FRGD_SRC) | SetBits(SRC_BKGD, DP_BKGD_SRC));
++    outf(DP_MIX, SetBits(ATIMach64ALU[rop], DP_FRGD_MIX));
++
++#ifdef AVOID_DGA
++
++    if (TransparencyColour == -1)
++
++#else /* AVOID_DGA */
++
++    if (!pATI->XAAForceTransBlit && (TransparencyColour == -1))
++
++#endif /* AVOID_DGA */
++
++    {
++        outf(CLR_CMP_CNTL, CLR_CMP_FN_FALSE);
++    }
++    else
++    {
++        ATIMach64WaitForFIFO(pATI, 2);
++        outf(CLR_CMP_CLR, TransparencyColour);
++        outf(CLR_CMP_CNTL, CLR_CMP_FN_EQUAL | CLR_CMP_SRC_2D);
++    }
++
++    pATI->dst_cntl = 0;
++
++    if (ydir > 0)
++        pATI->dst_cntl |= DST_Y_DIR;
++    if (xdir > 0)
++        pATI->dst_cntl |= DST_X_DIR;
++
++    if (pATI->XModifier == 1)
++        outf(DST_CNTL, pATI->dst_cntl);
++    else
++        pATI->dst_cntl |= DST_24_ROT_EN;
++}
++
++/*
++ * ATIMach64SubsequentScreenToScreenCopy --
++ *
++ * This function performs a screen-to-screen copy operation.
++ */
++static void
++ATIMach64SubsequentScreenToScreenCopy
++(
++    ScrnInfoPtr pScreenInfo,
++    int         xSrc,
++    int         ySrc,
++    int         xDst,
++    int         yDst,
++    int         w,
++    int         h
++)
++{
++    ATIPtr pATI = ATIPTR(pScreenInfo);
++
++    xSrc *= pATI->XModifier;
++    xDst *= pATI->XModifier;
++    w    *= pATI->XModifier;
++
++    ATIDRISync(pScreenInfo);
++
++    /* Disable clipping if it gets in the way */
++    ATIMach64ValidateClip(pATI, xDst, xDst + w - 1, yDst, yDst + h - 1);
++
++    if (!(pATI->dst_cntl & DST_X_DIR))
++    {
++        xSrc += w - 1;
++        xDst += w - 1;
++    }
++
++    if (!(pATI->dst_cntl & DST_Y_DIR))
++    {
++        ySrc += h - 1;
++        yDst += h - 1;
++    }
++
++    if (pATI->XModifier != 1)
++        outf(DST_CNTL, pATI->dst_cntl | SetBits((xDst / 4) % 6, DST_24_ROT));
++
++    ATIMach64WaitForFIFO(pATI, 4);
++    outf(SRC_Y_X, SetWord(xSrc, 1) | SetWord(ySrc, 0));
++    outf(SRC_WIDTH1, w);
++    outf(DST_Y_X, SetWord(xDst, 1) | SetWord(yDst, 0));
++    outf(DST_HEIGHT_WIDTH, SetWord(w, 1) | SetWord(h, 0));
++
++    /*
++     * On VTB's and later, the engine will randomly not wait for a copy
++     * operation to commit its results to video memory before starting the next
++     * one.  The probability of such occurrences increases with GUI_WB_FLUSH
++     * (or GUI_WB_FLUSH_P) setting, bitsPerPixel and/or CRTC clock.  This
++     * would point to some kind of video memory bandwidth problem were it noti
++     * for the fact that the problem occurs less often (but still occurs) when
++     * copying larger rectangles.
++     */
++    if ((pATI->Chip >= ATI_CHIP_264VTB) && !pATI->OptionDevel)
++        ATIMach64Sync(pScreenInfo);
++}
++
++/*
++ * ATIMach64SetupForSolidFill --
++ *
++ * This function sets up the draw engine for a series of solid fills.
++ */
++static void
++ATIMach64SetupForSolidFill
++(
++    ScrnInfoPtr  pScreenInfo,
++    int          colour,
++    int          rop,
++    unsigned int planemask
++)
++{
++    ATIPtr pATI = ATIPTR(pScreenInfo);
++
++    ATIDRISync(pScreenInfo);
++
++    ATIMach64WaitForFIFO(pATI, 5);
++    outf(DP_WRITE_MASK, planemask);
++    outf(DP_SRC, DP_MONO_SRC_ALLONES |
++        SetBits(SRC_FRGD, DP_FRGD_SRC) | SetBits(SRC_BKGD, DP_BKGD_SRC));
++    outf(DP_FRGD_CLR, colour);
++    outf(DP_MIX, SetBits(ATIMach64ALU[rop], DP_FRGD_MIX));
++
++    outf(CLR_CMP_CNTL, CLR_CMP_FN_FALSE);
++
++    if (pATI->XModifier == 1)
++        outf(DST_CNTL, DST_X_DIR | DST_Y_DIR);
++}
++
++/*
++ * ATIMach64SubsequentSolidFillRect --
++ *
++ * This function performs a solid rectangle fill.
++ */
++static void
++ATIMach64SubsequentSolidFillRect
++(
++    ScrnInfoPtr pScreenInfo,
++    int         x,
++    int         y,
++    int         w,
++    int         h
++)
++{
++    ATIPtr pATI = ATIPTR(pScreenInfo);
++
++    ATIDRISync(pScreenInfo);
++
++    if (pATI->XModifier != 1)
++    {
++        x *= pATI->XModifier;
++        w *= pATI->XModifier;
++
++        outf(DST_CNTL, SetBits((x / 4) % 6, DST_24_ROT) |
++            (DST_X_DIR | DST_Y_DIR | DST_24_ROT_EN));
++    }
++
++    /* Disable clipping if it gets in the way */
++    ATIMach64ValidateClip(pATI, x, x + w - 1, y, y + h - 1);
++
++    ATIMach64WaitForFIFO(pATI, 2);
++    outf(DST_Y_X, SetWord(x, 1) | SetWord(y, 0));
++    outf(DST_HEIGHT_WIDTH, SetWord(w, 1) | SetWord(h, 0));
++}
++
++/*
++ * ATIMach64SetupForSolidLine --
++ *
++ * This function sets up the draw engine for a series of solid lines.  It is
++ * not used for 24bpp because the engine doesn't support it.
++ */
++static void
++ATIMach64SetupForSolidLine
++(
++    ScrnInfoPtr  pScreenInfo,
++    int          colour,
++    int          rop,
++    unsigned int planemask
++)
++{
++    ATIPtr pATI = ATIPTR(pScreenInfo);
++
++    ATIDRISync(pScreenInfo);
++
++    ATIMach64WaitForFIFO(pATI, 5);
++    outf(DP_WRITE_MASK, planemask);
++    outf(DP_SRC, DP_MONO_SRC_ALLONES |
++        SetBits(SRC_FRGD, DP_FRGD_SRC) | SetBits(SRC_BKGD, DP_BKGD_SRC));
++    outf(DP_FRGD_CLR, colour);
++    outf(DP_MIX, SetBits(ATIMach64ALU[rop], DP_FRGD_MIX));
++
++    outf(CLR_CMP_CNTL, CLR_CMP_FN_FALSE);
++
++    ATIMach64ValidateClip(pATI, pATI->NewHW.sc_left, pATI->NewHW.sc_right,
++        pATI->NewHW.sc_top, pATI->NewHW.sc_bottom);
++}
++
++/*
++ * ATIMach64SubsequentSolidHorVertLine --
++ *
++ * This is called to draw a solid horizontal or vertical line.  This does a
++ * one-pixel wide solid fill.
++ */
++static void
++ATIMach64SubsequentSolidHorVertLine
++(
++    ScrnInfoPtr pScreenInfo,
++    int         x,
++    int         y,
++    int         len,
++    int         dir
++)
++{
++    ATIPtr pATI = ATIPTR(pScreenInfo);
++
++    ATIDRISync(pScreenInfo);
++
++    ATIMach64WaitForFIFO(pATI, 3);
++    outf(DST_CNTL, DST_X_DIR | DST_Y_DIR);
++    outf(DST_Y_X, SetWord(x, 1) | SetWord(y, 0));
++
++    if (dir == DEGREES_0)
++        outf(DST_HEIGHT_WIDTH, SetWord(len, 1) | SetWord(1, 0));
++    else /* if (dir == DEGREES_270) */
++        outf(DST_HEIGHT_WIDTH, SetWord(1, 1) | SetWord(len, 0));
++}
++
++/*
++ * ATIMach64SubsequentSolidBresenhamLine --
++ *
++ * This function draws a line using the Bresenham line engine.
++ */
++static void
++ATIMach64SubsequentSolidBresenhamLine
++(
++    ScrnInfoPtr pScreenInfo,
++    int         x,
++    int         y,
++    int         major,
++    int         minor,
++    int         err,
++    int         len,
++    int         octant
++)
++{
++    ATIPtr pATI = ATIPTR(pScreenInfo);
++    CARD32 dst_cntl = DST_LAST_PEL;
++
++    if (octant & YMAJOR)
++        dst_cntl |= DST_Y_MAJOR;
++
++    if (!(octant & XDECREASING))
++        dst_cntl |= DST_X_DIR;
++
++    if (!(octant & YDECREASING))
++        dst_cntl |= DST_Y_DIR;
++
++    ATIDRISync(pScreenInfo);
++
++    ATIMach64WaitForFIFO(pATI, 6);
++    outf(DST_CNTL, dst_cntl);
++    outf(DST_Y_X, SetWord(x, 1) | SetWord(y, 0));
++    outf(DST_BRES_ERR, minor + err);
++    outf(DST_BRES_INC, minor);
++    outf(DST_BRES_DEC, minor - major);
++    outf(DST_BRES_LNTH, len);
++}
++
++/*
++ * ATIMach64SetupForMono8x8PatternFill --
++ *
++ * This function sets up the draw engine for a series of 8x8 1bpp pattern
++ * fills.
++ */
++static void
++ATIMach64SetupForMono8x8PatternFill
++(
++    ScrnInfoPtr  pScreenInfo,
++    int          patx,
++    int          paty,
++    int          fg,
++    int          bg,
++    int          rop,
++    unsigned int planemask
++)
++{
++    ATIPtr pATI = ATIPTR(pScreenInfo);
++
++    ATIDRISync(pScreenInfo);
++
++    ATIMach64WaitForFIFO(pATI, 3);
++    outf(DP_WRITE_MASK, planemask);
++    outf(DP_SRC, DP_MONO_SRC_PATTERN |
++        SetBits(SRC_FRGD, DP_FRGD_SRC) | SetBits(SRC_BKGD, DP_BKGD_SRC));
++    outf(DP_FRGD_CLR, fg);
++
++    if (bg == -1)
++    {
++        outf(DP_MIX, SetBits(ATIMach64ALU[rop], DP_FRGD_MIX) |
++            SetBits(MIX_DST, DP_BKGD_MIX));
++    }
++    else
++    {
++        ATIMach64WaitForFIFO(pATI, 2);
++        outf(DP_BKGD_CLR, bg);
++        outf(DP_MIX, SetBits(ATIMach64ALU[rop], DP_FRGD_MIX) |
++            SetBits(ATIMach64ALU[rop], DP_BKGD_MIX));
++    }
++
++    ATIMach64WaitForFIFO(pATI, 4);
++    outf(PAT_REG0, patx);
++    outf(PAT_REG1, paty);
++    outf(PAT_CNTL, PAT_MONO_EN);
++
++    outf(CLR_CMP_CNTL, CLR_CMP_FN_FALSE);
++
++    if (pATI->XModifier == 1)
++        outf(DST_CNTL, DST_X_DIR | DST_Y_DIR);
++}
++
++/*
++ * ATIMach64SubsequentMono8x8PatternFillRect --
++ *
++ * This function performs an 8x8 1bpp pattern fill.
++ */
++static void
++ATIMach64SubsequentMono8x8PatternFillRect
++(
++    ScrnInfoPtr pScreenInfo,
++    int         patx,
++    int         paty,
++    int         x,
++    int         y,
++    int         w,
++    int         h
++)
++{
++    ATIPtr pATI = ATIPTR(pScreenInfo);
++
++    ATIDRISync(pScreenInfo);
++
++    if (pATI->XModifier != 1)
++    {
++        x *= pATI->XModifier;
++        w *= pATI->XModifier;
++
++        outf(DST_CNTL, SetBits((x / 4) % 6, DST_24_ROT) |
++            (DST_X_DIR | DST_Y_DIR | DST_24_ROT_EN));
++    }
++
++    /* Disable clipping if it gets in the way */
++    ATIMach64ValidateClip(pATI, x, x + w - 1, y, y + h - 1);
++
++    ATIMach64WaitForFIFO(pATI, 2);
++    outf(DST_Y_X, SetWord(x, 1) | SetWord(y, 0));
++    outf(DST_HEIGHT_WIDTH, SetWord(w, 1) | SetWord(h, 0));
++}
++
++/*
++ * ATIMach64SetupForScanlineCPUToScreenColorExpandFill --
++ *
++ * This function sets up the engine for a series of colour expansion fills.
++ */
++static void
++ATIMach64SetupForScanlineCPUToScreenColorExpandFill
++(
++    ScrnInfoPtr  pScreenInfo,
++    int          fg,
++    int          bg,
++    int          rop,
++    unsigned int planemask
++)
++{
++    ATIPtr pATI = ATIPTR(pScreenInfo);
++
++    ATIDRISync(pScreenInfo);
++
++    ATIMach64WaitForFIFO(pATI, 3);
++    outf(DP_WRITE_MASK, planemask);
++    outf(DP_SRC, DP_MONO_SRC_HOST |
++        SetBits(SRC_FRGD, DP_FRGD_SRC) | SetBits(SRC_BKGD, DP_BKGD_SRC));
++    outf(DP_FRGD_CLR, fg);
++
++    if (bg == -1)
++    {
++        outf(DP_MIX, SetBits(ATIMach64ALU[rop], DP_FRGD_MIX) |
++            SetBits(MIX_DST, DP_BKGD_MIX));
++    }
++    else
++    {
++        ATIMach64WaitForFIFO(pATI, 2);
++        outf(DP_BKGD_CLR, bg);
++        outf(DP_MIX, SetBits(ATIMach64ALU[rop], DP_FRGD_MIX) |
++            SetBits(ATIMach64ALU[rop], DP_BKGD_MIX));
++    }
++
++    outf(CLR_CMP_CNTL, CLR_CMP_FN_FALSE);
++
++    if (pATI->XModifier == 1)
++        outf(DST_CNTL, DST_X_DIR | DST_Y_DIR);
++}
++
++/*
++ * ATIMach64SubsequentScanlineCPUToScreenColorExpandFill --
++ *
++ * This function sets up the engine for a single colour expansion fill.
++ */
++static void
++ATIMach64SubsequentScanlineCPUToScreenColorExpandFill
++(
++    ScrnInfoPtr pScreenInfo,
++    int         x,
++    int         y,
++    int         w,
++    int         h,
++    int         skipleft
++)
++{
++    ATIPtr pATI = ATIPTR(pScreenInfo);
++
++    ATIDRISync(pScreenInfo);
++
++    if (pATI->XModifier != 1)
++    {
++        x *= pATI->XModifier;
++        w *= pATI->XModifier;
++        skipleft *= pATI->XModifier;
++
++        outf(DST_CNTL, SetBits((x / 4) % 6, DST_24_ROT) |
++            (DST_X_DIR | DST_Y_DIR | DST_24_ROT_EN));
++    }
++
++    pATI->ExpansionBitmapWidth = (w + 31) / 32;
++
++    ATIMach64WaitForFIFO(pATI, 3);
++    pATI->sc_left = x + skipleft;
++    pATI->sc_right = x + w - 1;
++    outf(SC_LEFT_RIGHT,
++        SetWord(pATI->sc_right, 1) | SetWord(pATI->sc_left, 0));
++    outf(DST_Y_X, SetWord(x, 1) | SetWord(y, 0));
++    outf(DST_HEIGHT_WIDTH,
++        SetWord(pATI->ExpansionBitmapWidth * 32, 1) | SetWord(h, 0));
++}
++
++/*
++ * ATIMach64SubsequentColorExpandScanline --
++ *
++ * This function feeds a bitmap scanline to the engine for a colour expansion
++ * fill.  This is written to do burst transfers for those platforms that can do
++ * them, and to improve CPU/engine concurrency.
++ */
++static void
++ATIMach64SubsequentColorExpandScanline
++(
++    ScrnInfoPtr pScreenInfo,
++    int         iBuffer
++)
++{
++    ATIPtr          pATI         = ATIPTR(pScreenInfo);
++    CARD32          *pBitmapData = pATI->ExpansionBitmapScanlinePtr[iBuffer];
++    int             w            = pATI->ExpansionBitmapWidth;
++
++    ATIDRISync(pScreenInfo);
++
++    while (w > 0)
++    {
++        /*
++         * Transfers are done in chunks of up to 64 bytes in length (32 on
++         * earlier controllers).
++         */
++        int nDWord = w;
++        if (nDWord > pATI->nHostFIFOEntries)
++            nDWord = pATI->nHostFIFOEntries;
++
++        /* Make enough FIFO slots available */
++        ATIMach64WaitForFIFO(pATI, nDWord);
++
++        /*
++         * Always start transfers on a chuck-sized boundary.  Note that
++         * HOST_DATA_0 is actually on a 512-byte boundary, but *pBitmapData can
++         * only be guaranteed to be on a chunk-sized boundary.
++         *
++         * Transfer current chunk.  With any luck, the compiler won't mangle
++         * this too badly...
++         */
++
++#       if defined(ATIMove32)
++
++        {
++            ATIMove32(pATI->pHOST_DATA, pBitmapData, nDWord);
++        }
++
++#       else
++
++        {
++            volatile CARD32 *pDst;
++            CARD32          *pSrc;
++            unsigned int    iDWord;
++
++            iDWord = 16 - nDWord;
++            pDst = (volatile CARD32 *)pATI->pHOST_DATA - iDWord;
++            pSrc = pBitmapData - iDWord;
++
++            switch (iDWord)
++            {
++                case  0:  MMIO_MOVE32(pDst +  0, 0, *(pSrc +  0));
++                case  1:  MMIO_MOVE32(pDst +  1, 0, *(pSrc +  1));
++                case  2:  MMIO_MOVE32(pDst +  2, 0, *(pSrc +  2));
++                case  3:  MMIO_MOVE32(pDst +  3, 0, *(pSrc +  3));
++                case  4:  MMIO_MOVE32(pDst +  4, 0, *(pSrc +  4));
++                case  5:  MMIO_MOVE32(pDst +  5, 0, *(pSrc +  5));
++                case  6:  MMIO_MOVE32(pDst +  6, 0, *(pSrc +  6));
++                case  7:  MMIO_MOVE32(pDst +  7, 0, *(pSrc +  7));
++                case  8:  MMIO_MOVE32(pDst +  8, 0, *(pSrc +  8));
++                case  9:  MMIO_MOVE32(pDst +  9, 0, *(pSrc +  9));
++                case 10:  MMIO_MOVE32(pDst + 10, 0, *(pSrc + 10));
++                case 11:  MMIO_MOVE32(pDst + 11, 0, *(pSrc + 11));
++                case 12:  MMIO_MOVE32(pDst + 12, 0, *(pSrc + 12));
++                case 13:  MMIO_MOVE32(pDst + 13, 0, *(pSrc + 13));
++                case 14:  MMIO_MOVE32(pDst + 14, 0, *(pSrc + 14));
++                case 15:  MMIO_MOVE32(pDst + 15, 0, *(pSrc + 15));
++
++                default:    /* Muffle compiler */
++                    break;
++            }
++        }
++
++#       endif
++
++        /* Step to next chunk */
++        pBitmapData += nDWord;
++        w -= nDWord;
++        pATI->nAvailableFIFOEntries -= nDWord;
++    }
++
++    pATI->EngineIsBusy = TRUE;
++}
++
++/*
++ * ATIMach64AccelInit --
++ *
++ * This function fills in structure fields needed for acceleration on Mach64
++ * variants.
++ */
++Bool
++ATIMach64AccelInit
++(
++    ScreenPtr pScreen
++)
++{
++    ScrnInfoPtr   pScreenInfo = xf86ScreenToScrn(pScreen);
++    ATIPtr        pATI        = ATIPTR(pScreenInfo);
++    XAAInfoRecPtr pXAAInfo;
++
++    if (!(pATI->pXAAInfo = XAACreateInfoRec()))
++        return FALSE;
++
++    pXAAInfo = pATI->pXAAInfo;
++
++    /* This doesn't seem quite right... */
++    if (pATI->XModifier == 1)
++    {
++        pXAAInfo->Flags = PIXMAP_CACHE | OFFSCREEN_PIXMAPS;
++        pXAAInfo->Flags |= LINEAR_FRAMEBUFFER;
++    }
++
++    /* Sync */
++    pXAAInfo->Sync = ATIMach64Sync;
++
++    /* Screen-to-screen copy */
++    pXAAInfo->SetupForScreenToScreenCopy = ATIMach64SetupForScreenToScreenCopy;
++    pXAAInfo->SubsequentScreenToScreenCopy =
++        ATIMach64SubsequentScreenToScreenCopy;
++
++    /* Solid fills */
++    pXAAInfo->SetupForSolidFill = ATIMach64SetupForSolidFill;
++    pXAAInfo->SubsequentSolidFillRect = ATIMach64SubsequentSolidFillRect;
++
++    /* 8x8 mono pattern fills */
++    pXAAInfo->Mono8x8PatternFillFlags =
++
++#if X_BYTE_ORDER != X_LITTLE_ENDIAN
++
++        BIT_ORDER_IN_BYTE_MSBFIRST |
++
++#endif /* X_BYTE_ORDER */
++
++        HARDWARE_PATTERN_PROGRAMMED_BITS | HARDWARE_PATTERN_SCREEN_ORIGIN;
++    pXAAInfo->SetupForMono8x8PatternFill = ATIMach64SetupForMono8x8PatternFill;
++    pXAAInfo->SubsequentMono8x8PatternFillRect =
++        ATIMach64SubsequentMono8x8PatternFillRect;
++
++    /*
++     * Use scanline version of colour expansion, not only for the non-ix86
++     * case, but also to avoid PCI retries.
++     */
++    pXAAInfo->ScanlineCPUToScreenColorExpandFillFlags =
++        LEFT_EDGE_CLIPPING | LEFT_EDGE_CLIPPING_NEGATIVE_X |
++        CPU_TRANSFER_PAD_DWORD | SCANLINE_PAD_DWORD;
++    if (pATI->XModifier != 1)
++        pXAAInfo->ScanlineCPUToScreenColorExpandFillFlags |= TRIPLE_BITS_24BPP;
++    pXAAInfo->NumScanlineColorExpandBuffers = 1;
++
++    /* Align bitmap data on a 64-byte boundary */
++    pATI->ExpansionBitmapWidth =        /* DWord size in bits */
++        ((pATI->displayWidth * pATI->XModifier) + 31) & ~31U;
++    pATI->ExpansionBitmapScanlinePtr[1] =
++        (CARD32 *)XNFalloc((pATI->ExpansionBitmapWidth >> 3) + 63);
++    pATI->ExpansionBitmapScanlinePtr[0] =
++        (pointer)(((unsigned long)pATI->ExpansionBitmapScanlinePtr[1] + 63) &
++                  ~63UL);
++    pXAAInfo->ScanlineColorExpandBuffers =
++        (CARD8 **)pATI->ExpansionBitmapScanlinePtr;
++    pXAAInfo->SetupForScanlineCPUToScreenColorExpandFill =
++        ATIMach64SetupForScanlineCPUToScreenColorExpandFill;
++    pXAAInfo->SubsequentScanlineCPUToScreenColorExpandFill =
++        ATIMach64SubsequentScanlineCPUToScreenColorExpandFill;
++    pXAAInfo->SubsequentColorExpandScanline =
++        ATIMach64SubsequentColorExpandScanline;
++
++    /* The engine does not support the following primitives for 24bpp */
++    if (pATI->XModifier != 1)
++        goto XAAInit;
++
++    /* Solid lines */
++    pXAAInfo->SetupForSolidLine = ATIMach64SetupForSolidLine;
++    pXAAInfo->SubsequentSolidHorVertLine = ATIMach64SubsequentSolidHorVertLine;
++    pXAAInfo->SubsequentSolidBresenhamLine =
++        ATIMach64SubsequentSolidBresenhamLine;
++
++XAAInit:
++    if (!XAAInit(pScreen, pATI->pXAAInfo)) {
++        XAADestroyInfoRec(pATI->pXAAInfo);
++        pATI->pXAAInfo = NULL;
++        return FALSE;
++    }
++
++    return TRUE;
++}
++#endif /* USE_XAA */
+diff --git a/src/atimach64accel.h b/src/atimach64accel.h
+index 3aaf1b0..92fb4df 100644
+--- a/src/atimach64accel.h
++++ b/src/atimach64accel.h
+@@ -24,6 +24,10 @@
+ #define ___ATIMACH64ACCEL_H___ 1
+ 
+ #include "atipriv.h"
++
++#ifdef HAVE_XAA_H
++#include "xaa.h"
++#endif
+ #include "exa.h"
+ 
+ #define ATIMach64MaxX  4095
+@@ -32,6 +36,9 @@
+ #ifdef USE_EXA
+ extern Bool ATIMach64ExaInit(ScreenPtr);
+ #endif
++#ifdef USE_XAA
++extern Bool ATIMach64AccelInit(ScreenPtr);
++#endif
+ extern void ATIMach64Sync(ScrnInfoPtr);
+ 
+ /* atimach64accel.c */
+diff --git a/src/atimach64io.h b/src/atimach64io.h
+index caff26d..80553f8 100644
+--- a/src/atimach64io.h
++++ b/src/atimach64io.h
+@@ -236,7 +236,7 @@ do {                                                            \
+  * Set upon DRISwapContext and when DRI accesses the GPU engine
+  * from within the server, see DRIInitBuffers/DRIMoveBuffers.
+  *
+- * Forces the EXA software paths to sync before accessing the FB memory.
++ * Forces the EXA/XAA software paths to sync before accessing the FB memory.
+  */
+ static __inline__ void ATIDRIMarkSyncInt(ScrnInfoPtr _pScrInfo)
+ {
+@@ -245,12 +245,16 @@ static __inline__ void ATIDRIMarkSyncInt(ScrnInfoPtr _pScrInfo)
+     if (_pATI->useEXA)
+         exaMarkSync(_pScrInfo->pScreen);
+ #endif
++#ifdef USE_XAA
++    if (!_pATI->useEXA)
++        SET_SYNC_FLAG(_pATI->pXAAInfo); /* NeedToSync = TRUE */
++#endif
+ }
+ 
+ /*
+  * Set upon DRISwapContext and when the server acquires the DRI lock.
+  *
+- * Forces the EXA accelerated paths to sync before accessing the GPU engine.
++ * Forces the EXA/XAA accelerated paths to sync before accessing the GPU engine.
+  */
+ static __inline__ void ATIDRIMarkSyncExt(ScrnInfoPtr _pScrInfo)
+ {
+@@ -267,6 +271,12 @@ static __inline__ void ATIDRISync(ScrnInfoPtr _pScrInfo)
+         if (_pATI->NeedDRISync) exaWaitSync(_pScrInfo->pScreen);
+     }
+ #endif
++#ifdef USE_XAA
++    if (_pATI->directRenderingEnabled && _pATI->pXAAInfo)
++    {
++        if (_pATI->NeedDRISync) (*_pATI->pXAAInfo->Sync)(_pScrInfo);
++    }
++#endif
+ }
+ 
+ #define ATIDRILock(_pScrInfo)                   \
+diff --git a/src/atimach64xv.c b/src/atimach64xv.c
+index 5288557..bb3f486 100644
+--- a/src/atimach64xv.c
++++ b/src/atimach64xv.c
+@@ -510,6 +510,26 @@ ATIMach64XVMemFree
+     ATIPtr    pATI
+ );
+ 
++#ifdef USE_XAA
++/*
++ * ATIMach64RemoveLinearCallback --
++ *
++ * This is called by the framebuffer manager to release the offscreen XVideo
++ * buffer after the video has been temporarily disabled due to its window being
++ * iconified or completely occluded.
++ */
++static void
++ATIMach64RemoveLinearCallback
++(
++    FBLinearPtr pLinear
++)
++{
++    ATIPtr pATI = ATIPTR(xf86ScreenToScrn(pLinear->pScreen));
++
++    pATI->pXVBuffer = NULL;
++    outf(OVERLAY_SCALE_CNTL, SCALE_EN);
++}
++#endif /* USE_XAA */
+ 
+ /*
+  * ATIMach64StopVideo --
+@@ -534,6 +554,20 @@ ATIMach64StopVideo
+ 
+     REGION_EMPTY(pScreen, &pATI->VideoClip);
+ 
++#ifdef USE_XAA
++    if (!pATI->useEXA && !Cleanup)
++    {
++        /*
++         * Free offscreen buffer if/when its allocation is needed by XAA's
++         * pixmap cache.
++         */
++        FBLinearPtr linear = (FBLinearPtr)pATI->pXVBuffer;
++        if (linear)
++            linear->RemoveLinearCallback =
++                ATIMach64RemoveLinearCallback;
++        return;
++    }
++#endif /* USE_XAA */
+ 
+     ATIMach64XVMemFree(pScreen, pATI->pXVBuffer, pATI);
+     pATI->pXVBuffer = NULL;
+@@ -1529,6 +1563,54 @@ ATICloseXVideo
+ 
+ /* Functions for offscreen memory management */
+ 
++#ifdef USE_XAA
++static FBLinearPtr
++ATIResizeOffscreenLinear
++(
++    ScreenPtr   pScreen,
++    FBLinearPtr pLinear,
++    int         Size
++)
++{
++    if (Size <= 0)
++    {
++        xf86FreeOffscreenLinear(pLinear);
++        return NULL;
++    }
++
++    if (pLinear)
++    {
++        if ((pLinear->size >= Size) ||
++            xf86ResizeOffscreenLinear(pLinear, Size))
++        {
++            pLinear->MoveLinearCallback = NULL;
++            pLinear->RemoveLinearCallback = NULL;
++            return pLinear;
++        }
++
++        xf86FreeOffscreenLinear(pLinear);
++    }
++
++    pLinear = xf86AllocateOffscreenLinear(pScreen, Size, 16, NULL, NULL, NULL);
++
++    if (!pLinear)
++    {
++        int maxSize;
++
++        xf86QueryLargestOffscreenLinear(pScreen, &maxSize, 16,
++            PRIORITY_EXTREME);
++
++        if (maxSize < Size)
++            return NULL;
++
++        xf86PurgeUnlockedOffscreenAreas(pScreen);
++        pLinear =
++            xf86AllocateOffscreenLinear(pScreen, Size, 16, NULL, NULL, NULL);
++    }
++
++    return pLinear;
++}
++#endif /* USE_XAA */
+ 
+ static pointer
+ ATIMach64XVMemAlloc
+@@ -1561,6 +1643,23 @@ ATIMach64XVMemAlloc
+     }
+ #endif /* USE_EXA */
+ 
++#ifdef USE_XAA
++    if (!pATI->useEXA) {
++        FBLinearPtr linear = (FBLinearPtr)pVideo;
++        int cpp = pATI->AdjustDepth;
++
++        /* XAA allocates in units of pixels at the screen bpp, so adjust size
++         * appropriately.
++         */
++        size = (size + cpp - 1) / cpp;
++
++        linear = ATIResizeOffscreenLinear(pScreen, linear, size);
++        if (linear != NULL) {
++            *offset = linear->offset * cpp;
++            return linear;
++        }
++    }
++#endif /* USE_XAA */
+ 
+     *offset = 0;
+     return NULL;
+@@ -1583,5 +1682,13 @@ ATIMach64XVMemFree
+     }
+ #endif /* USE_EXA */
+ 
++#ifdef USE_XAA
++    if (!pATI->useEXA) {
++        FBLinearPtr linear = (FBLinearPtr)pVideo;
++
++        if (linear != NULL)
++            ATIResizeOffscreenLinear(pScreen, linear, 0);
++    }
++#endif /* USE_XAA */
+ }
+ 
+diff --git a/src/atipreinit.c b/src/atipreinit.c
+index 699e95e..7281f19 100644
+--- a/src/atipreinit.c
++++ b/src/atipreinit.c
+@@ -52,6 +52,9 @@
+ #include "atiadjust.h"
+ 
+ #include "vbe.h"
++#if GET_ABI_MAJOR(ABI_VIDEODRV_VERSION) < 6
++#include "xf86RAC.h"
++#endif
+ 
+ /*
+  * FreeScreen handles the clean-up.
+diff --git a/src/atiscreen.c b/src/atiscreen.c
+index 56bf1e1..c1eff4c 100644
+--- a/src/atiscreen.c
++++ b/src/atiscreen.c
+@@ -100,6 +100,243 @@ ATIRefreshArea
+     }
+ }
+ 
++#ifdef USE_XAA
++/*
++ * ATIMinBits --
++ *
++ * Compute log base 2 of val.
++ */
++static int
++ATIMinBits
++(
++    int val
++)
++{
++    int bits;
++
++    if (!val) return 1;
++    for (bits = 0; val; val >>= 1, ++bits);
++    return bits;
++}
++
++static Bool
++ATIMach64SetupMemXAA_NoDRI
++(
++    ScrnInfoPtr pScreenInfo,
++    ScreenPtr pScreen
++)
++{
++    ATIPtr       pATI        = ATIPTR(pScreenInfo);
++
++    {
++        /*
++         * Note:  If PixelArea exceeds the engine's maximum, the excess is
++         *        never used, even though it would be useful for such things
++         *        as XVideo buffers.
++         */
++        int maxScanlines = ATIMach64MaxY;
++        int maxPixelArea = maxScanlines * pScreenInfo->displayWidth;
++        int PixelArea = pScreenInfo->videoRam * 1024 * 8 / pATI->bitsPerPixel;
++        if (PixelArea > maxPixelArea)
++            PixelArea = maxPixelArea;
++        xf86InitFBManagerArea(pScreen, PixelArea, 2);
++    }
++
++    return TRUE;
++}
++
++#ifdef XF86DRI_DEVEL
++/*
++ * Memory layour for XAA with DRI (no local_textures):
++ * | front  | pixmaps, xv | back   | depth  | textures | c |
++ *
++ * 1024x768@16bpp with 8 MB:
++ * | 1.5 MB | ~3.5 MB     | 1.5 MB | 1.5 MB | 0        | c |
++ *
++ * 1024x768@32bpp with 8 MB:
++ * | 3.0 MB | ~0.5 MB     | 3.0 MB | 1.5 MB | 0        | c |
++ *
++ * "c" is the hw cursor which occupies 1KB
++ */
++static Bool
++ATIMach64SetupMemXAA
++(
++    ScrnInfoPtr pScreenInfo,
++    ScreenPtr pScreen
++)
++{
++	ATIPtr       pATI        = ATIPTR(pScreenInfo);
++
++	ATIDRIServerInfoPtr pATIDRIServer = pATI->pDRIServerInfo;
++	int cpp = pATI->bitsPerPixel >> 3;
++	int widthBytes = pScreenInfo->displayWidth * cpp;
++	int zWidthBytes = pScreenInfo->displayWidth * 2; /* always 16-bit z-buffer */
++	int fbSize = pScreenInfo->videoRam * 1024;
++	int bufferSize = pScreenInfo->virtualY * widthBytes;
++	int zBufferSize = pScreenInfo->virtualY * zWidthBytes;
++	int offscreenBytes, total, scanlines;
++
++	pATIDRIServer->fbX = 0;
++	pATIDRIServer->fbY = 0;
++	pATIDRIServer->frontOffset = 0;
++	pATIDRIServer->frontPitch = pScreenInfo->displayWidth;
++
++	/* Calculate memory remaining for pixcache and textures after 
++	 * front, back, and depth buffers
++	 */
++	offscreenBytes = fbSize - ( 2 * bufferSize + zBufferSize );
++
++	if ( !pATIDRIServer->IsPCI && !pATI->OptionLocalTextures ) {
++	    /* Don't allocate a local texture heap for AGP unless requested */
++	    pATIDRIServer->textureSize = 0;
++	} else {
++	    int l, maxPixcache;
++
++#ifdef XvExtension
++
++	    int xvBytes;
++
++	    /* Try for enough pixmap cache for DVD and a full viewport
++	     */
++	    xvBytes = 720*480*cpp; /* enough for single-buffered DVD */
++	    maxPixcache = xvBytes > bufferSize ? xvBytes : bufferSize;
++
++#else /* XvExtension */
++
++	    /* Try for one viewport */
++	    maxPixcache = bufferSize;
++
++#endif /* XvExtension */
++
++	    pATIDRIServer->textureSize = offscreenBytes - maxPixcache;
++
++	    /* If that gives us less than half the offscreen mem available for textures, split 
++	     * the available mem between textures and pixmap cache
++	     */
++	    if (pATIDRIServer->textureSize < (offscreenBytes/2)) {
++		pATIDRIServer->textureSize = offscreenBytes/2;
++	    }
++
++	    if (pATIDRIServer->textureSize <= 0)
++		pATIDRIServer->textureSize = 0;
++
++	    l = ATIMinBits((pATIDRIServer->textureSize-1) / MACH64_NR_TEX_REGIONS);
++	    if (l < MACH64_LOG_TEX_GRANULARITY) l = MACH64_LOG_TEX_GRANULARITY;
++
++	    /* Round the texture size up to the nearest whole number of
++	     * texture regions.  Again, be greedy about this, don't round
++	     * down.
++	     */
++	    pATIDRIServer->logTextureGranularity = l;
++	    pATIDRIServer->textureSize =
++		(pATIDRIServer->textureSize >> l) << l;
++	}
++
++	total = fbSize - pATIDRIServer->textureSize;
++	scanlines = total / widthBytes;
++	if (scanlines > ATIMach64MaxY) scanlines = ATIMach64MaxY;
++
++	/* Recalculate the texture offset and size to accommodate any
++	 * rounding to a whole number of scanlines.
++	 * FIXME: Is this actually needed?
++	 */
++	pATIDRIServer->textureOffset = scanlines * widthBytes;
++	pATIDRIServer->textureSize = fbSize - pATIDRIServer->textureOffset;
++
++	/* Set a minimum usable local texture heap size.  This will fit
++	 * two 256x256 textures.  We check this after any rounding of
++	 * the texture area.
++	 */
++	if (pATIDRIServer->textureSize < 256*256 * cpp * 2) {
++	    pATIDRIServer->textureOffset = 0;
++	    pATIDRIServer->textureSize = 0;
++	    scanlines = fbSize / widthBytes;
++	    if (scanlines > ATIMach64MaxY) scanlines = ATIMach64MaxY;
++	}
++
++	pATIDRIServer->depthOffset = scanlines * widthBytes - zBufferSize;
++	pATIDRIServer->depthPitch = pScreenInfo->displayWidth;
++	pATIDRIServer->depthY = pATIDRIServer->depthOffset/widthBytes;
++	pATIDRIServer->depthX =  (pATIDRIServer->depthOffset - 
++				  (pATIDRIServer->depthY * widthBytes)) / cpp;
++
++	pATIDRIServer->backOffset = pATIDRIServer->depthOffset - bufferSize;
++	pATIDRIServer->backPitch = pScreenInfo->displayWidth;
++	pATIDRIServer->backY = pATIDRIServer->backOffset/widthBytes;
++	pATIDRIServer->backX =  (pATIDRIServer->backOffset - 
++				  (pATIDRIServer->backY * widthBytes)) / cpp;
++
++	scanlines = fbSize / widthBytes;
++	if (scanlines > ATIMach64MaxY) scanlines = ATIMach64MaxY;
++
++	if ( pATIDRIServer->IsPCI && pATIDRIServer->textureSize == 0 ) {
++	    xf86DrvMsg(pScreenInfo->scrnIndex, X_WARNING,
++		       "Not enough memory for local textures, disabling DRI\n");
++	    ATIDRICloseScreen(pScreen);
++	    pATI->directRenderingEnabled = FALSE;
++	} else {
++	    BoxRec ScreenArea;
++
++	    ScreenArea.x1 = 0;
++	    ScreenArea.y1 = 0;
++	    ScreenArea.x2 = pATI->displayWidth;
++	    ScreenArea.y2 = scanlines;
++
++	    if (!xf86InitFBManager(pScreen, &ScreenArea)) {
++		xf86DrvMsg(pScreenInfo->scrnIndex, X_ERROR,
++			   "Memory manager initialization to (%d,%d) (%d,%d) failed\n",
++			   ScreenArea.x1, ScreenArea.y1,
++			   ScreenArea.x2, ScreenArea.y2);
++		return FALSE;
++	    } else {
++		int width, height;
++
++		xf86DrvMsg(pScreenInfo->scrnIndex, X_INFO,
++			   "Memory manager initialized to (%d,%d) (%d,%d)\n",
++			   ScreenArea.x1, ScreenArea.y1, ScreenArea.x2, ScreenArea.y2);
++
++		if (xf86QueryLargestOffscreenArea(pScreen, &width, &height, 0, 0, 0)) {
++		    xf86DrvMsg(pScreenInfo->scrnIndex, X_INFO,
++			       "Largest offscreen area available: %d x %d\n",
++			       width, height);
++
++		    /* lines in offscreen area needed for depth buffer and textures */
++		    pATI->depthTexLines = scanlines
++			- pATIDRIServer->depthOffset / widthBytes;
++		    pATI->backLines     = scanlines
++			- pATIDRIServer->backOffset / widthBytes
++			- pATI->depthTexLines;
++		    pATI->depthTexArea  = NULL;
++		    pATI->backArea      = NULL;
++		} else {
++		    xf86DrvMsg(pScreenInfo->scrnIndex, X_ERROR, 
++			       "Unable to determine largest offscreen area available\n");
++		    return FALSE;
++		}
++
++	    }
++
++	    xf86DrvMsg(pScreenInfo->scrnIndex, X_INFO, "Will use %d kB of offscreen memory for XAA\n", 
++		       (offscreenBytes - pATIDRIServer->textureSize)/1024);
++
++	    xf86DrvMsg(pScreenInfo->scrnIndex, X_INFO, "Will use back buffer at offset 0x%x\n",
++		       pATIDRIServer->backOffset);
++
++	    xf86DrvMsg(pScreenInfo->scrnIndex, X_INFO, "Will use depth buffer at offset 0x%x\n",
++		       pATIDRIServer->depthOffset);
++
++	    if (pATIDRIServer->textureSize > 0) {
++		xf86DrvMsg(pScreenInfo->scrnIndex, X_INFO,
++			   "Will use %d kB for local textures at offset 0x%x\n",
++			   pATIDRIServer->textureSize/1024,
++			   pATIDRIServer->textureOffset);
++	    }
++	}
++
++	return TRUE;
++}
++#endif /* XF86DRI_DEVEL */
++#endif /* USE_XAA */
+   	 
+ /*
+  * ATIScreenInit --
+@@ -243,6 +480,33 @@ ATIScreenInit(SCREEN_INIT_ARGS_DECL)
+ 
+     xf86SetBlackWhitePixels(pScreen);
+ 
++#ifdef USE_XAA
++
++    if (!pATI->useEXA) {
++
++    /* Memory manager setup */
++
++#ifdef XF86DRI_DEVEL
++    if (pATI->directRenderingEnabled)
++    {
++        if (!ATIMach64SetupMemXAA(pScreenInfo, pScreen))
++            return FALSE;
++    }
++    else
++#endif /* XF86DRI_DEVEL */
++    {
++        if (!ATIMach64SetupMemXAA_NoDRI(pScreenInfo, pScreen))
++            return FALSE;
++    }
++
++    /* Setup acceleration */
++
++    if (pATI->OptionAccel && !ATIMach64AccelInit(pScreen))
++        return FALSE;
++
++    }
++
++#endif /* USE_XAA */
+ 
+ #ifdef USE_EXA
+ 
+@@ -332,7 +596,7 @@ ATIScreenInit(SCREEN_INIT_ARGS_DECL)
+  * This function is called by DIX to close the screen.
+  */
+ Bool
+-ATICloseScreen (ScreenPtr pScreen)
++ATICloseScreen (CLOSE_SCREEN_ARGS_DECL)
+ {
+     ScrnInfoPtr pScreenInfo = xf86ScreenToScrn(pScreen);
+     ATIPtr      pATI        = ATIPTR(pScreenInfo);
+@@ -357,6 +621,13 @@ ATICloseScreen (ScreenPtr pScreen)
+         free(pATI->pExa);
+         pATI->pExa = NULL;
+     }
++#endif
++#ifdef USE_XAA
++    if (pATI->pXAAInfo)
++    {
++        XAADestroyInfoRec(pATI->pXAAInfo);
++        pATI->pXAAInfo = NULL;
++    }
+ #endif
+     if (pATI->pCursorInfo)
+     {
+@@ -367,11 +638,19 @@ ATICloseScreen (ScreenPtr pScreen)
+     pATI->Closeable = FALSE;
+     ATILeaveGraphics(pScreenInfo, pATI);
+ 
++#ifdef USE_XAA
++    if (!pATI->useEXA)
++    {
++        free(pATI->ExpansionBitmapScanlinePtr[1]);
++        pATI->ExpansionBitmapScanlinePtr[0] = NULL;
++        pATI->ExpansionBitmapScanlinePtr[1] = NULL;
++    }
++#endif
+ 
+     free(pATI->pShadow);
+     pATI->pShadow = NULL;
+     pScreenInfo->pScreen = NULL;
+ 
+     pScreen->CloseScreen = pATI->CloseScreen;
+-    return (*pScreen->CloseScreen)(pScreen);
++    return (*pScreen->CloseScreen)(CLOSE_SCREEN_ARGS);
+ }
+diff --git a/src/atiscreen.h b/src/atiscreen.h
+index 2be5d15..e180a72 100644
+--- a/src/atiscreen.h
++++ b/src/atiscreen.h
+@@ -26,6 +26,6 @@
+ #include "screenint.h"
+ 
+ extern Bool ATIScreenInit(SCREEN_INIT_ARGS_DECL);
+-extern Bool ATICloseScreen(ScreenPtr pScreen);
++extern Bool ATICloseScreen(CLOSE_SCREEN_ARGS_DECL);
+ 
+ #endif /* ___ATISCREEN_H___ */
+diff --git a/src/atistruct.h b/src/atistruct.h
+index f021b8d..6b56cac 100644
+--- a/src/atistruct.h
++++ b/src/atistruct.h
+@@ -55,8 +55,14 @@
+ #ifdef USE_EXA
+ #include "exa.h"
+ #endif
++#ifdef USE_XAA
++#include "xaa.h"
++#endif
+ #include "xf86Cursor.h"
+ #include "xf86Pci.h"
++#if GET_ABI_MAJOR(ABI_VIDEODRV_VERSION) < 6
++#include "xf86Resources.h"
++#endif
+ 
+ #include "atipcirename.h"
+ 
+@@ -308,11 +314,14 @@ typedef struct _ATIRec
+     unsigned long Block0Base, Block1Base;
+ 
+     /*
+-     * EXA interface.
++     * XAA interface.
+      */
+     Bool useEXA;
+ #ifdef USE_EXA
+     ExaDriverPtr pExa;
++#endif
++#ifdef USE_XAA
++    XAAInfoRecPtr pXAAInfo;
+ #endif
+     int nAvailableFIFOEntries, nFIFOEntries, nHostFIFOEntries;
+     CARD8 EngineIsBusy, EngineIsLocked, XModifier;
+@@ -320,6 +329,10 @@ typedef struct _ATIRec
+     CARD32 sc_left_right, sc_top_bottom;
+     CARD16 sc_left, sc_right, sc_top, sc_bottom;        /* Current scissors */
+     pointer pHOST_DATA; /* Current HOST_DATA_* transfer window address */
++#ifdef USE_XAA
++    CARD32 *ExpansionBitmapScanlinePtr[2];
++    int ExpansionBitmapWidth;
++#endif
+ #ifdef USE_EXA
+     Bool RenderAccelEnabled;
+     Mach64ContextRegs3D m3d;
+@@ -387,13 +400,20 @@ typedef struct _ATIRec
+     DGAFunctionRec ATIDGAFunctions;
+     int nDGAMode;
+ 
++    /*
++     * XAAForceTransBlit alters the behavior of 'SetupForScreenToScreenCopy',
++     * such that ~0 is interpreted as a legitimate transparency key.
++     */
++    CARD8 XAAForceTransBlit;
++
+ #endif /* AVOID_DGA */
+ 
+     /*
+      * XVideo-related data.
+      */
+     DevUnion XVPortPrivate[1];
+-    pointer pXVBuffer;		/* USE_EXA: ExaOffscreenArea */
++    pointer pXVBuffer;		/* USE_EXA: ExaOffscreenArea*
++				   USE_XAA: FBLinearPtr */
+     RegionRec VideoClip;
+     int SurfacePitch, SurfaceOffset;
+     CARD8 AutoPaint, DoubleBuffer, CurrentBuffer, ActiveSurface;
+@@ -482,6 +502,12 @@ typedef struct _ATIRec
+     Bool have3DWindows;
+                                                                                 
+     /* offscreen memory management */
++#ifdef USE_XAA
++    int               backLines;
++    FBAreaPtr         backArea;
++    int               depthTexLines;
++    FBAreaPtr         depthTexArea;
++#endif
+     CARD8 OptionIsPCI;           /* Force PCI mode */
+     CARD8 OptionDMAMode;         /* async, sync, mmio */
+     CARD8 OptionAGPMode;         /* AGP mode */
+diff --git a/src/compat-api.h b/src/compat-api.h
+index 7f1108e..34d88b4 100644
+--- a/src/compat-api.h
++++ b/src/compat-api.h
+@@ -28,6 +28,46 @@
+ #ifndef COMPAT_API_H
+ #define COMPAT_API_H
+ 
++#ifndef GLYPH_HAS_GLYPH_PICTURE_ACCESSOR
++#define GetGlyphPicture(g, s) GlyphPicture((g))[(s)->myNum]
++#define SetGlyphPicture(g, s, p) GlyphPicture((g))[(s)->myNum] = p
++#endif
++
++#ifndef XF86_HAS_SCRN_CONV
++#define xf86ScreenToScrn(s) xf86Screens[(s)->myNum]
++#define xf86ScrnToScreen(s) screenInfo.screens[(s)->scrnIndex]
++#endif
++
++#ifndef XF86_SCRN_INTERFACE
++
++#define SCRN_ARG_TYPE int
++#define SCRN_INFO_PTR(arg1) ScrnInfoPtr pScreenInfo = xf86Screens[(arg1)]
++
++#define SCREEN_ARG_TYPE int
++#define SCREEN_PTR(arg1) ScreenPtr pScreen = screenInfo.screens[(arg1)]
++
++#define SCREEN_INIT_ARGS_DECL int i, ScreenPtr pScreen, int argc, char **argv
++
++#define BLOCKHANDLER_ARGS_DECL int arg, pointer blockData, pointer pTimeout, pointer pReadmask
++#define BLOCKHANDLER_ARGS arg, blockData, pTimeout, pReadmask
++
++#define CLOSE_SCREEN_ARGS_DECL int scrnIndex, ScreenPtr pScreen
++#define CLOSE_SCREEN_ARGS scrnIndex, pScreen
++
++#define ADJUST_FRAME_ARGS_DECL int arg, int x, int y, int flags
++#define ADJUST_FRAME_ARGS(arg, x, y) (arg)->scrnIndex, x, y, 0
++
++#define SWITCH_MODE_ARGS_DECL int arg, DisplayModePtr pMode, int flags
++#define SWITCH_MODE_ARGS(arg, m) (arg)->scrnIndex, m, 0
++
++#define FREE_SCREEN_ARGS_DECL int arg, int flags
++
++#define VT_FUNC_ARGS_DECL int arg, int flags
++#define VT_FUNC_ARGS pScreenInfo->scrnIndex, 0
++
++#define XF86_SCRN_ARG(x) ((x)->scrnIndex)
++#define SCREEN_ARG(x) ((x)->myNum)
++#else
+ #define SCRN_ARG_TYPE ScrnInfoPtr
+ #define SCRN_INFO_PTR(arg1) ScrnInfoPtr pScreenInfo = (arg1)
+ 
+@@ -39,7 +79,23 @@
+ #define BLOCKHANDLER_ARGS_DECL ScreenPtr arg, pointer pTimeout, pointer pReadmask
+ #define BLOCKHANDLER_ARGS arg, pTimeout, pReadmask
+ 
++#define CLOSE_SCREEN_ARGS_DECL ScreenPtr pScreen
++#define CLOSE_SCREEN_ARGS pScreen
++
++#define ADJUST_FRAME_ARGS_DECL ScrnInfoPtr arg, int x, int y
++#define ADJUST_FRAME_ARGS(arg, x, y) arg, x, y
++
+ #define SWITCH_MODE_ARGS_DECL ScrnInfoPtr arg, DisplayModePtr pMode
+ #define SWITCH_MODE_ARGS(arg, m) arg, m
+ 
++#define FREE_SCREEN_ARGS_DECL ScrnInfoPtr arg
++
++#define VT_FUNC_ARGS_DECL ScrnInfoPtr arg
++#define VT_FUNC_ARGS pScreenInfo
++
++#define XF86_SCRN_ARG(x) (x)
++
++#define SCREEN_ARG(x) (x)
++#endif
++
+ #endif
