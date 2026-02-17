@@ -1,6 +1,6 @@
 # --- T2-COPYRIGHT-BEGIN ---
 # t2/package/*/linux/restore-con-scrollback.patch
-# Copyright (C) 2024 - 2025 The T2 SDE Project
+# Copyright (C) 2024 - 2026 The T2 SDE Project
 # SPDX-License-Identifier: GPL-2.0 or patched project license
 # --- T2-COPYRIGHT-END ---
 
@@ -581,7 +581,7 @@ index 3ff1b2a8659e..9bf7d56e0d20 100644
 +	if (softback_lines) {
 +		if (y + softback_lines >= vc->vc_rows) {
 +			mode = CM_ERASE;
-+			ops->cursor_flash = 0;
++			par->cursor_flash = 0;
 +			return;
 +		} else
 +			y += softback_lines;
@@ -594,11 +594,11 @@ index 3ff1b2a8659e..9bf7d56e0d20 100644
  			mask[i++] = msk;
  	}
  
--	ops->cursor_state.enable = enable && !use_sw;
-+	ops->cursor_state.enable = (mode != CM_ERASE) && !use_sw;
+-	par->cursor_state.enable = enable && !use_sw;
++	par->cursor_state.enable = (mode != CM_ERASE) && !use_sw;
  
  	cursor.image.data = src;
- 	cursor.image.fg_color = ops->cursor_state.image.fg_color;
+ 	cursor.image.fg_color = par->cursor_state.image.fg_color;
 diff --git a/drivers/video/fbdev/core/fbcon.c b/drivers/video/fbdev/core/fbcon.c
 index e8b4e8c119b5..e6818f5fa629 100644
 --- a/drivers/video/fbdev/core/fbcon.c
@@ -647,7 +647,7 @@ index e8b4e8c119b5..e6818f5fa629 100644
 +
  static void fb_flashcursor(struct work_struct *work)
  {
- 	struct fbcon_ops *ops = container_of(work, struct fbcon_ops, cursor_work.work);
+	struct fbcon_par *par = container_of(work, struct fbcon_par, cursor_work.work);
  	struct fb_info *info;
  	struct vc_data *vc = NULL;
  	int c;
@@ -660,13 +660,13 @@ index e8b4e8c119b5..e6818f5fa629 100644
  	}
  
  	c = scr_readw((u16 *) vc->vc_pos);
--	enable = ops->cursor_flash && !ops->cursor_state.enable;
--	ops->cursor(vc, info, enable,
-+	mode = (!ops->cursor_flash || ops->cursor_state.enable) ?
+-	enable = par->cursor_flash && !par->cursor_state.enable;
+-	par->bitops->cursor(vc, info, enable,
++	mode = (!par->cursor_flash || par->cursor_state.enable) ?
 +		CM_ERASE : CM_DRAW;
-+	ops->cursor(vc, info, mode, softback_lines,
- 		    get_fg_color(vc, info, c),
- 		    get_bg_color(vc, info, c));
++	par->bitops->cursor(vc, info, mode, softback_lines,
+ 			    get_fg_color(vc, info, c),
+ 			    get_bg_color(vc, info, c));
  	console_unlock();
 @@ -446,7 +469,13 @@
  		}
@@ -722,33 +722,33 @@ index e8b4e8c119b5..e6818f5fa629 100644
 +	if (vc == svc && softback_buf)
 +		fbcon_update_softback(vc);
 +
- 	if (ops->rotate_font && ops->rotate_font(info, vc)) {
- 		ops->rotate = FB_ROTATE_UR;
+ 	if (par->bitops->rotate_font && par->bitops->rotate_font(info, vc)) {
+ 		par->rotate = FB_ROTATE_UR;
  		set_blitting_type(vc, info);
 @@ -1338,10 +1395,11 @@
- 		ops->clear_margins(vc, info, margin_color, bottom_only);
+ 		par->clear_margins(vc, info, margin_color, bottom_only);
  }
  
 -static void fbcon_cursor(struct vc_data *vc, bool enable)
 +static void fbcon_cursor(struct vc_data *vc, int mode)
  {
  	struct fb_info *info = fbcon_info_from_console(vc->vc_num);
- 	struct fbcon_ops *ops = info->fbcon_par;
+ 	struct fbcon_par *par = info->fbcon_par;
 +	int y;
   	int c = scr_readw((u16 *) vc->vc_pos);
  
- 	ops->cur_blink_jiffies = msecs_to_jiffies(vc->vc_cur_blink_ms);
+ 	par->cur_blink_jiffies = msecs_to_jiffies(vc->vc_cur_blink_ms);
 @@ -1354,12 +1412,21 @@
  	else
  		fbcon_add_cursor_work(info);
  
--	ops->cursor_flash = enable;
-+	ops->cursor_flash = (mode == CM_ERASE) ? 0 : 1;
+-	par->cursor_flash = enable;
++	par->cursor_flash = (mode == CM_ERASE) ? 0 : 1;
  
- 	if (!ops->cursor)
+ 	if (!par->bitops->cursor)
  		return;
  
--	ops->cursor(vc, info, enable,
+-	par->bitops->cursor(vc, info, enable,
 +	if (mode & CM_SOFTBACK) {
 +		mode &= ~CM_SOFTBACK;
 +		y = softback_lines;
@@ -758,9 +758,9 @@ index e8b4e8c119b5..e6818f5fa629 100644
 +		y = 0;
 +	}
 +
-+	ops->cursor(vc, info, mode, y,
- 		    get_fg_color(vc, info, c),
- 		    get_bg_color(vc, info, c));
++	par->bitops->cursor(vc, info, mode, y,
+ 			    get_fg_color(vc, info, c),
+ 			    get_bg_color(vc, info, c));
  }
 @@ -1429,8 +1496,11 @@
  	rows /= vc->vc_font.height;
@@ -942,11 +942,11 @@ index e8b4e8c119b5..e6818f5fa629 100644
  
 @@ -2260,7 +2458,7 @@
  	if (fbcon_is_active(vc, info)) {
- 		if (ops->blank_state != blank) {
- 			ops->blank_state = blank;
+ 		if (par->blank_state != blank) {
+ 			par->blank_state = blank;
 -			fbcon_cursor(vc, !blank);
 +			fbcon_cursor(vc, blank ? CM_ERASE : CM_DRAW);
- 			ops->cursor_flash = (!blank);
+ 			par->cursor_flash = (!blank);
  
  			if (fb_blank(info, blank))
 @@ -2437,6 +2635,9 @@
@@ -1045,7 +1045,7 @@ index e8b4e8c119b5..e6818f5fa629 100644
 +static void fbcon_scrolldelta(struct vc_data *vc, int lines)
 +{
 +	struct fb_info *info = registered_fb[con2fb_map[fg_console]];
-+	struct fbcon_ops *ops = info->fbcon_par;
++	struct fbcon_par *par = info->fbcon_par;
 +	struct fbcon_display *disp = &fb_display[fg_console];
 +	int offset, limit, scrollback_old;
 +
@@ -1123,9 +1123,9 @@ index e8b4e8c119b5..e6818f5fa629 100644
 +	else if (offset >= limit)
 +		offset -= limit;
 +
-+	ops->var.xoffset = 0;
-+	ops->var.yoffset = offset * vc->vc_font.height;
-+	ops->update_start(info);
++	par->var.xoffset = 0;
++	par->var.yoffset = offset * vc->vc_font.height;
++	par->bitops->update_start(info);
 +
 +	if (!scrollback_current)
 +		fbcon_cursor(vc, CM_DRAW);
@@ -1140,7 +1140,7 @@ index e8b4e8c119b5..e6818f5fa629 100644
  
  void fbcon_suspended(struct fb_info *info)
 @@ -2665,7 +3024,7 @@
- 	vc = vc_cons[ops->currcon].d;
+ 	vc = vc_cons[par->currcon].d;
  
  	/* Clear cursor, restore saved data */
 -	fbcon_cursor(vc, false);
@@ -1216,7 +1216,7 @@ index f9b794ff7d39..91562cd2a2c9 100644
 +	if (softback_lines) {
 +		if (y + softback_lines >= vc->vc_rows) {
 +			mode = CM_ERASE;
-+			ops->cursor_flash = 0;
++			par->cursor_flash = 0;
 +			return;
 +		} else
 +			y += softback_lines;
@@ -1224,16 +1224,16 @@ index f9b794ff7d39..91562cd2a2c9 100644
 +
   	c = scr_readw((u16 *) vc->vc_pos);
  	attribute = get_attribute(info, c);
- 	src = ops->fontbuffer + ((c & charmask) * (w * vc->vc_font.width));
+ 	src = par->fontbuffer + ((c & charmask) * (w * vc->vc_font.width));
 @@ -349,7 +358,7 @@ static void ccw_cursor(struct vc_data *vc, struct fb_info *info, bool enable,
  		kfree(tmp);
  	}
  
--	ops->cursor_state.enable = enable && !use_sw;
-+	ops->cursor_state.enable = (mode != CM_ERASE) && !use_sw;
+-	par->cursor_state.enable = enable && !use_sw;
++	par->cursor_state.enable = (mode != CM_ERASE) && !use_sw;
  
  	cursor.image.data = src;
- 	cursor.image.fg_color = ops->cursor_state.image.fg_color;
+ 	cursor.image.fg_color = par->cursor_state.image.fg_color;
 diff --git a/drivers/video/fbdev/core/fbcon_cw.c b/drivers/video/fbdev/core/fbcon_cw.c
 index 903f6fc174e1..bd8e05e2e4bb 100644
 --- a/drivers/video/fbdev/core/fbcon_cw.c
@@ -1256,7 +1256,7 @@ index 903f6fc174e1..bd8e05e2e4bb 100644
 +	if (softback_lines) {
 +		if (y + softback_lines >= vc->vc_rows) {
 +			mode = CM_ERASE;
-+			ops->cursor_flash = 0;
++			par->cursor_flash = 0;
 +			return;
 +		} else
 +			y += softback_lines;
@@ -1264,16 +1264,16 @@ index 903f6fc174e1..bd8e05e2e4bb 100644
 +
   	c = scr_readw((u16 *) vc->vc_pos);
  	attribute = get_attribute(info, c);
- 	src = ops->fontbuffer + ((c & charmask) * (w * vc->vc_font.width));
+ 	src = par->fontbuffer + ((c & charmask) * (w * vc->vc_font.width));
 @@ -332,7 +341,7 @@ static void cw_cursor(struct vc_data *vc, struct fb_info *info, bool enable,
  		kfree(tmp);
  	}
  
--	ops->cursor_state.enable = enable && !use_sw;
-+	ops->cursor_state.enable = (mode != CM_ERASE) && !use_sw;
+-	par->cursor_state.enable = enable && !use_sw;
++	par->cursor_state.enable = (mode != CM_ERASE) && !use_sw;
  
  	cursor.image.data = src;
- 	cursor.image.fg_color = ops->cursor_state.image.fg_color;
+ 	cursor.image.fg_color = par->cursor_state.image.fg_color;
 diff --git a/drivers/video/fbdev/core/fbcon_ud.c b/drivers/video/fbdev/core/fbcon_ud.c
 index 594331936fd3..6474970928a2 100644
 --- a/drivers/video/fbdev/core/fbcon_ud.c
@@ -1296,7 +1296,7 @@ index 594331936fd3..6474970928a2 100644
 +	if (softback_lines) {
 +		if (y + softback_lines >= vc->vc_rows) {
 +			mode = CM_ERASE;
-+			ops->cursor_flash = 0;
++			par->cursor_flash = 0;
 +			return;
 +		} else
 +			y += softback_lines;
@@ -1304,16 +1304,16 @@ index 594331936fd3..6474970928a2 100644
 +
   	c = scr_readw((u16 *) vc->vc_pos);
  	attribute = get_attribute(info, c);
- 	src = ops->fontbuffer + ((c & charmask) * (w * vc->vc_font.height));
+ 	src = par->fontbuffer + ((c & charmask) * (w * vc->vc_font.height));
 @@ -372,7 +381,7 @@ static void ud_cursor(struct vc_data *vc, struct fb_info *info, bool enable,
  			mask[i++] = ~msk;
  	}
  
--	ops->cursor_state.enable = enable && !use_sw;
-+	ops->cursor_state.enable = (mode != CM_ERASE) && !use_sw;
+-	par->cursor_state.enable = enable && !use_sw;
++	par->cursor_state.enable = (mode != CM_ERASE) && !use_sw;
  
  	cursor.image.data = src;
- 	cursor.image.fg_color = ops->cursor_state.image.fg_color;
+ 	cursor.image.fg_color = par->cursor_state.image.fg_color;
 diff --git a/drivers/video/fbdev/core/tileblit.c b/drivers/video/fbdev/core/tileblit.c
 index eff7ec4da167..16b844ef416c 100644
 --- a/drivers/video/fbdev/core/tileblit.c
