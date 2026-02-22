@@ -1,7 +1,7 @@
 //
 // --- T2-COPYRIGHT-BEGIN ---
 // t2/package/*/gn/last_commit_position.h
-// Copyright (C) 2023 - 2025 The T2 SDE Project
+// Copyright (C) 2023 - 2026 The T2 SDE Project
 // SPDX-License-Identifier: GPL-2.0
 // --- T2-COPYRIGHT-END ---
 //
@@ -11,7 +11,7 @@
 #ifndef OUT_LAST_COMMIT_POSITION_H_
 #define OUT_LAST_COMMIT_POSITION_H_
 
-#define LAST_COMMIT_POSITION_NUM 2255
-#define LAST_COMMIT_POSITION "2255 (97b68a0bb62b)"
+#define LAST_COMMIT_POSITION_NUM 2324
+#define LAST_COMMIT_POSITION "2324 (304bbef6c7e9)"
 
 #endif  // OUT_LAST_COMMIT_POSITION_H_

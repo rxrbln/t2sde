@@ -444,7 +444,61 @@ fi
 
 targetdir="$base/target/$target"
 
+if [ "$SDECFG_TMPFS_MAX_SIZE" != 0 ]; then
+	x="$(match_source_file -p)"
+	[ "$x" ] && x="$(du -cm $x | tail -1 | cut -f 1)"
+	[ "$x" ] || x=0
+	[ "$x" -gt "${SDECFG_TMPFS_MAX_SIZE:-0}" ] && SDECFG_TMPFS=0
+fi
+
+if [ $clear_src = 1 ]; then
+	if [ "$SDECFG_TMPFS" = 1 ]; then
+		mount -n -o remount,exec,$SDECFG_TMPFS_OPT /tmp
+		mkdir -p /tmp/${builddir##*/}
+		mount -n --bind /tmp/${builddir##*/} $builddir
+	fi
+fi
+
+if [ $update = 1 -a ! -f $xroot/var/adm/md5sums/$xpkg ]; then
+	#echo_warning "Ignoring update mode since package isn't installed already."
+	update=0
+fi
+if [ $update = 1 ]; then
+	(
+		cd $xroot/
+		$md5sum --check var/adm/md5sums/$xpkg 2>&1 < /dev/null |
+			grep ': FAILED$' | cut -f1 -d:
+	) > $builddir/backup_files.txt
+	if [ -s $builddir/backup_files.txt ]; then
+		echo_status "Creating backup of old package data."
+		mkdir -p $xroot/var/adm/backup; chmod 700 $xroot/var/adm/backup
+		backup_tar="$xroot/var/adm/backup/$(date '+%Y%m%d%H%M%S')_$xpkg.tar.gz"
+		(cd $xroot/; tar --no-recursion -czf - -T $builddir/`
+			`backup_files.txt || true) > $backup_tar
+	else
+		update=0
+	fi
+fi
+
 detect_patchfiles
+
+# Erase positional parameters to prevent unintended parameter
+# passing. We do not want to pass the current positional parameters
+# to the loaded script.
+set --
+
+# define new abort function for errors while building
+#
+abort() {
+	[ "$*" ] && echo "$*"; echo "--- BUILD ERROR ---"
+	rm -vf $root/var/adm/logs/$stagelevel-$xpkg.log
+	false
+}
+
+{
+	trap 'echo "Got SIGINT (Ctrl-C). Aborting build."; exit 1' INT
+	exec < /dev/null
+
 
 if [ $stagelevel -gt 2 ]; then
 	for pc_file in $xroot/var/adm/parse-config/*; do
@@ -464,11 +518,6 @@ if ! hasflag NOPARALLEL; then
 	var_append makeopt ' ' -j${SDECFG_PARALLEL:-1}
 	var_append makeinstopt ' ' -j${SDECFG_PARALLEL:-1}
 fi
-
-# Erase positional parameters to prevent unintended parameter
-# passing. We do not want to pass the current positional parameters
-# to the loaded script.
-set --
 
 # include package pre config - if any
 if [ -f $base/build/$SDECFG_ID/TOOLCHAIN/$toolsdir/lib/pkg_${pkg}_pre.conf ]; then
@@ -538,45 +587,8 @@ if hasflag NOPARALLEL || [ "$SDECFG_PARALLEL" -le 1 ]; then
 	#echo "Building in ${builddir##*/}, with $SDECFG_PARALLEL threads"
 fi
 
-if [ "$SDECFG_TMPFS_MAX_SIZE" != 0 ]; then
-	x="$(match_source_file -p)"
-	[ "$x" ] && x="$(du -cm $x | tail -1 | cut -f 1)"
-	[ "$x" ] || x=0
-	[ "$x" -gt "${SDECFG_TMPFS_MAX_SIZE:-0}" ] && SDECFG_TMPFS=0
-fi
-
-if [ $clear_src = 1 ]; then
-	if [ "$SDECFG_TMPFS" = 1 ]; then
-		mount -n -o remount,exec,$SDECFG_TMPFS_OPT /tmp
-		mkdir -p /tmp/${builddir##*/}
-		mount -n --bind /tmp/${builddir##*/} $builddir
-	fi
-fi
-
 export TMPDIR="$builddir/tmp"
 mkdir -p "$TMPDIR"
-
-if [ $update = 1 -a ! -f $xroot/var/adm/md5sums/$xpkg ]; then
-	#echo_warning "Ignoring update mode since package isn't installed already."
-	update=0
-fi
-
-if [ $update = 1 ]; then
-	(
-		cd $xroot/
-		$md5sum --check var/adm/md5sums/$xpkg 2>&1 < /dev/null |
-			grep ': FAILED$' | cut -f1 -d:
-	) > $builddir/backup_files.txt
-	if [ -s $builddir/backup_files.txt ]; then
-		echo_status "Creating backup of old package data."
-		mkdir -p $xroot/var/adm/backup; chmod 700 $xroot/var/adm/backup
-		backup_tar="$xroot/var/adm/backup/$(date '+%Y%m%d%H%M%S')_$xpkg.tar.gz"
-		(cd $xroot/; tar --no-recursion -czf - -T $builddir/`
-			`backup_files.txt || true) > $backup_tar
-	else
-		update=0
-	fi
-fi
 
 if [ "$SDECFG_FLIST" = "flwrapper" ]; then
 	rm -f $builddir/fl_wrapper.{rlog,wlog}
@@ -587,18 +599,6 @@ elif [ "$SDECFG_FLIST" = "find" ]; then
 fi
 
 hook_eval prepare
-
-# define new abort function for errors while building
-#
-abort() {
-	[ "$*" ] && echo "$*"; echo "--- BUILD ERROR ---"
-	rm -vf $root/var/adm/logs/$stagelevel-$xpkg.log
-	false
-}
-
-{
-	trap 'echo "Got SIGINT (Ctrl-C). Aborting build."; exit 1' INT
-	exec < /dev/null
 
 	# Makes debugging build problems easier
 	#
