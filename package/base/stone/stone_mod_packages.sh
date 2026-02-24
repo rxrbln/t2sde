@@ -7,14 +7,13 @@
 #
 # [MAIN] 90 packages Package Management (Install, Update and Remove)
 
+SDECFG_SHORTID="$(grep '^export SDECFG_SHORTID=' /etc/SDE-CONFIG/config 2>/dev/null | cut -f2- -d=)"
+SDECFG_SHORTID="${SDECFG_SHORTID//\'/}"
+
 if [ -n "$ROCK_INSTALL_SOURCE_URL" ]; then
 	dev="NETWORK INSTALL"
 	dir="$ROCK_INSTALL_SOURCE_URL" root="/mnt"
 	gasguiopt="-F"
-
-	SDECFG_SHORTID="$( grep '^export SDECFG_SHORTID=' \
-		/etc/SDE-CONFIG/config 2> /dev/null | cut -f2- -d= )"
-	SDECFG_SHORTID="${SDECFG_SHORTID//\'/}"
 elif [ -n "$ROCK_INSTALL_SOURCE_DEV" ]; then
 	dev="$ROCK_INSTALL_SOURCE_DEV"
 	dir="/media" root="/mnt"
@@ -25,10 +24,13 @@ else
 	dev="/dev/cdrom"
 	dir="/media/cdrom" root="/"
 	gasguiopt=""
+fi
 
-	SDECFG_SHORTID="$( grep '^export SDECFG_SHORTID=' \
-		/etc/SDE-CONFIG/config 2> /dev/null | cut -f2- -d= )"
-	SDECFG_SHORTID="${SDECFG_SHORTID//\'/}"
+# detect live install
+if grep -q "/ overlay" /proc/mounts; then
+	dev="RSYNC"
+	dir="/" root="/mnt"
+	gasguiopt="rsync"
 fi
 
 read_ids() {
@@ -51,16 +53,19 @@ read_ids() {
 }
 
 startgas() {
-	[ -z "$( cd $dir; ls )" ] && mount $opt -v -o ro $dev $dir
+	[ -z "$(cd $dir; ls)" ] && mount $opt -v -o ro $dev $dir
 	if [ "$SDECFG_SHORTID" = "Automatically choose first" ]; then
-		SDECFG_SHORTID="$( cd $dir; ls -d */{,TOOLCHAIN/}pkgs 2> /dev/null | \
-					sed -e 's,/pkgs$,,' | head -n 1 )"
+		SDECFG_SHORTID="$( cd $dir; ls -d */{,TOOLCHAIN/}pkgs 2>/dev/null |
+			sed -e 's,/pkgs$,,' | head -n 1)"
 		echo "Using Config-ID <${SDECFG_SHORTID:-None}> .."
 	fi
 	SDECFG_PKGFILE_TYPE="$(grep '^export SDECFG_PKGFILE_TYPE=' \
 		/etc/SDE-CONFIG/config 2> /dev/null | cut -f2- -d=)"
 	SDECFG_PKGFILE_TYPE="${SDECFG_PKGFILE_TYPE//\'/}"
-	if [ $startgas = 1 ]; then
+
+	if [ "$gasguiopt" = "rsync" ]; then
+		rsync -artx --partial --info=progress2 "$dir" "$root"
+	elif [ $startgas = 1 ]; then
 		echo
 		echo "Running: gasgui $gasguiopt \\"
 		echo "                -c '$SDECFG_SHORTID' \\"
