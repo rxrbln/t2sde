@@ -1,0 +1,131 @@
+# --- T2-COPYRIGHT-BEGIN ---
+# t2/package/*/linux/hotfix-ia64-coredump-warn-vga-console.patch.ia64
+# Copyright (C) 2026 The T2 SDE Project
+# SPDX-License-Identifier: GPL-2.0 or patched project license
+# --- T2-COPYRIGHT-END ---
+
+# Selection of fixes from v7.0-rc1-epic1 tree not present in T2 6.19 ia64 patch
+# - Fix WARN in fs/binfmt on process coredump
+#   (https://github.com/linux-ia64/linux-ia64/commit/a36b6e096bd78e2f4c4269462298bb1d5b52c265)
+# - Fix VGA console
+#   (https://github.com/linux-ia64/linux-ia64/commit/e416d4adce3c13ba0df3124fb52ebcf5d677db3c,
+#    https://github.com/linux-ia64/linux-ia64/commit/69dfd4d525bae75504279bf2789b790b1c0e7ab5)
+
+diff --git a/arch/ia64/kernel/ptrace.c b/arch/ia64/kernel/ptrace.c
+index 3ece9a0d98ed..1eee29a9ec81 100644
+--- a/arch/ia64/kernel/ptrace.c
++++ b/arch/ia64/kernel/ptrace.c
+@@ -1928,14 +1928,14 @@ access_uarea(struct task_struct *child, unsigned long addr,
+ 
+ static const struct user_regset native_regsets[] = {
+ 	{
+-		.core_note_type = NT_PRSTATUS,
++		USER_REGSET_NOTE_TYPE(PRSTATUS),
+ 		.n = ELF_NGREG,
+ 		.size = sizeof(elf_greg_t), .align = sizeof(elf_greg_t),
+ 		.regset_get = gpregs_get, .set = gpregs_set,
+ 		.writeback = gpregs_writeback
+ 	},
+ 	{
+-		.core_note_type = NT_PRFPREG,
++		USER_REGSET_NOTE_TYPE(PRFPREG),
+ 		.n = ELF_NFPREG,
+ 		.size = sizeof(elf_fpreg_t), .align = sizeof(elf_fpreg_t),
+ 		.regset_get = fpregs_get, .set = fpregs_set, .active = fpregs_active
+diff --git a/arch/ia64/kernel/setup.c b/arch/ia64/kernel/setup.c
+index 044e1772f463..2db97457ea99 100644
+--- a/arch/ia64/kernel/setup.c
++++ b/arch/ia64/kernel/setup.c
+@@ -41,7 +41,7 @@
+ #include <linux/seq_file.h>
+ #include <linux/string.h>
+ #include <linux/threads.h>
+-#include <linux/screen_info.h>
++#include <linux/sysfb.h>
+ #include <linux/dmi.h>
+ #include <linux/root_dev.h>
+ #include <linux/serial.h>
+@@ -88,7 +88,7 @@ EXPORT_SYMBOL(local_per_cpu_offset);
+ #endif
+ unsigned long ia64_cycles_per_usec;
+ struct ia64_boot_param *ia64_boot_param;
+-struct screen_info screen_info;
++struct sysfb_display_info sysfb_primary_display;
+ unsigned long vga_console_iobase;
+ unsigned long vga_console_membase;
+ 
+@@ -501,11 +501,11 @@ early_console_setup (char *cmdline)
+ }
+ 
+ static void __init
+-screen_info_setup(void)
++primary_display_setup(void)
+ {
+ 	unsigned int orig_x, orig_y, num_cols, num_rows, font_height;
+ 
+-	memset(&screen_info, 0, sizeof(screen_info));
++	memset(&sysfb_primary_display, 0, sizeof(sysfb_primary_display));
+ 
+ 	if (!ia64_boot_param->console_info.num_rows ||
+ 	    !ia64_boot_param->console_info.num_cols) {
+@@ -523,14 +523,14 @@ screen_info_setup(void)
+ 		font_height = 400 / num_rows;
+ 	}
+ 
+-	screen_info.orig_x = orig_x;
+-	screen_info.orig_y = orig_y;
+-	screen_info.orig_video_cols  = num_cols;
+-	screen_info.orig_video_lines = num_rows;
+-	screen_info.orig_video_points = font_height;
+-	screen_info.orig_video_mode = 3;	/* XXX fake */
+-	screen_info.orig_video_isVGA = 1;	/* XXX fake */
+-	screen_info.orig_video_ega_bx = 3;	/* XXX fake */
++	sysfb_primary_display.screen.orig_x = orig_x;
++	sysfb_primary_display.screen.orig_y = orig_y;
++	sysfb_primary_display.screen.orig_video_cols  = num_cols;
++	sysfb_primary_display.screen.orig_video_lines = num_rows;
++	sysfb_primary_display.screen.orig_video_points = font_height;
++	sysfb_primary_display.screen.orig_video_mode = 3;	/* XXX fake */
++	sysfb_primary_display.screen.orig_video_isVGA = 1;	/* XXX fake */
++	sysfb_primary_display.screen.orig_video_ega_bx = 3;	/* XXX fake */
+ }
+ 
+ static inline void
+@@ -609,19 +609,15 @@ setup_arch (char **cmdline_p)
+ 	cpu_init();	/* initialize the bootstrap CPU */
+ 	mmu_context_init();	/* initialize context_id bitmap */
+ 
+-#ifdef CONFIG_VT
+-	if (!conswitchp) {
+-# if defined(CONFIG_VGA_CONSOLE)
+-		/*
+-		 * Non-legacy systems may route legacy VGA MMIO range to system
+-		 * memory.  vga_con probes the MMIO hole, so memory looks like
+-		 * a VGA device to it.  The EFI memory map can tell us if it's
+-		 * memory so we can avoid this problem.
+-		 */
+-		if (efi_mem_type(0xA0000) != EFI_CONVENTIONAL_MEMORY)
+-			conswitchp = &vga_con;
+-# endif
+-	}
++#if defined(CONFIG_VT) && defined(CONFIG_VGA_CONSOLE)
++	/*
++	 * Non-legacy systems may route legacy VGA MMIO range to system
++	 * memory.  vga_con probes the MMIO hole, so memory looks like
++	 * a VGA device to it.  The EFI memory map can tell us if it's
++	 * memory so we can avoid this problem.
++	 */
++	if (efi_mem_type(0xA0000) != EFI_CONVENTIONAL_MEMORY)
++		vgacon_register_screen(&sysfb_primary_display.screen);
+ #endif
+ 
+ 	/* enable IA-64 Machine Check Abort Handling unless disabled */
+@@ -642,7 +638,7 @@ setup_arch (char **cmdline_p)
+ 		init_smp_config();
+ #endif
+ 
+-	screen_info_setup();
++	primary_display_setup();
+ 	paging_init();
+ 
+ 	clear_sched_clock_stable();
