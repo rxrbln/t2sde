@@ -18,7 +18,7 @@
 
 [C] extra/development
 # TODO: native cmake and OBJDIR
-[F] CROSS CUSTOM-LTO LATOMIC.riscv LATOMIC.riscv64 LATOMIC.sparc
+[F] CROSS CUSTOM-LTO LATOMIC.riscv LATOMIC.riscv64 LATOMIC.sparc NO-LTO.ia64
 
 [E] opt cups
 [E] opt double-conversion
@@ -26,7 +26,7 @@
 [L] LGPL
 [S] Stable
 [V] 6.10.2
-[P] X -----5---9 139.000
+[P] X ?----5---9 139.000
 
 [CV-GROUP] qt6
 [D] f07438f6cc3281ad813328d1ced6c26c6c25697cd523fb03150ad7a2 qtbase-everywhere-src-6.10.2.tar.xz https://download.qt.io/official_releases/qt/6.10/6.10.2/submodules/
@@ -36,6 +36,7 @@
 runconf=0 runmake=0 runcmake=0 createdocs=0
 
 var_remove_regex GCC_WRAPPER_REMOVE ' ' '-march.*'
+var_remove_regex SYSGCC_WRAPPER_REMOVE ' ' '-march.*'
 
 qt_preconf() {
 	if atstage native; then
@@ -61,6 +62,8 @@ confopt="-prefix /$prefix -bindir $bindir -libdir $libdir \
 # guide to locate fontconfig header files
 var_append CXX_WRAPPER_APPEND ' ' "-I$root$(pkgprefix includedir fontconfig)"
 var_append CXX_WRAPPER_APPEND ' ' "-L$root$(pkgprefix libdir libxcb)"
+var_append CXX_WRAPPER_APPEND ' ' "-L$root$(pkgprefix libdir glib)"
+atstage toolchain && export DESTDIR=$root
 
 [[ $libdir = *lib64* ]] && var_append confopt ' ' '-platform linux-g++-64'
 
@@ -94,11 +97,25 @@ if [ $arch == ia64 ]; then
 fi
 
 qt_postmake() {
+    if atstage toolchain; then
+	mv $root$bindir/qtpaths{,-x}
+	cat > $root$bindir/qtpaths <<EOT
+#!/bin/sh
+
+\$0-x \$* | (
+[[ "\$root" != *TOOLCHAIN* ]] &&
+	sed -e "s,/.*/cross/qt,/usr," -e "/LIBEXEC/!s,/usr/lib,$(stagelevel=2 prefix=usr pkggetdir libdir)," ||
+	cat
+)
+EOT
+	chmod +x $root$bindir/qtpaths
+    else
 	cat > $root/etc/profile.d/qt6 <<-EOT
 QT6DIR=/$prefix
 #QTDIR=/$prefix
 export QT6DIR # QTDIR
 EOT
+    fi
 }
 hook_add postmake 5 qt_postmake
 
@@ -107,9 +124,12 @@ var_append confopt ' ' --
 var_append confopt ' ' -DINSTALL_ARCHDATADIR=${libdir##*/}/qt6
 var_append confopt ' ' -DINSTALL_LIBEXECDIR=${libexecdir##*/}/qt6
 var_append confopt ' ' -DINSTALL_MKSPECSDIR=${datadir##*/}/qt6/mkspecs
+
 pkginstalled mysql && var_append confopt ' ' "-DMySQL_ROOT=$root/$(pkgprefix mysql) -DMySQL_LIBRARY=$root$(pkgprefix libdir mysql)/mysql/libmysqlclient.so"
 pkginstalled postgresql && var_append confopt ' ' -DPostgreSQL_ROOT=$root/$(pkgprefix postgresql)
 
+#atstage toolchain && var_append confopt ' ' -DCMAKE_SYSROOT=$root
 atstage cross &&
 	hook_add preconf 2 "create_cmake_toolchain_file >> t2.cmake" &&
-	var_append confopt ' ' "-DQT_HOST_PATH=/$prefix -DCMAKE_TOOLCHAIN_FILE=t2.cmake -DQT_FORCE_BUILD_TOOLS=ON"
+	var_append confopt ' ' "-DQT_HOST_PATH=$root/TOOLCHAIN/cross/qt -DCMAKE_TOOLCHAIN_FILE=t2.cmake -DQT_FORCE_BUILD_TOOLS=ON" &&
+	var_append GCC_WRAPPER_FILTER '|' "sed 's,/.*TOOLCHAIN/.*lib.*/lib\(.*\).so.*,-l\1,'"
