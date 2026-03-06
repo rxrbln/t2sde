@@ -1,6 +1,6 @@
 # --- T2-COPYRIGHT-BEGIN ---
 # t2/package/*/stone/stone_mod_setup.sh
-# Copyright (C) 2004 - 2025 The T2 SDE Project
+# Copyright (C) 2004 - 2026 The T2 SDE Project
 # Copyright (C) 1998 - 2003 ROCK Linux Project
 # SPDX-License-Identifier: GPL-2.0
 # --- T2-COPYRIGHT-END ---
@@ -132,12 +132,14 @@ set_passwd() {
 }
 
 create_user() {
-	gui_input "Create first user account named:" "user" name
-	if [ "$name" ]; then
-		if useradd -G audio,input,users,video "$name"; then
-			while ! set_passwd "$name"; do :; done
-		fi
+	local name=user
+	if ! grep -q "^$name:" /etc/passwd; then
+		gui_input "Create first user account named:" "user" name
+		[ "$name" ] || return
+		useradd -G audio,input,users,video "$name" || return
 	fi
+
+	while ! set_passwd "$name"; do :; done
 }
 
 main() {
@@ -149,6 +151,9 @@ main() {
 	unset gui_nocancel
 
 	create_user
+
+	# temp live desktop demo hack
+	rm -f /etc/plasmalogin.conf /home/user/Desktop/install.desktop 2>/dev/null
 
 	# run the stone modules that registered itself for the first SETUP pass
 	while read -u 200 a b c cmd; do
