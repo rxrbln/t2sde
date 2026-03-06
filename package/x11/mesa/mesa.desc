@@ -46,7 +46,7 @@
 [L] OpenSource
 [S] Stable
 [V] 26.0.1
-[P] X -----5---9 127.445
+[P] X ?----5---9 127.445
 
 [CV-FLAGS] NO-MAJOR
 [D] 5465c780d7012ca4831974d9e5c9d4f2d709ec660bf115b90bcefcfb mesa-26.0.1.tar.xz https://archive.mesa3d.org/
@@ -61,11 +61,15 @@ if atstage cross; then
 
 	var_append mesonopt ' ' -Dmesa-clc=system
 	var_append mesonopt ' ' -Dprecomp-compiler=system
-else
+elif atstage toolchain; then
 	# for cross builds
 	var_append mesonopt ' ' -Dinstall-mesa-clc=true
 	var_append mesonopt ' ' -Dinstall-precomp-compiler=true
 fi
+
+atstage toolchain &&
+	export RUSTC=/opt/rust/bin/rustc BINDGEN=/usr/bin/bindgen CBINDGEN=/usr/bincbindgen &&
+	export LDFLAGS="-Wl,-rpath,${root}${libdir}"
 
 # atomics crash on i486
 GCC_WRAPPER_INSERT="${GCC_WRAPPER_INSERT/i486/i586}"
@@ -91,7 +95,7 @@ if pkginstalled libdrm; then
     var_append mesonopt ' ' '-Dvideo-codecs=h264dec,h264enc,h265dec,h265enc,vc1dec'
     var_append galdrv ',' "softpipe,r600,virgl,zink"
     pkginstalled cbindgen && var_append galdrv ',' nouveau
-    pkginstalled directx-headers && var_append galdrv ',' "d3d12" &&
+    ! atstage toolchain && pkginstalled directx-headers && var_append galdrv ',' "d3d12" &&
 	var_append GCC_WRAPPER_APPEND ' ' -I$root$includedir/wsl/stubs
     var_append galdrv ',' i915
 
@@ -121,21 +125,27 @@ pkginstalled libxshmfence || var_append mesonopt ' ' -Ddri3=disabled
 
 if pkginstalled llvm; then
     var_append mesonopt ' ' '-Dllvm=enabled -Dshared-llvm=enabled'
-    var_append vuldrv ',' swrast
 
     case $arch in
 	arm|arm64|powerpc64|riscv64|x86*)
-		var_append galdrv ',' llvmpipe ;;
+		# [ "$SDECFG_X8664_X32" != 1 ]
+		var_append galdrv ',' llvmpipe
+		var_append vuldrv ',' swrast
+		;;
     esac
 
     if pkginstalled libdrm; then
 	var_append galdrv ',' "iris,r300,radeonsi"
-	var_append vuldrv ',' "amd,imagination,virtio"
+	var_append vuldrv ',' "amd,virtio"
 	pkginstalled cbindgen && var_append vuldrv ',' nouveau
-	if pkginstalled rustc; then
+	if atstage toolchain; then
+	    var_append mesonopt ' ' -Dgallium-rusticl=false # -Dgallium-rusticl-enable-drivers=[]
+	elif pkginstalled rustc; then
 	    var_append mesonopt ' ' -Dgallium-rusticl=true
 	    atstage native ||
 		var_append GCC_WRAPPER_FILTER '|' "sed s,$sysroot/TOOLCHAIN/cross/lib/libclang-cpp.so,-lclang-cpp,"
+	else
+	    var_append mesonopt ' ' -Dgallium-rusticl=false # -Dgallium-rusticl-enable-drivers=[]
 	fi
 	[ "$arch_sizeof_char_p" = 8 ] && var_append vuldrv ',' intel
 
@@ -148,12 +158,20 @@ if pkginstalled llvm; then
 	arm|arm64)
 		[[ $arch_machine = armv5* ]] && var_remove vuldrv ',' virtio
 		var_append galdrv ',' "asahi,etnaviv,freedreno,lima,v3d,vc4"
-		var_append vuldrv ',' "broadcom,freedreno"
+		var_append vuldrv ',' "broadcom,freedreno,imagination"
+
 		atstage native && var_append galdrv ',' panfrost
 		pkginstalled cbindgen && var_append galdrv ',' "tegra"
 		;;
 	alpha|ia64)
 		vuldrv=
+		;;
+	riscv*)
+		var_append vuldrv ',' imagination
+		;;
+	x86-64)
+		[ "$SDECFG_X8664_X32" = 1 ] &&
+			var_remove vuldrv ',' nouveau && var_remove galdrv ',' nouveau
 		;;
 	esac
     fi
@@ -163,13 +181,11 @@ fi
 
 pkginstalled vulkan-headers || var_remove galdrv ',' zink
 
-if atstage cross; then
-	var_remove galdrv ',' asahi # TODO: asahi_clc
-fi
-
 # TODO: find out where -lunwind is added in rustc or llvm/clang
 [ "$SDECFG_LIBC" = musl ] && hook_add inmake 5 "sed -i 's/-lunwind //g' objs/build.ninja"
 
 var_append mesonopt ' ' -Dvulkan-drivers=$vuldrv
 var_append mesonopt ' ' -Dgallium-drivers=$galdrv
 var_append mesonopt ' ' -Dshared-glapi=enabled
+
+[ $arch = powerpc ] && var_append GCC_WRAPPER_APPEND ' ' -mlongcall
