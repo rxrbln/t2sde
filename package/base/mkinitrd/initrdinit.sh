@@ -2,7 +2,7 @@
 
 PATH=/sbin:/bin:/usr/bin:/usr/sbin
 
-echo "T2 SDE early userspace (c)2005-2025 Rene Rebe, ExactCODE GmbH; Germany."
+echo "T2 SDE early userspace (c)2005-2026 Rene Rebe, ExactCODE GmbH; Germany."
 
 mapper2lvm() {
 	# support both, direct vg/lv or mapper/...
@@ -20,13 +20,36 @@ boot() {
 	exec switch_root /mnt "$@"
 }
 
+overlayfs() {
+	if [ ! -e $mnt/$overlay ]; then
+		echo "No $mnt/$overlay to overlay."
+		return 1
+	fi
+
+	mkdir -p /mnt/{mnt,overlay,work}
+	modprobe loop 2>/dev/null
+
+	if ! losetup /dev/loop0 $mnt/$overlay; then
+		echo "Failed to setup /dev/loop0"
+		return 1
+	fi
+
+	mount -t squashfs -o ro /dev/loop0 /mnt/mnt &&
+		mount -t overlay -o lowerdir=/mnt/mnt,upperdir=/mnt/overlay,workdir=/mnt/work \
+			none /mnt &&
+		return 0
+
+	echo "Failed to loop mount $overlay"
+	losetup -d /dev/loop0
+}
+
 mount -t proc proc /proc
 [ -e /proc/sys/kernel/ostype ] &&
 	echo "$(< /proc/sys/kernel/ostype) $(< /proc/sys/kernel/osrelease)," \
 "mounting /dev, /proc, /sys and starting u/devd."
 mount -t devtmpfs -o mode=755 devtmpfs /dev
 mount -t sysfs sysfs /sys
-mkdir -p /tmp /mnt /run /var/run
+mkdir -p /tmp /run /var/run
 ln -sf /proc/self/fd /dev/fd
 
 udevd &
@@ -50,9 +73,12 @@ fi
 root="root= $cmdline" root=${root##*root=} root=${root%% *}
 init="init= $cmdline" init=${init##*init=} init=${init%% *}
 swap="swap= $cmdline" swap=${swap##*swap=} swap=${swap%% *}
+overlay="overlay= $cmdline" overlay=${overlay##*overlay=} overlay=${overlay%% *}
 resume="resume= $cmdline" resume=${resume##*resume=} resume=${resume%% *}
 mountopt="rootflags= $cmdline" mountopt=${mountopt##*rootflags=} mountopt=${mountopt%% *}
 mountopt="ro${mountopt:+,$mountopt}"
+[ "$overlay" ] && mnt=/mnt/media || mnt=/mnt
+mkdir -p $mnt
 
 # parse cmdline
 for v in $cmdline; do
@@ -188,7 +214,9 @@ while [[ -n "$root" && ($((i++)) -le 15 || "$cmdline" = *rootwait*) ]]; do
 	fi
 
 	for fs in $filesystems; do
-	  if mount -t $fs -o $mountopt $root /mnt 2> /dev/null; then
+	  if mount -t $fs -o $mountopt $root $mnt 2>/dev/null; then
+		[ "$overlay" ] && overlayfs
+
 		# TODO: search other places if we want 100% backward compat?
 		init=${init:-/sbin/init}
 		if [ -f /mnt$init ]; then
