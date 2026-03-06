@@ -1,0 +1,286 @@
+From: Simon Richter <Simon.Richter@hogyros.de>
+To: linux-pci@vger.kernel.org
+Cc: intel-xe@lists.freedesktop.org,
+	dri-devel@lists.freedesktop.org,
+	Simon Richter <Simon.Richter@hogyros.de>
+Subject: [PATCH v2 1/5] vgaarb: pass vga_get errors to userspace
+Date: Wed, 18 Feb 2026 22:46:29 +0900
+Message-ID: <20260218134633.461181-2-Simon.Richter@hogyros.de>
+X-Mailing-List: linux-pci@vger.kernel.org
+List-Id: <linux-pci.vger.kernel.org>
+MIME-Version: 1.0
+
+If vga_get fails, return the error code via the write syscall.
+
+Signed-off-by: Simon Richter <Simon.Richter@hogyros.de>
+---
+ drivers/pci/vgaarb.c | 7 ++++++-
+ 1 file changed, 6 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/pci/vgaarb.c b/drivers/pci/vgaarb.c
+index 87143e235033..188885d30d41 100644
+--- a/drivers/pci/vgaarb.c
++++ b/drivers/pci/vgaarb.c
+@@ -1134,6 +1134,7 @@ static ssize_t vga_arb_write(struct file *file, const char __user *buf,
+ 	char kbuf[64], *curr_pos;
+ 	size_t remaining = count;
+ 
++	int err;
+ 	int ret_val;
+ 	int i;
+ 
+@@ -1165,7 +1166,11 @@ static ssize_t vga_arb_write(struct file *file, const char __user *buf,
+ 			goto done;
+ 		}
+ 
+-		vga_get_uninterruptible(pdev, io_state);
++		err = vga_get_uninterruptible(pdev, io_state);
++		if (unlikely(err)) {
++			ret_val = err;
++			goto done;
++		}
+ 
+ 		/* Update the client's locks lists */
+ 		for (i = 0; i < MAX_USER_CARDS; i++) {
+
+From: Simon Richter <Simon.Richter@hogyros.de>
+To: linux-pci@vger.kernel.org
+Cc: intel-xe@lists.freedesktop.org,
+	dri-devel@lists.freedesktop.org,
+	Simon Richter <Simon.Richter@hogyros.de>
+Subject: [PATCH v2 2/5] vgaarb: pass errors from pci_set_vga_state up
+Date: Wed, 18 Feb 2026 22:46:30 +0900
+Message-ID: <20260218134633.461181-3-Simon.Richter@hogyros.de>
+X-Mailer: git-send-email 2.47.3
+In-Reply-To: <20260218134633.461181-1-Simon.Richter@hogyros.de>
+References: <20260217170419.236739-1-Simon.Richter@hogyros.de>
+ <20260218134633.461181-1-Simon.Richter@hogyros.de>
+Precedence: bulk
+X-Mailing-List: linux-pci@vger.kernel.org
+List-Id: <linux-pci.vger.kernel.org>
+List-Subscribe: <mailto:linux-pci+subscribe@vger.kernel.org>
+List-Unsubscribe: <mailto:linux-pci+unsubscribe@vger.kernel.org>
+MIME-Version: 1.0
+
+pci_set_vga_state returns an error code, which so far has been ignored.
+Pass this code through __vga_tryget (via ERR_PTR).
+
+Signed-off-by: Simon Richter <Simon.Richter@hogyros.de>
+---
+ drivers/pci/vgaarb.c | 13 +++++++++++--
+ 1 file changed, 11 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/pci/vgaarb.c b/drivers/pci/vgaarb.c
+index 188885d30d41..93f695f9d768 100644
+--- a/drivers/pci/vgaarb.c
++++ b/drivers/pci/vgaarb.c
+@@ -215,6 +215,7 @@ static struct vga_device *__vga_tryget(struct vga_device *vgadev,
+ 	struct vga_device *conflict;
+ 	unsigned int pci_bits;
+ 	u32 flags = 0;
++	int err = 0;
+ 
+ 	/*
+ 	 * Account for "normal" resources to lock. If we decode the legacy,
+@@ -307,7 +308,9 @@ static struct vga_device *__vga_tryget(struct vga_device *vgadev,
+ 		if (change_bridge)
+ 			flags |= PCI_VGA_STATE_CHANGE_BRIDGE;
+ 
+-		pci_set_vga_state(conflict->pdev, false, pci_bits, flags);
++		err = pci_set_vga_state(conflict->pdev, false, pci_bits, flags);
++		if (unlikely(err))
++			return ERR_PTR(err);
+ 		conflict->owns &= ~match;
+ 
+ 		/* If we disabled normal decoding, reflect it in owns */
+@@ -337,7 +340,9 @@ static struct vga_device *__vga_tryget(struct vga_device *vgadev,
+ 	if (wants & VGA_RSRC_LEGACY_MASK)
+ 		flags |= PCI_VGA_STATE_CHANGE_BRIDGE;
+ 
+-	pci_set_vga_state(vgadev->pdev, true, pci_bits, flags);
++	err = pci_set_vga_state(vgadev->pdev, true, pci_bits, flags);
++	if (unlikely(err))
++		return ERR_PTR(err);
+ 
+ 	vgadev->owns |= wants;
+ lock_them:
+@@ -455,6 +460,10 @@ int vga_get(struct pci_dev *pdev, unsigned int rsrc, int interruptible)
+ 		}
+ 		conflict = __vga_tryget(vgadev, rsrc);
+ 		spin_unlock_irqrestore(&vga_lock, flags);
++		if (IS_ERR(conflict)) {
++			rc = PTR_ERR(conflict);
++			break;
++		}
+ 		if (conflict == NULL)
+ 			break;
+ 
+
+From: Simon Richter <Simon.Richter@hogyros.de>
+To: linux-pci@vger.kernel.org
+Cc: intel-xe@lists.freedesktop.org,
+	dri-devel@lists.freedesktop.org,
+	Simon Richter <Simon.Richter@hogyros.de>
+Subject: [PATCH v2 3/5] vgaarb: mark vga_get family as __must_check
+Date: Wed, 18 Feb 2026 22:46:31 +0900
+Message-ID: <20260218134633.461181-4-Simon.Richter@hogyros.de>
+X-Mailer: git-send-email 2.47.3
+In-Reply-To: <20260218134633.461181-1-Simon.Richter@hogyros.de>
+References: <20260217170419.236739-1-Simon.Richter@hogyros.de>
+ <20260218134633.461181-1-Simon.Richter@hogyros.de>
+Precedence: bulk
+X-Mailing-List: linux-pci@vger.kernel.org
+List-Id: <linux-pci.vger.kernel.org>
+List-Subscribe: <mailto:linux-pci+subscribe@vger.kernel.org>
+List-Unsubscribe: <mailto:linux-pci+unsubscribe@vger.kernel.org>
+MIME-Version: 1.0
+
+These functions can return an error, but some callers expect they don't,
+and unconditionally access VGA registers afterwards and call vga_put.
+
+Signed-off-by: Simon Richter <Simon.Richter@hogyros.de>
+---
+ include/linux/vgaarb.h | 15 ++++++++-------
+ 1 file changed, 8 insertions(+), 7 deletions(-)
+
+diff --git a/include/linux/vgaarb.h b/include/linux/vgaarb.h
+index 97129a1bbb7d..eed524c67c22 100644
+--- a/include/linux/vgaarb.h
++++ b/include/linux/vgaarb.h
+@@ -27,7 +27,8 @@ struct pci_dev;
+ 
+ #ifdef CONFIG_VGA_ARB
+ void vga_set_legacy_decoding(struct pci_dev *pdev, unsigned int decodes);
+-int vga_get(struct pci_dev *pdev, unsigned int rsrc, int interruptible);
++int __must_check vga_get(struct pci_dev *pdev, unsigned int rsrc,
++			 int interruptible);
+ void vga_put(struct pci_dev *pdev, unsigned int rsrc);
+ struct pci_dev *vga_default_device(void);
+ void vga_set_default_device(struct pci_dev *pdev);
+@@ -39,8 +40,8 @@ static inline void vga_set_legacy_decoding(struct pci_dev *pdev,
+ 		unsigned int decodes)
+ {
+ };
+-static inline int vga_get(struct pci_dev *pdev, unsigned int rsrc,
+-		int interruptible)
++static inline int __must_check vga_get(struct pci_dev *pdev, unsigned int rsrc,
++				       int interruptible)
+ {
+ 	return 0;
+ }
+@@ -74,8 +75,8 @@ static inline int vga_client_register(struct pci_dev *pdev,
+  *
+  * On success, release the VGA resource again with vga_put().
+  */
+-static inline int vga_get_interruptible(struct pci_dev *pdev,
+-					unsigned int rsrc)
++static inline int __must_check vga_get_interruptible(struct pci_dev *pdev,
++						     unsigned int rsrc)
+ {
+ 	return vga_get(pdev, rsrc, 1);
+ }
+@@ -89,8 +90,8 @@ static inline int vga_get_interruptible(struct pci_dev *pdev,
+  *
+  * On success, release the VGA resource again with vga_put().
+  */
+-static inline int vga_get_uninterruptible(struct pci_dev *pdev,
+-					  unsigned int rsrc)
++static inline int __must_check vga_get_uninterruptible(struct pci_dev *pdev,
++						       unsigned int rsrc)
+ {
+ 	return vga_get(pdev, rsrc, 0);
+ }
+
+From: Simon Richter <Simon.Richter@hogyros.de>
+To: linux-pci@vger.kernel.org
+Cc: intel-xe@lists.freedesktop.org,
+	dri-devel@lists.freedesktop.org,
+	Simon Richter <Simon.Richter@hogyros.de>
+Subject: [PATCH v2 4/5] pci: check if VGA decoding was really activated
+Date: Wed, 18 Feb 2026 22:46:32 +0900
+Message-ID: <20260218134633.461181-5-Simon.Richter@hogyros.de>
+X-Mailer: git-send-email 2.47.3
+In-Reply-To: <20260218134633.461181-1-Simon.Richter@hogyros.de>
+References: <20260217170419.236739-1-Simon.Richter@hogyros.de>
+ <20260218134633.461181-1-Simon.Richter@hogyros.de>
+Precedence: bulk
+X-Mailing-List: linux-pci@vger.kernel.org
+List-Id: <linux-pci.vger.kernel.org>
+List-Subscribe: <mailto:linux-pci+subscribe@vger.kernel.org>
+List-Unsubscribe: <mailto:linux-pci+unsubscribe@vger.kernel.org>
+MIME-Version: 1.0
+
+PCI bridges are allowed to refuse activating VGA decoding, by simply
+ignoring attempts to set the bit that enables it, so after setting the bit,
+read it back to verify.
+
+One example of such a bridge is the root bridge in IBM PowerNV.
+
+Signed-off-by: Simon Richter <Simon.Richter@hogyros.de>
+---
+ drivers/pci/pci.c | 6 ++++++
+ 1 file changed, 6 insertions(+)
+
+diff --git a/drivers/pci/pci.c b/drivers/pci/pci.c
+index f3244630bfd0..0984a0aefb88 100644
+--- a/drivers/pci/pci.c
++++ b/drivers/pci/pci.c
+@@ -6198,6 +6198,12 @@ int pci_set_vga_state(struct pci_dev *dev, bool decode,
+ 				cmd &= ~PCI_BRIDGE_CTL_VGA;
+ 			pci_write_config_word(bridge, PCI_BRIDGE_CONTROL,
+ 					      cmd);
++			if (decode) {
++				pci_read_config_word(bridge, PCI_BRIDGE_CONTROL,
++						     &cmd);
++				if(!(cmd & PCI_BRIDGE_CTL_VGA))
++					return -EIO;
++			}
+ 		}
+ 		bus = bus->parent;
+ 	}
+
+From: Simon Richter <Simon.Richter@hogyros.de>
+To: linux-pci@vger.kernel.org
+Cc: intel-xe@lists.freedesktop.org,
+	dri-devel@lists.freedesktop.org,
+	Simon Richter <Simon.Richter@hogyros.de>
+Subject: [PATCH v2 5/5] pci: mark return value of pci_set_vga_state as
+ __must_check
+Date: Wed, 18 Feb 2026 22:46:33 +0900
+Message-ID: <20260218134633.461181-6-Simon.Richter@hogyros.de>
+X-Mailer: git-send-email 2.47.3
+In-Reply-To: <20260218134633.461181-1-Simon.Richter@hogyros.de>
+References: <20260217170419.236739-1-Simon.Richter@hogyros.de>
+ <20260218134633.461181-1-Simon.Richter@hogyros.de>
+Precedence: bulk
+X-Mailing-List: linux-pci@vger.kernel.org
+List-Id: <linux-pci.vger.kernel.org>
+List-Subscribe: <mailto:linux-pci+subscribe@vger.kernel.org>
+List-Unsubscribe: <mailto:linux-pci+unsubscribe@vger.kernel.org>
+MIME-Version: 1.0
+
+This function can return an error, which should be checked.
+
+The only caller so far is __vga_tryget in vgaarb, which did not check.
+
+Signed-off-by: Simon Richter <Simon.Richter@hogyros.de>
+---
+ include/linux/pci.h | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/include/linux/pci.h b/include/linux/pci.h
+index 1c270f1d5123..aa1451d402d1 100644
+--- a/include/linux/pci.h
++++ b/include/linux/pci.h
+@@ -1720,8 +1720,8 @@ resource_size_t pcibios_window_alignment(struct pci_bus *bus,
+ #define PCI_VGA_STATE_CHANGE_BRIDGE (1 << 0)
+ #define PCI_VGA_STATE_CHANGE_DECODES (1 << 1)
+ 
+-int pci_set_vga_state(struct pci_dev *pdev, bool decode,
+-		      unsigned int command_bits, u32 flags);
++int __must_check pci_set_vga_state(struct pci_dev *pdev, bool decode,
++				   unsigned int command_bits, u32 flags);
+ 
+ /*
+  * Virtual interrupts allow for more interrupts to be allocated
+

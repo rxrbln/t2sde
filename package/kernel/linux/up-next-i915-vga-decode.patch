@@ -1,0 +1,82 @@
+Subject: [1/1] drm/i915: handle failure from vga_get_uninterruptible()
+From: Simon Richter <Simon.Richter@hogyros.de>
+X-Patchwork-Id: 709684
+To: intel-xe@lists.freedesktop.org,
+	dri-devel@lists.freedesktop.org
+Cc: Simon Richter <Simon.Richter@hogyros.de>
+Date: Sat,  7 Mar 2026 00:23:47 +0900
+
+The vga_get_uninterruptible() function can return an error if it fails to
+set up VGA decoding for the requested device.
+
+If VGA decoding is unavailable, we don't need to be careful to leave the
+VGA emulation in a usable state, as vgacon will also be unable to get
+access later on, so just skip over the VGA accesses and the vga_put() call
+matching the failed vga_get_uninterruptible().
+
+Signed-off-by: Simon Richter <Simon.Richter@hogyros.de>
+---
+ drivers/gpu/drm/i915/display/intel_vga.c | 21 +++++++++++++++++++--
+ 1 file changed, 19 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/gpu/drm/i915/display/intel_vga.c b/drivers/gpu/drm/i915/display/intel_vga.c
+index 6e125564db34..dd581f20e962 100644
+--- a/drivers/gpu/drm/i915/display/intel_vga.c
++++ b/drivers/gpu/drm/i915/display/intel_vga.c
+@@ -49,6 +49,7 @@ void intel_vga_disable(struct intel_display *display)
+ 	enum pipe pipe;
+ 	u32 tmp;
+ 	u8 sr1;
++	int err;
+ 
+ 	tmp = intel_de_read(display, vga_reg);
+ 	if (tmp & VGA_DISP_DISABLE)
+@@ -65,13 +66,22 @@ void intel_vga_disable(struct intel_display *display)
+ 		    pipe_name(pipe));
+ 
+ 	/* WaEnableVGAAccessThroughIOPort:ctg,elk,ilk,snb,ivb,vlv,hsw */
+-	vga_get_uninterruptible(pdev, VGA_RSRC_LEGACY_IO);
++	/*
++	 * if the VGA ports are inaccessible now, the chance that vgacon
++	 * will be able to access them later is low enough that we don't
++	 * have to care about the emulation state machines being in sync
++	 */
++	err = vga_get_uninterruptible(pdev, VGA_RSRC_LEGACY_IO);
++	if (err)
++		goto skip;
++
+ 	outb(0x01, VGA_SEQ_I);
+ 	sr1 = inb(VGA_SEQ_D);
+ 	outb(sr1 | VGA_SR01_SCREEN_OFF, VGA_SEQ_D);
+ 	vga_put(pdev, VGA_RSRC_LEGACY_IO);
+ 	udelay(300);
+ 
++skip:
+ 	intel_de_write(display, vga_reg, VGA_DISP_DISABLE);
+ 	intel_de_posting_read(display, vga_reg);
+ }
+@@ -79,6 +89,7 @@ void intel_vga_disable(struct intel_display *display)
+ void intel_vga_reset_io_mem(struct intel_display *display)
+ {
+ 	struct pci_dev *pdev = to_pci_dev(display->drm->dev);
++	int err;
+ 
+ 	/*
+ 	 * After we re-enable the power well, if we touch VGA register 0x3d5
+@@ -89,8 +100,14 @@ void intel_vga_reset_io_mem(struct intel_display *display)
+ 	 * console_unlock(). So make here we touch the VGA MSR register, making
+ 	 * sure vgacon can keep working normally without triggering interrupts
+ 	 * and error messages.
++	 *
++	 * We ignore this issue if we can't access the VGA registers, because
++	 * neither can vgacon.
+ 	 */
+-	vga_get_uninterruptible(pdev, VGA_RSRC_LEGACY_IO);
++	err = vga_get_uninterruptible(pdev, VGA_RSRC_LEGACY_IO);
++	if (err)
++		return;
++
+ 	outb(inb(VGA_MIS_R), VGA_MIS_W);
+ 	vga_put(pdev, VGA_RSRC_LEGACY_IO);
+ }
+
