@@ -56,7 +56,7 @@ make_fstab() {
 	local tmp1=`mktemp` tmp2=`mktemp`
 
 	# currently active swaps
-	sed '1d; s/ .*/ none swap defaults 0 0/' /proc/swaps > $tmp2
+	sed '1d; /zram/d; s/ .*/ none swap defaults 0 0/' /proc/swaps > $tmp2
 
 	# copy defaults and fallbacks
 	sed 's/  */ /g' /etc/fstab >> $tmp2
