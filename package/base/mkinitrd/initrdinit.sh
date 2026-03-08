@@ -74,7 +74,8 @@ root="root= $cmdline" root=${root##*root=} root=${root%% *}
 init="init= $cmdline" init=${init##*init=} init=${init%% *}
 swap="swap= $cmdline" swap=${swap##*swap=} swap=${swap%% *}
 overlay="overlay= $cmdline" overlay=${overlay##*overlay=} overlay=${overlay%% *}
-resume="resume= $cmdline" resume=${resume##*resume=} resume=${resume%% *}
+[[ "$cmdline" != *noresume* ]] &&
+	resume="resume= $cmdline" resume=${resume##*resume=} resume=${resume%% *}
 mountopt="rootflags= $cmdline" mountopt=${mountopt##*rootflags=} mountopt=${mountopt%% *}
 mountopt="ro${mountopt:+,$mountopt}"
 [ "$overlay" ] && mnt=/mnt/media || mnt=/mnt
@@ -143,22 +144,30 @@ while [[ -n "$root" && ($((i++)) -le 15 || "$cmdline" = *rootwait*) ]]; do
   [[ "${swap}" = LABEL=* ]] && swap="/dev/disk/by-label/${swap#LABEL=}"
 
   # maybe resume from disk?
-  if [[ "$resume" && "$cmdline" != *noresume* ]]; then
+  if [ "$resume" ]; then
 	if [[ ! -e $resume && "${resume}" = /dev/*/* && -e /sbin/lvm ]]; then
-		lvs $(mapper2lvm ${resume#/dev/}) >/dev/null 2>&1 || continue
-		echo "${n}Activating LVM $resume"; n=
-		lvchange -a ay $(mapper2lvm ${resume#/dev/})
+		if lvs $(mapper2lvm ${resume#/dev/}) >/dev/null 2>&1; then
+			echo "${n}Activating LVM $resume"; n=
+			lvchange -a ay $(mapper2lvm ${resume#/dev/})
+		fi
 	fi
 	
 	# only try to resume if the device does not have a swap signature
-	if [ -e $resume -a -z "$(disktype $resume | sed  -n "/swap,/p")" ]; then
-		resume=`ls -lL $resume |
-		  sed 's/[^ ]* *[^ t]* *[^ ]* *[^ ]* *\([0-9]*\), *\([0-9]*\) .*/\1:\2/'`
+	if [ -e $resume ]; then
+		if [ -z "$(disktype $resume | sed -n "/swap,/p")" ]; then
+			resume=`ls -lL $resume |
+		  	sed 's/[^ ]* *[^ t]* *[^ ]* *[^ ]* *\([0-9]*\), *\([0-9]*\) .*/\1:\2/'`
 
-		echo "${n}Resuming from $resume"; n=
-		echo "$resume" > /sys/power/resume
-		echo "Warning: Resume failed. Please check the kernel log for details."
+			echo "${n}Resuming from $resume"; n=
+			echo "$resume" > /sys/power/resume
+			echo "Warning: Resume failed. Please check the kernel log for details."
+		fi
 		resume=
+	elif [ $i -ge 10 ]; then
+		echo "Warning: Timed out waiting for $resume to resume."
+		resume=
+	else
+		continue
 	fi
   fi
 
