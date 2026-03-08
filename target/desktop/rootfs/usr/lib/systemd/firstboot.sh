@@ -20,13 +20,18 @@ lt_LT.UTF-8 lv_LV.UTF-8 nl_NL.UTF-8 pl_PL.UTF-8 pt_BR.UTF-8 pt_PT.UTF-8 \
 ro_RO.UTF-8 ru_RU.UTF-8 sk_SK.UTF-8 sl_SI.UTF-8 sv_SE.UTF-8 th_TH.UTF-8 \
 tr_TR.UTF-8 uk_UA.UTF-8 zh_CN.UTF-8 zh_TW.UTF-8"
 
-if [[ "$(uname -m)" != *86* ]]; then
+[[ "$(uname -m)" != *86* ]] &&
 	systemctl mask sleep.target suspend.target hibernate.target hybrid-sleep.target
 
+[ ! -e /dev/dri/card0 ] &&
+	systemctl disable plasmalogin.service --now
+
+mem=$(sed -n '/MemTotal/{s/.* \([[:digit:]]*\) .*/\1/p}' /proc/meminfo)
+if [ $mem -le $((1024* 1024)) ]; then
 	modprobe zram
-	zramctl -f -s 64m
-	mkswap /dev/zram0
-	swapon /dev/zram0 -p 200
+	zram=$(zramctl -f -s $((mem/8))k)
+	mkswap $zram
+	swapon $zram -p 200
 fi
 
 set +m
