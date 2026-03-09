@@ -2268,34 +2268,6 @@ index 51576d9c935d..3cf2568def3f 100644
  		mdss: display-subsystem@ae00000 {
  			compatible = "qcom,x1e80100-mdss";
  			reg = <0 0x0ae00000 0 0x1000>;
-@@ -5817,9 +6158,11 @@ mdss_dp2_phy: phy@aec2a00 {
- 			      <0 0x0aec2000 0 0x1c8>;
- 
- 			clocks = <&dispcc DISP_CC_MDSS_DPTX2_AUX_CLK>,
--				 <&dispcc DISP_CC_MDSS_AHB_CLK>;
-+				 <&dispcc DISP_CC_MDSS_AHB_CLK>,
-+				 <&tcsr TCSR_EDP_CLKREF_EN>;
- 			clock-names = "aux",
--				      "cfg_ahb";
-+				      "cfg_ahb",
-+				      "ref";
- 
- 			power-domains = <&rpmhpd RPMHPD_MX>;
- 
-@@ -5837,9 +6180,11 @@ mdss_dp3_phy: phy@aec5a00 {
- 			      <0 0x0aec5000 0 0x1c8>;
- 
- 			clocks = <&dispcc DISP_CC_MDSS_DPTX3_AUX_CLK>,
--				 <&dispcc DISP_CC_MDSS_AHB_CLK>;
-+				 <&dispcc DISP_CC_MDSS_AHB_CLK>,
-+				 <&tcsr TCSR_EDP_CLKREF_EN>;
- 			clock-names = "aux",
--				      "cfg_ahb";
-+				      "cfg_ahb",
-+				      "ref";
- 
- 			power-domains = <&rpmhpd RPMHPD_MX>;
- 
 @@ -5961,6 +6306,78 @@ tlmm: pinctrl@f100000 {
  			gpio-ranges = <&tlmm 0 0 239>;
  			wakeup-parent = <&pdc>;
@@ -4070,54 +4042,6 @@ index b71a6a0bed3f..b21a4f9086f6 100644
  obj-$(CONFIG_PHY_QCOM_PCIE2)		+= phy-qcom-pcie2.o
  
  obj-$(CONFIG_PHY_QCOM_QMP_COMBO)	+= phy-qcom-qmp-combo.o phy-qcom-qmp-usbc.o
-diff --git a/drivers/phy/qualcomm/phy-qcom-edp.c b/drivers/phy/qualcomm/phy-qcom-edp.c
-index f1b51018683d..ca9bb9d70e29 100644
---- a/drivers/phy/qualcomm/phy-qcom-edp.c
-+++ b/drivers/phy/qualcomm/phy-qcom-edp.c
-@@ -103,7 +103,9 @@ struct qcom_edp {
- 
- 	struct phy_configure_opts_dp dp_opts;
- 
--	struct clk_bulk_data clks[2];
-+	struct clk_bulk_data *clks;
-+	int num_clks;
-+
- 	struct regulator_bulk_data supplies[2];
- 
- 	bool is_edp;
-@@ -218,7 +220,7 @@ static int qcom_edp_phy_init(struct phy *phy)
- 	if (ret)
- 		return ret;
- 
--	ret = clk_bulk_prepare_enable(ARRAY_SIZE(edp->clks), edp->clks);
-+	ret = clk_bulk_prepare_enable(edp->num_clks, edp->clks);
- 	if (ret)
- 		goto out_disable_supplies;
- 
-@@ -885,7 +887,7 @@ static int qcom_edp_phy_exit(struct phy *phy)
- {
- 	struct qcom_edp *edp = phy_get_drvdata(phy);
- 
--	clk_bulk_disable_unprepare(ARRAY_SIZE(edp->clks), edp->clks);
-+	clk_bulk_disable_unprepare(edp->num_clks, edp->clks);
- 	regulator_bulk_disable(ARRAY_SIZE(edp->supplies), edp->supplies);
- 
- 	return 0;
-@@ -1092,11 +1094,9 @@ static int qcom_edp_phy_probe(struct platform_device *pdev)
- 	if (IS_ERR(edp->pll))
- 		return PTR_ERR(edp->pll);
- 
--	edp->clks[0].id = "aux";
--	edp->clks[1].id = "cfg_ahb";
--	ret = devm_clk_bulk_get(dev, ARRAY_SIZE(edp->clks), edp->clks);
--	if (ret)
--		return ret;
-+	edp->num_clks = devm_clk_bulk_get_all(dev, &edp->clks);
-+	if (edp->num_clks < 0)
-+		return dev_err_probe(dev, edp->num_clks, "failed to parse clocks\n");
- 
- 	edp->supplies[0].supply = "vdda-phy";
- 	edp->supplies[1].supply = "vdda-pll";
 diff --git a/drivers/phy/qualcomm/phy-qcom-mipi-csi2-3ph-dphy.c b/drivers/phy/qualcomm/phy-qcom-mipi-csi2-3ph-dphy.c
 new file mode 100644
 index 000000000000..1a99efee88cc
@@ -6184,14 +6108,15 @@ index 69f53625a049..5b7268868bbd 100644
  
  	dev_set_drvdata(&mhi_dev->dev, qdev);
  	rc = qrtr_endpoint_register(&qdev->ep, QRTR_EP_NID_AUTO);
-@@ -97,6 +103,7 @@ static int qcom_mhi_qrtr_probe(struct mhi_device *mhi_dev,
- 		qrtr_endpoint_unregister(&qdev->ep);
- 		return rc;
- 	}
-+	complete_all(&qdev->prepared);
+@@ -97,6 +103,8 @@ static int qcom_mhi_qrtr_probe(struct mhi_device *mhi_dev,
+ 	if (rc)
+ 		goto err_unregister;
  
++	complete_all(&qdev->prepared);
++
  	dev_dbg(qdev->dev, "Qualcomm MHI QRTR driver probed\n");
  
+ 	return 0;
 diff --git a/net/qrtr/smd.c b/net/qrtr/smd.c
 index c91bf030fbc7..bd70dcfe499a 100644
 --- a/net/qrtr/smd.c
