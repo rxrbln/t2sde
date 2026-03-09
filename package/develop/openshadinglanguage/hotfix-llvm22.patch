@@ -1,0 +1,89 @@
+From 7bcf83eb859b4ce7ffcc599835ec2e6058fbd12f Mon Sep 17 00:00:00 2001
+From: Larry Gritz <lg@larrygritz.com>
+Date: Wed, 4 Mar 2026 20:29:28 -0800
+Subject: [PATCH] build: Support llvm 22, clang 22 for building (#2086)
+
+Fix the minor API changes that came with LLVM 22.
+
+Signed-off-by: Larry Gritz <lg@larrygritz.com>
+---
+ .github/workflows/build-steps.yml |  2 +-
+ .github/workflows/ci.yml          |  6 +++---
+ INSTALL.md                        |  4 ++--
+ src/cmake/externalpackages.cmake  |  2 +-
+ src/liboslcomp/oslcomp.cpp        |  4 ++++
+ src/liboslexec/llvm_util.cpp      | 15 ++++++++++++++-
+ 6 files changed, 25 insertions(+), 8 deletions(-)
+
+diff --git a/src/cmake/externalpackages.cmake b/src/cmake/externalpackages.cmake
+index 3906b8dec..97f0b66f6 100644
+--- a/src/cmake/externalpackages.cmake
++++ b/src/cmake/externalpackages.cmake
+@@ -58,7 +58,7 @@ checked_find_package (pugixml REQUIRED
+ # LLVM library setup
+ checked_find_package (LLVM REQUIRED
+                       VERSION_MIN 14.0
+-                      VERSION_MAX 21.9
++                      VERSION_MAX 22.9
+                       PRINT LLVM_SYSTEM_LIBRARIES CLANG_LIBRARIES
+                             LLVM_SHARED_MODE)
+ # ensure include directory is added (in case of non-standard locations
+diff --git a/src/liboslcomp/oslcomp.cpp b/src/liboslcomp/oslcomp.cpp
+index 027f47d01..f978dd101 100644
+--- a/src/liboslcomp/oslcomp.cpp
++++ b/src/liboslcomp/oslcomp.cpp
+@@ -201,7 +201,11 @@ OSLCompilerImpl::preprocess_buffer(const std::string& buffer,
+     inst.setTarget(target);
+ 
+     inst.createFileManager();
++#if OSL_LLVM_VERSION >= 220
++    inst.createSourceManager();
++#else
+     inst.createSourceManager(inst.getFileManager());
++#endif
+     clang::SourceManager& sm = inst.getSourceManager();
+     sm.setMainFileID(sm.createFileID(std::move(mbuf), clang::SrcMgr::C_User));
+ 
+diff --git a/src/liboslexec/llvm_util.cpp b/src/liboslexec/llvm_util.cpp
+index 759978888..7a9db27bf 100644
+--- a/src/liboslexec/llvm_util.cpp
++++ b/src/liboslexec/llvm_util.cpp
+@@ -1543,7 +1543,11 @@ LLVM_Util::make_jit_execengine(std::string* err, TargetISA requestedISA,
+     // TODO: investigate if reciprocals can be disabled by other means.
+     // Perhaps enable UnsafeFPMath, then modify creation of DIV instructions
+     // to remove the arcp (allow reciprocal) flag on that instructions
++#if OSL_LLVM_VERSION < 220
++    // UnsafeFPMath was removed from TargetOptions in LLVM 22; FP math
++    // control is now handled via per-instruction fast-math flags in IR.
+     options.UnsafeFPMath = false;
++#endif
+     // Since there are OSL language functions isinf and isnan,
+     // we cannot assume there will not be infs and NANs
+     options.NoInfsFPMath = false;
+@@ -1805,7 +1809,11 @@ LLVM_Util::nvptx_target_machine()
+         // N.B. 'Standard' only allow fusion of 'blessed' ops (currently just
+         // fmuladd). To truly disable FMA and never fuse FP-ops, we need to
+         // instead use llvm::FPOpFusion::Strict.
+-        options.UnsafeFPMath                           = 1;
++#if OSL_LLVM_VERSION < 220
++        // UnsafeFPMath was removed from TargetOptions in LLVM 22; FP math
++        // control is now handled via per-instruction fast-math flags in IR.
++        options.UnsafeFPMath = 1;
++#endif
+         options.NoInfsFPMath                           = 1;
+         options.NoNaNsFPMath                           = 1;
+         options.HonorSignDependentRoundingFPMathOption = 0;
+@@ -1817,8 +1825,13 @@ LLVM_Util::nvptx_target_machine()
+ 
+         // Verify that the NVPTX target has been initialized
+         std::string error;
++#if OSL_LLVM_VERSION >= 220
++        const llvm::Target* llvm_target
++            = llvm::TargetRegistry::lookupTarget(ModuleTriple, error);
++#else
+         const llvm::Target* llvm_target
+             = llvm::TargetRegistry::lookupTarget(ModuleTriple.str(), error);
++#endif
+         OSL_ASSERT(llvm_target
+                    && "PTX compile error: LLVM Target is not initialized");
+ 
