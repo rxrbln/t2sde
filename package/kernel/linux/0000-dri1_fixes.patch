@@ -1,0 +1,125 @@
+--- ./drivers/gpu/drm/drm_vblank.c.vanilla	2026-03-11 19:56:04.616769337 +0100
++++ ./drivers/gpu/drm/drm_vblank.c	2026-03-11 20:38:14.557361947 +0100
+@@ -300,12 +300,12 @@
+ static void drm_update_vblank_count(struct drm_device *dev, unsigned int pipe,
+ 				    bool in_vblank_irq)
+ {
+-	struct drm_vblank_crtc *vblank = drm_vblank_crtc(dev, pipe);
++	struct drm_vblank_crtc *vblank = NULL;
+ 	u32 cur_vblank, diff;
+ 	bool rc;
+ 	ktime_t t_vblank;
+ 	int count = DRM_TIMESTAMP_MAXRETRIES;
+-	int framedur_ns = vblank->framedur_ns;
++	int framedur_ns = 0;
+ 	u32 max_vblank_count = drm_max_vblank_count(dev, pipe);
+ 
+ 	/*
+@@ -325,10 +325,14 @@
+ 		rc = drm_get_last_vbltimestamp(dev, pipe, &t_vblank, in_vblank_irq);
+ 	} while (cur_vblank != __get_vblank_counter(dev, pipe) && --count > 0);
+ 
+-	if (max_vblank_count) {
++	if (drm_core_check_feature(dev, DRIVER_MODESET)) {
++		vblank = drm_vblank_crtc(dev, pipe);
++		framedur_ns = vblank->framedur_ns;
++
++	  if (max_vblank_count) {
+ 		/* trust the hw counter when it's around */
+ 		diff = (cur_vblank - vblank->last) & max_vblank_count;
+-	} else if (rc && framedur_ns) {
++	  } else if (rc && framedur_ns) {
+ 		u64 diff_ns = ktime_to_ns(ktime_sub(t_vblank, vblank->time));
+ 
+ 		/*
+@@ -346,35 +350,36 @@
+ 		if (diff == 0 && in_vblank_irq)
+ 			drm_dbg_vbl(dev, "crtc %u: Redundant vblirq ignored\n",
+ 				    pipe);
+-	} else {
++	  } else {
+ 		/* some kind of default for drivers w/o accurate vbl timestamping */
+ 		diff = in_vblank_irq ? 1 : 0;
+-	}
++	  }
+ 
+-	/*
+-	 * Within a drm_vblank_pre_modeset - drm_vblank_post_modeset
+-	 * interval? If so then vblank irqs keep running and it will likely
+-	 * happen that the hardware vblank counter is not trustworthy as it
+-	 * might reset at some point in that interval and vblank timestamps
+-	 * are not trustworthy either in that interval. Iow. this can result
+-	 * in a bogus diff >> 1 which must be avoided as it would cause
+-	 * random large forward jumps of the software vblank counter.
+-	 */
+-	if (diff > 1 && (vblank->inmodeset & 0x2)) {
++	  /*
++	   * Within a drm_vblank_pre_modeset - drm_vblank_post_modeset
++	   * interval? If so then vblank irqs keep running and it will likely
++	   * happen that the hardware vblank counter is not trustworthy as it
++	   * might reset at some point in that interval and vblank timestamps
++	   * are not trustworthy either in that interval. Iow. this can result
++	   * in a bogus diff >> 1 which must be avoided as it would cause
++	   * random large forward jumps of the software vblank counter.
++	   */
++	  if (diff > 1 && (vblank->inmodeset & 0x2)) {
+ 		drm_dbg_vbl(dev,
+ 			    "clamping vblank bump to 1 on crtc %u: diffr=%u"
+ 			    " due to pre-modeset.\n", pipe, diff);
+ 		diff = 1;
+-	}
++	  }
+ 
+-	drm_dbg_vbl(dev, "updating vblank count on crtc %u:"
++	  drm_dbg_vbl(dev, "updating vblank count on crtc %u:"
+ 		    " current=%llu, diff=%u, hw=%u hw_last=%u\n",
+ 		    pipe, (unsigned long long)atomic64_read(&vblank->count),
+ 		    diff, cur_vblank, vblank->last);
+ 
+-	if (diff == 0) {
++	 if (diff == 0) {
+ 		drm_WARN_ON_ONCE(dev, cur_vblank != vblank->last);
+ 		return;
++	  }
+ 	}
+ 
+ 	/*
+@@ -913,9 +918,13 @@
+ drm_get_last_vbltimestamp(struct drm_device *dev, unsigned int pipe,
+ 			  ktime_t *tvblank, bool in_vblank_irq)
+ {
+-	struct drm_crtc *crtc = drm_crtc_from_index(dev, pipe);
++	if (drm_core_check_feature(dev, DRIVER_MODESET)) {
++		struct drm_crtc *crtc = drm_crtc_from_index(dev, pipe);
++
++		return drm_crtc_get_last_vbltimestamp(crtc, tvblank, in_vblank_irq);
++	}
+ 
+-	return drm_crtc_get_last_vbltimestamp(crtc, tvblank, in_vblank_irq);
++	return false;
+ }
+ 
+ /**
+@@ -1986,7 +1995,6 @@
+ 
+ static void drm_handle_vblank_events(struct drm_device *dev, unsigned int pipe)
+ {
+-	struct drm_crtc *crtc = drm_crtc_from_index(dev, pipe);
+ 	bool high_prec = false;
+ 	struct drm_pending_vblank_event *e, *t;
+ 	ktime_t now;
+@@ -2010,8 +2018,12 @@
+ 		send_vblank_event(dev, e, seq, now);
+ 	}
+ 
+-	if (crtc && crtc->funcs->get_vblank_timestamp)
+-		high_prec = true;
++	if (drm_core_check_feature(dev, DRIVER_MODESET)) {
++		struct drm_crtc *crtc = drm_crtc_from_index(dev, pipe);
++
++		if (crtc && crtc->funcs->get_vblank_timestamp)
++			high_prec = true;
++	}
+ 
+ 	trace_drm_vblank_event(pipe, seq, now, high_prec);
+ }
