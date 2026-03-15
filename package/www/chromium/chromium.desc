@@ -20,13 +20,29 @@
 
 [L] BSD
 [S] Stable
-[V] 145.0.7632.116
+[V] 146.0.7680.80
 
 [CV-URL] https://chromium.googlesource.com/chromium/src/+refs
-[D] 2a0f232abe7c9b1f06f7a4d91732cb0cd93acdcbf9e9e5209cf35c88 chromium-145.0.7632.116-linux.tar.xz https://github.com/chromium-linux-tarballs/chromium-tarballs/releases/download/145.0.7632.116/
+[D] 356ddf8f794741e5e0b8ce3311792ec49bd93aac0309a9fdc5c9bd92 chromium-146.0.7680.80-linux.tar.xz https://github.com/chromium-linux-tarballs/chromium-tarballs/releases/download/146.0.7680.80/
+[D] 2f9b70d29a8b01307aca6de11766444d42e81a23c123a6e22dbe8bf7 copium-146.2.tar.gz !https://codeberg.org/selfisekai/copium/archive/146.2.tar.gz
+[D] 688fcf4e2919ddf7d4e94c416fca658a2b3018a7952a8f72d13028dc wasm-node-4.22.4.tgz https://registry.npmjs.org/@rollup/wasm-node/-/
 
 runmake=0
 prefix=opt/chromium
+
+var_append copium_patches ' ' cr138-node-version-check.patch
+var_append copium_patches ' ' cr146-rust-pre1.95-bytemuck.patch
+var_append copium_patches ' ' cr146-sanitize-ignore-for-ubsan-feature.patch
+var_append copium_patches ' ' cr146-no-esbuild.patch
+var_append copium_patches ' ' cr145-rollup-as-rollup.patch
+
+copium_patches() {
+	tar $taropt `match_source_file -p copium` -C ./..
+	for p in $copium_patches; do
+		var_append patchfiles ' ' $builddir/copium/$p
+	done	
+}
+hook_add prepatch 5 copium_patches
 
 [ "$SDECFG_DEFAULT_CC" == "gcc" ] && CC=${CC/gcc/clang}
 [ "$SDECFG_DEFAULT_CXX" == "gcc" ] && CXX=${CXX/g++/clang++}
@@ -67,6 +83,7 @@ chromium_flags="
 	media_use_ffmpeg=true
 	media_use_libvpx=true
 	media_use_openh264=true
+	node_version_check=false
 	proprietary_codecs=true
 	rtc_build_json=false
 	rtc_build_libsrtp=true
@@ -140,12 +157,14 @@ chromium_premake() {
 	var_remove system_libs ' ' unrar
 	build/linux/unbundle/replace_gn_files.py --system-libraries $system_libs
 
+	# use system nodejs
 	mkdir -p third_party/node/linux/node-linux-x64/bin
 	ln -sf /usr/bin/node third_party/node/linux/node-linux-x64/bin/
-	(
-		cd third_party/devtools-frontend/src
-		npm ci --ignore-scripts
-	)
+
+	# rollup wasm
+	rm -rv third_party/devtools-frontend/src/node_modules/rollup
+	mkdir third_party/devtools-frontend/src/node_modules/rollup
+	tar xf `match_source_file -p wasm-node` --strip-components=1 -C third_party/devtools-frontend/src/node_modules/rollup
 	
 	# allow system libs in official build
 	sed -i 's/OFFICIAL_BUILD/GOOGLE_CHROME_BUILD/' \
