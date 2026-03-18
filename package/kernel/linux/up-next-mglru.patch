@@ -1,0 +1,1168 @@
+
+https://lore.kernel.org/lkml/20260318-mglru-reclaim-v1-0-2c46f9eb0508@tencent.com/
+
+From: Kairui Song via B4 Relay <devnull+kasong.tencent.com@kernel.org>
+Date: Wed, 18 Mar 2026 03:08:57 +0800
+Subject: [PATCH 1/8] mm/mglru: consolidate common code for retrieving
+ evitable size
+Precedence: bulk
+X-Mailing-List: linux-kernel@vger.kernel.org
+List-Id: <linux-kernel.vger.kernel.org>
+List-Subscribe: <mailto:linux-kernel+subscribe@vger.kernel.org>
+List-Unsubscribe: <mailto:linux-kernel+unsubscribe@vger.kernel.org>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: 7bit
+Message-Id: <20260318-mglru-reclaim-v1-1-2c46f9eb0508@tencent.com>
+References: <20260318-mglru-reclaim-v1-0-2c46f9eb0508@tencent.com>
+In-Reply-To: <20260318-mglru-reclaim-v1-0-2c46f9eb0508@tencent.com>
+To: linux-mm@kvack.org
+Cc: Andrew Morton <akpm@linux-foundation.org>, 
+ Axel Rasmussen <axelrasmussen@google.com>, Yuanchu Xie <yuanchu@google.com>, 
+ Wei Xu <weixugc@google.com>, Johannes Weiner <hannes@cmpxchg.org>, 
+ David Hildenbrand <david@kernel.org>, Michal Hocko <mhocko@kernel.org>, 
+ Qi Zheng <zhengqi.arch@bytedance.com>, 
+ Shakeel Butt <shakeel.butt@linux.dev>, Lorenzo Stoakes <ljs@kernel.org>, 
+ Barry Song <baohua@kernel.org>, David Stevens <stevensd@google.com>, 
+ Chen Ridong <chenridong@huaweicloud.com>, Leno Hou <lenohou@gmail.com>, 
+ Yafang Shao <laoar.shao@gmail.com>, Yu Zhao <yuzhao@google.com>, 
+ Zicheng Wang <wangzicheng@honor.com>, Kalesh Singh <kaleshsingh@google.com>, 
+ Suren Baghdasaryan <surenb@google.com>, Chris Li <chrisl@kernel.org>, 
+ Vernon Yang <vernon2gm@gmail.com>, linux-kernel@vger.kernel.org, 
+ Kairui Song <kasong@tencent.com>
+X-Mailer: b4 0.14.3
+X-Developer-Signature: v=1; a=ed25519-sha256; t=1773774704; l=4083;
+ i=kasong@tencent.com; s=kasong-sign-tencent; h=from:subject:message-id;
+ bh=oBDA7DoT+1LgZqzpmvPbT4X1VuiGCgQ8ao2nlrP+Kj0=;
+ b=iHaahECT5wFn/8x3pOujy095P54IV+9WnkgMAUT2I1Czxg3d8ClJY6ZPN97ihTWBUn0bJjLoI
+ zQT8vb5jG0fDeEZsBGFTXBGIzPWtlMUzmxDquBHFrTjaMGSvEq7rNk7
+X-Developer-Key: i=kasong@tencent.com; a=ed25519;
+ pk=kCdoBuwrYph+KrkJnrr7Sm1pwwhGDdZKcKrqiK8Y1mI=
+X-Endpoint-Received: by B4 Relay for kasong@tencent.com/kasong-sign-tencent
+ with auth_id=562
+X-Original-From: Kairui Song <kasong@tencent.com>
+Reply-To: kasong@tencent.com
+
+From: Kairui Song <kasong@tencent.com>
+
+Merge commonly used code for counting evictable folios in a lruvec.
+
+No behavior change.
+
+Signed-off-by: Kairui Song <kasong@tencent.com>
+---
+ mm/vmscan.c | 42 +++++++++++++++++-------------------------
+ 1 file changed, 17 insertions(+), 25 deletions(-)
+
+diff --git a/mm/vmscan.c b/mm/vmscan.c
+index 33287ba4a500..d7fc7f1fe06d 100644
+--- a/mm/vmscan.c
++++ b/mm/vmscan.c
+@@ -4078,27 +4078,33 @@ static void set_initial_priority(struct pglist_data *pgdat, struct scan_control
+ 	sc->priority = clamp(priority, DEF_PRIORITY / 2, DEF_PRIORITY);
+ }
+ 
+-static bool lruvec_is_sizable(struct lruvec *lruvec, struct scan_control *sc)
++static long lruvec_evictable_size(struct lruvec *lruvec, int swappiness)
+ {
+ 	int gen, type, zone;
+-	unsigned long total = 0;
+-	int swappiness = get_swappiness(lruvec, sc);
++	unsigned long seq, total = 0;
+ 	struct lru_gen_folio *lrugen = &lruvec->lrugen;
+-	struct mem_cgroup *memcg = lruvec_memcg(lruvec);
+ 	DEFINE_MAX_SEQ(lruvec);
+ 	DEFINE_MIN_SEQ(lruvec);
+ 
+ 	for_each_evictable_type(type, swappiness) {
+-		unsigned long seq;
+-
+ 		for (seq = min_seq[type]; seq <= max_seq; seq++) {
+ 			gen = lru_gen_from_seq(seq);
+-
+ 			for (zone = 0; zone < MAX_NR_ZONES; zone++)
+ 				total += max(READ_ONCE(lrugen->nr_pages[gen][type][zone]), 0L);
+ 		}
+ 	}
+ 
++	return total;
++}
++
++static bool lruvec_is_sizable(struct lruvec *lruvec, struct scan_control *sc)
++{
++	unsigned long total;
++	int swappiness = get_swappiness(lruvec, sc);
++	struct mem_cgroup *memcg = lruvec_memcg(lruvec);
++
++	total = lruvec_evictable_size(lruvec, swappiness);
++
+ 	/* whether the size is big enough to be helpful */
+ 	return mem_cgroup_online(memcg) ? (total >> sc->priority) : total;
+ }
+@@ -4921,9 +4927,6 @@ static int evict_folios(unsigned long nr_to_scan, struct lruvec *lruvec,
+ static bool should_run_aging(struct lruvec *lruvec, unsigned long max_seq,
+ 			     int swappiness, unsigned long *nr_to_scan)
+ {
+-	int gen, type, zone;
+-	unsigned long size = 0;
+-	struct lru_gen_folio *lrugen = &lruvec->lrugen;
+ 	DEFINE_MIN_SEQ(lruvec);
+ 
+ 	*nr_to_scan = 0;
+@@ -4931,18 +4934,7 @@ static bool should_run_aging(struct lruvec *lruvec, unsigned long max_seq,
+ 	if (evictable_min_seq(min_seq, swappiness) + MIN_NR_GENS > max_seq)
+ 		return true;
+ 
+-	for_each_evictable_type(type, swappiness) {
+-		unsigned long seq;
+-
+-		for (seq = min_seq[type]; seq <= max_seq; seq++) {
+-			gen = lru_gen_from_seq(seq);
+-
+-			for (zone = 0; zone < MAX_NR_ZONES; zone++)
+-				size += max(READ_ONCE(lrugen->nr_pages[gen][type][zone]), 0L);
+-		}
+-	}
+-
+-	*nr_to_scan = size;
++	*nr_to_scan = lruvec_evictable_size(lruvec, swappiness);
+ 	/* better to run aging even though eviction is still possible */
+ 	return evictable_min_seq(min_seq, swappiness) + MIN_NR_GENS == max_seq;
+ }
+@@ -4954,7 +4946,7 @@ static bool should_run_aging(struct lruvec *lruvec, unsigned long max_seq,
+  */
+ static long get_nr_to_scan(struct lruvec *lruvec, struct scan_control *sc, int swappiness)
+ {
+-	bool success;
++	bool need_aging;
+ 	unsigned long nr_to_scan;
+ 	struct mem_cgroup *memcg = lruvec_memcg(lruvec);
+ 	DEFINE_MAX_SEQ(lruvec);
+@@ -4962,7 +4954,7 @@ static long get_nr_to_scan(struct lruvec *lruvec, struct scan_control *sc, int s
+ 	if (mem_cgroup_below_min(sc->target_mem_cgroup, memcg))
+ 		return -1;
+ 
+-	success = should_run_aging(lruvec, max_seq, swappiness, &nr_to_scan);
++	need_aging = should_run_aging(lruvec, max_seq, swappiness, &nr_to_scan);
+ 
+ 	/* try to scrape all its memory if this memcg was deleted */
+ 	if (nr_to_scan && !mem_cgroup_online(memcg))
+@@ -4971,7 +4963,7 @@ static long get_nr_to_scan(struct lruvec *lruvec, struct scan_control *sc, int s
+ 	nr_to_scan = apply_proportional_protection(memcg, sc, nr_to_scan);
+ 
+ 	/* try to get away with not aging at the default priority */
+-	if (!success || sc->priority == DEF_PRIORITY)
++	if (!need_aging || sc->priority == DEF_PRIORITY)
+ 		return nr_to_scan >> sc->priority;
+ 
+ 	/* stop scanning this lruvec as it's low on cold folios */
+
+-- 
+2.53.0
+
+
+
+From: Kairui Song via B4 Relay <devnull+kasong.tencent.com@kernel.org>
+Date: Wed, 18 Mar 2026 03:08:58 +0800
+Subject: [PATCH 2/8] mm/mglru: relocate the LRU scan batch limit to callers
+Precedence: bulk
+X-Mailing-List: linux-kernel@vger.kernel.org
+List-Id: <linux-kernel.vger.kernel.org>
+List-Subscribe: <mailto:linux-kernel+subscribe@vger.kernel.org>
+List-Unsubscribe: <mailto:linux-kernel+unsubscribe@vger.kernel.org>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: 7bit
+Message-Id: <20260318-mglru-reclaim-v1-2-2c46f9eb0508@tencent.com>
+References: <20260318-mglru-reclaim-v1-0-2c46f9eb0508@tencent.com>
+In-Reply-To: <20260318-mglru-reclaim-v1-0-2c46f9eb0508@tencent.com>
+To: linux-mm@kvack.org
+Cc: Andrew Morton <akpm@linux-foundation.org>, 
+ Axel Rasmussen <axelrasmussen@google.com>, Yuanchu Xie <yuanchu@google.com>, 
+ Wei Xu <weixugc@google.com>, Johannes Weiner <hannes@cmpxchg.org>, 
+ David Hildenbrand <david@kernel.org>, Michal Hocko <mhocko@kernel.org>, 
+ Qi Zheng <zhengqi.arch@bytedance.com>, 
+ Shakeel Butt <shakeel.butt@linux.dev>, Lorenzo Stoakes <ljs@kernel.org>, 
+ Barry Song <baohua@kernel.org>, David Stevens <stevensd@google.com>, 
+ Chen Ridong <chenridong@huaweicloud.com>, Leno Hou <lenohou@gmail.com>, 
+ Yafang Shao <laoar.shao@gmail.com>, Yu Zhao <yuzhao@google.com>, 
+ Zicheng Wang <wangzicheng@honor.com>, Kalesh Singh <kaleshsingh@google.com>, 
+ Suren Baghdasaryan <surenb@google.com>, Chris Li <chrisl@kernel.org>, 
+ Vernon Yang <vernon2gm@gmail.com>, linux-kernel@vger.kernel.org, 
+ Kairui Song <kasong@tencent.com>
+X-Mailer: b4 0.14.3
+X-Developer-Signature: v=1; a=ed25519-sha256; t=1773774704; l=3426;
+ i=kasong@tencent.com; s=kasong-sign-tencent; h=from:subject:message-id;
+ bh=fQOTRb1NWR0zmPJVNyY4mfywYbSd2CGKo+IRJ8AULGE=;
+ b=mIJt8COJcbU+MtTkJSOMrRRP4ieSNiOL7KcyQ5FHr6Xc5vCR517gTft3XyzSKB1K6Nk7QbB+M
+ A06MqUx0WHBBvYe+zdypVrrJKn6f+79LjqJlCgHq0gA0JpAYLbs8QhE
+X-Developer-Key: i=kasong@tencent.com; a=ed25519;
+ pk=kCdoBuwrYph+KrkJnrr7Sm1pwwhGDdZKcKrqiK8Y1mI=
+X-Endpoint-Received: by B4 Relay for kasong@tencent.com/kasong-sign-tencent
+ with auth_id=562
+X-Original-From: Kairui Song <kasong@tencent.com>
+Reply-To: kasong@tencent.com
+
+From: Kairui Song <kasong@tencent.com>
+
+Same as active / inactive LRU, MGLRU isolates and scans folios in
+batches.  The batch split is done hidden deep in the helper, which
+makes the code harder to follow.  The helper's arguments are also
+confusing since callers usually request more folios than the batch
+size, so the helper almost never processes the full requested amount.
+
+Move the batch splitting into the top loop to make it cleaner, there
+should be no behavior change.
+
+Signed-off-by: Kairui Song <kasong@tencent.com>
+---
+ mm/vmscan.c | 19 +++++++++++--------
+ 1 file changed, 11 insertions(+), 8 deletions(-)
+
+diff --git a/mm/vmscan.c b/mm/vmscan.c
+index d7fc7f1fe06d..d48074f9bd87 100644
+--- a/mm/vmscan.c
++++ b/mm/vmscan.c
+@@ -4538,11 +4538,12 @@
+ 	int scanned = 0;
+ 	int isolated = 0;
+ 	int skipped = 0;
+-	int scan_batch = min(nr_to_scan, MAX_LRU_BATCH);
+-	int remaining = scan_batch;
++	unsigned long remaining = nr_to_scan;
++
+ 	struct lru_gen_folio *lrugen = &lruvec->lrugen;
+ 	struct mem_cgroup *memcg = lruvec_memcg(lruvec);
+ 
++	VM_WARN_ON_ONCE(nr_to_scan > MAX_LRU_BATCH);
+ 	VM_WARN_ON_ONCE(!list_empty(list));
+ 
+ 	if (get_nr_gens(lruvec, type) == MIN_NR_GENS)
+@@ -4599,7 +4600,7 @@
+ 	count_memcg_events(memcg, item, isolated);
+ 	count_memcg_events(memcg, PGREFILL, sorted);
+ 	__count_vm_events(PGSCAN_ANON + type, isolated);
+-	trace_mm_vmscan_lru_isolate(sc->reclaim_idx, sc->order, scan_batch,
++	trace_mm_vmscan_lru_isolate(sc->reclaim_idx, sc->order, nr_to_scan,
+ 				scanned, skipped, isolated,
+ 				type ? LRU_INACTIVE_FILE : LRU_INACTIVE_ANON);
+ 
+@@ -4827,7 +4827,8 @@ static int isolate_folios(unsigned long nr_to_scan, struct lruvec *lruvec,
+ 
+ 		*type_scanned = type;
+ 
+-		scanned = scan_folios(nr_to_scan, lruvec, sc, type, tier, list);
++		scanned = scan_folios(nr_to_scan, lruvec, sc,
++				      type, tier, list);
+ 		if (scanned)
+ 			return scanned;
+ 
+@@ -4999,7 +5000,7 @@ static bool should_abort_scan(struct lruvec *lruvec, struct scan_control *sc)
+ 
+ static bool try_to_shrink_lruvec(struct lruvec *lruvec, struct scan_control *sc)
+ {
+-	long nr_to_scan;
++	long nr_batch, nr_to_scan;
+ 	unsigned long scanned = 0;
+ 	int swappiness = get_swappiness(lruvec, sc);
+ 
+@@ -5010,7 +5011,8 @@ static bool try_to_shrink_lruvec(struct lruvec *lruvec, struct scan_control *sc)
+ 		if (nr_to_scan <= 0)
+ 			break;
+ 
+-		delta = evict_folios(nr_to_scan, lruvec, sc, swappiness);
++		nr_batch = min(nr_to_scan, MAX_LRU_BATCH);
++		delta = evict_folios(nr_batch, lruvec, sc, swappiness);
+ 		if (!delta)
+ 			break;
+ 
+@@ -5615,6 +5617,7 @@ static int run_aging(struct lruvec *lruvec, unsigned long seq,
+ static int run_eviction(struct lruvec *lruvec, unsigned long seq, struct scan_control *sc,
+ 			int swappiness, unsigned long nr_to_reclaim)
+ {
++	int nr_batch;
+ 	DEFINE_MAX_SEQ(lruvec);
+ 
+ 	if (seq + MIN_NR_GENS > max_seq)
+@@ -5631,8 +5634,8 @@ static int run_eviction(struct lruvec *lruvec, unsigned long seq, struct scan_co
+ 		if (sc->nr_reclaimed >= nr_to_reclaim)
+ 			return 0;
+ 
+-		if (!evict_folios(nr_to_reclaim - sc->nr_reclaimed, lruvec, sc,
+-				  swappiness))
++		nr_batch = min(nr_to_reclaim - sc->nr_reclaimed, MAX_LRU_BATCH);
++		if (!evict_folios(nr_batch, lruvec, sc, swappiness))
+ 			return 0;
+ 
+ 		cond_resched();
+
+-- 
+2.53.0
+
+From: Kairui Song via B4 Relay <devnull+kasong.tencent.com@kernel.org>
+Date: Wed, 18 Mar 2026 03:08:59 +0800
+Subject: [PATCH 3/8] mm/mglru: restructure the reclaim loop
+Precedence: bulk
+X-Mailing-List: linux-kernel@vger.kernel.org
+List-Id: <linux-kernel.vger.kernel.org>
+List-Subscribe: <mailto:linux-kernel+subscribe@vger.kernel.org>
+List-Unsubscribe: <mailto:linux-kernel+unsubscribe@vger.kernel.org>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: 7bit
+Message-Id: <20260318-mglru-reclaim-v1-3-2c46f9eb0508@tencent.com>
+References: <20260318-mglru-reclaim-v1-0-2c46f9eb0508@tencent.com>
+In-Reply-To: <20260318-mglru-reclaim-v1-0-2c46f9eb0508@tencent.com>
+To: linux-mm@kvack.org
+Cc: Andrew Morton <akpm@linux-foundation.org>, 
+ Axel Rasmussen <axelrasmussen@google.com>, Yuanchu Xie <yuanchu@google.com>, 
+ Wei Xu <weixugc@google.com>, Johannes Weiner <hannes@cmpxchg.org>, 
+ David Hildenbrand <david@kernel.org>, Michal Hocko <mhocko@kernel.org>, 
+ Qi Zheng <zhengqi.arch@bytedance.com>, 
+ Shakeel Butt <shakeel.butt@linux.dev>, Lorenzo Stoakes <ljs@kernel.org>, 
+ Barry Song <baohua@kernel.org>, David Stevens <stevensd@google.com>, 
+ Chen Ridong <chenridong@huaweicloud.com>, Leno Hou <lenohou@gmail.com>, 
+ Yafang Shao <laoar.shao@gmail.com>, Yu Zhao <yuzhao@google.com>, 
+ Zicheng Wang <wangzicheng@honor.com>, Kalesh Singh <kaleshsingh@google.com>, 
+ Suren Baghdasaryan <surenb@google.com>, Chris Li <chrisl@kernel.org>, 
+ Vernon Yang <vernon2gm@gmail.com>, linux-kernel@vger.kernel.org, 
+ Kairui Song <kasong@tencent.com>
+X-Mailer: b4 0.14.3
+X-Developer-Signature: v=1; a=ed25519-sha256; t=1773774704; l=6507;
+ i=kasong@tencent.com; s=kasong-sign-tencent; h=from:subject:message-id;
+ bh=nSc3ZboeAfZqlXa9RRdghawxnkojRfxE+BLKkAiqpPw=;
+ b=CEdwqcbP+j24LiaU20jUXH/9jmyPXXacBzgfAGK4Ah8Q1H8lI8SaBAfcoOJoy4eZYHvlkd/lm
+ T/afHPPiKjgAhp6fG4PLpL7uzx0drHVKLrCLhHjc1pb34ccpzWklJqu
+X-Developer-Key: i=kasong@tencent.com; a=ed25519;
+ pk=kCdoBuwrYph+KrkJnrr7Sm1pwwhGDdZKcKrqiK8Y1mI=
+X-Endpoint-Received: by B4 Relay for kasong@tencent.com/kasong-sign-tencent
+ with auth_id=562
+X-Original-From: Kairui Song <kasong@tencent.com>
+Reply-To: kasong@tencent.com
+
+From: Kairui Song <kasong@tencent.com>
+
+The current loop will calculate the scan number on each iteration. The
+number of folios to scan is based on the LRU length, with some unclear
+behaviors, eg, it only shifts the scan number by reclaim priority at the
+default priority, and it couples the number calculation with aging and
+rotation.
+
+Adjust, simplify it, and decouple aging and rotation. Just calculate the
+scan number for once at the beginning of the reclaim, always respect the
+reclaim priority, and make the aging and rotation more explicit.
+
+This slightly changes how offline memcg aging works: previously, offline
+memcg wouldn't be aged unless it didn't have any evictable folios. Now,
+we might age it if it has only 3 generations and the reclaim priority is
+less than DEF_PRIORITY, which should be fine. On one hand, offline memcg
+might still hold long-term folios, and in fact, a long-existing offline
+memcg must be pinned by some long-term folios like shmem. These folios
+might be used by other memcg, so aging them as ordinary memcg doesn't
+seem wrong. And besides, aging enables further reclaim of an offlined
+memcg, which will certainly happen if we keep shrinking it. And offline
+memcg might soon be no longer an issue once reparenting is all ready.
+
+Overall, the memcg LRU rotation, as described in mmzone.h,
+remains the same.
+
+Signed-off-by: Kairui Song <kasong@tencent.com>
+---
+ mm/vmscan.c | 74 ++++++++++++++++++++++++++++++-------------------------------
+ 1 file changed, 36 insertions(+), 38 deletions(-)
+
+diff --git a/mm/vmscan.c b/mm/vmscan.c
+index d48074f9bd87..ed5b5f8dd3c7 100644
+--- a/mm/vmscan.c
++++ b/mm/vmscan.c
+@@ -4926,49 +4926,35 @@ static int evict_folios(unsigned long nr_to_scan, struct lruvec *lruvec,
+ }
+ 
+ static bool should_run_aging(struct lruvec *lruvec, unsigned long max_seq,
+-			     int swappiness, unsigned long *nr_to_scan)
++			     struct scan_control *sc, int swappiness)
+ {
+ 	DEFINE_MIN_SEQ(lruvec);
+ 
+-	*nr_to_scan = 0;
+ 	/* have to run aging, since eviction is not possible anymore */
+ 	if (evictable_min_seq(min_seq, swappiness) + MIN_NR_GENS > max_seq)
+ 		return true;
+ 
+-	*nr_to_scan = lruvec_evictable_size(lruvec, swappiness);
++	/* try to get away with not aging at the default priority */
++	if (sc->priority == DEF_PRIORITY)
++		return false;
++
+ 	/* better to run aging even though eviction is still possible */
+ 	return evictable_min_seq(min_seq, swappiness) + MIN_NR_GENS == max_seq;
+ }
+ 
+-/*
+- * For future optimizations:
+- * 1. Defer try_to_inc_max_seq() to workqueues to reduce latency for memcg
+- *    reclaim.
+- */
+-static long get_nr_to_scan(struct lruvec *lruvec, struct scan_control *sc, int swappiness)
++static long get_nr_to_scan(struct lruvec *lruvec, struct scan_control *sc,
++			   struct mem_cgroup *memcg, int swappiness)
+ {
+-	bool need_aging;
+ 	unsigned long nr_to_scan;
+-	struct mem_cgroup *memcg = lruvec_memcg(lruvec);
+-	DEFINE_MAX_SEQ(lruvec);
+-
+-	if (mem_cgroup_below_min(sc->target_mem_cgroup, memcg))
+-		return -1;
+-
+-	need_aging = should_run_aging(lruvec, max_seq, swappiness, &nr_to_scan);
+ 
++	nr_to_scan = lruvec_evictable_size(lruvec, swappiness);
+ 	/* try to scrape all its memory if this memcg was deleted */
+-	if (nr_to_scan && !mem_cgroup_online(memcg))
++	if (!mem_cgroup_online(memcg))
+ 		return nr_to_scan;
+ 
+ 	nr_to_scan = apply_proportional_protection(memcg, sc, nr_to_scan);
+-
+-	/* try to get away with not aging at the default priority */
+-	if (!need_aging || sc->priority == DEF_PRIORITY)
+-		return nr_to_scan >> sc->priority;
+-
+-	/* stop scanning this lruvec as it's low on cold folios */
+-	return try_to_inc_max_seq(lruvec, max_seq, swappiness, false) ? -1 : 0;
++	/* always respect scan priority */
++	return nr_to_scan >> sc->priority;
+ }
+ 
+ static bool should_abort_scan(struct lruvec *lruvec, struct scan_control *sc)
+@@ -4998,31 +4984,43 @@ static bool should_abort_scan(struct lruvec *lruvec, struct scan_control *sc)
+ 	return true;
+ }
+ 
++/*
++ * For future optimizations:
++ * 1. Defer try_to_inc_max_seq() to workqueues to reduce latency for memcg
++ *    reclaim.
++ */
+ static bool try_to_shrink_lruvec(struct lruvec *lruvec, struct scan_control *sc)
+ {
++	bool need_rotate = false;
+ 	long nr_batch, nr_to_scan;
+-	unsigned long scanned = 0;
+ 	int swappiness = get_swappiness(lruvec, sc);
++	struct mem_cgroup *memcg = lruvec_memcg(lruvec);
+ 
+-	while (true) {
++	nr_to_scan = get_nr_to_scan(lruvec, sc, memcg, swappiness);
++	while (nr_to_scan > 0) {
+ 		int delta;
++		DEFINE_MAX_SEQ(lruvec);
+ 
+-		nr_to_scan = get_nr_to_scan(lruvec, sc, swappiness);
+-		if (nr_to_scan <= 0)
++		if (mem_cgroup_below_min(sc->target_mem_cgroup, memcg)) {
++			need_rotate = true;
+ 			break;
++		}
++
++		if (should_run_aging(lruvec, max_seq, sc, swappiness)) {
++			if (try_to_inc_max_seq(lruvec, max_seq, swappiness, false))
++				need_rotate = true;
++			break;
++		}
+ 
+ 		nr_batch = min(nr_to_scan, MAX_LRU_BATCH);
+ 		delta = evict_folios(nr_batch, lruvec, sc, swappiness);
+ 		if (!delta)
+ 			break;
+ 
+-		scanned += delta;
+-		if (scanned >= nr_to_scan)
+-			break;
+-
+ 		if (should_abort_scan(lruvec, sc))
+ 			break;
+ 
++		nr_to_scan -= delta;
+ 		cond_resched();
+ 	}
+ 
+@@ -5034,12 +5032,12 @@ static bool try_to_shrink_lruvec(struct lruvec *lruvec, struct scan_control *sc)
+ 		wakeup_flusher_threads(WB_REASON_VMSCAN);
+ 
+ 	/* whether this lruvec should be rotated */
+-	return nr_to_scan < 0;
++	return need_rotate;
+ }
+ 
+ static int shrink_one(struct lruvec *lruvec, struct scan_control *sc)
+ {
+-	bool success;
++	bool need_rotate;
+ 	unsigned long scanned = sc->nr_scanned;
+ 	unsigned long reclaimed = sc->nr_reclaimed;
+ 	struct mem_cgroup *memcg = lruvec_memcg(lruvec);
+@@ -5057,7 +5055,7 @@ static int shrink_one(struct lruvec *lruvec, struct scan_control *sc)
+ 		memcg_memory_event(memcg, MEMCG_LOW);
+ 	}
+ 
+-	success = try_to_shrink_lruvec(lruvec, sc);
++	need_rotate = try_to_shrink_lruvec(lruvec, sc);
+ 
+ 	shrink_slab(sc->gfp_mask, pgdat->node_id, memcg, sc->priority);
+ 
+@@ -5067,10 +5065,10 @@ static int shrink_one(struct lruvec *lruvec, struct scan_control *sc)
+ 
+ 	flush_reclaim_state(sc);
+ 
+-	if (success && mem_cgroup_online(memcg))
++	if (need_rotate && mem_cgroup_online(memcg))
+ 		return MEMCG_LRU_YOUNG;
+ 
+-	if (!success && lruvec_is_sizable(lruvec, sc))
++	if (!need_rotate && lruvec_is_sizable(lruvec, sc))
+ 		return 0;
+ 
+ 	/* one retry if offlined or too small */
+
+-- 
+2.53.0
+
+
+From: Kairui Song via B4 Relay <devnull+kasong.tencent.com@kernel.org>
+Date: Wed, 18 Mar 2026 03:09:00 +0800
+Subject: [PATCH 4/8] mm/mglru: scan and count the exact number of folios
+Precedence: bulk
+X-Mailing-List: linux-kernel@vger.kernel.org
+List-Id: <linux-kernel.vger.kernel.org>
+List-Subscribe: <mailto:linux-kernel+subscribe@vger.kernel.org>
+List-Unsubscribe: <mailto:linux-kernel+unsubscribe@vger.kernel.org>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: 7bit
+Message-Id: <20260318-mglru-reclaim-v1-4-2c46f9eb0508@tencent.com>
+References: <20260318-mglru-reclaim-v1-0-2c46f9eb0508@tencent.com>
+In-Reply-To: <20260318-mglru-reclaim-v1-0-2c46f9eb0508@tencent.com>
+To: linux-mm@kvack.org
+Cc: Andrew Morton <akpm@linux-foundation.org>, 
+ Axel Rasmussen <axelrasmussen@google.com>, Yuanchu Xie <yuanchu@google.com>, 
+ Wei Xu <weixugc@google.com>, Johannes Weiner <hannes@cmpxchg.org>, 
+ David Hildenbrand <david@kernel.org>, Michal Hocko <mhocko@kernel.org>, 
+ Qi Zheng <zhengqi.arch@bytedance.com>, 
+ Shakeel Butt <shakeel.butt@linux.dev>, Lorenzo Stoakes <ljs@kernel.org>, 
+ Barry Song <baohua@kernel.org>, David Stevens <stevensd@google.com>, 
+ Chen Ridong <chenridong@huaweicloud.com>, Leno Hou <lenohou@gmail.com>, 
+ Yafang Shao <laoar.shao@gmail.com>, Yu Zhao <yuzhao@google.com>, 
+ Zicheng Wang <wangzicheng@honor.com>, Kalesh Singh <kaleshsingh@google.com>, 
+ Suren Baghdasaryan <surenb@google.com>, Chris Li <chrisl@kernel.org>, 
+ Vernon Yang <vernon2gm@gmail.com>, linux-kernel@vger.kernel.org, 
+ Kairui Song <kasong@tencent.com>
+X-Mailer: b4 0.14.3
+X-Developer-Signature: v=1; a=ed25519-sha256; t=1773774704; l=3146;
+ i=kasong@tencent.com; s=kasong-sign-tencent; h=from:subject:message-id;
+ bh=ky1RNKZLvXcrdMH1kH0GOekvj38YuXZMcHy4rmbDVXw=;
+ b=553cnEXzCmztoDDKU1GnFdlSR+/vyXytKxAb9StLKpS6UvhbV0dykEwBCqNffnCFJo5+JaTEK
+ 2Ihc40Wy2N/BFNiKqlIvvQgFHbhIaFzs+7QgAGC09dLP7kT7vmNdIM1
+X-Developer-Key: i=kasong@tencent.com; a=ed25519;
+ pk=kCdoBuwrYph+KrkJnrr7Sm1pwwhGDdZKcKrqiK8Y1mI=
+X-Endpoint-Received: by B4 Relay for kasong@tencent.com/kasong-sign-tencent
+ with auth_id=562
+X-Original-From: Kairui Song <kasong@tencent.com>
+Reply-To: kasong@tencent.com
+
+From: Kairui Song <kasong@tencent.com>
+
+Make the scan helpers return the exact number of folios being scanned
+or isolated. This should make the scan more accurate and easier to
+follow.
+
+Now there is no more need for special handling when there is no
+progress made. The old livelock prevention `(return isolated ||
+!remaining ? scanned : 0)` is replaced by the natural scan budget
+exhaustion in try_to_shrink_lruvec, and sort_folio moves ineligible
+folios to newer generations.
+
+Signed-off-by: Kairui Song <kasong@tencent.com>
+---
+ mm/vmscan.c | 27 +++++++++++----------------
+ 1 file changed, 11 insertions(+), 16 deletions(-)
+
+diff --git a/mm/vmscan.c b/mm/vmscan.c
+index ed5b5f8dd3c7..4f4548ff3a17 100644
+--- a/mm/vmscan.c
++++ b/mm/vmscan.c
+@@ -4680,7 +4680,7 @@ static bool isolate_folio(struct lruvec *lruvec, struct folio *folio, struct sca
+ 
+ static int scan_folios(unsigned long nr_to_scan, struct lruvec *lruvec,
+ 		       struct scan_control *sc, int type, int tier,
+-		       struct list_head *list)
++		       struct list_head *list, int *isolatedp)
+ {
+ 	int i;
+ 	int gen;
+@@ -4750,11 +4750,9 @@ static int scan_folios(unsigned long nr_to_scan, struct lruvec *lruvec,
+ 				type ? LRU_INACTIVE_FILE : LRU_INACTIVE_ANON);
+ 	if (type == LRU_GEN_FILE)
+ 		sc->nr.file_taken += isolated;
+-	/*
+-	 * There might not be eligible folios due to reclaim_idx. Check the
+-	 * remaining to prevent livelock if it's not making progress.
+-	 */
+-	return isolated || !remaining ? scanned : 0;
++
++	*isolatedp = isolated;
++	return scanned;
+ }
+ 
+ static int get_tier_idx(struct lruvec *lruvec, int type)
+@@ -4819,23 +4817,24 @@ static int isolate_folios(unsigned long nr_to_scan, struct lruvec *lruvec,
+ 			  int *type_scanned, struct list_head *list)
+ {
+ 	int i;
++	int scanned = 0;
++	int isolated = 0;
+ 	int type = get_type_to_scan(lruvec, swappiness);
+ 
+ 	for_each_evictable_type(i, swappiness) {
+-		int scanned;
+ 		int tier = get_tier_idx(lruvec, type);
+ 
+ 		*type_scanned = type;
+ 
+-		scanned = scan_folios(nr_to_scan, lruvec, sc,
+-				      type, tier, list);
+-		if (scanned)
++		scanned += scan_folios(nr_to_scan, lruvec, sc,
++				      type, tier, list, &isolated);
++		if (isolated)
+ 			return scanned;
+ 
+ 		type = !type;
+ 	}
+ 
+-	return 0;
++	return scanned;
+ }
+ 
+ static int evict_folios(unsigned long nr_to_scan, struct lruvec *lruvec,
+@@ -4852,7 +4851,6 @@ static int evict_folios(unsigned long nr_to_scan, struct lruvec *lruvec,
+ 	struct reclaim_stat stat;
+ 	struct lru_gen_mm_walk *walk;
+ 	bool skip_retry = false;
+-	struct lru_gen_folio *lrugen = &lruvec->lrugen;
+ 	struct mem_cgroup *memcg = lruvec_memcg(lruvec);
+ 	struct pglist_data *pgdat = lruvec_pgdat(lruvec);
+ 
+@@ -4860,10 +4858,7 @@ static int evict_folios(unsigned long nr_to_scan, struct lruvec *lruvec,
+ 
+ 	scanned = isolate_folios(nr_to_scan, lruvec, sc, swappiness, &type, &list);
+ 
+-	scanned += try_to_inc_min_seq(lruvec, swappiness);
+-
+-	if (evictable_min_seq(lrugen->min_seq, swappiness) + MIN_NR_GENS > lrugen->max_seq)
+-		scanned = 0;
++	try_to_inc_min_seq(lruvec, swappiness);
+ 
+ 	lruvec_unlock_irq(lruvec);
+ 
+
+-- 
+2.53.0
+
+From: Kairui Song via B4 Relay <devnull+kasong.tencent.com@kernel.org>
+Date: Wed, 18 Mar 2026 03:09:01 +0800
+Subject: [PATCH 5/8] mm/mglru: use a smaller batch for reclaim
+Precedence: bulk
+X-Mailing-List: linux-kernel@vger.kernel.org
+List-Id: <linux-kernel.vger.kernel.org>
+List-Subscribe: <mailto:linux-kernel+subscribe@vger.kernel.org>
+List-Unsubscribe: <mailto:linux-kernel+unsubscribe@vger.kernel.org>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: 7bit
+Message-Id: <20260318-mglru-reclaim-v1-5-2c46f9eb0508@tencent.com>
+References: <20260318-mglru-reclaim-v1-0-2c46f9eb0508@tencent.com>
+In-Reply-To: <20260318-mglru-reclaim-v1-0-2c46f9eb0508@tencent.com>
+To: linux-mm@kvack.org
+Cc: Andrew Morton <akpm@linux-foundation.org>, 
+ Axel Rasmussen <axelrasmussen@google.com>, Yuanchu Xie <yuanchu@google.com>, 
+ Wei Xu <weixugc@google.com>, Johannes Weiner <hannes@cmpxchg.org>, 
+ David Hildenbrand <david@kernel.org>, Michal Hocko <mhocko@kernel.org>, 
+ Qi Zheng <zhengqi.arch@bytedance.com>, 
+ Shakeel Butt <shakeel.butt@linux.dev>, Lorenzo Stoakes <ljs@kernel.org>, 
+ Barry Song <baohua@kernel.org>, David Stevens <stevensd@google.com>, 
+ Chen Ridong <chenridong@huaweicloud.com>, Leno Hou <lenohou@gmail.com>, 
+ Yafang Shao <laoar.shao@gmail.com>, Yu Zhao <yuzhao@google.com>, 
+ Zicheng Wang <wangzicheng@honor.com>, Kalesh Singh <kaleshsingh@google.com>, 
+ Suren Baghdasaryan <surenb@google.com>, Chris Li <chrisl@kernel.org>, 
+ Vernon Yang <vernon2gm@gmail.com>, linux-kernel@vger.kernel.org, 
+ Kairui Song <kasong@tencent.com>
+X-Mailer: b4 0.14.3
+X-Developer-Signature: v=1; a=ed25519-sha256; t=1773774704; l=825;
+ i=kasong@tencent.com; s=kasong-sign-tencent; h=from:subject:message-id;
+ bh=WP4y9XHEWiYUb4a2CJWiS80eKSpma8CkjsOc7bozYm0=;
+ b=g31dIkTIDAoe+MBcN4ZK5LGx2nUUlTr1S9ZIEF3qT1RdprPhYqv5TpzL2bTnSn2S22d/15tG8
+ vcDdYbsDHYuD00RXl3abh+rRm7IHz5euwoqKW53MVDa4YC3BLrm/HqQ
+X-Developer-Key: i=kasong@tencent.com; a=ed25519;
+ pk=kCdoBuwrYph+KrkJnrr7Sm1pwwhGDdZKcKrqiK8Y1mI=
+X-Endpoint-Received: by B4 Relay for kasong@tencent.com/kasong-sign-tencent
+ with auth_id=562
+X-Original-From: Kairui Song <kasong@tencent.com>
+Reply-To: kasong@tencent.com
+
+From: Kairui Song <kasong@tencent.com>
+
+With a fixed number to reclaim calculated at the beginning, making each
+following step smaller should reduce the lock contention and avoid
+over-aggressive reclaim of folios, as it will abort earlier when the
+number of folios to be reclaimed is reached.
+
+Signed-off-by: Kairui Song <kasong@tencent.com>
+---
+ mm/vmscan.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/mm/vmscan.c b/mm/vmscan.c
+index 4f4548ff3a17..2ff1609ff4de 100644
+--- a/mm/vmscan.c
++++ b/mm/vmscan.c
+@@ -5007,7 +5007,7 @@ static bool try_to_shrink_lruvec(struct lruvec *lruvec, struct scan_control *sc)
+ 			break;
+ 		}
+ 
+-		nr_batch = min(nr_to_scan, MAX_LRU_BATCH);
++		nr_batch = min(nr_to_scan, MIN_LRU_BATCH);
+ 		delta = evict_folios(nr_batch, lruvec, sc, swappiness);
+ 		if (!delta)
+ 			break;
+
+-- 
+2.53.0
+
+
+From: Kairui Song via B4 Relay <devnull+kasong.tencent.com@kernel.org>
+Date: Wed, 18 Mar 2026 03:09:02 +0800
+Subject: [PATCH 6/8] mm/mglru: don't abort scan immediately right after
+ aging
+Precedence: bulk
+X-Mailing-List: linux-kernel@vger.kernel.org
+List-Id: <linux-kernel.vger.kernel.org>
+List-Subscribe: <mailto:linux-kernel+subscribe@vger.kernel.org>
+List-Unsubscribe: <mailto:linux-kernel+unsubscribe@vger.kernel.org>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: 7bit
+Message-Id: <20260318-mglru-reclaim-v1-6-2c46f9eb0508@tencent.com>
+References: <20260318-mglru-reclaim-v1-0-2c46f9eb0508@tencent.com>
+In-Reply-To: <20260318-mglru-reclaim-v1-0-2c46f9eb0508@tencent.com>
+To: linux-mm@kvack.org
+Cc: Andrew Morton <akpm@linux-foundation.org>, 
+ Axel Rasmussen <axelrasmussen@google.com>, Yuanchu Xie <yuanchu@google.com>, 
+ Wei Xu <weixugc@google.com>, Johannes Weiner <hannes@cmpxchg.org>, 
+ David Hildenbrand <david@kernel.org>, Michal Hocko <mhocko@kernel.org>, 
+ Qi Zheng <zhengqi.arch@bytedance.com>, 
+ Shakeel Butt <shakeel.butt@linux.dev>, Lorenzo Stoakes <ljs@kernel.org>, 
+ Barry Song <baohua@kernel.org>, David Stevens <stevensd@google.com>, 
+ Chen Ridong <chenridong@huaweicloud.com>, Leno Hou <lenohou@gmail.com>, 
+ Yafang Shao <laoar.shao@gmail.com>, Yu Zhao <yuzhao@google.com>, 
+ Zicheng Wang <wangzicheng@honor.com>, Kalesh Singh <kaleshsingh@google.com>, 
+ Suren Baghdasaryan <surenb@google.com>, Chris Li <chrisl@kernel.org>, 
+ Vernon Yang <vernon2gm@gmail.com>, linux-kernel@vger.kernel.org, 
+ Kairui Song <kasong@tencent.com>
+X-Mailer: b4 0.14.3
+X-Developer-Signature: v=1; a=ed25519-sha256; t=1773774704; l=3429;
+ i=kasong@tencent.com; s=kasong-sign-tencent; h=from:subject:message-id;
+ bh=T/HWO7r92IX2HXb54p5Jhi6DhOIRTUsj1BQ/NXwPbvg=;
+ b=aMekzaRsdniBjd+IraV6atJrozmNn8h5TRpciswuPMrWkmFP08pADTxM66rxNk2N94Aij+nsX
+ vy8cTKR6edsD3WTTNGjHufKdjL5aq/4OKmP2iolDmwPZTpYW9k0LI+N
+X-Developer-Key: i=kasong@tencent.com; a=ed25519;
+ pk=kCdoBuwrYph+KrkJnrr7Sm1pwwhGDdZKcKrqiK8Y1mI=
+X-Endpoint-Received: by B4 Relay for kasong@tencent.com/kasong-sign-tencent
+ with auth_id=562
+X-Original-From: Kairui Song <kasong@tencent.com>
+Reply-To: kasong@tencent.com
+
+From: Kairui Song <kasong@tencent.com>
+
+Right now, if eviction triggers aging, the reclaimer will abort. This is
+not the optimal strategy for several reasons.
+
+Aborting the reclaim early wastes a reclaim cycle when under pressure,
+and for concurrent reclaim, if the LRU is under aging, all concurrent
+reclaimers might fail. And if the age has just finished, new cold folios
+exposed by the aging are not reclaimed until the next reclaim iteration.
+
+What's more, the current aging trigger is quite lenient, having 3 gens
+with a reclaim priority lower than default will trigger aging, and
+blocks reclaiming from one memcg. This wastes reclaim retry cycles
+easily. And in the worst case, if the reclaim is making slower progress
+and all following attempts fail due to being blocked by aging, it
+triggers unexpected early OOM.
+
+And if a lruvec requires aging, it doesn't mean it's hot. Instead, the
+lruvec could be idle for quite a while, and hence it might contain lots
+of cold folios to be reclaimed.
+
+While it's helpful to rotate memcg LRU after aging for global reclaim,
+as global reclaim fairness is coupled with the rotation in shrink_many,
+memcg fairness is instead handled by cgroup iteration in
+shrink_node_memcgs. So, for memcg level pressure, this abort is not the
+key part for keeping the fairness. And in most cases, there is no need
+to age, and fairness must be achieved by upper-level reclaim control.
+
+So instead, just keep the scanning going unless one whole batch of
+folios failed to be isolated or enough folios have been scanned, which
+is triggered by evict_folios returning 0. And only abort for global
+reclaim after one batch, so when there are fewer memcgs, progress is
+still made, and the fairness mechanism described above still works fine.
+
+And in most cases, the one more batch attempt for global reclaim might
+just be enough to satisfy what the reclaimer needs, hence improving
+global reclaim performance by reducing reclaim retry cycles.
+
+Rotation is still there after the reclaim is done, which still follows
+the comment in mmzone.h. And fairness still looking good.
+
+Signed-off-by: Kairui Song <kasong@tencent.com>
+---
+ mm/vmscan.c | 8 ++++++--
+ 1 file changed, 6 insertions(+), 2 deletions(-)
+
+diff --git a/mm/vmscan.c b/mm/vmscan.c
+index 2ff1609ff4de..b26959d90850 100644
+--- a/mm/vmscan.c
++++ b/mm/vmscan.c
+@@ -4986,7 +4986,7 @@ static bool should_abort_scan(struct lruvec *lruvec, struct scan_control *sc)
+  */
+ static bool try_to_shrink_lruvec(struct lruvec *lruvec, struct scan_control *sc)
+ {
+-	bool need_rotate = false;
++	bool need_rotate = false, should_age = false;
+ 	long nr_batch, nr_to_scan;
+ 	int swappiness = get_swappiness(lruvec, sc);
+ 	struct mem_cgroup *memcg = lruvec_memcg(lruvec);
+@@ -5004,7 +5004,7 @@ static bool try_to_shrink_lruvec(struct lruvec *lruvec, struct scan_control *sc)
+ 		if (should_run_aging(lruvec, max_seq, sc, swappiness)) {
+ 			if (try_to_inc_max_seq(lruvec, max_seq, swappiness, false))
+ 				need_rotate = true;
+-			break;
++			should_age = true;
+ 		}
+ 
+ 		nr_batch = min(nr_to_scan, MIN_LRU_BATCH);
+@@ -5015,6 +5015,10 @@ static bool try_to_shrink_lruvec(struct lruvec *lruvec, struct scan_control *sc)
+ 		if (should_abort_scan(lruvec, sc))
+ 			break;
+ 
++		/* Cgroup reclaim fairness not guarded by rotate */
++		if (root_reclaim(sc) && should_age)
++			break;
++
+ 		nr_to_scan -= delta;
+ 		cond_resched();
+ 	}
+
+-- 
+2.53.0
+
+From: Kairui Song via B4 Relay <devnull+kasong.tencent.com@kernel.org>
+Date: Wed, 18 Mar 2026 03:09:03 +0800
+Subject: [PATCH 7/8] mm/mglru: simplify and improve dirty writeback
+ handling
+Precedence: bulk
+X-Mailing-List: linux-kernel@vger.kernel.org
+List-Id: <linux-kernel.vger.kernel.org>
+List-Subscribe: <mailto:linux-kernel+subscribe@vger.kernel.org>
+List-Unsubscribe: <mailto:linux-kernel+unsubscribe@vger.kernel.org>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: 7bit
+Message-Id: <20260318-mglru-reclaim-v1-7-2c46f9eb0508@tencent.com>
+References: <20260318-mglru-reclaim-v1-0-2c46f9eb0508@tencent.com>
+In-Reply-To: <20260318-mglru-reclaim-v1-0-2c46f9eb0508@tencent.com>
+To: linux-mm@kvack.org
+Cc: Andrew Morton <akpm@linux-foundation.org>, 
+ Axel Rasmussen <axelrasmussen@google.com>, Yuanchu Xie <yuanchu@google.com>, 
+ Wei Xu <weixugc@google.com>, Johannes Weiner <hannes@cmpxchg.org>, 
+ David Hildenbrand <david@kernel.org>, Michal Hocko <mhocko@kernel.org>, 
+ Qi Zheng <zhengqi.arch@bytedance.com>, 
+ Shakeel Butt <shakeel.butt@linux.dev>, Lorenzo Stoakes <ljs@kernel.org>, 
+ Barry Song <baohua@kernel.org>, David Stevens <stevensd@google.com>, 
+ Chen Ridong <chenridong@huaweicloud.com>, Leno Hou <lenohou@gmail.com>, 
+ Yafang Shao <laoar.shao@gmail.com>, Yu Zhao <yuzhao@google.com>, 
+ Zicheng Wang <wangzicheng@honor.com>, Kalesh Singh <kaleshsingh@google.com>, 
+ Suren Baghdasaryan <surenb@google.com>, Chris Li <chrisl@kernel.org>, 
+ Vernon Yang <vernon2gm@gmail.com>, linux-kernel@vger.kernel.org, 
+ Kairui Song <kasong@tencent.com>
+X-Mailer: b4 0.14.3
+X-Developer-Signature: v=1; a=ed25519-sha256; t=1773774704; l=6525;
+ i=kasong@tencent.com; s=kasong-sign-tencent; h=from:subject:message-id;
+ bh=4v8IMSBCol6NW26BtD5Q/L1ClDP1BcPSL9T6s99BSk4=;
+ b=ogWGF6m9Kn1C0l8kcePmuURjvWxNqfs0Nq5qylyh8k5Lu9lBZj1aLlqafYXwCtj1m+qUBfcfX
+ GlyrobjCyxTBuGGdl87zTSoMBm9jDi7IXnMMfQTqP+yFeDoz9Q+gqi6
+X-Developer-Key: i=kasong@tencent.com; a=ed25519;
+ pk=kCdoBuwrYph+KrkJnrr7Sm1pwwhGDdZKcKrqiK8Y1mI=
+X-Endpoint-Received: by B4 Relay for kasong@tencent.com/kasong-sign-tencent
+ with auth_id=562
+X-Original-From: Kairui Song <kasong@tencent.com>
+Reply-To: kasong@tencent.com
+
+From: Kairui Song <kasong@tencent.com>
+
+The current handling of dirty writeback folios is not working well for
+file page heavy workloads: Dirty folios are protected and move to next
+gen upon isolation of getting throttled or reactivated upon pageout
+(shrink_folio_list).
+
+This might help to reduce the LRU lock contention slightly, but as a
+result, the ping-pong effect of folios between head and tail of last two
+gens is serious as the shrinker will run into protected dirty writeback
+folios more frequently compared to activation. The dirty flush wakeup
+condition is also much more passive compared to active/inactive LRU.
+Active / inactve LRU wakes the flusher if one batch of folios passed to
+shrink_folio_list is unevictable due to under writeback, but MGLRU
+instead has to check this after the whole reclaim loop is done, and then
+count the isolation protection number compared to the total reclaim
+number.
+
+And we previously saw OOM problems with it, too, which were fixed but
+still not perfect [1].
+
+So instead, just drop the special handling for dirty writeback, just
+re-activate it like active / inactive LRU. And also move the dirty flush
+wake up check right after shrink_folio_list. This should improve both
+throttling and performance.
+
+Test with YCSB workloadb showed a major performance improvement:
+
+Before this series:
+Throughput(ops/sec): 61642.78008938203
+AverageLatency(us):  507.11127774145166
+pgpgin 158190589
+pgpgout 5880616
+workingset_refault 7262988
+
+After this commit:
+Throughput(ops/sec): 80216.04855744806  (+30.1%, higher is better)
+AverageLatency(us):  388.17633477268913 (-23.5%, lower is better)
+pgpgin 101871227                        (-35.6%, lower is better)
+pgpgout 5770028
+workingset_refault 3418186              (-52.9%, lower is better)
+
+The refault rate is 50% lower, and throughput is 30% higher, which is a
+huge gain. We also observed significant performance gain for other
+real-world workloads.
+
+We were concerned that the dirty flush could cause more wear for SSD:
+that should not be the problem here, since the wakeup condition is when
+the dirty folios have been pushed to the tail of LRU, which indicates
+that memory pressure is so high that writeback is blocking the workload
+already.
+
+Signed-off-by: Kairui Song <kasong@tencent.com>
+Link: https://lore.kernel.org/linux-mm/20241026115714.1437435-1-jingxiangzeng.cas@gmail.com/ [1]
+---
+ mm/vmscan.c | 44 +++++++++++++-------------------------------
+ 1 file changed, 13 insertions(+), 31 deletions(-)
+
+diff --git a/mm/vmscan.c b/mm/vmscan.c
+index b26959d90850..e11d0f1a8b68 100644
+--- a/mm/vmscan.c
++++ b/mm/vmscan.c
+@@ -4577,7 +4577,6 @@ static bool sort_folio(struct lruvec *lruvec, struct folio *folio, struct scan_c
+ 		       int tier_idx)
+ {
+ 	bool success;
+-	bool dirty, writeback;
+ 	int gen = folio_lru_gen(folio);
+ 	int type = folio_is_file_lru(folio);
+ 	int zone = folio_zonenum(folio);
+@@ -4627,21 +4626,6 @@ static bool sort_folio(struct lruvec *lruvec, struct folio *folio, struct scan_c
+ 		return true;
+ 	}
+ 
+-	dirty = folio_test_dirty(folio);
+-	writeback = folio_test_writeback(folio);
+-	if (type == LRU_GEN_FILE && dirty) {
+-		sc->nr.file_taken += delta;
+-		if (!writeback)
+-			sc->nr.unqueued_dirty += delta;
+-	}
+-
+-	/* waiting for writeback */
+-	if (writeback || (type == LRU_GEN_FILE && dirty)) {
+-		gen = folio_inc_gen(lruvec, folio, true);
+-		list_move(&folio->lru, &lrugen->folios[gen][type][zone]);
+-		return true;
+-	}
+-
+ 	return false;
+ }
+ 
+@@ -4748,8 +4732,6 @@ static int scan_folios(unsigned long nr_to_scan, struct lruvec *lruvec,
+ 	trace_mm_vmscan_lru_isolate(sc->reclaim_idx, sc->order, nr_to_scan,
+ 				scanned, skipped, isolated,
+ 				type ? LRU_INACTIVE_FILE : LRU_INACTIVE_ANON);
+-	if (type == LRU_GEN_FILE)
+-		sc->nr.file_taken += isolated;
+ 
+ 	*isolatedp = isolated;
+ 	return scanned;
+@@ -4814,11 +4796,11 @@ static int get_type_to_scan(struct lruvec *lruvec, int swappiness)
+ 
+ static int isolate_folios(unsigned long nr_to_scan, struct lruvec *lruvec,
+ 			  struct scan_control *sc, int swappiness,
+-			  int *type_scanned, struct list_head *list)
++			  int *type_scanned,
++			  struct list_head *list, int *isolated)
+ {
+ 	int i;
+ 	int scanned = 0;
+-	int isolated = 0;
+ 	int type = get_type_to_scan(lruvec, swappiness);
+ 
+ 	for_each_evictable_type(i, swappiness) {
+@@ -4827,8 +4809,8 @@ static int isolate_folios(unsigned long nr_to_scan, struct lruvec *lruvec,
+ 		*type_scanned = type;
+ 
+ 		scanned += scan_folios(nr_to_scan, lruvec, sc,
+-				      type, tier, list, &isolated);
+-		if (isolated)
++				      type, tier, list, isolated);
++		if (*isolated)
+ 			return scanned;
+ 
+ 		type = !type;
+@@ -4843,6 +4825,7 @@ static int evict_folios(unsigned long nr_to_scan, struct lruvec *lruvec,
+ 	int type;
+ 	int scanned;
+ 	int reclaimed;
++	int isolated = 0;
+ 	LIST_HEAD(list);
+ 	LIST_HEAD(clean);
+ 	struct folio *folio;
+@@ -4856,7 +4839,7 @@ static int evict_folios(unsigned long nr_to_scan, struct lruvec *lruvec,
+ 
+ 	lruvec_lock_irq(lruvec);
+ 
+-	scanned = isolate_folios(nr_to_scan, lruvec, sc, swappiness, &type, &list);
++	scanned = isolate_folios(nr_to_scan, lruvec, sc, swappiness, &type, &list, &isolated);
+ 
+ 	try_to_inc_min_seq(lruvec, swappiness);
+ 
+@@ -4866,12 +4849,18 @@ static int evict_folios(unsigned long nr_to_scan, struct lruvec *lruvec,
+ 		return scanned;
+ retry:
+ 	reclaimed = shrink_folio_list(&list, pgdat, sc, &stat, false, memcg);
+-	sc->nr.unqueued_dirty += stat.nr_unqueued_dirty;
+ 	sc->nr_reclaimed += reclaimed;
+ 	trace_mm_vmscan_lru_shrink_inactive(pgdat->node_id,
+ 			scanned, reclaimed, &stat, sc->priority,
+ 			type ? LRU_INACTIVE_FILE : LRU_INACTIVE_ANON);
+ 
++	/*
++	 * If too many file cache in the coldest generation can't be evicted
++	 * due to being dirty, wake up the flusher.
++	 */
++	if (stat.nr_unqueued_dirty == isolated)
++		wakeup_flusher_threads(WB_REASON_VMSCAN);
++
+ 	list_for_each_entry_safe_reverse(folio, next, &list, lru) {
+ 		DEFINE_MIN_SEQ(lruvec);
+ 
+@@ -5023,13 +5012,6 @@ static bool try_to_shrink_lruvec(struct lruvec *lruvec, struct scan_control *sc)
+ 		cond_resched();
+ 	}
+ 
+-	/*
+-	 * If too many file cache in the coldest generation can't be evicted
+-	 * due to being dirty, wake up the flusher.
+-	 */
+-	if (sc->nr.unqueued_dirty && sc->nr.unqueued_dirty == sc->nr.file_taken)
+-		wakeup_flusher_threads(WB_REASON_VMSCAN);
+-
+ 	/* whether this lruvec should be rotated */
+ 	return need_rotate;
+ }
+
+-- 
+2.53.0
+
+From: Kairui Song via B4 Relay <devnull+kasong.tencent.com@kernel.org>
+Date: Wed, 18 Mar 2026 03:09:04 +0800
+Subject: [PATCH 8/8] mm/vmscan: remove sc->file_taken
+Precedence: bulk
+X-Mailing-List: linux-kernel@vger.kernel.org
+List-Id: <linux-kernel.vger.kernel.org>
+List-Subscribe: <mailto:linux-kernel+subscribe@vger.kernel.org>
+List-Unsubscribe: <mailto:linux-kernel+unsubscribe@vger.kernel.org>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: 7bit
+Message-Id: <20260318-mglru-reclaim-v1-8-2c46f9eb0508@tencent.com>
+References: <20260318-mglru-reclaim-v1-0-2c46f9eb0508@tencent.com>
+In-Reply-To: <20260318-mglru-reclaim-v1-0-2c46f9eb0508@tencent.com>
+To: linux-mm@kvack.org
+Cc: Andrew Morton <akpm@linux-foundation.org>, 
+ Axel Rasmussen <axelrasmussen@google.com>, Yuanchu Xie <yuanchu@google.com>, 
+ Wei Xu <weixugc@google.com>, Johannes Weiner <hannes@cmpxchg.org>, 
+ David Hildenbrand <david@kernel.org>, Michal Hocko <mhocko@kernel.org>, 
+ Qi Zheng <zhengqi.arch@bytedance.com>, 
+ Shakeel Butt <shakeel.butt@linux.dev>, Lorenzo Stoakes <ljs@kernel.org>, 
+ Barry Song <baohua@kernel.org>, David Stevens <stevensd@google.com>, 
+ Chen Ridong <chenridong@huaweicloud.com>, Leno Hou <lenohou@gmail.com>, 
+ Yafang Shao <laoar.shao@gmail.com>, Yu Zhao <yuzhao@google.com>, 
+ Zicheng Wang <wangzicheng@honor.com>, Kalesh Singh <kaleshsingh@google.com>, 
+ Suren Baghdasaryan <surenb@google.com>, Chris Li <chrisl@kernel.org>, 
+ Vernon Yang <vernon2gm@gmail.com>, linux-kernel@vger.kernel.org, 
+ Kairui Song <kasong@tencent.com>
+X-Mailer: b4 0.14.3
+X-Developer-Signature: v=1; a=ed25519-sha256; t=1773774704; l=849;
+ i=kasong@tencent.com; s=kasong-sign-tencent; h=from:subject:message-id;
+ bh=gt8iOF2lvqV45jaXpQMK2rEjBoErbZaKLWKtqx1d/6o=;
+ b=VXG4thCFCMpSII8Hv+Bkr5Er7SJWju2DheTxxcMlkv7dJns19gawBoIDz/wORmr1SKPFwXJ/w
+ eI4rWv77eyxDt517edy9GAbSGCFxILfmwCOlkcTjfLjMo5Gj1DWjxs4
+X-Developer-Key: i=kasong@tencent.com; a=ed25519;
+ pk=kCdoBuwrYph+KrkJnrr7Sm1pwwhGDdZKcKrqiK8Y1mI=
+X-Endpoint-Received: by B4 Relay for kasong@tencent.com/kasong-sign-tencent
+ with auth_id=562
+X-Original-From: Kairui Song <kasong@tencent.com>
+Reply-To: kasong@tencent.com
+
+From: Kairui Song <kasong@tencent.com>
+
+No one is using it now, just remove it.
+
+Signed-off-by: Kairui Song <kasong@tencent.com>
+---
+ mm/vmscan.c | 3 ---
+ 1 file changed, 3 deletions(-)
+
+diff --git a/mm/vmscan.c b/mm/vmscan.c
+index e11d0f1a8b68..b95c9fc17edf 100644
+--- a/mm/vmscan.c
++++ b/mm/vmscan.c
+@@ -174,7 +174,6 @@ struct scan_control {
+ 		unsigned int congested;
+ 		unsigned int writeback;
+ 		unsigned int immediate;
+-		unsigned int file_taken;
+ 		unsigned int taken;
+ 	} nr;
+ 
+@@ -2041,8 +2040,6 @@ static unsigned long shrink_inactive_list(unsigned long nr_to_scan,
+ 	sc->nr.writeback += stat.nr_writeback;
+ 	sc->nr.immediate += stat.nr_immediate;
+ 	sc->nr.taken += nr_taken;
+-	if (file)
+-		sc->nr.file_taken += nr_taken;
+ 
+ 	trace_mm_vmscan_lru_shrink_inactive(pgdat->node_id,
+ 			nr_scanned, nr_reclaimed, &stat, sc->priority, file);
+
+-- 
+2.53.0
+
+
+
