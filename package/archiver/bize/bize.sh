@@ -139,7 +139,7 @@ bize_query() {
 		l) cat $(awk '$0 ~ /flists/' <<< "$files") ;;
 		m) cat $(awk '$0 ~ /md5sums/' <<< "$files") ;;
 		d) cat $(awk '$0 ~ /dependencies/' <<< "$files") ;;
-		y) md5sum --check --quiet $(awk '$0 ~ /md5sum/' <<< "$files") ;;
+		y) (cd $root/; md5sum --check --quiet $(awk '$0 ~ /md5sum/' <<< "$files") ) ;;
 	esac
 }
 
