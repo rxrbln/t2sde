@@ -75,3 +75,6 @@ dnl Oopses null pointer dereference
 dnl LDOM bugs
 # CONFIG_SCHED_CORE is not set
 CONFIG_MQ_IOSCHED_DEADLINE=y
+
+# https://github.com/sparclinux/issues/issues/29
+# CONFIG_CGROUP_BPF is not set
