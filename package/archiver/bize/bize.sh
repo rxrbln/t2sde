@@ -107,7 +107,7 @@ bize_bundle() {
 	[ -z "$root" ] && root='/'
 
 	[ ! -f "$adm/flists/$pkg" ] &&
-		echo "$0: $pkg: no such package" >&2
+		echo "$0: $pkg: no such package" >&2 && exit 1
 
 	local ver=$(head -1 $adm/packages/$pkg | cut -d' ' -f6)
 	local compressor="zstd -T0 -19"
