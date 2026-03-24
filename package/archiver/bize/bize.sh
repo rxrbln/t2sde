@@ -104,22 +104,22 @@ bize_uninstall() {
 }
 
 bize_bundle() {
-	[ -z "${root}" ] && root='/'
+	[ -z "$root" ] && root='/'
 
-	[ ! -f "${root}var/adm/flists/$pkg" ] && \
+	[ ! -f "$adm/flists/$pkg" ] &&
 		echo "$0: $pkg: no such package" >&2
 
-	local ver=$(head -1 ${root}/var/adm/packages/$pkg | cut -d' ' -f6)
+	local ver=$(head -1 $adm/packages/$pkg | cut -d' ' -f6)
 	local compressor="zstd -T0 -19"
 	local ext="zst"
 
 	echo "Creating a binary package of $pkg-$ver"
-	(cd ${root}
-		(grep ' var/adm' ${root}var/adm/flists/$pkg;
-		 grep -v ' var/adm' ${root}var/adm/flists/$pkg) | cut -d' ' -f2 \
-		| tar -cf- --no-recursion --files-from=- \
-		| $compressor
-	) > ./$pkg-$ver.tar.$ext
+	(cd $root
+		(grep ' var/adm' $adm/flists/$pkg
+		 grep -v ' var/adm' $adm/flists/$pkg) | cut -d' ' -f2 |
+			tar -cf- --no-recursion --files-from=- |
+			$compressor
+	) > $pkg-$ver.tar.$ext
 }
 
 bize_query() {
@@ -152,11 +152,11 @@ bize_main() {
 			-i) install=1 ;;
 			-r) remove=1 ;;
 			-t) test=echo ;;
-			-f) keep="" ;;
+			-f) keep= ;;
 			-v) verbose=v voption=-v ;;
 			-R) shift ; root="$1" ;;
 			-R*) root="${1#-R}" ;;
-			-b) bundle=1; remove=0 ;; # quick hack for the if install = remove
+			-b) bundle=1 ;; # quick hack for the if install = remove
 			-q|-p|-l|-m|-d|-y) query=1; query_type="${1#-}" ;;
 			--) break ;;
 			-*) bize_usage ; return 1 ;;
@@ -180,7 +180,7 @@ bize_main() {
 		fi
 	done
 
-	if [ "$install$remove$query" != "1" -o -z "$root" ]; then
+	if [ "$install$remove$query$bundle" != "1" -o -z "$root" ]; then
 		bize_usage
 		return 1
 	fi
