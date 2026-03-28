@@ -5,7 +5,6 @@
  T2 SDE: misc/archive/hello.hs
  Copyright (C) 2010 - 2024 The T2 SDE Project
  
- More information can be found in the files COPYING and README.
  
  This program is free software; you can redistribute it and/or modify
  it under the terms of the GNU General Public License as published by
