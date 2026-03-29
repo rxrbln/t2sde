@@ -323,7 +323,7 @@ done
 #
 [ -z "$minimal" ] &&
 for x in $root/sbin/{insmod,blkid,lvm,vgchange,lvchange,vgs,lvs,mdadm} \
-	 $root/usr/sbin/{cryptsetup,smartctl,cache_check} $root/usr/embutils/{dmesg,mkswap,swapon}
+	 $root/usr/sbin/{cache_check,cryptsetup,kexec,smartctl} $root/usr/embutils/{dmesg,mkswap,swapon}
 do
   if [ ! -e $x ]; then
 	echo "Warning: Skipped optional file ${x#$root}!"
