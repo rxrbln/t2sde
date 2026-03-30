@@ -1,6 +1,6 @@
 /*
  * --- T2-COPYRIGHT-BEGIN ---
- * t2/package/*/sysfiles/btee.c
+ * t2/package/.../sysfiles/btee.c
  * Copyright (C) 2004 - 2026 The T2 SDE Project
  * SPDX-License-Identifier: GPL-2.0
  * --- T2-COPYRIGHT-END ---
