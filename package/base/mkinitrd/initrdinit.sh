@@ -131,6 +131,7 @@ while [[ -n "$root" && ($((i++)) -le 15 || "$cmdline" = *rootwait*) ]]; do
   if [[ "${root}" = *,* ]]; then
 	toor="${root%,*}"
 	[[ "${toor}" = LABEL=* ]] && toor="/dev/disk/by-label/${root#LABEL=}"
+	[[ "${toor}" = PARTUUID=* ]] && toor="/dev/disk/by-partuuid/${root#PARTUUID=}"
 	[[ "${toor}" = UUID=* ]] && toor="/dev/disk/by-uuid/${root#UUID=}"
 	[ -e "$toor" ] || continue
 
@@ -138,8 +139,10 @@ while [[ -n "$root" && ($((i++)) -le 15 || "$cmdline" = *rootwait*) ]]; do
 	cryptsetup --disable-locks luksOpen $toor root && root="${root#*,}"
   fi
 
+  [[ "${root}" = PARTUUID=* ]] && root="/dev/disk/by-partuuid/${root#PARTUUID=}"
   [[ "${root}" = UUID=* ]] && root="/dev/disk/by-uuid/${root#UUID=}"
   [[ "${root}" = LABEL=* ]] && root="/dev/disk/by-label/${root#LABEL=}"
+  [[ "${swap}" = PARTUUID=* ]] && swap="/dev/disk/by-partuuid/${swap#PARTUUID=}"
   [[ "${swap}" = UUID=* ]] && swap="/dev/disk/by-uuid/${swap#UUID=}"
   [[ "${swap}" = LABEL=* ]] && swap="/dev/disk/by-label/${swap#LABEL=}"
 
