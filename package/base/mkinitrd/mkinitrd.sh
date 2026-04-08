@@ -314,7 +314,7 @@ copy_dyn_libs () {
 
 # setup programs
 #
-for x in $root/sbin/{udevd,udevadm,kmod,modprobe} $root/usr/sbin/{disktype,ipconfig}
+for x in $root/sbin/{udevd,udevadm,kmod,modprobe,dmsetup} $root/usr/sbin/{disktype,ipconfig}
 do
 	cp -av $x $tmpdir/sbin/
 	copy_dyn_libs $x
