@@ -29,7 +29,7 @@ vitalmods[r8169.ko]=1
 
 # firmware only needed for rare / embedded variants
 declare -A fwopt
-fwopt[e100.ko]=1    # popular vintage
+fwopt[e100.ko]=1	# popular vintage
 
 
 # TODO: defauls for vintage vs. latest, usb, pata, etc.
@@ -83,7 +83,8 @@ done
 if [ "$network" ]; then
 	filter="$filter -e '/ipv4\.' -e nfsv4"
 
-	[ -z "$minimal" ] && filter="$filter -e '/ipv6\.' -e netconsole -e ethernet \
+	[ "$minimal" ] ||
+		filter="$filter -e '/ipv6\.' -e netconsole -e ethernet \
 -e aqc111 -e asix -e ax88179_178a -e cdc_ether -e /cdc_ncm -e cx82310_eth -e r8153_ecm \
 -e rtl8150 -e r8152"
 fi
