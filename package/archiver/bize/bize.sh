@@ -134,7 +134,7 @@ bize_query() {
 		files=$(ls $adm/*/$pkg)
 	fi
 	case "$query_type" in
-		q) awk -F': ' 'FNR==1 { print $2 }' $(echo "$files" | awk '$0 ~ /packages/') ;;
+		q) awk -F': ' 'FNR==1 { print $2 }' $(awk '$0 ~ /packages.+/' <<< $files) ;;
 		p) cat $(awk '$0 ~ /packages/' <<< "$files") ;;
 		l) cat $(awk '$0 ~ /flists/' <<< "$files") ;;
 		m) cat $(awk '$0 ~ /md5sums/' <<< "$files") ;;
