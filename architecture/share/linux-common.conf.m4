@@ -1,6 +1,6 @@
 dnl --- T2-COPYRIGHT-BEGIN ---
 dnl t2/architecture/share/linux-common.conf.m4
-dnl Copyright (C) 2004 - 2025 The T2 SDE Project
+dnl Copyright (C) 2004 - 2026 The T2 SDE Project
 dnl SPDX-License-Identifier: GPL-2.0
 dnl --- T2-COPYRIGHT-END ---
 
@@ -424,6 +424,7 @@ CONFIG_AGP=m
 dnl DRM drivers for hardware 3D
 dnl
 CONFIG_DRM=m
+CONFIG_DRM_LEGACY=y
 CONFIG_DRM_I915=m
 CONFIG_DRM_I915_KMS=y
 CONFIG_DRM_I915_GVT=y
