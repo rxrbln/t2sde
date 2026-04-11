@@ -70,6 +70,6 @@ if [ "$SDECFG_CROSSBUILD" != 1 ]; then
 fi
 
 echo "Squashing root file-system ..."
-mksquashfs . $isofsdir/live.squash -noappend -comp zstd -Xcompression-level 15 \
+mksquashfs . $isofsdir/rootfs.sqf -noappend -comp zstd -Xcompression-level 20 \
   -b 1M -processors "$(nproc)" # -no-progress -no-exports
-du -sh $isofsdir/live.squash
+du -sh $isofsdir/rootfs.sqf
