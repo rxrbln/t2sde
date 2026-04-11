@@ -16,7 +16,6 @@ dnl Enable experimental features, and stagging drivers
 dnl
 CONFIG_EXPERIMENTAL=y
 CONFIG_STAGING=y
-CONFIG_RUST=y
 # CONFIG_STAGING_EXCLUDE_BUILD is not set
 # CONFIG_IKHEADERS is not set
 
