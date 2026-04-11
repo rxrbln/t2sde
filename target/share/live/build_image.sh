@@ -46,6 +46,9 @@ rsync -artH $v --devices --specials --delete --delete-excluded \
      --exclude-from ../files-exclude $build_root/ $imagelocation/
 rm ../files-{wanted,all,exclude}
 
+# enable passwd-less root by default
+sed -i 's/root:\*/root:/' $imagelocation/etc/shadow
+
 echo "Overlaying root file-system with target defined files ..."
 [ -e $base/target/share/live/rootfs ] &&
 	copy_and_parse_from_source $base/target/share/live/rootfs $imagelocation
