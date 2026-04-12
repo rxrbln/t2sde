@@ -314,7 +314,7 @@ copy_dyn_libs () {
 
 # setup programs
 #
-for x in $root/sbin/{udevd,udevadm,kmod,modprobe,dmsetup} $root/usr/sbin/{disktype,ipconfig}
+for x in $root/sbin/{udevd,udevadm,kmod,modprobe} $root/usr/sbin/{disktype,ipconfig}
 do
 	cp -av $x $tmpdir/sbin/
 	copy_dyn_libs $x
@@ -323,7 +323,7 @@ done
 # setup optional programs
 #
 [ -z "$minimal" ] &&
-for x in $root/sbin/{insmod,blkid,lvm,vgchange,lvchange,vgs,lvs,mdadm} \
+for x in $root/sbin/{insmod,blkid,lvm,vgchange,lvchange,vgs,lvs,dmsetup,mdadm} \
 	 $root/usr/sbin/{cache_check,cryptsetup,kexec,smartctl} $root/usr/embutils/{dmesg,mkswap,swapon}
 do
   if [ ! -e $x ]; then
