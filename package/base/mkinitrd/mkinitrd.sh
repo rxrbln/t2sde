@@ -62,7 +62,7 @@ while [ "$1" ]; do
 done
 
 # -e ps3vram -e net/phy
-[ -z "$minimal" ] && filter="$filter -e reiserfs -e btrfs -e /jfs -e /xfs -e jffs2
+[ -z "$minimal" ] && filter="$filter -e reiserfs -e btrfs -e /jfs -e /zfs -e jffs2
 -e /udf -e overlayfs -e ntfs -e /fat -e /exfat -e /hfs -e floppy -e efivarfs -e watchdog
 -e pci/controller -e /ata/ -e /scsi/ -e /fusion/ -e nvme/host -e mmc/host -e mmc_block
 -e virtio.\(blk\|scsi\|net\|console\|input\|gpu\|pci\) -e ps3disk -e drivers/pcmcia
