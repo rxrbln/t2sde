@@ -1,0 +1,647 @@
+From e3c9d44e685efc3179de2f24642c7c4962539a39 Mon Sep 17 00:00:00 2001
+From: Xinhui Yang <cyan@cyano.uk>
+Date: Sun, 5 Apr 2026 18:19:54 +0800
+Subject: [PATCH] chore: bring back IA-64 support
+
+* Patch based on [1] from T/2 SDE.
+* Adapt changes in the threading codes.
+* Removed Win32 exclusive parts from the old patch.
+* 4 out of 2011 tests failed. They fail due to stack overflow.
+
+[1]: https://github.com/rxrbln/t2sde/blob/b6ddb1cad6dd566c6d4fb76f4be96352537f5e5e/architecture/ia64/package/ruby/ia64.patch
+     SVN: https://svn.exactcode.de/t2/trunk@69202
+---
+ common.mk                            |  2 +
+ configure.ac                         | 15 +++++
+ cont.c                               | 92 +++++++++++++++++++++++++++-
+ ext/etc/etc.c                        |  6 ++
+ gc.c                                 | 18 +++++-
+ ia64.S                               | 42 +++++++++++++
+ include/ruby/defines.h               |  4 ++
+ internal/thread.h                    |  7 +++
+ thread.c                             |  8 +++
+ thread_pthread.c                     | 46 +++++++++++++-
+ thread_pthread.h                     |  4 ++
+ thread_pthread_mn.c                  |  4 ++
+ tool/m4/ruby_stack_grow_direction.m4 |  2 +-
+ vm.c                                 |  3 +
+ vm_core.h                            |  5 ++
+ vm_dump.c                            |  8 +++
+ 16 files changed, 261 insertions(+), 5 deletions(-)
+ create mode 100644 ia64.S
+
+diff --git a/common.mk b/common.mk
+index 08fee9119a..ab63b547dc 100644
+--- a/common.mk
++++ b/common.mk
+@@ -1102,6 +1102,8 @@ strlcat.$(OBJEXT): {$(VPATH)}strlcat.c
+ strlcpy.$(OBJEXT): {$(VPATH)}strlcpy.c
+ strstr.$(OBJEXT): {$(VPATH)}strstr.c
+ tgamma.$(OBJEXT): {$(VPATH)}tgamma.c
++ia64.$(OBJEXT): {$(VPATH)}ia64.s
++	$(CC) $(CFLAGS) -c $<
+ 
+ .coroutine_obj $(COROUTINE_OBJ): \
+ 	{$(VPATH)}$(COROUTINE_SRC) \
+diff --git a/configure.ac b/configure.ac
+index 2bbce78fd0..b12ded2a2f 100644
+--- a/configure.ac
++++ b/configure.ac
+@@ -2610,6 +2610,21 @@ AS_IF([test x"$ac_cv_func_dirfd" = xno], [
+ ])])
+ ])
+ 
++AS_IF([test x"$target_cpu" = xia64], [
++    AC_LIBOBJ([ia64])
++    AC_CACHE_CHECK(for __libc_ia64_register_backing_store_base,
++                   rb_cv___libc_ia64_register_backing_store_base,
++    [rb_cv___libc_ia64_register_backing_store_base=no
++    AC_TRY_LINK(
++      [extern unsigned long __libc_ia64_register_backing_store_base;],
++      [unsigned long p = __libc_ia64_register_backing_store_base;
++       printf("%ld\n", p);],
++      [rb_cv___libc_ia64_register_backing_store_base=yes])])
++    AS_IF([test $rb_cv___libc_ia64_register_backing_store_base = yes], [
++      AC_DEFINE(HAVE___LIBC_IA64_REGISTER_BACKING_STORE_BASE)
++    ])
++])
++
+ AC_CACHE_CHECK(whether right shift preserve sign bit, rb_cv_rshift_sign,
+     [AC_COMPILE_IFELSE([AC_LANG_BOOL_COMPILE_TRY([], [(-1==(-1>>1))])],
+ 	rb_cv_rshift_sign=yes,
+diff --git a/cont.c b/cont.c
+index b33c1462bf..9c60d66d70 100644
+--- a/cont.c
++++ b/cont.c
+@@ -223,6 +223,11 @@ typedef struct rb_context_struct {
+         VALUE *stack;
+         VALUE *stack_src;
+         size_t stack_size;
++#ifdef __ia64
++        VALUE *register_stack;
++        VALUE *register_stack_src;
++        int register_stack_size;
++#endif
+     } machine;
+     rb_execution_context_t saved_ec;
+     rb_jmpbuf_t jmpbuf;
+@@ -420,6 +425,12 @@ fiber_pool_vacancy_pop(struct fiber_pool * pool)
+     if (vacancy) {
+         fiber_pool_vacancy_remove(vacancy);
+     }
++#ifdef __ia64
++    if (cont->machine.register_stack) {
++       rb_gc_mark_locations(cont->machine.register_stack,
++                            cont->machine.register_stack + cont->machine.register_stack_size);
++    }
++#endif
+ 
+     return vacancy;
+ }
+@@ -896,6 +907,10 @@ fiber_initialize_coroutine(rb_fiber_t *fiber, size_t * vm_stack_size)
+     sec->machine.stack_start = fiber->stack.current;
+     sec->machine.stack_maxsize = fiber->stack.available;
+ 
++#ifdef __ia64
++    sec->machine.register_stack_maxsize = sec->machine.stack_maxsize;
++#endif
++
+     fiber->context.argument = (void*)fiber;
+ 
+     return vm_stack;
+@@ -1094,6 +1109,9 @@ cont_free(void *ptr)
+         fiber_stack_release_locked(fiber);
+     }
+ 
++#ifdef __ia64
++    RUBY_FREE_UNLESS_NULL(cont->machine.register_stack);
++#endif
+     RUBY_FREE_UNLESS_NULL(cont->saved_vm_stack.ptr);
+ 
+     VM_ASSERT(cont->jit_cont != NULL);
+@@ -1123,6 +1141,12 @@ cont_memsize(const void *ptr)
+         size += cont->machine.stack_size * sizeof(*cont->machine.stack);
+     }
+ 
++#ifdef __ia64
++    if (cont->machine.register_stack) {
++        size += cont->machine.register_stack_size * sizeof(*cont->machine.register_stack);
++    }
++#endif
++
+     return size;
+ }
+ 
+@@ -1220,7 +1244,9 @@ cont_save_machine_stack(rb_thread_t *th, rb_context_t *cont)
+     size_t size;
+ 
+     SET_MACHINE_STACK_END(&th->ec->machine.stack_end);
+-
++#ifdef __ia64
++    th->ec->machine.register_stack_end = rb_ia64_bsp();
++#endif
+     if (th->ec->machine.stack_start > th->ec->machine.stack_end) {
+         size = cont->machine.stack_size = th->ec->machine.stack_start - th->ec->machine.stack_end;
+         cont->machine.stack_src = th->ec->machine.stack_end;
+@@ -1240,6 +1266,20 @@ cont_save_machine_stack(rb_thread_t *th, rb_context_t *cont)
+     FLUSH_REGISTER_WINDOWS;
+     asan_unpoison_memory_region(cont->machine.stack_src, size, false);
+     MEMCPY(cont->machine.stack, cont->machine.stack_src, VALUE, size);
++
++#ifdef __ia64
++    rb_ia64_flushrs();
++    size = cont->machine.register_stack_size = th->ec->machine.register_stack_end - th->ec->machine.register_stack_start;
++    cont->machine.register_stack_src = th->ec->machine.register_stack_start;
++    if (cont->machine.register_stack) {
++       REALLOC_N(cont->machine.register_stack, VALUE, size);
++    }
++    else {
++       cont->machine.register_stack = ALLOC_N(VALUE, size);
++    }
++
++    MEMCPY(cont->machine.register_stack, cont->machine.register_stack_src, VALUE, size);
++#endif
+ }
+ 
+ static const rb_data_type_t cont_data_type = {
+@@ -1261,6 +1301,10 @@ cont_save_thread(rb_context_t *cont, rb_thread_t *th)
+     /* saved_ec->machine.stack_end should be NULL */
+     /* because it may happen GC afterward */
+     sec->machine.stack_end = NULL;
++
++#ifdef __ia64
++    sec->machine.register_stack_end = NULL;
++#endif
+ }
+ 
+ static rb_nativethread_lock_t jit_cont_lock;
+@@ -1678,11 +1722,53 @@ cont_restore_1(rb_context_t *cont)
+                VALUE, cont->machine.stack_size);
+     }
+ 
++#ifdef __ia64
++    if (cont->machine.register_stack_src) {
++       MEMCPY(cont->machine.register_stack_src, cont->machine.register_stack,
++              VALUE, cont->machine.register_stack_size);
++    }
++#endif
+     ruby_longjmp(cont->jmpbuf, 1);
+ }
+ 
+ NORETURN(NOINLINE(static void cont_restore_0(rb_context_t *, VALUE *)));
+ 
++#ifdef __ia64
++#define C(a) rse_##a##0, rse_##a##1, rse_##a##2, rse_##a##3, rse_##a##4
++#define E(a) rse_##a##0= rse_##a##1= rse_##a##2= rse_##a##3= rse_##a##4
++static volatile int C(a), C(b), C(c), C(d), C(e);
++static volatile int C(f), C(g), C(h), C(i), C(j);
++static volatile int C(k), C(l), C(m), C(n), C(o);
++static volatile int C(p), C(q), C(r), C(s), C(t);
++#if 0
++{/* the above lines make cc-mode.el confused so much */}
++#endif
++int rb_dummy_false = 0;
++NORETURN(NOINLINE(static void register_stack_extend(rb_context_t *, VALUE *, VALUE *)));
++static void
++register_stack_extend(rb_context_t *cont, VALUE *vp, VALUE *curr_bsp)
++{
++    if (rb_dummy_false) {
++        /* use registers as much as possible */
++        E(a) = E(b) = E(c) = E(d) = E(e) =
++        E(f) = E(g) = E(h) = E(i) = E(j) =
++        E(k) = E(l) = E(m) = E(n) = E(o) =
++        E(p) = E(q) = E(r) = E(s) = E(t) = 0;
++        E(a) = E(b) = E(c) = E(d) = E(e) =
++        E(f) = E(g) = E(h) = E(i) = E(j) =
++        E(k) = E(l) = E(m) = E(n) = E(o) =
++        E(p) = E(q) = E(r) = E(s) = E(t) = 0;
++    }
++    if (curr_bsp < cont->machine.register_stack_src+cont->machine.register_stack_size) {
++        register_stack_extend(cont, vp, (VALUE*)rb_ia64_bsp());
++    }
++    cont_restore_0(cont, vp);
++}
++#undef C
++#undef E
++#endif
++
++
+ static void
+ cont_restore_0(rb_context_t *cont, VALUE *addr_in_prev_frame)
+ {
+@@ -1736,6 +1822,10 @@ cont_restore_0(rb_context_t *cont, VALUE *addr_in_prev_frame)
+     cont_restore_1(cont);
+ }
+ 
++#ifdef __ia64
++#define cont_restore_0(cont, vp) register_stack_extend((cont), (vp), (VALUE*)rb_ia64_bsp())
++#endif
++
+ /*
+  *  Document-class: Continuation
+  *
+diff --git a/ext/etc/etc.c b/ext/etc/etc.c
+index 8d50a96a62..5205b4f2a7 100644
+--- a/ext/etc/etc.c
++++ b/ext/etc/etc.c
+@@ -845,6 +845,9 @@ etc_uname(VALUE obj)
+ # ifndef PROCESSOR_ARCHITECTURE_AMD64
+ #   define PROCESSOR_ARCHITECTURE_AMD64 9
+ # endif
++# ifndef PROCESSOR_ARCHITECTURE_IA64
++#   define PROCESSOR_ARCHITECTURE_IA64 6
++# endif
+ # ifndef PROCESSOR_ARCHITECTURE_INTEL
+ #   define PROCESSOR_ARCHITECTURE_INTEL 0
+ # endif
+@@ -856,6 +859,9 @@ etc_uname(VALUE obj)
+       case PROCESSOR_ARCHITECTURE_ARM:
+ 	mach = "ARM";
+ 	break;
++      case PROCESSOR_ARCHITECTURE_IA64:
++        mach = "IA64";
++        break;
+       case PROCESSOR_ARCHITECTURE_INTEL:
+ 	mach = "x86";
+ 	break;
+diff --git a/gc.c b/gc.c
+index 8e239011e6..de528469ff 100644
+--- a/gc.c
++++ b/gc.c
+@@ -2511,7 +2511,11 @@ count_objects(int argc, VALUE *argv, VALUE os)
+     return hash;
+ }
+ 
++#ifdef __ia64
++#define SET_STACK_END (SET_MACHINE_STACK_END(&ec->machine.stack_end), ec->machine.register_stack_end = rb_ia64_bsp())
++#else
+ #define SET_STACK_END SET_MACHINE_STACK_END(&ec->machine.stack_end)
++#endif
+ 
+ #define STACK_START (ec->machine.stack_start)
+ #define STACK_END (ec->machine.stack_end)
+@@ -2559,12 +2563,20 @@ ruby_stack_length(VALUE **p)
+ static int
+ stack_check(rb_execution_context_t *ec, int water_mark)
+ {
++    int ret;
+     SET_STACK_END;
+ 
+     size_t length = STACK_LENGTH;
+     size_t maximum_length = STACK_LEVEL_MAX - water_mark;
+ 
+-    return length > maximum_length;
++    ret = length > maximum_length;
++#ifdef __ia64
++    if (!ret) {
++        ret = (VALUE*)rb_ia64_bsp() - ec->machine.register_stack_start >
++            ec->machine.register_stack_maxsize/sizeof(VALUE) - water_mark;
++    }
++#endif
++    return ret;
+ }
+ #else
+ #define stack_check(ec, water_mark) FALSE
+@@ -2976,6 +2988,10 @@ rb_gc_mark_machine_context(const rb_execution_context_t *ec)
+ #endif
+ 
+     each_location_ptr(stack_start, stack_end, gc_mark_machine_stack_location_maybe, data);
++#ifdef __ia64
++    each_location_ptr(ec->machine.register_stack_start,
++        ec->machine.register_stack_end, gc_mark_machine_stack_location_maybe, data);
++#endif
+     int num_regs = sizeof(ec->machine.regs)/(sizeof(VALUE));
+     each_location((VALUE*)&ec->machine.regs, num_regs, gc_mark_machine_stack_location_maybe, data);
+ }
+diff --git a/ia64.S b/ia64.S
+new file mode 100644
+index 0000000000..1087105585
+--- /dev/null
++++ b/ia64.S
+@@ -0,0 +1,42 @@
++// rb_ia64_flushrs and rb_ia64_bsp is written in IA64 assembly language
++// because Intel Compiler for IA64 doesn't support inline assembly.
++//
++// This file is based on following C program compiled by gcc.
++//
++//   void rb_ia64_flushrs(void) { __builtin_ia64_flushrs(); }
++//   void *rb_ia64_bsp(void) { return __builtin_ia64_bsp(); }
++//
++// Note that rb_ia64_flushrs and rb_ia64_bsp works in its own stack frame.
++// It's because BSP is updated by br.call/brl.call (not alloc instruction).
++// So rb_ia64_flushrs flushes stack frames including caller's one.
++// rb_ia64_bsp returns the address next to caller's register stack frame.
++//
++// See also
++// Intel Itanium Architecture Software Developer's Manual
++// Volume 2: System Architecture.
++//
++	.file	"ia64.c"
++	.text
++	.align 16
++	.global rb_ia64_flushrs#
++	.proc rb_ia64_flushrs#
++rb_ia64_flushrs:
++	.prologue
++	.body
++	flushrs
++	;;
++	nop.i 0
++	br.ret.sptk.many b0
++	.endp rb_ia64_flushrs#
++	.align 16
++	.global rb_ia64_bsp#
++	.proc rb_ia64_bsp#
++rb_ia64_bsp:
++	.prologue
++	.body
++	nop.m 0
++	;;
++	mov r8 = ar.bsp
++	br.ret.sptk.many b0
++	.endp rb_ia64_bsp#
++	.ident	"GCC: (GNU) 3.3.5 (Debian 1:3.3.5-13)"
+diff --git a/include/ruby/defines.h b/include/ruby/defines.h
+index 48184f8a18..6d953be163 100644
+--- a/include/ruby/defines.h
++++ b/include/ruby/defines.h
+@@ -109,6 +109,10 @@ RBIMPL_SYMBOL_EXPORT_BEGIN()
+ void rb_sparc_flush_register_windows(void);
+ RBIMPL_SYMBOL_EXPORT_END()
+ # define FLUSH_REGISTER_WINDOWS rb_sparc_flush_register_windows()
++#elif defined(__ia64)
++void *rb_ia64_bsp(void);
++void rb_ia64_flushrs(void);
++# define FLUSH_REGISTER_WINDOWS rb_ia64_flushrs()
+ #else
+ # define FLUSH_REGISTER_WINDOWS ((void)0)
+ #endif
+diff --git a/internal/thread.h b/internal/thread.h
+index ea891b4372..d053de5699 100644
+--- a/internal/thread.h
++++ b/internal/thread.h
+@@ -15,9 +15,16 @@
+ struct rb_thread_struct;        /* in vm_core.h */
+ struct rb_io;
+ 
++#ifdef __ia64
++#define RB_GC_SAVE_MACHINE_REGISTER_STACK(th)          \
++    do{(th)->ec->machine.register_stack_end = rb_ia64_bsp();}while(0)
++#else
++#define RB_GC_SAVE_MACHINE_REGISTER_STACK(th)
++#endif
+ #define RB_VM_SAVE_MACHINE_CONTEXT(th)				\
+     do {							\
+         FLUSH_REGISTER_WINDOWS;					\
++        RB_GC_SAVE_MACHINE_REGISTER_STACK(th);                  \
+         setjmp((th)->ec->machine.regs);				\
+         SET_MACHINE_STACK_END(&(th)->ec->machine.stack_end);	\
+     } while (0)
+diff --git a/thread.c b/thread.c
+index 69bec6d3de..b3ef49bc0d 100644
+--- a/thread.c
++++ b/thread.c
+@@ -519,6 +519,10 @@ thread_cleanup_func_before_exec(void *th_ptr)
+     // The thread stack doesn't exist in the forked process:
+     th->ec->machine.stack_start = th->ec->machine.stack_end = NULL;
+ 
++#ifdef __ia64
++    th->ec->machine.register_stack_start = th->ec->machine.register_stack_end = NULL;
++#endif
++
+     threadptr_interrupt_exec_cleanup(th);
+     rb_threadptr_root_fiber_terminate(th);
+ }
+@@ -555,7 +559,11 @@ static VALUE rb_thread_to_s(VALUE thread);
+ void
+ ruby_thread_init_stack(rb_thread_t *th, void *local_in_parent_frame)
+ {
++#ifdef __ia64
++    native_thread_init_stack(th, local_in_parent_frame, rb_ia64_bsp());
++#else
+     native_thread_init_stack(th, local_in_parent_frame);
++#endif
+ }
+ 
+ const VALUE *
+diff --git a/thread_pthread.c b/thread_pthread.c
+index df2940d5cf..a9e03f5a4a 100644
+--- a/thread_pthread.c
++++ b/thread_pthread.c
+@@ -1952,6 +1952,10 @@ static struct {
+     rb_nativethread_id_t id;
+     size_t stack_maxsize;
+     VALUE *stack_start;
++#ifdef __ia64
++    VALUE *register_stack_maxsize;
++    VALUE *register_stack_start;
++#endif
+ } native_main_thread;
+ 
+ #ifdef STACK_END_ADDRESS
+@@ -1976,13 +1980,23 @@ space_size(size_t stack_size)
+ }
+ 
+ static void
++#ifdef __ia64
++native_thread_init_main_thread_stack(void *addr, VALUE *bsp)
++#else
+ native_thread_init_main_thread_stack(void *addr)
++#endif
+ {
+     native_main_thread.id = pthread_self();
+ #ifdef RUBY_ASAN_ENABLED
+     addr = asan_get_real_stack_addr((void *)addr);
+ #endif
+ 
++#ifdef __ia64
++    if (!native_main_thread.register_stack_start ||
++        (VALUE*)bsp < native_main_thread.register_stack_start) {
++        native_main_thread.register_stack_start = (VALUE*)bsp;
++    }
++#endif
+ #if MAINSTACKADDR_AVAILABLE
+     if (native_main_thread.stack_maxsize) return;
+     {
+@@ -2063,7 +2077,11 @@ native_thread_init_main_thread_stack(void *addr)
+     {int err = (expr); if (err) {rb_bug_errno(#expr, err);}}
+ 
+ static int
++#ifdef __ia64
++native_thread_init_stack(rb_thread_t *th, void *local_in_parent_frame, VALUE *bsp)
++#else
+ native_thread_init_stack(rb_thread_t *th, void *local_in_parent_frame)
++#endif
+ {
+     rb_nativethread_id_t curr = pthread_self();
+ #ifdef RUBY_ASAN_ENABLED
+@@ -2074,7 +2092,11 @@ native_thread_init_stack(rb_thread_t *th, void *local_in_parent_frame)
+     if (!native_main_thread.id) {
+         /* This thread is the first thread, must be the main thread -
+          * configure the native_main_thread object */
++#ifdef __ia64
++        native_thread_init_main_thread_stack(local_in_parent_frame, bsp);
++#else
+         native_thread_init_main_thread_stack(local_in_parent_frame);
++#endif
+     }
+ 
+     if (pthread_equal(curr, native_main_thread.id)) {
+@@ -2097,6 +2119,11 @@ native_thread_init_stack(rb_thread_t *th, void *local_in_parent_frame)
+         rb_raise(rb_eNotImpError, "ruby engine can initialize only in the main thread");
+ #endif
+     }
++#ifdef __ia64
++    th->ec->machine.register_stack_start = native_main_thread.register_stack_start;
++    th->ec->machine.stack_maxsize /= 2;
++    th->ec->machine.register_stack_maxsize = th->ec->machine.stack_maxsize;
++#endif
+ 
+     return 0;
+ }
+@@ -2119,7 +2146,10 @@ native_thread_create0(struct rb_native_thread *nt)
+     const size_t space = space_size(stack_size);
+ 
+     nt->machine_stack_maxsize = stack_size - space;
+-
++#ifdef __ia64
++    nt->machine_stack_maxsize /= 2;
++    nt->register_stack_maxsize = nt->machine_stack_maxsize;
++#endif
+ #ifdef USE_SIGALTSTACK
+     nt->altstack = rb_allocate_sigaltstack();
+ #endif
+@@ -2210,7 +2240,11 @@ native_thread_create_dedicated(rb_thread_t *th)
+ }
+ 
+ static void
++#ifdef __ia64
++call_thread_start_func_2(rb_thread_t *th, VALUE *reg_stack_start)
++#else
+ call_thread_start_func_2(rb_thread_t *th)
++#endif
+ {
+     /* Capture the address of a local in this stack frame to mark the beginning of the
+        machine stack for this thread. This is required even if we can tell the real
+@@ -2220,8 +2254,12 @@ call_thread_start_func_2(rb_thread_t *th)
+        bug #13887) */
+     VALUE stack_start = 0;
+     VALUE *stack_start_addr = asan_get_real_stack_addr(&stack_start);
+-
++#ifdef __ia64
++    native_thread_init_stack(th, stack_start_addr, reg_stack_start);
++#else
+     native_thread_init_stack(th, stack_start_addr);
++#endif
++    th->ec->machine.register_stack_start = reg_stack_start;
+     thread_start_func_2(th, th->ec->machine.stack_start);
+ }
+ 
+@@ -2267,7 +2305,11 @@ nt_start(void *ptr)
+             thread_sched_unlock(sched, th);
+ 
+             // start threads
++#ifdef __ia64
++            call_thread_start_func_2(th, rb_ia64_bsp());
++#else
+             call_thread_start_func_2(th);
++#endif
+             break; // TODO: allow to change to the SNT
+         }
+         else {
+diff --git a/thread_pthread.h b/thread_pthread.h
+index 992e9fb080..e8766a149c 100644
+--- a/thread_pthread.h
++++ b/thread_pthread.h
+@@ -113,6 +113,10 @@ struct rb_native_thread {
+     int dedicated;
+ 
+     size_t machine_stack_maxsize;
++#ifdef __ia64
++    size_t register_stack_maxsize;
++    VALUE *register_stack_start;
++#endif
+ };
+ 
+ #undef except
+diff --git a/thread_pthread_mn.c b/thread_pthread_mn.c
+index 0d774c67b5..2b87f97fa0 100644
+--- a/thread_pthread_mn.c
++++ b/thread_pthread_mn.c
+@@ -473,7 +473,11 @@ co_start(struct coroutine_context *from, struct coroutine_context *self)
+     thread_sched_unlock(sched, th);
+     {
+         RB_INTERNAL_THREAD_HOOK(RUBY_INTERNAL_THREAD_EVENT_RESUMED, th);
++#ifdef __ia64
++       	call_thread_start_func_2(th, rb_ia64_bsp());
++#else
+         call_thread_start_func_2(th);
++#endif
+     }
+     thread_sched_lock(sched, NULL);
+ 
+diff --git a/tool/m4/ruby_stack_grow_direction.m4 b/tool/m4/ruby_stack_grow_direction.m4
+index 8c6fdd5722..f57ed28661 100644
+--- a/tool/m4/ruby_stack_grow_direction.m4
++++ b/tool/m4/ruby_stack_grow_direction.m4
+@@ -3,7 +3,7 @@ AC_DEFUN([RUBY_STACK_GROW_DIRECTION], [
+     AS_VAR_PUSHDEF([stack_grow_dir], [rb_cv_stack_grow_dir_$1])
+     AC_CACHE_CHECK(stack growing direction on $1, stack_grow_dir, [
+ AS_CASE(["$1"],
+-[m68*|x86*|x64|i?86|ppc*|sparc*|alpha*|arm*|aarch*], [ $2=-1],
++[m68*|x86*|x64|ia64|i?86|ppc*|sparc*|alpha*|arm*|aarch*], [ $2=-1],
+ [hppa*], [ $2=+1],
+ [
+   AC_RUN_IFELSE([AC_LANG_SOURCE([[
+diff --git a/vm.c b/vm.c
+index f78a779c3f..bdedbf4900 100644
+--- a/vm.c
++++ b/vm.c
+@@ -4093,6 +4093,9 @@ core_hash_merge_kwd(VALUE hash, VALUE kw)
+ 
+ extern VALUE *rb_gc_stack_start;
+ extern size_t rb_gc_stack_maxsize;
++#ifdef __ia64
++extern VALUE *rb_gc_register_stack_start;
++#endif
+ 
+ /* debug functions */
+ 
+diff --git a/vm_core.h b/vm_core.h
+index 68adc5eac1..5001176711 100644
+--- a/vm_core.h
++++ b/vm_core.h
+@@ -1086,6 +1086,11 @@ struct rb_execution_context_struct {
+         VALUE *stack_start;
+         VALUE *stack_end;
+         size_t stack_maxsize;
++#ifdef __ia64
++	VALUE *register_stack_start;
++	VALUE *register_stack_end;
++	size_t register_stack_maxsize;
++#endif
+         RUBY_ALIGNAS(SIZEOF_VALUE) jmp_buf regs;
+ 
+ #ifdef RUBY_ASAN_ENABLED
+diff --git a/vm_dump.c b/vm_dump.c
+index e2b4804ab0..363de0b186 100644
+--- a/vm_dump.c
++++ b/vm_dump.c
+@@ -1046,6 +1046,14 @@ dump_thread(void *arg)
+                     frame.AddrFrame.Offset = context.Fp;
+                     frame.AddrStack.Mode = AddrModeFlat;
+                     frame.AddrStack.Offset = context.Sp;
++#elif defined(_M_IA64) || defined(__ia64__)
++		    mac = IMAGE_FILE_MACHINE_IA64;
++		    frame.AddrPC.Mode = AddrModeFlat;
++		    frame.AddrPC.Offset = context.StIIP;
++		    frame.AddrBStore.Mode = AddrModeFlat;
++		    frame.AddrBStore.Offset = context.RsBSP;
++		    frame.AddrStack.Mode = AddrModeFlat;
++		    frame.AddrStack.Offset = context.IntSp;
+ #else	/* i386 */
+                     mac = IMAGE_FILE_MACHINE_I386;
+                     frame.AddrPC.Mode = AddrModeFlat;
+-- 
+2.52.0
+
