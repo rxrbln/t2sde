@@ -1,6 +1,6 @@
 dnl --- T2-COPYRIGHT-BEGIN ---
 dnl t2/architecture/x86/linux-x86.conf.m4
-dnl Copyright (C) 2009 - 2025 The T2 SDE Project
+dnl Copyright (C) 2009 - 2026 The T2 SDE Project
 dnl SPDX-License-Identifier: GPL-2.0
 dnl --- T2-COPYRIGHT-END ---
 
@@ -46,3 +46,5 @@ CONFIG_FB_GEODE=y
 
 dnl does often corrupt the FB
 # CONFIG_FB_NVIDIA is not set
+
+# CONFIG_APPLE_BCE is not set
