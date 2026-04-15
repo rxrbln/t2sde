@@ -4,6 +4,21 @@ PATH=/sbin:/bin:/usr/bin:/usr/sbin
 
 echo "T2 SDE early userspace (c)2005-2026 Rene Rebe, ExactCODE GmbH; Germany."
 
+getopt() {
+	_="$2 $1" _=${_##*$2} _=${_%% *}
+	echo "$_"
+	unset _
+}
+
+getdev() {
+	case "$1" in
+	PARTUUID=*) echo "/dev/disk/by-partuuid/${1#PARTUUID=}" ;;
+	UUID=*) echo "/dev/disk/by-uuid/${1#UUID=}" ;;
+	LABEL=*) echo "/dev/disk/by-label/${1#LABEL=}" ;;
+	*) echo "$1" ;;
+	esac
+}
+
 mapper2lvm() {
 	# support both, direct vg/lv or mapper/...
 	x=${1#mapper/}
@@ -53,7 +68,10 @@ mkdir -p /tmp /run /var/run
 ln -sf /proc/self/fd /dev/fd
 
 udevd &
-modules="rd.modprobe= $cmdline" modules=${modules##*rd.modprobe=} modules=${modules%% *}
+
+[ -e /proc/cmdline ] && cmdline="$(< /proc/cmdline)"
+
+modules=$(getopt "$cmdline" rd.modprobe=)
 for m in ${modules//,/ }; do modprobe $m; done
 udevadm trigger --action=add
 udevadm settle
@@ -69,14 +87,12 @@ if [ -z "$(ls -A /sys/block | sed '/^loop/d; /^fd/d')" ]; then
 fi
 
 # get the root device, init, early swap
-[ -e /proc/cmdline ] && cmdline="$(< /proc/cmdline)"
-root="root= $cmdline" root=${root##*root=} root=${root%% *}
-init="init= $cmdline" init=${init##*init=} init=${init%% *}
-swap="swap= $cmdline" swap=${swap##*swap=} swap=${swap%% *}
-overlay="overlay= $cmdline" overlay=${overlay##*overlay=} overlay=${overlay%% *}
+root=$(getdev $(getopt "$cmdline" root=))
+init=$(getdev $(getopt "$cmdline" init=))
+swap=$(getdev $(getopt "$cmdline" swap=))
 [[ "$cmdline" != *noresume* ]] &&
-	resume="resume= $cmdline" resume=${resume##*resume=} resume=${resume%% *}
-mountopt="rootflags= $cmdline" mountopt=${mountopt##*rootflags=} mountopt=${mountopt%% *}
+	resume=$(getdev $(getopt "$cmdline" resume=))
+mountopt=$(getopt "$cmdline" mountopt=)
 mountopt="ro${mountopt:+,$mountopt}"
 [ "$overlay" ] && mnt=/mnt/media || mnt=/mnt
 mkdir -p $mnt
@@ -129,23 +145,14 @@ while [[ -n "$root" && ($((i++)) -le 15 || "$cmdline" = *rootwait*) ]]; do
 
   # open luks for lvm2 and resume from disk early
   if [[ "${root}" = *,* ]]; then
-	toor="${root%,*}"
-	[[ "${toor}" = LABEL=* ]] && toor="/dev/disk/by-label/${root#LABEL=}"
-	[[ "${toor}" = PARTUUID=* ]] && toor="/dev/disk/by-partuuid/${root#PARTUUID=}"
-	[[ "${toor}" = UUID=* ]] && toor="/dev/disk/by-uuid/${root#UUID=}"
+	toor=${root%,*}
 	[ -e "$toor" ] || continue
 
 	echo -n "${n}"; n=
-	cryptsetup --disable-locks luksOpen $toor root && root="${root#*,}"
+	cryptsetup --disable-locks luksOpen $toor root && root=$(getdev ${root#*,})
   fi
 
-  [[ "${root}" = PARTUUID=* ]] && root="/dev/disk/by-partuuid/${root#PARTUUID=}"
-  [[ "${root}" = UUID=* ]] && root="/dev/disk/by-uuid/${root#UUID=}"
-  [[ "${root}" = LABEL=* ]] && root="/dev/disk/by-label/${root#LABEL=}"
-  [[ "${swap}" = PARTUUID=* ]] && swap="/dev/disk/by-partuuid/${swap#PARTUUID=}"
-  [[ "${swap}" = UUID=* ]] && swap="/dev/disk/by-uuid/${swap#UUID=}"
-  [[ "${swap}" = LABEL=* ]] && swap="/dev/disk/by-label/${swap#LABEL=}"
-
+  
   # maybe resume from disk?
   if [ "$resume" ]; then
 	if [[ ! -e $resume && "${resume}" = /dev/*/* && -e /sbin/lvm ]]; then
