@@ -146,11 +146,15 @@ set_passwd() {
 }
 
 create_user() {
-	local name=user
-	if ! grep -q "^$name:" /etc/passwd; then
-		gui_input "Create first user account named:" "user" name
-		[ "$name" ] || return
+	gui_input "Create first user account named:" "user" name
+	[ "$name" ] || return
+
+	# new, or reuse live "user" if available
+	if ! grep -q "^user:" /etc/passwd; then
 		useradd -G audio,input,users,video "$name" || return
+	else
+		usermod -l "$name" -d "/home/$name" -m user
+		groupmod -n "$name" user
 	fi
 
 	while ! set_passwd "$name"; do :; done
