@@ -108,7 +108,7 @@ EOT
 				)" $c
 			)" "$d"
 		)" "$e $f"
-	done < /etc/fstab | tr ' ' '\240' > $tmp1
+	done < /etc/fstab | sed "s/ /\xc2\xa0/g" > $tmp1
 
 	gui_message $'Auto-created /etc/fstab file:\n\n'"$(< $tmp1)"
 	rm -f $tmp1 $tmp2
