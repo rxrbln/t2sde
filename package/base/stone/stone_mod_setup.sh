@@ -7,6 +7,19 @@
 #
 # This module should only be executed once directly after the installation
 
+get_dm() {
+	local dev="$1"
+	[[ "$dev" = /dev/dm-* ]] &&
+	for d in /dev/mapper/*; do
+		[ "$(readlink $d)" != $dev ] && continue
+		d=${d##*/}
+		d="${d//--/	}" d="${d/-//}" d="${d//	/-}"
+		dev="/dev/$d"
+		break
+	done
+	echo $dev
+}
+
 get_dm_dev() {
 	local dev="$1"
 	local devnode=$(stat -c "%t:%T" $dev)
@@ -70,6 +83,7 @@ make_fstab() {
 		[ "$dn" != none ] && n=1 || n=999
 		grep " $dn " $tmp2 | tail -n $n |
 		while read dev point type residual; do
+			dev=$(get_dm $dev)
 			dev=$(get_dm_slave $dev)
 			dev=$(get_uuid $dev)
 			case $type in
