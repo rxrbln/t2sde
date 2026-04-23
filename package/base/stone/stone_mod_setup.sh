@@ -7,6 +7,19 @@
 #
 # This module should only be executed once directly after the installation
 
+get_dm() {
+	local dev="$1"
+	[[ "$dev" = /dev/dm-* ]] &&
+	for d in /dev/mapper/*; do
+		[ "$(readlink $d)" != $dev ] && continue
+		d=${d##*/}
+		d="${d//--/	}" d="${d/-//}" d="${d//	/-}"
+		dev="/dev/$d"
+		break
+	done
+	echo $dev
+}
+
 get_dm_dev() {
 	local dev="$1"
 	local devnode=$(stat -c "%t:%T" $dev)
@@ -70,6 +83,7 @@ make_fstab() {
 		[ "$dn" != none ] && n=1 || n=999
 		grep " $dn " $tmp2 | tail -n $n |
 		while read dev point type residual; do
+			dev=$(get_dm $dev)
 			dev=$(get_dm_slave $dev)
 			dev=$(get_uuid $dev)
 			case $type in
@@ -108,7 +122,7 @@ EOT
 				)" $c
 			)" "$d"
 		)" "$e $f"
-	done < /etc/fstab | tr ' ' '\240' > $tmp1
+	done < /etc/fstab | sed "s/ /\xc2\xa0/g" > $tmp1
 
 	gui_message $'Auto-created /etc/fstab file:\n\n'"$(< $tmp1)"
 	rm -f $tmp1 $tmp2
@@ -132,11 +146,15 @@ set_passwd() {
 }
 
 create_user() {
-	local name=user
-	if ! grep -q "^$name:" /etc/passwd; then
-		gui_input "Create first user account named:" "user" name
-		[ "$name" ] || return
+	gui_input "Create first user account named:" "user" name
+	[ "$name" ] || return
+
+	# new, or reuse live "user" if available
+	if ! grep -q "^user:" /etc/passwd; then
 		useradd -G audio,input,users,video "$name" || return
+	else
+		usermod -l "$name" -d "/home/$name" -m user
+		groupmod -n "$name" user
 	fi
 
 	while ! set_passwd "$name"; do :; done
