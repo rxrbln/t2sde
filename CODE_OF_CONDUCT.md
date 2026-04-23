@@ -1,9 +1,3 @@
-
----
-
-# 📄 `CODE_OF_CONDUCT.md`
-
-```markdown id="k8d2v9"
 # Code of Conduct
 
 ## Our commitment
