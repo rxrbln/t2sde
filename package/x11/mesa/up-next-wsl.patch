@@ -1,0 +1,62 @@
+From fdfa527df98b1b9666efe383de61911b4c63be0f Mon Sep 17 00:00:00 2001
+From: Icenowy Zheng <uwu@icenowy.me>
+Date: Fri, 18 Jul 2025 02:03:28 +0800
+Subject: [PATCH] vulkan/wsi: support allocating more memory for buffers
+
+Some Vulkan drivers need some padding for buffers of some specific
+sizes, e.g. the working-in-progress opensource pvr Vulkan driver. These
+situations are currently rejected by an assert.
+
+Remove the assert and use the memory size returned by
+GetBufferMemoryRequirements for buffer memory allocations.
+
+This allows common WSI code to run on pvr Vulkan driver when applied
+atop the dev/bxs development branch.
+
+Signed-off-by: Icenowy Zheng <uwu@icenowy.me>
+---
+ src/vulkan/wsi/wsi_common.c | 7 ++++---
+ 1 file changed, 4 insertions(+), 3 deletions(-)
+
+diff --git a/src/vulkan/wsi/wsi_common.c b/src/vulkan/wsi/wsi_common.c
+index d88323a91ed7..7cef39a2ef5b 100644
+--- a/src/vulkan/wsi/wsi_common.c
++++ b/src/vulkan/wsi/wsi_common.c
+@@ -1942,6 +1942,7 @@ wsi_create_buffer_blit_context(const struct wsi_swapchain *chain,
+ 
+    const struct wsi_device *wsi = chain->wsi;
+    VkResult result;
++   VkDeviceSize buffer_mem_size;
+ 
+    const VkBufferUsageFlags create_flags =
+       (chain->create_flags & VK_SWAPCHAIN_CREATE_PROTECTED_BIT_KHR) ?
+@@ -1966,7 +1967,7 @@ wsi_create_buffer_blit_context(const struct wsi_swapchain *chain,
+ 
+    VkMemoryRequirements reqs;
+    wsi->GetBufferMemoryRequirements(chain->device, image->blit.buffer, &reqs);
+-   assert(reqs.size <= info->linear_size);
++   buffer_mem_size = MAX2(info->linear_size, reqs.size);
+ 
+    struct wsi_memory_allocate_info memory_wsi_info = {
+       .sType = VK_STRUCTURE_TYPE_WSI_MEMORY_ALLOCATE_INFO_MESA,
+@@ -1983,14 +1984,14 @@ wsi_create_buffer_blit_context(const struct wsi_swapchain *chain,
+    VkMemoryAllocateInfo buf_mem_info = {
+       .sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
+       .pNext = &buf_mem_dedicated_info,
+-      .allocationSize = info->linear_size,
++      .allocationSize = buffer_mem_size,
+       .memoryTypeIndex =
+          info->select_blit_dst_memory_type(wsi, reqs.memoryTypeBits),
+    };
+ 
+    void *sw_host_ptr = NULL;
+    if (info->alloc_shm)
+-      sw_host_ptr = info->alloc_shm(image, info->linear_size);
++      sw_host_ptr = info->alloc_shm(image, buffer_mem_size);
+ 
+    VkExportMemoryAllocateInfo memory_export_info;
+    VkImportMemoryHostPointerInfoEXT host_ptr_info;
+-- 
+GitLab
+
+
