@@ -1,19 +1,19 @@
-From 00e4599c7e090cea5d4968231d587bd19b3a3d7f Mon Sep 17 00:00:00 2001
+From 062bd2be58d14b8bf8265e9bfdc5b5474211c145 Mon Sep 17 00:00:00 2001
 From: "github-actions[bot]"
  <41898282+github-actions[bot]@users.noreply.github.com>
-Date: Sat, 31 Jan 2026 18:57:34 +0000
+Date: Sat, 25 Apr 2026 19:27:39 +0000
 Subject: [PATCH] Add APFS driver
 
 ---
  fs/apfs/Makefile                  |   28 +
- fs/apfs/apfs.h                    | 1343 ++++++++++++
+ fs/apfs/apfs.h                    | 1346 ++++++++++++
  fs/apfs/apfs_raw.h                | 1570 ++++++++++++++
  fs/apfs/btree.c                   | 1174 +++++++++++
  fs/apfs/compress.c                |  478 +++++
  fs/apfs/dir.c                     | 1505 ++++++++++++++
  fs/apfs/extents.c                 | 2374 ++++++++++++++++++++++
  fs/apfs/file.c                    |  224 ++
- fs/apfs/inode.c                   | 2594 ++++++++++++++++++++++++
+ fs/apfs/inode.c                   | 2598 ++++++++++++++++++++++++
  fs/apfs/key.c                     |  337 +++
  fs/apfs/libzbitmap.c              |  442 ++++
  fs/apfs/libzbitmap.h              |   31 +
@@ -31,7 +31,7 @@ Subject: [PATCH] Add APFS driver
  fs/apfs/object.c                  |  315 +++
  fs/apfs/snapshot.c                |  687 +++++++
  fs/apfs/spaceman.c                | 1479 ++++++++++++++
- fs/apfs/super.c                   | 2127 +++++++++++++++++++
+ fs/apfs/super.c                   | 2263 +++++++++++++++++++++
  fs/apfs/symlink.c                 |   80 +
  fs/apfs/transaction.c             | 1034 ++++++++++
  fs/apfs/unicode.c                 | 3156 +++++++++++++++++++++++++++++
@@ -39,7 +39,7 @@ Subject: [PATCH] Add APFS driver
  fs/apfs/version.h                 |    1 +
  fs/apfs/xattr.c                   |  914 +++++++++
  fs/apfs/xfield.c                  |  171 ++
- 34 files changed, 26966 insertions(+)
+ 34 files changed, 27109 insertions(+)
  create mode 100644 fs/apfs/Makefile
  create mode 100644 fs/apfs/apfs.h
  create mode 100644 fs/apfs/apfs_raw.h
@@ -77,7 +77,7 @@ Subject: [PATCH] Add APFS driver
 
 diff --git a/fs/apfs/Makefile b/fs/apfs/Makefile
 new file mode 100644
-index 000000000..a2dbed980
+index 000000000..2bafc31f1
 --- /dev/null
 +++ b/fs/apfs/Makefile
 @@ -0,0 +1,28 @@
@@ -97,9 +97,9 @@ index 000000000..a2dbed980
 +	  spaceman.o super.o symlink.o transaction.o unicode.o xattr.o xfield.o
 +
 +# If you want mounts to be writable by default, run the build as:
-+#   make CONFIG=-DCONFIG_APFS_RW_ALWAYS
++#   make APFS_CONFIG=-DCONFIG_APFS_RW_ALWAYS
 +# This is risky and not generally recommended.
-+ccflags-y += $(CONFIG)
++ccflags-y += $(APFS_CONFIG)
 +
 +default:
 +	./genver.sh
@@ -111,10 +111,10 @@ index 000000000..a2dbed980
 +	make -C $(KERNEL_DIR) M=$(PWD) clean
 diff --git a/fs/apfs/apfs.h b/fs/apfs/apfs.h
 new file mode 100644
-index 000000000..5a729fca7
+index 000000000..0bbf98df3
 --- /dev/null
 +++ b/fs/apfs/apfs.h
-@@ -0,0 +1,1343 @@
+@@ -0,0 +1,1346 @@
 +/* SPDX-License-Identifier: GPL-2.0-only */
 +/*
 + * Copyright (C) 2018 Ernesto A. Fernández <ernesto.mnd.fernandez@gmail.com>
@@ -497,6 +497,7 @@ index 000000000..5a729fca7
 +	unsigned int s_vol_nr;		/* Index of the volume in the sb list */
 +	kuid_t s_uid;			/* uid to override on-disk uid */
 +	kgid_t s_gid;			/* gid to override on-disk gid */
++	unsigned int s_mount_opt;
 +
 +	struct apfs_crypto_state_val *s_dflt_pfk; /* default per-file key */
 +
@@ -1157,7 +1158,9 @@ index 000000000..5a729fca7
 +			struct dentry *dentry, struct iattr *iattr);
 +#endif
 +
-+#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 6, 0)
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(7, 0, 0)
++extern int apfs_update_time(struct inode *inode, enum fs_update_time time, unsigned int flags);
++#elif LINUX_VERSION_CODE < KERNEL_VERSION(6, 6, 0)
 +extern int apfs_update_time(struct inode *inode, struct timespec64 *time, int flags);
 +#else
 +extern int apfs_update_time(struct inode *inode, int flags);
@@ -8821,10 +8824,10 @@ index 000000000..3e8a55897
 +};
 diff --git a/fs/apfs/inode.c b/fs/apfs/inode.c
 new file mode 100644
-index 000000000..6e38e05ad
+index 000000000..7eb88bdb8
 --- /dev/null
 +++ b/fs/apfs/inode.c
-@@ -0,0 +1,2594 @@
+@@ -0,0 +1,2598 @@
 +// SPDX-License-Identifier: GPL-2.0-only
 +/*
 + * Copyright (C) 2018 Ernesto A. Fernández <ernesto.mnd.fernandez@gmail.com>
@@ -10936,7 +10939,9 @@ index 000000000..6e38e05ad
 +}
 +
 +/* TODO: this only seems to be necessary because ->write_inode() isn't firing */
-+#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 6, 0)
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(7, 0, 0)
++int apfs_update_time(struct inode *inode, enum fs_update_time time, unsigned int flags)
++#elif LINUX_VERSION_CODE < KERNEL_VERSION(6, 6, 0)
 +int apfs_update_time(struct inode *inode, struct timespec64 *time, int flags)
 +#else
 +int apfs_update_time(struct inode *inode, int flags)
@@ -10950,7 +10955,9 @@ index 000000000..6e38e05ad
 +		return err;
 +	apfs_inode_join_transaction(sb, inode);
 +
-+#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 6, 0) && !RHEL_VERSION_GE(9, 6)
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(7, 0, 0)
++	generic_update_time(inode, time, flags);
++#elif LINUX_VERSION_CODE < KERNEL_VERSION(6, 6, 0) && !RHEL_VERSION_GE(9, 6)
 +	generic_update_time(inode, time, flags);
 +#else
 +	generic_update_time(inode, flags);
@@ -19689,10 +19696,10 @@ index 000000000..31bf439e9
 +}
 diff --git a/fs/apfs/super.c b/fs/apfs/super.c
 new file mode 100644
-index 000000000..6ae75a036
+index 000000000..bcc353a33
 --- /dev/null
 +++ b/fs/apfs/super.c
-@@ -0,0 +1,2127 @@
+@@ -0,0 +1,2263 @@
 +// SPDX-License-Identifier: GPL-2.0-only
 +/*
 + * Copyright (C) 2018 Ernesto A. Fernández <ernesto.mnd.fernandez@gmail.com>
@@ -19710,6 +19717,10 @@ index 000000000..6ae75a036
 +#include <linux/seq_file.h>
 +#include "apfs.h"
 +#include "version.h"
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(7, 0, 0)
++#include <linux/fs_context.h>
++#include <linux/fs_parser.h>
++#endif
 +
 +#define APFS_MODULE_ID_STRING	"linux-apfs by eafer (" GIT_COMMIT ")"
 +
@@ -20159,6 +20170,9 @@ index 000000000..6ae75a036
 +	struct apfs_spaceman *sm = NULL;
 +	u32 bmap_idx;
 +	int i;
++
++	if (!nxi)
++		return;
 +
 +	mutex_lock(&nxs_mutex);
 +
@@ -20882,7 +20896,9 @@ index 000000000..6ae75a036
 +	.put_super	= apfs_put_super,
 +	.sync_fs	= apfs_sync_fs,
 +	.statfs		= apfs_statfs,
++#if LINUX_VERSION_CODE < KERNEL_VERSION(7, 0, 0)
 +	.remount_fs	= apfs_remount,
++#endif
 +	.show_options	= apfs_show_options,
 +};
 +
@@ -20890,6 +20906,7 @@ index 000000000..6ae75a036
 +	Opt_readwrite, Opt_cknodes, Opt_uid, Opt_gid, Opt_vol, Opt_snap, Opt_tier2, Opt_err,
 +};
 +
++#if LINUX_VERSION_CODE < KERNEL_VERSION(7, 0, 0)
 +static const match_table_t tokens = {
 +	{Opt_readwrite, "readwrite"},
 +	{Opt_cknodes, "cknodes"},
@@ -20900,6 +20917,18 @@ index 000000000..6ae75a036
 +	{Opt_tier2, "tier2=%s"},
 +	{Opt_err, NULL}
 +};
++#else
++static const struct fs_parameter_spec apfs_param_spec[] = {
++	fsparam_flag	("readwrite",	Opt_readwrite),
++	fsparam_flag	("cknodes",	Opt_cknodes),
++	fsparam_uid	("uid",		Opt_uid),
++	fsparam_gid	("gid",		Opt_gid),
++	fsparam_u32	("vol",		Opt_vol),
++	fsparam_string	("snap",	Opt_snap),
++	fsparam_string	("tier2",	Opt_tier2),
++	{}
++};
++#endif
 +
 +/**
 + * apfs_set_nx_flags - Set the mount flags for the container, if allowed
@@ -20922,30 +20951,59 @@ index 000000000..6ae75a036
 +	mutex_unlock(&nxs_mutex);
 +}
 +
++static void parse_options_set_flags(struct super_block *sb, struct apfs_sb_info *sbi,
++		unsigned int nx_flags)
++{
++	struct apfs_nxsb_info *nxi = sbi->s_nxi;
++
++	apfs_set_nx_flags(sb, nx_flags);
++	if (!(sb->s_flags & SB_RDONLY)) {
++		if (nxi->nx_flags & APFS_READWRITE) {
++			apfs_notice(sb, "experimental write support is enabled");
++		} else {
++			apfs_warn(sb, "experimental writes disabled to avoid data loss");
++			apfs_warn(sb, "if you really want them, check the README");
++			sb->s_flags |= SB_RDONLY;
++		}
++	}
++}
++
++/**
++ * apfs_set_default_opts - Set the default mount options in the superblock
++ * @sbi: in-memory superblock info
++ */
++static void apfs_set_default_opts(struct apfs_sb_info *sbi)
++{
++	sbi->s_vol_nr = 0;
++	sbi->s_snap_name = NULL;
++	sbi->s_tier2_path = NULL;
++	sbi->s_mount_opt = 0;
++#ifdef CONFIG_APFS_RW_ALWAYS
++	/* Still risky, but some packagers want writable mounts by default */
++	sbi->s_mount_opt |= APFS_READWRITE;
++#endif
++	sbi->s_uid = INVALID_UID;
++	sbi->s_gid = INVALID_GID;
++}
++
++#if LINUX_VERSION_CODE < KERNEL_VERSION(7, 0, 0)
++
 +/*
 + * Many of the parse_options() functions in other file systems return 0
 + * on error. This one returns an error code, and 0 on success.
++ *
++ * Note that even on failure, the caller is responsible for freeing all
++ * superblock fields.
 + */
-+static int parse_options(struct super_block *sb, char *options)
++static int parse_options(struct apfs_sb_info *sbi, char *options)
 +{
-+	struct apfs_sb_info *sbi = APFS_SB(sb);
-+	struct apfs_nxsb_info *nxi = sbi->s_nxi;
 +	char *p;
 +	substring_t args[MAX_OPT_ARGS];
 +	int option;
 +	int err = 0;
-+	unsigned int nx_flags;
-+
-+	/* Set default values before parsing */
-+	nx_flags = 0;
-+
-+#ifdef CONFIG_APFS_RW_ALWAYS
-+	/* Still risky, but some packagers want writable mounts by default */
-+	nx_flags |= APFS_READWRITE;
-+#endif
 +
 +	if (!options)
-+		goto out;
++		return 0;
 +
 +	while ((p = strsep(&options, ",")) != NULL) {
 +		int token;
@@ -20959,14 +21017,14 @@ index 000000000..6ae75a036
 +			 * Write support is not safe yet, so keep it disabled
 +			 * unless the user requests it explicitly.
 +			 */
-+			nx_flags |= APFS_READWRITE;
++			sbi->s_mount_opt |= APFS_READWRITE;
 +			break;
 +		case Opt_cknodes:
 +			/*
 +			 * Right now, node checksums are too costly to enable
 +			 * by default.  TODO: try to improve this.
 +			 */
-+			nx_flags |= APFS_CHECK_NODES;
++			sbi->s_mount_opt |= APFS_CHECK_NODES;
 +			break;
 +		case Opt_uid:
 +			err = match_int(&args[0], &option);
@@ -20974,7 +21032,7 @@ index 000000000..6ae75a036
 +				return err;
 +			sbi->s_uid = make_kuid(current_user_ns(), option);
 +			if (!uid_valid(sbi->s_uid)) {
-+				apfs_err(sb, "invalid uid");
++				apfs_err(NULL, "invalid uid");
 +				return -EINVAL;
 +			}
 +			break;
@@ -20984,38 +21042,92 @@ index 000000000..6ae75a036
 +				return err;
 +			sbi->s_gid = make_kgid(current_user_ns(), option);
 +			if (!gid_valid(sbi->s_gid)) {
-+				apfs_err(sb, "invalid gid");
++				apfs_err(NULL, "invalid gid");
 +				return -EINVAL;
 +			}
 +			break;
 +		case Opt_vol:
++			err = match_int(&args[0], &sbi->s_vol_nr);
++			if (err) {
++				apfs_err(NULL, "invalid volume number");
++				return -EINVAL;
++			}
++			break;
 +		case Opt_snap:
++			kfree(sbi->s_snap_name);
++			sbi->s_snap_name = match_strdup(&args[0]);
++			if (!sbi->s_snap_name)
++				return -ENOMEM;
++			break;
 +		case Opt_tier2:
-+			/* Already read early on mount */
++			kfree(sbi->s_tier2_path);
++			sbi->s_tier2_path = match_strdup(&args[0]);
++			if (!sbi->s_tier2_path)
++				return -ENOMEM;
 +			break;
 +		default:
-+			/*
-+			 * We should have already checked the mount options in
-+			 * apfs_preparse_options(), so this is a bug.
-+			 */
-+			apfs_alert(sb, "invalid mount option %s", p);
++			apfs_warn(NULL, "invalid mount option %s", p);
 +			return -EINVAL;
-+		}
-+	}
-+
-+out:
-+	apfs_set_nx_flags(sb, nx_flags);
-+	if (!(sb->s_flags & SB_RDONLY)) {
-+		if (nxi->nx_flags & APFS_READWRITE) {
-+			apfs_notice(sb, "experimental write support is enabled");
-+		} else {
-+			apfs_warn(sb, "experimental writes disabled to avoid data loss");
-+			apfs_warn(sb, "if you really want them, check the README");
-+			sb->s_flags |= SB_RDONLY;
 +		}
 +	}
 +	return 0;
 +}
++
++#else /* LINUX_VERSION_CODE < KERNEL_VERSION(7, 0, 0) */
++
++static int apfs_parse_param(struct fs_context *fc, struct fs_parameter *param)
++{
++	struct apfs_sb_info *sbi = fc->s_fs_info;
++	int opt;
++	struct fs_parse_result result;
++
++	opt = fs_parse(fc, apfs_param_spec, param, &result);
++	if (opt < 0)
++		return opt;
++
++	switch (opt) {
++	case Opt_readwrite:
++		/*
++		 * Write support is not safe yet, so keep it disabled
++		 * unless the user requests it explicitly.
++		 */
++		sbi->s_mount_opt |= APFS_READWRITE;
++		break;
++	case Opt_cknodes:
++		/*
++		 * Right now, node checksums are too costly to enable
++		 * by default.  TODO: try to improve this.
++		 */
++		sbi->s_mount_opt |= APFS_CHECK_NODES;
++		break;
++	case Opt_uid:
++		sbi->s_uid = result.uid;
++		break;
++	case Opt_gid:
++		sbi->s_gid = result.gid;
++		break;
++	case Opt_vol:
++		sbi->s_vol_nr = result.uint_32;
++		break;
++	case Opt_snap:
++		kfree(sbi->s_snap_name);
++		sbi->s_snap_name = kstrdup(param->string, GFP_KERNEL);
++		if (!sbi->s_snap_name)
++			return -ENOMEM;
++		break;
++	case Opt_tier2:
++		kfree(sbi->s_tier2_path);
++		sbi->s_tier2_path = kstrdup(param->string, GFP_KERNEL);
++		if (!sbi->s_tier2_path)
++			return -ENOMEM;
++		break;
++	default:
++		return -EINVAL;
++	}
++	return 0;
++}
++
++#endif
 +
 +/**
 + * apfs_check_nx_features - Check for unsupported features in the container
@@ -21245,12 +21357,7 @@ index 000000000..6ae75a036
 +	err = apfs_setup_bdi(sb);
 +	if (err)
 +		goto failed_volume;
-+
-+	sbi->s_uid = INVALID_UID;
-+	sbi->s_gid = INVALID_GID;
-+	err = parse_options(sb, data);
-+	if (err)
-+		goto failed_volume;
++	parse_options_set_flags(sb, sbi, sbi->s_mount_opt);
 +
 +	err = apfs_map_volume_super(sb, false /* write */);
 +	if (err)
@@ -21563,108 +21670,52 @@ index 000000000..6ae75a036
 +	return ret;
 +}
 +
-+/**
-+ * apfs_preparse_options - Parse the options used to identify a superblock
-+ * @sbi:	superblock info
-+ * @options:	options string to parse
-+ *
-+ * Returns 0 on success, or a negative error code in case of failure. Even on
-+ * failure, the caller is responsible for freeing all superblock fields.
-+ */
-+static int apfs_preparse_options(struct apfs_sb_info *sbi, char *options)
-+{
-+	char *tofree = NULL;
-+	char *p;
-+	substring_t args[MAX_OPT_ARGS];
-+	int err = 0;
-+
-+	/* Set default values before parsing */
-+	sbi->s_vol_nr = 0;
-+	sbi->s_snap_name = NULL;
-+	sbi->s_tier2_path = NULL;
-+
-+	if (!options)
-+		return 0;
-+
-+	/* Later parse_options() will need the unmodified options string */
-+	options = kstrdup(options, GFP_KERNEL);
-+	if (!options)
-+		return -ENOMEM;
-+	tofree = options;
-+
-+	while ((p = strsep(&options, ",")) != NULL) {
-+		int token;
-+
-+		if (!*p)
-+			continue;
-+		token = match_token(p, tokens, args);
-+		switch (token) {
-+		case Opt_vol:
-+			err = match_int(&args[0], &sbi->s_vol_nr);
-+			if (err)
-+				goto out;
-+			break;
-+		case Opt_snap:
-+			kfree(sbi->s_snap_name);
-+			sbi->s_snap_name = match_strdup(&args[0]);
-+			if (!sbi->s_snap_name) {
-+				err = -ENOMEM;
-+				goto out;
-+			}
-+			break;
-+		case Opt_tier2:
-+			kfree(sbi->s_tier2_path);
-+			sbi->s_tier2_path = match_strdup(&args[0]);
-+			if (!sbi->s_tier2_path) {
-+				err = -ENOMEM;
-+				goto out;
-+			}
-+			break;
-+		case Opt_readwrite:
-+		case Opt_cknodes:
-+		case Opt_uid:
-+		case Opt_gid:
-+			/* Not needed for sget(), will be read later */
-+			break;
-+		default:
-+			apfs_warn(NULL, "invalid mount option %s", p);
-+			err = -EINVAL;
-+			goto out;
-+		}
-+	}
-+	err = 0;
-+out:
-+	kfree(tofree);
-+	return err;
-+}
-+
 +/*
 + * This function is a copy of mount_bdev() that allows multiple mounts.
 + */
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(7, 0, 0)
++static int apfs_test_super_fc(struct super_block *sb, struct fs_context *fc);
++static int apfs_set_super_fc(struct super_block *sb, struct fs_context *fc);
++static int apfs_get_tree(struct fs_context *fc)
++#else
 +static struct dentry *apfs_mount(struct file_system_type *fs_type, int flags,
 +				 const char *dev_name, void *data)
++#endif
 +{
 +	struct super_block *sb;
 +	struct apfs_sb_info *sbi;
 +	struct apfs_blkdev_info *bd_info = NULL, *tier2_info = NULL;
-+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 5, 0) || RHEL_VERSION_GE(9, 4)
++	int error = 0;
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(7, 0, 0)
++	blk_mode_t mode = sb_open_mode(fc->sb_flags);
++	void *data = fc->fs_private;
++	const char *dev_name = fc->source;
++
++	sbi = fc->s_fs_info;
++#elif LINUX_VERSION_CODE >= KERNEL_VERSION(6, 5, 0) || RHEL_VERSION_GE(9, 4)
 +	blk_mode_t mode = sb_open_mode(flags);
 +#else
 +	fmode_t mode = FMODE_READ | FMODE_EXCL;
 +#endif
-+	int error = 0;
 +
++#if LINUX_VERSION_CODE < KERNEL_VERSION(7, 0, 0)
 +	sbi = kzalloc(sizeof(*sbi), GFP_KERNEL);
 +	if (!sbi)
 +		return ERR_PTR(-ENOMEM);
++	apfs_set_default_opts(sbi);
 +	/* Set up the fields that sget() will need to id the superblock */
-+	error = apfs_preparse_options(sbi, data);
++	error = parse_options(sbi, data);
 +	if (error)
 +		goto out_free_sbi;
++#endif
 +
 +	/* Make sure that snapshots are mounted read-only */
 +	if (sbi->s_snap_name)
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(7, 0, 0)
++		fc->sb_flags |= SB_RDONLY;
++#else
 +		flags |= SB_RDONLY;
++#endif
 +
 +#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 5, 0) && !RHEL_VERSION_GE(9, 4)
 +	if (!(flags & SB_RDONLY))
@@ -21676,7 +21727,12 @@ index 000000000..6ae75a036
 +		goto out_free_sbi;
 +
 +	/* TODO: lockfs stuff? Btrfs doesn't seem to care */
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(7, 0, 0)
++	fc->sb_flags |= SB_NOSEC;
++	sb = sget_fc(fc, apfs_test_super_fc, apfs_set_super_fc);
++#else
 +	sb = sget(fs_type, apfs_test_super, apfs_set_super, flags | SB_NOSEC, sbi);
++#endif
 +	if (IS_ERR(sb)) {
 +		error = PTR_ERR(sb);
 +		goto out_unmap_super;
@@ -21692,7 +21748,11 @@ index 000000000..6ae75a036
 +	WARN_ON(sb->s_dev != bd_info->blki_bdev->bd_dev);
 +
 +	if (sb->s_root) {
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(7, 0, 0)
++		if ((fc->sb_flags ^ sb->s_flags) & SB_RDONLY) {
++#else
 +		if ((flags ^ sb->s_flags) & SB_RDONLY) {
++#endif
 +			error = -EBUSY;
 +			deactivate_locked_super(sb);
 +			goto out_unmap_super;
@@ -21704,8 +21764,14 @@ index 000000000..6ae75a036
 +		kfree(sbi->s_tier2_path);
 +		sbi->s_tier2_path = NULL;
 +		kfree(sbi);
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(7, 0, 0)
++		fc->s_fs_info = NULL;
++#endif
 +		sbi = NULL;
 +	} else {
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(7, 0, 0)
++		fc->s_fs_info = NULL;
++#endif
 +		if (!sbi->s_snap_name && !tier2_info)
 +			snprintf(sb->s_id, sizeof(sb->s_id), "%pg:%u", bd_info->blki_bdev, sbi->s_vol_nr);
 +		else if (!tier2_info)
@@ -21717,28 +21783,47 @@ index 000000000..6ae75a036
 +		error = apfs_read_main_super(sb);
 +		if (error) {
 +			deactivate_locked_super(sb);
-+			return ERR_PTR(error);
++			goto out_return_error;
 +		}
 +#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 5, 0) && !RHEL_VERSION_GE(9, 4)
 +		sb->s_mode = mode;
 +#endif
++
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(7, 0, 0)
++		error = apfs_fill_super(sb, data, fc->sb_flags & SB_SILENT ? 1 : 0);
++#else
 +		error = apfs_fill_super(sb, data, flags & SB_SILENT ? 1 : 0);
++#endif
 +		if (error) {
 +			deactivate_locked_super(sb);
-+			return ERR_PTR(error);
++			goto out_return_error;
 +		}
 +		sb->s_flags |= SB_ACTIVE;
 +	}
 +
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(7, 0, 0)
++	fc->root = dget(sb->s_root);
++	return 0;
++#else
 +	return dget(sb->s_root);
++#endif
 +
 +out_unmap_super:
++#if LINUX_VERSION_CODE < KERNEL_VERSION(7, 0, 0)
 +	apfs_free_main_super(sbi);
++#endif
 +out_free_sbi:
++#if LINUX_VERSION_CODE < KERNEL_VERSION(7, 0, 0)
 +	kfree(sbi->s_snap_name);
 +	kfree(sbi->s_tier2_path);
 +	kfree(sbi);
++#endif
++out_return_error:
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(7, 0, 0)
++	return error;
++#else
 +	return ERR_PTR(error);
++#endif
 +}
 +
 +/**
@@ -21786,10 +21871,68 @@ index 000000000..6ae75a036
 +	apfs_free_sb_info(sb);
 +}
 +
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(7, 0, 0)
++static int apfs_test_super_fc(struct super_block *sb, struct fs_context *fc)
++{
++	return apfs_test_super(sb, fc->s_fs_info);
++}
++
++static int apfs_set_super_fc(struct super_block *sb, struct fs_context *fc)
++{
++	return apfs_set_super(sb, fc->s_fs_info);
++}
++
++static int apfs_reconfigure(struct fs_context *fc)
++{
++	struct super_block *sb = fc->root->d_sb;
++	int flags = fc->sb_flags;
++
++	return apfs_remount(sb, &flags, fc->fs_private);
++}
++
++static void apfs_free_fc(struct fs_context *fc)
++{
++	struct apfs_sb_info *sbi = fc->s_fs_info;
++
++	if (sbi) {
++		apfs_free_main_super(sbi);
++		kfree(sbi->s_snap_name);
++		kfree(sbi->s_tier2_path);
++		kfree(sbi);
++	}
++}
++
++static const struct fs_context_operations apfs_context_ops = {
++	.get_tree		= apfs_get_tree,
++	.reconfigure		= apfs_reconfigure,
++	.free			= apfs_free_fc,
++	.parse_param		= apfs_parse_param,
++};
++
++static int apfs_init_fs_context(struct fs_context *fc)
++{
++	struct apfs_sb_info *sbi;
++
++	/* Setup happens here now instead of the top of apfs_mount */
++	sbi = kzalloc(sizeof(*sbi), GFP_KERNEL);
++	if (!sbi)
++		return -ENOMEM;
++	apfs_set_default_opts(sbi);
++
++	fc->s_fs_info = sbi;
++	fc->ops = &apfs_context_ops;
++	return 0;
++}
++#endif /* LINUX_VERSION_CODE >= 7.0.0 */
++
 +static struct file_system_type apfs_fs_type = {
 +	.owner		= THIS_MODULE,
 +	.name		= "apfs",
++#if LINUX_VERSION_CODE < KERNEL_VERSION(7, 0, 0)
 +	.mount		= apfs_mount,
++#else
++	.init_fs_context = apfs_init_fs_context,
++#endif
 +	.kill_sb	= apfs_kill_sb,
 +	.fs_flags	= FS_REQUIRES_DEV,
 +};
@@ -26143,11 +26286,11 @@ index 000000000..e3b7edc51
 +#endif	/* _APFS_UNICODE_H */
 diff --git a/fs/apfs/version.h b/fs/apfs/version.h
 new file mode 100644
-index 000000000..0c8737318
+index 000000000..e16b23c10
 --- /dev/null
 +++ b/fs/apfs/version.h
 @@ -0,0 +1 @@
-+#define GIT_COMMIT	"v0.3.18"
++#define GIT_COMMIT	""
 diff --git a/fs/apfs/xattr.c b/fs/apfs/xattr.c
 new file mode 100644
 index 000000000..c21b8e469
@@ -27246,99 +27389,5 @@ index 000000000..b8cbe17fd
 +	return total_len;
 +}
 -- 
-2.52.0
-
-From 918ebea43ba3c425e6ffefdbde0db6b55e445b77 Mon Sep 17 00:00:00 2001
-From: Aditya Garg <85610623+AdityaGarg8@users.noreply.github.com>
-Date: Sun, 10 Nov 2024 15:31:18 +0530
-Subject: [PATCH] Necessary modifications to build APFS with the kernel
-
----
- fs/Kconfig       |  1 +
- fs/Makefile      |  1 +
- fs/apfs/Kconfig  | 13 +++++++++++++
- fs/apfs/Makefile | 22 ++--------------------
- 4 files changed, 17 insertions(+), 20 deletions(-)
- create mode 100644 fs/apfs/Kconfig
-
-diff --git a/fs/Kconfig b/fs/Kconfig
-index aae170fc2..5131d5b3c 100644
---- a/fs/Kconfig
-+++ b/fs/Kconfig
-@@ -321,6 +321,7 @@ source "fs/affs/Kconfig"
- source "fs/ecryptfs/Kconfig"
- source "fs/hfs/Kconfig"
- source "fs/hfsplus/Kconfig"
-+source "fs/apfs/Kconfig"
- source "fs/befs/Kconfig"
- source "fs/bfs/Kconfig"
- source "fs/efs/Kconfig"
-diff --git a/fs/Makefile b/fs/Makefile
-index 61679fd58..8a17c50d7 100644
---- a/fs/Makefile
-+++ b/fs/Makefile
-@@ -120,6 +120,7 @@ obj-$(CONFIG_DEBUG_FS)		+= debugfs/
- obj-$(CONFIG_TRACING)		+= tracefs/
- obj-$(CONFIG_OCFS2_FS)		+= ocfs2/
- obj-$(CONFIG_BTRFS_FS)		+= btrfs/
-+obj-$(CONFIG_APFS_FS)		+= apfs/
- obj-$(CONFIG_GFS2_FS)           += gfs2/
- obj-$(CONFIG_F2FS_FS)		+= f2fs/
- obj-$(CONFIG_CEPH_FS)		+= ceph/
-diff --git a/fs/apfs/Kconfig b/fs/apfs/Kconfig
-new file mode 100644
-index 000000000..99caf203a
---- /dev/null
-+++ b/fs/apfs/Kconfig
-@@ -0,0 +1,13 @@
-+# SPDX-License-Identifier: GPL-2.0-only
-+config APFS_FS
-+	tristate "Apple file system support"
-+	select LIBCRC32C
-+	select ZLIB_INFLATE
-+	select NLS
-+	select BUFFER_HEAD
-+	select FS_IOMAP
-+	select LEGACY_DIRECT_IO
-+	help
-+	  If you say Y here, you will be able to mount APFS partitions
-+	  with read-only access. Write access is experimental and will
-+	  corrupt your container.
-diff --git a/fs/apfs/Makefile b/fs/apfs/Makefile
-index a2dbed980..bc7bc8cc5 100644
---- a/fs/apfs/Makefile
-+++ b/fs/apfs/Makefile
-@@ -1,28 +1,10 @@
- # SPDX-License-Identifier: GPL-2.0-only
- #
--# Makefile for the out-of-tree Linux APFS module.
-+# Makefile for the Linux APFS module.
- #
- 
--KERNELRELEASE ?= $(shell uname -r)
--KERNEL_DIR    ?= /lib/modules/$(KERNELRELEASE)/build
--PWD           := $(shell pwd)
--
--obj-m = apfs.o
-+obj-$(CONFIG_APFS_FS) = apfs.o
- apfs-y := btree.o compress.o dir.o extents.o file.o inode.o key.o libzbitmap.o \
- 	  lzfse/lzfse_decode.o lzfse/lzfse_decode_base.o lzfse/lzfse_fse.o \
- 	  lzfse/lzvn_decode_base.o message.o namei.o node.o object.o snapshot.o \
- 	  spaceman.o super.o symlink.o transaction.o unicode.o xattr.o xfield.o
--
--# If you want mounts to be writable by default, run the build as:
--#   make CONFIG=-DCONFIG_APFS_RW_ALWAYS
--# This is risky and not generally recommended.
--ccflags-y += $(CONFIG)
--
--default:
--	./genver.sh
--	make -C $(KERNEL_DIR) M=$(PWD)
--install:
--	make -C $(KERNEL_DIR) M=$(PWD) modules_install
--clean:
--	rm -f version.h
--	make -C $(KERNEL_DIR) M=$(PWD) clean
--- 
-2.39.5 (Apple Git-154)
+2.53.0
 
