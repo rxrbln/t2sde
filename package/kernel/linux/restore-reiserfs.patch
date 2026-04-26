@@ -8680,7 +8680,7 @@ new file mode 100644
 index 000000000000..d39ee5f6c075
 --- /dev/null
 +++ b/fs/reiserfs/inode.c
-@@ -0,0 +1,3416 @@
+@@ -0,0 +1,3427 @@
 +/*
 + * Copyright 2000 by Hans Reiser, licensing governed by reiserfs/README
 + */
@@ -8731,7 +8731,7 @@ index 000000000000..d39ee5f6c075
 +	 * for some reason like lack of space..
 +	 * also handles bad_inode case
 +	 */
-+	if (!(inode->i_state & I_NEW) && INODE_PKEY(inode)->k_objectid != 0) {
++	if (!(inode_state_read_once(inode) & I_NEW) && INODE_PKEY(inode)->k_objectid != 0) {
 +
 +		reiserfs_delete_xattrs(inode);
 +
@@ -10318,7 +10318,7 @@ index 000000000000..d39ee5f6c075
 +	if (!inode)
 +		return ERR_PTR(-ENOMEM);
 +
-+	if (inode->i_state & I_NEW) {
++	if (inode_state_read(inode) & I_NEW) {
 +		reiserfs_read_locked_inode(inode, &args);
 +		unlock_new_inode(inode);
 +	}
@@ -10826,7 +10826,7 @@ index 000000000000..d39ee5f6c075
 +out_inserted_sd:
 +	clear_nlink(inode);
 +	th->t_trans_id = 0;	/* so the caller can't use this handle later */
-+	if (inode->i_state & I_NEW)
++	if (inode_state_read(inode) & I_NEW)
 +		unlock_new_inode(inode);
 +	iput(inode);
 +	return err;
@@ -11402,11 +11402,22 @@ index 000000000000..d39ee5f6c075
 +	return block_read_full_folio(folio, reiserfs_get_block);
 +}
 +
++static int reiserfs_write_cache_pages(struct address_space *mapping,
++		struct writeback_control *wbc, void *data)
++{
++       struct folio *folio = NULL;
++       int error;
++
++       while ((folio = writeback_iter(mapping, wbc, folio, &error)))
++               error = reiserfs_write_folio(folio, wbc, data);
++       return error;
++}
++
 +static int reiserfs_writepages(struct address_space *mapping,
 +		struct writeback_control *wbc)
 +{
 +	reiserfs_wait_on_write_block(mapping->host->i_sb);
-+	return write_cache_pages(mapping, wbc, reiserfs_write_folio, NULL);
++	return reiserfs_write_cache_pages(mapping, wbc, NULL);
 +}
 +
 +static void reiserfs_truncate_failed_write(struct inode *inode)
@@ -33138,3 +33149,86 @@ index 000000000000..503ad018ce5b
  
  /**
   * d_splice_alias - splice a disconnected dentry into the tree if one exists
+--- linux-7.0/fs/reiserfs/super.c.vanilla	2026-04-26 16:27:54.738284084 +0200
++++ linux-7.0/fs/reiserfs/super.c	2026-04-26 17:14:15.927631577 +0200
+@@ -61,7 +61,6 @@
+ 		is_reiserfs_jr(rs));
+ }
+ 
+-static int reiserfs_remount(struct super_block *s, int *flags, char *data);
+ static int reiserfs_statfs(struct dentry *dentry, struct kstatfs *buf);
+ 
+ static int reiserfs_sync_fs(struct super_block *s, int wait)
+@@ -818,7 +817,6 @@
+ 	.freeze_fs = reiserfs_freeze,
+ 	.unfreeze_fs = reiserfs_unfreeze,
+ 	.statfs = reiserfs_statfs,
+-	.remount_fs = reiserfs_remount,
+ 	.show_options = reiserfs_show_options,
+ #ifdef CONFIG_QUOTA
+ 	.quota_read = reiserfs_quota_read,
+@@ -1425,8 +1423,9 @@
+ }
+ #endif
+ 
+-static int reiserfs_remount(struct super_block *s, int *mount_flags, char *arg)
++static int reiserfs_reconfigure(struct fs_context *fc)
+ {
++	struct super_block *s = fc->root->d_sb;
+ 	struct reiserfs_super_block *rs;
+ 	struct reiserfs_transaction_handle th;
+ 	unsigned long blocks;
+@@ -1884,7 +1883,7 @@
+ 	if (!(silent))				\
+ 		reiserfs_warning(s, id, __VA_ARGS__)
+ 
+-static int reiserfs_fill_super(struct super_block *s, void *data, int silent)
++static int reiserfs_fill_super(struct super_block *s, struct fs_context *fc)
+ {
+ 	struct inode *root_inode;
+ 	struct reiserfs_transaction_handle th;
+@@ -1899,6 +1898,7 @@
+ 	int errval = -EINVAL;
+ 	char *qf_names[REISERFS_MAXQUOTAS] = {};
+ 	unsigned int qfmt = 0;
++	int silent = fc->sb_flags & SB_SILENT;
+ 
+ 	sbi = kzalloc(sizeof(struct reiserfs_sb_info), GFP_KERNEL);
+ 	if (!sbi)
+@@ -2593,11 +2593,21 @@
+ 
+ #endif
+ 
+-static struct dentry *get_super_block(struct file_system_type *fs_type,
+-			   int flags, const char *dev_name,
+-			   void *data)
++static int reiserfs_get_tree(struct fs_context *fc)
+ {
+-	return mount_bdev(fs_type, flags, dev_name, data, reiserfs_fill_super);
++	return get_tree_bdev(fc, reserifs_fill_super);
++}
++
++static const struct fs_context_operations reiserfs_context_ops = {
++	.get_tree       = reiserfs_get_tree,
++	.reconfigure    = reiserfs_reconfigure,
++};
++
++static int reiserfs_init_fs_context(struct fs_context *fc)
++{
++	fc->ops = &reiserfs_context_ops;
++
++	return 0;
+ }
+ 
+ static int __init init_reiserfs_fs(void)
+@@ -2632,9 +2642,9 @@
+ struct file_system_type reiserfs_fs_type = {
+ 	.owner = THIS_MODULE,
+ 	.name = "reiserfs",
+-	.mount = get_super_block,
+ 	.kill_sb = reiserfs_kill_sb,
+ 	.fs_flags = FS_REQUIRES_DEV,
++	.init_fs_context = reiserfs_init_fs_context,
+ };
+ MODULE_ALIAS_FS("reiserfs");
+ 
