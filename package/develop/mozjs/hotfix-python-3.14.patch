@@ -1,0 +1,184 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Mike Hommey <mh+mozilla@glandium.org>
+Date: Tue, 19 Aug 2025 05:09:09 +0000
+Subject: [PATCH] Bug 1969769 - Change uses of ast.Str with ast.Constant.
+ r=firefox-build-system-reviewers,ahochheiden
+
+ast.Str was deprecated in python 3.12 and removed in 3.14. It inherited
+from ast.Constant, `Str.s` was equivalent to `Constant.value`, so we can
+use the latter on both old and newer python versions.
+
+Differential Revision: https://phabricator.services.mozilla.com/D261512
+---
+ python/mozbuild/mozbuild/frontend/reader.py        | 14 +++++++-------
+ .../mozbuild/mozbuild/vendor/rewrite_mozbuild.py   |  6 ++----
+ 2 files changed, 9 insertions(+), 11 deletions(-)
+
+diff --git a/python/mozbuild/mozbuild/frontend/reader.py b/python/mozbuild/mozbuild/frontend/reader.py
+index 9f6292cb909d..89bf9995c176 100644
+--- a/python/mozbuild/mozbuild/frontend/reader.py
++++ b/python/mozbuild/mozbuild/frontend/reader.py
+@@ -470,7 +470,7 @@ class TemplateFunction:
+             return c(
+                 ast.Subscript(
+                     value=c(ast.Name(id=self._global_name, ctx=ast.Load())),
+-                    slice=c(ast.Index(value=c(ast.Str(s=node.id)))),
++                    slice=c(ast.Index(value=c(ast.Constant(value=node.id)))),
+                     ctx=node.ctx,
+                 )
+             )
+@@ -1039,23 +1039,23 @@ class BuildReader:
+                 else:
+                     # Others
+                     assert isinstance(target.slice, ast.Index)
+-                    assert isinstance(target.slice.value, ast.Str)
+-                    key = target.slice.value.s
++                    assert isinstance(target.slice.value, ast.Constant)
++                    key = target.slice.value.value
+             elif isinstance(target, ast.Attribute):
+                 assert isinstance(target.attr, str)
+                 key = target.attr
+ 
+             return name, key
+ 
+         def assigned_values(node):
+             value = node.value
+             if isinstance(value, ast.List):
+                 for v in value.elts:
+-                    assert isinstance(v, ast.Str)
+-                    yield v.s
++                    assert isinstance(v, ast.Constant)
++                    yield v.value
+             else:
+-                assert isinstance(value, ast.Str)
+-                yield value.s
++                assert isinstance(value, ast.Constant)
++                yield value.value
+ 
+         assignments = []
+ 
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Mike Hommey <mh+mozilla@glandium.org>
+Date: Tue, 19 Aug 2025 05:08:34 +0000
+Subject: [PATCH] Bug 1983713 - Use non-deprecated ast value.
+ r=firefox-build-system-reviewers,nalexander,ahochheiden
+
+ast.Str was deprecated in python 3.12 and removed in 3.14. It inherited
+from ast.Constant, `Str.s` was equivalent to `Constant.value`, so we can
+use the latter on both old and newer python versions.
+
+Differential Revision: https://phabricator.services.mozilla.com/D261511
+---
+ python/mach/mach/command_util.py | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/python/mach/mach/command_util.py b/python/mach/mach/command_util.py
+index 44e13f18d6cc..8539bf37b5b0 100644
+--- a/python/mach/mach/command_util.py
++++ b/python/mach/mach/command_util.py
+@@ -292,7 +292,7 @@ class DecoratorVisitor(ast.NodeVisitor):
+             kwarg_dict = {}
+ 
+             for name, arg in zip(["command", "subcommand"], decorator.args):
+-                kwarg_dict[name] = arg.s
++                kwarg_dict[name] = arg.value
+ 
+             for keyword in decorator.keywords:
+                 if keyword.arg not in relevant_kwargs:
+
+diff --git a/python/mozbuild/mozbuild/vendor/rewrite_mozbuild.py b/python/mozbuild/mozbuild/vendor/rewrite_mozbuild.py
+index cfcc0f18b9a9..de06b58819b6 100644
+--- a/python/mozbuild/mozbuild/vendor/rewrite_mozbuild.py
++++ b/python/mozbuild/mozbuild/vendor/rewrite_mozbuild.py
+@@ -327,15 +327,13 @@ def assignment_node_to_source_filename_list(code, node):
+     """
+     if isinstance(node.value, ast.List) and "elts" in node.value._fields:
+         for f in node.value.elts:
+-            if not isinstance(f, ast.Constant) and not isinstance(f, ast.Str):
++            if not isinstance(f, ast.Constant):
+                 log(
+                     "Found non-constant source file name in list: ",
+                     ast_get_source_segment(code, f),
+                 )
+                 return []
+-        return [
+-            f.value if isinstance(f, ast.Constant) else f.s for f in node.value.elts
+-        ]
++        return [f.value for f in node.value.elts]
+     elif isinstance(node.value, ast.ListComp):
+         # SOURCES += [f for f in foo if blah]
+         log("Could not find the files for " + ast_get_source_segment(code, node.value))
+
+
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Jan-Erik Rediger <jrediger@mozilla.com>
+Date: Wed, 27 Aug 2025 01:09:58 +0000
+Subject: [PATCH] Bug 1983736 - Patch jsonschema to work with Python 3.14+
+ r=mach-reviewers,ahal,ahochheiden
+
+Differential Revision: https://phabricator.services.mozilla.com/D262335
+---
+ python/mozbuild/mozbuild/vendor/vendor_python.py       | 4 ++++
+ third_party/python/jsonschema/jsonschema/validators.py | 5 ++++-
+ 2 files changed, 8 insertions(+), 1 deletion(-)
+
+diff --git a/python/mozbuild/mozbuild/vendor/vendor_python.py b/python/mozbuild/mozbuild/vendor/vendor_python.py
+index 9acee946fc4c..2801e1b685d5 100644
+--- a/python/mozbuild/mozbuild/vendor/vendor_python.py
++++ b/python/mozbuild/mozbuild/vendor/vendor_python.py
+@@ -40,6 +40,10 @@ EXCLUDED_PACKAGES = {
+     # modified 'dummy' version of it so that the dependency checks still succeed, but
+     # if it ever is attempted to be used, it will fail gracefully.
+     "ansicon",
++    # jsonschema 4.17.3 is incompatible with Python 3.14+,
++    # but later versions use a dependency with Rust components, which we thus can't vendor.
++    # For now we apply the minimal patch to jsonschema to make it work again.
++    "jsonschema",
+ }
+ 
+ 
+diff --git a/third_party/python/jsonschema/jsonschema/validators.py b/third_party/python/jsonschema/jsonschema/validators.py
+index 66e803ea2d0b..88316a8bb727 100644
+--- a/third_party/python/jsonschema/jsonschema/validators.py
++++ b/third_party/python/jsonschema/jsonschema/validators.py
+@@ -875,8 +875,11 @@ class RefResolver:
+             return None
+         uri, fragment = urldefrag(url)
+         for subschema in subschemas:
++            id = subschema["$id"]
++            if not isinstance(id, str):
++                continue
+             target_uri = self._urljoin_cache(
+-                self.resolution_scope, subschema["$id"],
++                self.resolution_scope, id,
+             )
+             if target_uri.rstrip("/") == uri.rstrip("/"):
+                 if fragment:
+
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Alex Hochheiden <ahochheiden@mozilla.com>
+Date: Wed, 15 Oct 2025 05:42:37 +0000
+Subject: [PATCH] Bug 1993797 - Fix AST parsing in DecoratorVisitor for Python
+ 3.14 r=firefox-build-system-reviewers,glandium
+
+This is necessary due to the `ast.Str` removal in 3.14.
+
+Differential Revision: https://phabricator.services.mozilla.com/D268646
+---
+ python/mach/mach/command_util.py | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/python/mach/mach/command_util.py b/python/mach/mach/command_util.py
+index 8539bf37b5b0..14bf65d60257 100644
+--- a/python/mach/mach/command_util.py
++++ b/python/mach/mach/command_util.py
+@@ -299,7 +299,7 @@ class DecoratorVisitor(ast.NodeVisitor):
+                     # We only care about these 3 kwargs, so we can safely skip the rest
+                     continue
+ 
+-                kwarg_dict[keyword.arg] = getattr(keyword.value, "s", "")
++                kwarg_dict[keyword.arg] = keyword.value.value
+ 
+             command = kwarg_dict.pop("command")
+             self.results.setdefault(command, {})
+
