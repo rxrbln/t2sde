@@ -1,53 +1,13 @@
 # --- T2-COPYRIGHT-BEGIN ---
 # t2/package/*/linux/restore-reiserfs.patch
-# Copyright (C) 2025 The T2 SDE Project
+# Copyright (C) 2026 The T2 SDE Project
 # SPDX-License-Identifier: GPL-2.0 or patched project license
 # --- T2-COPYRIGHT-END ---
 
-diff --git a/Documentation/filesystems/porting.rst b/Documentation/filesystems/porting.rst
-index 9ab2a3d6f2b4..92bffcc6747a 100644
---- a/Documentation/filesystems/porting.rst
-+++ b/Documentation/filesystems/porting.rst
-@@ -177,7 +177,7 @@ settles down a bit.
- **mandatory**
- 
- s_export_op is now required for exporting a filesystem.
--isofs, ext2, ext3, fat
-+isofs, ext2, ext3, reiserfs, fat
- can be used as examples of very different filesystems.
- 
- ---
-diff --git a/Documentation/userspace-api/ioctl/ioctl-number.rst b/Documentation/userspace-api/ioctl/ioctl-number.rst
-index 243f1f1b554a..e4be1378ba26 100644
---- a/Documentation/userspace-api/ioctl/ioctl-number.rst
-+++ b/Documentation/userspace-api/ioctl/ioctl-number.rst
-@@ -375,7 +375,7 @@ Code  Seq#    Include File                                           Comments
- 0xCB  00-1F                                                            CBM serial IEC bus in development:
-                                                                        <mailto:michael.klein@puffin.lb.shuttle.de>
- 0xCC  00-0F  drivers/misc/ibmvmc.h                                     pseries VMC driver
--0xCD  01     linux/reiserfs_fs.h                                       Dead since 6.13
-+0xCD  01     linux/reiserfs_fs.h
- 0xCE  01-02  uapi/linux/cxl_mem.h                                      Compute Express Link Memory Devices
- 0xCF  02     fs/smb/client/cifs_ioctl.h
- 0xDB  00-0F  drivers/char/mwave/mwavepub.h
-diff --git a/drivers/block/Kconfig b/drivers/block/Kconfig
-index a97f2c40c640..ed209f4f2798 100644
---- a/drivers/block/Kconfig
-+++ b/drivers/block/Kconfig
-@@ -130,7 +130,7 @@ config BLK_DEV_UBD_SYNC
-           kernel command line option.  Alternatively, you can say Y here to
-           turn on synchronous operation by default for all block devices.
- 
--          If you're running a journalling file system (like xfs, for
-+          If you're running a journalling file system (like reiserfs, for
-           example) in your virtual machine, you will want to say Y here.  If
-           you care for the safety of the data in your virtual machine, Y is a
-           wise choice too.  In all other cases (for example, if you're just
-diff --git a/fs/Kconfig b/fs/Kconfig
-index 64d420e3c475..aae170fc2795 100644
---- a/fs/Kconfig
-+++ b/fs/Kconfig
-@@ -43,6 +43,7 @@ config FS_MBCACHE
+diff -urN linux-7.0.orig/fs/Kconfig linux-7.0/fs/Kconfig
+--- linux-7.0.orig/fs/Kconfig	2026-04-12 22:48:06.000000000 +0200
++++ linux-7.0/fs/Kconfig	2026-04-27 15:47:19.668363415 +0200
+@@ -43,6 +43,7 @@
  	default y if EXT4_FS=y
  	default m if EXT2_FS_XATTR || EXT4_FS
  
@@ -55,11 +15,10 @@ index 64d420e3c475..aae170fc2795 100644
  source "fs/jfs/Kconfig"
  
  source "fs/xfs/Kconfig"
-diff --git a/fs/Makefile b/fs/Makefile
-index 15df0a923d3a..61679fd587b7 100644
---- a/fs/Makefile
-+++ b/fs/Makefile
-@@ -61,6 +61,7 @@ obj-$(CONFIG_DLM)		+= dlm/
+diff -urN linux-7.0.orig/fs/Makefile linux-7.0/fs/Makefile
+--- linux-7.0.orig/fs/Makefile	2026-04-12 22:48:06.000000000 +0200
++++ linux-7.0/fs/Makefile	2026-04-27 15:47:19.668397216 +0200
+@@ -62,6 +62,7 @@
   
  # Do not add any filesystems before this line
  obj-$(CONFIG_NETFS_SUPPORT)	+= netfs/
@@ -67,51 +26,9 @@ index 15df0a923d3a..61679fd587b7 100644
  obj-$(CONFIG_EXT4_FS)		+= ext4/
  # We place ext4 before ext2 so that clean ext3 root fs's do NOT mount using the
  # ext2 driver, which doesn't know about journalling!  Explicitly request ext2
-diff --git a/fs/buffer.c b/fs/buffer.c
-index b158cb7a5038..bb4a31b9559d 100644
---- a/fs/buffer.c
-+++ b/fs/buffer.c
-@@ -855,7 +855,8 @@ static int fsync_buffers_list(spinlock_t *lock, struct list_head *list)
-  * done a sync().  Just drop the buffers from the inode list.
-  *
-  * NOTE: we take the inode's blockdev's mapping's i_private_lock.  Which
-- * assumes that all the buffers are against the blockdev.
-+ * assumes that all the buffers are against the blockdev.  Not true
-+ * for reiserfs.
-  */
- void invalidate_inode_buffers(struct inode *inode)
- {
-diff --git a/fs/quota/Kconfig b/fs/quota/Kconfig
-index 818083a36bef..4c925e55dbcd 100644
---- a/fs/quota/Kconfig
-+++ b/fs/quota/Kconfig
-@@ -9,13 +9,14 @@ config QUOTA
- 	help
- 	  If you say Y here, you will be able to set per user limits for disk
- 	  usage (also called disk quotas). Currently, it works for the
--	  ext2, ext3, ext4, f2fs, jfs and ocfs2 file systems. Note that gfs2
--	  and xfs use their own quota system. Ext3 and ext4 also support
--	  journaled quotas for which you don't need to run quotacheck(8) after
--	  an unclean shutdown. For further details, read the Quota mini-HOWTO,
--	  available from <https://www.tldp.org/docs.html#howto>, or the
--	  documentation provided with the quota tools. Probably the quota
--	  support is only useful for multi user systems. If unsure, say N.
-+	  ext2, ext3, ext4, f2fs, jfs, ocfs2 and reiserfs file systems.
-+	  Note that gfs2 and xfs use their own quota system.
-+	  Ext3, ext4 and reiserfs also support journaled quotas for which
-+	  you don't need to run quotacheck(8) after an unclean shutdown.
-+	  For further details, read the Quota mini-HOWTO, available from
-+	  <https://www.tldp.org/docs.html#howto>, or the documentation provided
-+	  with the quota tools. Probably the quota support is only useful for
-+	  multi user systems. If unsure, say N.
- 
- config QUOTA_NETLINK_INTERFACE
- 	bool "Report quota messages through netlink interface"
-diff --git a/fs/reiserfs/Kconfig b/fs/reiserfs/Kconfig
-new file mode 100644
-index 000000000000..0e6fe26458fe
---- /dev/null
-+++ b/fs/reiserfs/Kconfig
+diff -urN linux-7.0.orig/fs/reiserfs/Kconfig linux-7.0/fs/reiserfs/Kconfig
+--- linux-7.0.orig/fs/reiserfs/Kconfig	1970-01-01 01:00:00.000000000 +0100
++++ linux-7.0/fs/reiserfs/Kconfig	2026-04-27 15:47:04.427392009 +0200
 @@ -0,0 +1,91 @@
 +# SPDX-License-Identifier: GPL-2.0-only
 +config REISERFS_FS
@@ -120,7 +37,7 @@ index 000000000000..0e6fe26458fe
 +	select CRC32
 +	select LEGACY_DIRECT_IO
 +	help
-+	  Reiserfs is deprecated and scheduled to be removed from the kernel
++	  Reiserfs is deprecated and was removed from the kernel 6.13
 +	  in 2025. If you are still using it, please migrate to another
 +	  filesystem or tell us your usecase for reiserfs.
 +
@@ -204,11 +121,9 @@ index 000000000000..0e6fe26458fe
 +
 +	  If you are not using a security module that requires using
 +	  extended attributes for file security labels, say N.
-diff --git a/fs/reiserfs/Makefile b/fs/reiserfs/Makefile
-new file mode 100644
-index 000000000000..bd29c58ccbd8
---- /dev/null
-+++ b/fs/reiserfs/Makefile
+diff -urN linux-7.0.orig/fs/reiserfs/Makefile linux-7.0/fs/reiserfs/Makefile
+--- linux-7.0.orig/fs/reiserfs/Makefile	1970-01-01 01:00:00.000000000 +0100
++++ linux-7.0/fs/reiserfs/Makefile	2026-04-27 15:47:04.427441221 +0200
 @@ -0,0 +1,30 @@
 +# SPDX-License-Identifier: GPL-2.0
 +#
@@ -240,11 +155,9 @@ index 000000000000..bd29c58ccbd8
 +
 +TAGS:
 +	etags *.c
-diff --git a/fs/reiserfs/README b/fs/reiserfs/README
-new file mode 100644
-index 000000000000..11e9ecf24b63
---- /dev/null
-+++ b/fs/reiserfs/README
+diff -urN linux-7.0.orig/fs/reiserfs/README linux-7.0/fs/reiserfs/README
+--- linux-7.0.orig/fs/reiserfs/README	1970-01-01 01:00:00.000000000 +0100
++++ linux-7.0/fs/reiserfs/README	2026-04-27 15:47:04.427478872 +0200
 @@ -0,0 +1,151 @@
 +[LICENSING]
 +
@@ -397,11 +310,9 @@ index 000000000000..11e9ecf24b63
 +than the ones just named.  SuSE has helped in much more than just
 +funding....
 +
-diff --git a/fs/reiserfs/acl.h b/fs/reiserfs/acl.h
-new file mode 100644
-index 000000000000..2571b1a8be84
---- /dev/null
-+++ b/fs/reiserfs/acl.h
+diff -urN linux-7.0.orig/fs/reiserfs/acl.h linux-7.0/fs/reiserfs/acl.h
+--- linux-7.0.orig/fs/reiserfs/acl.h	1970-01-01 01:00:00.000000000 +0100
++++ linux-7.0/fs/reiserfs/acl.h	2026-04-27 15:47:04.427505202 +0200
 @@ -0,0 +1,78 @@
 +/* SPDX-License-Identifier: GPL-2.0 */
 +#include <linux/init.h>
@@ -481,11 +392,9 @@ index 000000000000..2571b1a8be84
 +	return 0;
 +}
 +#endif
-diff --git a/fs/reiserfs/bitmap.c b/fs/reiserfs/bitmap.c
-new file mode 100644
-index 000000000000..bf708ac287b4
---- /dev/null
-+++ b/fs/reiserfs/bitmap.c
+diff -urN linux-7.0.orig/fs/reiserfs/bitmap.c linux-7.0/fs/reiserfs/bitmap.c
+--- linux-7.0.orig/fs/reiserfs/bitmap.c	1970-01-01 01:00:00.000000000 +0100
++++ linux-7.0/fs/reiserfs/bitmap.c	2026-04-27 15:47:04.427655156 +0200
 @@ -0,0 +1,1476 @@
 +/*
 + * Copyright 2000 by Hans Reiser, licensing governed by reiserfs/README
@@ -1963,11 +1872,9 @@ index 000000000000..bf708ac287b4
 +		SB_AP_BITMAP(sb) = NULL;
 +	}
 +}
-diff --git a/fs/reiserfs/dir.c b/fs/reiserfs/dir.c
-new file mode 100644
-index 000000000000..79ee2b436685
---- /dev/null
-+++ b/fs/reiserfs/dir.c
+diff -urN linux-7.0.orig/fs/reiserfs/dir.c linux-7.0/fs/reiserfs/dir.c
+--- linux-7.0.orig/fs/reiserfs/dir.c	1970-01-01 01:00:00.000000000 +0100
++++ linux-7.0/fs/reiserfs/dir.c	2026-04-27 15:47:04.427731668 +0200
 @@ -0,0 +1,346 @@
 +/*
 + * Copyright 2000 by Hans Reiser, licensing governed by reiserfs/README
@@ -2315,11 +2222,9 @@ index 000000000000..79ee2b436685
 +	memcpy(body + deh_location(dot), ".", 1);
 +	memcpy(body + deh_location(dotdot), "..", 2);
 +}
-diff --git a/fs/reiserfs/do_balan.c b/fs/reiserfs/do_balan.c
-new file mode 100644
-index 000000000000..5129efc6f2e6
---- /dev/null
-+++ b/fs/reiserfs/do_balan.c
+diff -urN linux-7.0.orig/fs/reiserfs/do_balan.c linux-7.0/fs/reiserfs/do_balan.c
+--- linux-7.0.orig/fs/reiserfs/do_balan.c	1970-01-01 01:00:00.000000000 +0100
++++ linux-7.0/fs/reiserfs/do_balan.c	2026-04-27 15:47:04.427926852 +0200
 @@ -0,0 +1,1900 @@
 +/*
 + * Copyright 2000 by Hans Reiser, licensing governed by reiserfs/README
@@ -4221,11 +4126,9 @@ index 000000000000..5129efc6f2e6
 +
 +	do_balance_completed(tb);
 +}
-diff --git a/fs/reiserfs/file.c b/fs/reiserfs/file.c
-new file mode 100644
-index 000000000000..8eb3ad3e8ae9
---- /dev/null
-+++ b/fs/reiserfs/file.c
+diff -urN linux-7.0.orig/fs/reiserfs/file.c linux-7.0/fs/reiserfs/file.c
+--- linux-7.0.orig/fs/reiserfs/file.c	1970-01-01 01:00:00.000000000 +0100
++++ linux-7.0/fs/reiserfs/file.c	2026-04-27 15:47:15.806536868 +0200
 @@ -0,0 +1,270 @@
 +/*
 + * Copyright 2000 by Hans Reiser, licensing governed by reiserfs/README
@@ -4443,7 +4346,7 @@ index 000000000000..8eb3ad3e8ae9
 +				 * of file and any buffer marked BH_New.
 +				 */
 +				if (reiserfs_data_ordered(inode->i_sb) &&
-+				    (new || page->__folio_index >= i_size_index)) {
++				    (new || page_folio(page)->index >= i_size_index)) {
 +					reiserfs_add_ordered_list(inode, bh);
 +				}
 +			}
@@ -4497,11 +4400,9 @@ index 000000000000..8eb3ad3e8ae9
 +	.fileattr_get = reiserfs_fileattr_get,
 +	.fileattr_set = reiserfs_fileattr_set,
 +};
-diff --git a/fs/reiserfs/fix_node.c b/fs/reiserfs/fix_node.c
-new file mode 100644
-index 000000000000..6c13a8d9a73c
---- /dev/null
-+++ b/fs/reiserfs/fix_node.c
+diff -urN linux-7.0.orig/fs/reiserfs/fix_node.c linux-7.0/fs/reiserfs/fix_node.c
+--- linux-7.0.orig/fs/reiserfs/fix_node.c	1970-01-01 01:00:00.000000000 +0100
++++ linux-7.0/fs/reiserfs/fix_node.c	2026-04-27 15:47:04.428280821 +0200
 @@ -0,0 +1,2822 @@
 +/*
 + * Copyright 2000 by Hans Reiser, licensing governed by reiserfs/README
@@ -7325,11 +7226,9 @@ index 000000000000..6c13a8d9a73c
 +	kfree(tb->vn_buf);
 +
 +}
-diff --git a/fs/reiserfs/hashes.c b/fs/reiserfs/hashes.c
-new file mode 100644
-index 000000000000..7a26c4fe6c46
---- /dev/null
-+++ b/fs/reiserfs/hashes.c
+diff -urN linux-7.0.orig/fs/reiserfs/hashes.c linux-7.0/fs/reiserfs/hashes.c
+--- linux-7.0.orig/fs/reiserfs/hashes.c	1970-01-01 01:00:00.000000000 +0100
++++ linux-7.0/fs/reiserfs/hashes.c	2026-04-27 15:47:04.428376453 +0200
 @@ -0,0 +1,177 @@
 +
 +/*
@@ -7508,11 +7407,9 @@ index 000000000000..7a26c4fe6c46
 +	}
 +	return a;
 +}
-diff --git a/fs/reiserfs/ibalance.c b/fs/reiserfs/ibalance.c
-new file mode 100644
-index 000000000000..5db6f45b3fed
---- /dev/null
-+++ b/fs/reiserfs/ibalance.c
+diff -urN linux-7.0.orig/fs/reiserfs/ibalance.c linux-7.0/fs/reiserfs/ibalance.c
+--- linux-7.0.orig/fs/reiserfs/ibalance.c	1970-01-01 01:00:00.000000000 +0100
++++ linux-7.0/fs/reiserfs/ibalance.c	2026-04-27 15:47:04.428497016 +0200
 @@ -0,0 +1,1161 @@
 +/*
 + * Copyright 2000 by Hans Reiser, licensing governed by reiserfs/README
@@ -8675,12 +8572,10 @@ index 000000000000..5db6f45b3fed
 +
 +	return order;
 +}
-diff --git a/fs/reiserfs/inode.c b/fs/reiserfs/inode.c
-new file mode 100644
-index 000000000000..d39ee5f6c075
---- /dev/null
-+++ b/fs/reiserfs/inode.c
-@@ -0,0 +1,3427 @@
+diff -urN linux-7.0.orig/fs/reiserfs/inode.c linux-7.0/fs/reiserfs/inode.c
+--- linux-7.0.orig/fs/reiserfs/inode.c	1970-01-01 01:00:00.000000000 +0100
++++ linux-7.0/fs/reiserfs/inode.c	2026-04-27 15:47:15.806755403 +0200
+@@ -0,0 +1,3424 @@
 +/*
 + * Copyright 2000 by Hans Reiser, licensing governed by reiserfs/README
 + */
@@ -8877,7 +8772,7 @@ index 000000000000..d39ee5f6c075
 +{
 +	struct buffer_head *head, *next, *bh;
 +
-+	if (page && PagePrivate(page)) {
++	if (page && folio_buffers(page_folio(page))) {
 +		head = page_buffers(page);
 +		bh = head;
 +		do {
@@ -9271,12 +9166,14 @@ index 000000000000..d39ee5f6c075
 +	 * hole_page can be zero in case of direct_io, we are sure
 +	 * that we cannot get here if we write with O_DIRECT into tail page
 +	 */
-+	if (!hole_page || index != hole_page->__folio_index) {
-+		tail_page = grab_cache_page(inode->i_mapping, index);
-+		retval = -ENOMEM;
-+		if (!tail_page) {
++	if (!hole_page || index != page_folio(hole_page)->index) {
++		struct folio *tail_folio = filemap_grab_folio(inode->i_mapping,
++							      index);
++		if (IS_ERR(tail_folio)) {
++			retval = -ENOMEM;
 +			goto out;
 +		}
++		tail_page = &tail_folio->page;
 +	} else {
 +		tail_page = hole_page;
 +	}
@@ -11003,7 +10900,7 @@ index 000000000000..d39ee5f6c075
 +		/* if we are not on a block boundary */
 +		if (length) {
 +			length = blocksize - length;
-+			zero_user(page, offset, length);
++			folio_zero_range(page_folio(page), offset, length);
 +			if (buffer_mapped(bh) && bh->b_blocknr != 0) {
 +				mark_buffer_dirty(bh);
 +			}
@@ -11186,7 +11083,7 @@ index 000000000000..d39ee5f6c075
 + * code to handle reiserfs tails.
 + */
 +static int reiserfs_write_folio(struct folio *folio,
-+		struct writeback_control *wbc, void *data)
++		struct writeback_control *wbc)
 +{
 +	struct inode *inode = folio->mapping->host;
 +	unsigned long end_index = inode->i_size >> PAGE_SHIFT;
@@ -11402,22 +11299,16 @@ index 000000000000..d39ee5f6c075
 +	return block_read_full_folio(folio, reiserfs_get_block);
 +}
 +
-+static int reiserfs_write_cache_pages(struct address_space *mapping,
-+		struct writeback_control *wbc, void *data)
-+{
-+       struct folio *folio = NULL;
-+       int error;
-+
-+       while ((folio = writeback_iter(mapping, wbc, folio, &error)))
-+               error = reiserfs_write_folio(folio, wbc, data);
-+       return error;
-+}
-+
 +static int reiserfs_writepages(struct address_space *mapping,
 +		struct writeback_control *wbc)
 +{
++	struct folio *folio = NULL;
++	int error = 0;
++
 +	reiserfs_wait_on_write_block(mapping->host->i_sb);
-+	return reiserfs_write_cache_pages(mapping, wbc, NULL);
++	while ((folio = writeback_iter(mapping, wbc, folio, &error)))
++		error = reiserfs_write_folio(folio, wbc);
++	return error;
 +}
 +
 +static void reiserfs_truncate_failed_write(struct inode *inode)
@@ -11426,7 +11317,7 @@ index 000000000000..d39ee5f6c075
 +	reiserfs_truncate_file(inode, 0);
 +}
 +
-+static int reiserfs_write_begin(struct file *file,
++static int reiserfs_write_begin(const struct kiocb *iocb,
 +				struct address_space *mapping,
 +				loff_t pos, unsigned len,
 +				struct folio **foliop, void **fsdata)
@@ -11554,7 +11445,8 @@ index 000000000000..d39ee5f6c075
 +	return generic_block_bmap(as, block, reiserfs_bmap);
 +}
 +
-+static int reiserfs_write_end(struct file *file, struct address_space *mapping,
++static int reiserfs_write_end(const struct kiocb *iocb,
++			      struct address_space *mapping,
 +			      loff_t pos, unsigned len, unsigned copied,
 +			      struct folio *folio, void *fsdata)
 +{
@@ -11658,7 +11550,7 @@ index 000000000000..d39ee5f6c075
 +			  unsigned from, unsigned to)
 +{
 +	struct inode *inode = page->mapping->host;
-+	loff_t pos = ((loff_t) page->__folio_index << PAGE_SHIFT) + to;
++	loff_t pos = ((loff_t) page_folio(page)->index << PAGE_SHIFT) + to;
 +	int ret = 0;
 +	int update_sd = 0;
 +	struct reiserfs_transaction_handle *th = NULL;
@@ -12108,12 +12000,10 @@ index 000000000000..d39ee5f6c075
 +	.dirty_folio = reiserfs_dirty_folio,
 +	.migrate_folio = buffer_migrate_folio,
 +};
-diff --git a/fs/reiserfs/ioctl.c b/fs/reiserfs/ioctl.c
-new file mode 100644
-index 000000000000..dd33f8cc6eda
---- /dev/null
-+++ b/fs/reiserfs/ioctl.c
-@@ -0,0 +1,221 @@
+diff -urN linux-7.0.orig/fs/reiserfs/ioctl.c linux-7.0/fs/reiserfs/ioctl.c
+--- linux-7.0.orig/fs/reiserfs/ioctl.c	1970-01-01 01:00:00.000000000 +0100
++++ linux-7.0/fs/reiserfs/ioctl.c	2026-04-27 15:47:15.806908057 +0200
+@@ -0,0 +1,225 @@
 +/*
 + * Copyright 2000 by Hans Reiser, licensing governed by reiserfs/README
 + */
@@ -12312,10 +12202,14 @@ index 000000000000..dd33f8cc6eda
 +	 */
 +	index = inode->i_size >> PAGE_SHIFT;
 +	mapping = inode->i_mapping;
-+	page = grab_cache_page(mapping, index);
-+	retval = -ENOMEM;
-+	if (!page) {
-+		goto out;
++	{
++		struct folio *folio = filemap_grab_folio(mapping, index);
++
++		if (IS_ERR(folio)) {
++			retval = -ENOMEM;
++			goto out;
++		}
++		page = &folio->page;
 +	}
 +	retval = __reiserfs_write_begin(page, write_from, 0);
 +	if (retval)
@@ -12335,11 +12229,9 @@ index 000000000000..dd33f8cc6eda
 +	reiserfs_write_unlock(inode->i_sb);
 +	return retval;
 +}
-diff --git a/fs/reiserfs/item_ops.c b/fs/reiserfs/item_ops.c
-new file mode 100644
-index 000000000000..5011c10287c6
---- /dev/null
-+++ b/fs/reiserfs/item_ops.c
+diff -urN linux-7.0.orig/fs/reiserfs/item_ops.c linux-7.0/fs/reiserfs/item_ops.c
+--- linux-7.0.orig/fs/reiserfs/item_ops.c	1970-01-01 01:00:00.000000000 +0100
++++ linux-7.0/fs/reiserfs/item_ops.c	2026-04-27 15:47:04.429182883 +0200
 @@ -0,0 +1,737 @@
 +/*
 + * Copyright 2000 by Hans Reiser, licensing governed by reiserfs/README
@@ -13078,11 +12970,9 @@ index 000000000000..5011c10287c6
 +	NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
 +	&errcatch_ops		/* This is to catch errors with invalid type (15th entry for TYPE_ANY) */
 +};
-diff --git a/fs/reiserfs/journal.c b/fs/reiserfs/journal.c
-new file mode 100644
-index 000000000000..e477ee0ff35d
---- /dev/null
-+++ b/fs/reiserfs/journal.c
+diff -urN linux-7.0.orig/fs/reiserfs/journal.c linux-7.0/fs/reiserfs/journal.c
+--- linux-7.0.orig/fs/reiserfs/journal.c	1970-01-01 01:00:00.000000000 +0100
++++ linux-7.0/fs/reiserfs/journal.c	2026-04-27 15:47:04.429586783 +0200
 @@ -0,0 +1,4404 @@
 +// SPDX-License-Identifier: GPL-2.0
 +/*
@@ -17488,11 +17378,9 @@ index 000000000000..e477ee0ff35d
 +	dump_stack();
 +#endif
 +}
-diff --git a/fs/reiserfs/lbalance.c b/fs/reiserfs/lbalance.c
-new file mode 100644
-index 000000000000..7f868569d4d0
---- /dev/null
-+++ b/fs/reiserfs/lbalance.c
+diff -urN linux-7.0.orig/fs/reiserfs/lbalance.c linux-7.0/fs/reiserfs/lbalance.c
+--- linux-7.0.orig/fs/reiserfs/lbalance.c	1970-01-01 01:00:00.000000000 +0100
++++ linux-7.0/fs/reiserfs/lbalance.c	2026-04-27 15:47:04.429824799 +0200
 @@ -0,0 +1,1426 @@
 +/*
 + * Copyright 2000 by Hans Reiser, licensing governed by reiserfs/README
@@ -18920,11 +18808,9 @@ index 000000000000..7f868569d4d0
 +#endif
 +
 +}
-diff --git a/fs/reiserfs/lock.c b/fs/reiserfs/lock.c
-new file mode 100644
-index 000000000000..46bd7bd63a71
---- /dev/null
-+++ b/fs/reiserfs/lock.c
+diff -urN linux-7.0.orig/fs/reiserfs/lock.c linux-7.0/fs/reiserfs/lock.c
+--- linux-7.0.orig/fs/reiserfs/lock.c	1970-01-01 01:00:00.000000000 +0100
++++ linux-7.0/fs/reiserfs/lock.c	2026-04-27 15:47:04.429902211 +0200
 @@ -0,0 +1,101 @@
 +// SPDX-License-Identifier: GPL-2.0
 +#include "reiserfs.h"
@@ -19027,11 +18913,9 @@ index 000000000000..46bd7bd63a71
 +	WARN_ONCE((sb_i->lock_depth > 0), "Unwanted recursive reiserfs lock!\n");
 +}
 +#endif
-diff --git a/fs/reiserfs/namei.c b/fs/reiserfs/namei.c
-new file mode 100644
-index 000000000000..7e7b531fcc49
---- /dev/null
-+++ b/fs/reiserfs/namei.c
+diff -urN linux-7.0.orig/fs/reiserfs/namei.c linux-7.0/fs/reiserfs/namei.c
+--- linux-7.0.orig/fs/reiserfs/namei.c	1970-01-01 01:00:00.000000000 +0100
++++ linux-7.0/fs/reiserfs/namei.c	2026-04-27 15:47:15.807007559 +0200
 @@ -0,0 +1,1725 @@
 +/*
 + * Copyright 2000 by Hans Reiser, licensing governed by reiserfs/README
@@ -19810,8 +19694,8 @@ index 000000000000..7e7b531fcc49
 +	return retval;
 +}
 +
-+static struct dentry* reiserfs_mkdir(struct mnt_idmap *idmap, struct inode *dir,
-+				      struct dentry *dentry, umode_t mode)
++static struct dentry *reiserfs_mkdir(struct mnt_idmap *idmap, struct inode *dir,
++				     struct dentry *dentry, umode_t mode)
 +{
 +	int retval;
 +	struct inode *inode;
@@ -19907,7 +19791,7 @@ index 000000000000..7e7b531fcc49
 +out_failed:
 +	reiserfs_write_unlock(dir->i_sb);
 +	reiserfs_security_free(&security);
-+	return retval ? ERR_PTR(retval) : NULL;
++	return ERR_PTR(retval);
 +}
 +
 +static inline int reiserfs_empty_dir(struct inode *inode)
@@ -20758,11 +20642,9 @@ index 000000000000..7e7b531fcc49
 +	.get_inode_acl = reiserfs_get_acl,
 +	.set_acl = reiserfs_set_acl,
 +};
-diff --git a/fs/reiserfs/objectid.c b/fs/reiserfs/objectid.c
-new file mode 100644
-index 000000000000..34baf5c0f265
---- /dev/null
-+++ b/fs/reiserfs/objectid.c
+diff -urN linux-7.0.orig/fs/reiserfs/objectid.c linux-7.0/fs/reiserfs/objectid.c
+--- linux-7.0.orig/fs/reiserfs/objectid.c	1970-01-01 01:00:00.000000000 +0100
++++ linux-7.0/fs/reiserfs/objectid.c	2026-04-27 15:47:04.430131216 +0200
 @@ -0,0 +1,216 @@
 +/*
 + * Copyright 2000 by Hans Reiser, licensing governed by reiserfs/README
@@ -20980,11 +20862,9 @@ index 000000000000..34baf5c0f265
 +	memset(disk_sb->s_unused, 0, sizeof(disk_sb->s_unused));
 +	return 0;
 +}
-diff --git a/fs/reiserfs/prints.c b/fs/reiserfs/prints.c
-new file mode 100644
-index 000000000000..84a194b77f19
---- /dev/null
-+++ b/fs/reiserfs/prints.c
+diff -urN linux-7.0.orig/fs/reiserfs/prints.c linux-7.0/fs/reiserfs/prints.c
+--- linux-7.0.orig/fs/reiserfs/prints.c	1970-01-01 01:00:00.000000000 +0100
++++ linux-7.0/fs/reiserfs/prints.c	2026-04-27 15:47:04.430215898 +0200
 @@ -0,0 +1,792 @@
 +/*
 + * Copyright 2000 by Hans Reiser, licensing governed by reiserfs/README
@@ -21778,11 +21658,9 @@ index 000000000000..84a194b77f19
 +	 */
 +
 +}
-diff --git a/fs/reiserfs/procfs.c b/fs/reiserfs/procfs.c
-new file mode 100644
-index 000000000000..5c68a4a52d78
---- /dev/null
-+++ b/fs/reiserfs/procfs.c
+diff -urN linux-7.0.orig/fs/reiserfs/procfs.c linux-7.0/fs/reiserfs/procfs.c
+--- linux-7.0.orig/fs/reiserfs/procfs.c	1970-01-01 01:00:00.000000000 +0100
++++ linux-7.0/fs/reiserfs/procfs.c	2026-04-27 15:47:04.430285540 +0200
 @@ -0,0 +1,490 @@
 +/* -*- linux-c -*- */
 +
@@ -22274,11 +22152,9 @@ index 000000000000..5c68a4a52d78
 + * (available at http://www.namesys.com/legalese.html)
 + *
 + */
-diff --git a/fs/reiserfs/reiserfs.h b/fs/reiserfs/reiserfs.h
-new file mode 100644
-index 000000000000..12fc20af8e17
---- /dev/null
-+++ b/fs/reiserfs/reiserfs.h
+diff -urN linux-7.0.orig/fs/reiserfs/reiserfs.h linux-7.0/fs/reiserfs/reiserfs.h
+--- linux-7.0.orig/fs/reiserfs/reiserfs.h	1970-01-01 01:00:00.000000000 +0100
++++ linux-7.0/fs/reiserfs/reiserfs.h	2026-04-27 15:47:15.807217804 +0200
 @@ -0,0 +1,3419 @@
 +/* SPDX-License-Identifier: GPL-2.0 */
 +/*
@@ -25699,11 +25575,9 @@ index 000000000000..12fc20af8e17
 +long reiserfs_compat_ioctl(struct file *filp,
 +		   unsigned int cmd, unsigned long arg);
 +int reiserfs_unpack(struct inode *inode);
-diff --git a/fs/reiserfs/resize.c b/fs/reiserfs/resize.c
-new file mode 100644
-index 000000000000..7b498a0d060b
---- /dev/null
-+++ b/fs/reiserfs/resize.c
+diff -urN linux-7.0.orig/fs/reiserfs/resize.c linux-7.0/fs/reiserfs/resize.c
+--- linux-7.0.orig/fs/reiserfs/resize.c	1970-01-01 01:00:00.000000000 +0100
++++ linux-7.0/fs/reiserfs/resize.c	2026-04-27 15:47:04.430758591 +0200
 @@ -0,0 +1,230 @@
 +/*
 + * Copyright 2000 by Hans Reiser, licensing governed by reiserfs/README
@@ -25935,11 +25809,9 @@ index 000000000000..7b498a0d060b
 +	SB_JOURNAL(s)->j_must_wait = 1;
 +	return journal_end(&th);
 +}
-diff --git a/fs/reiserfs/stree.c b/fs/reiserfs/stree.c
-new file mode 100644
-index 000000000000..5faf702f8d15
---- /dev/null
-+++ b/fs/reiserfs/stree.c
+diff -urN linux-7.0.orig/fs/reiserfs/stree.c linux-7.0/fs/reiserfs/stree.c
+--- linux-7.0.orig/fs/reiserfs/stree.c	1970-01-01 01:00:00.000000000 +0100
++++ linux-7.0/fs/reiserfs/stree.c	2026-04-27 15:47:15.807371648 +0200
 @@ -0,0 +1,2280 @@
 +/*
 + *  Copyright 2000 by Hans Reiser, licensing governed by reiserfs/README
@@ -27469,7 +27341,7 @@ index 000000000000..5faf702f8d15
 +	unsigned long cur_index;
 +
 +	if (page) {
-+		if (PagePrivate(page)) {
++		if (folio_buffers(page_folio(page))) {
 +			tail_index = pos & (PAGE_SIZE - 1);
 +			cur_index = 0;
 +			head = page_buffers(page);
@@ -28221,12 +28093,10 @@ index 000000000000..5faf702f8d15
 +	}
 +	return retval;
 +}
-diff --git a/fs/reiserfs/super.c b/fs/reiserfs/super.c
-new file mode 100644
-index 000000000000..ab76468da02d
---- /dev/null
-+++ b/fs/reiserfs/super.c
-@@ -0,0 +1,2646 @@
+diff -urN linux-7.0.orig/fs/reiserfs/super.c linux-7.0/fs/reiserfs/super.c
+--- linux-7.0.orig/fs/reiserfs/super.c	1970-01-01 01:00:00.000000000 +0100
++++ linux-7.0/fs/reiserfs/super.c	2026-04-27 15:47:12.437793066 +0200
+@@ -0,0 +1,2719 @@
 +/*
 + * Copyright 2000 by Hans Reiser, licensing governed by reiserfs/README
 + *
@@ -28259,8 +28129,19 @@ index 000000000000..ab76468da02d
 +#include <linux/namei.h>
 +#include <linux/crc32.h>
 +#include <linux/seq_file.h>
++#include <linux/fs_context.h>
++#include <linux/fs_parser.h>
 +
 +struct file_system_type reiserfs_fs_type;
++
++/*
++ * Per-mount fs_context state.  We only need to carry the raw options
++ * string through parse_monolithic -> get_tree / reconfigure; the actual
++ * option decoding is still done by the legacy reiserfs_parse_options().
++ */
++struct reiserfs_fs_context {
++	char *opts;
++};
 +
 +static const char reiserfs_3_5_magic_string[] = REISERFS_SUPER_MAGIC_STRING;
 +static const char reiserfs_3_6_magic_string[] = REISER2FS_SUPER_MAGIC_STRING;
@@ -28292,6 +28173,7 @@ index 000000000000..ab76468da02d
 +
 +static int reiserfs_remount(struct super_block *s, int *flags, char *data);
 +static int reiserfs_statfs(struct dentry *dentry, struct kstatfs *buf);
++static int reiserfs_fill_super(struct super_block *s, struct fs_context *fc);
 +
 +static int reiserfs_sync_fs(struct super_block *s, int wait)
 +{
@@ -29047,7 +28929,6 @@ index 000000000000..ab76468da02d
 +	.freeze_fs = reiserfs_freeze,
 +	.unfreeze_fs = reiserfs_unfreeze,
 +	.statfs = reiserfs_statfs,
-+	.remount_fs = reiserfs_remount,
 +	.show_options = reiserfs_show_options,
 +#ifdef CONFIG_QUOTA
 +	.quota_read = reiserfs_quota_read,
@@ -29881,7 +29762,7 @@ index 000000000000..ab76468da02d
 +	}
 +
 +	reiserfs_warning(NULL, "", "reiserfs filesystem is deprecated and "
-+		"scheduled to be removed from the kernel in 2025");
++		"was removed from the kernel 6.13 in 2025");
 +	SB_BUFFER_WITH_SB(s) = bh;
 +	SB_DISK_SUPER_BLOCK(s) = rs;
 +
@@ -30113,7 +29994,7 @@ index 000000000000..ab76468da02d
 +	if (!(silent))				\
 +		reiserfs_warning(s, id, __VA_ARGS__)
 +
-+static int reiserfs_fill_super(struct super_block *s, void *data, int silent)
++static int reiserfs_fill_super(struct super_block *s, struct fs_context *fc)
 +{
 +	struct inode *root_inode;
 +	struct reiserfs_transaction_handle th;
@@ -30128,6 +30009,9 @@ index 000000000000..ab76468da02d
 +	int errval = -EINVAL;
 +	char *qf_names[REISERFS_MAXQUOTAS] = {};
 +	unsigned int qfmt = 0;
++	struct reiserfs_fs_context *ctx = fc->fs_private;
++	char *data = ctx ? ctx->opts : NULL;
++	int silent = fc->sb_flags & SB_SILENT;
 +
 +	sbi = kzalloc(sizeof(struct reiserfs_sb_info), GFP_KERNEL);
 +	if (!sbi)
@@ -30295,7 +30179,7 @@ index 000000000000..ab76468da02d
 +	 */
 +	reiserfs_write_lock(s);
 +
-+	if (root_inode->i_state & I_NEW) {
++	if (inode_state_read_once(root_inode) & I_NEW) {
 +		reiserfs_read_locked_inode(root_inode, &args);
 +		unlock_new_inode(root_inode);
 +	}
@@ -30822,11 +30706,70 @@ index 000000000000..ab76468da02d
 +
 +#endif
 +
-+static struct dentry *get_super_block(struct file_system_type *fs_type,
-+			   int flags, const char *dev_name,
-+			   void *data)
++/*
++ * fs_context plumbing.  ReiserFS keeps its historical string-based option
++ * parser (reiserfs_parse_options) untouched: we stash the raw "data"
++ * argument in a small context struct via ->parse_monolithic and then hand
++ * it to the parser from fill_super / remount, exactly as the legacy
++ * mount_bdev path used to.
++ */
++
++static int reiserfs_parse_monolithic(struct fs_context *fc, void *data)
 +{
-+	return mount_bdev(fs_type, flags, dev_name, data, reiserfs_fill_super);
++	struct reiserfs_fs_context *ctx = fc->fs_private;
++
++	kfree(ctx->opts);
++	ctx->opts = NULL;
++	if (data) {
++		ctx->opts = kstrdup(data, GFP_KERNEL);
++		if (!ctx->opts)
++			return -ENOMEM;
++	}
++	return 0;
++}
++
++static int reiserfs_get_tree(struct fs_context *fc)
++{
++	return get_tree_bdev(fc, reiserfs_fill_super);
++}
++
++static int reiserfs_reconfigure(struct fs_context *fc)
++{
++	struct super_block *sb = fc->root->d_sb;
++	struct reiserfs_fs_context *ctx = fc->fs_private;
++	int flags = fc->sb_flags;
++
++	return reiserfs_remount(sb, &flags, ctx ? ctx->opts : NULL);
++}
++
++static void reiserfs_free_fc(struct fs_context *fc)
++{
++	struct reiserfs_fs_context *ctx = fc->fs_private;
++
++	if (ctx) {
++		kfree(ctx->opts);
++		kfree(ctx);
++	}
++}
++
++static const struct fs_context_operations reiserfs_context_ops = {
++	.parse_monolithic	= reiserfs_parse_monolithic,
++	.get_tree		= reiserfs_get_tree,
++	.reconfigure		= reiserfs_reconfigure,
++	.free			= reiserfs_free_fc,
++};
++
++static int reiserfs_init_fs_context(struct fs_context *fc)
++{
++	struct reiserfs_fs_context *ctx;
++
++	ctx = kzalloc(sizeof(*ctx), GFP_KERNEL);
++	if (!ctx)
++		return -ENOMEM;
++
++	fc->fs_private = ctx;
++	fc->ops = &reiserfs_context_ops;
++	return 0;
 +}
 +
 +static int __init init_reiserfs_fs(void)
@@ -30861,7 +30804,7 @@ index 000000000000..ab76468da02d
 +struct file_system_type reiserfs_fs_type = {
 +	.owner = THIS_MODULE,
 +	.name = "reiserfs",
-+	.mount = get_super_block,
++	.init_fs_context = reiserfs_init_fs_context,
 +	.kill_sb = reiserfs_kill_sb,
 +	.fs_flags = FS_REQUIRES_DEV,
 +};
@@ -30873,11 +30816,9 @@ index 000000000000..ab76468da02d
 +
 +module_init(init_reiserfs_fs);
 +module_exit(exit_reiserfs_fs);
-diff --git a/fs/reiserfs/tail_conversion.c b/fs/reiserfs/tail_conversion.c
-new file mode 100644
-index 000000000000..2cec61af2a9e
---- /dev/null
-+++ b/fs/reiserfs/tail_conversion.c
+diff -urN linux-7.0.orig/fs/reiserfs/tail_conversion.c linux-7.0/fs/reiserfs/tail_conversion.c
+--- linux-7.0.orig/fs/reiserfs/tail_conversion.c	1970-01-01 01:00:00.000000000 +0100
++++ linux-7.0/fs/reiserfs/tail_conversion.c	2026-04-27 15:47:04.431341546 +0200
 @@ -0,0 +1,318 @@
 +// SPDX-License-Identifier: GPL-2.0
 +/*
@@ -31197,12 +31138,10 @@ index 000000000000..2cec61af2a9e
 +
 +	return block_size - round_tail_len;
 +}
-diff --git a/fs/reiserfs/xattr.c b/fs/reiserfs/xattr.c
-new file mode 100644
-index 000000000000..998035a6388e
---- /dev/null
-+++ b/fs/reiserfs/xattr.c
-@@ -0,0 +1,1038 @@
+diff -urN linux-7.0.orig/fs/reiserfs/xattr.c linux-7.0/fs/reiserfs/xattr.c
+--- linux-7.0.orig/fs/reiserfs/xattr.c	1970-01-01 01:00:00.000000000 +0100
++++ linux-7.0/fs/reiserfs/xattr.c	2026-04-27 15:47:15.807463290 +0200
+@@ -0,0 +1,1047 @@
 +// SPDX-License-Identifier: GPL-2.0
 +/*
 + * linux/fs/reiserfs/xattr.c
@@ -31365,7 +31304,7 @@ index 000000000000..998035a6388e
 +
 +	inode_lock_nested(d_inode(xaroot), I_MUTEX_XATTR);
 +
-+	xadir = lookup_noperm(&QSTR(namebuf), xaroot);
++	xadir = lookup_one(&nop_mnt_idmap, &QSTR(namebuf), xaroot);
 +	if (!IS_ERR(xadir) && d_really_is_negative(xadir)) {
 +		int err = -ENODATA;
 +
@@ -31412,7 +31351,7 @@ index 000000000000..998035a6388e
 +			       (namelen == 2 && name[1] == '.')))
 +		return true;
 +
-+	dentry = lookup_noperm(&QSTR(name), dbuf->xadir);
++	dentry = lookup_one(&nop_mnt_idmap, &QSTR_LEN(name, namelen), dbuf->xadir);
 +	if (IS_ERR(dentry)) {
 +		dbuf->err = PTR_ERR(dentry);
 +		return false;
@@ -31603,7 +31542,7 @@ index 000000000000..998035a6388e
 +		return ERR_CAST(xadir);
 +
 +	inode_lock_nested(d_inode(xadir), I_MUTEX_XATTR);
-+	xafile = lookup_noperm(&QSTR(name), xadir);
++	xafile = lookup_one(&nop_mnt_idmap, &QSTR(name), xadir);
 +	if (IS_ERR(xafile)) {
 +		err = PTR_ERR(xafile);
 +		goto out;
@@ -31691,7 +31630,7 @@ index 000000000000..998035a6388e
 +		return PTR_ERR(xadir);
 +
 +	inode_lock_nested(d_inode(xadir), I_MUTEX_XATTR);
-+	dentry = lookup_noperm(&QSTR(name), xadir);
++	dentry = lookup_one(&nop_mnt_idmap, &QSTR(name), xadir);
 +	if (IS_ERR(dentry)) {
 +		err = PTR_ERR(dentry);
 +		goto out_dput;
@@ -32163,8 +32102,8 @@ index 000000000000..998035a6388e
 +	return generic_permission(&nop_mnt_idmap, inode, mask);
 +}
 +
-+static int xattr_hide_revalidate(struct inode *, const struct qstr *,
-+				  struct dentry *, unsigned int)
++static int xattr_hide_revalidate(struct inode *dir, const struct qstr *name,
++				 struct dentry *dentry, unsigned int flags)
 +{
 +	return -EPERM;
 +}
@@ -32180,10 +32119,18 @@ index 000000000000..998035a6388e
 +
 +	/* If we don't have the privroot located yet - go find it */
 +	inode_lock(d_inode(s->s_root));
-+	dentry = lookup_noperm(&QSTR(PRIVROOT_NAME), s->s_root);
++	dentry = lookup_one(&nop_mnt_idmap, &QSTR(PRIVROOT_NAME),
++			    s->s_root);
 +	if (!IS_ERR(dentry)) {
 +		REISERFS_SB(s)->priv_root = dentry;
-+		d_set_d_op(dentry, &xattr_lookup_poison_ops);
++		/*
++		 * d_set_d_op() is no longer exported; we have to install the
++		 * operations and the matching DCACHE_OP_REVALIDATE flag by
++		 * hand.  xattr_lookup_poison_ops only implements
++		 * ->d_revalidate, so this is the only flag we need.
++		 */
++		dentry->d_op = &xattr_lookup_poison_ops;
++		dentry->d_flags |= DCACHE_OP_REVALIDATE;
 +		if (d_really_is_positive(dentry))
 +			reiserfs_init_priv_inode(d_inode(dentry));
 +	} else
@@ -32218,7 +32165,8 @@ index 000000000000..998035a6388e
 +		if (!REISERFS_SB(s)->xattr_root) {
 +			struct dentry *dentry;
 +
-+			dentry = lookup_noperm(&QSTR(XAROOT_NAME), privroot);
++			dentry = lookup_one(&nop_mnt_idmap, &QSTR(XAROOT_NAME),
++					    privroot);
 +			if (!IS_ERR(dentry))
 +				REISERFS_SB(s)->xattr_root = dentry;
 +			else
@@ -32241,11 +32189,9 @@ index 000000000000..998035a6388e
 +
 +	return err;
 +}
-diff --git a/fs/reiserfs/xattr.h b/fs/reiserfs/xattr.h
-new file mode 100644
-index 000000000000..5868a4e990e3
---- /dev/null
-+++ b/fs/reiserfs/xattr.h
+diff -urN linux-7.0.orig/fs/reiserfs/xattr.h linux-7.0/fs/reiserfs/xattr.h
+--- linux-7.0.orig/fs/reiserfs/xattr.h	1970-01-01 01:00:00.000000000 +0100
++++ linux-7.0/fs/reiserfs/xattr.h	2026-04-27 15:47:04.431494169 +0200
 @@ -0,0 +1,117 @@
 +/* SPDX-License-Identifier: GPL-2.0 */
 +#include <linux/reiserfs_xattr.h>
@@ -32364,15 +32310,14 @@ index 000000000000..5868a4e990e3
 +static inline void reiserfs_security_free(struct reiserfs_security_handle *sec)
 +{}
 +#endif
-diff --git a/fs/reiserfs/xattr_acl.c b/fs/reiserfs/xattr_acl.c
-new file mode 100644
-index 000000000000..064264992b49
---- /dev/null
-+++ b/fs/reiserfs/xattr_acl.c
-@@ -0,0 +1,411 @@
+diff -urN linux-7.0.orig/fs/reiserfs/xattr_acl.c linux-7.0/fs/reiserfs/xattr_acl.c
+--- linux-7.0.orig/fs/reiserfs/xattr_acl.c	1970-01-01 01:00:00.000000000 +0100
++++ linux-7.0/fs/reiserfs/xattr_acl.c	2026-04-27 15:47:15.807524452 +0200
+@@ -0,0 +1,412 @@
 +// SPDX-License-Identifier: GPL-2.0
 +#include <linux/capability.h>
 +#include <linux/fs.h>
++#include <linux/fs_struct.h>
 +#include <linux/posix_acl.h>
 +#include "reiserfs.h"
 +#include <linux/errno.h>
@@ -32781,11 +32726,9 @@ index 000000000000..064264992b49
 +
 +	return posix_acl_chmod(&nop_mnt_idmap, dentry, inode->i_mode);
 +}
-diff --git a/fs/reiserfs/xattr_security.c b/fs/reiserfs/xattr_security.c
-new file mode 100644
-index 000000000000..078dd8cc312f
---- /dev/null
-+++ b/fs/reiserfs/xattr_security.c
+diff -urN linux-7.0.orig/fs/reiserfs/xattr_security.c linux-7.0/fs/reiserfs/xattr_security.c
+--- linux-7.0.orig/fs/reiserfs/xattr_security.c	1970-01-01 01:00:00.000000000 +0100
++++ linux-7.0/fs/reiserfs/xattr_security.c	2026-04-27 15:47:04.431579051 +0200
 @@ -0,0 +1,127 @@
 +// SPDX-License-Identifier: GPL-2.0
 +#include "reiserfs.h"
@@ -32914,11 +32857,9 @@ index 000000000000..078dd8cc312f
 +	.set = security_set,
 +	.list = security_list,
 +};
-diff --git a/fs/reiserfs/xattr_trusted.c b/fs/reiserfs/xattr_trusted.c
-new file mode 100644
-index 000000000000..0c0c74d8db0e
---- /dev/null
-+++ b/fs/reiserfs/xattr_trusted.c
+diff -urN linux-7.0.orig/fs/reiserfs/xattr_trusted.c linux-7.0/fs/reiserfs/xattr_trusted.c
+--- linux-7.0.orig/fs/reiserfs/xattr_trusted.c	1970-01-01 01:00:00.000000000 +0100
++++ linux-7.0/fs/reiserfs/xattr_trusted.c	2026-04-27 15:47:04.431598272 +0200
 @@ -0,0 +1,46 @@
 +// SPDX-License-Identifier: GPL-2.0
 +#include "reiserfs.h"
@@ -32966,11 +32907,9 @@ index 000000000000..0c0c74d8db0e
 +	.set = trusted_set,
 +	.list = trusted_list,
 +};
-diff --git a/fs/reiserfs/xattr_user.c b/fs/reiserfs/xattr_user.c
-new file mode 100644
-index 000000000000..88195181e1d7
---- /dev/null
-+++ b/fs/reiserfs/xattr_user.c
+diff -urN linux-7.0.orig/fs/reiserfs/xattr_user.c linux-7.0/fs/reiserfs/xattr_user.c
+--- linux-7.0.orig/fs/reiserfs/xattr_user.c	1970-01-01 01:00:00.000000000 +0100
++++ linux-7.0/fs/reiserfs/xattr_user.c	2026-04-27 15:47:04.431617322 +0200
 @@ -0,0 +1,43 @@
 +// SPDX-License-Identifier: GPL-2.0
 +#include "reiserfs.h"
@@ -33015,11 +32954,9 @@ index 000000000000..88195181e1d7
 +	.set = user_set,
 +	.list = user_list,
 +};
-diff --git a/include/uapi/linux/reiserfs_fs.h b/include/uapi/linux/reiserfs_fs.h
-new file mode 100644
-index 000000000000..5bb921409f2b
---- /dev/null
-+++ b/include/uapi/linux/reiserfs_fs.h
+diff -urN linux-7.0.orig/include/uapi/linux/reiserfs_fs.h linux-7.0/include/uapi/linux/reiserfs_fs.h
+--- linux-7.0.orig/include/uapi/linux/reiserfs_fs.h	1970-01-01 01:00:00.000000000 +0100
++++ linux-7.0/include/uapi/linux/reiserfs_fs.h	2026-04-27 15:47:04.431646983 +0200
 @@ -0,0 +1,27 @@
 +/* SPDX-License-Identifier: GPL-2.0 WITH Linux-syscall-note */
 +/*
@@ -33048,11 +32985,9 @@ index 000000000000..5bb921409f2b
 +#define REISERFS_IOC_SETVERSION		FS_IOC_SETVERSION
 +
 +#endif				/* _LINUX_REISER_FS_H */
-diff --git a/include/uapi/linux/reiserfs_xattr.h b/include/uapi/linux/reiserfs_xattr.h
-new file mode 100644
-index 000000000000..503ad018ce5b
---- /dev/null
-+++ b/include/uapi/linux/reiserfs_xattr.h
+diff -urN linux-7.0.orig/include/uapi/linux/reiserfs_xattr.h linux-7.0/include/uapi/linux/reiserfs_xattr.h
+--- linux-7.0.orig/include/uapi/linux/reiserfs_xattr.h	1970-01-01 01:00:00.000000000 +0100
++++ linux-7.0/include/uapi/linux/reiserfs_xattr.h	2026-04-27 15:47:04.431668764 +0200
 @@ -0,0 +1,25 @@
 +/* SPDX-License-Identifier: GPL-2.0 WITH Linux-syscall-note */
 +/*
@@ -33079,156 +33014,3 @@ index 000000000000..503ad018ce5b
 +};
 +
 +#endif  /*  _LINUX_REISERFS_XATTR_H  */
---- linux-6.17/fs/reiserfs/inode.c.vanilla	2025-10-05 19:57:56.454018155 +0200
-+++ linux-6.17/fs/reiserfs/inode.c	2025-10-05 20:45:43.273329102 +0200
-@@ -589,7 +589,7 @@
- 	 * that we cannot get here if we write with O_DIRECT into tail page
- 	 */
- 	if (!hole_page || index != hole_page->__folio_index) {
--		tail_page = grab_cache_page(inode->i_mapping, index);
-+		tail_page = find_or_create_page(inode->i_mapping, index, mapping_gfp_mask(inode->i_mapping));
- 		retval = -ENOMEM;
- 		if (!tail_page) {
- 			goto out;
-@@ -2320,7 +2320,7 @@
- 		/* if we are not on a block boundary */
- 		if (length) {
- 			length = blocksize - length;
--			zero_user(page, offset, length);
-+			memzero_page(page, offset, length);
- 			if (buffer_mapped(bh) && bh->b_blocknr != 0) {
- 				mark_buffer_dirty(bh);
- 			}
-@@ -2732,7 +2732,7 @@
- 	reiserfs_truncate_file(inode, 0);
- }
- 
--static int reiserfs_write_begin(struct file *file,
-+static int reiserfs_write_begin(const struct kiocb *iocb,
- 				struct address_space *mapping,
- 				loff_t pos, unsigned len,
- 				struct folio **foliop, void **fsdata)
-@@ -2860,7 +2860,7 @@
- 	return generic_block_bmap(as, block, reiserfs_bmap);
- }
- 
--static int reiserfs_write_end(struct file *file, struct address_space *mapping,
-+static int reiserfs_write_end(const struct kiocb *iocb, struct address_space *mapping,
- 			      loff_t pos, unsigned len, unsigned copied,
- 			      struct folio *folio, void *fsdata)
- {
---- linux-6.17/fs/reiserfs/ioctl.c.vanilla	2025-10-05 20:16:54.865849735 +0200
-+++ linux-6.17/fs/reiserfs/ioctl.c	2025-10-05 20:17:29.580863031 +0200
-@@ -196,7 +196,7 @@
- 	 */
- 	index = inode->i_size >> PAGE_SHIFT;
- 	mapping = inode->i_mapping;
--	page = grab_cache_page(mapping, index);
-+	page = find_or_create_page(mapping, index, mapping_gfp_mask(mapping));
- 	retval = -ENOMEM;
- 	if (!page) {
- 		goto out;
---- linux-6.17/fs/reiserfs/xattr.c.vanilla	2025-10-05 20:50:28.339430678 +0200
-+++ linux-6.17/fs/reiserfs/xattr.c	2025-10-05 21:07:15.199372655 +0200
-@@ -978,7 +978,7 @@
- 	dentry = lookup_noperm(&QSTR(PRIVROOT_NAME), s->s_root);
- 	if (!IS_ERR(dentry)) {
- 		REISERFS_SB(s)->priv_root = dentry;
--		d_set_d_op(dentry, &xattr_lookup_poison_ops);
-+		d_splice_alias_ops(d_inode(dentry), dentry, &xattr_lookup_poison_ops);
- 		if (d_really_is_positive(dentry))
- 			reiserfs_init_priv_inode(d_inode(dentry));
- 	} else
---- linux-6.17/fs/dcache.c.vanilla	2025-10-05 21:09:55.503992824 +0200
-+++ linux-6.17/fs/dcache.c	2025-10-05 21:10:14.516209613 +0200
-@@ -3034,6 +3034,7 @@
- 	__d_add(dentry, inode, ops);
- 	return NULL;
- }
-+EXPORT_SYMBOL(d_splice_alias_ops);
- 
- /**
-  * d_splice_alias - splice a disconnected dentry into the tree if one exists
---- linux-7.0/fs/reiserfs/super.c.vanilla	2026-04-26 16:27:54.738284084 +0200
-+++ linux-7.0/fs/reiserfs/super.c	2026-04-26 17:14:15.927631577 +0200
-@@ -61,7 +61,6 @@
- 		is_reiserfs_jr(rs));
- }
- 
--static int reiserfs_remount(struct super_block *s, int *flags, char *data);
- static int reiserfs_statfs(struct dentry *dentry, struct kstatfs *buf);
- 
- static int reiserfs_sync_fs(struct super_block *s, int wait)
-@@ -818,7 +817,6 @@
- 	.freeze_fs = reiserfs_freeze,
- 	.unfreeze_fs = reiserfs_unfreeze,
- 	.statfs = reiserfs_statfs,
--	.remount_fs = reiserfs_remount,
- 	.show_options = reiserfs_show_options,
- #ifdef CONFIG_QUOTA
- 	.quota_read = reiserfs_quota_read,
-@@ -1425,8 +1423,9 @@
- }
- #endif
- 
--static int reiserfs_remount(struct super_block *s, int *mount_flags, char *arg)
-+static int reiserfs_reconfigure(struct fs_context *fc)
- {
-+	struct super_block *s = fc->root->d_sb;
- 	struct reiserfs_super_block *rs;
- 	struct reiserfs_transaction_handle th;
- 	unsigned long blocks;
-@@ -1884,7 +1883,7 @@
- 	if (!(silent))				\
- 		reiserfs_warning(s, id, __VA_ARGS__)
- 
--static int reiserfs_fill_super(struct super_block *s, void *data, int silent)
-+static int reiserfs_fill_super(struct super_block *s, struct fs_context *fc)
- {
- 	struct inode *root_inode;
- 	struct reiserfs_transaction_handle th;
-@@ -1899,6 +1898,7 @@
- 	int errval = -EINVAL;
- 	char *qf_names[REISERFS_MAXQUOTAS] = {};
- 	unsigned int qfmt = 0;
-+	int silent = fc->sb_flags & SB_SILENT;
- 
- 	sbi = kzalloc(sizeof(struct reiserfs_sb_info), GFP_KERNEL);
- 	if (!sbi)
-@@ -2593,11 +2593,21 @@
- 
- #endif
- 
--static struct dentry *get_super_block(struct file_system_type *fs_type,
--			   int flags, const char *dev_name,
--			   void *data)
-+static int reiserfs_get_tree(struct fs_context *fc)
- {
--	return mount_bdev(fs_type, flags, dev_name, data, reiserfs_fill_super);
-+	return get_tree_bdev(fc, reserifs_fill_super);
-+}
-+
-+static const struct fs_context_operations reiserfs_context_ops = {
-+	.get_tree       = reiserfs_get_tree,
-+	.reconfigure    = reiserfs_reconfigure,
-+};
-+
-+static int reiserfs_init_fs_context(struct fs_context *fc)
-+{
-+	fc->ops = &reiserfs_context_ops;
-+
-+	return 0;
- }
- 
- static int __init init_reiserfs_fs(void)
-@@ -2632,9 +2642,9 @@
- struct file_system_type reiserfs_fs_type = {
- 	.owner = THIS_MODULE,
- 	.name = "reiserfs",
--	.mount = get_super_block,
- 	.kill_sb = reiserfs_kill_sb,
- 	.fs_flags = FS_REQUIRES_DEV,
-+	.init_fs_context = reiserfs_init_fs_context,
- };
- MODULE_ALIAS_FS("reiserfs");
- 
