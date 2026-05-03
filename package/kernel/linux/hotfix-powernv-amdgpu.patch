@@ -1,0 +1,67 @@
+From: daedalao <daedalao@overPOWERED>
+Date: 2026-05-01
+Subject: [PATCH] drm/amdgpu: disable RLCV VF scheduling and pause firmware on Vega10 bare-metal
+
+On POWER8/POWER9 systems, OPAL/skiboot runs AtomBIOS from the IBM-customized
+VBIOS during PCIe slot enumeration.  For the Radeon Pro V340L (Vega10,
+1002:6860), this does two things:
+  1. Sets RLC_GPU_IOV_VF_ENABLE.VF_ENABLE=1, placing the RLC scheduler
+     in SR-IOV VF-dispatch mode.
+  2. Loads the RLCV microcontroller firmware (PSP fw_type=22) which then
+     actively intercepts GFX ring submissions waiting for world-switch
+     commands that Linux amdgpu never issues.
+
+fix19 cleared VF_ENABLE but left the RLCV firmware running.  On bare-metal
+usage (e.g. EGL context creation from Sunshine/Mesa), the first GFX ring
+command submitted after driver init triggers a 10-second timeout because
+RLCV firmware is still running and intercepting, even with VF_ENABLE=0.
+
+Fix: after clearing VF_ENABLE, send the RLCV safe-mode request
+(RLC_RLCV_SAFE_MODE CMD=1 MESSAGE=1) to explicitly pause the firmware.
+Poll for ACK up to 500ms.  Timeout is non-fatal: if RLCV firmware was
+not loaded or already idle it simply will not respond.
+
+On x86 Vega10 (OPAL never runs, VF_ENABLE=0, no RLCV fw loaded), both
+writes are harmless no-ops: VF_ENABLE stays 0, RLCV safe-mode returns
+no response and the loop exits immediately.
+
+Replaces fix19_disable_gpu_iov_vf.patch.
+
+Signed-off-by: daedalao <daedalao@overPOWERED>
+---
+ drivers/gpu/drm/amd/amdgpu/gfx_v9_0.c | 20 ++++++++++++++++++++
+ 1 file changed, 20 insertions(+)
+
+diff --git a/drivers/gpu/drm/amd/amdgpu/gfx_v9_0.c b/drivers/gpu/drm/amd/amdgpu/gfx_v9_0.c
+index 7e9d753f4..7ac3f8182 100644
+--- a/drivers/gpu/drm/amd/amdgpu/gfx_v9_0.c
++++ b/drivers/gpu/drm/amd/amdgpu/gfx_v9_0.c
+@@ -3231,6 +3231,26 @@ static int gfx_v9_0_rlc_resume(struct amdgpu_device *adev)
+ 		else
+ 			gfx_v9_0_enable_lbpw(adev, false);
+ 		break;
++	case IP_VERSION(9, 0, 1): {
++		/* OPAL/skiboot on POWER8 sets VF_ENABLE=1 and loads RLCV firmware
++		 * via PSP (fw_type=22) during PCIe slot POST.  Clear VF_ENABLE first
++		 * so the hardware scheduler stops dispatching VF context-switches,
++		 * then send RLCV the safe-mode command to pause the firmware itself
++		 * before any GFX ring submissions arrive from user-space.
++		 * Timeout is non-fatal: if RLCV was not loaded it simply will not ACK. */
++		int i;
++		WREG32_SOC15(GC, 0, mmRLC_GPU_IOV_VF_ENABLE, 0);
++		WREG32_SOC15(GC, 0, mmRLC_RLCV_SAFE_MODE,
++			     RLC_RLCV_SAFE_MODE__CMD_MASK |
++			     (1 << RLC_RLCV_SAFE_MODE__MESSAGE__SHIFT));
++		for (i = 0; i < 500; i++) {
++			if (RREG32_SOC15(GC, 0, mmRLC_RLCV_SAFE_MODE) &
++			    RLC_RLCV_SAFE_MODE__RESPONSE_MASK)
++				break;
++			udelay(1000);
++		}
++		break;
++	}
+ 	default:
+ 		break;
+ 	}
+--
+2.49.0
