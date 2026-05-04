@@ -18,7 +18,7 @@ f=" $pkg_filter "
 for pkg in `grep '^X ' $base/config/$config/packages | cut -d ' ' -f 5`; do
 	# include the package?
 	if [ "${f/ $pkg /}" == "$f" ]; then
-		cut -d ' ' -f 2 $build_root/var/adm/flists/$pkg || true
+		cut -d ' ' -f 2 $build_root/var/adm/flists/$pkg 2>/dev/null || true
 	fi
 done | sort -u > ../files-wanted
 unset f
