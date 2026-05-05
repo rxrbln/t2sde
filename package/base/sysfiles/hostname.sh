@@ -28,11 +28,13 @@ if [ ! "$hostname" ]; then
     fi
     # try various /proc as fallback
     [ "$hostname" ] || hostname=$(sed -n "/\(system type\)[^:]*:[[:space:]]/{s///p;q}" /proc/cpuinfo)
+    [ "$hostname" ] || hostname=$(sed -n "/\(model name\)[^:]*:[[:space:]]/{s///p;q}" /proc/cpuinfo)
     [ "$hostname" ] || hostname=$(sed -n "/\(model\)[^:]*:[[:space:]]/{s///p;q}" /proc/cpuinfo)
     hostname="${hostname%%(*}"
     hostname="${hostname%${hostname##*[![:space:]]}}"
     hostname="${hostname//[[:space:][:punct:]]/_}"
-    hostname="${hostname//__/_}"
+    hostname="${hostname//_/-}"
+    hostname="${hostname//--/-}"
 fi
 
-[ "$hostname" ] && hostname "$hostname" 
+[ "$hostname" ] && hostname "$hostname"
