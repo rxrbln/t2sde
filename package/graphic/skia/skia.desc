@@ -29,22 +29,28 @@
 runcargo=0 rungo=0 runmake=0
 makeinstopt=
 
-hook_add postmake 5 "sed -i 's/include.//g2' include/*/{,*}/{,*}/*.h"
-hook_add postmake 5 "sed -i 's/modules.//g1' include/*/{,*}/*.h"
-hook_add postmake 5 "sed -i 's/src.//g1' modules/skcms/*.h"
-hook_add postinstall 5 "cp -rvf $builddir/skia.git/modules/skcms/{,src}/*.h $includedir/skia/skcms"
-
+var_append GCC_WRAPPER_APPEND ' ' "-I$root$(pkgprefix includedir libx11) -L$root$(pkgprefix libdir libx11)"
 [ "$arch" = arm64 ] && var_remove GCC_WRAPPER_REMOVE ' ' "-march*"
 
-skia_prepare(){
+retry_sync_deps() {
 	python tools/git-sync-deps
-	gn gen out/Shared --args='is_debug=false is_component_build=true skia_use_system_libs=true skia_use_system_libwebp=true skia_use_system_libgifcodec=true skia_use_system_libxml=true skia_use_system_mesa=true'
+	#build still fails but all the deps are downloaded idk how to unset the error
+}
+
+skia_prepare(){
+	trap retry_sync_deps ERR
+	python tools/git-sync-deps
+	trap - ERR
+	gn gen out/Shared --args='is_debug=false is_component_build=true skia_use_system_expat=true skia_use_system_freetype2=true skia_use_system_harfbuzz=true skia_use_system_icu=true skia_use_system_libjpeg_turbo=true skia_use_system_libpng=true skia_use_system_libwebp=true skia_use_system_zlib=true'
 }
 hook_add premake 3 skia_prepare
 
 hook_add inmake 5 "ninja -C out/Shared"
 
-hook_add postmake 6 "install out/Shared/libskia.so $libdir; mkdir -p $root$includedir/skia/skcms; cp -rv include/* $root$includedir/skia/"
+hook_add postmake 5 "sed -i 's/include.//g2' include/*/{,*}/{,*}/*.h"
+hook_add postmake 5 "sed -i 's/modules.//g1' include/*/{,*}/*.h"
+hook_add postmake 5 "sed -i 's/src.//g1' modules/skcms/*.h"
+hook_add postmake 6 "install out/Shared/*.so $libdir; install out/Shared/*.a $libdir; mkdir -p $root$includedir/skia/skcms; cp -rv include/* $root$includedir/skia/"
 
 create_skia_pc_file() {
     cat <<-EOT > $root$libdir/pkgconfig/skia.pc
@@ -61,3 +67,5 @@ create_skia_pc_file() {
 EOT
 }
 hook_add postmake 7 create_skia_pc_file
+
+hook_add postinstall 8 "cp -rvf $builddir/skia.git/modules/skcms/{,src}/*.h $root$includedir/skia/skcms"
