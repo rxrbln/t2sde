@@ -324,8 +324,8 @@ done
 # setup optional programs
 #
 [ -z "$minimal" ] &&
-for x in $root/sbin/{insmod,blkid,lvm,vgchange,lvchange,vgs,lvs,dmsetup,mdadm} \
-	 $root/usr/sbin/{cache_check,cryptsetup,kexec,smartctl} $root/usr/embutils/{dmesg,mkswap,swapon}
+for x in $root/sbin/{insmod,blkid,lvm,vgchange,lvchange,vgs,lvs,dmsetup,mdadm,kexec} \
+	 $root/usr/sbin/{cache_check,cryptsetup,smartctl} $root/usr/embutils/{dmesg,mkswap,swapon}
 do
   if [ ! -e $x ]; then
 	echo "Warning: Skipped optional file ${x#$root}!"

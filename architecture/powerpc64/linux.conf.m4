@@ -1,6 +1,6 @@
 dnl --- T2-COPYRIGHT-BEGIN ---
 dnl t2/architecture/powerpc64/linux.conf.m4
-dnl Copyright (C) 2004 - 2025 The T2 SDE Project
+dnl Copyright (C) 2004 - 2026 The T2 SDE Project
 dnl SPDX-License-Identifier: GPL-2.0
 dnl --- T2-COPYRIGHT-END ---
 
@@ -37,6 +37,7 @@ dnl Platform specific support
 dnl
 
 CONFIG_PROC_DEVICETREE=y
+CONFIG_NVRAM=y
 
 CONFIG_ADB=y
 CONFIG_ADB_CUDA=y
