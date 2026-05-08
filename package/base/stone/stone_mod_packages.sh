@@ -89,11 +89,7 @@ startgas() {
 main() {
 	local startgas=0
 	while : ; do
-		cmd="gui_menu packages 'Package Management
-
-Note: You can install, update and remove packages (as well as query
-package information) with the command-line tool \"mine\". This is just
-a simple frontend for the \"mine\" program.'"
+		cmd="gui_menu packages 'Installation and Package Management'"
 
 		cmd="$cmd 'Mount Options:  $opt'"
 		cmd="$cmd 'gui_input \"Mount Options (e.g. -s -o sync) \" \"\$opt\" opt'"
@@ -108,7 +104,7 @@ a simple frontend for the \"mine\" program.'"
 		cmd="$cmd 'gui_input \"Config ID\""
 		cmd="$cmd \"\$SDECFG_SHORTID\" SDECFG_SHORTID'"
 
-		read_ids
+		[ "$dev" = RSYNC ] || read_ids
 
 		cmd="$cmd '' ''"
 		cmd="$cmd 'Start Package Manager' 'startgas=2'"
