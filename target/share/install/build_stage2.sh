@@ -18,8 +18,8 @@ mkdir -p $disksdir/2nd_stage; cd $disksdir/2nd_stage
 package_map="00-dirtree zlib          parted             cryptsetup
 xfsprogs           dosfstools         jfsutils           btrfs-progs
 e2fsprogs          reiserfsprogs      reiser4progs       genromfs
-openzfs
-popt               raidtools          mdadm              pcre
+openzfs            pcre               pcre2
+popt               raidtools          mdadm
 lvm                lvm2               device-mapper      libaio
 dump               eject              disktype           mac-fdisk
 libnvme            nvme-cli           hdparm             sgutils
