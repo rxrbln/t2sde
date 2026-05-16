@@ -522,21 +522,24 @@ static int if_getconfig(char *ifname)
 	struct sockaddr dstaddr, broadaddr, netmask;
 	unsigned char *hwaddr;
 
-	strcpy(ifr.ifr_name, ifname);
+	if (strlen(ifname) >= IFNAMSIZ)
+		return -1;
+
+	snprintf(ifr.ifr_name, IFNAMSIZ, "%s", ifname);
 	if (ioctl(skfd, SIOCGIFFLAGS, &ifr) < 0)
 		return -1;
 	mif_flags = ifr.ifr_flags;
 	printf("The result of SIOCGIFFLAGS on %s is %x.\n",
 	       ifname, ifr.ifr_flags);
 
-	strcpy(ifr.ifr_name, ifname);
+	snprintf(ifr.ifr_name, IFNAMSIZ, "%s", ifname);
 	if (ioctl(skfd, SIOCGIFADDR, &ifr) < 0)
 		return -1;
 	printf("The result of SIOCGIFADDR is %2.2x.%2.2x.%2.2x.%2.2x.\n",
 	       ifr.ifr_addr.sa_data[0], ifr.ifr_addr.sa_data[1],
 	       ifr.ifr_addr.sa_data[2], ifr.ifr_addr.sa_data[3]);
 
-	strcpy(ifr.ifr_name, ifname);
+	snprintf(ifr.ifr_name, IFNAMSIZ, "%s", ifname);
 	if (ioctl(skfd, SIOCGIFHWADDR, &ifr) < 0)
 		return -1;
 
@@ -547,31 +550,31 @@ static int if_getconfig(char *ifname)
 	       ifr.ifr_hwaddr.sa_family, hwaddr[0], hwaddr[1],
 	       hwaddr[2], hwaddr[3], hwaddr[4], hwaddr[5]);
 
-	strcpy(ifr.ifr_name, ifname);
+	snprintf(ifr.ifr_name, IFNAMSIZ, "%s", ifname);
 	if (ioctl(skfd, SIOCGIFMETRIC, &ifr) < 0) {
 		metric = 0;
 	} else
 		metric = ifr.ifr_metric;
 
-	strcpy(ifr.ifr_name, ifname);
+	snprintf(ifr.ifr_name, IFNAMSIZ, "%s", ifname);
 	if (ioctl(skfd, SIOCGIFMTU, &ifr) < 0)
 		mtu = 0;
 	else
 		mtu = ifr.ifr_mtu;
 
-	strcpy(ifr.ifr_name, ifname);
+	snprintf(ifr.ifr_name, IFNAMSIZ, "%s", ifname);
 	if (ioctl(skfd, SIOCGIFDSTADDR, &ifr) < 0) {
 		memset(&dstaddr, 0, sizeof(struct sockaddr));
 	} else
 		dstaddr = ifr.ifr_dstaddr;
 
-	strcpy(ifr.ifr_name, ifname);
+	snprintf(ifr.ifr_name, IFNAMSIZ, "%s", ifname);
 	if (ioctl(skfd, SIOCGIFBRDADDR, &ifr) < 0) {
 		memset(&broadaddr, 0, sizeof(struct sockaddr));
 	} else
 		broadaddr = ifr.ifr_broadaddr;
 
-	strcpy(ifr.ifr_name, ifname);
+	snprintf(ifr.ifr_name, IFNAMSIZ, "%s", ifname);
 	if (ioctl(skfd, SIOCGIFNETMASK, &ifr) < 0) {
 		memset(&netmask, 0, sizeof(struct sockaddr));
 	} else
@@ -622,11 +625,11 @@ static int get_drv_info(char *master_ifname)
 	char *endptr;
 
 	memset(&ifr, 0, sizeof(ifr));
-	strncpy(ifr.ifr_name, master_ifname, IFNAMSIZ);
+	snprintf(ifr.ifr_name, IFNAMSIZ, "%s", master_ifname);
 	ifr.ifr_data = (caddr_t)&info;
 
 	info.cmd = ETHTOOL_GDRVINFO;
-	strncpy(info.driver, "ifenslave", 32);
+	snprintf(info.driver, 32, "ifenslave");
 	snprintf(info.fw_version, 32, "%d", BOND_ABI_VERSION);
 
 	if (ioctl(skfd, SIOCETHTOOL, &ifr) < 0) {
@@ -667,8 +670,8 @@ static int change_active(char *master_ifname, char *slave_ifname)
 		return 1;
 	}
 
-	strncpy(ifr.ifr_name, master_ifname, IFNAMSIZ);
-	strncpy(ifr.ifr_slave, slave_ifname, IFNAMSIZ);
+	snprintf(ifr.ifr_name, IFNAMSIZ, "%s", master_ifname);
+	snprintf(ifr.ifr_slave, IFNAMSIZ, "%s", slave_ifname);
 	if ((ioctl(skfd, SIOCBONDCHANGEACTIVE, &ifr) < 0) &&
 	    (ioctl(skfd, BOND_CHANGE_ACTIVE_OLD, &ifr) < 0)) {
 		saved_errno = errno;
@@ -815,8 +818,8 @@ static int enslave(char *master_ifname, char *slave_ifname)
 	}
 
 	/* Do the real thing */
-	strncpy(ifr.ifr_name, master_ifname, IFNAMSIZ);
-	strncpy(ifr.ifr_slave, slave_ifname, IFNAMSIZ);
+	snprintf(ifr.ifr_name, IFNAMSIZ, "%s", master_ifname);
+	snprintf(ifr.ifr_slave, IFNAMSIZ, "%s", slave_ifname);
 	if ((ioctl(skfd, SIOCBONDENSLAVE, &ifr) < 0) &&
 	    (ioctl(skfd, BOND_ENSLAVE_OLD, &ifr) < 0)) {
 		saved_errno = errno;
@@ -856,8 +859,8 @@ static int release(char *master_ifname, char *slave_ifname)
 		return 1;
 	}
 
-	strncpy(ifr.ifr_name, master_ifname, IFNAMSIZ);
-	strncpy(ifr.ifr_slave, slave_ifname, IFNAMSIZ);
+	snprintf(ifr.ifr_name, IFNAMSIZ, "%s", master_ifname);
+	snprintf(ifr.ifr_slave, IFNAMSIZ, "%s", slave_ifname);
 	if ((ioctl(skfd, SIOCBONDRELEASE, &ifr) < 0) &&
 	    (ioctl(skfd, BOND_RELEASE_OLD, &ifr) < 0)) {
 		saved_errno = errno;
