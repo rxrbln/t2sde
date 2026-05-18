@@ -1,3 +1,9 @@
+# --- T2-COPYRIGHT-BEGIN ---
+# t2/package/*/firefox/hotfix-bigendian-skia.patch
+# Copyright (C) 2026 The T2 SDE Project
+# SPDX-License-Identifier: GPL-2.0 or patched project license
+# --- T2-COPYRIGHT-END ---
+
 Sparc only issue (was already in 52.x)
 Crash Annotation GraphicsCriticalError: |[0][GFX1]: Unknown image format 1 (t=6.67237) [GFX1]: Unknown image format 1
 Assertion failure: [GFX1]: Unknown image format 1, at /scratch/firefox/obj-sparc64-sun-solaris2.11/dist/include/mozilla/gfx/Logging.h:727
@@ -47,26 +53,6 @@ Couldn't convert chrome URL: chrome://branding/locale/brand.properties
 
 https://bugzilla.mozilla.org/show_bug.cgi?id=1344659
 
---- firefox-140.1.0/gfx/2d/Types.h
-+++ firefox-140.1.0/gfx/2d/Types.h
-@@ -104,15 +104,8 @@ UNKNOWN,  // TODO: Replace uses with May
- // The following values are endian-independent synonyms. The _UINT32 suffix
- // indicates that the name reflects the layout when viewed as a uint32_t
- // value.
--#if MOZ_LITTLE_ENDIAN()
-   A8R8G8B8_UINT32 = B8G8R8A8,  // 0xAARRGGBB
-   X8R8G8B8_UINT32 = B8G8R8X8,  // 0x00RRGGBB
--#elif MOZ_BIG_ENDIAN()
--  A8R8G8B8_UINT32 = A8R8G8B8,  // 0xAARRGGBB
--  X8R8G8B8_UINT32 = X8R8G8B8,  // 0x00RRGGBB
--#else
--#  error "bad endianness"
--#endif
- 
-   // The following values are OS and endian-independent synonyms.
-   //
-
-
 Sparc DEBUG build only issue:
 
 [GFX2-]: Failed to lock WindowSurface, falling back to XPutImage backend.
@@ -77,16 +63,14 @@ https://bugzilla.mozilla.org/show_bug.cgi?id=1325259
 
 --- firefox-140.1.0/gfx/2d/DrawTargetSkia.cpp
 +++ firefox-140.1.0/gfx/2d/DrawTargetSkia.cpp
-@@ -159,8 +159,12 @@ }
+@@ -159,8 +159,8 @@ }
    return surfaceBounds.Intersect(bounds);
  }
  
-+#if MOZ_BIG_ENDIAN()
-+static const int kARGBAlphaOffset = 0;
-+#else
- static const int kARGBAlphaOffset =
-     SurfaceFormat::A8R8G8B8_UINT32 == SurfaceFormat::B8G8R8A8 ? 3 : 0;
-+#endif
+-static const int kARGBAlphaOffset =
+-    SurfaceFormat::A8R8G8B8_UINT32 == SurfaceFormat::B8G8R8A8 ? 3 : 0;
++static const int kARGBAlphaOffset = std::endian::native != std::endian::little ? 0 :
++    (SurfaceFormat::A8R8G8B8_UINT32 == SurfaceFormat::B8G8R8A8 ? 3 : 0);
  
  static bool VerifyRGBXFormat(uint8_t* aData, const IntSize& aSize,
                               const int32_t aStride, SurfaceFormat aFormat) {
@@ -112,16 +96,16 @@ Bug 1716707 [s390x] Software WebRender does not support big endian
    }
    mDT->Flush();
  
-+#if MOZ_BIG_ENDIAN()
-+  // One swizzle to rule them all.
-+  // With exception to certain text boxes with 1 line (46 pixels) and 2 lines
-+  // (64 pixels) in Firefox 115. Per following bug:
-+  // https://bugzilla.mozilla.org/show_bug.cgi?id=1900574
-+  if ((int)mDT->GetSize().height != 46 && mDT->GetSize().height != 64)
-+    gfx::SwizzleData(mMappedData, mMappedStride, gfx::SurfaceFormat::B8G8R8A8,
-+                     mMappedData, mMappedStride, gfx::SurfaceFormat::A8R8G8B8,
-+                     mDT->GetSize());
-+#endif
++  if (std::endian::native != std::endian::little) {
++    // One swizzle to rule them all.
++    // With exception to certain text boxes with 1 line (46 pixels) and 2 lines
++    // (64 pixels) in Firefox 115. Per following bug:
++    // https://bugzilla.mozilla.org/show_bug.cgi?id=1900574
++    if ((int)mDT->GetSize().height != 46 && mDT->GetSize().height != 64)
++      gfx::SwizzleData(mMappedData, mMappedStride, gfx::SurfaceFormat::B8G8R8A8,
++                       mMappedData, mMappedStride, gfx::SurfaceFormat::A8R8G8B8,
++                       mDT->GetSize());
++  }
 +
    // Done with the DT. Hand it back to the widget and clear out any trace of it.
    mWidget->EndRemoteDrawingInRegion(mDT, mDirtyRegion);
@@ -132,16 +116,16 @@ Bug 1716707 [s390x] Software WebRender does not support big endian
      return NS_ERROR_OUT_OF_MEMORY;
    }
  
-+#if MOZ_BIG_ENDIAN()
-+  if (aBackend == gfx::BackendType::SKIA && canUseDataSurface) {
-+      // SKIA is lying about what format it returns on big endian
-+      for (int ii=0; ii < mRawSurface->GetSize().Height()*mRawSurface->Stride() / 4; ++ii) {
-+        uint32_t *vals = (uint32_t*)(mRawSurface->GetData());
-+        uint32_t val = ((vals[ii] << 8) & 0xFF00FF00 ) | ((vals[ii] >> 8) & 0xFF00FF );
-+        vals[ii] = (val << 16) | (val >> 16);
-+      }
++  if (std::endian::native != std::endian::little) {
++    if (aBackend == gfx::BackendType::SKIA && canUseDataSurface) {
++        // SKIA is lying about what format it returns on big endian
++        for (int ii=0; ii < mRawSurface->GetSize().Height()*mRawSurface->Stride() / 4; ++ii) {
++          uint32_t *vals = (uint32_t*)(mRawSurface->GetData());
++          uint32_t val = ((vals[ii] << 8) & 0xFF00FF00 ) | ((vals[ii] >> 8) & 0xFF00FF );
++          vals[ii] = (val << 16) | (val >> 16);
++        }
++    }
 +  }
-+#endif
 +
    if (!canUseDataSurface) {
      // We used an offscreen surface, which is an "optimized" surface from
