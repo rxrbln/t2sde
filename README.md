@@ -41,7 +41,7 @@ wire transfer within the EU.
 
 The bounties are meant to give back to the community, inspire next
 generation open source developers and not to feed automated LLM "AI"
-clankers. Therefore only real humans are eligable. To limit
+clankers. Therefore only real humans are eligible. To limit
 administrative overhead we can unfortunately not pay fractional work.
 
 If in doubt, best ask before working on a larger bounty.
