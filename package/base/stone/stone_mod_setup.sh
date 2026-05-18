@@ -171,7 +171,8 @@ main() {
 	create_user
 
 	# temp live desktop demo hack
-	rm -f /etc/plasmalogin.conf /home/user/Desktop/install.desktop 2>/dev/null
+	rm -f /etc/plasmalogin.conf /home/user/Desktop/install.desktop \
+	      /etc/polkit-1/rules.d/10-installer.rules 2>/dev/null
 
 	# run the stone modules that registered itself for the first SETUP pass
 	while read -u 200 a b c cmd; do
