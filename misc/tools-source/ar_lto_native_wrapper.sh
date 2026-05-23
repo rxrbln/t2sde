@@ -17,27 +17,31 @@ exec_ar() {
 }
 
 is_lto_object() {
-	file "$1" 2>/dev/null | grep -Eqi 'LLVM.*bitcode|LTO' && return 0
-	readelf -S "$1" 2>/dev/null | grep -q '\.gnu\.lto' && return 0
-	strings "$1" 2>/dev/null | grep -Eq '(^|[_.])gnu_lto|\.gnu\.lto' && return 0
+	file -b "$1" 2>/dev/null | grep -Eqi 'LLVM.*bitcode|LTO' && return 0
+	readelf -S "$1" 2>/dev/null | grep -Eq '\.(gnu|llvm)\.lto' && return 0
+	objdump -h "$1" 2>/dev/null | grep -Eq '\.(gnu|llvm)\.lto' && return 0
 	return 1
 }
 
 native_object_for() {
 	local src="$1" out="$2" cc
 
-	if file "$src" 2>/dev/null | grep -Eqi 'LLVM.*bitcode'; then
+	if file -b "$src" 2>/dev/null | grep -Eqi 'LLVM.*bitcode'; then
 		cc="${CLANG:-${archprefix}clang}"
 		read -r -a cc_argv <<< "${cc:-clang}"
-		"${cc_argv[@]}" -x ir -c -o "$out" "$src"
+		CMD_WRAPPER_BYPASS=1 CC_WRAPPER_BYPASS=1 GCC_WRAPPER_BYPASS=1 \
+			"${cc_argv[@]}" -x ir -c -o "$out" "$src"
 	else
 		cc="${CC:-${archprefix}cc}"
 		read -r -a cc_argv <<< "$cc"
-		"${cc_argv[@]}" -flto -flinker-output=nolto-rel -r -nostdlib -o "$out" "$src"
+		CMD_WRAPPER_BYPASS=1 CC_WRAPPER_BYPASS=1 GCC_WRAPPER_BYPASS=1 \
+			"${cc_argv[@]}" -flto -flinker-output=nolto-rel -r -nostdlib -o "$out" "$src"
 	fi
 
 	if is_lto_object "$out"; then
 		echo "ar_lto_native_wrapper: failed to convert $src to a native object" >&2
+		file "$src" "$out" >&2 || true
+		readelf -S "$out" 2>/dev/null | grep -E '\.(gnu|llvm)\.lto' >&2 || true
 		return 1
 	fi
 }
