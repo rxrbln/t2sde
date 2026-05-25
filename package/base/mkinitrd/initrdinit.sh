@@ -35,27 +35,53 @@ boot() {
 	exec switch_root /mnt "$@"
 }
 
+detectfs() {
+	disktype $1 2>/dev/null |
+	sed -e '/file system/!d' -e 's/file system.*//' -e 's/ //g' \
+	    -e 'y/ABCDEFGHIJKLMNOPQRSTUVWXYZ/abcdefghijklmnopqrstuvwxyz/' \
+	    -e 's/fat32/vfat/'
+}
+
 overlayfs() {
-	if [ ! -e $mnt/$overlay ]; then
-		echo "No $mnt/$overlay to overlay."
+    modprobe loop 2>/dev/null
+
+    overlays=
+    i=-1
+    for o in ${overlay//,/ }; do
+	((++i))
+
+	if [ ! -e $mnt/$o ]; then
+		echo "No $mnt/$o to overlay."
 		return 1
 	fi
 
-	mkdir -p /mnt/{mnt,overlay,work}
-	modprobe loop 2>/dev/null
 
-	if ! losetup /dev/loop0 $mnt/$overlay; then
-		echo "Failed to setup /dev/loop0"
+	if ! losetup /dev/loop$i $mnt/$o; then
+		echo "Failed to setup /dev/loop$i"
 		return 1
 	fi
 
-	mount -t squashfs -o ro /dev/loop0 /mnt/mnt &&
-		mount -t overlay -o lowerdir=/mnt/mnt,upperdir=/mnt/overlay,workdir=/mnt/work \
-			none /mnt &&
-		return 0
+	fs=$(detectfs /dev/loop$i)
 
-	echo "Failed to loop mount $overlay"
-	losetup -d /dev/loop0
+	mkdir /mnt/$i
+	if ! mount -t $fs -o ro /dev/loop$i /mnt/$i; then
+		echo "Failed to mount $o"
+		return 1
+	fi
+	overlays="$overlays${overlays:+:}/mnt/$i"
+    done
+
+    # last not writeable? add tmpfs
+    if ! mount -o remount,rw -t $fs /dev/loop$i /mnt/$i; then
+	((++i))
+	mkdir /mnt/$i
+	overlays="$overlays${overlays:+:}/mnt/$i"
+    fi
+
+    mkdir -p /mnt/$i/{mnt,overlay,work}
+    upper=${overlays##*:}
+    overlays=${overlays%:*}
+    mount -t overlay -o lowerdir=$overlays,upperdir=/mnt/$i/overlay,workdir=/mnt/$i/work none /mnt && return 0
 }
 
 mount -t proc proc /proc
@@ -94,7 +120,7 @@ swap=$(getdev $(getopt "$cmdline" swap=))
 	resume=$(getdev $(getopt "$cmdline" resume=))
 mountopt=$(getopt "$cmdline" mountopt=)
 mountopt="ro${mountopt:+,$mountopt}"
-[ "$overlay" ] && mnt=/mnt/media || mnt=/mnt
+[ "$overlay" ] && mnt=/mnt/mnt || mnt=/mnt
 mkdir -p $mnt
 
 # parse cmdline
@@ -225,11 +251,7 @@ while [[ -n "$root" && ($((i++)) -le 15 || "$cmdline" = *rootwait*) ]]; do
 	  fi
 
 	  # try best match / detected root first, all the others thereafter
-	  filesystems=`disktype $root 2>/dev/null |
-	    sed -e '/file system/!d' -e 's/file system.*//' -e 's/ //g' \
-		-e 'y/ABCDEFGHIJKLMNOPQRSTUVWXYZ/abcdefghijklmnopqrstuvwxyz/' \
-		-e 's/fat32/vfat/'
-	    sed '/^nodev/d' /proc/filesystems | sed '1!G; $p; h; d'`
+	  filesystems=$(detectfs $root; sed '/^nodev/d' /proc/filesystems | sed '1!G; $p; h; d')
 	fi
 
 	for fs in $filesystems; do
