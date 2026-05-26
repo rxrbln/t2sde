@@ -6,12 +6,12 @@
 
 --- dnsmasq-2.85/src/rfc2131.c.orig	2021-04-07 22:39:39.000000000 +0200
 +++ dnsmasq-2.85/src/rfc2131.c	2021-08-30 17:49:48.447435549 +0200
-@@ -55,7 +55,8 @@
- 		       time_t now,
+@@ -57,7 +57,8 @@
  		       unsigned int lease_time,
  		       unsigned short fuzz,
--		       const char *pxevendor);
-+		       const char *pxevendor,
+ 		       const char *pxevendor,
+-		       int leasequery);
++		       int leasequery,
 +		       const char *filename);
  
  
@@ -35,12 +35,12 @@
  	  memcpy(daemon->dhcp_buff2, mess->file, sizeof(mess->file));
  	  daemon->dhcp_buff2[sizeof(mess->file) + 1] = 0; /* ensure zero term. */
  	  id.net = (char *)daemon->dhcp_buff2;
-@@ -650,7 +656,7 @@
+@@ -692,7 +693,7 @@
  	      
  	      clear_packet(mess, end);
  	      do_options(context, mess, end, NULL, hostname, get_domain(mess->yiaddr), 
--			 netid, subnet_addr, 0, 0, -1, NULL, vendor_class_len, now, 0xffffffff, 0, NULL);
-+			 netid, subnet_addr, 0, 0, -1, NULL, vendor_class_len, now, 0xffffffff, 0, NULL, filename);
+-			 netid, subnet_addr, 0, 0, -1, NULL, vendor_class_len, now, 0xffffffff, 0, NULL, 0);
++			 netid, subnet_addr, 0, 0, -1, NULL, vendor_class_len, now, 0xffffffff, 0, NULL, 0, filename);
  	    }
  	}
        
@@ -60,52 +60,63 @@
  		    }
  		  
  		  option_put(mess, end, OPTION_MESSAGE_TYPE, 1, 
-@@ -1152,7 +1160,7 @@
+@@ -1231,7 +1232,7 @@
+ 	  
+ 	  subnet_addr.s_addr = 0;
+ 	  do_options(context, mess, end, req_options, lease->hostname, get_domain(lease->addr), netid, subnet_addr,
+-		     0, 0, -1, NULL, vendor_class_len, now, 0xffffffff, 0, NULL, 1);
++		     0, 0, -1, NULL, vendor_class_len, now, 0xffffffff, 0, NULL, 1, filename);
+ 	  
+ 	  /* Does this have to be last for leasequery replies also? RFC 4388 is silent on the subject. */
+ 	  if (lease->agent_id && in_list(req_options, OPTION_AGENT_ID) &&
+@@ -1391,7 +1392,7 @@
        option_put(mess, end, OPTION_LEASE_TIME, 4, time);
        /* T1 and T2 are required in DHCPOFFER by HP's wacky Jetdirect client. */
        do_options(context, mess, end, req_options, offer_hostname, get_domain(mess->yiaddr), 
--		 netid, subnet_addr, fqdn_flags, borken_opt, pxearch, uuid, vendor_class_len, now, time, fuzz, pxevendor);
-+		 netid, subnet_addr, fqdn_flags, borken_opt, pxearch, uuid, vendor_class_len, now, time, fuzz, pxevendor, filename);
+-		 netid, subnet_addr, fqdn_flags, borken_opt, pxearch, uuid, vendor_class_len, now, time, fuzz, pxevendor, 0);
++		 netid, subnet_addr, fqdn_flags, borken_opt, pxearch, uuid, vendor_class_len, now, time, fuzz, pxevendor, 0, filename);
        
        return dhcp_packet_size(mess, agent_id, real_end);
  	
-@@ -1501,7 +1509,7 @@
+@@ -1752,7 +1753,7 @@
  	  if (rapid_commit)
  	     option_put(mess, end, OPTION_RAPID_COMMIT, 0, 0);
  	   do_options(context, mess, end, req_options, hostname, get_domain(mess->yiaddr), 
--		     netid, subnet_addr, fqdn_flags, borken_opt, pxearch, uuid, vendor_class_len, now, time, fuzz, pxevendor);
-+		     netid, subnet_addr, fqdn_flags, borken_opt, pxearch, uuid, vendor_class_len, now, time, fuzz, pxevendor, filename);
+-		      netid, subnet_addr, fqdn_flags, borken_opt, pxearch, uuid, vendor_class_len, now, time, fuzz, pxevendor, 0);
++		      netid, subnet_addr, fqdn_flags, borken_opt, pxearch, uuid, vendor_class_len, now, time, fuzz, pxevendor, 0, filename);
  	}
  
        return dhcp_packet_size(mess, agent_id, real_end); 
-@@ -1568,7 +1576,7 @@
+@@ -1819,7 +1820,7 @@
  	}
  
        do_options(context, mess, end, req_options, hostname, get_domain(mess->ciaddr),
--		 netid, subnet_addr, fqdn_flags, borken_opt, pxearch, uuid, vendor_class_len, now, 0xffffffff, 0, pxevendor);
-+		 netid, subnet_addr, fqdn_flags, borken_opt, pxearch, uuid, vendor_class_len, now, 0xffffffff, 0, pxevendor, filename);
+-		 netid, subnet_addr, fqdn_flags, borken_opt, pxearch, uuid, vendor_class_len, now, 0xffffffff, 0, pxevendor, 0);
++		 netid, subnet_addr, fqdn_flags, borken_opt, pxearch, uuid, vendor_class_len, now, 0xffffffff, 0, pxevendor, 0, filename);
        
        *is_inform = 1; /* handle reply differently */
        return dhcp_packet_size(mess, agent_id, real_end); 
-@@ -2367,7 +2375,8 @@
- 		       time_t now,
+@@ -2625,7 +2626,8 @@
  		       unsigned int lease_time,
  		       unsigned short fuzz,
--		       const char *pxevendor)
-+		       const char *pxevendor,
+ 		       const char *pxevendor,
+-		       int leasequery)
++		       int leasequery,
 +		       const char *filename)
  {
    struct dhcp_opt *opt, *config_opts = daemon->dhcp_opts;
    struct dhcp_boot *boot;
-@@ -2437,9 +2446,9 @@
- 	  if (!option_bool(OPT_NO_OVERRIDE) &&
- 	      req_options && 
- 	      in_list(req_options, OPTION_FILENAME))
--	    option_put_string(mess, end, OPTION_FILENAME, boot->file, 1);
-+	    option_put_string(mess, end, OPTION_FILENAME, filename[0] ? filename : boot->file, 1);
- 	  else
--	    safe_strncpy((char *)mess->file, boot->file, sizeof(mess->file));
-+	    safe_strncpy((char *)mess->file, filename[0] ? filename : boot->file, sizeof(mess->file));
- 	}
-       
-       if (boot->next_server.s_addr) 
+@@ -2697,9 +2699,9 @@
+ 	      if (!option_bool(OPT_NO_OVERRIDE) &&
+ 		  req_options && 
+ 		  in_list(req_options, OPTION_FILENAME))
+-		option_put_string(mess, end, OPTION_FILENAME, boot->file, 1);
++		option_put_string(mess, end, OPTION_FILENAME, filename[0] ? filename : boot->file, 1);
+ 	      else
+-		safe_strncpy((char *)mess->file, boot->file, sizeof(mess->file));
++		safe_strncpy((char *)mess->file, filename[0] ? filename : boot->file, sizeof(mess->file));
+ 	    }
+ 	  
+ 	  if (boot->next_server.s_addr) 
+
+
