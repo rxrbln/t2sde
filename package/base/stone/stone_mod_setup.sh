@@ -155,6 +155,9 @@ create_user() {
 	else
 		usermod -l "$name" -d "/home/$name" -m user
 		groupmod -n "$name" user
+
+		sed -i "s,/home/user,/home/$name,g" \
+			/home/$name/{.local/share/user-places.xbel,config/session/dolphin_dolphin_dolphin}
 	fi
 
 	while ! set_passwd "$name"; do :; done
