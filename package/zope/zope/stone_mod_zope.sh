@@ -167,7 +167,7 @@ zope_instances_products() {
 					[ "${zope_products[$entry*3+2]}" != "$productdir" ] || break
 				done
 
-				if [ "${zope_products[$entry*3+2]}" == "$productdir" ]; then
+				if [ "${zope_products[$entry*3+2]}" = "$productdir" ]; then
 					productname="${zope_products[$entry*3+0]}"
 					version="${zope_products[$entry*3+1]}"
 
@@ -225,13 +225,13 @@ zope_instances_install() {
 	if gui_yesno "Are you sure you want to install $productname?"; then
 		count=${#zope_products[@]}; (( count=count/3 ))
 		for (( entry=0; entry<count; entry++ )); do
-			[ "${zope_products[$entry*3+0]}" == "$productname" ] || continue
+			[ "${zope_products[$entry*3+0]}" = "$productname" ] || continue
 			version="${zope_products[$entry*3+1]}"
 			productdir="${zope_products[$entry*3+2]}"
 			break
 		done
 
-		if [ ! -e "$product" -a "${zope_products[$entry*3+0]}" == "$productname" ]; then
+		if [ ! -e "$product" -a "${zope_products[$entry*3+0]}" = "$productname" ]; then
 			if ln -s "$productdir" "$product"; then
 				gui_message "$productname - $version was succesfully installed"
 		
@@ -258,8 +258,8 @@ zope_instances_update() {
 
 	count=${#zope_products[@]}; (( count=count/3 ))
 	for (( entry=0; entry<count; entry++ )); do
-		[ "${zope_products[$entry*3+0]}" == "$productname" ] || continue
-		if [ "${zope_products[$entry*3+1]}" == "$version" ]; then
+		[ "${zope_products[$entry*3+0]}" = "$productname" ] || continue
+		if [ "${zope_products[$entry*3+1]}" = "$version" ]; then
 			versions="$versions '(X) ${zope_products[$entry*3+1]}' 'true'"
 		else
 			versions="$versions '( ) ${zope_products[$entry*3+1]}' \

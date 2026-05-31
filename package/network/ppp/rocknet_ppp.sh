@@ -76,7 +76,7 @@ public_ppp() {
 	ppp_command="$ppp_command unit $ppp_unit"
 	ppp_command="$ppp_command $ppp_args"
 
-	if [ "$CANUSESERVICE" == "1" ]; then
+	if [ "$CANUSESERVICE" = "1" ]; then
 		addcode up 5 1 "service_create $if 'ip link set $ppp_if down up
 exec `eval echo $ppp_command` nodetach' \
 			'[ -f /var/run/$if.pid ] && rm -f /var/run/$if.pid'"

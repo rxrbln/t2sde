@@ -7,9 +7,9 @@
 public_udhcp() {
 	local opt_nodns=
 	local HOSTNAME="`hostname`" cmdline=
-	[ "$HOSTNAME" == "(none)" ] && HOSTNAME=
+	[ "$HOSTNAME" = "(none)" ] && HOSTNAME=
 	
-	[ "$CANUSESERVICE" == "1" ] && cmdline="exec "
+	[ "$CANUSESERVICE" = "1" ] && cmdline="exec "
 
 	cmdline="$cmdline /usr/sbin/udhcpc ${HOSTNAME:+-h $HOSTNAME} -i $if"
 	cmdline="$cmdline -s /etc/udhcp/t2-default.script"
@@ -28,7 +28,7 @@ public_udhcp() {
 $cmdline"
 	fi
 
-	if [ "$CANUSESERVICE" == "1" ]; then
+	if [ "$CANUSESERVICE" = "1" ]; then
 		addcode up 5 1 "service_create $if '$cmdline -f' \
 			'sleep 2 ; ip link set $if down'"
 		addcode down 5 1 "service_destroy $if"

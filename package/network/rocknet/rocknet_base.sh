@@ -43,7 +43,7 @@ public_interface() {
 		if [ "$interface" = "auto" ]; then
 			ignore=1
 			for x in "${auto_if[@]}"; do
-				[[ "$if" == $x ]] && ignore=0
+				[[ "$if" = $x ]] && ignore=0
 			done
 		else
 			[ "$if" = "$interface" ] || ignore=1

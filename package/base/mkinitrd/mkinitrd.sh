@@ -296,7 +296,7 @@ copy_dyn_libs () {
 					local y=$tmpdir$xlibdir$lib
 					mkdir -p ${y%/*}
 					ln -sfv $x $tmpdir$xlibdir$lib
-					if [ "${x#/}" == "$x" ]; then # relative?
+					if [ "${x#/}" = "$x" ]; then # relative?
 						# directory to prepend?
 						[ ${lib%/*} != "$lib" ] && x="${lib%/*}/$x"
 					fi

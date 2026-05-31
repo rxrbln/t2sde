@@ -1,6 +1,6 @@
 # --- T2-COPYRIGHT-BEGIN ---
 # t2/package/*/iptables/rocknet_iptables.sh
-# Copyright (C) 2004 - 2025 The T2 SDE Project
+# Copyright (C) 2004 - 2026 The T2 SDE Project
 # SPDX-License-Identifier: GPL-2.0
 # --- T2-COPYRIGHT-END ---
 
@@ -45,7 +45,7 @@ iptables_init_if() {
 iptables_parse_conditions() {
 	iptables_cond=""
 	ipv=""
-	[ "$1" == "-4" -o "$1" == "-6" ] && ipv="$1" && shift
+	[ "$1" = "-4" -o "$1" = "-6" ] && ipv="$1" && shift
 	while [ -n "$1" ]; do
 		case "$1" in
 		    all)
@@ -96,14 +96,14 @@ public_restrict() {
 
 public_iptables() {
 	ipv=""
-	[ "$1" == "-4" -o "$1" == "-6" ] && ipv="$1" && shift
+	[ "$1" = "-4" -o "$1" = "-6" ] && ipv="$1" && shift
 	ipt_addcode up 1 6 "iptables $*"
 	iptables_init_if
 }
 
 public_iptables_down() {
 	ipv=""
-	[ "$1" == "-4" -o "$1" == "-6" ] && ipv="$1" && shift
+	[ "$1" = "-4" -o "$1" = "-6" ] && ipv="$1" && shift
 	ipt_addcode down 1 6 "iptables $*"
 	iptables_init_if
 }
