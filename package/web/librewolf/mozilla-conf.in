@@ -1,0 +1,150 @@
+# --- T2-COPYRIGHT-BEGIN ---
+# t2/package/*/firefox/mozilla-conf.in
+# Copyright (C) 2004 - 2026 The T2 SDE Project
+# Copyright (C) 1998 - 2004 ROCK Linux Project
+# SPDX-License-Identifier: GPL-2.0
+# --- T2-COPYRIGHT-END ---
+
+runconf=0
+runcargo=0
+runpipinstall=0
+rungpepinstall=0
+runmake=0
+
+# default prefix for mozilla derivatives
+mozilla_prefix=opt/mozilla
+
+unset AS
+var_remove_regex makeopt ' ' 'AS=.*'
+atstage cross && export DESTDIR=$root
+
+# set default homepage and distribution
+mozilla_branding() {
+	local distro="T2 $sdever"
+	local startpage=https://t2sde.org/startpage/
+
+	# set distribution
+	if [ -f xpfe/global/build.dtd.in ]; then
+		sed -i "s,0000000000,$distro," xpfe/global/build.dtd.in
+	fi
+
+	# set startpage
+	find -name region.properties -o -name browserconfig.properties | while read f; do
+		sed -i -e "s,startup.homepage_override_url=.*,startup.homepage_override_url=$startpage," \
+		       -e "s,homePageDefault=.*,homePageDefault=$startpage," \
+		       -e "s,browser.startup.homepage=.*,browser.startup.homepage=$startpage," \
+		       $f
+	done
+}
+
+hook_add preconf 2 "mozilla_branding"
+
+# default configuration for mozilla's derivatives
+mozilla_configure() {
+	cat > .mozconfig <<-EOF
+# Options for client.mk.
+mk_add_options MOZ_MAKE_FLAGS=-j${SDECFG_PARALLEL:-1}
+
+# Options for 'configure' (same as command-line options).
+EOF
+
+	if atstage cross; then
+		cat <<-EOF >> .mozconfig
+CROSS_COMPILE=1
+TOOLCHAIN_PREFIX=$archprefix
+ac_add_options --target=$arch_target
+ac_add_options --host=$arch_build
+ac_add_options --with-clang-path=$root/TOOLCHAIN/cross/wrapper/${CC%-*}-clang
+EOF
+	else cat <<-EOF >> .mozconfig
+ac_add_options --host=$arch_target # needed?
+EOF
+	fi
+
+	cat <<-EOF >> .mozconfig
+ac_add_options --prefix=/$prefix
+ac_add_options --libdir=$libdir
+#ac_add_options --sysconfdir=/etc/$pkg
+#ac_add_options --localstatedir=/var
+#ac_add_options --enable-default-mozilla-five-home
+#ac_add_options --with-default-mozilla-five-home=$libdir/$pkg-$ver
+#ac_add_options --disable-dtd-debug
+#ac_add_options --disable-logging # broken/obsolete since firefox ~42
+#ac_add_options --disable-pedantic
+#ac_add_options --enable-xft
+#ac_add_options --enable-default-toolkit=cairo-gtk2
+ac_add_options --with-system-zlib
+#ac_add_options --with-system-mng
+#ac_add_options --enable-system-cairo
+#ac_add_options --enable-crypto
+ac_add_options --disable-jemalloc
+EOF
+
+	[ "$SDECFG_DEBUG" = 1 ] &&
+		echo "ac_add_options --enable-debug-symbols --enable-debug" >> .mozconfig ||
+		echo "ac_add_options --enable-strip --enable-optimize" >> .mozconfig
+
+	[ "$SDECFG_LTO" = 1 ] && case "$arch_machine" in
+	aarch64*|loongarch64|mips64*|powerpc64*|x86_64)
+		echo "ac_add_options --enable-lto" >> .mozconfig ;;
+	esac
+	:
+}
+
+mozilla_register() {
+	echo "Run the component registration ..."
+	export MOZILLA_FIVE_HOME=$libdir/$pkg-$moz_ver
+	pushd $MOZILLA_FIVE_HOME
+	[ -e ./regxpcom ] && LD_LIBRARY_PATH=. ./regxpcom
+	[ -e ./regchrome ] && LD_LIBRARY_PATH=. ./regchrome
+	popd
+}
+
+mozilla_ver() {
+	moz_ver="`sed -n 's/MOZ_APP_VERSION *= *//p' config/autoconf.mk || true`"
+	moz_ver=${moz_ver:-$ver}
+
+	# dynamically inject the actual $libdir we are building with
+	sed -i "/lib32\"/d" security/sandbox/linux/broker/SandboxBrokerPolicyFactory.cpp
+	if [[ "$libdir" = *lib ]]; then
+		sed -i "/lib64\"/d" security/sandbox/linux/broker/SandboxBrokerPolicyFactory.cpp
+	else
+		sed -i "s/lib64\"/${libdir##*/}\"/" security/sandbox/linux/broker/SandboxBrokerPolicyFactory.cpp
+	fi
+}
+
+var_append makeopt ' ' "-f client.mk build"
+
+# generic configuration
+hook_add prepatch 1 'mozilla_configure'
+hook_add premake 5 'mozilla_ver'
+hook_add postmake 5 'mozilla_register'
+
+# compiler quirks
+case $arch in
+	x86)
+		# atomics crash on i486
+		GCC_WRAPPER_INSERT="${GCC_WRAPPER_INSERT/i486/i586}"
+		# float_t should be 32-bit, ..!? :-/
+		var_append GCC_WRAPPER_INSERT ' ' -D__FLT_EVAL_METHOD__=0
+		;;
+	arm)
+		var_append GCC_WRAPPER_APPEND ' ' -DLIBYUV_DISABLE_NEON=1
+		;;
+	arm64)
+		# sve simd
+		var_remove_regex GCC_WRAPPER_REMOVE ' ' "-march.*"
+		;;
+esac
+
+var_append GCC_WRAPPER_APPEND ' ' "`pkg-config glib-2.0 --cflags`"
+var_append GCC_WRAPPER_APPEND ' ' "`pkg-config x11 --cflags --libs-only-L`"
+
+# cleanups in this fat directory are a bit expensive
+nocvsinsrcdir=0
+chownsrcdir=0
+
+# distribute this file only with seamonkey
+if [ "$pkg" != "seamonkey" ]; then
+	var_append flist''del '|' ".*/aclocal/nspr\.m4"
+fi

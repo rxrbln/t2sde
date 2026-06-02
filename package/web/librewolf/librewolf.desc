@@ -1,0 +1,148 @@
+[COPY] --- T2-COPYRIGHT-BEGIN ---
+[COPY] t2/package/*/librewolf/librewolf.desc
+[COPY] Copyright (C) 2004 - 2026 The T2 SDE Project
+[COPY] Copyright (C) 1998 - 2004 ROCK Linux Project
+[COPY] SPDX-License-Identifier: GPL-2.0
+[COPY] --- T2-COPYRIGHT-END ---
+
+[I] Web browser with the primary goals of privacy, security and user freedom.
+
+[T] Designed to increase protection against tracking and fingerprinting
+[T] techniques, while also including a few security improvements.
+
+[U] https://librewolf.net/
+
+[A] The Librewolf Team
+[M] Riley Beckett <rbeckettvt@gmail.com>
+
+[C] extra/office
+[F] CROSS NO-LIBTOOL-FIX CUSTOM-LTO LATOMIC.x86 LATOMIC.sparc LATOMIC.sparc64
+[R] - alpha hppa hppa64 ia64 m68k riscv
+
+[L] MPL
+[V] 151.0.1-2
+
+[D] 552cf9943ddad45a884005e1bb7b7690102222a2b7492ce066dd9d4d librewolf-151.0.1-2.source.tar.gz https://codeberg.org/api/packages/librewolf/generic/librewolf-source/151.0.1-2/
+
+. $base/package/*/*/mozilla-conf.in
+mozilla_prefix=opt/librewolf
+
+export MACH_BUILD_PYTHON_NATIVE_PACKAGE_SOURCE=system
+export HOME=$sysroot/root
+
+if [ $prefix_auto = 1 ]; then
+	prefix=$mozilla_prefix
+	set_confopt
+fi
+
+hook_add inmake 5 "./mach build"
+hook_add postmake 5 "./mach install"
+
+librewolf_config() {
+	rm -f mozconfig
+	cat <<-EOT >> .mozconfig
+. \$topsrcdir/browser/config/mozconfig
+export MOZ_PHOENIX=1
+mk_add_options MOZ_PHOENIX=1
+mk_add_options MOZ_OBJDIR=@TOPSRCDIR@/objs
+
+#ac_add_options --enable-mathml
+#ac_add_options --enable-crypto
+#ac_add_options --enable-module=psm
+ac_add_options --enable-default-toolkit=cairo-gtk3
+ac_add_options --without-system-png
+#ac_add_options --disable-profilesharing
+ac_add_options --with-system-zlib
+#ac_add_options --with-system-bz2
+#ac_add_options --enable-system-sqlite
+ac_add_options --enable-system-ffi
+ac_add_options --enable-system-pixman
+#ac_add_options --with-pthreads
+#ac_add_options --enable-gio
+#ac_add_options --disable-gnomevfs
+ac_add_options --disable-necko-wifi
+ac_add_options --disable-crashreporter
+ac_add_options --disable-updater
+ac_add_options --disable-tests
+#ac_add_options --disable-installer
+#ac_add_options --disable-cargo-incremental
+ac_add_options --disable-jemalloc
+ac_add_options --enable-jxl
+
+# librewolf specific things
+ac_add_options --allow-addon-sideload
+ac_add_options --enable-hardening
+ac_add_options --disable-default-browser-agent
+ac_add_options --with-unsigned-addon-scopes=app,system
+
+ac_add_options --with-app-name=librewolf
+ac_add_options --with-app-basename=librewolf
+ac_add_options --with-branding=browser/branding/librewolf
+
+
+mk_add_options MOZ_CRASHREPORTER=0
+mk_add_options MOZ_DATA_REPORTING=0
+mk_add_options MOZ_SERVICES_HEALTHREPORT=0
+mk_add_options MOZ_TELEMETRY_REPORTING=0
+EOT
+
+pkginstalled dbus || echo "ac_add_options --disable-dbus" >> .mozconfig
+pkginstalled libjpeg-turbo && echo "ac_add_options --with-system-jpeg" >> .mozconfig
+pkginstalled icu4c && echo "ac_add_options --with-system-icu" >> .mozconfig
+pkginstalled pulseaudio || echo "ac_add_options --disable-pulseaudio" >> .mozconfig
+pkginstalled alsa-lib && echo "ac_add_options --enable-alsa" >> .mozconfig
+pkginstalled libevent && echo "ac_add_options --with-system-libevent" >> .mozconfig
+
+	# currently little-endian only
+	if [ $arch_bigendian != yes ] && pkginstalled wasi-libc; then
+		echo "ac_add_options --with-wasi-sysroot=$root/$(pkgprefix wasi-libc)" >> .mozconfig
+	else
+		echo "ac_add_options --without-wasm-sandboxed-libraries" >> .mozconfig
+	fi
+
+	[ "$SDECFG_DEFAULT_CC" = clang ] &&
+		var_append GCC_WRAPPER_APPEND ' ' "-c?:-fuse-ld=lld" &&
+		echo "ac_add_options --disable-elf-hack" >> .mozconfig
+
+	[ "$SDECFG_POWERPC64_ENDIANESS" = 'le' ] ||
+		var_append patchfiles ' ' $confdir/hotfix-ppc-not-power8.diff
+
+	# jit and sandbox?
+	case "$arch" in
+	x86)
+		# jit needs sse on x86
+		if ! $CC -E -dM -x c /dev/null | grep -iq _sse; then
+			var_append patchfiles ' ' $confdir/no-jit.diff
+			echo "ac_add_options --disable-jit" >> .mozconfig
+		fi
+		;;
+	arm)
+		[[ $arch_machine = armv[678]* ]] || echo "ac_add_options --disable-jit" >> .mozconfig
+		;;
+	arm64|loongarch64|riscv64|x86-64)
+		# no jit yet for x32 ABI variants
+		if [ "$SDECFG_X8664_X32" = 1 -o "$SDECFG_MIPS64_N32" = 1 ]; then
+			echo "ac_add_options --disable-jit" >> .mozconfig
+		fi
+		;;
+	*)
+		echo "ac_add_options --disable-jit" >> .mozconfig ;;
+	esac
+}
+
+# don't pass CPU optimizations to clang w/ wasi
+GCC_WRAPPER_INSERT="${GCC_WRAPPER_INSERT/-march=/--target=wasm32-wasi?:-march=}"
+GCC_WRAPPER_INSERT="${GCC_WRAPPER_INSERT/-mcpu=/--target=wasm32-wasi?:-mcpu=}"
+GCC_WRAPPER_INSERT="${GCC_WRAPPER_INSERT/-mtune=/--target=wasm32-wasi?:-mtune=}"
+GCC_WRAPPER_INSERT="${GCC_WRAPPER_INSERT/-mfpu=/--target=wasm32-wasi?:-mfpu=}"
+GCC_WRAPPER_INSERT="${GCC_WRAPPER_INSERT/-c?:-pie/--target=wasm32-wasi?:-c?:-pie}"
+
+hook_add prepatch 5 "cargo_clear_cksum third_party/rust/*/.cargo-checksum.json"
+hook_add postpatch 5 "rust_update_arch_target third_party/rust/*/no_atomic*.rs"
+
+hook_add prepatch 4 "librewolf_config"
+
+# disable legacy component registration
+mozilla_register() {
+	:
+}
