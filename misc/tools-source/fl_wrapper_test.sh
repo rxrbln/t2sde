@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/bin/bash
 #
 # --- T2-COPYRIGHT-BEGIN ---
 # t2/misc/tools-source/fl_wrapper_test.sh
