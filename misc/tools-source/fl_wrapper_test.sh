@@ -7,14 +7,14 @@
 # SPDX-License-Identifier: GPL-2.0
 # --- T2-COPYRIGHT-END ---
 
-for x in exec{l,v}{,p,e} ; do
+for x in execl execlp execle execv execvp execve ; do
 touch fltest_$x ; done
 
 bash misc/tools-source/fl_wrapper.c.sh > fl_wrapper.c
 gcc -O2 -shared -fPIC -Wall -ldl fl_wrapper.c -o fl_wrapper.so
 
-echo -n > rlog.txt
-echo -n > wlog.txt
+: > rlog.txt
+: > wlog.txt
 
 export FLWRAPPER_RLOG=rlog.txt
 export FLWRAPPER_WLOG=wlog.txt
