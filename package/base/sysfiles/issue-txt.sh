@@ -1,10 +1,10 @@
 # --- T2-COPYRIGHT-BEGIN ---
-# t2/package/*/sysfiles/issue-std.sh
+# t2/package/*/sysfiles/issue-txt.sh
 # Copyright (C) 2021 - 2026 The T2 SDE Project
 # SPDX-License-Identifier: GPL-2.0
 # --- T2-COPYRIGHT-END ---
 
-cat > etc/issue << EOT
+cat > etc/issue-txt << EOT
 ___________       _________
 __  /__|__ \\\\____________  /____
 _  __/___/ /_  ___/  __  /_  _ \\\\

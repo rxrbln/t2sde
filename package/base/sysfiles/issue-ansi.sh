@@ -4,7 +4,7 @@
 # SPDX-License-Identifier: GPL-2.0
 # --- T2-COPYRIGHT-END ---
 
-cat > etc/issue.ansi << EOT
+cat > etc/issue << EOT
 [?25l[?7l[0m[33m[1m
                         //[37m[0m[1m
  [0m[31m[1mTTTTTTTTTTTTTTT[37m[0m[1m       [0m[33m[1m//[37m[0m[1m
