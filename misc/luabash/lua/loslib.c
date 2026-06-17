@@ -229,7 +229,7 @@ static const luaL_Reg syslib[] = {
   {"rename",    os_rename},
   {"setlocale", os_setlocale},
   {"time",      os_time},
-  {"tmpname",   os_tmpname},
+  /*{"tmpname",   os_tmpname},*/
   {NULL, NULL}
 };
 
