@@ -6,6 +6,8 @@ dnl --- T2-COPYRIGHT-END ---
 
 define(`SPARC', 'SPARC')dnl
 
+CONFIG_SUN_OPENPROMIO=y
+
 # CONFIG_SUN4 is not set
 
 dnl run on old V7
@@ -42,8 +44,6 @@ CONFIG_FB_P9100=y
 dnl need to make it small
 
 # CONFIG_SMP is not set
-CONFIG_PREEMPT_NONE=y
-
 include(`linux-small.conf.m4')
 
 # CONFIG_PCI is not set
