@@ -1412,6 +1412,29 @@ init_vars_and_hooks() {
 		justinstopt="$justopt"' install'
 	fi
 
+	# Build suicide protection: when installing shared libraries natively,
+	# don't rm a .so that the running shell depends on. The install-wrappers
+	# below make rm check /proc/self/maps so "make install" can't kill bash.
+	if ! atstage cross && [ -d "$base/build/$SDECFG_ID/TOOLCHAIN/$toolsdir/bin" ]; then
+		cat > "$base/build/$SDECFG_ID/TOOLCHAIN/$toolsdir/bin/t2-safe-rm" <<- 'RM-WRAPPER'
+		#!/bin/sh
+		for f; do
+			case "$f" in
+				*.so|*.so.*)
+					if [ -f "$f" ] && [ -r /proc/self/maps ] && \
+					   grep -F " $(basename "$f")" /proc/self/maps >/dev/null 2>&1; then
+						echo "BUILD-SUICIDE-GUARD: skipping rm of loaded library: $f" >&2
+						continue
+					fi
+					;;
+			esac
+			rm -f "$f"
+		done
+		RM-WRAPPER
+		chmod +x "$base/build/$SDECFG_ID/TOOLCHAIN/$toolsdir/bin/t2-safe-rm"
+		var_append makeopt ' ' 'RM=t2-safe-rm'
+	fi
+
 	atstage cross && hook_add postflist 2 'postflist_fix_cross_scripts'
 	[ "$SDECFG_DO_CHECK" = 1 ] && hook_add inmake 6 'run_check'
 	[ "$SDECFG_STATIC_IN_USR" = 1 ] && hook_add postflist 3 'postflist_static_lib'
