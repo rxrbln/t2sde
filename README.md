@@ -48,6 +48,48 @@ If in doubt, best ask before working on a larger bounty.
 
 https://github.com/rxrbln/t2sde/issues?q=is%3Aopen+is%3Aissue+author%3Arxrbln
 
+# Build architecture
+
+T2 builds in stages to bootstrap from nothing:
+
+| Stage | What | How |
+|-------|------|-----|
+| 0 | Cross-compiler toolchain | Builds binutils + gcc for `$arch` targeting the build host |
+| 1 | Minimal target base | Cross-compiles glibc, kernel headers, core utils into a sysroot |
+| 2 | Target GCC | Rebuilds gcc natively inside the fresh sysroot |
+| 3-8 | Full system | Cross-compiles packages against the stage-2 sysroot |
+| 9 | Final rebuild | `Emerge-Pkg` / `t2 install` — natively on the running target |
+
+All package recipes are plain shell + metadata (`.desc` files). No custom
+DSL, no Python, no XML — just `sh` and `make`. The build is reproducible:
+same config = same binary checksums.
+
+# Portability
+
+T2 currently targets these architectures — many bootstrapped nightly
+with automated ISO generation:
+
+`alpha`, `arm`, `arm64`, `hppa`, `ia64`, `loongarch64`, `m68k`,
+`microblaze`, `mips64`, `mipsel`, `openrisc`, `ppc64le`, `ppc64-32`,
+`riscv32`, `riscv64`, `sparc64`, `x86`, `x86-64`
+
+# Bug philosophy
+
+T2 ships "rolling with tags" — packages land in the tree as soon as they
+build. If a build breaks, we revert or fix it forward. There is no
+separate "stable" branch; stability comes from the stage system and
+automated rebuild infrastructure.
+
+Known rough edges:
+- Python cross-compilation (KB#8 on t2sde.org)
+- GObject introspection on cross-compiled ISOs
+- PowerPC 32-bit GRUB boot
+- NVIDIA nouveau support for Turing+ GPUs
+
+If you hit a failure, `scripts/Build-Target` with `-xtrace` will show
+exactly where it broke. Patches welcome — bounties available for larger
+fixes (see below).
+
 # History
 
 "T2" started as a community driven fork of the ROCK Linux project in
