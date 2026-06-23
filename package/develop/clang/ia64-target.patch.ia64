@@ -1,0 +1,727 @@
+# --- T2-COPYRIGHT-BEGIN ---
+# t2/package/*/clang/ia64-target.patch.ia64
+# Copyright (C) 2026 The T2 SDE Project
+# SPDX-License-Identifier: GPL-2.0 or patched project license
+# --- T2-COPYRIGHT-END ---
+
+diff --git clang/lib/Basic/CMakeLists.txt clang/lib/Basic/CMakeLists.txt
+index adfc6ee326b5..ac4cdea013c4 100644
+--- clang/lib/Basic/CMakeLists.txt
++++ clang/lib/Basic/CMakeLists.txt
+@@ -104,6 +104,7 @@ add_clang_library(clangBasic
+   Targets/CSKY.cpp
+   Targets/DirectX.cpp
+   Targets/Hexagon.cpp
++  Targets/IA64.cpp
+   Targets/Lanai.cpp
+   Targets/LoongArch.cpp
+   Targets/M68k.cpp
+diff --git clang/lib/Basic/Targets.cpp clang/lib/Basic/Targets.cpp
+index 263253918d96..3828ab8e1b85 100644
+--- clang/lib/Basic/Targets.cpp
++++ clang/lib/Basic/Targets.cpp
+@@ -22,6 +22,7 @@
+ #include "Targets/CSKY.h"
+ #include "Targets/DirectX.h"
+ #include "Targets/Hexagon.h"
++#include "Targets/IA64.h"
+ #include "Targets/Lanai.h"
+ #include "Targets/LoongArch.h"
+ #include "Targets/M68k.h"
+@@ -128,6 +129,14 @@ std::unique_ptr<TargetInfo> AllocateTarget(const llvm::Triple &Triple,
+       return std::make_unique<LinuxTargetInfo<HexagonTargetInfo>>(Triple, Opts);
+     return std::make_unique<HexagonTargetInfo>(Triple, Opts);
+ 
++  case llvm::Triple::ia64:
++    switch (os) {
++    case llvm::Triple::Linux:
++      return std::make_unique<LinuxTargetInfo<IA64TargetInfo>>(Triple, Opts);
++    default:
++      return std::make_unique<IA64TargetInfo>(Triple, Opts);
++    }
++
+   case llvm::Triple::lanai:
+     return std::make_unique<LanaiTargetInfo>(Triple, Opts);
+ 
+diff --git clang/lib/Basic/Targets/IA64.cpp clang/lib/Basic/Targets/IA64.cpp
+new file mode 100644
+index 000000000000..a92fb3651402
+--- /dev/null
++++ clang/lib/Basic/Targets/IA64.cpp
+@@ -0,0 +1,149 @@
++//===--- IA64.cpp - Implement IA-64 (Itanium) target feature support ------===//
++//
++// Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
++// See https://llvm.org/LICENSE.txt for license information.
++// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
++//
++//===----------------------------------------------------------------------===//
++//
++// This file implements the IA-64 (Itanium) TargetInfo object.
++//
++//===----------------------------------------------------------------------===//
++
++#include "IA64.h"
++#include "Targets.h"
++#include "clang/Basic/MacroBuilder.h"
++#include "llvm/ADT/StringSwitch.h"
++
++using namespace clang;
++using namespace clang::targets;
++
++IA64TargetInfo::IA64TargetInfo(const llvm::Triple &Triple,
++                               const TargetOptions &)
++    : TargetInfo(Triple) {
++  // Byte-identical to TargetDataLayout.cpp's Triple::ia64 case. Little-endian,
++  // LP64, 80-bit long double in 128 bits, 128-bit stack alignment.
++  resetDataLayout("e-m:e-p:64:64-i64:64-f80:128-n8:16:32:64-S128");
++
++  // IA-64 is an LP64 platform.
++  LongWidth = LongAlign = PointerWidth = PointerAlign = 64;
++  IntMaxType = SignedLong;
++  Int64Type = SignedLong;
++  SizeType = UnsignedLong;
++  PtrDiffType = SignedLong;
++  IntPtrType = SignedLong;
++
++  // long double is the 80-bit x87 extended format, but -- unlike x86 -- it is
++  // stored and aligned in 16 bytes on IA-64 (psABI). This must match the
++  // datalayout's "f80:128" and the cross glibc headers; do NOT inherit x86's
++  // 96-bit/32-byte settings.
++  LongDoubleWidth = 128;
++  LongDoubleAlign = 128;
++  LongDoubleFormat = &llvm::APFloat::x87DoubleExtended();
++  SuitableAlign = 128;
++
++  // Up to 64-bit accesses are lock-free.
++  MaxAtomicPromoteWidth = MaxAtomicInlineWidth = 64;
++}
++
++IA64TargetInfo::CPUKind IA64TargetInfo::getCPUKind(StringRef Name) const {
++  return llvm::StringSwitch<CPUKind>(Name)
++      .Cases({"itanium", "merced"}, CK_ITANIUM)
++      .Cases({"itanium2", "mckinley", "montecito"}, CK_ITANIUM2)
++      .Default(CK_GENERIC);
++}
++
++void IA64TargetInfo::fillValidCPUList(
++    SmallVectorImpl<StringRef> &Values) const {
++  static const StringRef CPUs[] = {"generic", "itanium", "itanium2"};
++  Values.append(std::begin(CPUs), std::end(CPUs));
++}
++
++void IA64TargetInfo::getTargetDefines(const LangOptions &Opts,
++                                      MacroBuilder &Builder) const {
++  // DefineStd emits __ia64__, __ia64, and (in GNU mode) ia64.
++  DefineStd(Builder, "ia64", Opts);
++  Builder.defineMacro("__itanium__");
++  Builder.defineMacro("__REGISTER_PREFIX__", "");
++  // __LP64__ / _LP64 are emitted generically for LP64 targets by the
++  // preprocessor; long-double width follows from LongDoubleFormat above.
++
++  // GCC exposes __float80 as a builtin type on i386/x86_64/IA-64, where it
++  // "means the same thing as long double" -- on IA-64 long double is already
++  // the 80-bit double-extended format, so the two are bit- and ABI-identical
++  // (both mangle as 'e'). clang has no __float80 builtin type, so alias it to
++  // long double; this is what GCC code such as libffi's ia64 port expects.
++  Builder.defineMacro("__float80", "long double");
++}
++
++bool IA64TargetInfo::hasFeature(StringRef Feature) const {
++  return Feature == "ia64";
++}
++
++// IA-64 register file: 128 general (r0-r127), 128 floating (f0-f127),
++// 64 predicate (p0-p63), and 8 branch (b0-b7) registers.
++const char *const IA64TargetInfo::GCCRegNames[] = {
++    // clang-format off
++    // General registers
++    "r0",   "r1",   "r2",   "r3",   "r4",   "r5",   "r6",   "r7",
++    "r8",   "r9",   "r10",  "r11",  "r12",  "r13",  "r14",  "r15",
++    "r16",  "r17",  "r18",  "r19",  "r20",  "r21",  "r22",  "r23",
++    "r24",  "r25",  "r26",  "r27",  "r28",  "r29",  "r30",  "r31",
++    "r32",  "r33",  "r34",  "r35",  "r36",  "r37",  "r38",  "r39",
++    "r40",  "r41",  "r42",  "r43",  "r44",  "r45",  "r46",  "r47",
++    "r48",  "r49",  "r50",  "r51",  "r52",  "r53",  "r54",  "r55",
++    "r56",  "r57",  "r58",  "r59",  "r60",  "r61",  "r62",  "r63",
++    "r64",  "r65",  "r66",  "r67",  "r68",  "r69",  "r70",  "r71",
++    "r72",  "r73",  "r74",  "r75",  "r76",  "r77",  "r78",  "r79",
++    "r80",  "r81",  "r82",  "r83",  "r84",  "r85",  "r86",  "r87",
++    "r88",  "r89",  "r90",  "r91",  "r92",  "r93",  "r94",  "r95",
++    "r96",  "r97",  "r98",  "r99",  "r100", "r101", "r102", "r103",
++    "r104", "r105", "r106", "r107", "r108", "r109", "r110", "r111",
++    "r112", "r113", "r114", "r115", "r116", "r117", "r118", "r119",
++    "r120", "r121", "r122", "r123", "r124", "r125", "r126", "r127",
++    // Floating-point registers
++    "f0",   "f1",   "f2",   "f3",   "f4",   "f5",   "f6",   "f7",
++    "f8",   "f9",   "f10",  "f11",  "f12",  "f13",  "f14",  "f15",
++    "f16",  "f17",  "f18",  "f19",  "f20",  "f21",  "f22",  "f23",
++    "f24",  "f25",  "f26",  "f27",  "f28",  "f29",  "f30",  "f31",
++    "f32",  "f33",  "f34",  "f35",  "f36",  "f37",  "f38",  "f39",
++    "f40",  "f41",  "f42",  "f43",  "f44",  "f45",  "f46",  "f47",
++    "f48",  "f49",  "f50",  "f51",  "f52",  "f53",  "f54",  "f55",
++    "f56",  "f57",  "f58",  "f59",  "f60",  "f61",  "f62",  "f63",
++    "f64",  "f65",  "f66",  "f67",  "f68",  "f69",  "f70",  "f71",
++    "f72",  "f73",  "f74",  "f75",  "f76",  "f77",  "f78",  "f79",
++    "f80",  "f81",  "f82",  "f83",  "f84",  "f85",  "f86",  "f87",
++    "f88",  "f89",  "f90",  "f91",  "f92",  "f93",  "f94",  "f95",
++    "f96",  "f97",  "f98",  "f99",  "f100", "f101", "f102", "f103",
++    "f104", "f105", "f106", "f107", "f108", "f109", "f110", "f111",
++    "f112", "f113", "f114", "f115", "f116", "f117", "f118", "f119",
++    "f120", "f121", "f122", "f123", "f124", "f125", "f126", "f127",
++    // Predicate registers
++    "p0",   "p1",   "p2",   "p3",   "p4",   "p5",   "p6",   "p7",
++    "p8",   "p9",   "p10",  "p11",  "p12",  "p13",  "p14",  "p15",
++    "p16",  "p17",  "p18",  "p19",  "p20",  "p21",  "p22",  "p23",
++    "p24",  "p25",  "p26",  "p27",  "p28",  "p29",  "p30",  "p31",
++    "p32",  "p33",  "p34",  "p35",  "p36",  "p37",  "p38",  "p39",
++    "p40",  "p41",  "p42",  "p43",  "p44",  "p45",  "p46",  "p47",
++    "p48",  "p49",  "p50",  "p51",  "p52",  "p53",  "p54",  "p55",
++    "p56",  "p57",  "p58",  "p59",  "p60",  "p61",  "p62",  "p63",
++    // Branch registers
++    "b0",   "b1",   "b2",   "b3",   "b4",   "b5",   "b6",   "b7",
++    // clang-format on
++};
++
++ArrayRef<const char *> IA64TargetInfo::getGCCRegNames() const {
++  return llvm::ArrayRef(GCCRegNames);
++}
++
++// The ABI register aliases: gp=r1, sp=r12, rp=b0 (the assembler also accepts
++// these names, and gcc exposes them as register aliases).
++const TargetInfo::GCCRegAlias IA64TargetInfo::GCCRegAliases[] = {
++    {{"gp"}, "r1"},
++    {{"sp"}, "r12"},
++    {{"rp"}, "b0"},
++};
++
++ArrayRef<TargetInfo::GCCRegAlias> IA64TargetInfo::getGCCRegAliases() const {
++  return llvm::ArrayRef(GCCRegAliases);
++}
+diff --git clang/lib/Basic/Targets/IA64.h clang/lib/Basic/Targets/IA64.h
+new file mode 100644
+index 000000000000..2c6240c2b420
+--- /dev/null
++++ clang/lib/Basic/Targets/IA64.h
+@@ -0,0 +1,86 @@
++//===--- IA64.h - declare IA-64 (Itanium) target feature support *- C++ -*-===//
++//
++// Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
++// See https://llvm.org/LICENSE.txt for license information.
++// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
++//
++//===----------------------------------------------------------------------===//
++//
++// This file declares the IA-64 (Itanium) TargetInfo object. The type model is
++// the IA-64 SysV psABI's LP64: 64-bit long/pointer, 80-bit extended long
++// double stored/aligned in 16 bytes (not x86's 96-bit quirk). The datalayout
++// is byte-identical to the backend's (TargetDataLayout.cpp, Triple::ia64) --
++// that string is the contract between frontend struct layout and backend
++// lowering, so the two must never diverge.
++//
++//===----------------------------------------------------------------------===//
++
++#ifndef LLVM_CLANG_LIB_BASIC_TARGETS_IA64_H
++#define LLVM_CLANG_LIB_BASIC_TARGETS_IA64_H
++#include "clang/Basic/TargetInfo.h"
++#include "clang/Basic/TargetOptions.h"
++#include "llvm/Support/Compiler.h"
++#include "llvm/TargetParser/Triple.h"
++
++namespace clang {
++namespace targets {
++
++class LLVM_LIBRARY_VISIBILITY IA64TargetInfo : public TargetInfo {
++  static const char *const GCCRegNames[];
++  static const TargetInfo::GCCRegAlias GCCRegAliases[];
++
++  enum CPUKind { CK_GENERIC, CK_ITANIUM, CK_ITANIUM2 } CPU = CK_GENERIC;
++
++public:
++  IA64TargetInfo(const llvm::Triple &Triple, const TargetOptions &);
++
++  void getTargetDefines(const LangOptions &Opts,
++                        MacroBuilder &Builder) const override;
++
++  bool hasFeature(StringRef Feature) const override;
++
++  llvm::SmallVector<Builtin::InfosShard> getTargetBuiltins() const override {
++    // No target builtins yet.
++    return {};
++  }
++
++  BuiltinVaListKind getBuiltinVaListKind() const override {
++    // The IA-64 __gnuc_va_list is a plain pointer into the argument save area.
++    return TargetInfo::VoidPtrBuiltinVaList;
++  }
++
++  ArrayRef<const char *> getGCCRegNames() const override;
++  ArrayRef<TargetInfo::GCCRegAlias> getGCCRegAliases() const override;
++
++  bool validateAsmConstraint(const char *&Name,
++                             TargetInfo::ConstraintInfo &Info) const override {
++    // Inline-asm constraints are not modelled yet (no inline asm in scope).
++    return false;
++  }
++
++  std::string_view getClobbers() const override { return ""; }
++
++  bool isValidCPUName(StringRef Name) const override {
++    return getCPUKind(Name) != CK_GENERIC || Name == "generic";
++  }
++
++  void fillValidCPUList(SmallVectorImpl<StringRef> &Values) const override;
++
++  bool setCPU(const std::string &Name) override {
++    CPU = getCPUKind(Name);
++    return CPU != CK_GENERIC || Name == "generic";
++  }
++
++  bool hasBitIntType() const override { return true; }
++
++  // IA-64 has no native 128-bit integer and the backend does not lower i128;
++  // don't offer __int128 (which would also require an i128 datalayout entry).
++  bool hasInt128Type() const override { return false; }
++
++private:
++  CPUKind getCPUKind(StringRef Name) const;
++};
++
++} // namespace targets
++} // namespace clang
++#endif // LLVM_CLANG_LIB_BASIC_TARGETS_IA64_H
+diff --git clang/lib/CodeGen/CMakeLists.txt clang/lib/CodeGen/CMakeLists.txt
+index dbbc35b372f4..edab662246a9 100644
+--- clang/lib/CodeGen/CMakeLists.txt
++++ clang/lib/CodeGen/CMakeLists.txt
+@@ -139,6 +139,7 @@ add_clang_library(clangCodeGen
+   Targets/CSKY.cpp
+   Targets/DirectX.cpp
+   Targets/Hexagon.cpp
++  Targets/IA64.cpp
+   Targets/Lanai.cpp
+   Targets/LoongArch.cpp
+   Targets/M68k.cpp
+diff --git clang/lib/CodeGen/CodeGenModule.cpp clang/lib/CodeGen/CodeGenModule.cpp
+index 85ed38f14462..880438ae456c 100644
+--- clang/lib/CodeGen/CodeGenModule.cpp
++++ clang/lib/CodeGen/CodeGenModule.cpp
+@@ -117,6 +117,8 @@ createTargetCodeGenInfo(CodeGenModule &CGM) {
+   default:
+     return createDefaultTargetCodeGenInfo(CGM);
+ 
++  case llvm::Triple::ia64:
++    return createIA64TargetCodeGenInfo(CGM);
+   case llvm::Triple::m68k:
+     return createM68kTargetCodeGenInfo(CGM);
+   case llvm::Triple::mips:
+diff --git clang/lib/CodeGen/TargetInfo.h clang/lib/CodeGen/TargetInfo.h
+index db06584d766b..7f141fc8b00d 100644
+--- clang/lib/CodeGen/TargetInfo.h
++++ clang/lib/CodeGen/TargetInfo.h
+@@ -539,6 +539,9 @@ std::unique_ptr<TargetCodeGenInfo>
+ createLoongArchTargetCodeGenInfo(CodeGenModule &CGM, unsigned GRLen,
+                                  unsigned FLen);
+ 
++std::unique_ptr<TargetCodeGenInfo>
++createIA64TargetCodeGenInfo(CodeGenModule &CGM);
++
+ std::unique_ptr<TargetCodeGenInfo>
+ createM68kTargetCodeGenInfo(CodeGenModule &CGM);
+ 
+diff --git clang/lib/CodeGen/Targets/IA64.cpp clang/lib/CodeGen/Targets/IA64.cpp
+new file mode 100644
+index 000000000000..3e49c8e6e7d6
+--- /dev/null
++++ clang/lib/CodeGen/Targets/IA64.cpp
+@@ -0,0 +1,229 @@
++//===- IA64.cpp -----------------------------------------------------------===//
++//
++// Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
++// See https://llvm.org/LICENSE.txt for license information.
++// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
++//
++//===----------------------------------------------------------------------===//
++
++#include "ABIInfoImpl.h"
++#include "TargetInfo.h"
++
++using namespace clang;
++using namespace clang::CodeGen;
++
++//===----------------------------------------------------------------------===//
++// IA-64 (Itanium) SysV ABI Implementation.
++//
++// Aggregates are passed and returned *by value*, flattened into 64-bit
++// parameter slots per the psABI (IA64conventions.pdf §8.5/§8.6):
++//
++//  * A non-homogeneous aggregate is mapped to (size+63)/64 consecutive 64-bit
++//    slots ("Byte 0" alignment). For arguments the first eight slots land in
++//    out0-out7 and the rest on the stack; for return values 1-256 bits land in
++//    r8-r11. We express this by coercing to an [N x i64] (or i64) "direct" type
++//    and letting the backend's CCAssignToReg/Stack split it.
++//  * A homogeneous floating-point aggregate (HFA: all float, all double, or all
++//    long double; up to eight elements) is passed/returned in f8-f15. We coerce
++//    to [N x base] so each element gets its own FP register.
++//  * Aggregate return values larger than 256 bits are returned in a caller-
++//    allocated buffer whose address is passed in r8 (sret); the backend's
++//    CCIfSRet rule routes it there.
++//
++// A 16-byte-aligned aggregate uses the "Next Even" slot policy (psABI Table
++// 8-1): it must start on an even parameter slot. The [N x i64] coercion cannot
++// convey the alignment to the backend, but the slot an argument lands on is
++// fully determined by the arguments before it (slots 0-7 are the registers,
++// 8+ the stack), so classifyArgumentType tracks the running slot count and,
++// when such an aggregate would start on an odd slot, emits one i64 of padding
++// (an unused argument, ABIArgInfo's PaddingType) to burn it. Scalar long
++// doubles and HFAs need no padding -- the backend's f80 CC hook applies Next
++// Even itself -- but their slot consumption is mirrored in the count.
++//===----------------------------------------------------------------------===//
++
++namespace {
++class IA64ABIInfo : public ABIInfo {
++public:
++  IA64ABIInfo(CodeGenTypes &CGT) : ABIInfo(CGT) {}
++
++private:
++  /// Aggregate return values strictly larger than this many bits go in memory.
++  static constexpr uint64_t MaxReturnRegBits = 256;
++
++  ABIArgInfo classifyReturnType(QualType RetTy) const;
++  /// Classify one argument. \p Slots is the running count of parameter slots
++  /// taken by the preceding arguments; it is advanced by this argument's
++  /// footprint (including any Next-Even padding slot).
++  ABIArgInfo classifyArgumentType(QualType Ty, uint64_t &Slots) const;
++
++  /// Coerce an aggregate to the [N x i64] (or plain i64) "direct" type that the
++  /// backend splits across the integer parameter / return registers.
++  llvm::Type *coerceToIntSlots(uint64_t SizeBits) const;
++  /// Coerce a homogeneous FP aggregate to [Members x Base].
++  ABIArgInfo coerceHFA(const Type *Base, uint64_t Members) const;
++
++  bool isHomogeneousAggregateBaseType(QualType Ty) const override;
++  bool isHomogeneousAggregateSmallEnough(const Type *Base,
++                                         uint64_t Members) const override;
++
++  void computeInfo(CGFunctionInfo &FI) const override {
++    if (!getCXXABI().classifyReturnType(FI))
++      FI.getReturnInfo() = classifyReturnType(FI.getReturnType());
++    // An indirect (sret) return's buffer address travels in r8 and takes no
++    // parameter slot, so the slot count starts at 0 either way.
++    uint64_t Slots = 0;
++    for (auto &Arg : FI.arguments())
++      Arg.info = classifyArgumentType(Arg.type, Slots);
++  }
++
++  RValue EmitVAArg(CodeGenFunction &CGF, Address VAListAddr, QualType Ty,
++                   AggValueSlot Slot) const override;
++};
++
++class IA64TargetCodeGenInfo : public TargetCodeGenInfo {
++public:
++  IA64TargetCodeGenInfo(CodeGenTypes &CGT)
++      : TargetCodeGenInfo(std::make_unique<IA64ABIInfo>(CGT)) {}
++};
++} // end anonymous namespace
++
++bool IA64ABIInfo::isHomogeneousAggregateBaseType(QualType Ty) const {
++  // The psABI HFA base types are single-, double-, and double-extended-
++  // precision floating point (not quad). Each element is passed in one FR.
++  if (const BuiltinType *BT = Ty->getAs<BuiltinType>()) {
++    switch (BT->getKind()) {
++    case BuiltinType::Float:
++    case BuiltinType::Double:
++    case BuiltinType::LongDouble:
++      return true;
++    default:
++      break;
++    }
++  }
++  return false;
++}
++
++bool IA64ABIInfo::isHomogeneousAggregateSmallEnough(const Type *Base,
++                                                    uint64_t Members) const {
++  // f8-f15: at most eight individual values.
++  return Members <= 8;
++}
++
++llvm::Type *IA64ABIInfo::coerceToIntSlots(uint64_t SizeBits) const {
++  llvm::Type *I64 = llvm::Type::getInt64Ty(getVMContext());
++  uint64_t NumSlots = (SizeBits + 63) / 64;
++  if (NumSlots <= 1)
++    return I64;
++  return llvm::ArrayType::get(I64, NumSlots);
++}
++
++ABIArgInfo IA64ABIInfo::coerceHFA(const Type *Base, uint64_t Members) const {
++  llvm::Type *EltTy = CGT.ConvertType(QualType(Base, 0));
++  llvm::Type *CoerceTy =
++      Members == 1 ? EltTy : llvm::ArrayType::get(EltTy, Members);
++  return ABIArgInfo::getDirect(CoerceTy);
++}
++
++ABIArgInfo IA64ABIInfo::classifyArgumentType(QualType Ty,
++                                             uint64_t &Slots) const {
++  Ty = useFirstFieldIfTransparentUnion(Ty);
++
++  if (!isAggregateTypeForABI(Ty)) {
++    // Treat an enum as its underlying integer type.
++    if (const EnumType *ET = Ty->getAs<EnumType>())
++      Ty = ET->getDecl()->getIntegerType();
++
++    // A long double takes two slots starting on an even one (the backend's f80
++    // hook burns the odd slot itself); every other scalar takes one slot.
++    if (getContext().getTypeAlign(Ty) >= 128)
++      Slots += (Slots & 1) + 2;
++    else
++      ++Slots;
++
++    if (isPromotableIntegerTypeForABI(Ty))
++      return ABIArgInfo::getExtend(Ty);
++    return ABIArgInfo::getDirect();
++  }
++
++  // Aggregates are passed by value. Empty aggregates take no slot.
++  uint64_t Size = getContext().getTypeSize(Ty);
++  if (Size == 0)
++    return ABIArgInfo::getIgnore();
++
++  // Homogeneous FP aggregate -> f8-f15. Each element shadows one GR parameter
++  // slot (two for long double, where the backend's f80 hook also applies Next
++  // Even); mirror that consumption in the slot count.
++  const Type *Base = nullptr;
++  uint64_t Members = 0;
++  if (isHomogeneousAggregate(Ty, Base, Members)) {
++    if (getContext().getTypeAlign(Ty) >= 128)
++      Slots += (Slots & 1) + 2 * Members;
++    else
++      Slots += Members;
++    return coerceHFA(Base, Members);
++  }
++
++  // Everything else: flatten into 64-bit integer slots. A 16-byte-aligned
++  // aggregate must start on an even slot ("Next Even"); if it would start on
++  // an odd one, burn that slot with one i64 of padding (an unused argument).
++  llvm::Type *Padding = nullptr;
++  if (getContext().getTypeAlign(Ty) >= 128 && (Slots & 1)) {
++    Padding = llvm::Type::getInt64Ty(getVMContext());
++    ++Slots;
++  }
++  Slots += (Size + 63) / 64;
++  return ABIArgInfo::getDirect(coerceToIntSlots(Size), 0, Padding);
++}
++
++ABIArgInfo IA64ABIInfo::classifyReturnType(QualType RetTy) const {
++  if (RetTy->isVoidType())
++    return ABIArgInfo::getIgnore();
++
++  if (!isAggregateTypeForABI(RetTy)) {
++    if (const EnumType *ET = RetTy->getAs<EnumType>())
++      RetTy = ET->getDecl()->getIntegerType();
++
++    if (isPromotableIntegerTypeForABI(RetTy))
++      return ABIArgInfo::getExtend(RetTy);
++    return ABIArgInfo::getDirect();
++  }
++
++  uint64_t Size = getContext().getTypeSize(RetTy);
++  if (Size == 0)
++    return ABIArgInfo::getIgnore();
++
++  // Homogeneous FP aggregate -> f8-f15.
++  const Type *Base = nullptr;
++  uint64_t Members = 0;
++  if (isHomogeneousAggregate(RetTy, Base, Members))
++    return coerceHFA(Base, Members);
++
++  // Aggregates up to 256 bits return in r8-r11; larger ones in a caller buffer
++  // whose address is passed in r8 (sret, routed by the backend's CCIfSRet rule).
++  if (Size > MaxReturnRegBits)
++    return getNaturalAlignIndirect(RetTy, getDataLayout().getAllocaAddrSpace(),
++                                   /*ByVal=*/false);
++
++  return ABIArgInfo::getDirect(coerceToIntSlots(Size));
++}
++
++RValue IA64ABIInfo::EmitVAArg(CodeGenFunction &CGF, Address VAListAddr,
++                              QualType Ty, AggValueSlot Slot) const {
++  // The va_list is a single pointer walking a contiguous image of 64-bit slots
++  // (see the backend's va_start lowering). Each argument occupies a whole
++  // number of 8-byte slots in that image; aggregates are read in place. The
++  // image starts on a 16-byte boundary (entry sp - 48), so a 16-byte-aligned
++  // value's Next-Even slot is exactly the next 16-byte-aligned address:
++  // AllowHigherAlign rounds the pointer up to it.
++  uint64_t Slots = 0;
++  ABIArgInfo AI = classifyArgumentType(Ty, Slots);
++  return emitVoidPtrVAArg(CGF, VAListAddr, Ty, /*IsIndirect=*/AI.isIndirect(),
++                          getContext().getTypeInfoInChars(Ty),
++                          CharUnits::fromQuantity(8),
++                          /*AllowHigherAlign=*/true, Slot);
++}
++
++std::unique_ptr<TargetCodeGenInfo>
++CodeGen::createIA64TargetCodeGenInfo(CodeGenModule &CGM) {
++  return std::make_unique<IA64TargetCodeGenInfo>(CGM.getTypes());
++}
+diff --git clang/lib/Driver/ToolChains/CommonArgs.cpp clang/lib/Driver/ToolChains/CommonArgs.cpp
+index 10a1a412eea0..c36381ab66fe 100644
+--- clang/lib/Driver/ToolChains/CommonArgs.cpp
++++ clang/lib/Driver/ToolChains/CommonArgs.cpp
+@@ -629,6 +629,8 @@ const char *tools::getLDMOption(const llvm::Triple &T, const ArgList &Args) {
+     if (tools::mips::hasMipsAbiArg(Args, "n32") || T.isABIN32())
+       return "elf32ltsmipn32";
+     return "elf64ltsmip";
++  case llvm::Triple::ia64:
++    return "elf64_ia64";
+   case llvm::Triple::systemz:
+     return "elf64_s390";
+   case llvm::Triple::x86_64:
+diff --git clang/lib/Driver/ToolChains/Gnu.cpp clang/lib/Driver/ToolChains/Gnu.cpp
+index cb6a9b242421..058f3fa2ab08 100644
+--- clang/lib/Driver/ToolChains/Gnu.cpp
++++ clang/lib/Driver/ToolChains/Gnu.cpp
+@@ -413,10 +413,15 @@ void tools::gnutools::Linker::ConstructJob(Compilation &C, const JobAction &JA,
+       }
+       if (P.empty()) {
+         const char *crtbegin;
++        bool IsIA64 = ToolChain.getTriple().getArch() == llvm::Triple::ia64;
+         if (Args.hasArg(options::OPT_shared))
+           crtbegin = isAndroid ? "crtbegin_so.o" : "crtbeginS.o";
+         else if (IsStatic)
+-          crtbegin = isAndroid ? "crtbegin_static.o" : "crtbeginT.o";
++          // IA-64 toolchains don't ship a static-specific crtbeginT.o; the
++          // plain crtbegin.o serves static links too.
++          crtbegin = isAndroid    ? "crtbegin_static.o"
++                     : IsIA64      ? "crtbegin.o"
++                                   : "crtbeginT.o";
+         else if (IsPIE || IsStaticPIE)
+           crtbegin = isAndroid ? "crtbegin_dynamic.o" : "crtbeginS.o";
+         else
+@@ -628,6 +633,10 @@ void tools::gnutools::Assembler::ConstructJob(Compilation &C,
+   switch (getToolChain().getArch()) {
+   default:
+     break;
++  // Select explicit stop mode
++  case llvm::Triple::ia64:
++    CmdArgs.push_back("-x");
++    break;
+   // Add --32/--64 to make sure we get the format we want.
+   // This is incomplete
+   case llvm::Triple::x86:
+@@ -2453,6 +2462,10 @@ void Generic_GCC::GCCInstallationDetector::AddDefaultGCCPrefixes(
+       "s390x-unknown-linux-gnu", "s390x-ibm-linux-gnu", "s390x-suse-linux",
+       "s390x-redhat-linux"};
+ 
++  static const char *const IA64LibDirs[] = {"/lib"};
++  static const char *const IA64Triples[] = {"ia64-linux-gnu",
++                                            "ia64-unknown-linux-gnu"};
++
+   using std::begin;
+   using std::end;
+ 
+@@ -2753,6 +2766,10 @@ void Generic_GCC::GCCInstallationDetector::AddDefaultGCCPrefixes(
+     LibDirs.append(begin(SystemZLibDirs), end(SystemZLibDirs));
+     TripleAliases.append(begin(SystemZTriples), end(SystemZTriples));
+     break;
++  case llvm::Triple::ia64:
++    LibDirs.append(begin(IA64LibDirs), end(IA64LibDirs));
++    TripleAliases.append(begin(IA64Triples), end(IA64Triples));
++    break;
+   default:
+     // By default, just rely on the standard lib directories and the original
+     // triple.
+@@ -3084,6 +3101,7 @@ bool Generic_GCC::IsIntegratedAssemblerDefault() const {
+   case llvm::Triple::nvptx:
+   case llvm::Triple::nvptx64:
+   case llvm::Triple::xcore:
++  case llvm::Triple::ia64:
+     return false;
+   default:
+     return true;
+diff --git clang/lib/Driver/ToolChains/Linux.cpp clang/lib/Driver/ToolChains/Linux.cpp
+index d525b417b4ea..6db631d5f5ba 100644
+--- clang/lib/Driver/ToolChains/Linux.cpp
++++ clang/lib/Driver/ToolChains/Linux.cpp
+@@ -219,6 +219,9 @@ static StringRef getOSLibDir(const llvm::Triple &Triple, const ArgList &Args) {
+     }
+   }
+ 
++  if (Triple.getArch() == llvm::Triple::ia64)
++    return "lib";
++
+   return Triple.isArch32Bit() ? "lib" : "lib64";
+ }
+ 
+@@ -650,6 +653,10 @@ std::string Linux::getDynamicLinker(const ArgList &Args) const {
+             .str();
+     break;
+   }
++  case llvm::Triple::ia64:
++    LibDir = "lib";
++    Loader = "ld-linux-ia64.so.2";
++    break;
+   case llvm::Triple::m68k:
+     LibDir = "lib";
+     Loader = "ld.so.1";
+diff --git clang/test/CodeGen/ia64-abi.c clang/test/CodeGen/ia64-abi.c
+new file mode 100644
+index 000000000000..6b7a0bf38498
+--- /dev/null
++++ clang/test/CodeGen/ia64-abi.c
+@@ -0,0 +1,26 @@
++// REQUIRES: ia64-registered-target
++// RUN: %clang_cc1 -triple ia64 -emit-llvm -o - %s | FileCheck %s
++
++// IA-64 aggregate by-value passing. Small aggregates are coerced to an array of
++// i64 argument slots. A 16-byte-aligned aggregate must begin on an even slot
++// ("Next Even"): if the preceding arguments leave the next slot odd, clang
++// inserts an i64 padding argument so the aggregate starts even (commit
++// 9a689f1e, IA64ABIInfo::classifyArgumentType).
++
++struct S16 { long a; long b; } __attribute__((aligned(16)));
++
++// %x occupies slot 0, so the 16-byte-aligned aggregate would land on odd slot
++// 1; an i64 padding argument is inserted to push it to even slot 2.
++// CHECK-LABEL: define {{.*}} @f_pad(
++// CHECK-SAME: i64 noundef %x, i64 %{{[0-9]+}}, [2 x i64] %s.coerce)
++long f_pad(long x, struct S16 s) {
++  return x + s.a + s.b;
++}
++
++// With no preceding argument the aggregate already starts on even slot 0, so no
++// padding argument is inserted.
++// CHECK-LABEL: define {{.*}} @f_nopad(
++// CHECK-SAME: [2 x i64] %s.coerce)
++long f_nopad(struct S16 s) {
++  return s.a + s.b;
++}
+diff --git clang/test/CodeGen/ia64-float80.c clang/test/CodeGen/ia64-float80.c
+new file mode 100644
+index 000000000000..434411bbadf8
+--- /dev/null
++++ clang/test/CodeGen/ia64-float80.c
+@@ -0,0 +1,23 @@
++// REQUIRES: ia64-registered-target
++// RUN: %clang_cc1 -triple ia64 -emit-llvm -o - %s | FileCheck %s
++
++// GCC exposes __float80 on IA-64; clang has no dedicated __float80 builtin and
++// aliases it to long double, which on IA-64 is the 80-bit x87 extended format
++// (commit 8821fe2f). Both map to the x86_fp80 IR type at 16-byte alignment.
++
++#ifndef __float80
++#error __float80 should be defined on IA-64
++#endif
++
++_Static_assert(sizeof(__float80) == sizeof(long double), "__float80 == long double");
++_Static_assert(__LDBL_MANT_DIG__ == 64, "long double is 80-bit extended");
++
++// CHECK-LABEL: define {{.*}}x86_fp80 @use_float80(x86_fp80
++__float80 use_float80(__float80 x) {
++  return x + 1;
++}
++
++// CHECK-LABEL: define {{.*}}x86_fp80 @use_long_double(x86_fp80
++long double use_long_double(long double x) {
++  return x + 1;
++}
