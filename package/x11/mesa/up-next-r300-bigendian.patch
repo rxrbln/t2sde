@@ -1,0 +1,983 @@
+From c04dcc9b4e1b0ef2f029cd5ccb06900e230a74e3 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Pavel=20Ondra=C4=8Dka?= <pavel.ondracka@gmail.com>
+Date: Mon, 22 Jun 2026 14:51:05 +0200
+Subject: [PATCH 1/9] r300: use signed index offset for index translation
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+The index offset is derived from index_bias, which is signed and can be
+negative when r300_split_index_bias() has to emulate a negative bias on
+pre-R500 hardware. Keep the translation helper parameter signed instead
+of converting it to unsigned at the function boundary.
+
+Signed-off-by: Pavel Ondračka <pavel.ondracka@gmail.com>
+Part-of: <https://gitlab.freedesktop.org/mesa/mesa/-/merge_requests/42218>
+---
+ src/gallium/drivers/r300/r300_context.h          | 2 +-
+ src/gallium/drivers/r300/r300_render_translate.c | 2 +-
+ 2 files changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/src/gallium/drivers/r300/r300_context.h b/src/gallium/drivers/r300/r300_context.h
+index f684500d33c4..57b4b469cb29 100644
+--- a/src/gallium/drivers/r300/r300_context.h
++++ b/src/gallium/drivers/r300/r300_context.h
+@@ -777,7 +777,7 @@ void r300_stop_query(struct r300_context *r300);
+ void r300_translate_index_buffer(struct r300_context *r300,
+                                  const struct pipe_draw_info *info,
+                                  struct pipe_resource **out_index_buffer,
+-                                 unsigned *index_size, unsigned index_offset,
++                                 unsigned *index_size, int index_offset,
+                                  unsigned *start, unsigned count,
+                                  const uint8_t **export_ptr);
+ 
+diff --git a/src/gallium/drivers/r300/r300_render_translate.c b/src/gallium/drivers/r300/r300_render_translate.c
+index cea5200cab34..b9b41bbb5efb 100644
+--- a/src/gallium/drivers/r300/r300_render_translate.c
++++ b/src/gallium/drivers/r300/r300_render_translate.c
+@@ -11,7 +11,7 @@
+ void r300_translate_index_buffer(struct r300_context *r300,
+                                  const struct pipe_draw_info *info,
+                                  struct pipe_resource **out_buffer,
+-                                 unsigned *index_size, unsigned index_offset,
++                                 unsigned *index_size, int index_offset,
+                                  unsigned *start, unsigned count,
+                                  const uint8_t **export_ptr)
+ {
+-- 
+GitLab
+
+
+From 1e37c98fe1dbc4486ce14d998959a876a28faa47 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Pavel=20Ondra=C4=8Dka?= <pavel.ondracka@gmail.com>
+Date: Mon, 22 Jun 2026 14:51:34 +0200
+Subject: [PATCH 2/9] r300: always use 32-bit indices on big endian
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+We either need to do 32bit endian swap for all in VAP or no swap at all and convert everything to LE manually. This implements the former and mirrors the current behaviour for vertex attributes.
+
+Assisted-by: Codex (GPT-5.5)
+Signed-off-by: Pavel Ondračka <pavel.ondracka@gmail.com>
+Part-of: <https://gitlab.freedesktop.org/mesa/mesa/-/merge_requests/42218>
+---
+ src/gallium/drivers/r300/r300_context.h       |  6 ++
+ src/gallium/drivers/r300/r300_render.c        | 33 ++++++++-
+ .../drivers/r300/r300_render_translate.c      | 73 +++++++++++++++++++
+ 3 files changed, 110 insertions(+), 2 deletions(-)
+
+diff --git a/src/gallium/drivers/r300/r300_context.h b/src/gallium/drivers/r300/r300_context.h
+index 57b4b469cb29..6e168cb46a8c 100644
+--- a/src/gallium/drivers/r300/r300_context.h
++++ b/src/gallium/drivers/r300/r300_context.h
+@@ -774,6 +774,12 @@ void r300_resume_query(struct r300_context *r300,
+ void r300_stop_query(struct r300_context *r300);
+ 
+ /* r300_render_translate.c */
++void r300_rebuild_elts_to_uint_userptr(struct pipe_context *context,
++                                       const struct pipe_draw_info *info,
++                                       unsigned add_transfer_flags,
++                                       int index_bias,
++                                       unsigned start, unsigned count,
++                                       void *out);
+ void r300_translate_index_buffer(struct r300_context *r300,
+                                  const struct pipe_draw_info *info,
+                                  struct pipe_resource **out_index_buffer,
+diff --git a/src/gallium/drivers/r300/r300_render.c b/src/gallium/drivers/r300/r300_render.c
+index 79089e23ba51..6941523194e8 100644
+--- a/src/gallium/drivers/r300/r300_render.c
++++ b/src/gallium/drivers/r300/r300_render.c
+@@ -12,6 +12,7 @@
+ 
+ #include "util/u_inlines.h"
+ 
++#include "util/u_endian.h"
+ #include "util/format/u_format.h"
+ #include "util/u_draw.h"
+ #include "util/u_memory.h"
+@@ -485,14 +486,35 @@ static void r300_draw_elements_immediate(struct r300_context *r300,
+                                          const struct pipe_draw_info *info,
+                                          const struct pipe_draw_start_count_bias *draw)
+ {
++#if UTIL_ARCH_BIG_ENDIAN
++    uint32_t indices[8];
++#else
+     const uint8_t *ptr1;
+     const uint16_t *ptr2;
+     const uint32_t *ptr4;
++    unsigned i;
++#endif
+     unsigned index_size = info->index_size;
+-    unsigned i, count_dwords = index_size == 4 ? draw->count :
+-                                                 (draw->count + 1) / 2;
++    bool use_32bit_indices = index_size == 4;
++    unsigned count_dwords;
++#if UTIL_ARCH_BIG_ENDIAN
++    /* R500 applies draw->index_bias in hardware via R500_VAP_INDEX_OFFSET. */
++    int index_bias = draw->index_bias && !r300->screen->caps.is_r500 ?
++                     draw->index_bias : 0;
++#endif
+     CS_LOCALS(r300);
+ 
++#if UTIL_ARCH_BIG_ENDIAN
++    /* The VAP uses one endian-swap mode for all fetched data. On BE, emit
++     * immediate indices as 32-bit words to match the vertex streams.
++     */
++    use_32bit_indices = true;
++    assert(draw->count <= ARRAY_SIZE(indices));
++    r300_rebuild_elts_to_uint_userptr(&r300->context, info, 0, index_bias,
++                                      draw->start, draw->count, indices);
++#endif
++    count_dwords = use_32bit_indices ? draw->count : (draw->count + 1) / 2;
++
+     /* 19 dwords for r300_draw_elements_immediate. Give up if the function fails. */
+     if (!r300_prepare_for_rendering(r300,
+             PREP_EMIT_STATES | PREP_VALIDATE_VBOS | PREP_EMIT_VARRAYS |
+@@ -504,6 +526,12 @@ static void r300_draw_elements_immediate(struct r300_context *r300,
+     BEGIN_CS(2 + count_dwords);
+     OUT_CS_PKT3(R300_PACKET3_3D_DRAW_INDX_2, count_dwords);
+ 
++#if UTIL_ARCH_BIG_ENDIAN
++    OUT_CS(R300_VAP_VF_CNTL__PRIM_WALK_INDICES | (draw->count << 16) |
++           R300_VAP_VF_CNTL__INDEX_SIZE_32bit |
++           r300_translate_primitive(info->mode));
++    OUT_CS_TABLE(indices, count_dwords);
++#else
+     switch (index_size) {
+     case 1:
+         ptr1 = (uint8_t*)info->index.user;
+@@ -571,6 +599,7 @@ static void r300_draw_elements_immediate(struct r300_context *r300,
+         }
+         break;
+     }
++#endif
+     END_CS;
+ }
+ 
+diff --git a/src/gallium/drivers/r300/r300_render_translate.c b/src/gallium/drivers/r300/r300_render_translate.c
+index b9b41bbb5efb..32f267ea1756 100644
+--- a/src/gallium/drivers/r300/r300_render_translate.c
++++ b/src/gallium/drivers/r300/r300_render_translate.c
+@@ -4,9 +4,67 @@
+  */
+ 
+ #include "r300_context.h"
++#include "util/u_endian.h"
+ #include "util/u_index_modify.h"
+ #include "util/u_upload_mgr.h"
+ 
++#if UTIL_ARCH_BIG_ENDIAN
++/* The VAP endian-swap mode is global, so keep BE index streams 32-bit like
++ * translated vertex attributes.
++ */
++void r300_rebuild_elts_to_uint_userptr(struct pipe_context *context,
++                                       const struct pipe_draw_info *info,
++                                       unsigned add_transfer_flags,
++                                       int index_bias,
++                                       unsigned start,
++                                       unsigned count,
++                                       void *out)
++{
++    struct pipe_transfer *in_transfer = NULL;
++    const uint8_t *in_map;
++    uint32_t *out_map = out;
++
++    if (info->has_user_indices) {
++       in_map = info->index.user;
++    } else {
++       in_map = pipe_buffer_map(context, info->index.resource,
++                                PIPE_MAP_READ |
++                                add_transfer_flags,
++                                &in_transfer);
++    }
++
++    in_map += start * info->index_size;
++
++    switch (info->index_size) {
++    case 1:
++        for (unsigned i = 0; i < count; i++) {
++            out_map[i] = in_map[i] + index_bias;
++        }
++        break;
++
++    case 2: {
++        const uint16_t *in_map16 = (const uint16_t *)in_map;
++
++        for (unsigned i = 0; i < count; i++) {
++            out_map[i] = in_map16[i] + index_bias;
++        }
++        break;
++    }
++
++    case 4: {
++        const uint32_t *in_map32 = (const uint32_t *)in_map;
++
++        for (unsigned i = 0; i < count; i++) {
++            out_map[i] = in_map32[i] + index_bias;
++        }
++        break;
++    }
++    }
++
++    if (in_transfer)
++       pipe_buffer_unmap(context, in_transfer);
++}
++#endif
+ 
+ void r300_translate_index_buffer(struct r300_context *r300,
+                                  const struct pipe_draw_info *info,
+@@ -18,6 +76,20 @@ void r300_translate_index_buffer(struct r300_context *r300,
+     unsigned out_offset;
+     void **ptr = (void **)export_ptr;
+ 
++#if UTIL_ARCH_BIG_ENDIAN
++    if (*index_size < 4 || index_offset) {
++        *out_buffer = NULL;
++        u_upload_alloc_ref(r300->uploader, 0, count * sizeof(uint32_t), 4,
++                           &out_offset, out_buffer, ptr);
++
++        r300_rebuild_elts_to_uint_userptr(&r300->context, info,
++                                          PIPE_MAP_UNSYNCHRONIZED,
++                                          index_offset, *start, count, *ptr);
++
++        *index_size = 4;
++        *start = out_offset / sizeof(uint32_t);
++    }
++#else
+     switch (*index_size) {
+     case 1:
+         *out_buffer = NULL;
+@@ -62,4 +134,5 @@ void r300_translate_index_buffer(struct r300_context *r300,
+         }
+         break;
+     }
++#endif
+ }
+-- 
+GitLab
+
+
+From d2cf75034fb93129dd5694bb415540f090bd4a45 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Pavel=20Ondra=C4=8Dka?= <pavel.ondracka@gmail.com>
+Date: Thu, 4 Jun 2026 19:00:10 +0200
+Subject: [PATCH 3/9] r300: use R32_FLOAT as 32-bit dummy vertex format
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+The BE VAP path rejects vertex attribute formats smaller than 32 bits,
+but the zero-vertex-elements fallback used R8G8B8A8_UNORM as its dummy
+PSC attribute. This made no-attribute draw tests abort in r300_vertex_psc.
+Use R32_FLOAT for the dummy attribute instead, it keeps the same 4-byte
+dummy stride while satisfying the BE format restriction.
+
+Signed-off-by: Pavel Ondračka <pavel.ondracka@gmail.com>
+Part-of: <https://gitlab.freedesktop.org/mesa/mesa/-/merge_requests/42218>
+---
+ src/gallium/drivers/r300/r300_state.c | 3 ++-
+ 1 file changed, 2 insertions(+), 1 deletion(-)
+
+diff --git a/src/gallium/drivers/r300/r300_state.c b/src/gallium/drivers/r300/r300_state.c
+index 12434e4225a3..2690c9b06e07 100644
+--- a/src/gallium/drivers/r300/r300_state.c
++++ b/src/gallium/drivers/r300/r300_state.c
+@@ -2094,7 +2094,8 @@ static void* r300_create_vertex_elements_state(struct pipe_context* pipe,
+ 
+     /* R300 Programmable Stream Control (PSC) doesn't support 0 vertex elements. */
+     if (!count) {
+-        dummy_attrib.src_format = PIPE_FORMAT_R8G8B8A8_UNORM;
++        /* Keep the dummy format 32-bit so the big-endian VAP path accepts it. */
++        dummy_attrib.src_format = PIPE_FORMAT_R32_FLOAT;
+         attribs = &dummy_attrib;
+         count = 1;
+     } else if (count > 16) {
+-- 
+GitLab
+
+
+From b48a6013a757416b1652211d6d37ddf9ef4fdd47 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Pavel=20Ondra=C4=8Dka?= <pavel.ondracka@gmail.com>
+Date: Thu, 4 Jun 2026 20:21:41 +0200
+Subject: [PATCH 4/9] r300: fix occlusion query results on big endian
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+ZPASS counter writes follow the programmed ZB endian mode. The normal
+depth-buffer path already sets the BE depth endian bits, but the
+dummy-Z path used for occlusion queries without a depth buffer did
+not. Set the dummy-Z pitch endian bits on BE as well, then read query
+counters in native CPU order.
+
+This fixes byte-swapped occlusion query results from meta draw
+operations on big-endian r300 while preserving the no-depth dummy-Z
+query path.
+
+Signed-off-by: Pavel Ondračka <pavel.ondracka@gmail.com>
+Part-of: <https://gitlab.freedesktop.org/mesa/mesa/-/merge_requests/42218>
+---
+ src/gallium/drivers/r300/r300_emit.c  | 8 +++++++-
+ src/gallium/drivers/r300/r300_query.c | 4 ++--
+ 2 files changed, 9 insertions(+), 3 deletions(-)
+
+diff --git a/src/gallium/drivers/r300/r300_emit.c b/src/gallium/drivers/r300/r300_emit.c
+index b28bba17df9c..7fcafe094b85 100644
+--- a/src/gallium/drivers/r300/r300_emit.c
++++ b/src/gallium/drivers/r300/r300_emit.c
+@@ -705,12 +705,18 @@ void r300_emit_query_start(struct r300_context *r300, unsigned size, void*state)
+     }
+ 
+     if (use_dummy_z) {
++        unsigned depthpitch = 4 | R300_DEPTHMICROTILE_TILED_SQUARE;
++
++#if UTIL_ARCH_BIG_ENDIAN
++        depthpitch |= R300_DEPTHENDIAN(R300_SURF_DWORD_SWAP);
++#endif
++
+         OUT_CS_REG(R300_ZB_FORMAT, R300_DEPTHFORMAT_16BIT_INT_Z);
+ 
+         OUT_CS_REG(R300_ZB_DEPTHOFFSET, 0);
+         OUT_CS_RELOC(surf);
+ 
+-        OUT_CS_REG(R300_ZB_DEPTHPITCH, 4 | R300_DEPTHMICROTILE_TILED_SQUARE);
++        OUT_CS_REG(R300_ZB_DEPTHPITCH, depthpitch);
+         OUT_CS_RELOC(surf);
+     }
+ 
+diff --git a/src/gallium/drivers/r300/r300_query.c b/src/gallium/drivers/r300/r300_query.c
+index 6af30f03d55f..1a1c7c74a8e8 100644
+--- a/src/gallium/drivers/r300/r300_query.c
++++ b/src/gallium/drivers/r300/r300_query.c
+@@ -173,8 +173,8 @@ static bool r300_get_query_result(struct pipe_context* pipe,
+     /* Sum up the results. */
+     temp = 0;
+     for (i = 0; i < q->num_results; i++) {
+-        /* Convert little endian values written by GPU to CPU byte order */
+-        temp += util_le32_to_cpu(*map);
++        /* ZPASS writes follow the programmed ZB endian mode. */
++        temp += *map;
+         map++;
+     }
+ 
+-- 
+GitLab
+
+
+From ffa5548618a9b328e63fe5565f5d48e7a3f90154 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Pavel=20Ondra=C4=8Dka?= <pavel.ondracka@gmail.com>
+Date: Mon, 8 Jun 2026 11:16:31 +0200
+Subject: [PATCH 5/9] r300: fix BE 8888 render-to-texture endian state
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+On big endian, r300 normally uses DWORD_SWAP for 8888 array formats so
+CPU-visible bytes match the Gallium component order.
+
+That convention is wrong for non-sRGB 8888 resources that are both render
+targets and sampler views. Glamor can render to such a BO in VRAM and
+later sample it after the kernel migrates it to GTT under memory pressure.
+The bytes survive the move, but the sampler observes the colorbuffer
+contents with the opposite component convention, causing inverted colors
+around moved windows.
+
+Use NO_SWAP for both colorbuffer and sampler state for these resources,
+while leaving transfer resources, sRGB, pure render targets, and
+upload/readback paths on the existing endian policy.
+
+Closes: https://gitlab.freedesktop.org/mesa/mesa/-/work_items/15398
+Signed-off-by: Pavel Ondračka <pavel.ondracka@gmail.com>
+Part-of: <https://gitlab.freedesktop.org/mesa/mesa/-/merge_requests/42218>
+---
+ src/gallium/drivers/r300/r300_texture.c | 35 ++++++++++++++++++++++---
+ 1 file changed, 31 insertions(+), 4 deletions(-)
+
+diff --git a/src/gallium/drivers/r300/r300_texture.c b/src/gallium/drivers/r300/r300_texture.c
+index dda3bceeb590..f29fe33ce2b0 100644
+--- a/src/gallium/drivers/r300/r300_texture.c
++++ b/src/gallium/drivers/r300/r300_texture.c
+@@ -51,11 +51,38 @@ enum pipe_format r300_unbyteswap_array_format(enum pipe_format format)
+     }
+ }
+ 
+-static unsigned r300_get_endian_swap(enum pipe_format format)
++static unsigned r300_get_endian_swap(enum pipe_format format,
++                                     struct r300_resource *tex)
+ {
+     const struct util_format_description *desc;
+     unsigned swap_size;
+ 
++#if UTIL_ARCH_BIG_ENDIAN
++    if ((tex->b.bind & (PIPE_BIND_RENDER_TARGET | PIPE_BIND_SAMPLER_VIEW)) ==
++        (PIPE_BIND_RENDER_TARGET | PIPE_BIND_SAMPLER_VIEW) &&
++        !(tex->b.flags & R300_RESOURCE_FLAG_TRANSFER) &&
++        !util_format_is_srgb(tex->b.format)) {
++        /* Normal BE 8888 array formats use DWORD_SWAP so CPU-visible bytes
++         * follow Gallium component order. Render-to-texture resources need one
++         * GPU convention for both RB3D writes and sampler reads; otherwise a
++         * VRAM-rendered glamor pixmap sampled after migration to GTT gets
++         * channel-swapped. Keep transfer staging, sRGB, and pure render
++         * targets on the normal policy.
++         */
++        switch (format) {
++        case PIPE_FORMAT_A8R8G8B8_UNORM:
++        case PIPE_FORMAT_X8R8G8B8_UNORM:
++        case PIPE_FORMAT_B8G8R8A8_UNORM:
++        case PIPE_FORMAT_B8G8R8X8_UNORM:
++            return R300_SURF_NO_SWAP;
++        default:
++            break;
++        }
++    }
++#else
++    (void)tex;
++#endif
++
+     if (r300_unbyteswap_array_format(format) != format)
+         return R300_SURF_DWORD_SWAP;
+ 
+@@ -954,7 +981,7 @@ void r300_texture_setup_format_state(struct r300_screen *screen,
+ 
+     out->tile_config = R300_TXO_MACRO_TILE(desc->macrotile[level]) |
+                        R300_TXO_MICRO_TILE(desc->microtile) |
+-                       R300_TXO_ENDIAN(r300_get_endian_swap(format));
++                       R300_TXO_ENDIAN(r300_get_endian_swap(format, tex));
+ }
+ 
+ static void r300_texture_setup_fb_state(struct r300_surface *surf)
+@@ -970,7 +997,7 @@ static void r300_texture_setup_fb_state(struct r300_surface *surf)
+                 stride |
+                 R300_DEPTHMACROTILE(tex->tex.macrotile[level]) |
+                 R300_DEPTHMICROTILE(tex->tex.microtile) |
+-                R300_DEPTHENDIAN(r300_get_endian_swap(surf->base.format));
++                R300_DEPTHENDIAN(r300_get_endian_swap(surf->base.format, tex));
+         surf->format = r300_translate_zsformat(surf->base.format);
+         surf->pitch_zmask = tex->tex.zmask_stride_in_pixels[level];
+         surf->pitch_hiz = tex->tex.hiz_stride_in_pixels[level];
+@@ -982,7 +1009,7 @@ static void r300_texture_setup_fb_state(struct r300_surface *surf)
+                 r300_translate_colorformat(format) |
+                 R300_COLOR_TILE(tex->tex.macrotile[level]) |
+                 R300_COLOR_MICROTILE(tex->tex.microtile) |
+-                R300_COLOR_ENDIAN(r300_get_endian_swap(format));
++                R300_COLOR_ENDIAN(r300_get_endian_swap(format, tex));
+         surf->format = r300_translate_out_fmt(format);
+         surf->colormask_swizzle =
+             r300_translate_colormask_swizzle(format);
+-- 
+GitLab
+
+
+From 1663393c2c2f48c48eba23ada8214c8651732bf2 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Pavel=20Ondra=C4=8Dka?= <pavel.ondracka@gmail.com>
+Date: Fri, 12 Jun 2026 09:23:25 +0200
+Subject: [PATCH 6/9] r300: fix BE RGB565/RGB5 render-to-texture formats
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+On big endian, the r300 colorbuffer path needs RGB lane order for
+RGB565 and for the A1B5G5R5/X1B5G5R5 1555 render aliases. The generic
+BGRA lane mapping swaps red and blue for these render targets.
+
+For B5G5R5* textures, override the generic W1Z5Y5X5 sampler swizzle so
+GL_RGB5 and GL_RGB5_A1 render-to-texture sample with the same convention
+that RB3D used when writing the colorbuffer. This fixes the Sauerbraten
+minimap trace.
+
+RGB565 also needs a transfer-boundary conversion: resources are stored in
+the hardware lane order, while CPU maps must expose Gallium's
+PIPE_FORMAT_B5G6R5_UNORM convention. Swap the 5-bit red/blue fields on
+BE RGB565 maps so uploads and readbacks remain CPU-visible B5G6R5.
+
+Assisted-by: Codex (GPT-5.5)
+Signed-off-by: Pavel Ondračka <pavel.ondracka@gmail.com>
+Part-of: <https://gitlab.freedesktop.org/mesa/mesa/-/merge_requests/42218>
+---
+ src/gallium/drivers/r300/r300_texture.c  | 42 ++++++++++
+ src/gallium/drivers/r300/r300_transfer.c | 97 +++++++++++++++++++++++-
+ 2 files changed, 138 insertions(+), 1 deletion(-)
+
+diff --git a/src/gallium/drivers/r300/r300_texture.c b/src/gallium/drivers/r300/r300_texture.c
+index f29fe33ce2b0..6379d74223f9 100644
+--- a/src/gallium/drivers/r300/r300_texture.c
++++ b/src/gallium/drivers/r300/r300_texture.c
+@@ -307,6 +307,18 @@ uint32_t r300_translate_texformat(enum pipe_format format,
+         return R300_TX_FORMAT_CxV8U8 | result;
+     }
+ 
++#if UTIL_ARCH_BIG_ENDIAN
++    /* Match the sampler lanes to RB3D's BE 1555 write convention. */
++    switch (format) {
++    case PIPE_FORMAT_B5G5R5A1_UNORM:
++        return R300_EASY_TX_FORMAT(X, Y, Z, W, W1Z5Y5X5);
++    case PIPE_FORMAT_B5G5R5X1_UNORM:
++        return R300_EASY_TX_FORMAT(X, Y, Z, ONE, W1Z5Y5X5);
++    default:
++        break;
++    }
++#endif
++
+     /* Integer and fixed-point 16.16 textures are not supported. */
+     for (i = 0; i < 4; i++) {
+         if (desc->channel[i].type == UTIL_FORMAT_TYPE_FIXED ||
+@@ -504,6 +516,10 @@ static uint32_t r300_translate_colorformat(enum pipe_format format)
+ 
+         case PIPE_FORMAT_B5G5R5A1_UNORM:
+         case PIPE_FORMAT_B5G5R5X1_UNORM:
++#if UTIL_ARCH_BIG_ENDIAN
++        case PIPE_FORMAT_A1B5G5R5_UNORM:
++        case PIPE_FORMAT_X1B5G5R5_UNORM:
++#endif
+             return R300_COLOR_FORMAT_ARGB1555;
+ 
+         case PIPE_FORMAT_B4G4R4A4_UNORM:
+@@ -712,8 +728,20 @@ static uint32_t r300_translate_out_fmt(enum pipe_format format)
+ 
+         /*** Generic cases (standard channel mapping) ***/
+ 
++#if UTIL_ARCH_BIG_ENDIAN
++        /* BE RGB565/1555 aliases need RGB lane order, not BGRA. */
++        case PIPE_FORMAT_B5G6R5_UNORM:
++        case PIPE_FORMAT_A1B5G5R5_UNORM:
++        case PIPE_FORMAT_X1B5G5R5_UNORM:
++            return modifier |
++                R300_C0_SEL_R | R300_C1_SEL_G |
++                R300_C2_SEL_B | R300_C3_SEL_A;
++#endif
++
+         /* BGRA outputs. */
++#if !UTIL_ARCH_BIG_ENDIAN
+         case PIPE_FORMAT_B5G6R5_UNORM:
++#endif
+         case PIPE_FORMAT_B5G5R5A1_UNORM:
+         case PIPE_FORMAT_B5G5R5X1_UNORM:
+         case PIPE_FORMAT_B4G4R4A4_UNORM:
+@@ -834,6 +862,18 @@ static uint32_t r300_translate_colormask_swizzle(enum pipe_format format)
+     case PIPE_FORMAT_R32G32_FLOAT:
+         return COLORMASK_GRRG;
+ 
++#if UTIL_ARCH_BIG_ENDIAN
++    /* Match BE RGB565 colormasks to RGB output lanes; no alpha. */
++    case PIPE_FORMAT_B5G6R5_UNORM:
++        return COLORMASK_RGBX;
++
++    case PIPE_FORMAT_X1B5G5R5_UNORM:
++        return COLORMASK_RGBX;
++
++    case PIPE_FORMAT_A1B5G5R5_UNORM:
++        return COLORMASK_RGBA;
++#endif
++
+     case PIPE_FORMAT_B5G5R5X1_UNORM:
+     case PIPE_FORMAT_B4G4R4X4_UNORM:
+     case PIPE_FORMAT_B8G8R8X8_UNORM:
+@@ -841,7 +881,9 @@ static uint32_t r300_translate_colormask_swizzle(enum pipe_format format)
+     case PIPE_FORMAT_B10G10R10X2_UNORM:
+         return COLORMASK_BGRX;
+ 
++#if !UTIL_ARCH_BIG_ENDIAN
+     case PIPE_FORMAT_B5G6R5_UNORM:
++#endif
+     case PIPE_FORMAT_B5G5R5A1_UNORM:
+     case PIPE_FORMAT_B4G4R4A4_UNORM:
+     case PIPE_FORMAT_B8G8R8A8_UNORM:
+diff --git a/src/gallium/drivers/r300/r300_transfer.c b/src/gallium/drivers/r300/r300_transfer.c
+index 7ff89303f205..e07694842fb8 100644
+--- a/src/gallium/drivers/r300/r300_transfer.c
++++ b/src/gallium/drivers/r300/r300_transfer.c
+@@ -18,6 +18,11 @@ struct r300_transfer {
+ 
+     /* Linear texture. */
+     struct r300_resource *linear_texture;
++
++#if UTIL_ARCH_BIG_ENDIAN
++    void *map;
++    void *cpu_map;
++#endif
+ };
+ 
+ /* Convenience cast wrapper. */
+@@ -27,6 +32,65 @@ r300_transfer(struct pipe_transfer* transfer)
+     return (struct r300_transfer*)transfer;
+ }
+ 
++#if UTIL_ARCH_BIG_ENDIAN
++/* RGB565 render/sampler state on big endian uses the opposite 5-bit red/blue
++ * field order from Gallium's CPU-visible PIPE_FORMAT_B5G6R5_UNORM convention.
++ * Keep that difference contained at transfer boundaries: CPU maps see normal
++ * B5G6R5, while the resource stores the order consumed by r300 hardware.
++ */
++static void r300_copy_b5g6r5_map(const struct pipe_transfer *transfer,
++                                 char *dst_map, const char *src_map)
++{
++    for (unsigned z = 0; z < transfer->box.depth; z++) {
++        const char *src_layer = src_map + (size_t)z * transfer->layer_stride;
++        char *dst_layer = dst_map + (size_t)z * transfer->layer_stride;
++
++        for (unsigned y = 0; y < transfer->box.height; y++) {
++            const uint16_t *src =
++                (const uint16_t *)(src_layer + y * transfer->stride);
++            uint16_t *dst =
++                (uint16_t *)(dst_layer + y * transfer->stride);
++
++            for (unsigned x = 0; x < transfer->box.width; x++) {
++                uint16_t value = src[x];
++
++                dst[x] = ((value & 0xf800) >> 11) |
++                         (value & 0x07e0) |
++                         ((value & 0x001f) << 11);
++            }
++        }
++    }
++}
++
++static size_t r300_b5g6r5_map_size(const struct pipe_transfer *transfer)
++{
++    unsigned depth = transfer->box.depth;
++    size_t size = (size_t)transfer->stride * transfer->box.height;
++
++    if (depth > 1)
++        size += (size_t)(depth - 1) * transfer->layer_stride;
++
++    return size;
++}
++
++static void *r300_create_b5g6r5_cpu_map(struct r300_transfer *r300transfer,
++                                        char *map)
++{
++    struct pipe_transfer *transfer = (struct pipe_transfer*)r300transfer;
++    char *cpu_map = MALLOC(r300_b5g6r5_map_size(transfer));
++
++    if (!cpu_map)
++        return NULL;
++
++    r300transfer->map = map;
++
++    if (transfer->usage & PIPE_MAP_READ)
++        r300_copy_b5g6r5_map(transfer, cpu_map, map);
++
++    return cpu_map;
++}
++#endif
++
+ /* Copy from a tiled texture to a detiled one. */
+ static void r300_copy_from_tiled_texture(struct pipe_context *ctx,
+                                          struct r300_transfer *r300transfer)
+@@ -207,6 +271,18 @@ r300_texture_transfer_map(struct pipe_context *ctx,
+             return NULL;
+         }
+ 	*transfer = &trans->transfer;
++#if UTIL_ARCH_BIG_ENDIAN
++        if (texture->format == PIPE_FORMAT_B5G6R5_UNORM) {
++            trans->cpu_map = r300_create_b5g6r5_cpu_map(trans, map);
++            if (!trans->cpu_map) {
++                pipe_resource_reference(
++                    (struct pipe_resource**)&trans->linear_texture, NULL);
++                FREE(trans);
++                return NULL;
++            }
++            return trans->cpu_map;
++        }
++#endif
+         return map;
+     } else {
+         /* Tiling is disabled. */
+@@ -217,9 +293,20 @@ r300_texture_transfer_map(struct pipe_context *ctx,
+         }
+ 
+ 	*transfer = &trans->transfer;
+-        return map + trans->transfer.offset +
++        map += trans->transfer.offset +
+             box->y / util_format_get_blockheight(format) * trans->transfer.stride +
+             box->x / util_format_get_blockwidth(format) * util_format_get_blocksize(format);
++#if UTIL_ARCH_BIG_ENDIAN
++        if (texture->format == PIPE_FORMAT_B5G6R5_UNORM) {
++            trans->cpu_map = r300_create_b5g6r5_cpu_map(trans, map);
++            if (!trans->cpu_map) {
++                FREE(trans);
++                return NULL;
++            }
++            return trans->cpu_map;
++        }
++#endif
++        return map;
+     }
+ }
+ 
+@@ -228,6 +315,11 @@ void r300_texture_transfer_unmap(struct pipe_context *ctx,
+ {
+     struct r300_transfer *trans = r300_transfer(transfer);
+ 
++#if UTIL_ARCH_BIG_ENDIAN
++    if (trans->cpu_map && (transfer->usage & PIPE_MAP_WRITE))
++        r300_copy_b5g6r5_map(transfer, trans->map, trans->cpu_map);
++#endif
++
+     if (trans->linear_texture) {
+         if (transfer->usage & PIPE_MAP_WRITE) {
+             r300_copy_into_tiled_texture(ctx, trans);
+@@ -236,5 +328,8 @@ void r300_texture_transfer_unmap(struct pipe_context *ctx,
+         pipe_resource_reference(
+             (struct pipe_resource**)&trans->linear_texture, NULL);
+     }
++#if UTIL_ARCH_BIG_ENDIAN
++    FREE(trans->cpu_map);
++#endif
+     FREE(transfer);
+ }
+-- 
+GitLab
+
+
+From b3cd46cca6010b0a43d9877df03086852471d78a Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Pavel=20Ondra=C4=8Dka?= <pavel.ondracka@gmail.com>
+Date: Fri, 12 Jun 2026 09:23:26 +0200
+Subject: [PATCH 7/9] r300: fix BE constant blend color for colorbuffer formats
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+On big endian, several colorbuffer formats consume the constant
+blend-color register lanes in a format-specific order. Program the inverse
+lane order for A8R8G8B8, RGBA8/RGBX8/RGB10A2, RGB565, and B5G5R5* so
+GL_CONSTANT_COLOR and GL_CONSTANT_ALPHA see pipe RGBA/RGB.
+
+This fixes the constant blend-factor dEQP GLES2 fragment_ops blend cases
+on BE RV370 and the affected 8888, 1010102, 565, and 1555 subtests in
+Piglit fbo-blending-formats.
+
+Signed-off-by: Pavel Ondračka <pavel.ondracka@gmail.com>
+Part-of: <https://gitlab.freedesktop.org/mesa/mesa/-/merge_requests/42218>
+---
+ src/gallium/drivers/r300/r300_state.c | 58 ++++++++++++++++++++++++++-
+ 1 file changed, 56 insertions(+), 2 deletions(-)
+
+diff --git a/src/gallium/drivers/r300/r300_state.c b/src/gallium/drivers/r300/r300_state.c
+index 2690c9b06e07..e411b7a9fcc5 100644
+--- a/src/gallium/drivers/r300/r300_state.c
++++ b/src/gallium/drivers/r300/r300_state.c
+@@ -676,7 +676,6 @@ static void r300_set_blend_color(struct pipe_context* pipe,
+         (struct r300_blend_color_state*)r300->blend_color_state.state;
+     struct pipe_blend_color c;
+     struct pipe_surface *cb;
+-    float tmp;
+     CB_LOCALS;
+ 
+     state->state = *color; /* Save it, so that we can reuse it in set_fb_state */
+@@ -705,13 +704,68 @@ static void r300_set_blend_color(struct pipe_context* pipe,
+             c.color[2] = c.color[3];
+             break;
+ 
++#if UTIL_ARCH_BIG_ENDIAN
++        case PIPE_FORMAT_A8R8G8B8_UNORM: {
++            /* A8R8G8B8 constant-color blending consumes the register lanes
++             * in a different order from pipe RGBA. Program the inverse
++             * order so GL_CONSTANT_COLOR sees pipe RGBA.
++             */
++            float r = c.color[0];
++            float g = c.color[1];
++            float b = c.color[2];
++            float a = c.color[3];
++            c.color[0] = g;
++            c.color[1] = r;
++            c.color[2] = a;
++            c.color[3] = b;
++            break;
++        }
++
+         case PIPE_FORMAT_R8G8B8A8_UNORM:
+         case PIPE_FORMAT_R8G8B8X8_UNORM:
+         case PIPE_FORMAT_R10G10B10A2_UNORM:
+-            tmp = c.color[0];
++        case PIPE_FORMAT_B5G6R5_UNORM: {
++            /* These formats consume constant-color register lanes in A,R,G,B
++             * order. Program the inverse order so constant blend factors see
++             * pipe RGBA/RGB.
++             */
++            float r = c.color[0];
++            float g = c.color[1];
++            float b = c.color[2];
++            float a = c.color[3];
++            c.color[0] = g;
++            c.color[1] = b;
++            c.color[2] = a;
++            c.color[3] = r;
++            break;
++        }
++
++        case PIPE_FORMAT_B5G5R5A1_UNORM:
++        case PIPE_FORMAT_B5G5R5X1_UNORM: {
++            /* 1555 colorbuffer blending consumes the constant color in
++             * colorbuffer-lane order. Match the B5G5R5* output swizzle so
++             * GL_CONSTANT_COLOR blending sees pipe RGBA.
++             */
++            float r = c.color[0];
++            float g = c.color[1];
++            float b = c.color[2];
++            float a = c.color[3];
++            c.color[0] = g;
++            c.color[1] = r;
++            c.color[2] = a;
++            c.color[3] = b;
++            break;
++        }
++#else
++        case PIPE_FORMAT_R8G8B8A8_UNORM:
++        case PIPE_FORMAT_R8G8B8X8_UNORM:
++        case PIPE_FORMAT_R10G10B10A2_UNORM: {
++            float tmp = c.color[0];
+             c.color[0] = c.color[2];
+             c.color[2] = tmp;
+             break;
++        }
++#endif
+ 
+         default:;
+         }
+-- 
+GitLab
+
+
+From f01efcb12e3d35a9e005afb5bc0004ca90af2475 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Pavel=20Ondra=C4=8Dka?= <pavel.ondracka@gmail.com>
+Date: Fri, 12 Jun 2026 15:18:59 +0200
+Subject: [PATCH 8/9] r300: fix BE depth/stencil raw transfer endian state
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Tiled depth/stencil transfers can raw-copy 32-bit ZS storage through an
+RGBA8 color alias. On big endian, the normal RGBA8 array policy programs
+no swap, while the underlying ZS storage uses the dword endian
+convention. Keep those raw aliases on dword swap so depth readback sees
+the same byte order that the ZS path wrote.
+
+Fixes spec@arb_depth_texture@depthstencil-render-miplevels 146 d=z24.
+
+Signed-off-by: Pavel Ondračka <pavel.ondracka@gmail.com>
+Part-of: <https://gitlab.freedesktop.org/mesa/mesa/-/merge_requests/42218>
+---
+ src/gallium/drivers/r300/r300_texture.c | 16 ++++++++++++++++
+ 1 file changed, 16 insertions(+)
+
+diff --git a/src/gallium/drivers/r300/r300_texture.c b/src/gallium/drivers/r300/r300_texture.c
+index 6379d74223f9..eca020afc9ea 100644
+--- a/src/gallium/drivers/r300/r300_texture.c
++++ b/src/gallium/drivers/r300/r300_texture.c
+@@ -58,6 +58,22 @@ static unsigned r300_get_endian_swap(enum pipe_format format,
+     unsigned swap_size;
+ 
+ #if UTIL_ARCH_BIG_ENDIAN
++    if (util_format_is_depth_or_stencil(tex->b.format)) {
++        switch (format) {
++        case PIPE_FORMAT_B8G8R8A8_UNORM:
++        case PIPE_FORMAT_B8G8R8X8_UNORM:
++        case PIPE_FORMAT_R8G8B8A8_UNORM:
++        case PIPE_FORMAT_R8G8B8X8_UNORM:
++            /* Depth/stencil transfer blits can alias 32-bit ZS storage as
++             * RGBA8. Keep the alias on the ZS dword endian convention instead
++             * of the 8-bit array convention.
++             */
++            return R300_SURF_DWORD_SWAP;
++        default:
++            break;
++        }
++    }
++
+     if ((tex->b.bind & (PIPE_BIND_RENDER_TARGET | PIPE_BIND_SAMPLER_VIEW)) ==
+         (PIPE_BIND_RENDER_TARGET | PIPE_BIND_SAMPLER_VIEW) &&
+         !(tex->b.flags & R300_RESOURCE_FLAG_TRANSFER) &&
+-- 
+GitLab
+
+
+From b0d6b4c402ff52ff2b670db5875671c436617896 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Pavel=20Ondra=C4=8Dka?= <pavel.ondracka@gmail.com>
+Date: Fri, 12 Jun 2026 15:24:36 +0200
+Subject: [PATCH 9/9] r300: clean up endian swap selection
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Make r300_get_endian_swap return NO_SWAP directly in little endian. This
+keeps the depth/stencil raw alias fix and the BE render-to-texture
+exception intact while avoiding the mixed ifdef/runtime endian checks.
+
+Signed-off-by: Pavel Ondračka <pavel.ondracka@gmail.com>
+Part-of: <https://gitlab.freedesktop.org/mesa/mesa/-/merge_requests/42218>
+---
+ src/gallium/drivers/r300/r300_texture.c | 23 ++++++++++++-----------
+ 1 file changed, 12 insertions(+), 11 deletions(-)
+
+diff --git a/src/gallium/drivers/r300/r300_texture.c b/src/gallium/drivers/r300/r300_texture.c
+index eca020afc9ea..a4586a3788aa 100644
+--- a/src/gallium/drivers/r300/r300_texture.c
++++ b/src/gallium/drivers/r300/r300_texture.c
+@@ -30,11 +30,12 @@
+  */
+ enum pipe_format r300_unbyteswap_array_format(enum pipe_format format)
+ {
++#if !UTIL_ARCH_BIG_ENDIAN
+     /* FIXME: Disabled on little endian because of a reported regression:
+-     * https://bugs.freedesktop.org/show_bug.cgi?id=98869 */
+-    if (PIPE_ENDIAN_NATIVE != PIPE_ENDIAN_BIG)
+-        return format;
+-
++     * https://bugs.freedesktop.org/show_bug.cgi?id=98869
++     */
++    return format;
++#else
+     /* Only BGRA 8888 array formats are supported for simplicity of
+      * the implementation. */
+     switch (format) {
+@@ -49,15 +50,20 @@ enum pipe_format r300_unbyteswap_array_format(enum pipe_format format)
+     default:
+         return format;
+     }
++#endif
+ }
+ 
+ static unsigned r300_get_endian_swap(enum pipe_format format,
+                                      struct r300_resource *tex)
+ {
++#if !UTIL_ARCH_BIG_ENDIAN
++    (void)format;
++    (void)tex;
++    return R300_SURF_NO_SWAP;
++#else
+     const struct util_format_description *desc;
+     unsigned swap_size;
+ 
+-#if UTIL_ARCH_BIG_ENDIAN
+     if (util_format_is_depth_or_stencil(tex->b.format)) {
+         switch (format) {
+         case PIPE_FORMAT_B8G8R8A8_UNORM:
+@@ -95,16 +101,10 @@ static unsigned r300_get_endian_swap(enum pipe_format format,
+             break;
+         }
+     }
+-#else
+-    (void)tex;
+-#endif
+ 
+     if (r300_unbyteswap_array_format(format) != format)
+         return R300_SURF_DWORD_SWAP;
+ 
+-    if (PIPE_ENDIAN_NATIVE != PIPE_ENDIAN_BIG)
+-        return R300_SURF_NO_SWAP;
+-
+     desc = util_format_description(format);
+ 
+     /* Compressed formats should be in the little endian format. */
+@@ -122,6 +122,7 @@ static unsigned r300_get_endian_swap(enum pipe_format format,
+     case 32:
+         return R300_SURF_DWORD_SWAP;
+     }
++#endif
+ }
+ 
+ unsigned r300_get_swizzle_combined(const unsigned char *swizzle_format,
+-- 
+GitLab
+
