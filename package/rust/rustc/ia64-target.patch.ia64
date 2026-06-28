@@ -1,0 +1,879 @@
+# --- T2-COPYRIGHT-BEGIN ---
+# t2/package/*/rustc/ia64-target.patch.ia64
+# Copyright (C) 2026 The T2 SDE Project
+# SPDX-License-Identifier: GPL-2.0 or patched project license
+# --- T2-COPYRIGHT-END ---
+
+diff --git rustc-1.96.0/Cargo.lock rustc-1.96.0/Cargo.lock
+index 563d99d5475..f34fa8b5bec 100644
+--- rustc-1.96.0/Cargo.lock
++++ rustc-1.96.0/Cargo.lock
+@@ -2176,9 +2176,8 @@ checksum = "9fa0e2a1fcbe2f6be6c42e342259976206b383122fc152e872795338b5a3f3a7"
+ 
+ [[package]]
+ name = "libc"
+-version = "0.2.183"
+-source = "registry+https://github.com/rust-lang/crates.io-index"
+-checksum = "b5b646652bf6661599e1da8901b3b9522896f01e736bad5f723fe7a3a27f899d"
++version = "0.2.185"
++source = "git+https://github.com/linux-ia64/rust-libc?tag=ia64-0.2.185#b7645a1b3f800e0f905a5a932e1e6a26fffb2ec0"
+ 
+ [[package]]
+ name = "libdbus-sys"
+@@ -2301,9 +2300,8 @@ dependencies = [
+ 
+ [[package]]
+ name = "linux-raw-sys"
+-version = "0.11.0"
+-source = "registry+https://github.com/rust-lang/crates.io-index"
+-checksum = "df1d3c3b53da64cf5760482273a98e575c651a67eec7f77df96b5b642de8f039"
++version = "0.12.1"
++source = "git+https://github.com/linux-ia64/linux-raw-sys?tag=ia64-0.12.1#e2b20adae2cb0ed61f86687c9de806972039fea3"
+ 
+ [[package]]
+ name = "litemap"
+@@ -2714,8 +2712,7 @@ dependencies = [
+ [[package]]
+ name = "object"
+ version = "0.37.3"
+-source = "registry+https://github.com/rust-lang/crates.io-index"
+-checksum = "ff76201f031d8863c38aa7f905eca4f53abbfa15f609db4277d44cd8938f33fe"
++source = "git+https://github.com/linux-ia64/rust-object?tag=ia64-0.37.3#1c460647dc5e1c5389cec8c41f5d566985773c46"
+ dependencies = [
+  "crc32fast",
+  "flate2",
+@@ -4979,15 +4976,14 @@ dependencies = [
+ 
+ [[package]]
+ name = "rustix"
+-version = "1.1.2"
+-source = "registry+https://github.com/rust-lang/crates.io-index"
+-checksum = "cd15f8a2c5551a84d56efdc1cd049089e409ac19a3072d5037a17fd70719ff3e"
++version = "1.1.4"
++source = "git+https://github.com/linux-ia64/rustix?tag=ia64-1.1.4#1789a6693ff3e45a59ee7b46e7fd97325986eceb"
+ dependencies = [
+  "bitflags",
+  "errno",
+  "libc",
+  "linux-raw-sys",
+- "windows-sys 0.61.2",
++ "windows-sys 0.59.0",
+ ]
+ 
+ [[package]]
+diff --git rustc-1.96.0/Cargo.toml rustc-1.96.0/Cargo.toml
+index 67c7a9d67ed..683c8bd1816 100644
+--- rustc-1.96.0/Cargo.toml
++++ rustc-1.96.0/Cargo.toml
+@@ -91,5 +91,14 @@ codegen-units = 1
+ 
+ # If you want to use a crate with local modifications, you can set a path or git dependency here.
+ # For git dependencies, also add your source to ALLOWED_SOURCES in src/tools/tidy/src/extdeps.rs.
+-#[patch.crates-io]
+-
++[patch.crates-io]
++# IA-64 specific libc
++libc = { git = "https://github.com/linux-ia64/rust-libc", tag = "ia64-0.2.185" }
++# IA-64 specific linux-raw-sys
++linux-raw-sys = { git = "https://github.com/linux-ia64/linux-raw-sys", tag = "ia64-0.12.1" }
++# IA-64 specific rustix
++rustix = { git = "https://github.com/linux-ia64/rustix", tag = "ia64-1.1.4" }
++# IA-64 specific object fork (adds Architecture::Ia64 / EM_IA_64).
++# Must mirror library/Cargo.toml so the compiler itself (rustc_target,
++# rustc_codegen_ssa) can build native EM_IA_64 metadata objects.
++object = { git = "https://github.com/linux-ia64/rust-object", tag = "ia64-0.37.3" }
+diff --git rustc-1.96.0/compiler/rustc_codegen_llvm/src/back/write.rs rustc-1.96.0/compiler/rustc_codegen_llvm/src/back/write.rs
+index 515b571a9f4..efce3870ba4 100644
+--- rustc-1.96.0/compiler/rustc_codegen_llvm/src/back/write.rs
++++ rustc-1.96.0/compiler/rustc_codegen_llvm/src/back/write.rs
+@@ -2,14 +2,15 @@
+ use std::io::{self, Write};
+ use std::path::{Path, PathBuf};
+ use std::sync::Arc;
++use std::process::Command;
+ use std::{fs, slice, str};
+ 
+ use libc::{c_char, c_int, c_void, size_t};
+ use rustc_codegen_ssa::back::link::ensure_removed;
+ use rustc_codegen_ssa::back::versioned_llvm_target;
+ use rustc_codegen_ssa::back::write::{
+-    BitcodeSection, CodegenContext, EmitObj, InlineAsmError, ModuleConfig, SharedEmitter,
+-    TargetMachineFactoryConfig, TargetMachineFactoryFn,
++    AssemblerCommand, BitcodeSection, CodegenContext, EmitObj, InlineAsmError, ModuleConfig,
++    SharedEmitter, TargetMachineFactoryConfig, TargetMachineFactoryFn,
+ };
+ use rustc_codegen_ssa::base::wants_wasm_eh;
+ use rustc_codegen_ssa::common::TypeKind;
+@@ -35,8 +36,8 @@
+ use crate::builder::gpu_offload::scalar_width;
+ use crate::common::AsCCharPtr;
+ use crate::errors::{
+-    CopyBitcode, FromLlvmDiag, FromLlvmOptimizationDiag, LlvmError, ParseTargetMachineConfig,
+-    UnsupportedCompression, WithLlvmError, WriteBytecode,
++    AssemblerFailed, AssemblerSpawnFailed, CopyBitcode, FromLlvmDiag, FromLlvmOptimizationDiag,
++    LlvmError, ParseTargetMachineConfig, UnsupportedCompression, WithLlvmError, WriteBytecode,
+ };
+ use crate::llvm::diagnostic::OptimizationDiagnosticKind::*;
+ use crate::llvm::{self, DiagnosticInfo};
+@@ -100,6 +101,30 @@ fn write_output_file<'ll>(
+     result.into_result().unwrap_or_else(|()| llvm_err(dcx, LlvmError::WriteOutput { path: output }))
+ }
+ 
++/// Assemble `asm` (a `.s` file emitted by LLVM) into the object file `obj` by invoking an
++/// external assembler. Used for targets without an integrated assembler (e.g. IA-64).
++fn run_assembler(dcx: DiagCtxtHandle<'_>, assembler: &AssemblerCommand, asm: &Path, obj: &Path) {
++    let mut cmd = Command::new(&assembler.program);
++    cmd.args(&assembler.args).arg(asm).arg("-o").arg(obj);
++    debug!("running external assembler: {:?}", cmd);
++    match cmd.output() {
++        Ok(output) => {
++            if !output.status.success() {
++                let mut msg = String::from_utf8_lossy(&output.stderr).into_owned();
++                msg.push_str(&String::from_utf8_lossy(&output.stdout));
++                dcx.emit_fatal(AssemblerFailed {
++                    assembler: &assembler.program,
++                    status: output.status.to_string(),
++                    output: msg,
++                });
++            }
++        }
++        Err(err) => {
++            dcx.emit_fatal(AssemblerSpawnFailed { assembler: &assembler.program, err });
++        }
++    }
++}
++
+ pub(crate) fn create_informational_target_machine(
+     sess: &Session,
+     only_base_features: bool,
+@@ -1136,34 +1161,58 @@ extern "C" fn demangle_callback(
+                 let _timer =
+                     prof.generic_activity_with_arg("LLVM_module_codegen_emit_obj", &*module.name);
+ 
+-                let dwo_out = cgcx
+-                    .output_filenames
+-                    .temp_path_dwo_for_cgu(&module.name, cgcx.invocation_temp.as_deref());
+-                let dwo_out = match (cgcx.split_debuginfo, cgcx.split_dwarf_kind) {
+-                    // Don't change how DWARF is emitted when disabled.
+-                    (SplitDebuginfo::Off, _) => None,
+-                    // Don't provide a DWARF object path if split debuginfo is enabled but this is
+-                    // a platform that doesn't support Split DWARF.
+-                    _ if !cgcx.target_can_use_split_dwarf => None,
+-                    // Don't provide a DWARF object path in single mode, sections will be written
+-                    // into the object as normal but ignored by linker.
+-                    (_, SplitDwarfKind::Single) => None,
+-                    // Emit (a subset of the) DWARF into a separate dwarf object file in split
+-                    // mode.
+-                    (_, SplitDwarfKind::Split) => Some(dwo_out.as_path()),
+-                };
+-
+-                write_output_file(
+-                    dcx,
+-                    tm.raw(),
+-                    config.no_builtins,
+-                    llmod,
+-                    &obj_out,
+-                    dwo_out,
+-                    llvm::FileType::ObjectFile,
+-                    prof,
+-                    config.verify_llvm_ir,
+-                );
++                if let Some(assembler) = &cgcx.assembler_cmd {
++                    // This target has no integrated assembler (the LLVM backend can only
++                    // emit assembly text), so emit a `.s` and run an external assembler
++                    // (e.g. GNU `as`) to produce the object file. Split DWARF is not
++                    // supported on this path.
++                    let asm_out =
++                        cgcx.output_filenames.temp_path_ext_for_cgu("external-as.s", &module.name, None);
++                    write_output_file(
++                        dcx,
++                        tm.raw(),
++                        config.no_builtins,
++                        llmod,
++                        &asm_out,
++                        None,
++                        llvm::FileType::AssemblyFile,
++                        prof,
++                        config.verify_llvm_ir,
++                    );
++                    run_assembler(dcx, assembler, &asm_out, &obj_out);
++                    if !cgcx.save_temps {
++                        ensure_removed(dcx, &asm_out);
++                    }
++                } else {
++                    let dwo_out = cgcx
++                        .output_filenames
++                        .temp_path_dwo_for_cgu(&module.name, cgcx.invocation_temp.as_deref());
++                    let dwo_out = match (cgcx.split_debuginfo, cgcx.split_dwarf_kind) {
++                        // Don't change how DWARF is emitted when disabled.
++                        (SplitDebuginfo::Off, _) => None,
++                        // Don't provide a DWARF object path if split debuginfo is enabled but this is
++                        // a platform that doesn't support Split DWARF.
++                        _ if !cgcx.target_can_use_split_dwarf => None,
++                        // Don't provide a DWARF object path in single mode, sections will be written
++                        // into the object as normal but ignored by linker.
++                        (_, SplitDwarfKind::Single) => None,
++                        // Emit (a subset of the) DWARF into a separate dwarf object file in split
++                        // mode.
++                        (_, SplitDwarfKind::Split) => Some(dwo_out.as_path()),
++                    };
++
++                    write_output_file(
++                        dcx,
++                        tm.raw(),
++                        config.no_builtins,
++                        llmod,
++                        &obj_out,
++                        dwo_out,
++                        llvm::FileType::ObjectFile,
++                        prof,
++                        config.verify_llvm_ir,
++                    );
++                }
+             }
+ 
+             EmitObj::Bitcode => {
+diff --git rustc-1.96.0/compiler/rustc_codegen_llvm/src/errors.rs rustc-1.96.0/compiler/rustc_codegen_llvm/src/errors.rs
+index caec20db4c2..0aa4ebc057e 100644
+--- rustc-1.96.0/compiler/rustc_codegen_llvm/src/errors.rs
++++ rustc-1.96.0/compiler/rustc_codegen_llvm/src/errors.rs
+@@ -180,6 +180,23 @@ pub(crate) struct CopyBitcode {
+     pub err: std::io::Error,
+ }
+ 
++#[derive(Diagnostic)]
++#[diag("could not exec the external assembler `{$assembler}`: {$err}")]
++#[help("the assembler defaults to `<target-triple>-as`; set it with `-Cassembler=<path>`")]
++pub(crate) struct AssemblerSpawnFailed<'a> {
++    pub assembler: &'a Path,
++    pub err: std::io::Error,
++}
++
++#[derive(Diagnostic)]
++#[diag("external assembler `{$assembler}` failed with {$status}")]
++#[note("{$output}")]
++pub(crate) struct AssemblerFailed<'a> {
++    pub assembler: &'a Path,
++    pub status: String,
++    pub output: String,
++}
++
+ #[derive(Diagnostic)]
+ #[diag(
+     "unsupported debuginfo compression algorithm {$algorithm} - will fall back to uncompressed debuginfo"
+diff --git rustc-1.96.0/compiler/rustc_codegen_llvm/src/va_arg.rs rustc-1.96.0/compiler/rustc_codegen_llvm/src/va_arg.rs
+index 19735a29dfb..4e4b9b106fc 100644
+--- rustc-1.96.0/compiler/rustc_codegen_llvm/src/va_arg.rs
++++ rustc-1.96.0/compiler/rustc_codegen_llvm/src/va_arg.rs
+@@ -1174,6 +1174,17 @@ pub(super) fn emit_va_arg<'ll, 'tcx>(
+             AllowHigherAlign::Yes,
+             ForceRightAdjust::No,
+         ),
++        // IA-64 SysV: 8-byte argument slots, little-endian. Provisional cut for the
++        // bring-up; the exact c-variadic slot rules are revisited in Phase 2.
++        Arch::IA64 => emit_ptr_va_arg(
++            bx,
++            addr,
++            target_ty,
++            if target_ty_size > 2 * 8 { PassMode::Indirect } else { PassMode::Direct },
++            SlotSize::Bytes8,
++            AllowHigherAlign::Yes,
++            ForceRightAdjust::No,
++        ),
+ 
+         Arch::Bpf => bug!("bpf does not support c-variadic functions"),
+         Arch::SpirV => bug!("spirv does not support c-variadic functions"),
+diff --git rustc-1.96.0/compiler/rustc_codegen_ssa/src/back/metadata.rs rustc-1.96.0/compiler/rustc_codegen_ssa/src/back/metadata.rs
+index f6544c03514..64fecd71b7a 100644
+--- rustc-1.96.0/compiler/rustc_codegen_ssa/src/back/metadata.rs
++++ rustc-1.96.0/compiler/rustc_codegen_ssa/src/back/metadata.rs
+@@ -396,6 +396,11 @@ pub(super) fn elf_e_flags(architecture: Architecture, sess: &Session) -> u32 {
+                 _ => EF_PPC64_ABI_UNKNOWN,
+             }
+         }
++        Architecture::Ia64 => {
++            // IA-64 LP64 objects set EF_IA_64_ABI64; GNU ld refuses to mix
++            // objects with and without this flag. Match what gcc emits.
++            elf::EF_IA_64_ABI64
++        }
+         _ => 0,
+     }
+ }
+diff --git rustc-1.96.0/compiler/rustc_codegen_ssa/src/back/write.rs rustc-1.96.0/compiler/rustc_codegen_ssa/src/back/write.rs
+index 82d7e23602e..2fd357d37aa 100644
+--- rustc-1.96.0/compiler/rustc_codegen_ssa/src/back/write.rs
++++ rustc-1.96.0/compiler/rustc_codegen_ssa/src/back/write.rs
+@@ -311,6 +311,15 @@ pub fn new(cgcx: &CodegenContext, module_name: &str) -> TargetMachineFactoryConf
+         + Sync,
+ >;
+ 
++/// How to invoke an external assembler for targets without an integrated assembler
++/// (e.g. IA-64, whose LLVM backend has no MC object writer). The backend emits assembly
++/// and runs `program asm_args <in.s> -o <out.o>` to produce the object file.
++#[derive(Clone, Debug, Encodable, Decodable)]
++pub struct AssemblerCommand {
++    pub program: PathBuf,
++    pub args: Vec<String>,
++}
++
+ /// Additional resources used by optimize_and_codegen (not module specific)
+ #[derive(Clone, Encodable, Decodable)]
+ pub struct CodegenContext {
+@@ -338,6 +347,10 @@ pub struct CodegenContext {
+     pub split_debuginfo: rustc_target::spec::SplitDebuginfo,
+     pub split_dwarf_kind: rustc_session::config::SplitDwarfKind,
+     pub pointer_size: Size,
++    /// Set for targets that must produce object files via an external assembler
++    /// (the LLVM backend can only emit assembly). `None` means use LLVM's
++    /// integrated assembler as normal.
++    pub assembler_cmd: Option<Arc<AssemblerCommand>>,
+ 
+     /// LLVM optimizations for which we want to print remarks.
+     pub remark: Passes,
+@@ -1291,6 +1304,22 @@ fn start_executing_work<B: ExtraBackendMethods>(
+         None
+     };
+ 
++    // For targets without an integrated assembler (the LLVM backend can only emit
++    // assembly), resolve the external assembler to invoke. Resolution order:
++    // `-Cassembler` override, then the target's explicit `assembler`, then the
++    // clang-style default `<target-triple>-as`.
++    let assembler_cmd = sess.target.need_external_assembler.then(|| {
++        let program = if let Some(path) = &sess.opts.cg.assembler {
++            path.clone()
++        } else if let Some(assembler) = &sess.target.assembler {
++            PathBuf::from(assembler.to_string())
++        } else {
++            PathBuf::from(format!("{}-as", sess.opts.target_triple.tuple()))
++        };
++        let args = sess.target.asm_args.iter().map(|a| a.to_string()).collect();
++        Arc::new(AssemblerCommand { program, args })
++    });
++
+     let cgcx = CodegenContext {
+         crate_types: tcx.crate_types().to_vec(),
+         lto: sess.lto(),
+@@ -1319,6 +1348,7 @@ fn start_executing_work<B: ExtraBackendMethods>(
+         parallel: backend.supports_parallel() && !sess.opts.unstable_opts.no_parallel_backend,
+         pointer_size: tcx.data_layout.pointer_size(),
+         invocation_temp: sess.invocation_temp.clone(),
++        assembler_cmd,
+     };
+ 
+     // This is the "main loop" of parallel work happening for parallel codegen.
+diff --git rustc-1.96.0/compiler/rustc_llvm/build.rs rustc-1.96.0/compiler/rustc_llvm/build.rs
+index 38c16fb1cd6..71b62cdc1f7 100644
+--- rustc-1.96.0/compiler/rustc_llvm/build.rs
++++ rustc-1.96.0/compiler/rustc_llvm/build.rs
+@@ -9,6 +9,7 @@
+ use shlex::Shlex;
+ 
+ const OPTIONAL_COMPONENTS: &[&str] = &[
++    "ia64",
+     "x86",
+     "arm",
+     "aarch64",
+diff --git rustc-1.96.0/compiler/rustc_llvm/src/lib.rs rustc-1.96.0/compiler/rustc_llvm/src/lib.rs
+index a565e1feeb5..f6b4a842e96 100644
+--- rustc-1.96.0/compiler/rustc_llvm/src/lib.rs
++++ rustc-1.96.0/compiler/rustc_llvm/src/lib.rs
+@@ -199,6 +199,15 @@ fn init() { }
+         LLVMInitializeSparcAsmPrinter,
+         LLVMInitializeSparcAsmParser
+     );
++    // IA-64: the fork has no integrated assembler/disassembler, so only the
++    // text-emitting components exist (no AsmParser).
++    init_target!(
++        llvm_component = "ia64",
++        LLVMInitializeIA64TargetInfo,
++        LLVMInitializeIA64Target,
++        LLVMInitializeIA64TargetMC,
++        LLVMInitializeIA64AsmPrinter
++    );
+     init_target!(
+         llvm_component = "nvptx",
+         LLVMInitializeNVPTXTargetInfo,
+diff --git rustc-1.96.0/compiler/rustc_session/src/options.rs rustc-1.96.0/compiler/rustc_session/src/options.rs
+index 027a7045791..2875e025b99 100644
+--- rustc-1.96.0/compiler/rustc_session/src/options.rs
++++ rustc-1.96.0/compiler/rustc_session/src/options.rs
+@@ -2087,6 +2087,9 @@ pub(crate) fn parse_assert_incr_state(
+     ar: String = (String::new(), parse_string, [UNTRACKED],
+         "this option is deprecated and does nothing",
+         removed: Warn),
++    assembler: Option<PathBuf> = (None, parse_opt_pathbuf, [UNTRACKED],
++        "external assembler to use for targets without an integrated assembler \
++        (default: `<target-triple>-as`)"),
+     #[rustc_lint_opt_deny_field_access("use `Session::code_model` instead of this field")]
+     code_model: Option<CodeModel> = (None, parse_code_model, [TRACKED],
+         "choose the code model to use (`rustc --print code-models` for details)"),
+diff --git rustc-1.96.0/compiler/rustc_span/src/symbol.rs rustc-1.96.0/compiler/rustc_span/src/symbol.rs
+index bfa731e4bbe..79ce6504406 100644
+--- rustc-1.96.0/compiler/rustc_span/src/symbol.rs
++++ rustc-1.96.0/compiler/rustc_span/src/symbol.rs
+@@ -1055,6 +1055,7 @@
+         i64,
+         i128,
+         i128_type,
++        ia64,
+         ident,
+         if_let,
+         if_let_guard,
+diff --git rustc-1.96.0/compiler/rustc_target/src/asm/mod.rs rustc-1.96.0/compiler/rustc_target/src/asm/mod.rs
+index 1c84e92b662..9aac413a323 100644
+--- rustc-1.96.0/compiler/rustc_target/src/asm/mod.rs
++++ rustc-1.96.0/compiler/rustc_target/src/asm/mod.rs
+@@ -273,7 +273,7 @@ pub fn from_arch(arch: &Arch) -> Option<Self> {
+             Arch::Msp430 => Some(Self::Msp430),
+             Arch::M68k => Some(Self::M68k),
+             Arch::CSky => Some(Self::CSKY),
+-            Arch::AmdGpu | Arch::Xtensa | Arch::Other(_) => None,
++            Arch::AmdGpu | Arch::Xtensa | Arch::IA64 | Arch::Other(_) => None,
+         }
+     }
+ }
+diff --git rustc-1.96.0/compiler/rustc_target/src/callconv/ia64.rs rustc-1.96.0/compiler/rustc_target/src/callconv/ia64.rs
+new file mode 100644
+index 00000000000..414f360fa6e
+--- /dev/null
++++ rustc-1.96.0/compiler/rustc_target/src/callconv/ia64.rs
+@@ -0,0 +1,52 @@
++// IA-64 (Itanium) SysV psABI.
++//
++// NOTE: this is a *minimal placeholder* sufficient to compile and emit for
++// scalar-only signatures (Phase 1 of the IA-64 bring-up). It passes every
++// aggregate indirectly, which is NOT the real psABI: the actual convention
++// flattens small structs / homogeneous FP aggregates into up to 8 register
++// slots with "Next Even" alignment, matching clang's IA-64 TargetInfo. That
++// accurate classification is Phase 2 — see ../../../../llvm-project-misc/rust_bringup.html
++// and the clang `ia64-abi.c` test cases.
++
++use rustc_abi::TyAbiInterface;
++
++use crate::callconv::{ArgAbi, FnAbi};
++
++fn classify_ret<Ty>(ret: &mut ArgAbi<'_, Ty>) {
++    if ret.layout.is_aggregate() {
++        ret.make_indirect();
++    } else {
++        ret.extend_integer_width_to(64);
++    }
++}
++
++fn classify_arg<'a, Ty, C>(cx: &C, arg: &mut ArgAbi<'a, Ty>)
++where
++    Ty: TyAbiInterface<'a, C> + Copy,
++{
++    if arg.layout.pass_indirectly_in_non_rustic_abis(cx) {
++        arg.make_indirect();
++        return;
++    }
++    if arg.layout.is_aggregate() {
++        arg.make_indirect();
++    } else {
++        arg.extend_integer_width_to(64);
++    }
++}
++
++pub(crate) fn compute_abi_info<'a, Ty, C>(cx: &C, fn_abi: &mut FnAbi<'a, Ty>)
++where
++    Ty: TyAbiInterface<'a, C> + Copy,
++{
++    if !fn_abi.ret.is_ignore() {
++        classify_ret(&mut fn_abi.ret);
++    }
++
++    for arg in fn_abi.args.iter_mut() {
++        if arg.is_ignore() {
++            continue;
++        }
++        classify_arg(cx, arg);
++    }
++}
+diff --git rustc-1.96.0/compiler/rustc_target/src/callconv/mod.rs rustc-1.96.0/compiler/rustc_target/src/callconv/mod.rs
+index 7dc27079528..6012fa75065 100644
+--- rustc-1.96.0/compiler/rustc_target/src/callconv/mod.rs
++++ rustc-1.96.0/compiler/rustc_target/src/callconv/mod.rs
+@@ -16,6 +16,7 @@
+ mod bpf;
+ mod csky;
+ mod hexagon;
++mod ia64;
+ mod loongarch;
+ mod m68k;
+ mod mips;
+@@ -703,6 +704,7 @@ pub fn adjust_for_foreign_abi<C>(&mut self, cx: &C, abi: ExternAbi)
+                 }
+             }
+             Arch::Hexagon => hexagon::compute_abi_info(cx, self),
++            Arch::IA64 => ia64::compute_abi_info(cx, self),
+             Arch::Xtensa => xtensa::compute_abi_info(cx, self),
+             Arch::RiscV32 | Arch::RiscV64 => riscv::compute_abi_info(cx, self),
+             Arch::Wasm32 | Arch::Wasm64 => wasm::compute_abi_info(cx, self),
+diff --git rustc-1.96.0/compiler/rustc_target/src/spec/json.rs rustc-1.96.0/compiler/rustc_target/src/spec/json.rs
+index 5507af08667..04dce2fd345 100644
+--- rustc-1.96.0/compiler/rustc_target/src/spec/json.rs
++++ rustc-1.96.0/compiler/rustc_target/src/spec/json.rs
+@@ -114,6 +114,8 @@ macro_rules! forward_opt {
+ 
+         forward!(link_env_remove);
+         forward!(asm_args);
++        forward!(need_external_assembler);
++        forward_opt!(assembler);
+         forward!(cpu);
+         forward!(need_explicit_cpu);
+         forward!(features);
+@@ -318,6 +320,8 @@ macro_rules! target_option_val {
+         target_option_val!(env - link_env);
+         target_option_val!(link_env_remove);
+         target_option_val!(asm_args);
++        target_option_val!(need_external_assembler);
++        target_option_val!(assembler);
+         target_option_val!(cpu);
+         target_option_val!(need_explicit_cpu);
+         target_option_val!(features);
+@@ -541,6 +545,8 @@ struct TargetSpecJson {
+     link_env: Option<Vec<StaticCow<str>>>,
+     link_env_remove: Option<StaticCow<[StaticCow<str>]>>,
+     asm_args: Option<StaticCow<[StaticCow<str>]>>,
++    need_external_assembler: Option<bool>,
++    assembler: Option<StaticCow<str>>,
+     cpu: Option<StaticCow<str>>,
+     need_explicit_cpu: Option<bool>,
+     features: Option<StaticCow<str>>,
+diff --git rustc-1.96.0/compiler/rustc_target/src/spec/mod.rs rustc-1.96.0/compiler/rustc_target/src/spec/mod.rs
+index 0601f9d7c2c..70ffe5afdb9 100644
+--- rustc-1.96.0/compiler/rustc_target/src/spec/mod.rs
++++ rustc-1.96.0/compiler/rustc_target/src/spec/mod.rs
+@@ -1475,6 +1475,7 @@ fn $module() {
+     ("s390x-unknown-linux-musl", s390x_unknown_linux_musl),
+     ("sparc-unknown-linux-gnu", sparc_unknown_linux_gnu),
+     ("sparc64-unknown-linux-gnu", sparc64_unknown_linux_gnu),
++    ("ia64-unknown-linux-gnu", ia64_unknown_linux_gnu),
+     ("arm-unknown-linux-gnueabi", arm_unknown_linux_gnueabi),
+     ("arm-unknown-linux-gnueabihf", arm_unknown_linux_gnueabihf),
+     ("armeb-unknown-linux-gnueabi", armeb_unknown_linux_gnueabi),
+@@ -1889,6 +1890,7 @@ pub enum Arch {
+         Bpf = "bpf",
+         CSky = "csky",
+         Hexagon = "hexagon",
++        IA64 = "ia64",
+         LoongArch32 = "loongarch32",
+         LoongArch64 = "loongarch64",
+         M68k = "m68k",
+@@ -1926,6 +1928,7 @@ pub fn desc_symbol(&self) -> Symbol {
+             Self::Bpf => sym::bpf,
+             Self::CSky => sym::csky,
+             Self::Hexagon => sym::hexagon,
++            Self::IA64 => sym::ia64,
+             Self::LoongArch32 => sym::loongarch32,
+             Self::LoongArch64 => sym::loongarch64,
+             Self::M68k => sym::m68k,
+@@ -1958,10 +1961,10 @@ pub fn supports_scalable_vectors(&self) -> bool {
+ 
+         match self {
+             AArch64 | RiscV32 | RiscV64 => true,
+-            AmdGpu | Arm | Arm64EC | Avr | Bpf | CSky | Hexagon | LoongArch32 | LoongArch64
+-            | M68k | Mips | Mips32r6 | Mips64 | Mips64r6 | Msp430 | Nvptx64 | PowerPC
+-            | PowerPC64 | S390x | Sparc | Sparc64 | SpirV | Wasm32 | Wasm64 | X86 | X86_64
+-            | Xtensa | Other(_) => false,
++            AmdGpu | Arm | Arm64EC | Avr | Bpf | CSky | Hexagon | IA64 | LoongArch32
++            | LoongArch64 | M68k | Mips | Mips32r6 | Mips64 | Mips64r6 | Msp430 | Nvptx64
++            | PowerPC | PowerPC64 | S390x | Sparc | Sparc64 | SpirV | Wasm32 | Wasm64 | X86
++            | X86_64 | Xtensa | Other(_) => false,
+         }
+     }
+ }
+@@ -2220,7 +2223,7 @@ pub fn supports_c_variadic_definitions(&self) -> bool {
+             AArch64 | AmdGpu | Arm | Arm64EC | Avr | CSky | Hexagon | LoongArch32 | LoongArch64
+             | M68k | Mips | Mips32r6 | Mips64 | Mips64r6 | Msp430 | Nvptx64 | PowerPC
+             | PowerPC64 | RiscV32 | RiscV64 | S390x | Sparc | Sparc64 | Wasm32 | Wasm64 | X86
+-            | X86_64 | Xtensa => true,
++            | X86_64 | Xtensa | IA64 => true,
+         }
+     }
+ }
+@@ -2344,6 +2347,16 @@ pub struct TargetOptions {
+     /// Extra arguments to pass to the external assembler (when used)
+     pub asm_args: StaticCow<[StaticCow<str>]>,
+ 
++    /// Whether this target cannot emit object files via LLVM's integrated assembler
++    /// and must instead emit assembly text and invoke an external assembler (like
++    /// clang's `-fno-integrated-as`). Used by the IA-64 backend, whose LLVM target
++    /// has no MC object writer; objects are produced by GNU `as`.
++    pub need_external_assembler: bool,
++    /// External assembler program to invoke when `need_external_assembler` is set.
++    /// `None` means derive `<target-triple>-as` (clang-style), found on `PATH`. Can be
++    /// overridden on the command line with `-Cassembler=<path>`.
++    pub assembler: Option<StaticCow<str>>,
++
+     /// Default CPU to pass to LLVM. Corresponds to `llc -mcpu=$cpu`. Defaults
+     /// to "generic".
+     pub cpu: StaticCow<str>,
+@@ -2738,6 +2751,10 @@ fn add_pre_link_args(&mut self, flavor: LinkerFlavor, args: &[&'static str]) {
+         add_link_args(&mut self.pre_link_args, flavor, args);
+     }
+ 
++    fn add_late_link_args(&mut self, flavor: LinkerFlavor, args: &[&'static str]) {
++        add_link_args(&mut self.late_link_args, flavor, args);
++    }
++
+     fn update_from_cli(&mut self) {
+         self.linker_flavor = LinkerFlavor::from_cli_json(
+             self.linker_flavor_json,
+@@ -2805,6 +2822,8 @@ fn default() -> TargetOptions {
+             linker_is_gnu_json: true,
+             link_script: None,
+             asm_args: cvs![],
++            need_external_assembler: false,
++            assembler: None,
+             cpu: "generic".into(),
+             need_explicit_cpu: false,
+             features: "".into(),
+@@ -3814,6 +3833,7 @@ pub fn object_architecture(
+             Arch::LoongArch64 => (Architecture::LoongArch64, None),
+             Arch::CSky => (Architecture::Csky, None),
+             Arch::Arm64EC => (Architecture::Aarch64, Some(object::SubArchitecture::Arm64EC)),
++            Arch::IA64 => (Architecture::Ia64, None),
+             Arch::AmdGpu
+             | Arch::Nvptx64
+             | Arch::SpirV
+diff --git rustc-1.96.0/compiler/rustc_target/src/spec/targets/ia64_unknown_linux_gnu.rs rustc-1.96.0/compiler/rustc_target/src/spec/targets/ia64_unknown_linux_gnu.rs
+new file mode 100644
+index 00000000000..b9859189310
+--- /dev/null
++++ rustc-1.96.0/compiler/rustc_target/src/spec/targets/ia64_unknown_linux_gnu.rs
+@@ -0,0 +1,42 @@
++use crate::spec::{Arch, Cc, LinkerFlavor, Lld, PanicStrategy, Target, TargetMetadata, base, cvs};
++
++pub(crate) fn target() -> Target {
++    let mut base = base::linux_gnu::opts();
++    base.max_atomic_width = Some(64);
++    // The IA-64 GNU `as`/`ld` is the old ia64-only binutils (dropped upstream),
++    // whose `ld` is a strict single-pass-over-archives linker. rustc injects the
++    // panic runtime (panic_abort) to the LEFT of libstd, but libstd has a
++    // backward reference into it (__rust_start_panic / __rust_panic_cleanup, both
++    // #[rustc_std_internal_symbol]); a single-pass ld can't resolve that. Bracket
++    // the whole object/rlib/native-lib span in --start-group/--end-group so ld
++    // iterates the archives to a fixpoint.
++    base.add_pre_link_args(LinkerFlavor::Gnu(Cc::Yes, Lld::No), &["-Wl,--start-group"]);
++    base.add_late_link_args(LinkerFlavor::Gnu(Cc::Yes, Lld::No), &["-Wl,--end-group"]);
++    // EH landing-pad lowering is not implemented in the IA-64 backend yet, so
++    // default to aborting panics (Phase 5 lifts this). See rust_bringup.html.
++    base.panic_strategy = PanicStrategy::Abort;
++    // The IA-64 LLVM backend has no integrated assembler (no MC object writer), so
++    // rustc emits assembly and shells out to GNU `as`. Program defaults to
++    // `ia64-unknown-linux-gnu-as` from PATH; override with `-Cassembler=`.
++    base.need_external_assembler = true;
++    // GNU `as` for IA-64 defaults to "auto" template mode, which re-bundles
++    // instructions and *ignores* the explicit stop bits (`;;`) the backend
++    // emits — corrupting dependency ordering (and tripping a symbols.c assert).
++    // `-x` selects explicit mode so our bundling/stops are honored, exactly as
++    // clang's IA-64 path drives `as`.
++    base.asm_args = cvs!["-x"];
++
++    Target {
++        llvm_target: "ia64-unknown-linux-gnu".into(),
++        metadata: TargetMetadata {
++            description: Some("IA-64 (Itanium) Linux (kernel 4.4, glibc 2.23)".into()),
++            tier: Some(3),
++            host_tools: Some(false),
++            std: Some(false),
++        },
++        pointer_width: 64,
++        data_layout: "e-m:e-p:64:64-i64:64-f80:128-n8:16:32:64-S128".into(),
++        arch: Arch::IA64,
++        options: base,
++    }
++}
+diff --git rustc-1.96.0/compiler/rustc_target/src/target_features.rs rustc-1.96.0/compiler/rustc_target/src/target_features.rs
+index 161bb31c664..5a4863ff88a 100644
+--- rustc-1.96.0/compiler/rustc_target/src/target_features.rs
++++ rustc-1.96.0/compiler/rustc_target/src/target_features.rs
+@@ -1013,7 +1013,7 @@ pub fn rust_target_features(&self) -> &'static [(&'static str, Stability, Implie
+             Arch::Sparc | Arch::Sparc64 => SPARC_FEATURES,
+             Arch::M68k => M68K_FEATURES,
+             Arch::Avr => AVR_FEATURES,
+-            Arch::AmdGpu | Arch::Msp430 | Arch::SpirV | Arch::Xtensa | Arch::Other(_) => &[],
++            Arch::AmdGpu | Arch::Msp430 | Arch::SpirV | Arch::Xtensa | Arch::IA64 | Arch::Other(_) => &[],
+         }
+     }
+ 
+@@ -1039,7 +1039,7 @@ pub fn features_for_correct_fixed_length_vector_abi(&self) -> &'static [(u64, &'
+             Arch::CSky => CSKY_FEATURES_FOR_CORRECT_FIXED_LENGTH_VECTOR_ABI,
+             // FIXME: for some tier3 targets, we are overly cautious and always give warnings
+             // when passing args in vector registers.
+-            Arch::Msp430 | Arch::SpirV | Arch::Xtensa | Arch::Other(_) => &[],
++            Arch::IA64 | Arch::Msp430 | Arch::SpirV | Arch::Xtensa | Arch::Other(_) => &[],
+         }
+     }
+ 
+diff --git rustc-1.96.0/library/Cargo.lock rustc-1.96.0/library/Cargo.lock
+index ffa9a6302ef..01f9f95c66f 100644
+--- rustc-1.96.0/library/Cargo.lock
++++ rustc-1.96.0/library/Cargo.lock
+@@ -146,9 +146,8 @@ dependencies = [
+ 
+ [[package]]
+ name = "libc"
+-version = "0.2.183"
+-source = "registry+https://github.com/rust-lang/crates.io-index"
+-checksum = "b5b646652bf6661599e1da8901b3b9522896f01e736bad5f723fe7a3a27f899d"
++version = "0.2.185"
++source = "git+https://github.com/linux-ia64/rust-libc?tag=ia64-0.2.185#b7645a1b3f800e0f905a5a932e1e6a26fffb2ec0"
+ dependencies = [
+  "rustc-std-workspace-core",
+ ]
+@@ -186,8 +185,7 @@ dependencies = [
+ [[package]]
+ name = "object"
+ version = "0.37.3"
+-source = "registry+https://github.com/rust-lang/crates.io-index"
+-checksum = "ff76201f031d8863c38aa7f905eca4f53abbfa15f609db4277d44cd8938f33fe"
++source = "git+https://github.com/linux-ia64/rust-object?tag=ia64-0.37.3#1c460647dc5e1c5389cec8c41f5d566985773c46"
+ dependencies = [
+  "memchr",
+  "rustc-std-workspace-alloc",
+diff --git rustc-1.96.0/library/Cargo.toml rustc-1.96.0/library/Cargo.toml
+index 87df966bb6b..3829fe67be2 100644
+--- rustc-1.96.0/library/Cargo.toml
++++ rustc-1.96.0/library/Cargo.toml
+@@ -85,3 +85,7 @@ rustflags = [
+ rustc-std-workspace-core = { path = 'rustc-std-workspace-core' }
+ rustc-std-workspace-alloc = { path = 'rustc-std-workspace-alloc' }
+ rustc-std-workspace-std = { path = 'rustc-std-workspace-std' }
++# IA-64 specific libc
++libc = { git = "https://github.com/linux-ia64/rust-libc", tag = "ia64-0.2.185" }
++# IA-64 specific object (temporary)
++object = { git = "https://github.com/linux-ia64/rust-object", tag = "ia64-0.37.3" }
+diff --git rustc-1.96.0/library/std/src/os/linux/raw.rs rustc-1.96.0/library/std/src/os/linux/raw.rs
+index 6483f086113..a15b1816f83 100644
+--- rustc-1.96.0/library/std/src/os/linux/raw.rs
++++ rustc-1.96.0/library/std/src/os/linux/raw.rs
+@@ -237,6 +237,7 @@ pub struct stat {
+     target_arch = "mips64r6",
+     target_arch = "s390x",
+     target_arch = "sparc64",
++    target_arch = "ia64",
+     target_arch = "riscv64",
+     target_arch = "riscv32"
+ ))]
+diff --git rustc-1.96.0/library/std/src/sys/alloc/mod.rs rustc-1.96.0/library/std/src/sys/alloc/mod.rs
+index f2f1d1c7fec..cede662d4f6 100644
+--- rustc-1.96.0/library/std/src/sys/alloc/mod.rs
++++ rustc-1.96.0/library/std/src/sys/alloc/mod.rs
+@@ -38,6 +38,7 @@
+     target_arch = "mips64r6",
+     target_arch = "s390x",
+     target_arch = "sparc64",
++    target_arch = "ia64",
+     target_arch = "riscv64",
+     target_arch = "wasm64",
+ )) {
+diff --git rustc-1.96.0/library/std/src/sys/personality/gcc.rs rustc-1.96.0/library/std/src/sys/personality/gcc.rs
+index 019d5629d6d..58de632823e 100644
+--- rustc-1.96.0/library/std/src/sys/personality/gcc.rs
++++ rustc-1.96.0/library/std/src/sys/personality/gcc.rs
+@@ -80,6 +80,9 @@
+ #[cfg(any(target_arch = "sparc", target_arch = "sparc64"))]
+ const UNWIND_DATA_REG: (i32, i32) = (24, 25); // I0, I1
+ 
++#[cfg(target_arch = "ia64")]
++const UNWIND_DATA_REG: (i32, i32) = (15, 16); // r15, r16 (EH_RETURN_DATA_REGNO)
++
+ #[cfg(target_arch = "hexagon")]
+ const UNWIND_DATA_REG: (i32, i32) = (0, 1); // R0, R1
+ 
+diff --git rustc-1.96.0/library/std/src/sys/personality/mod.rs rustc-1.96.0/library/std/src/sys/personality/mod.rs
+index eabef92244d..1d99f5ab407 100644
+--- rustc-1.96.0/library/std/src/sys/personality/mod.rs
++++ rustc-1.96.0/library/std/src/sys/personality/mod.rs
+@@ -28,6 +28,18 @@ fn rust_eh_personality() {
+             core::intrinsics::abort()
+         }
+     }
++    target_arch = "ia64" => {
++        // IA-64 unwinds via native table-based info (.IA_64.unwind), not DWARF
++        // CFI, and EH is not yet implemented (panic=abort only -- Phase 5). The
++        // generic `gcc` personality decodes DWARF LSDA pointers via
++        // _Unwind_Get{Text,Data}RelBase, which don't exist in ia64 libgcc_s /
++        // libunwind. Until native ia64 EH lands, provide an aborting stub like
++        // the msvc/wasm cases above.
++        #[lang = "eh_personality"]
++        fn rust_eh_personality() {
++            core::intrinsics::abort()
++        }
++    }
+     any(
+         all(target_family = "windows", target_env = "gnu"),
+         target_os = "psp",
+diff --git rustc-1.96.0/library/unwind/src/libunwind.rs rustc-1.96.0/library/unwind/src/libunwind.rs
+index 091efa9c512..8f0bedcae95 100644
+--- rustc-1.96.0/library/unwind/src/libunwind.rs
++++ rustc-1.96.0/library/unwind/src/libunwind.rs
+@@ -69,6 +69,11 @@ pub enum _Unwind_Reason_Code {
+ #[cfg(any(target_arch = "sparc", target_arch = "sparc64"))]
+ pub const unwinder_private_data_size: usize = 2;
+ 
++// IA-64: gcc unwind.h uses the standard Itanium ABI _Unwind_Exception with
++// private_1/private_2 (2 words), non-SEH.
++#[cfg(target_arch = "ia64")]
++pub const unwinder_private_data_size: usize = 2;
++
+ #[cfg(any(target_arch = "riscv64", target_arch = "riscv32"))]
+ pub const unwinder_private_data_size: usize = 2;
+ 
+diff --git rustc-1.96.0/src/bootstrap/Cargo.lock rustc-1.96.0/src/bootstrap/Cargo.lock
+index a6d8d461052..f571310292a 100644
+--- rustc-1.96.0/src/bootstrap/Cargo.lock
++++ rustc-1.96.0/src/bootstrap/Cargo.lock
+@@ -96,8 +96,7 @@ dependencies = [
+ [[package]]
+ name = "cc"
+ version = "1.2.28"
+-source = "registry+https://github.com/rust-lang/crates.io-index"
+-checksum = "4ad45f4f74e4e20eaa392913b7b33a7091c87e59628f4dd27888205ad888843c"
++source = "git+https://github.com/linux-ia64/cc-rs?tag=ia64-1.2.28#c55e2c1c4acca14f51e1cb7ed26d9c5c2802ea39"
+ dependencies = [
+  "shlex",
+ ]
+diff --git rustc-1.96.0/src/bootstrap/Cargo.toml rustc-1.96.0/src/bootstrap/Cargo.toml
+index 9b1039bbc4f..9988893a2d5 100644
+--- rustc-1.96.0/src/bootstrap/Cargo.toml
++++ rustc-1.96.0/src/bootstrap/Cargo.toml
+@@ -94,3 +94,6 @@ debug = 0
+ [profile.dev.package]
+ # Only use debuginfo=1 to further reduce compile times.
+ bootstrap.debug = 1
++
++[patch.crates-io]
++cc = { git = "https://github.com/linux-ia64/cc-rs", tag = "ia64-1.2.28" }
+diff --git rustc-1.96.0/src/bootstrap/src/core/sanity.rs rustc-1.96.0/src/bootstrap/src/core/sanity.rs
+index c4a6b68aede..44cb1756edb 100644
+--- rustc-1.96.0/src/bootstrap/src/core/sanity.rs
++++ rustc-1.96.0/src/bootstrap/src/core/sanity.rs
+@@ -39,6 +39,8 @@ pub struct Finder {
+     // just a dummy comment so the list doesn't get onelined
+     "x86_64-unknown-linux-gnumsan",
+     "x86_64-unknown-linux-gnutsan",
++    "powerpc64-unknown-linux-gnuelfv2",
++    "ia64-unknown-linux-gnu",
+ ];
+ 
+ /// Minimum version threshold for libstdc++ required when using prebuilt LLVM
+diff --git rustc-1.96.0/src/librustdoc/clean/cfg.rs rustc-1.96.0/src/librustdoc/clean/cfg.rs
+index 086ee7def98..5879d64c543 100644
+--- rustc-1.96.0/src/librustdoc/clean/cfg.rs
++++ rustc-1.96.0/src/librustdoc/clean/cfg.rs
+@@ -552,8 +552,9 @@ fn human_readable_target_arch(os: Symbol) -> Option<&'static str> {
+         Bpf => "BPF",
+         CSky => "C-SKY",
+         Hexagon => "Hexagon",
+-        LoongArch32 => "LoongArch32",
+-        LoongArch64 => "LoongArch64",
++        IA64 => "Itanium (IA-64)",
++        LoongArch32 => "LoongArch32",
++        LoongArch64 => "LoongArch64",
+         M68k => "Motorola 680x0",
+         Mips => "MIPS",
+         Mips32r6 => "MIPS release 6",
