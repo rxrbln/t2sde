@@ -52,6 +52,28 @@ rust_update_arch_target() {
   done
 }
 
+cargo_inject_patches() {
+	[ -f Cargo.lock ] || return 0
+
+	local db="$base/architecture/$arch/cargo-patches" # only arch-specific patches supported atm
+	[ -f "$db" ] || return 0
+
+	local crate repo version tag
+	while read -r crate repo version pattern; do
+		[[ -z $crate || $crate == '#'* ]] && continue
+		tag=$(printf "$pattern" "$version")
+
+		grep -q "^name = \"$crate\"" Cargo.lock || continue
+
+		echo "injecting patch $crate = $repo tag $tag"
+
+		cargo update -p "$crate" --precise "$version" 2>/dev/null || true
+
+		grep -q '^\[patch\.crates-io\]' Cargo.toml || printf '\n[patch.crates-io]\n' >> Cargo.toml
+		printf '%s = { git = "%s", tag = "ia64-%s" }\n' "$crate" "$repo" "$version" >> Cargo.toml
+	done < "$db"
+}
+
 cargo_vendor() {
 	echo "Running cargo vendor vendor"
 	cargo vendor vendor
@@ -74,6 +96,9 @@ EOT
 if [ $stagelevel -gt 1 -a $pkg != rustc ]; then
 
     # TODO: maybe use a rustc wrapper in the future, too
+
+    # architectures with out-of-tree Rust support rely on patched crates
+    hook_add prepatch 4 cargo_inject_patches
 
     cflags="-mcpu= $GCC_WRAPPER_INSERT $GCC_WRAPPER_APPEND"
     mcpu="${cflags##*-mcpu=}" mcpu="${mcpu%% *}"
