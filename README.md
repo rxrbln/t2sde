@@ -1,16 +1,15 @@
 # T2 SDE
 
 T2 SDE is not just a regular Linux distribution - it is a flexible
-Open Source System Development Environment or Distribution Build Kit.
-Others might even name it Meta Distribution. T2 allows the creation of
-custom distributions with state of the art technology, up-to-date
-packages and integrated support for cross compilation. Currently the
-Linux kernel is usually used, but we also started to port T2 to
-support compiling home-brew like open source package add-ons on macOS,
-other BSDs, classic Unix systems (Irix, ...) or support bootstrapping
-alternative micro kernel systems (like a L4 variant or
-Fuchsia). Similarly building Haiku, Android, Minix, Hurd, Open (or
-Pure) Darwin, Haiku and OpenBSD could be supported, too.
+Open Source System Development Environment or "meta distribution".
+T2 allows the creation of custom distributions with state of the art
+technology, up-to-date packages and integrated support for cross
+compilation. Currently the Linux kernel is usually used, but we also
+started to port T2 to support compiling home-brew like add-on packages
+on macOS, BSDs, classic Unix systems (Irix, ...) or support bootstrapping
+alternative micro kernel systems (like a L4 variant or Fuchsia).
+Similarly building Haiku, Android, Minix, Hurd, Open (or Pure) Darwin,
+Haiku and OpenBSD could be supported, too.
 
 # Download
 
@@ -19,13 +18,22 @@ information, including about the latest source tree are at:
 
 https://t2sde.org/download/
 
+# History
+
+"T2" started as a community driven fork of the ROCK Linux project in
+2004, aiming for a simple, clean, lightweight and cross-compiling
+build system.
+
+"T2" was an intern project name for "try two / second try" or "technology
+two". The idea was to eventually choose a more public relation aware
+name, but somehow we just kept sticking with t2 so far ;-)
 
 # T2 SDE Developer Cheatsheet
 
 Quick reference for T2 SDE development, system maintenance and hacking. Run commands from `/usr/src/t2-src`.
 
 Reference docs:
-- [T2 Handbook](https://t2linux.com/handbook/)
+- [T2 Handbook](https://t2linux.com/documentation/)
 - [Knowledge Base](https://t2linux.com/documentation/kb/)
 
 ---
@@ -611,11 +619,4 @@ If in doubt, best ask before working on a larger bounty.
 
 https://github.com/rxrbln/t2sde/issues?q=is%3Aopen+is%3Aissue+author%3Arxrbln
 
-# History
 
-"T2" started as a community driven fork of the ROCK Linux project in
-2004 which aims at simplicity, clean and lightweight Linux build system.
-
-"T2" was an intern project name for "try two / second try" or "technology
-two". The idea was to eventually choose a more public relation aware
-name, but somehow we just kept sticking with t2 so far ;-)
