@@ -60,19 +60,25 @@ cargo_inject_patches() {
 	local db="$base/architecture/$arch/cargo-patches" # only arch-specific patches supported atm
 	[ -f "$db" ] || return 0
 
-	local crate repo version tag
+	local crate repo version tag force
 	while read -r crate repo version pattern; do
 		[[ -z $crate || $crate == '#'* ]] && continue
-		tag=$(printf "$pattern" "$version")
 
 		grep -q "^name = \"$crate\"" Cargo.lock || continue
 
-		echo "injecting patch $crate = $repo tag $tag"
+		update_out=$(cargo update -p "$crate" --precise "$version" --color never 2>&1) \
+			|| true
+		if [[ "$update_out" =~ requirement[[:space:]]\`${crate}[[:space:]]=[[:space:]]\"=?([^\"]+)\"\` ]]; then
+			# Update failed, force version and pray it exists in the fork
+			version="${BASH_REMATCH[1]}"
+			force="(version forced)"
+		fi
 
-		cargo update -p "$crate" --precise "$version" 2>/dev/null || true
+		tag=$(printf "$pattern" "$version")
+		echo "injecting patch $crate = $repo tag $tag $force"
 
 		grep -q '^\[patch\.crates-io\]' Cargo.toml || printf '\n[patch.crates-io]\n' >> Cargo.toml
-		printf '%s = { git = "%s", tag = "ia64-%s" }\n' "$crate" "$repo" "$version" >> Cargo.toml
+		printf '%s = { git = "%s", tag = "%s" }\n' "$crate" "$repo" "$tag" >> Cargo.toml
 	done < "$db"
 }
 
