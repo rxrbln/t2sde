@@ -1,0 +1,907 @@
+From d2e56947b969b60696e3c355e4c9006e112da606 Mon Sep 17 00:00:00 2001
+From: John Paul Adrian Glaubitz <glaubitz@physik.fu-berlin.de>
+Date: Sun, 24 Aug 2025 11:47:06 +0200
+Subject: [PATCH 1/2] RFE: Add SPARC support
+
+Signed-off-by: John Paul Adrian Glaubitz <glaubitz@physik.fu-berlin.de>
+---
+ README.md                          |  2 +
+ doc/man/man1/scmp_sys_resolver.1   |  3 +-
+ include/seccomp-syscalls.h         | 34 +++++++++++++++++
+ include/seccomp.h.in               |  6 +++
+ src/Makefile.am                    |  2 +
+ src/arch-sparc.c                   | 58 +++++++++++++++++++++++++++++
+ src/arch-sparc.h                   | 38 +++++++++++++++++++
+ src/arch-sparc64.c                 | 58 +++++++++++++++++++++++++++++
+ src/arch-sparc64.h                 | 34 +++++++++++++++++
+ src/arch-syscall-dump.c            |  8 ++++
+ src/arch-syscall-validate          | 60 +++++++++++++++++++++++++++++-
+ src/arch.c                         | 16 ++++++++
+ src/gen_pfc.c                      |  4 ++
+ src/python/libseccomp.pxd          |  2 +
+ src/python/seccomp.pyx             |  8 ++++
+ src/syscalls.h                     | 10 +++++
+ tests/15-basic-resolver.c          |  2 +
+ tests/26-sim-arch_all_be_basic.c   |  6 +++
+ tests/26-sim-arch_all_be_basic.py  |  2 +
+ tests/37-sim-ipc_syscalls_be.c     |  6 +++
+ tests/37-sim-ipc_syscalls_be.py    |  2 +
+ tests/37-sim-ipc_syscalls_be.tests | 26 ++++++-------
+ tests/56-basic-iterate_syscalls.c  |  2 +
+ tests/regression                   |  7 +++-
+ tools/scmp_arch_detect.c           |  6 +++
+ tools/scmp_bpf_sim.c               |  4 ++
+ tools/util.c                       |  6 +++
+ 27 files changed, 395 insertions(+), 17 deletions(-)
+ create mode 100644 src/arch-sparc.c
+ create mode 100644 src/arch-sparc.h
+ create mode 100644 src/arch-sparc64.c
+ create mode 100644 src/arch-sparc64.h
+
+diff --git a/README.md b/README.md
+index b213665..31744bc 100644
+--- a/README.md
++++ b/README.md
+@@ -48,6 +48,8 @@ The libseccomp library currently supports the architectures listed below:
+ * 64-bit PowerPC little endian (ppc64le)
+ * 32-bit s390 (s390)
+ * 64-bit s390x (s390x)
++* 32-bit SPARC (sparc)
++* 64-bit SPARC (sparc64)
+ * 64-bit RISC-V (riscv64)
+ * 32-bit SuperH big endian (sheb)
+ * 32-bit SuperH (sh)
+diff --git a/doc/man/man1/scmp_sys_resolver.1 b/doc/man/man1/scmp_sys_resolver.1
+index 2baa2b9..4304482 100644
+--- a/doc/man/man1/scmp_sys_resolver.1
++++ b/doc/man/man1/scmp_sys_resolver.1
+@@ -36,7 +36,8 @@ The architecture to use for resolving the system call.  Valid
+ .I ARCH
+ values are "x86", "x86_64", "x32", "arm", "aarch64", "loongarch64", "m68k",
+ "mips", "mipsel", "mips64", "mipsel64", "mips64n32", "mipsel64n32", "parisc",
+-"parisc64", "ppc", "ppc64", "ppc64le", "s390", "s390x", "sheb" and "sh".
++"parisc64", "ppc", "ppc64", "ppc64le", "s390", "s390x", "sparc", "sparc64",
++"sheb" and "sh".
+ .TP
+ .B \-t
+ If necessary, translate the system call name to the proper system call number,
+diff --git a/include/seccomp-syscalls.h b/include/seccomp-syscalls.h
+index b71f888..a0d4230 100644
+--- a/include/seccomp-syscalls.h
++++ b/include/seccomp-syscalls.h
+@@ -283,6 +283,18 @@
+ #define __PNR_getpagesize			-10249
+ #define __PNR_riscv_hwprobe			-10250
+ #define __PNR_uretprobe				-10251
++#define __PNR_execv				-10252
++#define __PNR_getdomainname			-10253
++#define __PNR_getresgid				-10254
++#define __PNR_getresuid				-10255
++#define __PNR_kern_features			-10256
++#define __PNR_memory_ordering			-10257
++#define __PNR_perfctr				-10258
++#define __PNR_sched_get_affinity		-10259
++#define __PNR_sched_set_affinity		-10260
++#define __PNR_setresgid				-10261
++#define __PNR_setresuid				-10262
++#define __PNR_utrap_install			-10263
+ 
+ /*
+  * libseccomp syscall definitions
+@@ -580,6 +592,8 @@
+ 
+ #define __SNR_eventfd2			__NR_eventfd2
+ 
++#define __SNR_execv			__NR_execv
++
+ #define __SNR_execve			__NR_execve
+ 
+ #define __SNR_execveat			__NR_execveat
+@@ -648,6 +662,10 @@
+ 
+ #define __SNR_fgetxattr			__NR_fgetxattr
+ 
++#define __SNR_file_getattr		__NR_file_getattr
++
++#define __SNR_file_setattr		__NR_file_setattr
++
+ #define __SNR_finit_module		__NR_finit_module
+ 
+ #define __SNR_flistxattr		__NR_flistxattr
+@@ -802,6 +820,8 @@
+ 
+ #define __SNR_getdents64		__NR_getdents64
+ 
++#define __SNR_getdomainname		__NR_getdomainname
++
+ #ifdef __NR_getegid
+ #define __SNR_getegid			__NR_getegid
+ #else
+@@ -1036,6 +1056,8 @@
+ 
+ #define __SNR_kcmp			__NR_kcmp
+ 
++#define __SNR_kern_features		__NR_kern_features
++
+ #ifdef __NR_kexec_file_load
+ #define __SNR_kexec_file_load		__NR_kexec_file_load
+ #else
+@@ -1152,6 +1174,8 @@
+ #define __SNR_memfd_secret		__PNR_memfd_secret
+ #endif
+ 
++#define __SNR_memory_ordering		__NR_memory_ordering
++
+ #ifdef __NR_migrate_pages
+ #define __SNR_migrate_pages		__NR_migrate_pages
+ #else
+@@ -1356,6 +1380,8 @@
+ #define __SNR_open_tree			__PNR_open_tree
+ #endif
+ 
++#define __SNR_open_tree_attr		__PNR_open_tree_attr
++
+ #define __SNR_openat			__NR_openat
+ 
+ #define __SNR_openat2			__NR_openat2
+@@ -1386,6 +1412,8 @@
+ 
+ #define __SNR_perf_event_open		__NR_perf_event_open
+ 
++#define __SNR_perfctr			__PNR_perfctr
++
+ #define __SNR_personality		__NR_personality
+ 
+ #define __SNR_pidfd_getfd		__NR_pidfd_getfd
+@@ -1672,6 +1700,8 @@
+ #define __SNR_s390_sthyi		__PNR_s390_sthyi
+ #endif
+ 
++#define __SNR_sched_get_affinity	__NR_sched_get_affinity
++
+ #define __SNR_sched_get_priority_max	__NR_sched_get_priority_max
+ 
+ #define __SNR_sched_get_priority_min	__NR_sched_get_priority_min
+@@ -1692,6 +1722,8 @@
+ #define __SNR_sched_rr_get_interval_time64	__PNR_sched_rr_get_interval_time64
+ #endif
+ 
++#define __SNR_sched_set_affinity	__NR_sched_set_affinity
++
+ #define __SNR_sched_setaffinity		__NR_sched_setaffinity
+ 
+ #define __SNR_sched_setattr		__NR_sched_setattr
+@@ -2368,6 +2400,8 @@
+ #define __SNR_utimes			__PNR_utimes
+ #endif
+ 
++#define __SNR_utrap_install		__PNR_utrap_install
++
+ #ifdef __NR_vfork
+ #define __SNR_vfork			__NR_vfork
+ #else
+diff --git a/include/seccomp.h.in b/include/seccomp.h.in
+index 38c50d2..2d0882a 100644
+--- a/include/seccomp.h.in
++++ b/include/seccomp.h.in
+@@ -241,6 +241,12 @@ struct scmp_arg_cmp {
+ #define SCMP_ARCH_SHEB		AUDIT_ARCH_SH
+ #define SCMP_ARCH_SH		AUDIT_ARCH_SHEL /* Little-endian SH is more common than big */
+ 
++/**
++ * The SPARC architecture tokens
++ */
++#define SCMP_ARCH_SPARC		AUDIT_ARCH_SPARC
++#define SCMP_ARCH_SPARC64	AUDIT_ARCH_SPARC64
++
+ /**
+  * Convert a syscall name into the associated syscall number
+  * @param x the syscall name
+diff --git a/src/Makefile.am b/src/Makefile.am
+index 1c47087..5b93bd0 100644
+--- a/src/Makefile.am
++++ b/src/Makefile.am
+@@ -45,6 +45,8 @@ SOURCES_ALL = \
+ 	arch-s390.h arch-s390.c \
+ 	arch-s390x.h arch-s390x.c \
+ 	arch-sh.h arch-sh.c \
++	arch-sparc.h arch-sparc.c \
++	arch-sparc64.h arch-sparc64.c \
+ 	syscalls.h syscalls.c syscalls.perf.c
+ 
+ EXTRA_DIST = \
+diff --git a/src/arch-sparc.c b/src/arch-sparc.c
+new file mode 100644
+index 0000000..44e63df
+--- /dev/null
++++ b/src/arch-sparc.c
+@@ -0,0 +1,58 @@
++/**
++ * Enhanced Seccomp sparc Specific Code
++ *
++ * Copyright (c) 2015 Freescale <bogdan.purcareata@freescale.com>
++ *               2025 John Paul Adrian Glaubitz <glaubitz@physik.fu-berlin.de>
++ * Author: Bogdan Purcareata <bogdan.purcareata@freescale.com>
++ *         John Paul Adrian Glaubitz <glaubitz@physik.fu-berlin.de>
++ *
++ * Derived from the PPC-specific code
++ *
++ */
++
++/*
++ * This library is free software; you can redistribute it and/or modify it
++ * under the terms of version 2.1 of the GNU Lesser General Public License as
++ * published by the Free Software Foundation.
++ *
++ * This library is distributed in the hope that it will be useful, but WITHOUT
++ * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
++ * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU Lesser General Public License
++ * for more details.
++ *
++ * You should have received a copy of the GNU Lesser General Public License
++ * along with this library; if not, see <http://www.gnu.org/licenses>.
++ */
++
++#include <stdlib.h>
++#include <errno.h>
++#include <string.h>
++#include <linux/audit.h>
++
++#include "db.h"
++#include "syscalls.h"
++#include "arch.h"
++#include "arch-sparc.h"
++
++/* sparc syscall numbers */
++#define __sparc_NR_socketcall		206
++#define __sparc_NR_ipc			215
++
++ARCH_DEF(sparc)
++
++const struct arch_def arch_def_sparc = {
++	.token = SCMP_ARCH_SPARC,
++	.token_bpf = AUDIT_ARCH_SPARC,
++	.size = ARCH_SIZE_32,
++	.endian = ARCH_ENDIAN_BIG,
++	.sys_socketcall = __sparc_NR_socketcall,
++	.sys_ipc = __sparc_NR_ipc,
++	.syscall_resolve_name = abi_syscall_resolve_name_munge,
++	.syscall_resolve_name_raw = sparc_syscall_resolve_name,
++	.syscall_resolve_num = abi_syscall_resolve_num_munge,
++	.syscall_resolve_num_raw = sparc_syscall_resolve_num,
++	.syscall_rewrite = abi_syscall_rewrite,
++	.rule_add = abi_rule_add,
++	.syscall_name_kver = sparc_syscall_name_kver,
++	.syscall_num_kver = sparc_syscall_num_kver,
++};
+diff --git a/src/arch-sparc.h b/src/arch-sparc.h
+new file mode 100644
+index 0000000..fac8012
+--- /dev/null
++++ b/src/arch-sparc.h
+@@ -0,0 +1,38 @@
++/**
++ * Enhanced Seccomp sparc Specific Code
++ *
++ * Copyright (c) 2015 Freescale <bogdan.purcareata@freescale.com>
++ *               2025 John Paul Adrian Glaubitz <glaubitz@physik.fu-berlin.de>
++ * Author: Bogdan Purcareata <bogdan.purcareata@freescale.com>
++ *         John Paul Adrian Glaubitz <glaubitz@physik.fu-berlin.de>
++ *
++ * Derived from the PPC-specific code
++ *
++ */
++
++/*
++ * This library is free software; you can redistribute it and/or modify it
++ * under the terms of version 2.1 of the GNU Lesser General Public License as
++ * published by the Free Software Foundation.
++ *
++ * This library is distributed in the hope that it will be useful, but WITHOUT
++ * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
++ * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU Lesser General Public License
++ * for more details.
++ *
++ * You should have received a copy of the GNU Lesser General Public License
++ * along with this library; if not, see <http://www.gnu.org/licenses>.
++ */
++
++#ifndef _ARCH_SPARC_H
++#define _ARCH_SPARC_H
++
++#include "arch.h"
++
++#ifdef sparc
++#undef sparc
++#endif
++
++ARCH_DECL(sparc)
++
++#endif
+diff --git a/src/arch-sparc64.c b/src/arch-sparc64.c
+new file mode 100644
+index 0000000..590ef42
+--- /dev/null
++++ b/src/arch-sparc64.c
+@@ -0,0 +1,58 @@
++/**
++ * Enhanced Seccomp sparc64 Specific Code
++ *
++ * Copyright (c) 2015 Freescale <bogdan.purcareata@freescale.com>
++ *               2025 John Paul Adrian Glaubitz <glaubitz@physik.fu-berlin.de>
++ * Author: Bogdan Purcareata <bogdan.purcareata@freescale.com>
++ *         John Paul Adrian Glaubitz <glaubitz@physik.fu-berlin.de>
++ *
++ * Derived from the PPC-specific code
++ *
++ */
++
++/*
++ * This library is free software; you can redistribute it and/or modify it
++ * under the terms of version 2.1 of the GNU Lesser General Public License as
++ * published by the Free Software Foundation.
++ *
++ * This library is distributed in the hope that it will be useful, but WITHOUT
++ * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
++ * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU Lesser General Public License
++ * for more details.
++ *
++ * You should have received a copy of the GNU Lesser General Public License
++ * along with this library; if not, see <http://www.gnu.org/licenses>.
++ */
++
++#include <stdlib.h>
++#include <errno.h>
++#include <string.h>
++#include <linux/audit.h>
++
++#include "db.h"
++#include "syscalls.h"
++#include "arch.h"
++#include "arch-sparc64.h"
++
++/* sparc64 syscall numbers */
++#define __sparc64_NR_socketcall		206
++#define __sparc64_NR_ipc		215
++
++ARCH_DEF(sparc64)
++
++const struct arch_def arch_def_sparc64 = {
++	.token = SCMP_ARCH_SPARC64,
++	.token_bpf = AUDIT_ARCH_SPARC64,
++	.size = ARCH_SIZE_64,
++	.endian = ARCH_ENDIAN_BIG,
++	.sys_socketcall = __sparc64_NR_socketcall,
++	.sys_ipc = __sparc64_NR_ipc,
++	.syscall_resolve_name = abi_syscall_resolve_name_munge,
++	.syscall_resolve_name_raw = sparc64_syscall_resolve_name,
++	.syscall_resolve_num = abi_syscall_resolve_num_munge,
++	.syscall_resolve_num_raw = sparc64_syscall_resolve_num,
++	.syscall_rewrite = abi_syscall_rewrite,
++	.rule_add = abi_rule_add,
++	.syscall_name_kver = sparc64_syscall_name_kver,
++	.syscall_num_kver = sparc64_syscall_num_kver,
++};
+diff --git a/src/arch-sparc64.h b/src/arch-sparc64.h
+new file mode 100644
+index 0000000..c4ff3b2
+--- /dev/null
++++ b/src/arch-sparc64.h
+@@ -0,0 +1,34 @@
++/**
++ * Enhanced Seccomp sparc64 Specific Code
++ *
++ * Copyright (c) 2015 Freescale <bogdan.purcareata@freescale.com>
++ *               2025 John Paul Adrian Glaubitz <glaubitz@physik.fu-berlin.de>
++ * Author: Bogdan Purcareata <bogdan.purcareata@freescale.com>
++ *         John Paul Adrian Glaubitz <glaubitz@physik.fu-berlin.de>
++ *
++ * Derived from the PPC-specific code
++ *
++ */
++
++/*
++ * This library is free software; you can redistribute it and/or modify it
++ * under the terms of version 2.1 of the GNU Lesser General Public License as
++ * published by the Free Software Foundation.
++ *
++ * This library is distributed in the hope that it will be useful, but WITHOUT
++ * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
++ * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU Lesser General Public License
++ * for more details.
++ *
++ * You should have received a copy of the GNU Lesser General Public License
++ * along with this library; if not, see <http://www.gnu.org/licenses>.
++ */
++
++#ifndef _ARCH_SPARC64_H
++#define _ARCH_SPARC64_H
++
++#include "arch.h"
++
++ARCH_DECL(sparc64)
++
++#endif
+diff --git a/src/arch-syscall-dump.c b/src/arch-syscall-dump.c
+index 60dbc1d..9ac40fa 100644
+--- a/src/arch-syscall-dump.c
++++ b/src/arch-syscall-dump.c
+@@ -48,6 +48,8 @@
+ #include "arch-s390.h"
+ #include "arch-s390x.h"
+ #include "arch-sh.h"
++#include "arch-sparc.h"
++#include "arch-sparc64.h"
+ 
+ /**
+  * Print the usage information to stderr and exit
+@@ -153,6 +155,12 @@ int main(int argc, char *argv[])
+ 		case SCMP_ARCH_SHEB:
+ 			sys = sh_syscall_iterate(iter);
+ 			break;
++		case SCMP_ARCH_SPARC:
++			sys = sparc_syscall_iterate(iter);
++			break;
++		case SCMP_ARCH_SPARC64:
++			sys = sparc64_syscall_iterate(iter);
++			break;
+ 		default:
+ 			/* invalid arch */
+ 			exit_usage(argv[0]);
+diff --git a/src/arch-syscall-validate b/src/arch-syscall-validate
+index 92229cd..829b783 100755
+--- a/src/arch-syscall-validate
++++ b/src/arch-syscall-validate
+@@ -658,6 +658,50 @@ function dump_lib_sh() {
+ 	dump_lib_arch sh | mangle_lib_syscall sh
+ }
+ 
++#
++# Dump the sparc system syscall table
++#
++# Arguments:
++#     1    path to the kernel source
++#
++#  Dump the architecture's syscall table to stdout.
++#
++function dump_sys_sparc() {
++	dump_from_syscall_tbl "$1/arch/sparc/kernel/syscalls/syscall.tbl" \
++		nospu 32
++}
++
++#
++# Dump the sparc library syscall table
++#
++#  Dump the library's syscall table to stdout.
++#
++function dump_lib_sparc() {
++	dump_lib_arch sparc | mangle_lib_syscall sparc
++}
++
++#
++# Dump the sparc64 system syscall table
++#
++# Arguments:
++#     1    path to the kernel source
++#
++#  Dump the architecture's syscall table to stdout.
++#
++function dump_sys_sparc64() {
++	dump_from_syscall_tbl "$1/arch/sparc/kernel/syscalls/syscall.tbl" \
++		nospu 64
++}
++
++#
++# Dump the sparc64 library syscall table
++#
++#  Dump the library's syscall table to stdout.
++#
++function dump_lib_sparc64() {
++	dump_lib_arch sparc64 | mangle_lib_syscall sparc64
++}
++
+ #
+ # Dump the system syscall table
+ #
+@@ -723,6 +767,12 @@ function dump_sys() {
+ 	sh)
+ 		dump_sys_sh "$2"
+ 		;;
++	sparc)
++		dump_sys_sparc "$2"
++		;;
++	sparc64)
++		dump_sys_sparc64 "$2"
++		;;
+ 	*)
+ 		echo ""
+ 		return 1
+@@ -796,6 +846,12 @@ function dump_lib() {
+ 	sh)
+ 		dump_lib_sh
+ 		;;
++	sparc)
++		dump_lib_sparc
++		;;
++	sparc64)
++		dump_lib_sparc64
++		;;
+ 	*)
+ 		echo ""
+ 		return 1
+@@ -835,6 +891,7 @@ function gen_csv() {
+ 	abi_list+=" riscv64"
+ 	abi_list+=" s390 s390x"
+ 	abi_list+=" sh"
++	abi_list+=" sparc sparc64"
+ 
+ 	# read the csv to get the existing data
+ 	local -A csv
+@@ -946,7 +1003,8 @@ if [[ $opt_arches == "" ]]; then
+ 		parisc parisc64 \
+ 		ppc ppc64 \
+ 		s390 s390x \
+-		sh"
++		sh \
++		sparc sparc64"
+ fi
+ 
+ # sanity checks
+diff --git a/src/arch.c b/src/arch.c
+index a3ff7ca..27b05f5 100644
+--- a/src/arch.c
++++ b/src/arch.c
+@@ -48,6 +48,8 @@
+ #include "arch-s390.h"
+ #include "arch-s390x.h"
+ #include "arch-sh.h"
++#include "arch-sparc.h"
++#include "arch-sparc64.h"
+ #include "db.h"
+ #include "system.h"
+ 
+@@ -111,6 +113,12 @@ const struct arch_def *arch_def_native = &arch_def_sheb;
+ #else
+ const struct arch_def *arch_def_native = &arch_def_sh;
+ #endif
++#elif __sparc__
++#ifdef __arch64__
++const struct arch_def *arch_def_native = &arch_def_sparc64;
++#else
++const struct arch_def *arch_def_native = &arch_def_sparc;
++#endif
+ #else
+ #error the arch code needs to know about your machine type
+ #endif /* machine type guess */
+@@ -183,6 +191,10 @@ const struct arch_def *arch_def_lookup(uint32_t token)
+ 		return &arch_def_sheb;
+ 	case SCMP_ARCH_SH:
+ 		return &arch_def_sh;
++	case SCMP_ARCH_SPARC:
++		return &arch_def_sparc;
++	case SCMP_ARCH_SPARC64:
++		return &arch_def_sparc64;
+ 	}
+ 
+ 	return NULL;
+@@ -243,6 +255,10 @@ const struct arch_def *arch_def_lookup_name(const char *arch_name)
+ 		return &arch_def_sheb;
+ 	else if (strcmp(arch_name, "sh") == 0)
+ 		return &arch_def_sh;
++	else if (strcmp(arch_name, "sparc64") == 0)
++		return &arch_def_sparc64;
++	else if (strcmp(arch_name, "sparc") == 0)
++		return &arch_def_sparc;
+ 
+ 	return NULL;
+ }
+diff --git a/src/gen_pfc.c b/src/gen_pfc.c
+index 62dd984..78df31d 100644
+--- a/src/gen_pfc.c
++++ b/src/gen_pfc.c
+@@ -97,6 +97,10 @@ static const char *_pfc_arch(const struct arch_def *arch)
+ 		return "sheb";
+ 	case SCMP_ARCH_SH:
+ 		return "sh";
++	case SCMP_ARCH_SPARC64:
++		return "sparc64";
++	case SCMP_ARCH_SPARC:
++		return "sparc";
+ 	default:
+ 		return "UNKNOWN";
+ 	}
+diff --git a/src/python/libseccomp.pxd b/src/python/libseccomp.pxd
+index f278488..db16393 100644
+--- a/src/python/libseccomp.pxd
++++ b/src/python/libseccomp.pxd
+@@ -53,6 +53,8 @@ cdef extern from "seccomp.h":
+         SCMP_ARCH_PPC64LE
+         SCMP_ARCH_S390
+         SCMP_ARCH_S390X
++        SCMP_ARCH_SPARC
++        SCMP_ARCH_SPARC64
+         SCMP_ARCH_RISCV64
+ 
+     cdef enum scmp_filter_attr:
+diff --git a/src/python/seccomp.pyx b/src/python/seccomp.pyx
+index 7e03dc0..745f937 100644
+--- a/src/python/seccomp.pyx
++++ b/src/python/seccomp.pyx
+@@ -218,6 +218,8 @@ cdef class Arch:
+     PARISC64 - 64-bit PA-RISC
+     PPC64 - 64-bit PowerPC
+     PPC - 32-bit PowerPC
++    SPARC - 32-bit SPARC
++    SPARC64 - 64-bit SPARC
+     RISCV64 - 64-bit RISC-V
+     """
+ 
+@@ -244,6 +246,8 @@ cdef class Arch:
+     PPC64LE = libseccomp.SCMP_ARCH_PPC64LE
+     S390 = libseccomp.SCMP_ARCH_S390
+     S390X = libseccomp.SCMP_ARCH_S390X
++    SPARC = libseccomp.SCMP_ARCH_SPARC
++    SPARC64 = libseccomp.SCMP_ARCH_SPARC64
+     RISCV64 = libseccomp.SCMP_ARCH_RISCV64
+ 
+     def __cinit__(self, arch=libseccomp.SCMP_ARCH_NATIVE):
+@@ -298,6 +302,10 @@ cdef class Arch:
+                 self._token = libseccomp.SCMP_ARCH_S390
+             elif arch == libseccomp.SCMP_ARCH_S390X:
+                 self._token = libseccomp.SCMP_ARCH_S390X
++            elif arch == libseccomp.SCMP_ARCH_SPARC:
++                self._token = libseccomp.SCMP_ARCH_SPARC
++            elif arch == libseccomp.SCMP_ARCH_SPARC64:
++                self._token = libseccomp.SCMP_ARCH_SPARC64
+             else:
+                 self._token = 0;
+         elif isinstance(arch, basestring):
+diff --git a/src/syscalls.h b/src/syscalls.h
+index 2d02ccc..d764f41 100644
+--- a/src/syscalls.h
++++ b/src/syscalls.h
+@@ -25,6 +25,8 @@
+ #include "arch-ppc.h"
+ #include "arch-s390.h"
+ #include "arch-s390x.h"
++#include "arch-sparc64.h"
++#include "arch-sparc.h"
+ #include "arch-sh.h"
+ #include "arch-x32.h"
+ #include "arch-x86_64.h"
+@@ -41,6 +43,9 @@ struct arch_syscall_table {
+ 	/* each arch listed here must be defined in syscalls.c  */
+ 	/* NOTE: see the warning above - BEWARE! */
+ 
++	/* NOTE: the order of the members of this structure must exactly
++	 *       match the order of the columns in syscalls.csv! */
++
+ 	int x86;
+ 	enum scmp_kver x86_kver;
+ 	int x86_64;
+@@ -86,6 +91,11 @@ struct arch_syscall_table {
+ 
+ 	int sh;
+ 	enum scmp_kver sh_kver;
++
++	int sparc;
++	enum scmp_kver sparc_kver;
++	int sparc64;
++	enum scmp_kver sparc64_kver;
+ };
+ #define SYSTBL_OFFSET(NAME) offsetof(struct arch_syscall_table, NAME)
+ 
+diff --git a/tests/15-basic-resolver.c b/tests/15-basic-resolver.c
+index 7e2e03f..604b5ec 100644
+--- a/tests/15-basic-resolver.c
++++ b/tests/15-basic-resolver.c
+@@ -49,6 +49,8 @@ unsigned int arch_list[] = {
+ 	SCMP_ARCH_PARISC64,
+ 	SCMP_ARCH_RISCV64,
+ 	SCMP_ARCH_SH,
++	SCMP_ARCH_SPARC,
++	SCMP_ARCH_SPARC64,
+ 	-1
+ };
+ 
+diff --git a/tests/26-sim-arch_all_be_basic.c b/tests/26-sim-arch_all_be_basic.c
+index 2b83f0b..19e33fe 100644
+--- a/tests/26-sim-arch_all_be_basic.c
++++ b/tests/26-sim-arch_all_be_basic.c
+@@ -71,6 +71,12 @@ int main(int argc, char *argv[])
+ 	if (rc != 0)
+ 		goto out;
+ 	rc = seccomp_arch_add(ctx, seccomp_arch_resolve_name("s390x"));
++	if (rc != 0)
++		goto out;
++	rc = seccomp_arch_add(ctx, seccomp_arch_resolve_name("sparc"));
++	if (rc != 0)
++		goto out;
++	rc = seccomp_arch_add(ctx, seccomp_arch_resolve_name("sparc64"));
+ 	if (rc != 0)
+ 		goto out;
+ 	rc = seccomp_arch_add(ctx, seccomp_arch_resolve_name("sheb"));
+diff --git a/tests/26-sim-arch_all_be_basic.py b/tests/26-sim-arch_all_be_basic.py
+index 2afa93a..9533de3 100755
+--- a/tests/26-sim-arch_all_be_basic.py
++++ b/tests/26-sim-arch_all_be_basic.py
+@@ -41,6 +41,8 @@ def test(args):
+     f.add_arch(Arch("s390"))
+     f.add_arch(Arch("s390x"))
+     f.add_arch(Arch("sheb"))
++    f.add_arch(Arch("sparc"))
++    f.add_arch(Arch("sparc64"))
+     f.add_rule(ALLOW, "read", Arg(0, EQ, sys.stdin.fileno()))
+     f.add_rule(ALLOW, "write", Arg(0, EQ, sys.stdout.fileno()))
+     f.add_rule(ALLOW, "write", Arg(0, EQ, sys.stderr.fileno()))
+diff --git a/tests/37-sim-ipc_syscalls_be.c b/tests/37-sim-ipc_syscalls_be.c
+index d1bd57e..118c4a8 100644
+--- a/tests/37-sim-ipc_syscalls_be.c
++++ b/tests/37-sim-ipc_syscalls_be.c
+@@ -51,6 +51,12 @@ int main(int argc, char *argv[])
+ 	if (rc != 0)
+ 		goto out;
+ 	rc = seccomp_arch_add(ctx, SCMP_ARCH_PPC);
++	if (rc != 0)
++		goto out;
++	rc = seccomp_arch_add(ctx, SCMP_ARCH_SPARC);
++	if (rc != 0)
++		goto out;
++	rc = seccomp_arch_add(ctx, SCMP_ARCH_SPARC64);
+ 	if (rc != 0)
+ 		goto out;
+ 
+diff --git a/tests/37-sim-ipc_syscalls_be.py b/tests/37-sim-ipc_syscalls_be.py
+index 18a09d0..34b0201 100755
+--- a/tests/37-sim-ipc_syscalls_be.py
++++ b/tests/37-sim-ipc_syscalls_be.py
+@@ -34,6 +34,8 @@ def test(args):
+     f.add_arch(Arch("s390"))
+     f.add_arch(Arch("s390x"))
+     f.add_arch(Arch("ppc"))
++    f.add_arch(Arch("sparc"))
++    f.add_arch(Arch("sparc64"))
+     f.add_rule(ALLOW, "semop")
+     f.add_rule(ALLOW, "semtimedop")
+     f.add_rule(ALLOW, "semget")
+diff --git a/tests/37-sim-ipc_syscalls_be.tests b/tests/37-sim-ipc_syscalls_be.tests
+index 96a5c81..b9224e4 100644
+--- a/tests/37-sim-ipc_syscalls_be.tests
++++ b/tests/37-sim-ipc_syscalls_be.tests
+@@ -7,19 +7,19 @@
+ 
+ test type: bpf-sim
+ 
+-# Testname		Arch			Syscall		Arg0	Arg1	Arg2	Arg3	Arg4	Arg5	Result
+-37-sim-ipc_syscalls_be	+s390,+s390x,+ppc	ipc		1	N	N	N	N	N	ALLOW
+-37-sim-ipc_syscalls_be	+s390,+s390x,+ppc	ipc		2	N	N	N	N	N	ALLOW
+-37-sim-ipc_syscalls_be	+s390,+s390x,+ppc	ipc		3	N	N	N	N	N	ALLOW
+-37-sim-ipc_syscalls_be	+s390,+s390x,+ppc	ipc		4	N	N	N	N	N	ALLOW
+-37-sim-ipc_syscalls_be	+s390,+s390x,+ppc	ipc		11	N	N	N	N	N	ALLOW
+-37-sim-ipc_syscalls_be	+s390,+s390x,+ppc	ipc		12	N	N	N	N	N	ALLOW
+-37-sim-ipc_syscalls_be	+s390,+s390x,+ppc	ipc		13	N	N	N	N	N	ALLOW
+-37-sim-ipc_syscalls_be	+s390,+s390x,+ppc	ipc		14	N	N	N	N	N	ALLOW
+-37-sim-ipc_syscalls_be	+s390,+s390x,+ppc	ipc		21	N	N	N	N	N	ALLOW
+-37-sim-ipc_syscalls_be	+s390,+s390x,+ppc	ipc		22	N	N	N	N	N	ALLOW
+-37-sim-ipc_syscalls_be	+s390,+s390x,+ppc	ipc		23	N	N	N	N	N	ALLOW
+-37-sim-ipc_syscalls_be	+s390,+s390x,+ppc	ipc		24	N	N	N	N	N	ALLOW
++# Testname		Arch					Syscall		Arg0	Arg1	Arg2	Arg3	Arg4	Arg5	Result
++37-sim-ipc_syscalls_be	+s390,+s390x,+ppc,+sparc,+sparc64	ipc		1	N	N	N	N	N	ALLOW
++37-sim-ipc_syscalls_be	+s390,+s390x,+ppc,+sparc,+sparc64	ipc		2	N	N	N	N	N	ALLOW
++37-sim-ipc_syscalls_be	+s390,+s390x,+ppc,+sparc,+sparc64	ipc		3	N	N	N	N	N	ALLOW
++37-sim-ipc_syscalls_be	+s390,+s390x,+ppc,+sparc,+sparc64	ipc		4	N	N	N	N	N	ALLOW
++37-sim-ipc_syscalls_be	+s390,+s390x,+ppc,+sparc,+sparc64	ipc		11	N	N	N	N	N	ALLOW
++37-sim-ipc_syscalls_be	+s390,+s390x,+ppc,+sparc,+sparc64	ipc		12	N	N	N	N	N	ALLOW
++37-sim-ipc_syscalls_be	+s390,+s390x,+ppc,+sparc,+sparc64	ipc		13	N	N	N	N	N	ALLOW
++37-sim-ipc_syscalls_be	+s390,+s390x,+ppc,+sparc,+sparc64	ipc		14	N	N	N	N	N	ALLOW
++37-sim-ipc_syscalls_be	+s390,+s390x,+ppc,+sparc,+sparc64	ipc		21	N	N	N	N	N	ALLOW
++37-sim-ipc_syscalls_be	+s390,+s390x,+ppc,+sparc,+sparc64	ipc		22	N	N	N	N	N	ALLOW
++37-sim-ipc_syscalls_be	+s390,+s390x,+ppc,+sparc,+sparc64	ipc		23	N	N	N	N	N	ALLOW
++37-sim-ipc_syscalls_be	+s390,+s390x,+ppc,+sparc,+sparc64	ipc		24	N	N	N	N	N	ALLOW
+ 
+ test type: bpf-valgrind
+ 
+diff --git a/tests/56-basic-iterate_syscalls.c b/tests/56-basic-iterate_syscalls.c
+index d5cf746..628aa75 100644
+--- a/tests/56-basic-iterate_syscalls.c
++++ b/tests/56-basic-iterate_syscalls.c
+@@ -46,6 +46,8 @@ unsigned int arch_list[] = {
+ 	SCMP_ARCH_PPC64LE,
+ 	SCMP_ARCH_S390,
+ 	SCMP_ARCH_S390X,
++	SCMP_ARCH_SPARC,
++	SCMP_ARCH_SPARC64,
+ 	SCMP_ARCH_PARISC,
+ 	SCMP_ARCH_PARISC64,
+ 	SCMP_ARCH_RISCV64,
+diff --git a/tests/regression b/tests/regression
+index c08a328..1e585d2 100755
+--- a/tests/regression
++++ b/tests/regression
+@@ -35,6 +35,7 @@ GLBL_ARCH_BE_SUPPORT=" \
+ 	parisc parisc64 \
+ 	ppc ppc64 \
+ 	s390 s390x \
++	sparc sparc64 \
+ 	sheb"
+ 
+ GLBL_ARCH_32B_SUPPORT=" \
+@@ -45,6 +46,7 @@ GLBL_ARCH_32B_SUPPORT=" \
+ 	parisc \
+ 	ppc \
+ 	s390 \
++	sparc \
+ 	sheb sh"
+ 
+ GLBL_ARCH_64B_SUPPORT=" \
+@@ -55,7 +57,8 @@ GLBL_ARCH_64B_SUPPORT=" \
+ 	parisc64 \
+ 	ppc64 \
+ 	riscv64 \
+-	s390x"
++	s390x \
++	sparc64"
+ 
+ GLBL_SYS_ARCH="../tools/scmp_arch_detect"
+ GLBL_SYS_RESOLVER="../tools/scmp_sys_resolver"
+@@ -805,7 +808,7 @@ function run_test_live() {
+ 
+ 	# setup the arch specific return values
+ 	case "$arch" in
+-	x86|x86_64|x32|arm|aarch64|loongarch64|m68k|parisc|parisc64|ppc|ppc64|ppc64le|ppc|s390|s390x|riscv64|sh|sheb)
++	x86|x86_64|x32|arm|aarch64|loongarch64|m68k|parisc|parisc64|ppc|ppc64|ppc64le|ppc|s390|s390x|sparc|sparc64|riscv64|sh|sheb)
+ 		rc_kill_process=159
+ 		rc_kill=159
+ 		rc_allow=160
+diff --git a/tools/scmp_arch_detect.c b/tools/scmp_arch_detect.c
+index a753a8d..d7fff0f 100644
+--- a/tools/scmp_arch_detect.c
++++ b/tools/scmp_arch_detect.c
+@@ -126,6 +126,12 @@ int main(int argc, char *argv[])
+ 		case SCMP_ARCH_S390X:
+ 			printf("s390x\n");
+ 			break;
++		case SCMP_ARCH_SPARC:
++			printf("sparc\n");
++			break;
++		case SCMP_ARCH_SPARC64:
++			printf("sparc64\n");
++			break;
+ 		case SCMP_ARCH_RISCV64:
+ 			printf("riscv64\n");
+ 			break;
+diff --git a/tools/scmp_bpf_sim.c b/tools/scmp_bpf_sim.c
+index fb7bd2d..9b6d139 100644
+--- a/tools/scmp_bpf_sim.c
++++ b/tools/scmp_bpf_sim.c
+@@ -296,6 +296,10 @@ int main(int argc, char *argv[])
+ 				arch = AUDIT_ARCH_SH;
+ 			else if (strcmp(optarg, "sh") == 0)
+ 				arch = AUDIT_ARCH_SHEL;
++			else if (strcmp(optarg, "sparc") == 0)
++				arch = AUDIT_ARCH_SPARC;
++			else if (strcmp(optarg, "sparc64") == 0)
++				arch = AUDIT_ARCH_SPARC64;
+ 			else
+ 				exit_fault(EINVAL);
+ 			break;
+diff --git a/tools/util.c b/tools/util.c
+index 1e39c79..bbcc6b5 100644
+--- a/tools/util.c
++++ b/tools/util.c
+@@ -90,6 +90,12 @@
+ #else
+ #define ARCH_NATIVE		AUDIT_ARCH_SHEL
+ #endif
++#elif __sparc__
++#ifdef __arch64__
++#define ARCH_NATIVE		AUDIT_ARCH_SPARC64
++#else
++#define ARCH_NATIVE		AUDIT_ARCH_SPARC
++#endif
+ #else
+ #error the simulator code needs to know about your machine type
+ #endif
+-- 
+2.51.0
+
