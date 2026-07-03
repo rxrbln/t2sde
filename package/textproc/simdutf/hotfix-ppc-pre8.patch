@@ -4,14 +4,88 @@
 # SPDX-License-Identifier: GPL-2.0 or patched project license
 # --- T2-COPYRIGHT-END ---
 
---- simdutf-7.7.1/include/simdutf/portability.h.vanilla	2026-01-07 19:09:59.487842309 +0100
-+++ simdutf-7.7.1/include/simdutf/portability.h	2026-01-07 19:13:13.334942175 +0100
-@@ -109,7 +109,7 @@
- #elif defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC)
-   #define SIMDUTF_IS_ARM64 1
- #elif defined(__PPC64__) || defined(_M_PPC64)
--  #if defined(__VEC__) && defined(__ALTIVEC__)
-+  #if defined(__VEC__) && defined(__ALTIVEC__) && defined(__POWER8_VECTOR__)
-     #define SIMDUTF_IS_PPC64 1
-   #endif
- #elif defined(__s390__)
+diff -ur /simdutf-9.0.0/src/simdutf/ppc64/simd.h simdutf-9.0.0/src/simdutf/ppc64/simd.h
+--- /simdutf-9.0.0/src/simdutf/ppc64/simd.h	2026-04-21 23:01:59.000000000 +0200
++++ simdutf-9.0.0/src/simdutf/ppc64/simd.h	2026-07-03 18:35:30.349938906 +0200
+@@ -64,6 +64,7 @@
+     typename vector_u32_type_for_element_aux<T>::type;
+ 
+ template <typename T> uint16_t move_mask_u8(T vec) {
++#if defined(__POWER8_VECTOR__)
+   const vec_u8_t perm_mask = {15 * 8, 14 * 8, 13 * 8, 12 * 8, 11 * 8, 10 * 8,
+                               9 * 8,  8 * 8,  7 * 8,  6 * 8,  5 * 8,  4 * 8,
+                               3 * 8,  2 * 8,  1 * 8,  0 * 8};
+@@ -74,6 +75,29 @@
+ #else
+   return static_cast<uint16_t>(result[1]);
+ #endif
++#else
++  // NOTE: vec_vbpermq() maps to vbpermq which requires POWER8 + VSX.  To keep
++  // support for the older AltiVec ISA we gather the most-significant bit of
++  // each byte into a 16-bit mask using only base AltiVec instructions.  This
++  // matches the original semantics: bit i of the result is the MSB of byte i.
++  const vec_u8_t msb =
++      vec_sr((vec_u8_t)vec, vec_splats((unsigned char)7)); // each byte -> 0/1
++  const vec_u8_t shifts = {0, 1, 2, 3, 4, 5, 6, 7,
++                           0, 1, 2, 3, 4, 5, 6, 7};
++  const vec_u8_t bits = vec_sl(msb, shifts); // 1 << (i % 8) when MSB set
++  const vec_u32_t zero = vec_splats((unsigned int)0);
++  // Sum the weighted bits of each half: lanes hold the two 8-bit sub-masks.
++  const vec_u32_t sum4 = vec_sum4s(bits, zero);
++  const vec_i32_t sum2 = vec_sum2s((vec_i32_t)sum4, (vec_i32_t)zero);
++#if SIMDUTF_IS_BIG_ENDIAN
++  const uint16_t lo = static_cast<uint16_t>(sum2[1]);
++  const uint16_t hi = static_cast<uint16_t>(sum2[3]);
++#else
++  const uint16_t lo = static_cast<uint16_t>(sum2[0]);
++  const uint16_t hi = static_cast<uint16_t>(sum2[2]);
++#endif
++  return static_cast<uint16_t>(lo | (hi << 8));
++#endif
+ }
+ 
+ #include "simdutf/ppc64/simd8-inl.h"
+diff -ur /simdutf-9.0.0/src/simdutf/ppc64/simd16-inl.h simdutf-9.0.0/src/simdutf/ppc64/simd16-inl.h
+--- /simdutf-9.0.0/src/simdutf/ppc64/simd16-inl.h	2026-04-21 23:01:59.000000000 +0200
++++ simdutf-9.0.0/src/simdutf/ppc64/simd16-inl.h	2026-07-03 18:35:39.903108593 +0200
+@@ -182,7 +182,15 @@
+ 
+   // Change the endianness
+   simdutf_really_inline simd16<uint16_t> swap_bytes() const {
++#if defined(__POWER8_VECTOR__)
+     return vec_revb(value);
++#else
++    // vec_revb() maps to xxbrh/revb which requires POWER8 + VSX; emulate the
++    // per-element byte swap with AltiVec shifts to keep support for the older
++    // ISA.
++    const vec_u16_t eight = vec_splats(uint16_t(8));
++    return vec_or(vec_sl(value, eight), vec_sr(value, eight));
++#endif
+   }
+ 
+   // Pack with the unsigned saturation of two uint16_t code units into single
+diff -ur /simdutf-9.0.0/src/simdutf/ppc64/simd32-inl.h simdutf-9.0.0/src/simdutf/ppc64/simd32-inl.h
+--- /simdutf-9.0.0/src/simdutf/ppc64/simd32-inl.h	2026-04-21 23:01:59.000000000 +0200
++++ simdutf-9.0.0/src/simdutf/ppc64/simd32-inl.h	2026-07-03 18:36:58.398501445 +0200
+@@ -172,7 +172,21 @@
+ 
+   // Change the endianness
+   simdutf_really_inline simd32<uint32_t> swap_bytes() const {
++#if defined(__POWER8_VECTOR__)
+     return vec_revb(value);
++#else
++    // vec_revb() maps to xxbrw/revb which requires POWER8 + VSX; emulate the
++    // per-element byte reversal (B0 B1 B2 B3 -> B3 B2 B1 B0) with AltiVec
++    // shifts to keep support for the older ISA.
++    const vec_u32_t v = value;
++    const vec_u32_t outer =
++        vec_or(vec_sl(v, vec_splats(24u)), vec_sr(v, vec_splats(24u)));
++    const vec_u32_t inner_lo =
++        vec_and(vec_sr(v, vec_splats(8u)), vec_splats(0x0000FF00u));
++    const vec_u32_t inner_hi =
++        vec_and(vec_sl(v, vec_splats(8u)), vec_splats(0x00FF0000u));
++    return vec_or(outer, vec_or(inner_lo, inner_hi));
++#endif
+   }
+ 
+   simdutf_really_inline uint64_t sum() const {
