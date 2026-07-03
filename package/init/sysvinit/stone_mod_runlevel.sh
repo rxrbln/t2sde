@@ -1,5 +1,5 @@
 # --- T2-COPYRIGHT-BEGIN ---
-# t2/package/*/stone/stone_mod_runlevel.sh
+# t2/package/*/sysvinit/stone_mod_runlevel.sh
 # Copyright (C) 2004 - 2026 The T2 SDE Project
 # Copyright (C) 1998 - 2003 ROCK Linux Project
 # SPDX-License-Identifier: GPL-2.0
