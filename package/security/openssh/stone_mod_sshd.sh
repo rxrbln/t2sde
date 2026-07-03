@@ -18,11 +18,6 @@ ssh_create_hostpair(){
 main() {
     while
 	gui_menu alsa 'SSH Daemon Configuration.' \
-		'Create a ssh host keypair' \
-			'ssh_create_hostpair' \
-		'Configure runlevels for sshd service' \
-			'$STONE runlevel edit_srv sshd' \
-		'(Re-)Start sshd init script' \
-			'$STONE runlevel restart sshd'
+		'Create a ssh host keypair'  'ssh_create_hostpair'
     do : ; done
 }
