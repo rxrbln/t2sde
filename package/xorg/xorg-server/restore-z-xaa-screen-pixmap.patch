@@ -1,0 +1,90 @@
+# --- T2-COPYRIGHT-BEGIN ---
+# t2/package/*/xorg-server/restore-z-xaa-screen-pixmap.patch
+# Copyright (C) 2026 The T2 SDE Project
+# SPDX-License-Identifier: GPL-2.0 or patched project license
+# --- T2-COPYRIGHT-END ---
+
+Treat the screen pixmap as living in video memory, as NetBSD's xsrc
+XAA does.  miPaintWindow() paints window borders and root fills on
+the screen pixmap (via GetWindowPixmap), which vanilla XAA sends to
+the software fb ops; for drivers whose framebuffer is not CPU
+addressable and who render everything through an engine (e.g. the
+SGI O2 crime driver, whose fb pointer is a malloc'ed shadow), such
+fallbacks are drawn into the shadow and never become visible.
+Likewise use the accelerated ReadPixmap when the screen pixmap is
+the source of GetImage/CopyArea.
+
+--- xorg-server-21.1.23/hw/xfree86/xaa/xaalocal.h
++++ xorg-server-21.1.23/hw/xfree86/xaa/xaalocal.h
+@@ -1376,6 +1376,17 @@
+ #define IS_OFFSCREEN_PIXMAP(pPix)\
+         ((XAA_GET_PIXMAP_PRIVATE((PixmapPtr)(pPix)))->offscreenArea)
+
++/*
++ * The screen pixmap lives in video memory even though it was not
++ * allocated by the offscreen manager; treat it as accelerated, for
++ * drivers whose framebuffer is not CPU addressable (e.g. crime).
++ * Window borders and root fills are painted on it via GetWindowPixmap.
++ */
++#define PIXMAP_IS_SCREEN(pDraw)\
++        ((pDraw)->type == DRAWABLE_PIXMAP && \
++         (PixmapPtr)(pDraw) == \
++         (*(pDraw)->pScreen->GetScreenPixmap)((pDraw)->pScreen))
++
+ #define PIXMAP_IS_SHARED(pPix)\
+         ((XAA_GET_PIXMAP_PRIVATE((PixmapPtr)(pPix)))->flags & SHARED_PIXMAP)
+
+--- xorg-server-21.1.23/hw/xfree86/xaa/xaaGC.c
++++ xorg-server-21.1.23/hw/xfree86/xaa/xaaGC.c
+@@ -79,7 +79,8 @@
+             pGC->fgPixel = 0x7fffffff;
+     }
+
+-    if ((pDraw->type == DRAWABLE_PIXMAP) && !IS_OFFSCREEN_PIXMAP(pDraw)) {
++    if ((pDraw->type == DRAWABLE_PIXMAP) && !IS_OFFSCREEN_PIXMAP(pDraw) &&
++        !PIXMAP_IS_SCREEN(pDraw)) {
+         pGCPriv->flags = OPS_ARE_PIXMAP;
+         pGCPriv->changes |= changes;
+
+@@ -345,7 +346,8 @@
+     RegionPtr ret;
+
+     if (infoRec->pScrn->vtSema &&
+-        ((pSrc->type == DRAWABLE_WINDOW) || IS_OFFSCREEN_PIXMAP(pSrc))) {
++        ((pSrc->type == DRAWABLE_WINDOW) || IS_OFFSCREEN_PIXMAP(pSrc) ||
++         PIXMAP_IS_SCREEN(pSrc))) {
+         if (infoRec->ReadPixmap && (pGC->alu == GXcopy) &&
+             (pSrc->bitsPerPixel == pDst->bitsPerPixel) &&
+             ((pGC->planemask & infoRec->FullPlanemasks[pSrc->depth - 1])
+@@ -388,7 +390,8 @@
+     XAA_PIXMAP_OP_PROLOGUE(pGC, pDst);
+
+     if (infoRec->pScrn->vtSema &&
+-        ((pSrc->type == DRAWABLE_WINDOW) || IS_OFFSCREEN_PIXMAP(pSrc))) {
++        ((pSrc->type == DRAWABLE_WINDOW) || IS_OFFSCREEN_PIXMAP(pSrc) ||
++         PIXMAP_IS_SCREEN(pSrc))) {
+         if (infoRec->NeedToSync) {
+             (*infoRec->Sync) (infoRec->pScrn);
+             infoRec->NeedToSync = FALSE;
+--- xorg-server-21.1.23/hw/xfree86/xaa/xaaInit.c
++++ xorg-server-21.1.23/hw/xfree86/xaa/xaaInit.c
+@@ -251,7 +251,8 @@
+     ScrnInfoPtr pScrn = infoRec->pScrn;
+
+     if (pScrn->vtSema &&
+-        ((pDraw->type == DRAWABLE_WINDOW) || IS_OFFSCREEN_PIXMAP(pDraw))) {
++        ((pDraw->type == DRAWABLE_WINDOW) || IS_OFFSCREEN_PIXMAP(pDraw) ||
++         PIXMAP_IS_SCREEN(pDraw))) {
+         if (infoRec->ReadPixmap && (format == ZPixmap) &&
+             ((planemask & infoRec->FullPlanemasks[pDraw->depth - 1]) ==
+              infoRec->FullPlanemasks[pDraw->depth - 1]) &&
+@@ -279,7 +280,8 @@
+
+     XAA_SCREEN_PROLOGUE(pScreen, GetSpans);
+     if (xf86ScreenToScrn(pScreen)->vtSema &&
+-        ((pDraw->type == DRAWABLE_WINDOW) || IS_OFFSCREEN_PIXMAP(pDraw))) {
++        ((pDraw->type == DRAWABLE_WINDOW) || IS_OFFSCREEN_PIXMAP(pDraw) ||
++         PIXMAP_IS_SCREEN(pDraw))) {
+         SYNC_CHECK(pDraw);
+     }
+     (*pScreen->GetSpans) (pDraw, wMax, ppt, pwidth, nspans, pdstStart);
