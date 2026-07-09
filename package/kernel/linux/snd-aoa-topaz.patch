@@ -1,0 +1,1350 @@
+# --- T2-COPYRIGHT-BEGIN ---
+# t2/package/*/linux/snd-aoa-topaz.patch
+# Copyright (C) 2026 The T2 SDE Project
+# SPDX-License-Identifier: GPL-2.0 or patched project license
+# --- T2-COPYRIGHT-END ---
+
+Finally optical s/pdif input. Tested on PowerMac11,2.
+
+diff --git a/sound/aoa/codecs/Kconfig b/sound/aoa/codecs/Kconfig
+index 03f89dbcc..676ad7823 100644
+--- a/sound/aoa/codecs/Kconfig
++++ b/sound/aoa/codecs/Kconfig
+@@ -23,3 +23,13 @@ config SND_AOA_TOONIE
+ 	This option enables support for the toonie codec
+ 	found in the Mac Mini. If you have a Mac Mini and
+ 	want to hear sound, select this option.
++
++config SND_AOA_TOPAZ
++	tristate "support Topaz chips"
++	select I2C
++	select I2C_POWERMAC
++	help
++	This option enables support for the Topaz (Crystal
++	CS8420) S/PDIF transceiver found in the digital audio
++	path of the PowerMac G5 and various PowerBooks. Select
++	this option to get digital S/PDIF input (and output).
+diff --git a/sound/aoa/codecs/Makefile b/sound/aoa/codecs/Makefile
+index 8feedc771..f1389e8e3 100644
+--- a/sound/aoa/codecs/Makefile
++++ b/sound/aoa/codecs/Makefile
+@@ -2,7 +2,9 @@
+ snd-aoa-codec-onyx-y := onyx.o
+ snd-aoa-codec-tas-y := tas.o
+ snd-aoa-codec-toonie-y := toonie.o
++snd-aoa-codec-topaz-y := topaz.o
+ 
+ obj-$(CONFIG_SND_AOA_ONYX) += snd-aoa-codec-onyx.o
+ obj-$(CONFIG_SND_AOA_TAS) += snd-aoa-codec-tas.o
+ obj-$(CONFIG_SND_AOA_TOONIE) += snd-aoa-codec-toonie.o
++obj-$(CONFIG_SND_AOA_TOPAZ) += snd-aoa-codec-topaz.o
+diff --git a/sound/aoa/codecs/topaz.c b/sound/aoa/codecs/topaz.c
+new file mode 100644
+index 000000000..45776e24e
+--- /dev/null
++++ b/sound/aoa/codecs/topaz.c
+@@ -0,0 +1,941 @@
++// SPDX-License-Identifier: GPL-2.0-only
++/*
++ * Apple Onboard Audio driver for Topaz codec
++ *
++ * Copyright 2026 René Rebe <rene@exactco.de>
++ *
++ * This is a driver for the Cirrus Logic Crystal CS8416 S/PDIF receiver
++ * and CS8420 S/PDIF transceiver, both codenamed "Topaz" in Apple
++ * hardware.  They provide the digital S/PDIF input (and, on the CS8420,
++ * output) of the PowerMac G5 and various PowerBooks.  The snd-aoa layout
++ * fabric has always referred to a "topaz" codec, but no codec driver
++ * existed for it, so those digital connections never appeared.
++ *
++ * Connections, by the bit used in aoa_codec.connected (these match the
++ * codec_bit values the layout fabric assigns):
++ *  0: digital (S/PDIF / AES3) input
++ *  1: digital (S/PDIF / AES3) output    [CS8420 only]
++ *
++ * The CS8416 is a receiver only.  The CS8420 additionally contains an
++ * asynchronous sample rate converter and an AES3 transmitter.
++ *
++ * CLOCKING CAVEAT: the i2sbus cell is always the bus clock master (see
++ * i2sbus_pcm_prepare(), which unconditionally sets I2S_SF_SCLK_MASTER),
++ * and it only ever selects one of its three internal clock sources.  The
++ * serial audio output port of either chip is therefore programmed as a
++ * slave.  On the CS8420 that is fine: its sample rate converter resamples
++ * the incoming S/PDIF stream to whatever rate the i2s cell drives.  The
++ * CS8416 has no such converter, so its captured data is only correct when
++ * the rate selected by the user matches the rate of the incoming stream.
++ * Apple's driver avoids this by slaving the i2s cell to the CS8416's
++ * recovered master clock (RMCK); soundbus cannot currently express that,
++ * which is also why transfer_info.must_be_clock_source is ignored today.
++ *
++ */
++#include <linux/delay.h>
++#include <linux/module.h>
++#include <linux/of.h>
++#include <linux/slab.h>
++#include <sound/asoundef.h>
++#include <asm/pmac_pfunc.h>
++
++MODULE_AUTHOR("snd-aoa contributors");
++MODULE_LICENSE("GPL");
++MODULE_DESCRIPTION("S/PDIF (topaz) codec driver for snd-aoa");
++
++#include "topaz.h"
++#include "../aoa.h"
++#include "../soundbus/soundbus.h"
++
++#define PFX "snd-aoa-codec-topaz: "
++
++/* connection bits, matching the layout fabric codec_bit assignment */
++#define TOPAZ_CC_DIGITALIN	(1<<0)
++#define TOPAZ_CC_DIGITALOUT	(1<<1)
++
++enum topaz_type {
++	TOPAZ_CS8416,
++	TOPAZ_CS8420,
++};
++
++struct topaz;
++
++/* per-chip behaviour; the two chips share no registers to speak of */
++struct topaz_chip {
++	const char	*name;
++	u8		id;		/* upper nibble of the ID register */
++	u32		connections;	/* directions the chip can support */
++	/* program the chip into its running configuration */
++	int		(*init)(struct topaz *topaz);
++	/* stop / restart around a bus clock change */
++	void		(*stop)(struct topaz *topaz);
++	void		(*run)(struct topaz *topaz);
++	/* receiver error register, and the bits meaning "no usable input" */
++	u8		rx_error_reg;
++	u8		rx_error_bad;
++	u8		rx_error_unlock;
++	/* first of the five received channel status bytes, 0 if we cannot
++	 * read them back */
++	u8		rx_cs_reg;
++	/* does the chip resample the receiver onto the bus clock? */
++	bool		has_src;
++	/* registers that must always be read from the chip, not the cache */
++	bool		(*is_status_reg)(u8 reg);
++};
++
++#define TOPAZ_RX_CS_BYTES	5
++
++struct topaz {
++	/* shadow copy of the control registers, indexed by register
++	 * address; status registers are always read from the chip */
++	u8			shadow[128];
++	struct i2c_client	*i2c;
++	struct aoa_codec	codec;
++	const struct topaz_chip	*chip;
++	u32			initialised:1;
++	int			open_count;
++	struct codec_info	*codec_info;
++
++	/* serialises concurrent access to the device and this struct */
++	struct mutex		mutex;
++};
++#define codec_to_topaz(c) container_of(c, struct topaz, codec)
++
++/*
++ * Read one register straight from the chip.
++ *
++ * i2c-powermac implements SMBus byte-data reads with a repeated start
++ * (pmac_i2c_mode_combined).  Should a bus or chip dislike that, fall back
++ * to writing the memory address pointer and reading the byte back as two
++ * separate transactions with a stop in between; the MAP persists across
++ * them.  Note i2c_powermac_xfer() only ever handles a single message, so
++ * this cannot be expressed as one two-message i2c_transfer().
++ *
++ * Returns 0 on success, negative errno on failure.
++ */
++static int topaz_i2c_read(struct i2c_client *client, u8 reg, u8 *value)
++{
++	s32 v;
++	int err;
++
++	v = i2c_smbus_read_byte_data(client, reg);
++	if (v >= 0) {
++		*value = (u8)v;
++		return 0;
++	}
++
++	err = i2c_master_send(client, &reg, 1);
++	if (err < 0)
++		return err;
++	err = i2c_master_recv(client, value, 1);
++	if (err < 0)
++		return err;
++	return 0;
++}
++
++static int topaz_i2c_write(struct i2c_client *client, u8 reg, u8 value)
++{
++	u8 buf[2] = { reg, value };
++	int err;
++
++	err = i2c_smbus_write_byte_data(client, reg, value);
++	if (!err)
++		return 0;
++
++	err = i2c_master_send(client, buf, sizeof(buf));
++	return err < 0 ? err : 0;
++}
++
++/* both return 0 if all ok, else on error */
++static int topaz_read_register(struct topaz *topaz, u8 reg, u8 *value)
++{
++	if (!topaz->chip->is_status_reg(reg)) {
++		*value = topaz->shadow[reg];
++		return 0;
++	}
++	if (topaz_i2c_read(topaz->i2c, reg, value)) {
++		*value = 0;
++		return -1;
++	}
++	topaz->shadow[reg] = *value;
++	return 0;
++}
++
++static int topaz_write_register(struct topaz *topaz, u8 reg, u8 value)
++{
++	int result;
++
++	result = topaz_i2c_write(topaz->i2c, reg, value);
++	if (!result)
++		topaz->shadow[reg] = value;
++	return result;
++}
++
++/* ---------------------------------------------------------------- CS8416 */
++
++static bool cs8416_is_status_reg(u8 reg)
++{
++	switch (reg) {
++	case CS8416_REG_RX_CH_STATUS:
++	case CS8416_REG_FORMAT_DETECT:
++	case CS8416_REG_RX_ERROR:
++	case CS8416_REG_INT_STATUS:
++	case CS8416_REG_OMCK_RMCK_RATIO:
++	case TOPAZ_REG_ID_VERSION:
++		return true;
++	}
++	/* the received channel status blocks are updated by the chip */
++	if (reg >= CS8416_REG_CH_A_STATUS && reg <= CS8416_REG_CH_B_STATUS + 4)
++		return true;
++	return false;
++}
++
++static int cs8416_init(struct topaz *topaz)
++{
++	static const struct {
++		u8 reg, val;
++	} regs[] = {
++		{ CS8416_REG_CONTROL0,		CS8416_CONTROL0_INIT },
++		{ CS8416_REG_CONTROL1,		CS8416_CONTROL1_INIT },
++		{ CS8416_REG_CONTROL2,		CS8416_CONTROL2_INIT },
++		{ CS8416_REG_CONTROL3,		CS8416_CONTROL3_INIT },
++		{ CS8416_REG_CONTROL4,		CS8416_CONTROL4_STOP },
++		{ CS8416_REG_SERIAL_FMT,	CS8416_SERIAL_FMT_INIT },
++		{ CS8416_REG_RX_ERROR_MASK,	CS8416_RX_ERROR_MASK_ENABLE },
++		{ CS8416_REG_INT_MASK,		CS8416_INT_MASK_INIT },
++		{ CS8416_REG_INT_MODE_MSB,	CS8416_INT_MODE_MSB_INIT },
++		{ CS8416_REG_INT_MODE_LSB,	CS8416_INT_MODE_LSB_INIT },
++		{ CS8416_REG_CONTROL4,		CS8416_CONTROL4_RUN },
++	};
++	int i, err;
++
++	for (i = 0; i < ARRAY_SIZE(regs); i++) {
++		err = topaz_write_register(topaz, regs[i].reg, regs[i].val);
++		if (err) {
++			printk(KERN_ERR PFX "CS8416: write of reg 0x%02x failed (%d)\n",
++			       regs[i].reg, err);
++			return err;
++		}
++	}
++	return 0;
++}
++
++static void cs8416_stop(struct topaz *topaz)
++{
++	u8 v;
++
++	topaz_write_register(topaz, CS8416_REG_RX_ERROR_MASK,
++			     CS8416_RX_ERROR_MASK_DISABLE);
++	if (topaz_read_register(topaz, CS8416_REG_CONTROL1, &v) == 0)
++		topaz_write_register(topaz, CS8416_REG_CONTROL1,
++				     v | CS8416_C1_MUTESAO);
++	topaz_write_register(topaz, CS8416_REG_CONTROL4, CS8416_CONTROL4_STOP);
++}
++
++static void cs8416_run(struct topaz *topaz)
++{
++	u8 v;
++
++	topaz_write_register(topaz, CS8416_REG_CONTROL4, CS8416_CONTROL4_RUN);
++	if (topaz_read_register(topaz, CS8416_REG_CONTROL1, &v) == 0)
++		topaz_write_register(topaz, CS8416_REG_CONTROL1,
++				     v & ~CS8416_C1_MUTESAO);
++	/* clear stale errors, then re-enable the unlock interrupt */
++	topaz_read_register(topaz, CS8416_REG_RX_ERROR, &v);
++	topaz_write_register(topaz, CS8416_REG_RX_ERROR_MASK,
++			     CS8416_RX_ERROR_MASK_ENABLE);
++}
++
++/* ---------------------------------------------------------------- CS8420 */
++
++static bool cs8420_is_status_reg(u8 reg)
++{
++	switch (reg) {
++	case CS8420_REG_RX_CH_STATUS:
++	case CS8420_REG_RX_ERROR:
++	case CS8420_REG_SAMPLE_RATE_RATIO:
++	case TOPAZ_REG_ID_VERSION:
++		return true;
++	}
++	return false;
++}
++
++/* program the consumer channel status block for the AES3 transmitter */
++static int cs8420_set_channel_status(struct topaz *topaz, unsigned int rate,
++				     unsigned int depth)
++{
++	u8 fs, wl;
++	int err;
++
++	switch (rate) {
++	case 32000:	fs = TOPAZ_CS_FS_32000; break;
++	case 44100:	fs = TOPAZ_CS_FS_44100; break;
++	case 48000:	fs = TOPAZ_CS_FS_48000; break;
++	case 88200:	fs = TOPAZ_CS_FS_88200; break;
++	case 96000:	fs = TOPAZ_CS_FS_96000; break;
++	default:	fs = TOPAZ_CS_FS_44100; break;
++	}
++	wl = (depth >= 24) ? TOPAZ_CS_WL_24BIT : TOPAZ_CS_WL_16BIT;
++
++	/* consumer, linear PCM, copy permitted, no pre-emphasis */
++	err = topaz_write_register(topaz, CS8420_REG_BUFFER(0), 0);
++	if (err)
++		return err;
++	err = topaz_write_register(topaz, CS8420_REG_BUFFER(1),
++				   TOPAZ_CS_CATEGORY_CD);
++	if (err)
++		return err;
++	err = topaz_write_register(topaz, CS8420_REG_BUFFER(2), 0);
++	if (err)
++		return err;
++	err = topaz_write_register(topaz, CS8420_REG_BUFFER(3), fs);
++	if (err)
++		return err;
++	return topaz_write_register(topaz, CS8420_REG_BUFFER(4), wl);
++}
++
++static int cs8420_init(struct topaz *topaz)
++{
++	static const struct {
++		u8 reg, val;
++	} regs[] = {
++		/* power down while configuring */
++		{ CS8420_REG_CLOCK_SOURCE_CTRL,	CS8420_CLOCK_SOURCE_STOP },
++		{ CS8420_REG_MISC_CTRL1,	CS8420_MISC_CTRL1_INIT },
++		{ CS8420_REG_MISC_CTRL2,	CS8420_MISC_CTRL2_INIT },
++		{ CS8420_REG_DATA_FLOW_CTRL,	CS8420_DATA_FLOW_CTRL_INIT },
++		{ CS8420_REG_SERIAL_INPUT_FMT,	CS8420_SERIAL_INPUT_FMT_INIT },
++		{ CS8420_REG_SERIAL_OUTPUT_FMT,	CS8420_SERIAL_OUTPUT_FMT_INIT },
++	};
++	u8 v;
++	int i, err;
++
++	for (i = 0; i < ARRAY_SIZE(regs); i++) {
++		err = topaz_write_register(topaz, regs[i].reg, regs[i].val);
++		if (err) {
++			printk(KERN_ERR PFX "CS8420: write of reg 0x%02x failed (%d)\n",
++			       regs[i].reg, err);
++			return err;
++		}
++	}
++
++	if (topaz->codec.connected & TOPAZ_CC_DIGITALIN) {
++		err = topaz_write_register(topaz, CS8420_REG_RX_ERROR_MASK,
++					   CS8420_RX_ERROR_MASK_ENABLE);
++		if (err)
++			return err;
++		topaz_read_register(topaz, CS8420_REG_RX_ERROR, &v);
++	}
++
++	err = topaz_write_register(topaz, CS8420_REG_CLOCK_SOURCE_CTRL,
++				   CS8420_CLOCK_SOURCE_RUN);
++	if (err)
++		return err;
++	err = topaz_write_register(topaz, CS8420_REG_USER_DATA_BUF_CTRL,
++				   CS8420_UDBC_UBM_BLOCK);
++	if (err)
++		return err;
++
++	if (topaz->codec.connected & TOPAZ_CC_DIGITALOUT) {
++		cs8420_set_channel_status(topaz, 44100, 16);
++		/* unmute the AES3 transmitter */
++		if (topaz_read_register(topaz, CS8420_REG_MISC_CTRL1, &v) == 0)
++			topaz_write_register(topaz, CS8420_REG_MISC_CTRL1,
++					     v & ~CS8420_MC1_MUTE_AES);
++	}
++	return 0;
++}
++
++static void cs8420_stop(struct topaz *topaz)
++{
++	u8 v;
++
++	topaz_write_register(topaz, CS8420_REG_RX_ERROR_MASK,
++			     CS8420_RX_ERROR_MASK_DISABLE);
++	if (topaz_read_register(topaz, CS8420_REG_MISC_CTRL1, &v) == 0)
++		topaz_write_register(topaz, CS8420_REG_MISC_CTRL1,
++				     v | CS8420_MC1_MUTE_AES);
++	topaz_write_register(topaz, CS8420_REG_CLOCK_SOURCE_CTRL,
++			     CS8420_CLOCK_SOURCE_STOP);
++}
++
++static void cs8420_run(struct topaz *topaz)
++{
++	u8 v;
++
++	topaz_write_register(topaz, CS8420_REG_CLOCK_SOURCE_CTRL,
++			     CS8420_CLOCK_SOURCE_RUN);
++	if (topaz->codec.connected & TOPAZ_CC_DIGITALOUT) {
++		if (topaz_read_register(topaz, CS8420_REG_MISC_CTRL1, &v) == 0)
++			topaz_write_register(topaz, CS8420_REG_MISC_CTRL1,
++					     v & ~CS8420_MC1_MUTE_AES);
++	}
++	if (topaz->codec.connected & TOPAZ_CC_DIGITALIN) {
++		topaz_read_register(topaz, CS8420_REG_RX_ERROR, &v);
++		topaz_write_register(topaz, CS8420_REG_RX_ERROR_MASK,
++				     CS8420_RX_ERROR_MASK_ENABLE);
++	}
++}
++
++/* ------------------------------------------------------------------------ */
++
++static const struct topaz_chip topaz_chips[] = {
++	[TOPAZ_CS8416] = {
++		.name		= "CS8416",
++		.id		= TOPAZ_ID_CS8416,
++		.connections	= TOPAZ_CC_DIGITALIN,
++		.init		= cs8416_init,
++		.stop		= cs8416_stop,
++		.run		= cs8416_run,
++		.rx_error_reg	= CS8416_REG_RX_ERROR,
++		.rx_error_bad	= CS8416_RXERR_UNLOCK | CS8416_RXERR_INVALID,
++		.rx_error_unlock = CS8416_RXERR_UNLOCK,
++		.rx_cs_reg	= CS8416_REG_CH_A_STATUS,
++		.has_src	= false,
++		.is_status_reg	= cs8416_is_status_reg,
++	},
++	[TOPAZ_CS8420] = {
++		.name		= "CS8420",
++		.id		= TOPAZ_ID_CS8420,
++		.connections	= TOPAZ_CC_DIGITALIN | TOPAZ_CC_DIGITALOUT,
++		.init		= cs8420_init,
++		.stop		= cs8420_stop,
++		.run		= cs8420_run,
++		.rx_error_reg	= CS8420_REG_RX_ERROR,
++		.rx_error_bad	= CS8420_RXERR_UNLOCK | CS8420_RXERR_VALID,
++		.rx_error_unlock = CS8420_RXERR_UNLOCK,
++		/* the received channel status is only reachable through the
++		 * C-bit buffer, which we do not drive; leave it unreported */
++		.rx_cs_reg	= 0,
++		.has_src	= true,
++		.is_status_reg	= cs8420_is_status_reg,
++	},
++};
++
++/* Is the receiver phase-locked to an incoming stream? */
++static bool topaz_locked(struct topaz *topaz)
++{
++	u8 err;
++
++	if (topaz_read_register(topaz, topaz->chip->rx_error_reg, &err))
++		return false;
++	return !(err & topaz->chip->rx_error_unlock);
++}
++
++/*
++ * Sample rate of the incoming stream, taken from the sample-frequency
++ * field of its channel status block, or 0 if we cannot tell.
++ */
++static unsigned int topaz_detected_rate(struct topaz *topaz)
++{
++	u8 cs3;
++
++	if (!topaz->chip->rx_cs_reg || !topaz_locked(topaz))
++		return 0;
++	if (topaz_read_register(topaz, topaz->chip->rx_cs_reg + 3, &cs3))
++		return 0;
++
++	switch (cs3 & IEC958_AES3_CON_FS) {
++	case IEC958_AES3_CON_FS_32000:	return 32000;
++	case IEC958_AES3_CON_FS_44100:	return 44100;
++	case IEC958_AES3_CON_FS_48000:	return 48000;
++	case IEC958_AES3_CON_FS_88200:	return 88200;
++	case IEC958_AES3_CON_FS_96000:	return 96000;
++	}
++	return 0;
++}
++
++static unsigned int topaz_rate_bit(unsigned int rate)
++{
++	switch (rate) {
++	case 32000:	return SNDRV_PCM_RATE_32000;
++	case 44100:	return SNDRV_PCM_RATE_44100;
++	case 48000:	return SNDRV_PCM_RATE_48000;
++	case 88200:	return SNDRV_PCM_RATE_88200;
++	case 96000:	return SNDRV_PCM_RATE_96000;
++	}
++	return 0;
++}
++
++/* alsa stuff */
++
++static int topaz_dev_register(struct snd_device *dev)
++{
++	return 0;
++}
++
++static const struct snd_device_ops ops = {
++	.dev_register = topaz_dev_register,
++};
++
++/* read-only control reporting whether the receiver is locked onto a
++ * valid incoming stream */
++#define topaz_capture_valid_info	snd_ctl_boolean_mono_info
++
++static int topaz_capture_valid_get(struct snd_kcontrol *kcontrol,
++				   struct snd_ctl_elem_value *ucontrol)
++{
++	struct topaz *topaz = snd_kcontrol_chip(kcontrol);
++	u8 err = topaz->chip->rx_error_bad;
++
++	guard(mutex)(&topaz->mutex);
++	topaz_read_register(topaz, topaz->chip->rx_error_reg, &err);
++
++	ucontrol->value.integer.value[0] = !(err & topaz->chip->rx_error_bad);
++	return 0;
++}
++
++static const struct snd_kcontrol_new topaz_capture_valid = {
++	.iface = SNDRV_CTL_ELEM_IFACE_PCM,
++	.name = "IEC958 Capture Valid",
++	.access = SNDRV_CTL_ELEM_ACCESS_READ | SNDRV_CTL_ELEM_ACCESS_VOLATILE,
++	.info = topaz_capture_valid_info,
++	.get = topaz_capture_valid_get,
++};
++
++static int topaz_iec958_info(struct snd_kcontrol *kcontrol,
++			     struct snd_ctl_elem_info *uinfo)
++{
++	uinfo->type = SNDRV_CTL_ELEM_TYPE_IEC958;
++	uinfo->count = 1;
++	return 0;
++}
++
++/* the channel status block received with the incoming stream */
++static int topaz_iec958_capture_get(struct snd_kcontrol *kcontrol,
++				    struct snd_ctl_elem_value *ucontrol)
++{
++	struct topaz *topaz = snd_kcontrol_chip(kcontrol);
++	int i;
++
++	guard(mutex)(&topaz->mutex);
++	for (i = 0; i < TOPAZ_RX_CS_BYTES; i++) {
++		u8 cs;
++
++		if (topaz_read_register(topaz, topaz->chip->rx_cs_reg + i, &cs))
++			return -EIO;
++		ucontrol->value.iec958.status[i] = cs;
++	}
++	return 0;
++}
++
++static const struct snd_kcontrol_new topaz_iec958_capture = {
++	.iface =	SNDRV_CTL_ELEM_IFACE_PCM,
++	.name =		SNDRV_CTL_NAME_IEC958("", CAPTURE, DEFAULT),
++	.access =	SNDRV_CTL_ELEM_ACCESS_READ |
++			SNDRV_CTL_ELEM_ACCESS_VOLATILE,
++	.info =		topaz_iec958_info,
++	.get =		topaz_iec958_capture_get,
++};
++
++static int topaz_iec958_mask_get(struct snd_kcontrol *kcontrol,
++				 struct snd_ctl_elem_value *ucontrol)
++{
++	memset(ucontrol->value.iec958.status, 0xff, TOPAZ_RX_CS_BYTES);
++	return 0;
++}
++
++static const struct snd_kcontrol_new topaz_iec958_mask = {
++	.iface =	SNDRV_CTL_ELEM_IFACE_PCM,
++	.name =		SNDRV_CTL_NAME_IEC958("", CAPTURE, MASK),
++	.access =	SNDRV_CTL_ELEM_ACCESS_READ,
++	.info =		topaz_iec958_info,
++	.get =		topaz_iec958_mask_get,
++};
++
++static struct transfer_info topaz_transfers[] = {
++	{
++		/* digital input (S/PDIF capture) */
++		.formats = SNDRV_PCM_FMTBIT_S16_BE |
++			   SNDRV_PCM_FMTBIT_S24_BE,
++		.rates = SNDRV_PCM_RATE_32000 |
++			 SNDRV_PCM_RATE_44100 |
++			 SNDRV_PCM_RATE_48000 |
++			 SNDRV_PCM_RATE_88200 |
++			 SNDRV_PCM_RATE_96000,
++		.transfer_in = 1,
++		/* the receiver recovers the clock from the incoming stream;
++		 * soundbus ignores this today, see the clocking caveat above */
++		.must_be_clock_source = 1,
++		.tag = 0,
++	},
++	{
++		/* digital output (S/PDIF playback), CS8420 only */
++		.formats = SNDRV_PCM_FMTBIT_S16_BE |
++			   SNDRV_PCM_FMTBIT_S24_BE,
++		.rates = SNDRV_PCM_RATE_32000 |
++			 SNDRV_PCM_RATE_44100 |
++			 SNDRV_PCM_RATE_48000 |
++			 SNDRV_PCM_RATE_88200 |
++			 SNDRV_PCM_RATE_96000,
++		.transfer_in = 0,
++		.must_be_clock_source = 0,
++		.tag = 1,
++	},
++	{}
++};
++
++/*
++ * A chip without a sample rate converter simply hands the received frames
++ * to the serial port, so the only rate the bus may run at is the rate of
++ * the incoming stream.  Restrict capture to it, otherwise the user would
++ * silently record pitch-shifted audio.  With no signal present we leave
++ * the rates alone so the device can still be opened.
++ */
++static int topaz_usable(struct codec_info_item *cii,
++			struct transfer_info *ti,
++			struct transfer_info *out)
++{
++	struct topaz *topaz = cii->codec_data;
++	unsigned int rate, bit;
++
++	if (!ti->transfer_in || topaz->chip->has_src)
++		return 1;
++
++	guard(mutex)(&topaz->mutex);
++	rate = topaz_detected_rate(topaz);
++	if (!rate)
++		return 1;
++
++	bit = topaz_rate_bit(rate);
++	if (!bit)
++		return 0;	/* locked to a rate we cannot carry */
++
++	out->rates = ti->rates & bit;
++	return out->rates != 0;
++}
++
++static int topaz_prepare(struct codec_info_item *cii,
++			 struct bus_info *bi,
++			 struct snd_pcm_substream *substream)
++{
++	struct topaz *topaz = cii->codec_data;
++
++	if (substream->stream == SNDRV_PCM_STREAM_CAPTURE) {
++		unsigned int rate;
++
++		if (topaz->chip->has_src)
++			return 0;
++
++		/* the incoming stream may have changed since open() */
++		guard(mutex)(&topaz->mutex);
++		rate = topaz_detected_rate(topaz);
++		if (rate && rate != substream->runtime->rate) {
++			printk(KERN_INFO PFX "incoming stream is %u Hz, "
++			       "cannot capture it at %u Hz\n",
++			       rate, substream->runtime->rate);
++			return -EINVAL;
++		}
++		return 0;
++	}
++
++	/* only the CS8420's AES3 transmitter has a channel status to set */
++	if (!(topaz->codec.connected & TOPAZ_CC_DIGITALOUT))
++		return 0;
++
++	guard(mutex)(&topaz->mutex);
++	if (cs8420_set_channel_status(topaz, substream->runtime->rate,
++				      snd_pcm_format_width(substream->runtime->format)))
++		return -EBUSY;
++	return 0;
++}
++
++static int topaz_open(struct codec_info_item *cii,
++		      struct snd_pcm_substream *substream)
++{
++	struct topaz *topaz = cii->codec_data;
++
++	guard(mutex)(&topaz->mutex);
++	topaz->open_count++;
++	return 0;
++}
++
++static int topaz_close(struct codec_info_item *cii,
++		       struct snd_pcm_substream *substream)
++{
++	struct topaz *topaz = cii->codec_data;
++
++	guard(mutex)(&topaz->mutex);
++	topaz->open_count--;
++	return 0;
++}
++
++/* The i2sbus cell is always the clock master, so we are only ever asked
++ * to become a slave.  Stop the codec while the bus reprograms its clocks,
++ * then restart, to avoid glitches and spurious receiver-error interrupts. */
++static int topaz_switch_clock(struct codec_info_item *cii,
++			      enum clock_switch what)
++{
++	struct topaz *topaz = cii->codec_data;
++
++	guard(mutex)(&topaz->mutex);
++	switch (what) {
++	case CLOCK_SWITCH_PREPARE_SLAVE:
++		topaz->chip->stop(topaz);
++		break;
++	case CLOCK_SWITCH_SLAVE:
++		topaz->chip->run(topaz);
++		break;
++	default: /* silence warning */
++		break;
++	}
++
++	return 0;
++}
++
++#ifdef CONFIG_PM
++
++static void topaz_hw_reset(struct topaz *topaz);
++
++static int topaz_suspend(struct codec_info_item *cii, pm_message_t state)
++{
++	struct topaz *topaz = cii->codec_data;
++
++	guard(mutex)(&topaz->mutex);
++	topaz->chip->stop(topaz);
++	return 0;
++}
++
++static int topaz_resume(struct codec_info_item *cii)
++{
++	struct topaz *topaz = cii->codec_data;
++
++	guard(mutex)(&topaz->mutex);
++	topaz_hw_reset(topaz);
++	return topaz->chip->init(topaz) ? -ENXIO : 0;
++}
++
++#endif /* CONFIG_PM */
++
++static struct codec_info topaz_codec_info = {
++	.transfers = topaz_transfers,
++	.sysclock_factor = 256,
++	.bus_factor = 64,
++	.owner = THIS_MODULE,
++	.usable = topaz_usable,
++	.prepare = topaz_prepare,
++	.open = topaz_open,
++	.close = topaz_close,
++	.switch_clock = topaz_switch_clock,
++#ifdef CONFIG_PM
++	.suspend = topaz_suspend,
++	.resume = topaz_resume,
++#endif
++};
++
++/*
++ * Bring the receiver out of reset.
++ *
++ * The digital codec has its own reset line, separate from the analog
++ * codec's: Apple drives it with the "platform-dig-hw-reset" platform
++ * function (AppleTopazAudio::CODEC_Reset), whereas onyx's reset is
++ * "platform-hw-reset", which aoa's gpio layer exposes as set_hw_reset().
++ * Until this runs the chip does not answer on i2c at all, so it must
++ * happen before we touch any register.  Same run/reset/run pulse and
++ * 250us delays as the Apple driver.
++ */
++static void topaz_hw_reset(struct topaz *topaz)
++{
++	static const u32 pulse[] = { 0, 1, 0 };
++	struct gpio_runtime *gpio = topaz->codec.gpio;
++	int i, rc;
++
++	if (!gpio || !gpio->node)
++		return;
++
++	for (i = 0; i < ARRAY_SIZE(pulse); i++) {
++		struct pmf_args args = { .count = 1, .u[0].v = pulse[i] };
++
++		rc = pmf_call_function(gpio->node, "dig-hw-reset", &args);
++		if (rc) {
++			/* not all machines wire this up */
++			printk(KERN_DEBUG PFX
++			       "dig-hw-reset platform function failed (%d)\n", rc);
++			return;
++		}
++		udelay(250);
++	}
++}
++
++static int topaz_init_codec(struct aoa_codec *codec)
++{
++	struct topaz *topaz = codec_to_topaz(codec);
++	struct snd_kcontrol *ctl;
++	struct codec_info *ci = &topaz_codec_info;
++	u8 idreg;
++	int err;
++
++	/* the fabric may claim connections the chip cannot provide */
++	topaz->codec.connected &= topaz->chip->connections;
++	if (topaz->codec.connected == 0) {
++		printk(KERN_INFO PFX "%s has no usable connection\n",
++		       topaz->chip->name);
++		return -ENOTCONN;
++	}
++
++	/* no locking needed here, the codec is not reachable yet */
++	topaz_hw_reset(topaz);
++
++	/* now that the chip is out of reset it should answer on i2c */
++	if (topaz_i2c_read(topaz->i2c, TOPAZ_REG_ID_VERSION, &idreg)) {
++		printk(KERN_ERR PFX "%s does not respond on i2c addr 0x%02x\n",
++		       topaz->chip->name, topaz->i2c->addr);
++		return -ENODEV;
++	}
++	if (((idreg & TOPAZ_ID_MASK) >> TOPAZ_ID_SHIFT) != topaz->chip->id)
++		printk(KERN_WARNING PFX
++		       "device tree says %s but id register reads 0x%02x\n",
++		       topaz->chip->name, idreg);
++	else
++		printk(KERN_INFO PFX "found %s revision %d\n",
++		       topaz->chip->name, idreg & TOPAZ_VERSION_MASK);
++
++	if (topaz->chip->init(topaz)) {
++		printk(KERN_ERR PFX "failed to initialise %s registers\n",
++		       topaz->chip->name);
++		return -ENODEV;
++	}
++	topaz->initialised = 1;
++
++	if (aoa_snd_device_new(SNDRV_DEV_CODEC, topaz, &ops)) {
++		printk(KERN_ERR PFX "failed to create topaz snd device!\n");
++		return -ENODEV;
++	}
++
++	/* if only one direction is connected, trim the transfer list to it */
++	if ((topaz->codec.connected & TOPAZ_CC_DIGITALIN) == 0) {
++		/* no input: skip the first (input) transfer entry */
++		if (!topaz->codec_info)
++			topaz->codec_info = kmalloc_obj(struct codec_info);
++		if (!topaz->codec_info)
++			return -ENOMEM;
++		ci = topaz->codec_info;
++		*ci = topaz_codec_info;
++		ci->transfers++;
++	} else if ((topaz->codec.connected & TOPAZ_CC_DIGITALOUT) == 0) {
++		/* no output: disable the output transfer entry */
++		if (!topaz->codec_info)
++			topaz->codec_info = kmalloc_obj(struct codec_info);
++		if (!topaz->codec_info)
++			return -ENOMEM;
++		ci = topaz->codec_info;
++		*ci = topaz_codec_info;
++		ci->transfers[1].formats = 0;
++	}
++
++	if (topaz->codec.soundbus_dev->attach_codec(topaz->codec.soundbus_dev,
++						    aoa_get_card(),
++						    ci, topaz)) {
++		printk(KERN_ERR PFX "error creating topaz pcm\n");
++		snd_device_free(aoa_get_card(), topaz);
++		return -ENODEV;
++	}
++
++#define ADDCTL(n)							\
++	do {								\
++		ctl = snd_ctl_new1(&n, topaz);				\
++		if (ctl) {						\
++			ctl->id.device =				\
++				topaz->codec.soundbus_dev->pcm->device;	\
++			err = aoa_snd_ctl_add(ctl);			\
++			if (err)					\
++				goto error;				\
++		}							\
++	} while (0)
++
++	if (topaz->codec.soundbus_dev->pcm &&
++	    (topaz->codec.connected & TOPAZ_CC_DIGITALIN)) {
++		ADDCTL(topaz_capture_valid);
++		if (topaz->chip->rx_cs_reg) {
++			ADDCTL(topaz_iec958_mask);
++			ADDCTL(topaz_iec958_capture);
++		}
++	}
++#undef ADDCTL
++
++	printk(KERN_INFO PFX "attached to %s codec via i2c\n",
++	       topaz->chip->name);
++	return 0;
++ error:
++	topaz->codec.soundbus_dev->detach_codec(topaz->codec.soundbus_dev, topaz);
++	snd_device_free(aoa_get_card(), topaz);
++	return err;
++}
++
++static void topaz_exit_codec(struct aoa_codec *codec)
++{
++	struct topaz *topaz = codec_to_topaz(codec);
++
++	if (!topaz->codec.soundbus_dev) {
++		printk(KERN_ERR PFX "topaz_exit_codec called without soundbus_dev!\n");
++		return;
++	}
++	topaz->codec.soundbus_dev->detach_codec(topaz->codec.soundbus_dev, topaz);
++}
++
++static int topaz_i2c_probe(struct i2c_client *client)
++{
++	const struct i2c_device_id *id = i2c_client_get_device_id(client);
++	struct device_node *node = client->dev.of_node;
++	struct topaz *topaz;
++
++	topaz = kzalloc_obj(struct topaz);
++	if (!topaz)
++		return -ENOMEM;
++
++	mutex_init(&topaz->mutex);
++	topaz->i2c = client;
++	topaz->chip = &topaz_chips[id->driver_data];
++	i2c_set_clientdata(client, topaz);
++
++	/*
++	 * Don't touch the chip here.  It is normally still held in reset by
++	 * the dig-hw-reset line, which we cannot drive until the fabric has
++	 * given us its gpio node, so it would not answer on i2c yet.
++	 * topaz_init_codec() resets it and verifies its identity instead.
++	 */
++
++	strscpy(topaz->codec.name, "topaz");
++	topaz->codec.owner = THIS_MODULE;
++	topaz->codec.init = topaz_init_codec;
++	topaz->codec.exit = topaz_exit_codec;
++	topaz->codec.node = of_node_get(node);
++
++	if (aoa_codec_register(&topaz->codec))
++		goto fail_put;
++
++	printk(KERN_DEBUG PFX "created and attached topaz instance\n");
++	return 0;
++ fail_put:
++	of_node_put(topaz->codec.node);
++	kfree(topaz);
++	return -ENODEV;
++}
++
++static void topaz_i2c_remove(struct i2c_client *client)
++{
++	struct topaz *topaz = i2c_get_clientdata(client);
++
++	aoa_codec_unregister(&topaz->codec);
++	of_node_put(topaz->codec.node);
++	kfree(topaz->codec_info);
++	kfree(topaz);
++}
++
++static const struct i2c_device_id topaz_i2c_id[] = {
++	{ "MAC,cs8416", TOPAZ_CS8416 },
++	{ "MAC,cs8420", TOPAZ_CS8420 },
++	{ }
++};
++MODULE_DEVICE_TABLE(i2c, topaz_i2c_id);
++
++static struct i2c_driver topaz_driver = {
++	.driver = {
++		.name = "aoa_codec_topaz",
++	},
++	.probe = topaz_i2c_probe,
++	.remove = topaz_i2c_remove,
++	.id_table = topaz_i2c_id,
++};
++
++module_i2c_driver(topaz_driver);
+diff --git a/sound/aoa/codecs/topaz.h b/sound/aoa/codecs/topaz.h
+new file mode 100644
+index 000000000..fbb9d7579
+--- /dev/null
++++ b/sound/aoa/codecs/topaz.h
+@@ -0,0 +1,252 @@
++/* SPDX-License-Identifier: GPL-2.0-only */
++/*
++ * Apple Onboard Audio driver for Topaz codec
++ *
++ * Copyright 2026 René Rebe <rene@exactco.de>
++ *
++ * Register definitions for the Cirrus Logic Crystal CS8416 S/PDIF
++ * receiver and the CS8420 S/PDIF transceiver, both codenamed "Topaz" in
++ * Apple hardware.  Values and the power-on initialisation sequences were
++ * derived from Apple's AppleOnboardAudio "AppleTopazPlugin" driver.
++ *
++ * Note the two chips have entirely different register maps; only the
++ * I.D./version register address is shared.
++ */
++#ifndef __SND_AOA_CODEC_TOPAZ_H
++#define __SND_AOA_CODEC_TOPAZ_H
++#include <linux/i2c.h>
++
++/*
++ * Both chips are accessed via an I2C "memory address pointer" (MAP) that
++ * auto-increments.  We only ever poke single bytes, so plain SMBus
++ * byte-data transactions (which set the MAP then read/write one byte)
++ * are sufficient.
++ */
++
++/* I.D. and version register, common to both chips */
++#define TOPAZ_REG_ID_VERSION		0x7f
++#	define TOPAZ_ID_SHIFT		4
++#	define TOPAZ_ID_MASK		(0xf<<TOPAZ_ID_SHIFT)
++#	define TOPAZ_ID_CS8420		0x0
++#	define TOPAZ_ID_CS8416		0x2
++#	define TOPAZ_VERSION_MASK	0x0f
++
++/* ======================================================================
++ * CS8416 -- S/PDIF receiver (digital input only)
++ * ====================================================================== */
++
++#define CS8416_REG_CONTROL0		0x00
++#	define CS8416_C0_FSWCLK		(1<<6)	/* force OMCK on RMCK */
++#	define CS8416_C0_TRUNC		(1<<2)
++
++#define CS8416_REG_CONTROL1		0x01
++#	define CS8416_C1_SWCLK		(1<<7)	/* auto clock switching */
++#	define CS8416_C1_MUTESAO	(1<<6)	/* mute serial audio output */
++#	define CS8416_C1_INT_SHIFT	4	/* interrupt pin mode */
++#		define CS8416_C1_INT_ACTIVEHIGH	0
++#		define CS8416_C1_INT_ACTIVELOW	1
++#		define CS8416_C1_INT_OPENDRAIN	2
++#	define CS8416_C1_HOLD_SHIFT	2	/* action on receiver error */
++#		define CS8416_C1_HOLD_LAST	0
++#		define CS8416_C1_HOLD_MUTE	1
++#		define CS8416_C1_HOLD_NOCHANGE	2
++#	define CS8416_C1_RMCKF		(1<<1)	/* 0 = RMCK 256fs, 1 = 128fs */
++#	define CS8416_C1_CHS		(1<<0)	/* channel status from B */
++
++#define CS8416_REG_CONTROL2		0x02
++#	define CS8416_C2_DETCI		(1<<7)	/* inhibit D to E transfer */
++#	define CS8416_C2_EMPH_CN_SHIFT	4	/* de-emphasis control */
++#		define CS8416_C2_EMPH_OFF	0
++#	define CS8416_C2_GPO0_SHIFT	0	/* GPO0 pin function */
++#		define CS8416_GPO_LOW		0x0
++#		define CS8416_GPO_RXERROR	0x5
++#		define CS8416_GPO_HIGH		0xc
++
++#define CS8416_REG_CONTROL3		0x03
++#	define CS8416_C3_GPO1_SHIFT	3
++#	define CS8416_C3_GPO2_SHIFT	0
++
++#define CS8416_REG_CONTROL4		0x04
++#	define CS8416_C4_RUN		(1<<7)	/* 0 = stopped, 1 = running */
++#	define CS8416_C4_RXD		(1<<6)	/* 0 = RMCK output, 1 = hi-Z */
++#	define CS8416_C4_RX_SEL_SHIFT	3	/* RX input pin select */
++#		define CS8416_C4_RXP0		0	/* used by Apple hardware */
++#	define CS8416_C4_TX_SEL_SHIFT	0
++
++#define CS8416_REG_SERIAL_FMT		0x05
++#	define CS8416_SF_SOMS		(1<<7)	/* serial output master mode */
++#	define CS8416_SF_SOSF		(1<<6)	/* OSCLK 128fs */
++#	define CS8416_SF_SORES_SHIFT	4	/* output resolution */
++#		define CS8416_SF_SORES_24BIT	0
++#	define CS8416_SF_SOJUST		(1<<3)	/* right justified */
++#	define CS8416_SF_SODEL		(1<<2)	/* MSB on 2nd OSCLK (I2S) */
++#	define CS8416_SF_SOSPOL		(1<<1)	/* SDOUT on falling OSCLK */
++#	define CS8416_SF_SOLRPOL	(1<<0)	/* right ch when OLRCK high */
++
++#define CS8416_REG_RX_ERROR_MASK	0x06
++#define CS8416_REG_INT_MASK		0x07
++#define CS8416_REG_INT_MODE_MSB		0x08
++#define CS8416_REG_INT_MODE_LSB		0x09
++
++#define CS8416_REG_RX_CH_STATUS		0x0a
++#	define CS8416_RXCS_AUX_MASK	(0xf<<4)
++#	define CS8416_RXCS_PRO		(1<<3)	/* professional format */
++#	define CS8416_RXCS_COPY		(1<<2)	/* copyright not asserted */
++#	define CS8416_RXCS_ORIG		(1<<1)	/* original data */
++#	define CS8416_RXCS_EMPH		(1<<0)	/* pre-emphasis not indicated */
++
++#define CS8416_REG_FORMAT_DETECT	0x0b
++#	define CS8416_FD_PCM		(1<<6)
++#	define CS8416_FD_IEC61937	(1<<5)
++#	define CS8416_FD_DTS_LD		(1<<4)
++#	define CS8416_FD_DTS_CD		(1<<3)
++#	define CS8416_FD_SILENCE		(1<<1)
++#	define CS8416_FD_96KHZ		(1<<0)
++
++/* receiver error register and its mask register share this bit layout */
++#define CS8416_REG_RX_ERROR		0x0c
++#	define CS8416_RXERR_QCRC	(1<<6)
++#	define CS8416_RXERR_CCRC	(1<<5)
++#	define CS8416_RXERR_UNLOCK	(1<<4)	/* PLL not locked */
++#	define CS8416_RXERR_INVALID	(1<<3)	/* received data invalid */
++#	define CS8416_RXERR_CONF	(1<<2)
++#	define CS8416_RXERR_BIP		(1<<1)
++#	define CS8416_RXERR_PARITY	(1<<0)
++
++#define CS8416_REG_INT_STATUS		0x0d
++#define CS8416_REG_OMCK_RMCK_RATIO	0x18
++#define CS8416_REG_CH_A_STATUS		0x19	/* 0x19..0x1d */
++#define CS8416_REG_CH_A_STATUS_N(n)	(CS8416_REG_CH_A_STATUS + (n))
++#define CS8416_REG_CH_B_STATUS		0x1e	/* 0x1e..0x22 */
++
++/*
++ * Power-on register values, mirroring
++ * AppleTopazPluginCS8416::preDMAEngineInit().  The serial audio output
++ * port is a slave clocked by the i2s cell; RMCK is driven out so the
++ * host can lock to the recovered clock.  RXP0 is the only receiver input
++ * wired up on Apple hardware.
++ */
++#define CS8416_CONTROL0_INIT		0x00
++#define CS8416_CONTROL1_INIT		((CS8416_C1_INT_ACTIVELOW << CS8416_C1_INT_SHIFT) | \
++					 (CS8416_C1_HOLD_MUTE << CS8416_C1_HOLD_SHIFT))	/* 0x14 */
++#define CS8416_CONTROL2_INIT		((CS8416_C2_EMPH_OFF << CS8416_C2_EMPH_CN_SHIFT) | \
++					 (CS8416_GPO_HIGH << CS8416_C2_GPO0_SHIFT))	/* 0x0c */
++#define CS8416_CONTROL3_INIT		0x00
++#define CS8416_CONTROL4_STOP		(CS8416_C4_RXP0 << CS8416_C4_RX_SEL_SHIFT)	/* 0x00 */
++#define CS8416_CONTROL4_RUN		(CS8416_C4_RUN | CS8416_CONTROL4_STOP)		/* 0x80 */
++/* slave, 64fs, 24 bit, left justified, MSB on 2nd clock (I2S),
++ * SDOUT sampled on rising OSCLK, right channel when OLRCK high */
++#define CS8416_SERIAL_FMT_INIT		(CS8416_SF_SODEL | CS8416_SF_SOLRPOL)		/* 0x05 */
++#define CS8416_RX_ERROR_MASK_ENABLE	(CS8416_RXERR_UNLOCK)				/* 0x10 */
++#define CS8416_RX_ERROR_MASK_DISABLE	0x00
++#define CS8416_INT_MASK_INIT		0x00
++#define CS8416_INT_MODE_MSB_INIT	0x00
++#define CS8416_INT_MODE_LSB_INIT	0x00
++
++/* ======================================================================
++ * CS8420 -- S/PDIF transceiver (digital input and output)
++ * ====================================================================== */
++
++#define CS8420_REG_MISC_CTRL1		0x01
++#	define CS8420_MC1_SWCLK_OMCK	(1<<7)	/* clock out = OMCK */
++#	define CS8420_MC1_VSET_INVALID	(1<<6)	/* transmitted V bit */
++#	define CS8420_MC1_MUTE_SAO	(1<<5)	/* mute serial audio out */
++#	define CS8420_MC1_MUTE_AES	(1<<4)	/* mute AES3 transmitter */
++#	define CS8420_MC1_DITH_DISABLE	(1<<3)
++#	define CS8420_MC1_INT_ACTIVELOW	(1<<1)
++#	define CS8420_MC1_TCBLD_OUTPUT	(1<<0)
++
++#define CS8420_REG_MISC_CTRL2		0x02
++#	define CS8420_MC2_HOLD_MUTE	(1<<5)	/* mute on receiver error */
++
++#define CS8420_REG_DATA_FLOW_CTRL	0x03
++#	define CS8420_DFC_AMLL_ENABLE	(1<<7)	/* auto mute on loss of lock */
++#	define CS8420_DFC_TXOFF		(1<<6)	/* AES3 tx drivers at 0V */
++#	define CS8420_DFC_AESBP		(1<<5)	/* AES3 bypass */
++#	define CS8420_DFC_TXD_SHIFT	3	/* AES3 tx data source */
++#		define CS8420_DFC_TXD_SRCOUT	0
++#		define CS8420_DFC_TXD_SAI	1	/* serial audio input */
++#		define CS8420_DFC_TXD_AES3	2
++#	define CS8420_DFC_TXD_MASK	(3<<CS8420_DFC_TXD_SHIFT)
++#	define CS8420_DFC_SPD_SHIFT	1	/* serial output data source */
++#		define CS8420_DFC_SPD_SRCOUT	0	/* SRC output (default) */
++#		define CS8420_DFC_SPD_SAI	1	/* serial audio input */
++#		define CS8420_DFC_SPD_AES3	2	/* AES3 receiver */
++#	define CS8420_DFC_SPD_MASK	(3<<CS8420_DFC_SPD_SHIFT)
++#	define CS8420_DFC_SRCD_AES3	(1<<0)	/* SRC input = AES3 receiver */
++
++#define CS8420_REG_CLOCK_SOURCE_CTRL	0x04
++#	define CS8420_CSC_RUN		(1<<6)	/* 0 = low power, 1 = run */
++#	define CS8420_CSC_OUTC_RECIC	(1<<3)	/* output time base = rec. clk */
++#	define CS8420_CSC_INC_OMCK	(1<<2)	/* input time base = OMCK */
++#	define CS8420_CSC_RXD_SHIFT	0	/* recovered input clock source */
++#		define CS8420_CSC_RXD_ILRCLK	0	/* 256*Fsi from ILRCK pin */
++#		define CS8420_CSC_RXD_AES3	1	/* 256*Fsi from AES3 input */
++#		define CS8420_CSC_RXD_EXT	2	/* bypass PLL, external */
++#	define CS8420_CSC_RXD_MASK	(3<<CS8420_CSC_RXD_SHIFT)
++
++#define CS8420_REG_SERIAL_INPUT_FMT	0x05
++#	define CS8420_SIF_SIMS_MASTER	(1<<7)	/* serial input master mode */
++
++#define CS8420_REG_SERIAL_OUTPUT_FMT	0x06
++#	define CS8420_SOF_SOMS_MASTER	(1<<7)	/* serial output master mode */
++
++#define CS8420_REG_RX_CH_STATUS		0x0f
++#define CS8420_REG_RX_ERROR		0x10	/* read to clear */
++#	define CS8420_RXERR_QCRC	(1<<6)
++#	define CS8420_RXERR_CCRC	(1<<5)
++#	define CS8420_RXERR_UNLOCK	(1<<4)	/* PLL not locked */
++#	define CS8420_RXERR_VALID	(1<<3)	/* received data invalid */
++#	define CS8420_RXERR_CONF	(1<<2)
++#	define CS8420_RXERR_BIP		(1<<1)
++#	define CS8420_RXERR_PARITY	(1<<0)
++
++#define CS8420_REG_RX_ERROR_MASK	0x11
++#	define CS8420_RXERRM_UNLOCK	(1<<4)
++
++#define CS8420_REG_CH_STATUS_BUF_CTRL	0x12
++#define CS8420_REG_USER_DATA_BUF_CTRL	0x13
++#	define CS8420_UDBC_UBM_BLOCK	(1<<2)	/* U bit manager block mode */
++
++#define CS8420_REG_SAMPLE_RATE_RATIO	0x1e	/* Fso/Fsi when locked */
++
++/* Channel status / user status buffer, 24 bytes, auto-increment */
++#define CS8420_REG_BUFFER_0		0x20
++#define CS8420_REG_BUFFER(n)		(CS8420_REG_BUFFER_0 + (n))
++
++/*
++ * Power-on register values, mirroring
++ * AppleTopazPluginCS8420::preDMAEngineInit().  The chip runs as a
++ * transceiver: the AES3 receiver feeds the sample rate converter whose
++ * output is presented on the serial audio output port (digital input
++ * capture), while the serial audio input port feeds the AES3 transmitter
++ * (digital output playback).  Both serial ports are slaves.
++ */
++#define CS8420_MISC_CTRL1_INIT		(CS8420_MC1_SWCLK_OMCK | \
++					 CS8420_MC1_MUTE_AES | \
++					 CS8420_MC1_INT_ACTIVELOW | \
++					 CS8420_MC1_TCBLD_OUTPUT)		/* 0x93 */
++#define CS8420_MISC_CTRL2_INIT		(CS8420_MC2_HOLD_MUTE)			/* 0x20 */
++#define CS8420_DATA_FLOW_CTRL_INIT	(CS8420_DFC_AMLL_ENABLE | \
++					 (CS8420_DFC_TXD_SAI << CS8420_DFC_TXD_SHIFT) | \
++					 (CS8420_DFC_SPD_SRCOUT << CS8420_DFC_SPD_SHIFT) | \
++					 CS8420_DFC_SRCD_AES3)			/* 0x89 */
++#define CS8420_CLOCK_SOURCE_STOP	(CS8420_CSC_RXD_AES3)			/* 0x01 */
++#define CS8420_CLOCK_SOURCE_RUN		(CS8420_CSC_RUN | CS8420_CSC_RXD_AES3)	/* 0x41 */
++/* left justified, MSB on 2nd clock (I2S), right channel when LRCK high */
++#define CS8420_SERIAL_INPUT_FMT_INIT	0x05
++#define CS8420_SERIAL_OUTPUT_FMT_INIT	0x05
++#define CS8420_RX_ERROR_MASK_ENABLE	(CS8420_RXERRM_UNLOCK)			/* 0x10 */
++#define CS8420_RX_ERROR_MASK_DISABLE	0x00
++
++/* Consumer channel-status block bytes (buffer 0..4), see IEC 60958. */
++#define TOPAZ_CS_CATEGORY_CD		0x80	/* byte 1: CD category code */
++#define TOPAZ_CS_FS_32000		0xc0	/* byte 3: sample frequency */
++#define TOPAZ_CS_FS_44100		0x00
++#define TOPAZ_CS_FS_48000		0x40
++#define TOPAZ_CS_FS_88200		0x10
++#define TOPAZ_CS_FS_96000		0x50
++#define TOPAZ_CS_WL_16BIT		0x40	/* byte 4: word length */
++#define TOPAZ_CS_WL_24BIT		0xd0
++
++#endif /* __SND_AOA_CODEC_TOPAZ_H */
+diff --git a/sound/aoa/fabrics/layout.c b/sound/aoa/fabrics/layout.c
+index c3ebb6de4..7d6c78c78 100644
+--- a/sound/aoa/fabrics/layout.c
++++ b/sound/aoa/fabrics/layout.c
+@@ -631,9 +631,35 @@ struct layout_dev {
+ 
+ static LIST_HEAD(layouts_list);
+ static int layouts_list_items;
+-/* this can go away but only if we allow multiple cards,
+- * make the fabric handle all the card stuff, etc... */
+-static struct layout_dev *layout_device;
++
++/* find the layout_dev whose soundbus a codec has been assigned to */
++static struct layout_dev *layout_dev_for_codec(struct aoa_codec *codec)
++{
++	struct layout_dev *ldev;
++
++	list_for_each_entry(ldev, &layouts_list, list)
++		if (ldev->sdev == codec->soundbus_dev)
++			return ldev;
++	return NULL;
++}
++
++/* number of registered soundbuses whose layout names this codec */
++static int layout_codec_users(const char *name)
++{
++	struct layout_dev *ldev;
++	int i, users = 0;
++
++	list_for_each_entry(ldev, &layouts_list, list) {
++		for (i = 0; i < MAX_CODECS_PER_BUS; i++) {
++			if (ldev->layout->codecs[i].name &&
++			    strcmp(ldev->layout->codecs[i].name, name) == 0) {
++				users++;
++				break;
++			}
++		}
++	}
++	return users;
++}
+ 
+ #define control_info	snd_ctl_boolean_mono_info
+ 
+@@ -790,9 +816,12 @@ static int check_codec(struct aoa_codec *codec,
+ 			return -ENODEV;
+ 		}
+ 	} else {
+-		if (layouts_list_items != 1) {
++		/* Without a phandle reference we can only place this codec
++		 * if exactly one registered layout asks for it by name. */
++		if (layout_codec_users(codec->name) != 1) {
+ 			printk(KERN_INFO "snd-aoa-fabric-layout: "
+-				"more than one soundbus, but no references.\n");
++				"more than one soundbus wants codec %s, "
++				"but it has no reference.\n", codec->name);
+ 			return -ENODEV;
+ 		}
+ 	}
+@@ -898,7 +927,10 @@ static void layout_attached_codec(struct aoa_codec *codec)
+ 	const struct codec_connection *cc;
+ 	struct snd_kcontrol *ctl;
+ 	int headphones, lineout;
+-	struct layout_dev *ldev = layout_device;
++	struct layout_dev *ldev = layout_dev_for_codec(codec);
++
++	if (!ldev)
++		return;
+ 
+ 	/* need to add this codec to our codec array! */
+ 
+@@ -999,10 +1031,6 @@ static int aoa_fabric_layout_probe(struct soundbus_dev *sdev)
+ 	struct layout_dev *ldev = NULL;
+ 	int err;
+ 
+-	/* hm, currently we can only have one ... */
+-	if (layout_device)
+-		return -ENODEV;
+-
+ 	/* by breaking out we keep a reference */
+ 	for_each_child_of_node(sdev->ofdev.dev.of_node, sound) {
+ 		if (of_node_is_type(sound, "soundchip"))
+@@ -1029,7 +1057,6 @@ static int aoa_fabric_layout_probe(struct soundbus_dev *sdev)
+ 	if (!ldev)
+ 		goto outnodev;
+ 
+-	layout_device = ldev;
+ 	ldev->sdev = sdev;
+ 	ldev->sound = sound;
+ 	ldev->layout = layout;
+@@ -1088,7 +1115,6 @@ static int aoa_fabric_layout_probe(struct soundbus_dev *sdev)
+ 	kfree(ldev);
+  outnodev:
+  	of_node_put(sound);
+- 	layout_device = NULL;
+ 	return -ENODEV;
+ }
+ 
+@@ -1117,7 +1143,6 @@ static void aoa_fabric_layout_remove(struct soundbus_dev *sdev)
+ 				       NULL);
+ 
+ 	ldev->gpio.methods->exit(&ldev->gpio);
+-	layout_device = NULL;
+ 	kfree(ldev);
+ 	sdev->pcmid = -1;
+ 	sdev->pcmname = NULL;
