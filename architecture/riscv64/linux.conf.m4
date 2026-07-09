@@ -1,6 +1,6 @@
 dnl --- T2-COPYRIGHT-BEGIN ---
 dnl t2/architecture/riscv64/linux.conf.m4
-dnl Copyright (C) 2004 - 2025 The T2 SDE Project
+dnl Copyright (C) 2004 - 2026 The T2 SDE Project
 dnl SPDX-License-Identifier: GPL-2.0
 dnl --- T2-COPYRIGHT-END ---
 
@@ -13,7 +13,6 @@ define(`RISCV64', 'RISCV64')dnl
 # CONFIG_RISCV_ISA_ZICBOM is not set
 
 CONFIG_NUMA=y
-CONFIG_TRANSPARENT_HUGEPAGE=y
 
 CONFIG_RISCV_SBI=y
 CONFIG_RISCV_BOOT_SPINWAIT=y
@@ -125,3 +124,6 @@ CONFIG_I2C=y
 # CONFIG_SPARSEMEM_VMEMMAP is not set
 
 # CONFIG_DRM_XE is not set
+
+CONFIG_DRM_CDNS_DSI_JH7110=y
+CONFIG_DRM_INNO_STARFIVE_HDMI=y

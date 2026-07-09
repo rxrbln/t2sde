@@ -81,6 +81,10 @@ CONFIG_IRQ_TIME_ACCOUNTING=y
 CONFIG_LRU_GEN=y
 CONFIG_LRU_GEN_ENABLED=y
 
+CONFIG_TRANSPARENT_HUGEPAGE=y
+CONFIG_TRANSPARENT_HUGEPAGE_ALWAYS=y
+CONFIG_HUGETLBFS=y
+
 CONFIG_MMIOTRACE=y
 
 dnl For sandboxing, e.g. Chrome
@@ -493,3 +497,5 @@ dnl No unit test stuff
 dnl
 # CONFIG_SLUB_DEBUG is not set
 # CONFIG_KUNIT is not set
+
+dnl include(`linux-debug.conf.m4')
