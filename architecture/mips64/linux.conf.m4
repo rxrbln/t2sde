@@ -34,6 +34,10 @@ include(`linux-net.conf.m4')
 include(`linux-fs.conf.m4')
 
 CONFIG_PREEMPT_NONE=y
+# CONFIG_TRANSPARENT_HUGEPAGE is not set
+# CONFIG_TRANSPARENT_HUGEPAGE_ALWAYS is not set
+# CONFIG_HUGETLBFS is not set
+# CONFIG_HUGETLB_PAGE is not set
 
 dnl Could work for some generic boards, but prevents Sgi kernel to load
 # CONFIG_KEXEC is not set
