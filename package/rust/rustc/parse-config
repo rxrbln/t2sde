@@ -52,6 +52,10 @@ rust_update_arch_target() {
   done
 }
 
+cargo_lock_versions() {
+	sed -n "/^name = \"$1\"\$/{n;s/^version = \"\(.*\)\"/\1/p}" Cargo.lock
+}
+
 cargo_inject_patches() {
 	[ -f Cargo.toml ] || return 0
 
@@ -60,25 +64,32 @@ cargo_inject_patches() {
 	local db="$base/architecture/$arch/cargo-patches" # only arch-specific patches supported atm
 	[ -f "$db" ] || return 0
 
-	local crate repo version tag force
+	local crate repo version pattern lockver ver key tag force vers update_out
 	while read -r crate repo version pattern; do
 		[[ -z $crate || $crate == '#'* ]] && continue
 
-		grep -q "^name = \"$crate\"" Cargo.lock || continue
+		# a crate can be locked at multiple versions, try to update each
+		# separately, as a plain "-p $crate" would be ambiguous
+		for lockver in $(cargo_lock_versions "$crate"); do
+			cargo update -p "$crate@$lockver" --precise "$version" >/dev/null 2>/dev/null || true
+		done
 
-		update_out=$(cargo update -p "$crate" --precise "$version" --color never 2>&1) \
-			|| true
-		if [[ "$update_out" =~ requirement[[:space:]]\`${crate}[[:space:]]=[[:space:]]\"=?([^\"]+)\"\` ]]; then
-			# Update failed, force version and pray it exists in the fork
-			version="${BASH_REMATCH[1]}"
-			force="(version forced)"
-		fi
+		# patch the exact versions remaining in Cargo.lock and pray they
+		# exist as tags in the fork
+		vers=($(cargo_lock_versions "$crate"))
+		for ver in "${vers[@]}"; do
+			force=
+			[ "$ver" != "$version" ] && force="(version forced)"
+			tag=$(printf "$pattern" "$ver")
+			echo "injecting patch $crate $ver = $repo tag $tag $force"
 
-		tag=$(printf "$pattern" "$version")
-		echo "injecting patch $crate = $repo tag $tag $force"
-
-		grep -q '^\[patch\.crates-io\]' Cargo.toml || printf '\n[patch.crates-io]\n' >> Cargo.toml
-		printf '%s = { git = "%s", tag = "%s" }\n' "$crate" "$repo" "$tag" >> Cargo.toml
+			grep -q '^\[patch\.crates-io\]' Cargo.toml || printf '\n[patch.crates-io]\n' >> Cargo.toml
+			# multiple versions of one crate need unique patch keys
+			key=$crate
+			[ ${#vers[@]} -gt 1 ] && key="$crate-${ver//[!0-9a-zA-Z]/-}"
+			printf '%s = { git = "%s", tag = "%s", package = "%s" }\n' \
+				"$key" "$repo" "$tag" "$crate" >> Cargo.toml
+		done
 	done < "$db"
 }
 
