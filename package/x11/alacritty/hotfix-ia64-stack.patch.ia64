@@ -1,0 +1,27 @@
+# --- T2-COPYRIGHT-BEGIN ---
+# t2/package/*/alacritty/hotfix-ia64-stack.patch.ia64
+# Copyright (C) 2026 The T2 SDE Project
+# SPDX-License-Identifier: GPL-2.0 or patched project license
+# --- T2-COPYRIGHT-END ---
+
+Move the 1 MiB PTY read buffer off the thread stack and onto the heap.
+
+The "PTY reader" thread is spawned with the default stack size and placed a
+1 MiB array (READ_BUFFER_SIZE = 0x10_0000) directly on its stack. On IA-64
+the thread stack is shared between the conventional memory stack and the RSE
+register backing store, roughly halving the usable stack, so this frame
+overflows the guard page. The fault surfaces at the first local written
+(State::default -> VecDeque::new) and shows up as a SIGSEGV. Heap-allocating
+the buffer removes it from the frame and fixes the crash on all targets.
+
+--- alacritty-0.17.0.orig/alacritty_terminal/src/event_loop.rs
++++ alacritty-0.17.0/alacritty_terminal/src/event_loop.rs
+@@ -205,7 +205,7 @@
+     pub fn spawn(mut self) -> JoinHandle<(Self, State)> {
+         thread::spawn_named("PTY reader", move || {
+             let mut state = State::default();
+-            let mut buf = [0u8; READ_BUFFER_SIZE];
++            let mut buf = vec![0u8; READ_BUFFER_SIZE].into_boxed_slice();
+ 
+             let poll_opts = PollMode::Level;
+             let mut interest = PollingEvent::readable(0);
