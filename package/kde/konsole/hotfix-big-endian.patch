@@ -1,0 +1,92 @@
+# --- T2-COPYRIGHT-BEGIN ---
+# t2/package/*/konsole/hotfix-big-endian.patch
+# Copyright (C) 2026 The T2 SDE Project
+# SPDX-License-Identifier: GPL-2.0 or patched project license
+# --- T2-COPYRIGHT-END ---
+
+Fix all terminal output being rendered underlined on big-endian targets
+(e.g. ppc64). RenditionFlagsC and LineProperty::flags are unions of a
+quint16 "all" integer (used with fixed RE_*/LINE_* bit constants) and a C
+bitfield struct accessed as .f.<name>. C bitfield allocation order is
+endianness dependent, so on big-endian the 4-bit underline field landed in
+bits 0-3 instead of 12-15. Every Character is built with RE_TRANSPARENT
+(bit 2), which then read back as underline != 0, underlining everything.
+Mirror the bitfield order on big-endian so both views agree.
+
+--- konsole-26.04.1/src/characters/Character.h.orig
++++ konsole-26.04.1/src/characters/Character.h
+@@ -16,6 +16,7 @@
+ #include "LineBlockCharacters.h"
+ 
+ // Qt
++#include <QtGlobal>
+ #include <QVector>
+ 
+ /* clang-format off */
+@@ -42,7 +43,23 @@
+     }
+     union {
+         quint16 all;
++        // The bit position of every field below must match the numeric LINE_*
++        // constants used with the "all" view of this union. C bitfield allocation
++        // order is endianness dependent, so the field order is mirrored on
++        // big-endian targets to keep both views in agreement (e.g. ppc64).
+         struct {
++#if Q_BYTE_ORDER == Q_BIG_ENDIAN
++            uint padding : 7;
++            uint error : 1;
++            uint output : 1;
++            uint input_start : 1;
++            uint output_start : 1;
++            uint prompt_start : 1;
++            uint doubleheight_bottom : 1;
++            uint doubleheight_top : 1;
++            uint doublewidth : 1;
++            uint wrapped : 1;
++#else
+             uint wrapped : 1;
+             uint doublewidth : 1;
+             uint doubleheight_top : 1;
+@@ -52,6 +69,7 @@
+             uint input_start : 1;
+             uint output : 1;
+             uint error : 1;
++#endif
+         } f;
+     } flags;
+     qint16 length;
+@@ -76,7 +94,26 @@
+ 
+ typedef union {
+     quint16 all;
++    // The bit position of every field below must match the numeric RE_*
++    // constants used with the "all" view of this union. C bitfield allocation
++    // order is endianness dependent, so the field order is mirrored on
++    // big-endian targets to keep both views in agreement (e.g. ppc64).
+     struct {
++#if Q_BYTE_ORDER == Q_BIG_ENDIAN
++        uint underline : 4;
++        uint selected : 1;
++        uint overline : 1;
++        uint conceal : 1;
++        uint strikeout : 1;
++        uint faint : 1;
++        uint extended : 1;
++        uint cursor : 1;
++        uint italic : 1;
++        uint reverse : 1;
++        uint transparent : 1;
++        uint blink : 1;
++        uint bold : 1;
++#else
+         uint bold : 1;
+         uint blink : 1;
+         uint transparent : 1;
+@@ -90,6 +127,7 @@
+         uint overline : 1;
+         uint selected : 1;
+         uint underline : 4;
++#endif
+     } f;
+ } RenditionFlagsC;
+ typedef quint16 RenditionFlags;
