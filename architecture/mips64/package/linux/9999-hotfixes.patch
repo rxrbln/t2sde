@@ -34,3 +34,251 @@
  				    size, vma->vm_page_prot))
  			return -EAGAIN;
  
+Subject: [PATCH] mips: ip30: fix fatal XIO data bus error probing Impact graphics
+
+Booting 7.1.3-ip30 on an SGI Octane dies in impact_xio_probe() with:
+
+  Data bus error, epc == a8000000205d5d90, ra == 00000000000e0100
+  IP30: CPU1: HEART ATTACK! ISR = 0x8000000000000000, ...
+  Kernel panic - not syncing: IP30: Fatal Error !
+
+The faulting instruction is the polling load in impact_wait_cfifo_empty():
+
+  a8000000205d5d8c:  daddu a1,a1,a6      # a6 = 0x20000, the HQ4 register block
+  a8000000205d5d90:  lbu   a1,11(a1)     # byte read of 0x2000b
+
+The source reads the 32-bit IMP_FIFOSTATUS register at offset 0x020008 and
+masks it with MSK_CFIFO_CNT.  On ImpactSR (HQ4) that mask is 0xff, exactly
+one byte wide, so gcc narrows the volatile 32-bit load into a single lbu of
+the low byte at 0x2000b (big endian).  The HQ4 status registers only decode
+full-width accesses; the partial-word read raises an XIO widget error, which
+HEART reports as a fatal data bus error.
+
+Indigo2 (HQ3) is unaffected because there MSK_CFIFO_CNT is 0x7f, which is not
+a whole-byte mask and therefore never triggers the narrowing.  Note that a
+__raw_readl()-style inline helper does not help either -- it narrows just the
+same.  Only a barrier between the load and the mask keeps the access width.
+
+Add an imp_read32() helper that does exactly that and route the eight 32-bit
+register reads in impact.c and impact_early.c through it.  Verified on the
+generated code: the FIFO status polls are now "lw v0,8(v0)", and the only lbu
+instructions left in impact.o are the genuine byte-wide IMP_BDVERS1 register
+and font/string character loads.
+
+While here, fix two unrelated bugs noticed in the same code paths:
+
+ - ip30-xtalk.c: platform_device_register_simple() returns a struct
+   platform_device *, not an int, and returns an ERR_PTR on failure.  The
+   "registered as a platform device" message was therefore printed both on
+   success and on failure, and a real registration failure was swallowed.
+   Use IS_ERR() and report the errno.
+
+ - impact.c: the DMA page table handed to the card was published with a
+   commented-out call to flush_kernel_dcache_range(), which is a parisc-only
+   symbol that has never existed on MIPS.  Replace it with a helper that
+   matches the existing coherent/noncoherent split: dma_wmb() to order the
+   stores ahead of the card's read on IP27/IP30 (dma_alloc_coherent), and
+   dma_sync_single_for_device() on IP22/IP28 (dma_alloc_noncoherent).
+
+Signed-off-by: René Rebe <rene@exactcode.de>
+---
+diff -urN a/arch/mips/sgi-ip30/ip30-xtalk.c b/arch/mips/sgi-ip30/ip30-xtalk.c
+--- a/arch/mips/sgi-ip30/ip30-xtalk.c	2026-07-10 16:45:47.904505584 +0200
++++ b/arch/mips/sgi-ip30/ip30-xtalk.c	2026-07-10 16:45:58.685514980 +0200
+@@ -6,6 +6,7 @@
+  *   Copyright (C) 2007, 2014-2016 Joshua Kinard <linux@kumba.dev>
+  */
+ 
++#include <linux/err.h>
+ #include <linux/init.h>
+ #include <linux/kernel.h>
+ #include <linux/platform_device.h>
+@@ -154,10 +155,11 @@
+ 
+ static void __init xtalk_init_widget(s8 wid, s8 masterwid)
+ {
++	const struct widget_ident *wi;
++	struct platform_device *pdev;
+ 	xwidget_mfg_num_t mfgnum;
+ 	xwidget_part_num_t partnum;
+ 	xwidget_rev_num_t rev;
+-
+ 	widgetreg_t widget_id;
+ 
+ 	if (!xbow_widget_active(wid))
+@@ -168,28 +170,32 @@
+ 	partnum = XWIDGET_PART_NUM(widget_id);
+ 	rev = XWIDGET_REV_NUM(widget_id);
+ 
+-
+ 	switch (partnum) {
+ 	case BRIDGE_WIDGET_PART_NUM:
+ 	case XBRIDGE_WIDGET_PART_NUM:
+ 		bridge_platform_create(wid, masterwid);
+ 		break;
+ 	default:
+-		{
+- 			const struct widget_ident *wi;
+-			for (wi = widget_idents; wi->name; wi++)
++		for (wi = widget_idents; wi->name; wi++)
+ 			if (wi->mfgr == mfgnum && wi->part == partnum)
+ 				break;
+ 
+-			if (wi->name == NULL) {
+-				pr_info("xtalk:%x unknown widget (0x%08x)\n", wid, partnum);
+-			} else {
+-				if (platform_device_register_simple(wi->name, wid, NULL, 0))
+-					pr_info("xtalk: %x %s widget (rev %s) "
+-						"registered as a platform device.\n", wid,
+-						 wi->name, wi->revs[rev] ? : "unknown");
+-			}
++		if (!wi->name) {
++			pr_info("xtalk:%x unknown widget (0x%04x)\n", wid,
++				partnum);
++			break;
+ 		}
++
++		pdev = platform_device_register_simple(wi->name, wid, NULL, 0);
++		if (IS_ERR(pdev)) {
++			pr_warn("xtalk:%x %s widget (rev %s) registration failed (%ld)\n",
++				wid, wi->name, wi->revs[rev] ? : "unknown",
++				PTR_ERR(pdev));
++			break;
++		}
++
++		pr_info("xtalk:%x %s widget (rev %s) registered as a platform device.\n",
++			wid, wi->name, wi->revs[rev] ? : "unknown");
+ 		break;
+ 	}
+ }
+diff -urN a/drivers/video/fbdev/impact.c b/drivers/video/fbdev/impact.c
+--- a/drivers/video/fbdev/impact.c	2026-07-10 16:45:47.904451760 +0200
++++ b/drivers/video/fbdev/impact.c	2026-07-10 16:45:58.683334190 +0200
+@@ -161,7 +161,7 @@
+ static inline void
+ impact_wait_cfifo_empty(struct fb_info *info)
+ {
+-	while (IMP_FIFOSTATUS(MMIO) & MSK_CFIFO_CNT)
++	while (IMP_RD32(IMP_FIFOSTATUS(MMIO)) & MSK_CFIFO_CNT)
+ 		cpu_relax();
+ }
+ 
+@@ -172,16 +172,16 @@
+ static inline void
+ impact_wait_dma_done(struct fb_info *info)
+ {
+-	while (IMP_DMABUSY(MMIO) & 0x1f)
++	while (IMP_RD32(IMP_DMABUSY(MMIO)) & 0x1f)
+ 		cpu_relax();
+ 
+-	while (!(IMP_STATUS(MMIO) & 1))
++	while (!(IMP_RD32(IMP_STATUS(MMIO)) & 1))
+ 		cpu_relax();
+ 
+-	while (!(IMP_STATUS(MMIO) & 2))	/* RSS_IDLE */
++	while (!(IMP_RD32(IMP_STATUS(MMIO)) & 2))	/* RSS_IDLE */
+ 		cpu_relax();
+ 
+-	while (!(IMP_RESTATUS(MMIO) & 0x100))
++	while (!(IMP_RD32(IMP_RESTATUS(MMIO)) & 0x100))
+ 		cpu_relax();
+ }
+ 
+@@ -193,10 +193,10 @@
+ impact_wait_dma_ready(struct fb_info *info)
+ {
+ 	IMP_CFIFOW(MMIO) = 0x000e0100;
+-	while (IMP_DMABUSY(MMIO) & 0x1eff)
++	while (IMP_RD32(IMP_DMABUSY(MMIO)) & 0x1eff)
+ 		cpu_relax();
+ 
+-	while (!(IMP_STATUS(MMIO) & 2))
++	while (!(IMP_RD32(IMP_STATUS(MMIO)) & 2))
+ 		cpu_relax();
+ }
+ /* ----------------------------------------------------------------------- */
+@@ -335,6 +335,25 @@
+ }
+ 
+ /**
++ * impact_dma_sync_for_device - hand a DMA buffer the CPU just wrote to the card.
++ * @dev: struct device pointer of the impact device.
++ * @dma_handle: dma handle of the buffer.
++ * @size: bytes written.
++ */
++static inline void
++impact_dma_sync_for_device(struct device *dev, dma_addr_t dma_handle,
++			   size_t size)
++{
++#ifndef SGI_INDIGO2
++	/* IP27/IP30 are coherent, so only ordering against the card is needed. */
++	dma_wmb();
++#else
++	/* IP22/IP28 are noncoherent, the writes have to leave the dcache. */
++	dma_sync_single_for_device(dev, dma_handle, size, DMA_TO_DEVICE);
++#endif
++}
++
++/**
+  * impact_alloctxtbl - allocate the texture (?) tables.
+  * @info: struct fb_info pointer to framebuffer data.
+  * @pool: DMA pool number.
+@@ -414,7 +433,8 @@
+ 		par->kpool_phys[pool][i] = dma_handle;
+ 		par->pool_txtbl[pool][i] = (dma_handle >> PAGE_SHIFT);
+ 	}
+-	/*flush_kernel_dcache_range(par->pool_txtbl[pool], (i * 4)); */
++	impact_dma_sync_for_device(par->dev, par->pool_txphys[pool],
++				   (par->pool_txnum[pool] * sizeof(u32)));
+ 
+ 	/* Finally, reattach the tbl to the card. */
+ 	impact_writetxtbl(info, pool);
+diff -urN a/drivers/video/fbdev/impact_early.c b/drivers/video/fbdev/impact_early.c
+--- a/drivers/video/fbdev/impact_early.c	2026-07-10 16:45:47.904473311 +0200
++++ b/drivers/video/fbdev/impact_early.c	2026-07-10 16:45:58.684315789 +0200
+@@ -39,7 +39,7 @@
+ static inline void
+ impact_early_wait_cfifo_empty(void)
+ {
+-	while (IMP_FIFOSTATUS(MMIO_FIXED) & MSK_CFIFO_CNT)
++	while (IMP_RD32(IMP_FIFOSTATUS(MMIO_FIXED)) & MSK_CFIFO_CNT)
+ 		cpu_relax();
+ }
+ 
+diff -urN a/include/video/impact.h b/include/video/impact.h
+--- a/include/video/impact.h	2026-07-10 16:45:47.904279594 +0200
++++ b/include/video/impact.h	2026-07-10 16:45:58.682313889 +0200
+@@ -18,6 +18,9 @@
+ #ifndef _IMPACT_H
+ #define _IMPACT_H
+ 
++#include <linux/compiler.h>
++#include <linux/types.h>
++
+ /* IP22/IP28 have HQ3, IP30 has HQ4. */
+ #if defined(CONFIG_SGI_IP22) || defined(CONFIG_SGI_IP28)
+ #define SGI_INDIGO2 1
+@@ -56,6 +59,23 @@
+ #define IMP_REG16(vma, off)		(*(volatile u16 *)((vma) + (off)))
+ #define IMP_REG8(vma, off)		(*(volatile u8 *)((vma) + (off)))
+ 
++/*
++ * The HQ3/HQ4 status registers only answer full 32-bit reads.  A masked read
++ * of the volatile lvalue does not pin the access width down: gcc happily
++ * narrows "IMP_FIFOSTATUS(vma) & 0xff" into a single lbu of the low byte,
++ * which on IP30 faults the XIO widget and takes the machine down with a HEART
++ * data bus error.  The barrier keeps the load from being combined with the
++ * mask, so read all 32-bit registers through this helper.
++ */
++static inline u32 imp_read32(volatile u32 *reg)
++{
++	u32 val = *reg;
++
++	barrier();
++	return val;
++}
++#define IMP_RD32(reg)			imp_read32(&(reg))
++
+ #ifndef SGI_INDIGO2
+  /* ImpactSR (HQ4) register offsets */
+  #define IMP_CFIFO(vma)			IMP_REG64(vma, 0x020400)
