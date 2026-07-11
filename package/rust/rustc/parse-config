@@ -65,13 +65,21 @@ cargo_inject_patches() {
 	[ -f "$db" ] || return 0
 
 	local crate repo version pattern lockver ver key tag force vers update_out
+	local -a versions
 	while read -r crate repo version pattern; do
 		[[ -z $crate || $crate == '#'* ]] && continue
+
+		# version may be a comma-separated list of candidate versions,
+		# e.g. a crate with major version 1.1 also patched down to a
+		# 0.38 req: "1.1.4,0.38.44" -- try each in turn per locked version
+		IFS=',' read -ra versions <<< "$version"
 
 		# a crate can be locked at multiple versions, try to update each
 		# separately, as a plain "-p $crate" would be ambiguous
 		for lockver in $(cargo_lock_versions "$crate"); do
-			cargo update -p "$crate@$lockver" --precise "$version" >/dev/null 2>/dev/null || true
+			for ver in "${versions[@]}"; do
+				cargo update -p "$crate@$lockver" --precise "$ver" >/dev/null 2>/dev/null && break
+			done
 		done
 
 		# patch the exact versions remaining in Cargo.lock and pray they
@@ -79,7 +87,7 @@ cargo_inject_patches() {
 		vers=($(cargo_lock_versions "$crate"))
 		for ver in "${vers[@]}"; do
 			force=
-			[ "$ver" != "$version" ] && force="(version forced)"
+			[[ " ${versions[*]} " == *" $ver "* ]] || force="(version forced)"
 			tag=$(printf "$pattern" "$ver")
 			echo "injecting patch $crate $ver = $repo tag $tag $force"
 
