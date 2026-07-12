@@ -1,0 +1,64 @@
+# --- T2-COPYRIGHT-BEGIN ---
+# t2/package/*/xf86-video-cirrus/hotfix-laguna-pitch.patch
+# Copyright (C) 2026 The T2 SDE Project
+# SPDX-License-Identifier: GPL-2.0 or patched project license
+# --- T2-COPYRIGHT-END ---
+
+Fix line pitch handling, e.g. 1400x @ 16 bit resulted in an unsupported
+pitch breaking xaa.
+
+--- xf86-video-cirrus-1.6.0/src/lg_driver.c.orig	2022-07-11 01:49:51.000000000 +0200
++++ xf86-video-cirrus-1.6.0/src/lg_driver.c	2026-07-12 19:39:20.036994195 +0200
+@@ -928,11 +928,51 @@
+                             pScrn->display->virtualY,
+                             pCir->FbMapSize, LOOKUP_BEST_REFRESH);
+ 
++    if (i == -1) {
++        LgFreeRec(pScrn);
++        return FALSE;
++    }
++
+     pCir->chip.lg->lineDataIndex =
+                                 LgFindLineData(pScrn->displayWidth,
+                                                 pScrn->bitsPerPixel);
+ 
+-    if (i == -1) {
++    if (pCir->chip.lg->lineDataIndex < 0) {
++        xf86DrvMsg(pScrn->scrnIndex, X_ERROR,
++                    "No tile pitch available for a display width of "
++                    "%d pixels at %d bpp\n",
++                    pScrn->displayWidth, pScrn->bitsPerPixel);
++        LgFreeRec(pScrn);
++        return FALSE;
++    }
++
++    /*
++     * The chip can only scan out (and blit to) a line whose pitch is one
++     * of the tiled pitches in LgLineData[], and LgFindLineData() rounds
++     * up to the next one of those.  xf86ValidateModes() only picks a
++     * pitch out of LgLinePitches[] when a virtual size is configured;
++     * otherwise it just rounds the width up to the pitch increment, which
++     * can leave displayWidth *smaller* than the pitch we are about to
++     * programme (e.g. 1400 -> 1408 pixels = 2816 bytes, while the chip
++     * gets the next tiled pitch up, 3328 bytes).  fb, the BitBLT engine
++     * and the CRTC all have to agree, so widen displayWidth to the pitch
++     * the hardware will actually use.
++     */
++    pScrn->displayWidth = LgLineData[pCir->chip.lg->lineDataIndex].pitch /
++                            (pScrn->bitsPerPixel >> 3);
++
++    /*
++     * Widening the pitch costs memory, so make sure we did not just grow
++     * the frame buffer beyond the end of video RAM.
++     */
++    if (pScrn->displayWidth * pScrn->virtualY * (pScrn->bitsPerPixel >> 3) >
++            pCir->FbMapSize) {
++        xf86DrvMsg(pScrn->scrnIndex, X_ERROR,
++                    "Virtual size %dx%d at %d bpp needs a line pitch of "
++                    "%d pixels, which does not fit in %d kByte of video "
++                    "RAM\n",
++                    pScrn->virtualX, pScrn->virtualY, pScrn->bitsPerPixel,
++                    pScrn->displayWidth, pScrn->videoRam);
+         LgFreeRec(pScrn);
+         return FALSE;
+     }
