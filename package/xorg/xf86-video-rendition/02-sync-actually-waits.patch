@@ -1,0 +1,143 @@
+# --- T2-COPYRIGHT-BEGIN ---
+# t2/package/*/xf86-video-rendition/02-sync-actually-waits.patch
+# Copyright (C) 2026 The T2 SDE Project
+# SPDX-License-Identifier: GPL-2.0 or patched project license
+# --- T2-COPYRIGHT-END ---
+
+--- a/src/accelX.c	2026-07-12 13:21:07.730171541 +0200
++++ b/src/accelX.c	2026-07-12 13:22:26.878897395 +0200
+@@ -47,6 +47,25 @@
+                           } \
+                         } while (0)
+ 
++/* Drain whatever is currently sitting in the output fifo.  This throws data
++   away, so it is only used to get rid of stale results before a sync. */
++#define flushfifoout()  do { int _c=0; \
++                          while ((_c++<0xfffff)&&((verite_in8(iob+FIFOOUTVALID)&0x7)>0)) \
++                              (void)verite_in32(iob); \
++                        } while (0)
++
++/* Block until the RISC has pushed a result word, then consume it.  Unlike a
++   plain drain this really waits: the ucode only produces the word once it has
++   retired every command queued ahead of it, which is what makes it a sync. */
++#define waitfifoout(res) do { int _c=0; \
++                          while ((_c++<0xfffff)&&((verite_in8(iob+FIFOOUTVALID)&0x7)==0)) /* spin */; \
++                          if ((verite_in8(iob+FIFOOUTVALID)&0x7)==0) { \
++                              ErrorF("RENDITION: RISC synchronization failed (%s)\n", res); \
++                              return; \
++                          } \
++                          (void)verite_in32(iob); \
++                        } while (0)
++
+ #define P1(x)           ((vu32)x)
+ #define P2(x, y)        ((((vu16)x)<<16)+((vu16)y))
+ 
+@@ -324,6 +343,7 @@
+     ErrorF("#InitUcode(2)# FIFOIN_FREE 0x%x -- \n",verite_in8(iob+FIFOINFREE));
+ #endif
+ 
++    waitfifo2(4, 1);
+     verite_out32(iob, 0);     /* a0 - ucode init command */
+     verite_out32(iob, 0);     /* a1 - 1024 byte context store area */
+     verite_out32(iob, 0);     /* a2 */
+@@ -393,6 +413,7 @@
+ 
+     v1k_flushicache(pScreenInfo);
+     v1k_start(pScreenInfo, pRendition->board.csucode_base);
++    waitfifo(4);
+     verite_out32(iob, 0);     /* a0 - ucode init command */
+     verite_out32(iob, 0);     /* a1 - 1024 byte context store area */
+     verite_out32(iob, 0);     /* a2 */
+@@ -447,8 +468,6 @@
+     renditionPtr pRendition = RENDITIONPTR(pScreenInfo);
+     unsigned long iob = pRendition->board.io_base;
+ 
+-    int c;
+-
+ #ifdef DEBUG
+     ErrorF("RENDITION: RENDITIONSyncV1000 called\n");
+ 
+@@ -456,57 +475,25 @@
+     ErrorF("#Sync (1)# FIFO_OUTVALID 0x%x -- \n",verite_in8(iob+FIFOOUTVALID));
+ #endif
+ 
+-    c=0;
+-    /* empty output fifo,
+-       i.e. if there is any valid data in the output fifo then read it */
+-
+-    while ((c++<0xfffff) && ((verite_in8(iob+FIFOOUTVALID)&0x7)>0))
+-      (void)verite_in32(iob);
+-
+-/*       if(!(c%0xffff))ErrorF("#F1# !0x%x! -- ",verite_in8(iob+FIFOOUTVALID)); */
+-
+-    if (c >= 0xfffff) { 
+-        ErrorF("RENDITION: RISC synchronization failed (1) FIFO out == %d!\n",
+-	       verite_in8(iob+FIFOOUTVALID)&0x1f);
+-        return; 
+-    }
++    /* discard stale results so the readbacks below can't pick up an old word */
++    flushfifoout();
+ 
+-    /* sync RISC */
++    /* Sync the RISC: CMD_GET_PIXEL is retired in order behind every command
++       already queued, so once its result word shows up the ucode is idle and
++       it is safe to halt it. */
+     waitfifo(2);
+     verite_out32(iob, CMD_GET_PIXEL);
+     verite_out32(iob, 0);
+-
+-    c=0;
+-    while ((c++<0xfffff) && ((verite_in8(iob+FIFOOUTVALID)&0x7)>0))
+-      (void)verite_in32(iob);
+-
+-/*       if(!(c%0xffff))ErrorF("#F2# !0x%x! -- ",verite_in8(iob+FIFOOUTVALID)); */
+-
+-
+-    if (c >= 0xfffff) { 
+-      ErrorF ("Rendition: RISC synchronization failed (2) FIFO out == %d!\n",
+-	      verite_in8(iob+FIFOOUTVALID)&0x1f);
+-        return; 
+-    }
++    waitfifoout("RISC idle");
+ 
+     /* sync pixel engine using csucode -- I suppose this is quite slow <ml> */
+     v1k_stop(pScreenInfo);
+     v1k_start(pScreenInfo, pRendition->board.csucode_base);
++    waitfifo(1);
+     verite_out32(iob, 2);     /* a0 - sync command */
+ 
+-    c=0;
+-    while ((c++<0xfffff) && ((verite_in8(iob+FIFOOUTVALID)&0x7)>0))
+-      (void)verite_in32(iob);
+-
+-/*      if(!(c%0xffff))ErrorF("#F3# !0x%x! -- ",verite_in8(iob+FIFOOUTVALID)); */
+-
+-    if (c == 0xfffff) { 
+-        ErrorF ("Rendition: Pixel engine synchronization failed FIFO out == %d!\n",
+-		verite_in8(iob+FIFOOUTVALID)&0x1f);
+-        return;
+-    }
+-
+     /* restart the ucode */
++    waitfifo(4);
+     verite_out32(iob, 0);     /* a0 - ucode init command */
+     verite_out32(iob, 0);     /* a1 - 1024 byte context store area */
+     verite_out32(iob, 0);     /* a2 */
+@@ -524,7 +511,16 @@
+     verite_out32(iob, pRendition->board.mode.virtualwidth  *
+ 	    (pRendition->board.mode.bitsperpixel>>3));
+     verite_out32(iob, (pRendition->board.mode.stride1<<12) |
+-	    (pRendition->board.mode.stride0<<8)); 
++	    (pRendition->board.mode.stride0<<8));
++
++    /* The csucode's pixel engine sync (a0=2) produces no result word, so it
++       can only be observed indirectly: the RISC executes strictly in order, so
++       a readback that retires *after* the restart proves everything queued
++       before it -- including the pixel engine sync -- has completed. */
++    waitfifo(2);
++    verite_out32(iob, CMD_GET_PIXEL);
++    verite_out32(iob, 0);
++    waitfifoout("pixel engine idle");
+ }
+ 
+ 
