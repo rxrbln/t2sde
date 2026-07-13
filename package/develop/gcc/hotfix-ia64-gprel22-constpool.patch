@@ -1,0 +1,33 @@
+# --- T2-COPYRIGHT-BEGIN ---
+# t2/package/*/gcc/hotfix-ia64-gprel22-constpool.patch
+# Copyright (C) 2026 The T2 SDE Project
+# SPDX-License-Identifier: GPL-2.0 or patched project license
+# --- T2-COPYRIGHT-END ---
+#
+# ia64: sdata_symbolic_operand() ignores -mno-sdata for constant-pool
+# symbols, so GCC keeps emitting 22-bit GPREL22 (addl @gprel(...))
+# relocations for reload-spilled constant-pool addresses even when
+# -mno-sdata is passed. In large -fPIC objects (e.g. Firefox/libxul on
+# ia64) those pool entries end up in .data.rel.ro.local, far outside
+# the +-2MB GPREL22 window, and the final link fails with:
+#
+#   relocation truncated to fit: GPREL22 against `.data.rel.ro.local'
+#
+# ia64_select_rtx_section() already honors TARGET_NO_SDATA when
+# choosing where to place the pool entry; the addressing predicate
+# needs to do the same so such symbols fall through to the existing
+# local_symbolic_operand64 path, which emits the full 64-bit
+# @gprel64 (movl+add) sequence instead (see GCC PR 60465 for the
+# rationale of preferring @gprel over @ltoff for local symbols).
+
+--- gcc-16.1.0/gcc/config/ia64/predicates.md.vanilla	2026-07-12 00:00:00.000000000 +0000
++++ gcc-16.1.0/gcc/config/ia64/predicates.md	2026-07-12 00:00:00.000000000 +0000
+@@ -55,7 +55,7 @@
+       if (CONSTANT_POOL_ADDRESS_P (op))
+ 	{
+ 	  size = GET_MODE_SIZE (get_pool_mode (op));
+-	  if (size > ia64_section_threshold)
++	  if (TARGET_NO_SDATA || size > ia64_section_threshold)
+ 	    return false;
+ 	}
+       else
