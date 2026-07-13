@@ -1,0 +1,1043 @@
+VX900 HDMI support tested on VIA M900 EPIA-M900-16L.
+
+Signed-off-by: René Rebe <rene@exactco.de>
+
+diff -urN xf86-video-openchrome.git/src/Makefile.am xf86-video-openchrome.git.new/src/Makefile.am
+--- xf86-video-openchrome.git/src/Makefile.am	2000-01-01 01:00:00.000000000 +0100
++++ xf86-video-openchrome.git.new/src/Makefile.am	2026-07-13 15:28:36.168479815 +0200
+@@ -55,6 +55,8 @@
+          via_i2c.c \
+          via_fp.c \
+          via_fp.h \
++         via_hdmi.c \
++         via_hdmi.h \
+          via_memcpy.c \
+          via_memmgr.h \
+          via_memmgr.c \
+diff -urN xf86-video-openchrome.git/src/via_hdmi.h xf86-video-openchrome.git.new/src/via_hdmi.h
+--- xf86-video-openchrome.git/src/via_hdmi.h	1970-01-01 01:00:00.000000000 +0100
++++ xf86-video-openchrome.git.new/src/via_hdmi.h	2026-07-13 16:17:00.331846711 +0200
+@@ -0,0 +1,124 @@
++/*
++ * Copyright 2026 René Rebe <rene@exactco.de>
++ *
++ * Permission is hereby granted, free of charge, to any person obtaining a
++ * copy of this software and associated documentation files (the "Software"),
++ * to deal in the Software without restriction, including without limitation
++ * the rights to use, copy, modify, merge, publish, distribute, sub license,
++ * and/or sell copies of the Software, and to permit persons to whom the
++ * Software is furnished to do so, subject to the following conditions:
++ *
++ * The above copyright notice and this permission notice (including the
++ * next paragraph) shall be included in all copies or substantial portions
++ * of the Software.
++ *
++ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
++ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
++ * FITNESS FOR A PARTICULAR PURPOSE AND NON-INFRINGEMENT. IN NO EVENT SHALL
++ * THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
++ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
++ * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
++ * DEALINGS IN THE SOFTWARE.
++ */
++
++/*
++ * via_hdmi.h
++ *
++ * Register map of the VX900 (VT3410) / VX855 integrated HDMI transmitter,
++ * part of the combined DisplayPort / HDMI PHY located in the MMIO block
++ * 0xC610 - 0xC7D4 (see via_regs.h).
++ *
++ * The offsets, bit fields and the programming order below were reverse
++ * engineered from the VT3410 video BIOS PHY enable routine (ROM entry at
++ * 0xAD06).  Each register is a 32 bit MMIO register accessed through the
++ * VIAGETREG() / VIASETREG() macros, i.e. *(pVia->MapBase + offset).
++ */
++
++#ifndef _VIA_HDMI_H_
++#define _VIA_HDMI_H_
++
++/*
++ * DP/HDMI controller master enable.  VBIOS: (0xC280 |= 0x42) to enable,
++ * (0xC280 &= ~0x42) to disable.
++ */
++#define VIA_HDMI_REG_CONTROL            0xC280
++#define VIA_HDMI_CONTROL_ENABLE         (BIT(1) | BIT(6))
++
++/*
++ * PHY configuration register.  VBIOS masks it with 0x3FFC0001 on every
++ * modeset, preserving bits [29:18] and bit 0 while clearing the rest.
++ */
++#define VIA_HDMI_REG_PHY_CFG            0xC618
++#define VIA_HDMI_PHY_CFG_MASK           0x3FFC0001
++
++/*
++ * TMDS clock control.
++ *  [31:30] clock range select (derived from the pixel clock).
++ *  [26:25] PLL / bias enable region (VBIOS sets both bits: 0x06000000).
++ */
++#define VIA_HDMI_REG_CLOCK              0xC740
++#define VIA_HDMI_CLOCK_RANGE_SHIFT      30
++#define VIA_HDMI_CLOCK_RANGE_MASK       0xC0000000
++#define VIA_HDMI_CLOCK_PLL_MASK         0x06000000
++
++/* Clock range field values, high pixel clock -> low divider. */
++#define VIA_HDMI_CLOCK_RANGE_ABOVE_135M 0x0
++#define VIA_HDMI_CLOCK_RANGE_67M_135M   0x1
++#define VIA_HDMI_CLOCK_RANGE_34M_67M    0x2
++#define VIA_HDMI_CLOCK_RANGE_BELOW_34M  0x3
++
++/* Pixel clock thresholds (Hz) used by the VBIOS to pick the range. */
++#define VIA_HDMI_CLOCK_135M             135000000
++#define VIA_HDMI_CLOCK_67M               67500000
++#define VIA_HDMI_CLOCK_34M               33750000
++
++/* Transmitter output enable.  VBIOS: (0xC74C |= 0x40) / (0xC74C &= ~0x40). */
++#define VIA_HDMI_REG_OUTPUT             0xC74C
++#define VIA_HDMI_OUTPUT_ENABLE          BIT(6)
++
++/*
++ * PHY calibration pattern register.  VBIOS writes 0x55 into bits [31:24],
++ * waits, then clears it again.
++ */
++#define VIA_HDMI_REG_PATTERN            0xC744
++#define VIA_HDMI_PATTERN_MASK           0x00FFFFFF
++#define VIA_HDMI_PATTERN_CALIB          0x55000000
++
++/*
++ * Hardware I2C (DDC) master used by the digital / HDMI port.  On VX900 the
++ * HDMI DDC lines are NOT wired to the SR-register GPIO bit-banging buses
++ * (SR26/SR31/SR2C); they are driven by this dedicated MMIO I2C controller.
++ * Reverse engineered from the VBIOS I2C engine at ROM 0xBA55.
++ */
++
++/* Engine enable: 0xC000 bit 0 (VBIOS routine 0xAC67). */
++#define VIA_HDMI_I2C_REG_ENABLE         0xC000
++#define VIA_HDMI_I2C_ENABLE             BIT(0)
++
++/* Data register: TX byte in [23:16], RX byte in [15:8]. */
++#define VIA_HDMI_I2C_REG_DATA           0xC0B4
++#define VIA_HDMI_I2C_TX_SHIFT           16
++#define VIA_HDMI_I2C_TX_MASK            0x00FF0000
++#define VIA_HDMI_I2C_RX_SHIFT           8
++#define VIA_HDMI_I2C_RX_MASK            0x0000FF00
++
++/* Command / status register. */
++#define VIA_HDMI_I2C_REG_CMD            0xC0B8
++#define VIA_HDMI_I2C_CMD_INIT           0x01
++#define VIA_HDMI_I2C_CMD_START_PREP     0x11    /* 0x01 | 0x10 */
++#define VIA_HDMI_I2C_CMD_START          0x19    /* 0x01 | 0x18 */
++#define VIA_HDMI_I2C_CMD_XFER           0x09    /* 0x01 | 0x08 */
++#define VIA_HDMI_I2C_CMD_STOP_PREP      0x21    /* 0x01 | 0x20 */
++#define VIA_HDMI_I2C_CMD_STOP           0x29    /* 0x01 | 0x28 */
++/* Status bits (read back from the command register). */
++#define VIA_HDMI_I2C_STAT_BYTE_DONE     0x08
++#define VIA_HDMI_I2C_STAT_START_DONE    0x18
++#define VIA_HDMI_I2C_STAT_STOP_DONE     0x828
++#define VIA_HDMI_I2C_STAT_BUSY          0x80
++
++/* Clock / configuration register: sets [25:23] = 001. */
++#define VIA_HDMI_I2C_REG_CFG            0xC0C4
++#define VIA_HDMI_I2C_CFG_MASK           0x03800000
++#define VIA_HDMI_I2C_CFG_VALUE          0x00800000
++
++#endif /* _VIA_HDMI_H_ */
+diff -urN xf86-video-openchrome.git/src/via_hdmi.c xf86-video-openchrome.git.new/src/via_hdmi.c
+--- xf86-video-openchrome.git/src/via_hdmi.c	1970-01-01 01:00:00.000000000 +0100
++++ xf86-video-openchrome.git.new/src/via_hdmi.c	2026-07-13 17:17:32.544519883 +0200
+@@ -0,0 +1,815 @@
++/*
++ * Copyright 2026 René Rebe <rene@exactco.de>
++ *
++ * Permission is hereby granted, free of charge, to any person obtaining a
++ * copy of this software and associated documentation files (the "Software"),
++ * to deal in the Software without restriction, including without limitation
++ * the rights to use, copy, modify, merge, publish, distribute, sub license,
++ * and/or sell copies of the Software, and to permit persons to whom the
++ * Software is furnished to do so, subject to the following conditions:
++ *
++ * The above copyright notice and this permission notice (including the
++ * next paragraph) shall be included in all copies or substantial portions
++ * of the Software.
++ *
++ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
++ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
++ * FITNESS FOR A PARTICULAR PURPOSE AND NON-INFRINGEMENT. IN NO EVENT SHALL
++ * THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
++ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
++ * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
++ * DEALINGS IN THE SOFTWARE.
++ */
++
++/*
++ * via_hdmi.c
++ *
++ * Controls the integrated HDMI transmitter found in the VIA Technologies
++ * VX900 (VT3410) and VX855 IGPs (Chrome9 HD).  On these chipsets the digital
++ * pixel data is carried by the integrated TMDS transmitter (shared with the
++ * DVI path, DVP1 pins) while the analog/PHY side is driven by the combined
++ * DisplayPort / HDMI PHY block in MMIO 0xC610 - 0xC7D4.
++ *
++ * The PHY enable sequence (viaHDMISetPHYState) was reverse engineered from
++ * the VT3410 video BIOS; see via_hdmi.h for the register map and the
++ * per-register VBIOS provenance.
++ *
++ * HDMI is electrically backward compatible with DVI, so a plain DVI-style
++ * TMDS video stream is accepted by HDMI sinks; audio and InfoFrame data
++ * islands are not required for a picture and are not emitted here.
++ */
++
++#ifdef HAVE_CONFIG_H
++#include "config.h"
++#endif
++
++#include <unistd.h>
++#include "via_driver.h"
++#include "via_hdmi.h"
++#include "xf86DDC.h"
++
++/*
++ * Maps a pixel clock (in Hz) to the VX900 HDMI PHY clock range field
++ * (0xC740 bits [31:30]).  Thresholds taken verbatim from the VBIOS.
++ */
++static CARD32
++viaHDMIClockRange(CARD32 dotClock)
++{
++    if (dotClock > VIA_HDMI_CLOCK_135M) {
++        return VIA_HDMI_CLOCK_RANGE_ABOVE_135M;
++    } else if (dotClock > VIA_HDMI_CLOCK_67M) {
++        return VIA_HDMI_CLOCK_RANGE_67M_135M;
++    } else if (dotClock > VIA_HDMI_CLOCK_34M) {
++        return VIA_HDMI_CLOCK_RANGE_34M_67M;
++    } else {
++        return VIA_HDMI_CLOCK_RANGE_BELOW_34M;
++    }
++}
++
++/*
++ * Powers the VX900 / VX855 HDMI (DisplayPort/HDMI combo) PHY on or off and,
++ * when enabling, programs the TMDS clock range for the requested pixel clock.
++ *
++ * This mirrors the VT3410 VBIOS PHY enable routine (ROM entry 0xAD06).
++ */
++void
++viaHDMISetPHYState(ScrnInfoPtr pScrn, Bool enable, CARD32 dotClock)
++{
++    VIAPtr pVia = VIAPTR(pScrn);
++    CARD32 clockReg;
++
++    DEBUG(xf86DrvMsg(pScrn->scrnIndex, X_INFO,
++                        "Entered %s.\n", __func__));
++
++    if (enable) {
++        /* DP/HDMI controller master enable: 0xC280 |= 0x42. */
++        VIASETREGMASK(VIA_HDMI_REG_CONTROL,
++                      VIA_HDMI_CONTROL_ENABLE, VIA_HDMI_CONTROL_ENABLE);
++
++        /* PHY configuration: keep bits [29:18] and bit 0, clear the rest. */
++        VIASETREG(VIA_HDMI_REG_PHY_CFG,
++                  VIAGETREG(VIA_HDMI_REG_PHY_CFG) & VIA_HDMI_PHY_CFG_MASK);
++
++        /* Transmitter output enable: 0xC74C |= 0x40. */
++        VIASETREGMASK(VIA_HDMI_REG_OUTPUT,
++                      VIA_HDMI_OUTPUT_ENABLE, VIA_HDMI_OUTPUT_ENABLE);
++
++        /* Clear the PLL / bias enable bits [26:25] before reprogramming. */
++        VIASETREG(VIA_HDMI_REG_CLOCK,
++                  VIAGETREG(VIA_HDMI_REG_CLOCK) & ~VIA_HDMI_CLOCK_PLL_MASK);
++        usleep(1);
++
++        /* Program the clock range field [31:30] from the pixel clock. */
++        clockReg = VIAGETREG(VIA_HDMI_REG_CLOCK) & ~VIA_HDMI_CLOCK_RANGE_MASK;
++        clockReg |= viaHDMIClockRange(dotClock) << VIA_HDMI_CLOCK_RANGE_SHIFT;
++        VIASETREG(VIA_HDMI_REG_CLOCK, clockReg);
++
++        /* Turn the PLL / bias back on. */
++        VIASETREG(VIA_HDMI_REG_CLOCK,
++                  VIAGETREG(VIA_HDMI_REG_CLOCK) | VIA_HDMI_CLOCK_PLL_MASK);
++        usleep(1);
++
++        /* PHY calibration pattern pulse on [31:24]: 0x55, wait, then clear. */
++        VIASETREG(VIA_HDMI_REG_PATTERN,
++                  (VIAGETREG(VIA_HDMI_REG_PATTERN) & VIA_HDMI_PATTERN_MASK) |
++                  VIA_HDMI_PATTERN_CALIB);
++        usleep(5);
++        VIASETREG(VIA_HDMI_REG_PATTERN,
++                  VIAGETREG(VIA_HDMI_REG_PATTERN) & VIA_HDMI_PATTERN_MASK);
++    } else {
++        /* Transmitter output disable followed by controller disable. */
++        VIASETREGMASK(VIA_HDMI_REG_OUTPUT, 0, VIA_HDMI_OUTPUT_ENABLE);
++        VIASETREGMASK(VIA_HDMI_REG_CONTROL, 0, VIA_HDMI_CONTROL_ENABLE);
++    }
++
++    xf86DrvMsg(pScrn->scrnIndex, X_INFO,
++                "HDMI PHY: %s\n", enable ? "On" : "Off");
++
++    DEBUG(xf86DrvMsg(pScrn->scrnIndex, X_INFO,
++                        "Exiting %s.\n", __func__));
++}
++
++/*
++ * Hardware I2C (DDC) master.
++ *
++ * The VX900 HDMI DDC is driven by a dedicated MMIO I2C controller
++ * (0xC0B4 data, 0xC0B8 command/status, 0xC0C4 config, gated by 0xC000[0]),
++ * reverse engineered from the VBIOS I2C engine at ROM 0xBA55.  It is exposed
++ * to the X server as a normal I2C bus by overriding I2CWriteRead so that
++ * xf86OutputGetEDID() can read EDID through it.
++ */
++
++/*
++ * Poll the command/status register.
++ *
++ * The VBIOS poll routines (0xB9DA/0xB9F6/0xB9E8) treat the masked command
++ * bits as "operation in progress" and succeed once they read back CLEAR;
++ * the inverted variant (0xBA04) succeeds once its bit reads back SET.
++ *
++ *   wantSet == FALSE: wait until (status & mask) == 0   (transfer complete)
++ *   wantSet == TRUE : wait until (status & mask) != 0   (data ready)
++ */
++static Bool
++viaHDMII2CWait(ScrnInfoPtr pScrn, CARD32 mask, Bool wantSet)
++{
++    VIAPtr pVia = VIAPTR(pScrn);
++    int i;
++
++    for (i = 0; i < 400; i++) {
++        CARD32 status = VIAGETREG(VIA_HDMI_I2C_REG_CMD);
++
++        if (wantSet) {
++            if (status & mask) {
++                return TRUE;
++            }
++        } else {
++            if (!(status & mask)) {
++                return TRUE;
++            }
++        }
++        usleep(10);
++    }
++
++    return FALSE;
++}
++
++static void
++viaHDMII2CSetTxByte(VIAPtr pVia, CARD8 value)
++{
++    VIASETREGMASK(VIA_HDMI_I2C_REG_DATA,
++                  ((CARD32) value) << VIA_HDMI_I2C_TX_SHIFT,
++                  VIA_HDMI_I2C_TX_MASK);
++}
++
++static Bool
++viaHDMII2CSendByte(ScrnInfoPtr pScrn, CARD8 value)
++{
++    VIAPtr pVia = VIAPTR(pScrn);
++
++    viaHDMII2CSetTxByte(pVia, value);
++    VIASETREG(VIA_HDMI_I2C_REG_CMD, VIA_HDMI_I2C_CMD_XFER);
++    /* Wait for the byte-transfer-in-progress bit to clear. */
++    return viaHDMII2CWait(pScrn, VIA_HDMI_I2C_STAT_BYTE_DONE, FALSE);
++}
++
++static Bool
++viaHDMII2CStart(ScrnInfoPtr pScrn)
++{
++    VIAPtr pVia = VIAPTR(pScrn);
++
++    VIASETREG(VIA_HDMI_I2C_REG_CMD, VIA_HDMI_I2C_CMD_START_PREP);
++    VIASETREG(VIA_HDMI_I2C_REG_CMD, VIA_HDMI_I2C_CMD_START);
++    /* Wait for the start-in-progress bits to clear. */
++    return viaHDMII2CWait(pScrn, VIA_HDMI_I2C_STAT_START_DONE, FALSE);
++}
++
++/*
++ * I2CWriteRead callback: perform a combined write-then-read transaction on
++ * the hardware DDC master.  Mirrors the VBIOS 0xBA55 sequence.
++ */
++static Bool
++viaHDMII2CWriteRead(I2CDevPtr d,
++                    I2CByte *WriteBuffer, int nWrite,
++                    I2CByte *ReadBuffer, int nRead)
++{
++    ScrnInfoPtr pScrn = (ScrnInfoPtr) d->pI2CBus->DriverPrivate.ptr;
++    VIAPtr pVia = VIAPTR(pScrn);
++    CARD32 savedEnable;
++    const char *phase = "init";
++    Bool ok = FALSE;
++    int i = 0;
++
++    /* Enable the DDC engine (0xC000[0]), remembering its previous state. */
++    savedEnable = VIAGETREG(VIA_HDMI_I2C_REG_ENABLE);
++    VIASETREGMASK(VIA_HDMI_I2C_REG_ENABLE,
++                  VIA_HDMI_I2C_ENABLE, VIA_HDMI_I2C_ENABLE);
++
++    /* Clock / prescale configuration. */
++    VIASETREGMASK(VIA_HDMI_I2C_REG_CFG,
++                  VIA_HDMI_I2C_CFG_VALUE, VIA_HDMI_I2C_CFG_MASK);
++
++    VIASETREG(VIA_HDMI_I2C_REG_CMD, VIA_HDMI_I2C_CMD_INIT);
++
++    xf86DrvMsg(pScrn->scrnIndex, X_INFO,
++                "HDMI DDC start: CMD=0x%08x CFG=0x%08x EN=0x%08x "
++                "(nWrite=%d nRead=%d)\n",
++                (unsigned) VIAGETREG(VIA_HDMI_I2C_REG_CMD),
++                (unsigned) VIAGETREG(VIA_HDMI_I2C_REG_CFG),
++                (unsigned) VIAGETREG(VIA_HDMI_I2C_REG_ENABLE),
++                nWrite, nRead);
++
++    if (nWrite > 0) {
++        phase = "write-start";
++        if (!viaHDMII2CStart(pScrn)) {
++            goto stop;
++        }
++        /* Slave address, write direction. */
++        phase = "write-addr";
++        if (!viaHDMII2CSendByte(pScrn, d->SlaveAddr & 0xFE)) {
++            goto stop;
++        }
++        phase = "write-data";
++        for (i = 0; i < nWrite; i++) {
++            if (!viaHDMII2CSendByte(pScrn, WriteBuffer[i])) {
++                goto stop;
++            }
++        }
++    }
++
++    if (nRead > 0) {
++        /* (Repeated) start and slave address, read direction. */
++        phase = "read-start";
++        if (!viaHDMII2CStart(pScrn)) {
++            goto stop;
++        }
++        phase = "read-addr";
++        if (!viaHDMII2CSendByte(pScrn, d->SlaveAddr | 0x01)) {
++            goto stop;
++        }
++        phase = "read-data";
++        for (i = 0; i < nRead; i++) {
++            VIASETREG(VIA_HDMI_I2C_REG_CMD, VIA_HDMI_I2C_CMD_XFER);
++            /* Transfer complete (in-progress bit clears) ... */
++            if (!viaHDMII2CWait(pScrn, VIA_HDMI_I2C_STAT_BYTE_DONE, FALSE)) {
++                goto stop;
++            }
++            /* ... then wait for the received byte to be latched. */
++            if (!viaHDMII2CWait(pScrn, VIA_HDMI_I2C_STAT_BUSY, TRUE)) {
++                goto stop;
++            }
++            ReadBuffer[i] = (VIAGETREG(VIA_HDMI_I2C_REG_DATA) &
++                             VIA_HDMI_I2C_RX_MASK) >> VIA_HDMI_I2C_RX_SHIFT;
++
++            /* Acknowledge all but the final byte to continue the burst. */
++            if (i < (nRead - 1)) {
++                VIASETREGMASK(VIA_HDMI_I2C_REG_CMD, 0, VIA_HDMI_I2C_STAT_BUSY);
++            }
++        }
++    }
++
++    ok = TRUE;
++
++stop:
++    if (!ok) {
++        xf86DrvMsg(pScrn->scrnIndex, X_WARNING,
++                    "HDMI DDC stalled at '%s' (i=%d): CMD=0x%08x DATA=0x%08x\n",
++                    phase, i,
++                    (unsigned) VIAGETREG(VIA_HDMI_I2C_REG_CMD),
++                    (unsigned) VIAGETREG(VIA_HDMI_I2C_REG_DATA));
++    }
++
++    /* Issue a STOP condition regardless of success. */
++    VIASETREGMASK(VIA_HDMI_I2C_REG_CMD, 0, VIA_HDMI_I2C_STAT_BUSY);
++    VIASETREG(VIA_HDMI_I2C_REG_CMD, VIA_HDMI_I2C_CMD_STOP_PREP);
++    VIASETREG(VIA_HDMI_I2C_REG_CMD, VIA_HDMI_I2C_CMD_STOP);
++    viaHDMII2CWait(pScrn, VIA_HDMI_I2C_STAT_STOP_DONE, FALSE);
++
++    /* Restore the engine enable bit to its previous state. */
++    VIASETREGMASK(VIA_HDMI_I2C_REG_ENABLE, savedEnable, VIA_HDMI_I2C_ENABLE);
++
++    return ok;
++}
++
++/*
++ * Create the hardware DDC I2C bus for the HDMI port.
++ */
++static char strHDMIDDCBus[] = "HDMI DDC";
++
++static I2CBusPtr
++viaHDMII2CBusInit(ScrnInfoPtr pScrn)
++{
++    I2CBusPtr pI2CBus;
++
++    pI2CBus = xf86CreateI2CBusRec();
++    if (!pI2CBus) {
++        xf86DrvMsg(pScrn->scrnIndex, X_ERROR,
++                    "Failed to create the HDMI DDC I2C bus.\n");
++        return NULL;
++    }
++
++    pI2CBus->BusName = strHDMIDDCBus;
++    pI2CBus->scrnIndex = pScrn->scrnIndex;
++    pI2CBus->DriverPrivate.ptr = pScrn;
++    pI2CBus->I2CWriteRead = viaHDMII2CWriteRead;
++
++    if (!xf86I2CBusInit(pI2CBus)) {
++        xf86DestroyI2CBusRec(pI2CBus, TRUE, FALSE);
++        xf86DrvMsg(pScrn->scrnIndex, X_ERROR,
++                    "Failed to initialize the HDMI DDC I2C bus.\n");
++        return NULL;
++    }
++
++    /* xf86I2CBusInit may install a default bit-banging I2CWriteRead; make
++     * sure our hardware implementation is the one that gets used. */
++    pI2CBus->I2CWriteRead = viaHDMII2CWriteRead;
++
++    return pI2CBus;
++}
++
++/*
++ * Read a 128-byte EDID block directly through the hardware DDC master.
++ * Block 0 is the base EDID; higher blocks are extensions.  Returns TRUE on
++ * success.  This intentionally bypasses xf86I2CProbeAddress() and the default
++ * bit-banging algorithm (this bus provides only a hardware I2CWriteRead).
++ */
++static Bool
++viaHDMIReadEDIDBlock(ScrnInfoPtr pScrn, I2CBusPtr pI2CBus,
++                     int block, unsigned char *buf)
++{
++    I2CDevRec dev;
++    I2CByte offset;
++
++    if (!pI2CBus) {
++        return FALSE;
++    }
++
++    memset(&dev, 0, sizeof(dev));
++    dev.DevName = strHDMIDDCBus;
++    dev.SlaveAddr = 0xA0;
++    dev.pI2CBus = pI2CBus;
++    dev.BitTimeout = pI2CBus->BitTimeout;
++    dev.ByteTimeout = pI2CBus->ByteTimeout;
++    dev.AcknTimeout = pI2CBus->AcknTimeout;
++    dev.StartTimeout = pI2CBus->StartTimeout;
++
++    offset = (I2CByte) (block * 128);
++    return xf86I2CWriteRead(&dev, &offset, 1, buf, 128);
++}
++
++/*
++ * Best effort probe of the attached sink's CEA-861 extension for the HDMI
++ * Vendor Specific Data Block (IEEE OUI 00-0C-03).  Returns TRUE when the sink
++ * advertises HDMI, FALSE for a DVI-only sink or on any read failure.  The
++ * result only affects reporting; the video path is identical either way.
++ */
++static Bool
++viaHDMIDetectSink(ScrnInfoPtr pScrn, I2CBusPtr pI2CBus,
++                  const unsigned char *baseBlock)
++{
++    unsigned char block[128];
++    unsigned char tag, dtdOffset;
++    int i;
++    Bool isHDMI = FALSE;
++
++    /* EDID byte 0x7E holds the number of extension blocks. */
++    if (baseBlock[0x7E] == 0) {
++        return FALSE;
++    }
++
++    if (!viaHDMIReadEDIDBlock(pScrn, pI2CBus, 1, block)) {
++        return FALSE;
++    }
++
++    /* Only a CEA-861 extension (tag 0x02) carries the HDMI VSDB. */
++    if (block[0] != 0x02) {
++        return FALSE;
++    }
++
++    /* block[2] is the offset to the detailed timing descriptors, i.e. the
++     * end of the data block collection which starts at byte 4. */
++    dtdOffset = block[2];
++    if ((dtdOffset < 4) || (dtdOffset > 127)) {
++        return FALSE;
++    }
++
++    i = 4;
++    while (i < dtdOffset) {
++        unsigned char length = block[i] & 0x1F;
++        tag = (block[i] >> 5) & 0x07;
++
++        /* Tag 3 == Vendor Specific Data Block. */
++        if ((tag == 3) && (length >= 3) && ((i + 3) < dtdOffset)) {
++            if ((block[i + 1] == 0x03) &&
++                (block[i + 2] == 0x0C) &&
++                (block[i + 3] == 0x00)) {
++                isHDMI = TRUE;
++                break;
++            }
++        }
++
++        i += length + 1;
++    }
++
++    return isHDMI;
++}
++
++static void
++via_hdmi_create_resources(xf86OutputPtr output)
++{
++}
++
++static void
++via_hdmi_dpms(xf86OutputPtr output, int mode)
++{
++    ScrnInfoPtr pScrn = output->scrn;
++    CARD32 dotClock = 0;
++
++    DEBUG(xf86DrvMsg(pScrn->scrnIndex, X_INFO,
++                        "Entered %s.\n", __func__));
++
++    if (output->crtc && output->crtc->mode.Clock) {
++        dotClock = output->crtc->mode.Clock * 1000;
++    }
++
++    switch (mode) {
++    case DPMSModeOn:
++        viaHDMISetPHYState(pScrn, TRUE, dotClock);
++        viaExtTMDSEnableIOPads(pScrn, 0x03);
++        break;
++    case DPMSModeStandby:
++    case DPMSModeSuspend:
++    case DPMSModeOff:
++        viaExtTMDSEnableIOPads(pScrn, 0x00);
++        viaHDMISetPHYState(pScrn, FALSE, 0);
++        break;
++    default:
++        break;
++    }
++
++    DEBUG(xf86DrvMsg(pScrn->scrnIndex, X_INFO,
++                        "Exiting %s.\n", __func__));
++}
++
++/*
++ * Capture the HDMI/DisplayPort PHY register state.  Called (via
++ * VIAEnterVT_internal) before the X server programs its first mode, so it
++ * records the console / VBIOS configuration that must be put back on exit.
++ */
++static void
++via_hdmi_save(xf86OutputPtr output)
++{
++    ScrnInfoPtr pScrn = output->scrn;
++    VIAPtr pVia = VIAPTR(pScrn);
++    VIAHDMIPtr pVIAHDMI = (VIAHDMIPtr) output->driver_private;
++
++    DEBUG(xf86DrvMsg(pScrn->scrnIndex, X_INFO,
++                        "Entered %s.\n", __func__));
++
++    pVIAHDMI->savedControl = VIAGETREG(VIA_HDMI_REG_CONTROL);
++    pVIAHDMI->savedPhyCfg  = VIAGETREG(VIA_HDMI_REG_PHY_CFG);
++    pVIAHDMI->savedClock   = VIAGETREG(VIA_HDMI_REG_CLOCK);
++    pVIAHDMI->savedOutput  = VIAGETREG(VIA_HDMI_REG_OUTPUT);
++    pVIAHDMI->savedPattern = VIAGETREG(VIA_HDMI_REG_PATTERN);
++    pVIAHDMI->regsSaved = TRUE;
++
++    DEBUG(xf86DrvMsg(pScrn->scrnIndex, X_INFO,
++                        "Exiting %s.\n", __func__));
++}
++
++/*
++ * Restore the HDMI/DisplayPort PHY register state saved by via_hdmi_save().
++ * Called on server exit / VT switch so the Linux console video mode comes
++ * back on the HDMI port.
++ */
++static void
++via_hdmi_restore(xf86OutputPtr output)
++{
++    ScrnInfoPtr pScrn = output->scrn;
++    VIAPtr pVia = VIAPTR(pScrn);
++    VIAHDMIPtr pVIAHDMI = (VIAHDMIPtr) output->driver_private;
++
++    DEBUG(xf86DrvMsg(pScrn->scrnIndex, X_INFO,
++                        "Entered %s.\n", __func__));
++
++    if (!pVIAHDMI->regsSaved) {
++        return;
++    }
++
++    VIASETREG(VIA_HDMI_REG_PHY_CFG, pVIAHDMI->savedPhyCfg);
++    VIASETREG(VIA_HDMI_REG_CLOCK,   pVIAHDMI->savedClock);
++    VIASETREG(VIA_HDMI_REG_PATTERN, pVIAHDMI->savedPattern);
++    VIASETREG(VIA_HDMI_REG_OUTPUT,  pVIAHDMI->savedOutput);
++    VIASETREG(VIA_HDMI_REG_CONTROL, pVIAHDMI->savedControl);
++
++    DEBUG(xf86DrvMsg(pScrn->scrnIndex, X_INFO,
++                        "Exiting %s.\n", __func__));
++}
++
++static int
++via_hdmi_mode_valid(xf86OutputPtr output, DisplayModePtr pMode)
++{
++    ScrnInfoPtr pScrn = output->scrn;
++
++    if (!ViaModeDotClockTranslate(pScrn, pMode)) {
++        return MODE_NOCLOCK;
++    }
++
++    return MODE_OK;
++}
++
++static Bool
++via_hdmi_mode_fixup(xf86OutputPtr output, DisplayModePtr mode,
++                    DisplayModePtr adjusted_mode)
++{
++    return TRUE;
++}
++
++static void
++via_hdmi_prepare(xf86OutputPtr output)
++{
++    ScrnInfoPtr pScrn = output->scrn;
++
++    DEBUG(xf86DrvMsg(pScrn->scrnIndex, X_INFO,
++                        "Entered %s.\n", __func__));
++
++    /* Blank the output while the CRTC timing is reprogrammed. */
++    viaExtTMDSEnableIOPads(pScrn, 0x00);
++    viaHDMISetPHYState(pScrn, FALSE, 0);
++
++    DEBUG(xf86DrvMsg(pScrn->scrnIndex, X_INFO,
++                        "Exiting %s.\n", __func__));
++}
++
++static void
++via_hdmi_commit(xf86OutputPtr output)
++{
++    ScrnInfoPtr pScrn = output->scrn;
++    CARD32 dotClock = 0;
++
++    DEBUG(xf86DrvMsg(pScrn->scrnIndex, X_INFO,
++                        "Entered %s.\n", __func__));
++
++    if (output->crtc && output->crtc->mode.Clock) {
++        dotClock = output->crtc->mode.Clock * 1000;
++    }
++
++    viaHDMISetPHYState(pScrn, TRUE, dotClock);
++    viaExtTMDSEnableIOPads(pScrn, 0x03);
++
++    DEBUG(xf86DrvMsg(pScrn->scrnIndex, X_INFO,
++                        "Exiting %s.\n", __func__));
++}
++
++static void
++via_hdmi_mode_set(xf86OutputPtr output, DisplayModePtr mode,
++                  DisplayModePtr adjusted_mode)
++{
++    ScrnInfoPtr pScrn = output->scrn;
++    vgaHWPtr hwp = VGAHWPTR(pScrn);
++    CARD8 syncPolarity = 0x00;
++
++    DEBUG(xf86DrvMsg(pScrn->scrnIndex, X_INFO,
++                        "Entered %s.\n", __func__));
++
++    if (!output->crtc) {
++        goto exit;
++    }
++
++    drmmode_crtc_private_ptr iga = output->crtc->driver_private;
++
++    /* Route the digital pixel data (integrated TMDS on DVP1) to the display
++     * controller driving this output. */
++    viaExtTMDSSetDisplaySource(pScrn, iga->index & 0x01);
++    viaTMDSSetDisplaySource(pScrn, iga->index & 0x01);
++
++    /* Sync polarity: 3X5.97[6]=VSYNC, [5]=HSYNC (1 == negative). */
++    if (adjusted_mode->Flags & V_NHSYNC) {
++        syncPolarity |= BIT(0);
++    }
++    if (adjusted_mode->Flags & V_NVSYNC) {
++        syncPolarity |= BIT(1);
++    }
++    viaTMDSSetSyncPolarity(pScrn, syncPolarity);
++
++    /* Clear any stale DVI sense interrupt (3C5.2B[6], RW1C). */
++    ViaSeqMask(hwp, 0x2B, 0x40, 0x40);
++
++    /* Set the TMDS clock range for this pixel clock (PHY still off; it is
++     * powered up in via_hdmi_commit). */
++    viaExtTMDSSetClockDriveStrength(pScrn, 0x03);
++    viaExtTMDSSetDataDriveStrength(pScrn, 0x03);
++
++exit:
++    DEBUG(xf86DrvMsg(pScrn->scrnIndex, X_INFO,
++                        "Exiting %s.\n", __func__));
++}
++
++static xf86OutputStatus
++via_hdmi_detect(xf86OutputPtr output)
++{
++    ScrnInfoPtr pScrn = output->scrn;
++    VIAHDMIPtr pVIAHDMI = (VIAHDMIPtr) output->driver_private;
++    xf86OutputStatus status = XF86OutputStatusDisconnected;
++    xf86MonPtr pMon = NULL;
++    unsigned char *edid;
++
++    DEBUG(xf86DrvMsg(pScrn->scrnIndex, X_INFO,
++                        "Entered %s.\n", __func__));
++
++    if (!pVIAHDMI->pDDCBus) {
++        xf86DrvMsg(pScrn->scrnIndex, X_PROBED,
++                    "HDMI DDC bus not available.\n");
++        return status;
++    }
++
++    /* Read the base EDID block through the hardware DDC master.  The block
++     * is handed to xf86InterpretEDID(), which takes ownership of it. */
++    edid = xnfalloc(128);
++    if (!viaHDMIReadEDIDBlock(pScrn, pVIAHDMI->pDDCBus, 0, edid)) {
++        free(edid);
++        xf86DrvMsg(pScrn->scrnIndex, X_PROBED,
++                    "Could not read EDID from the HDMI DDC bus.\n");
++        return status;
++    }
++
++    pMon = xf86InterpretEDID(pScrn->scrnIndex, edid);
++    if (pMon && DIGITAL(pMon->features.input_type)) {
++        status = XF86OutputStatusConnected;
++        pVIAHDMI->isHDMISink = viaHDMIDetectSink(pScrn, pVIAHDMI->pDDCBus,
++                                                 edid);
++        xf86OutputSetEDID(output, pMon);
++        xf86DrvMsg(pScrn->scrnIndex, X_PROBED,
++                    "Detected a %s display connected to HDMI.\n",
++                    pVIAHDMI->isHDMISink ? "HDMI" : "DVI");
++    } else {
++        if (!pMon) {
++            free(edid);
++        }
++        xf86DrvMsg(pScrn->scrnIndex, X_PROBED,
++                    "No valid digital EDID on the HDMI DDC bus.\n");
++    }
++
++    DEBUG(xf86DrvMsg(pScrn->scrnIndex, X_INFO,
++                        "Exiting %s.\n", __func__));
++    return status;
++}
++
++static void
++via_hdmi_destroy(xf86OutputPtr output)
++{
++    if (output->driver_private) {
++        free(output->driver_private);
++    }
++    output->driver_private = NULL;
++}
++
++static const xf86OutputFuncsRec via_hdmi_funcs = {
++    .create_resources   = via_hdmi_create_resources,
++    .dpms               = via_hdmi_dpms,
++    .save               = via_hdmi_save,
++    .restore            = via_hdmi_restore,
++    .mode_valid         = via_hdmi_mode_valid,
++    .mode_fixup         = via_hdmi_mode_fixup,
++    .prepare            = via_hdmi_prepare,
++    .commit             = via_hdmi_commit,
++    .mode_set           = via_hdmi_mode_set,
++    .detect             = via_hdmi_detect,
++    .get_modes          = xf86OutputGetEDIDModes,
++    .destroy            = via_hdmi_destroy,
++};
++
++/*
++ * Probe (pre-initialization detection) of the VX900 / VX855 integrated HDMI
++ * transmitter using the SR13 pin strapping, mirroring the integrated TMDS
++ * strapping semantics.  viaTMDSProbe() does not cover these chipsets, so the
++ * digital transmitter that drives the HDMI connector would otherwise never be
++ * registered.
++ */
++void
++viaHDMIProbe(ScrnInfoPtr pScrn)
++{
++    vgaHWPtr hwp = VGAHWPTR(pScrn);
++    VIAPtr pVia = VIAPTR(pScrn);
++    VIADisplayPtr pVIADisplay = pVia->pVIADisplay;
++    CARD8 sr13, sr5a;
++
++    DEBUG(xf86DrvMsg(pScrn->scrnIndex, X_INFO,
++                        "Entered %s.\n", __func__));
++
++    pVIADisplay->intHDMIPresence = FALSE;
++    pVIADisplay->intHDMIDIPort = VIA_DI_PORT_NONE;
++    pVIADisplay->intHDMII2CBus = VIA_I2C_NONE;
++
++    switch (pVia->Chipset) {
++    case VIA_VX855:
++    case VIA_VX900:
++        sr5a = hwp->readSeq(hwp, 0x5A);
++
++        /* SR5A[0] = 1 exposes the alternative pin strapping in SR13. */
++        ViaSeqMask(hwp, 0x5A, BIT(0), BIT(0));
++        sr13 = hwp->readSeq(hwp, 0x13);
++        hwp->writeSeq(hwp, 0x5A, sr5a);
++
++        /* 3C5.13[7:6] - Integrated LVDS / DVI Mode Select
++         *               01: DVI + LVDS2, 11: DVI only.
++         * Board pin strapping is an unreliable indicator of a physical
++         * HDMI connector (many VX900 boards strap for LVDS yet route the
++         * digital transmitter to an HDMI port). The IGP always provides
++         * the transmitter, so register the HDMI output unconditionally
++         * and let runtime DDC / EDID probing in via_hdmi_detect() decide
++         * whether a display is actually attached, the same way the analog
++         * VGA output is always registered. */
++        pVIADisplay->intHDMIPresence = TRUE;
++        pVIADisplay->intHDMIDIPort = VIA_DI_PORT_DVP1;
++        /* HDMI uses its own dedicated hardware DDC master, not one of the
++         * shared SR-GPIO bit-banging buses, so nothing is claimed here. */
++        pVIADisplay->intHDMII2CBus = VIA_I2C_NONE;
++        xf86DrvMsg(pScrn->scrnIndex, X_INFO,
++                    "Registering integrated HDMI transmitter "
++                    "(SR13: 0x%02X, strapping %s DVI/HDMI).\n",
++                    sr13, (sr13 & BIT(6)) ? "indicates" : "does not indicate");
++        break;
++    default:
++        break;
++    }
++
++    DEBUG(xf86DrvMsg(pScrn->scrnIndex, X_INFO,
++                        "Exiting %s.\n", __func__));
++}
++
++void
++viaHDMIInit(ScrnInfoPtr pScrn)
++{
++    xf86OutputPtr output;
++    VIAPtr pVia = VIAPTR(pScrn);
++    VIADisplayPtr pVIADisplay = pVia->pVIADisplay;
++    VIAHDMIPtr pVIAHDMI;
++    char outputNameBuffer[32];
++
++    DEBUG(xf86DrvMsg(pScrn->scrnIndex, X_INFO,
++                        "Entered %s.\n", __func__));
++
++    if (!pVIADisplay->intHDMIPresence) {
++        goto exit;
++    }
++
++    pVIAHDMI = (VIAHDMIPtr) xnfcalloc(1, sizeof(VIAHDMIRec));
++    if (!pVIAHDMI) {
++        DEBUG(xf86DrvMsg(pScrn->scrnIndex, X_ERROR,
++                            "Failed to allocate storage for the "
++                            "integrated HDMI transmitter.\n"));
++        goto exit;
++    }
++
++    sprintf(outputNameBuffer, "HDMI-%d", (pVIADisplay->numberDVI + 1));
++    output = xf86OutputCreate(pScrn, &via_hdmi_funcs, outputNameBuffer);
++    if (!output) {
++        free(pVIAHDMI);
++        DEBUG(xf86DrvMsg(pScrn->scrnIndex, X_ERROR,
++                            "Failed to create X Server display output "
++                            "for the integrated HDMI transmitter.\n"));
++        goto exit;
++    }
++
++    /* Track it as a DVI-class connector for xrandr naming purposes. */
++    pVIADisplay->numberDVI++;
++
++    pVIAHDMI->diPort = pVIADisplay->intHDMIDIPort;
++    pVIAHDMI->i2cBus = pVIADisplay->intHDMII2CBus;
++    pVIAHDMI->isHDMISink = FALSE;
++
++    /* Bring up the dedicated hardware DDC bus for EDID retrieval. */
++    pVIAHDMI->pDDCBus = viaHDMII2CBusInit(pScrn);
++
++    output->driver_private = pVIAHDMI;
++
++    /* Either display controller can drive HDMI. */
++    output->possible_crtcs = BIT(1) | BIT(0);
++    output->possible_clones = 0;
++    output->interlaceAllowed = FALSE;
++    output->doubleScanAllowed = FALSE;
++
++exit:
++    DEBUG(xf86DrvMsg(pScrn->scrnIndex, X_INFO,
++                        "Exiting %s.\n", __func__));
++}
+diff -urN xf86-video-openchrome.git/src/via_outputs.c xf86-video-openchrome.git.new/src/via_outputs.c
+--- xf86-video-openchrome.git/src/via_outputs.c	2000-01-01 01:00:00.000000000 +0100
++++ xf86-video-openchrome.git.new/src/via_outputs.c	2026-07-13 15:28:26.235383112 +0200
+@@ -61,6 +61,10 @@
+     viaExtTMDSProbe(pScrn);
+     viaTMDSProbe(pScrn);
+ 
++    /* Integrated HDMI (VX855 / VX900). Probed after the TMDS transmitters
++     * so external DVI chips get first claim on the shared I2C buses. */
++    viaHDMIProbe(pScrn);
++
+     viaFPProbe(pScrn);
+ 
+     viaAnalogProbe(pScrn);
+@@ -73,6 +77,9 @@
+     viaExtTMDSInit(pScrn);
+     viaTMDSInit(pScrn);
+ 
++    /* HDMI */
++    viaHDMIInit(pScrn);
++
+     /* VGA */
+     viaAnalogInit(pScrn);
+ 
+diff -urN xf86-video-openchrome.git/src/via_ums.h xf86-video-openchrome.git.new/src/via_ums.h
+--- xf86-video-openchrome.git/src/via_ums.h	2000-01-01 01:00:00.000000000 +0100
++++ xf86-video-openchrome.git.new/src/via_ums.h	2026-07-13 17:17:14.085390181 +0200
+@@ -179,6 +179,11 @@
+     CARD8       intTMDSDIPort;
+     CARD8       intTMDSI2CBus;
+ 
++    /* VX900 / VX855 integrated HDMI (DisplayPort/HDMI combo PHY). */
++    Bool        intHDMIPresence;
++    CARD8       intHDMIDIPort;
++    CARD8       intHDMII2CBus;
++
+     Bool        extTMDSPresence;
+     CARD8       extTMDSDIPort;
+     CARD8       extTMDSI2CBus;
+@@ -302,6 +307,28 @@
+     CARD8       i2cBus;
+ } VIATMDSRec, *VIATMDSPtr;
+ 
++typedef struct _VIAHDMI {
++    uint32_t    diPort;
++    CARD8       i2cBus;
++    /* TRUE when the attached sink advertised HDMI support through the
++     * CEA-861 HDMI Vendor Specific Data Block (IEEE OUI 00-0C-03).
++     * FALSE means a plain DVI sink (still driven, DVI-compatible). */
++    Bool        isHDMISink;
++    /* Dedicated hardware I2C (DDC) bus for the HDMI port; the VX900 HDMI
++     * DDC is not reachable through the SR-GPIO bit-banging buses. */
++    I2CBusPtr   pDDCBus;
++
++    /* Saved HDMI/DisplayPort PHY MMIO register state, captured before the
++     * X server first programs a mode so the console (VT) HDMI output can be
++     * restored on server exit or VT switch. */
++    Bool        regsSaved;
++    CARD32      savedControl;
++    CARD32      savedPhyCfg;
++    CARD32      savedClock;
++    CARD32      savedOutput;
++    CARD32      savedPattern;
++} VIAHDMIRec, *VIAHDMIPtr;
++
+ typedef struct
+ {
+     CARD16 X;
+@@ -1618,6 +1645,11 @@
+ void viaTMDSInit(ScrnInfoPtr pScrn);
+ void viaExtTMDSInit(ScrnInfoPtr pScrn);
+ 
++/* via_hdmi.c */
++void viaHDMISetPHYState(ScrnInfoPtr pScrn, Bool enable, CARD32 dotClock);
++void viaHDMIProbe(ScrnInfoPtr pScrn);
++void viaHDMIInit(ScrnInfoPtr pScrn);
++
+ /*via_tv.c */
+ #ifdef HAVE_DEBUG
+ void ViaTVPrintRegs(ScrnInfoPtr pScrn);
