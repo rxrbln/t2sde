@@ -1,0 +1,212 @@
+# --- T2-COPYRIGHT-BEGIN ---
+# t2/package/*/xf86-video-openchrome/hotfix-cle266-hwcursor.patch
+# Copyright (C) 2026 The T2 SDE Project
+# SPDX-License-Identifier: GPL-2.0 or patched project license
+# --- T2-COPYRIGHT-END ---
+
+CLE266 / KM400? (UniChrome) hardware cursor not visible. The driver drove
+them through the Hardware Icon (HI) engine, but these chipsets use a
+earlier gen 32x32 two-color cursor engine.
+
+Restore support for CLE266 / KM400? monochrome cursor engine.
+
+Signed-off-by: René Rebe <rene@exactco.de>
+
+
++++ xf86-video-openchrome.git/src/via_driver.c
+@@ -1562,7 +1562,16 @@
+         switch (pVia->Chipset) {
+         case VIA_CLE266:
+         case VIA_KM400:
+-            flags = 0;
++            /* CLE266 and KM400 (UniChrome) use a dedicated 32x32 two-color
++             * cursor engine (registers 0x2D0-0x2E0) that does not support an
++             * ARGB cursor.  Request a monochrome source/mask cursor in the
++             * layout that engine expects. */
++            cursorWidth = cursorHeight = 32;
++            flags = HARDWARE_CURSOR_SOURCE_MASK_INTERLEAVE_32 |
++                    HARDWARE_CURSOR_AND_SOURCE_WITH_MASK |
++                    HARDWARE_CURSOR_TRUECOLOR_AT_8BPP |
++                    HARDWARE_CURSOR_INVERT_MASK |
++                    HARDWARE_CURSOR_BIT_ORDER_MSBFIRST;
+             break;
+         default:
+             flags = HARDWARE_CURSOR_AND_SOURCE_WITH_MASK |
+--- xf86-video-openchrome.git/src/via_eng_regs.h
++++ xf86-video-openchrome.git/src/via_eng_regs.h
+@@ -153,6 +153,16 @@
+ #define V1_STARTADDR_CR1        0x2F4
+ #define V1_STARTADDR_CR2        0x2F8
+ #define V1_STARTADDR_CR3        0x2FC
++
++/* CLE266 / KM400 (UniChrome) dedicated hardware cursor engine registers.
++ * These older chipsets do not use the Hardware Icon (HI) engine below;
++ * the cursor is a 32x32 two-color cursor driven through this register set. */
++#define VIA_REG_CURSOR_MODE	0x2D0	/* cursor base address + control[1:0] */
++#define VIA_REG_CURSOR_POS	0x2D4	/* (x << 16) | y */
++#define VIA_REG_CURSOR_ORG	0x2D8	/* (xoff << 16) | yoff */
++#define VIA_REG_CURSOR_BG	0x2DC	/* background color */
++#define VIA_REG_CURSOR_FG	0x2E0	/* foreground color */
++
+ /*CN400 and older Hardware Icon engine register*/
+ #define HI_POSSTART		0x208
+ #define HI_CENTEROFFSET		0x20C
+--- xf86-video-openchrome.git/src/via_display.c
++++ xf86-video-openchrome.git/src/via_display.c
+@@ -3405,13 +3405,32 @@
+     HARDWARE_CURSOR_TRUECOLOR_AT_8BPP flag is set.  In that case
+     and in all other bpps the fg and bg are in 8-8-8 RGB format.
+ */
++/*
++ * CLE266 and KM400? (UniChrome) use a dedicated 32x32 two-color hardware
++ * cursor engine (registers 0x2D0-0x2E0) rather than the Hardware Icon (HI)
++ * engine used by later chipsets.
++ */
++static Bool
++viaCursorOldEngine(VIAPtr pVia)
++{
++    return (pVia->Chipset == VIA_CLE266) || (pVia->Chipset == VIA_KM400);
++}
++
+ static void
+ iga_crtc_set_cursor_colors(xf86CrtcPtr crtc, int bg, int fg)
+ {
+     ScrnInfoPtr pScrn = crtc->scrn;
++    VIAPtr pVia = VIAPTR(pScrn);
+     drmmode_crtc_private_ptr iga = crtc->driver_private;
+     xf86CrtcConfigPtr xf86_config = XF86_CRTC_CONFIG_PTR(pScrn);
+ 
++    if (viaCursorOldEngine(pVia)) {
++        /* Two-color cursor: foreground / background come from registers. */
++        VIASETREG(VIA_REG_CURSOR_BG, bg);
++        VIASETREG(VIA_REG_CURSOR_FG, fg);
++        return;
++    }
++
+     if (xf86_config->cursor_fg)
+         return;
+ 
+@@ -3437,6 +3456,7 @@
+ iga_crtc_set_cursor_position(xf86CrtcPtr crtc, int x, int y)
+ {
+     ScrnInfoPtr pScrn = crtc->scrn;
++    VIAPtr pVia = VIAPTR(pScrn);
+     drmmode_crtc_private_ptr iga = crtc->driver_private;
+     unsigned xoff, yoff;
+ 
+@@ -3454,6 +3474,18 @@
+         yoff = 0;
+     }
+ 
++    if (viaCursorOldEngine(pVia)) {
++        CARD32 mode = VIAGETREG(VIA_REG_CURSOR_MODE);
++
++        /* Hide the cursor while moving it to avoid a ghosting hardware
++         * bug, then restore the previous enable state. */
++        VIASETREG(VIA_REG_CURSOR_MODE, mode & 0xFFFFFFFE);
++        VIASETREG(VIA_REG_CURSOR_ORG, ((xoff << 16) | (yoff & 0x003f)));
++        VIASETREG(VIA_REG_CURSOR_POS, ((x << 16) | (y & 0x07ff)));
++        VIASETREG(VIA_REG_CURSOR_MODE, mode);
++        return;
++    }
++
+     if (!iga->index) {
+         viaIGA1SetHIDisplayLocation(pScrn, x, xoff, y, yoff);
+     } else {
+@@ -3465,8 +3497,15 @@
+ iga_crtc_show_cursor(xf86CrtcPtr crtc)
+ {
+     ScrnInfoPtr pScrn = crtc->scrn;
++    VIAPtr pVia = VIAPTR(pScrn);
+     drmmode_crtc_private_ptr iga = crtc->driver_private;
+ 
++    if (viaCursorOldEngine(pVia)) {
++        VIASETREG(VIA_REG_CURSOR_MODE,
++                  VIAGETREG(VIA_REG_CURSOR_MODE) | 0x03);
++        return;
++    }
++
+     if (!iga->index) {
+         viaIGA1DisplayHI(pScrn, TRUE);
+     } else {
+@@ -3478,8 +3517,15 @@
+ iga_crtc_hide_cursor(xf86CrtcPtr crtc)
+ {
+     ScrnInfoPtr pScrn = crtc->scrn;
++    VIAPtr pVia = VIAPTR(pScrn);
+     drmmode_crtc_private_ptr iga = crtc->driver_private;
+ 
++    if (viaCursorOldEngine(pVia)) {
++        VIASETREG(VIA_REG_CURSOR_MODE,
++                  VIAGETREG(VIA_REG_CURSOR_MODE) & 0xFFFFFFFE);
++        return;
++    }
++
+     if (!iga->index) {
+         viaIGA1DisplayHI(pScrn, FALSE);
+     } else {
+@@ -3508,6 +3554,48 @@
+     }
+ }
+ 
++/*
++ * Upload a two-color cursor image for the CLE266 / KM400 UniChrome cursor
++ * engine.  The X server hands us a 32x32 two-plane (AND source + mask) image
++ * (256 bytes) which is copied verbatim into video RAM, and the cursor engine
++ * is pointed at it via VIA_REG_CURSOR_MODE (byte offset in the low address
++ * bits, cursor control in bits [1:0]).
++ */
++static void
++iga_crtc_load_cursor_image(xf86CrtcPtr crtc, CARD8 *image)
++{
++    ScrnInfoPtr pScrn = crtc->scrn;
++    VIAPtr pVia = VIAPTR(pScrn);
++    drmmode_crtc_private_ptr iga = crtc->driver_private;
++    void *dst;
++    /* 32x32, two planes (AND + XOR), 1 bit per pixel per plane. */
++    unsigned int monoSize = 2 * (32 / 8) * 32;
++    CARD32 mode;
++
++    if (!viaCursorOldEngine(pVia)) {
++        return;
++    }
++
++    if (monoSize > iga->cursor_bo->size) {
++        monoSize = iga->cursor_bo->size;
++    }
++
++    mode = VIAGETREG(VIA_REG_CURSOR_MODE);
++
++    /* Disable the cursor engine while its image is replaced. */
++    VIASETREG(VIA_REG_CURSOR_MODE, mode & 0xFFFFFFFE);
++
++    dst = drm_bo_map(pScrn, iga->cursor_bo);
++    memset(dst, 0x00, iga->cursor_bo->size);
++    memcpy(dst, image, monoSize);
++    drm_bo_unmap(pScrn, iga->cursor_bo);
++
++    /* Point the engine at the image (byte offset in video RAM) while
++     * preserving the current enable / control bits. */
++    VIASETREG(VIA_REG_CURSOR_MODE,
++              (iga->cursor_bo->offset & 0xFFFFFFFC) | (mode & 0x03));
++}
++
+ static void
+ iga_crtc_destroy(xf86CrtcPtr crtc)
+ {
+@@ -3533,6 +3621,7 @@
+     .set_cursor_position    = iga_crtc_set_cursor_position,
+     .show_cursor            = iga_crtc_show_cursor,
+     .hide_cursor            = iga_crtc_hide_cursor,
++    .load_cursor_image      = iga_crtc_load_cursor_image,
+     .load_cursor_argb       = iga_crtc_load_cursor_argb,
+ #if GET_ABI_MAJOR(ABI_VIDEODRV_VERSION) > 2
+     .set_origin             = iga1_crtc_set_origin,
+@@ -3846,6 +3935,7 @@
+     .set_cursor_position    = iga_crtc_set_cursor_position,
+     .show_cursor            = iga_crtc_show_cursor,
+     .hide_cursor            = iga_crtc_hide_cursor,
++    .load_cursor_image      = iga_crtc_load_cursor_image,
+     .load_cursor_argb       = iga_crtc_load_cursor_argb,
+ #if GET_ABI_MAJOR(ABI_VIDEODRV_VERSION) > 2
+     .set_origin             = iga2_crtc_set_origin,
