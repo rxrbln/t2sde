@@ -1,0 +1,88 @@
+double free or corruption (!prev)
+(EE)
+(EE) Backtrace:
+(EE) 0: /usr/X11R7/bin/X (xorg_backtrace+0x91) [0x6c7b8b]
+(EE) 1: /usr/X11R7/bin/X (0x47b000+0x251b9b) [0x6ccb9b]
+(EE) 2: linux-gate.so.1 (__kernel_rt_sigreturn+0x0) [0xb7ee8af0]
+(EE) 3: /lib/libc.so.6 (0xb798f000+0x8d747) [0xb7a1c747]
+(EE) 4: /lib/libc.so.6 (0xb798f000+0x8d7f8) [0xb7a1c7f8]
+(EE) 5: /lib/libc.so.6 (pthread_kill+0x1f) [0xb7a1c81b]
+(EE) 6: /lib/libc.so.6 (gsignal+0x27) [0xb79c9884]
+(EE) 7: /lib/libc.so.6 (abort+0x11) [0xb79cab7a]
+(EE) 8: /lib/libc.so.6 (0xb798f000+0x7dcb9) [0xb7a0ccb9]
+(EE) 9: /lib/libc.so.6 (0xb798f000+0x9878a) [0xb7a2778a]
+(EE) 10: /lib/libc.so.6 (0xb798f000+0x9a067) [0xb7a29067]
+(EE) 11: /lib/libc.so.6 (0xb798f000+0x9a256) [0xb7a29256]
+(EE) 12: /usr/X11R7/lib/xorg/modules/drivers/openchrome_drv.so (0xb7509000+0x2246b) [0xb752b46b]
+(EE) 13: /usr/X11R7/lib/xorg/modules/drivers/openchrome_drv.so (0xb7509000+0x1a1d1) [0xb75231d1]
+
+diff -urN xf86-video-openchrome.git/src/via_driver.c xf86-video-openchrome.git.new/src/via_driver.c
+--- xf86-video-openchrome.git/src/via_driver.c	2000-01-01 01:00:00.000000000 +0100
++++ xf86-video-openchrome.git.new/src/via_driver.c	2026-07-13 17:08:22.075267687 +0200
+@@ -1351,10 +1351,6 @@
+     if (pVia->directRenderingType != DRI_2)
+         viaExitVideo(pScrn);
+ 
+-    if (!pVia->NoAccel) {
+-        viaExitAccel(pScreen);
+-    }
+-
+     if (pVia->ShadowPtr) {
+         shadowRemove(pScreen, pScreen->GetScreenPixmap(pScreen));
+         free(pVia->ShadowPtr);
+@@ -1384,9 +1380,32 @@
+     for (i = 0; i < xf86_config->num_crtc; i++) {
+         xf86CrtcPtr crtc = xf86_config->crtc[i];
+         drmmode_crtc_private_ptr iga = crtc->driver_private;
++        struct buffer_object *cursor_bo = iga->cursor_bo;
++
++        if (cursor_bo) {
++            int j;
+ 
+-        if (iga->cursor_bo)
+-            drm_bo_free(pScrn, iga->cursor_bo);
++            drm_bo_free(pScrn, cursor_bo);
++
++            /* VIAScreenInit() allocates a single cursor buffer object and
++             * assigns it to every CRTC, so clear every reference to the one
++             * just freed to avoid a double free of the shared object. */
++            for (j = i; j < xf86_config->num_crtc; j++) {
++                drmmode_crtc_private_ptr iga2 =
++                        xf86_config->crtc[j]->driver_private;
++
++                if (iga2->cursor_bo == cursor_bo)
++                    iga2->cursor_bo = NULL;
++            }
++        }
++    }
++
++    /* Tear down acceleration only after the framebuffer and cursor buffer
++     * objects above have been released.  viaExitAccel() runs exaDriverFini(),
++     * which destroys the EXA offscreen manager; freeing those EXA-backed
++     * buffer objects afterwards would operate on a dead manager. */
++    if (!pVia->NoAccel) {
++        viaExitAccel(pScreen);
+     }
+ 
+ #ifdef HAVE_DRI
+diff -urN xf86-video-openchrome.git/src/via_memmgr.c xf86-video-openchrome.git.new/src/via_memmgr.c
+--- xf86-video-openchrome.git/src/via_memmgr.c	2000-01-01 01:00:00.000000000 +0100
++++ xf86-video-openchrome.git.new/src/via_memmgr.c	2026-07-13 16:52:16.884949254 +0200
+@@ -254,7 +254,16 @@
+                     ExaOffscreenArea *pArea =
+                                     (ExaOffscreenArea *)obj->handle;
+ 
+-                    exaOffscreenFree(pScrn->pScreen, pArea);
++                    /* During screen teardown viaExitAccel() runs
++                     * exaDriverFini() (which frees every offscreen area and
++                     * clears pVia->exaDriverPtr) before the framebuffer and
++                     * cursor buffer objects are released here.  Once EXA is
++                     * gone the area is already freed, so calling
++                     * exaOffscreenFree() would dereference a NULL EXA screen
++                     * private.  Only free while EXA is still alive. */
++                    if (pVia->exaDriverPtr) {
++                        exaOffscreenFree(pScrn->pScreen, pArea);
++                    }
+                 }
+ #ifdef HAVE_DRI
+             } else if (pVia->directRenderingType == DRI_1) {
