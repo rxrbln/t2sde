@@ -1,0 +1,60 @@
+# --- T2-COPYRIGHT-BEGIN ---
+# t2/package/*/xf86-video-sis/hotfix-12bit-stride-noaccel.patch
+# Copyright (C) 2026 The T2 SDE Project
+# SPDX-License-Identifier: GPL-2.0 or patched project license
+# --- T2-COPYRIGHT-END ---
+
+Disable acceleration when the screen stride exceeds the engine's 12 bit limit.
+
+The 1st generation 2D engine (5597/5598/6326) holds the source/destination
+pitch (BR(2)) and the blit width (BR(3)) in 12 bit fields, counted in bytes.
+sis_accel.h masks both to 16 bit, so a larger stride is silently truncated and
+the engine blits with a bogus pitch instead of failing - at depth 24 this
+corrupts every mode wider than 1365 pixels (1400, 1600, ...).
+
+Compute the screen pitch in SiSAccelInit() and fall back to software rendering
+when it does not fit. Xv keeps working (the XAA path still sets up the fb
+memory manager and only skips XAAInit), and DGA already NULL-checks the
+FillRect/BlitRect hooks that are left unset. The EXA Prepare hooks program the
+pitch per pixmap rather than from the screen pitch, so they get the same check
+next to their existing alignment checks.
+
+--- xf86-video-sis/src/sis_accel.h.orig
++++ xf86-video-sis/src/sis_accel.h
+@@ -46,6 +46,12 @@
+ 
+ #define BR(x) sisReg32MMIO[x]
+ 
++/* Source/destination pitch (BR(2)) and blit width (BR(3)) are 12 bit
++ * fields holding byte counts. Both are fed from the screen pitch, hence
++ * the largest pitch (in bytes) the engine can be programmed with.
++ */
++#define SIS_MAX_ACCEL_PITCH 4095
++
+ /* These are done using Memory Mapped IO, of the registers */
+ /*
+  * Modified for Sis by Xavier Ducoin (xavier@rd.lectra.fr)
+--- xf86-video-sis/src/sis_accel.c.orig
++++ xf86-video-sis/src/sis_accel.c
+@@ -662,6 +671,21 @@
+     pSiS->exa_scratch = NULL;
+ #endif
+ 
++    /* The engine's pitch and width registers are 12 bit wide; a screen
++     * pitch beyond that would be truncated silently and make the engine
++     * draw with a bogus stride.
++     */
++    if(!pSiS->NoAccel && pSiS->Chipset == PCI_CHIP_SIS6326) {
++       int pitch = pScrn->displayWidth * ((pScrn->bitsPerPixel + 7) / 8);
++
++       if(pitch > SIS_MAX_ACCEL_PITCH) {
++	  xf86DrvMsg(pScrn->scrnIndex, X_WARNING,
++		"Screen pitch of %d bytes exceeds engine limit of %d bytes, "
++		"disabling acceleration\n", pitch, SIS_MAX_ACCEL_PITCH);
++	  pSiS->NoAccel = TRUE;
++       }
++    }
++
+     if(!pSiS->NoAccel) {
+ #ifdef SIS_USE_XAA
+        if(!pSiS->useEXA) {
