@@ -1,0 +1,268 @@
+# --- T2-COPYRIGHT-BEGIN ---
+# t2/package/*/xf86-video-rendition/01-fix-accel-ucode-lockup.patch
+# Copyright (C) 2026 The T2 SDE Project
+# SPDX-License-Identifier: GPL-2.0 or patched project license
+# --- T2-COPYRIGHT-END ---
+
+Fix hardware lockup when the 2D acceleration microcode is loaded:
+
+- do not load the microcode during PreInit while the board is in VGA
+  text mode, and do not leave the RISC running across the SCLKPLL/
+  DRAMCTL/MODEREG reprogramming done by verite_setmode() - defer the
+  load to RENDITIONAccelXAAInit, after the native mode is set up
+- keep the RISC held after saving/restoring the ucode; v1k_flushicache
+  force-steps instructions and requires a held RISC
+- copy the ucode with explicit 32-bit MMIO accesses instead of memcpy,
+  which is documented to hang V2x00 boards on WC mappings
+- reserve the HW cursor memory after the 64k microcode block, so the
+  cursor image no longer overlaps the CS ucode context store area
+- restore and reinit the ucode on VT re-entry, hold the RISC before
+  the register restore on VT leave/server exit
+
+--- a/src/rendition.c
++++ b/src/rendition.c
+@@ -52,6 +52,7 @@
+ #include "vtypes.h"
+ #include "vboard.h"
+ #include "vmodes.h"
++#include "v1krisc.h"
+ #include "accel.h"
+ #include "vramdac.h"
+ #include "rendition_shadow.h"
+@@ -845,33 +846,22 @@
+     if (!pScreenInfo->chipset)
+         pScreenInfo->chipset = (char *)renditionChipsets[0].name;
+ 
+-    if(!xf86ReturnOptValBool(pRendition->Options, OPTION_SW_CURSOR,0)){
+-      if(!pRendition->board.rotate)
+-	/* Do preemtive things for HW cursor */
+-	RenditionHWCursorPreInit(pScreenInfo);
+-      else{
+-	xf86DrvMsg(pScreenInfo->scrnIndex, X_WARNING,
+-		   "Hardware cursor not supported on rotated screen\n");
+-	xf86DrvMsg(pScreenInfo->scrnIndex, X_INFO,
+-		   "Software cursor activated\n");
+-      }
+-    }
+-    else 
+-      xf86DrvMsg(pScreenInfo->scrnIndex, X_CONFIG,
+-		 "Software cursor selected\n");
+-
+-    /* Unmapping delayed until after micrcode loading */
+-      /****************************************/
+-      /* Reserve memory and load the microcode */
+-      /****************************************/
++      /*******************************************/
++      /* Reserve memory for the microcode.       */
++      /* The microcode itself is loaded and      */
++      /* started in ScreenInit, once the native  */
++      /* mode has been set up: poking the RISC   */
++      /* while the board is still in VGA text    */
++      /* mode, and leaving it running across the */
++      /* SCLKPLL/DRAMCTL reprogramming done by   */
++      /* verite_setmode(), locks up the chip.    */
++      /*******************************************/
+ #if USE_ACCEL
+     if (!xf86ReturnOptValBool(pRendition->Options, OPTION_NOACCEL, 1) &&
+ 	!pRendition->board.shadowfb) {
+ 	/* Load XAA if needed */
+ 	if (xf86LoadSubModule(pScreenInfo, "xaa")) {
+-	    renditionMapMem(pScreenInfo);
+   	    RENDITIONAccelPreInit (pScreenInfo);
+-	    renditionUnmapMem(pScreenInfo);
+ 	    pRendition->board.accel = TRUE;
+ 	} else
+ 	    xf86DrvMsg(pScreenInfo->scrnIndex, X_WARNING,
+@@ -885,6 +875,25 @@
+ 	       ("Skipping acceleration\n"));
+ #endif
+ 
++    /* The HW cursor memory must be reserved after the microcode area:
++     * the CS ucode stores its context in the first kilobyte of the
++     * reserved microcode block, which is where the cursor image would
++     * otherwise end up. */
++    if(!xf86ReturnOptValBool(pRendition->Options, OPTION_SW_CURSOR,0)){
++      if(!pRendition->board.rotate)
++	/* Do preemtive things for HW cursor */
++	RenditionHWCursorPreInit(pScreenInfo);
++      else{
++	xf86DrvMsg(pScreenInfo->scrnIndex, X_WARNING,
++		   "Hardware cursor not supported on rotated screen\n");
++	xf86DrvMsg(pScreenInfo->scrnIndex, X_INFO,
++		   "Software cursor activated\n");
++      }
++    }
++    else
++      xf86DrvMsg(pScreenInfo->scrnIndex, X_CONFIG,
++		 "Software cursor selected\n");
++
+ #ifdef DEBUG
+     ErrorF("PreInit OK...!!!!\n");
+     sleep(2);
+@@ -1031,6 +1040,15 @@
+     ErrorF("RENDITION: renditionLeaveGraphics() called\n");
+     sleep(1);
+ #endif
++
++#if USE_ACCEL
++    /* Hold the RISC before the clocks and DRAM timing are restored;
++     * restoring SCLKPLL/DRAMCTL under a running RISC locks up the
++     * hardware. */
++    if (pRendition->board.accel)
++	v1k_stop(pScreenInfo);
++#endif
++
+     verite_restore(pScreenInfo, &pRendition->saveRegs);
+ 
+     vgaHWProtect(pScreenInfo, TRUE);
+@@ -1322,6 +1340,7 @@
+ {
+     SCRN_INFO_PTR(arg);
+     vgaHWPtr pvgaHW = VGAHWPTR(pScreenInfo);
++    renditionPtr pRendition = RENDITIONPTR(pScreenInfo);
+ 
+ #ifdef DEBUG
+     ErrorF("RENDITION: renditionEnterVT() called\n");
+@@ -1337,6 +1356,16 @@
+     if (!renditionSetMode(pScreenInfo, pScreenInfo->currentMode))
+         return FALSE;
+ 
++#if USE_ACCEL
++    /* The text console has clobbered the low video memory; put the
++     * microcode back and reinitialize it before any accelerated
++     * operation touches the (now stale) RISC state. */
++    if (pRendition->board.accel) {
++	if (0 == RENDITIONLoadUcode(pScreenInfo))
++	    RENDITIONInitUcode(pScreenInfo);
++    }
++#endif
++
+     (*pScreenInfo->AdjustFrame)(ADJUST_FRAME_ARGS(pScreenInfo,
+ 						  pScreenInfo->frameX0, pScreenInfo->frameY0));
+ 
+--- a/src/accelX.c
++++ b/src/accelX.c
+@@ -116,11 +116,11 @@
+     ErrorF("RENDITION: RENDITIONAccelPreInit called\n");
+     sleep(1);
+ #endif
+-#if 1
+-    if (RENDITIONLoadUcode(pScreenInfo)){
+-      ErrorF ("RENDITION: AccelPreInit - Warning. Loading of microcode failed!!\n");
+-    }
+-#endif
++    /* Only reserve the video memory for the microcode here.  The
++     * microcode is loaded in RENDITIONAccelXAAInit, after the native
++     * mode has been set up -- starting the RISC while the board is in
++     * VGA text mode and leaving it running across the clock/DRAM
++     * reprogramming in verite_setmode() locks up the hardware. */
+     pRendition->board.fbOffset += MC_SIZE;
+ 
+ #ifdef DEBUG
+@@ -184,8 +184,6 @@
+         RENDITIONSubsequentTwoPointLine;
+ #endif /* #if 0 */
+ 
+-    verite_check_csucode(pScreenInfo);
+-
+     if (RENDITIONLoadUcode(pScreenInfo)) return;
+     if (RENDITIONInitUcode(pScreenInfo)) return;
+ 
+@@ -233,10 +231,13 @@
+ {
+     renditionPtr pRendition = RENDITIONPTR(pScreenInfo);
+     XAAInfoRecPtr pXAAinfo=pRendition->AccelInfoRec;
+-    
++
+ #ifdef DEBUG
+     ErrorF("RENDITION: RENDITIONAccelNone called\n");
+ #endif
++    if (NULL == pXAAinfo)
++	return;
++
+     pXAAinfo->Flags=0;
+     pXAAinfo->Sync=NULL;
+     pXAAinfo->SetupForScreenToScreenCopy=NULL;
+@@ -324,6 +325,8 @@
+     ErrorF("#InitUcode(2)# FIFOIN_FREE 0x%x -- \n",verite_in8(iob+FIFOINFREE));
+ #endif
+ 
++    waitfifo2(4, 1);
++
+     verite_out32(iob, 0);     /* a0 - ucode init command */
+     verite_out32(iob, 0);     /* a1 - 1024 byte context store area */
+     verite_out32(iob, 0);     /* a2 */
+@@ -383,25 +386,19 @@
+     v1k_stop(pScreenInfo);
+     memend=verite_in8(iob+MEMENDIAN);
+     verite_out8(iob+MEMENDIAN, MEMENDIAN_NO);
+-#if 1
+-    memcpy(pRendition->board.vmem_base, pRendition->board.ucode_buffer, MC_SIZE);
+-#else
+-    /* SlowBcopy has inverted src and dst */
+-    xf86SlowBcopy(pRendition->board.ucode_buffer,pRendition->board.vmem_base,MC_SIZE);
+-#endif
+-    verite_out8(iob+MEMENDIAN, memend);
++    /* Copy with explicit 32-bit MMIO accesses; a plain memcpy to the
++     * (possibly write-combined) frame buffer aperture is known to hang
++     * V2x00 boards.  The RISC is left in hold state here; it is
++     * restarted by RENDITIONInitUcode once the icache has been
++     * flushed. */
++    {
++	vu32 *src=(vu32 *)pRendition->board.ucode_buffer;
++	vu32 offset;
+ 
+-    v1k_flushicache(pScreenInfo);
+-    v1k_start(pScreenInfo, pRendition->board.csucode_base);
+-    verite_out32(iob, 0);     /* a0 - ucode init command */
+-    verite_out32(iob, 0);     /* a1 - 1024 byte context store area */
+-    verite_out32(iob, 0);     /* a2 */
+-    verite_out32(iob, pRendition->board.ucode_entry);
+-
+-#if 0
+-    verite_out32(iob+0x60, 129);
+-    ErrorF("RENDITION: PC at %x\n", verite_in32(iob+0x64));
+-#endif
++	for (offset=0; offset<MC_SIZE; offset+=sizeof(vu32))
++	    verite_write_memory32(pRendition->board.vmem_base, offset, *src++);
++    }
++    verite_out8(iob+MEMENDIAN, memend);
+ }
+ 
+ 
+@@ -422,14 +419,20 @@
+     memend=verite_in8(iob+MEMENDIAN);
+     verite_out8(iob+MEMENDIAN, MEMENDIAN_NO);
+ 
+-#if 1
+-    memcpy(pRendition->board.ucode_buffer, pRendition->board.vmem_base, MC_SIZE);
+-#else
+-    /* SlowBcopy has inverted src and dst */
+-    xf86SlowBcopy(pRendition->board.vmem_base,pRendition->board.ucode_buffer,MC_SIZE);
+-#endif
++    /* Copy with explicit 32-bit MMIO accesses, see
++     * RENDITIONRestoreUcode. */
++    {
++	vu32 *dst=(vu32 *)pRendition->board.ucode_buffer;
++	vu32 offset;
++
++	for (offset=0; offset<MC_SIZE; offset+=sizeof(vu32))
++	    *dst++=verite_read_memory32(pRendition->board.vmem_base, offset);
++    }
+     verite_out8(iob+MEMENDIAN, memend);
+-    v1k_continue(pScreenInfo);
++    /* Keep the RISC in hold state: RENDITIONInitUcode flushes the
++     * icache (which requires a held RISC) and starts it.  Letting it
++     * run here means it is still running when the mode is changed or
++     * the icache is flushed, either of which locks up the chip. */
+ }
+ 
+ 
+@@ -507,6 +510,7 @@
+     }
+ 
+     /* restart the ucode */
++    waitfifo(4);
+     verite_out32(iob, 0);     /* a0 - ucode init command */
+     verite_out32(iob, 0);     /* a1 - 1024 byte context store area */
+     verite_out32(iob, 0);     /* a2 */
