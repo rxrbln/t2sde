@@ -1,12 +1,18 @@
 # --- T2-COPYRIGHT-BEGIN ---
-# t2/package/*/xf86-video-rendition/02-accel-state.patch
+# t2/package/*/xf86-video-rendition/02-underclock.patch
 # Copyright (C) 2026 The T2 SDE Project
 # SPDX-License-Identifier: GPL-2.0 or patched project license
 # --- T2-COPYRIGHT-END ---
 
-New "Underclock_Mem" option that programs the V2x00 SClkPLL to lower
-mclk=100/sclk=45 clocks (M/N/P/P = 70/5/2/4, register 0xa4846) for
-testing marginal boards/memory.
+Saner V2x00 system/memory clocking:
+
+- run the documented 50 MHz system clock by default: the historic
+  SClkPLL value 0xa484d programs mclk=110/sclk=55 despite its comment
+  claiming sclk=50; use 0xa4846 (M/N/P/P = 70/5/2/4, VCO 200 MHz ->
+  mclk=100/sclk=50) instead
+- add a new "Underclock_Mem" option programming 0xa483f (63/5/2/4
+  -> mclk=90/sclk=45) for testing marginal boards/memory; evaluated
+  already during PreInit so the initial mode setup uses it
 
 --- a/src/vtypes.h
 +++ b/src/vtypes.h
@@ -56,26 +62,33 @@ testing marginal boards/memory.
      OPTION_ROTATE
 --- a/src/vmodes.c
 +++ b/src/vmodes.c
-@@ -244,7 +244,17 @@
+@@ -244,9 +244,22 @@
      }
  
      if (pRendition->board.chip != V1000_DEVICE) {
 -      if(!pRendition->board.overclock_mem){
+-	verite_out32(iob+SCLKPLL, 0xa484d);  /* mclk=110 sclk=50 */
+-                                        /* M/N/P/P = 77/5/2/4 */
 +      /* SClkPLL: M bits[8:0], SClkP bits[12:9], MClkP bits[16:13],
 +       * N bits[22:17]; VCO = 14.31818 * M / N (125..250 MHz),
 +       * MClk = VCO / MClkP, SClk = VCO / SClkP, MClk >= SClk. */
 +      if(pRendition->board.underclock_mem){
 +	xf86DrvMsg(pScreenInfo->scrnIndex, X_CONFIG,
-+		   (" *** UNDERCLOCKING MEM/CLK mclk=100 sclk=45 ***\n"));
++		   (" *** UNDERCLOCKING MEM/CLK mclk=90 sclk=45 ***\n"));
 +	/* decrease Mem/Sys clock on request */
-+	verite_out32(iob+SCLKPLL, 0xa4846);  /* mclk=100 sclk=45 */
-+                                        /* M/N/P/P = 70/5/2/4 */
++	verite_out32(iob+SCLKPLL, 0xa483f);  /* mclk=90 sclk=45 */
++                                        /* M/N/P/P = 63/5/2/4 */
 +      }
 +      else if(!pRendition->board.overclock_mem){
-	verite_out32(iob+SCLKPLL, 0xa484d);  /* mclk=110 sclk=50 */
-                                         /* M/N/P/P = 77/5/2/4 */
++	/* the historic default 0xa484d programmed mclk=110 sclk=55,
++	 * despite its comment claiming sclk=50; run the documented
++	 * sclk=50 for stability */
++	verite_out32(iob+SCLKPLL, 0xa4846);  /* mclk=100 sclk=50 */
++                                        /* M/N/P/P = 70/5/2/4 */
        }
-@@ -255,6 +265,7 @@
+       else{
+ 	xf86DrvMsg(pScreenInfo->scrnIndex, X_CONFIG,
+@@ -255,6 +268,7 @@
  	verite_out32(iob+SCLKPLL, 0xa4854);  /* mclk=125 sclk=60 */
                                          /* M/N/P/P = 84/5/2/4 */
        }
