@@ -1,5 +1,5 @@
 # --- T2-COPYRIGHT-BEGIN ---
-# t2/package/*/xf86-video-rendition/01-fix-accel-ucode-lockup.patch
+# t2/package/*/xf86-video-rendition/01-fix-accel.patch
 # Copyright (C) 2026 The T2 SDE Project
 # SPDX-License-Identifier: GPL-2.0 or patched project license
 # --- T2-COPYRIGHT-END ---
@@ -19,8 +19,8 @@ Fix hardware lockup when the 2D acceleration microcode is loaded:
 - restore and reinit the ucode on VT re-entry, hold the RISC before
   the register restore on VT leave/server exit
 
---- a/src/rendition.c
-+++ b/src/rendition.c
+--- xf86-video-rendition-4.2.7/src/rendition.c	2026-07-14 19:45:04.659137826 +0200
++++ xf86-video-rendition-4.2.7/src/rendition.c	2026-07-14 16:16:52.632103554 +0200
 @@ -52,6 +52,7 @@
  #include "vtypes.h"
  #include "vboard.h"
@@ -132,7 +132,7 @@ Fix hardware lockup when the 2D acceleration microcode is loaded:
 +     * microcode back and reinitialize it before any accelerated
 +     * operation touches the (now stale) RISC state. */
 +    if (pRendition->board.accel) {
-+	if (0 == RENDITIONLoadUcode(pScreenInfo))
++	if (RENDITIONLoadUcode(pScreenInfo) == 0)
 +	    RENDITIONInitUcode(pScreenInfo);
 +    }
 +#endif
@@ -140,9 +140,40 @@ Fix hardware lockup when the 2D acceleration microcode is loaded:
      (*pScreenInfo->AdjustFrame)(ADJUST_FRAME_ARGS(pScreenInfo,
  						  pScreenInfo->frameX0, pScreenInfo->frameY0));
  
---- a/src/accelX.c
-+++ b/src/accelX.c
-@@ -116,11 +116,11 @@
+--- xf86-video-rendition-4.2.7/src/accelX.c	2026-07-14 19:45:04.659014420 +0200
++++ xf86-video-rendition-4.2.7/src/accelX.c	2026-07-14 19:17:37.403149061 +0200
+@@ -1,4 +1,5 @@
+ /*
++ * Copyright (C) 2026 René Rebe <rene@exactco.de>
+  * file accelX.c
+  *
+  * accelerator functions for X
+@@ -79,10 +80,20 @@
+ 				      int x, int y, int w, int h);
+ 
+ 
+-void RENDITIONSubsequentTwoPointLine(ScrnInfoPtr pScreenInfo,
+-				     int x1, int y1,
+-				     int x2, int y2,
+-				     int bias);
++void RENDITIONSetupForSolidLine(ScrnInfoPtr pScreenInfo,
++				int color, int rop,
++				unsigned int planemask);
++
++void RENDITIONSubsequentSolidTwoPointLine(ScrnInfoPtr pScreenInfo,
++					  int x1, int y1,
++					  int x2, int y2,
++					  int flags);
++
++void RENDITIONSubsequentSolidHorVertLine(ScrnInfoPtr pScreenInfo,
++					 int x, int y,
++					 int len, int dir);
++
++static int RENDITIONFbRows(renditionPtr pRendition);
+ 
+ 
+ /*
+@@ -116,11 +127,11 @@
      ErrorF("RENDITION: RENDITIONAccelPreInit called\n");
      sleep(1);
  #endif
@@ -159,16 +190,53 @@ Fix hardware lockup when the 2D acceleration microcode is loaded:
      pRendition->board.fbOffset += MC_SIZE;
  
  #ifdef DEBUG
-@@ -184,8 +184,6 @@
-         RENDITIONSubsequentTwoPointLine;
- #endif /* #if 0 */
+@@ -172,19 +183,26 @@
+                 RENDITIONSubsequentScreenToScreenCopy;
+ #endif
+ 
+-#if 0
++#if 1
+     /* solid filled rectangles */
+     pXAAinfo->SetupForSolidFill=
+                 RENDITIONSetupForSolidFill;
+     pXAAinfo->SubsequentSolidFillRect=
+                 RENDITIONSubsequentSolidFillRect;
++#endif
+ 
+-    /* line */
+-    xf86AccelInfoRec.SubsequentTwoPointLine =  
+-        RENDITIONSubsequentTwoPointLine;
+-#endif /* #if 0 */
++    pXAAinfo->SolidLineFlags=NO_PLANEMASK;
++    pXAAinfo->SetupForSolidLine=
++                RENDITIONSetupForSolidLine;
++#if 0
++    pXAAinfo->SubsequentSolidTwoPointLine=
++                RENDITIONSubsequentSolidTwoPointLine;
++#endif
  
 -    verite_check_csucode(pScreenInfo);
--
++#if 1
++    pXAAinfo->SubsequentSolidHorVertLine=
++                RENDITIONSubsequentSolidHorVertLine;
++#endif
+ 
      if (RENDITIONLoadUcode(pScreenInfo)) return;
      if (RENDITIONInitUcode(pScreenInfo)) return;
+@@ -214,6 +232,12 @@
+ 		       pRendition->board.fbOffset) /
+ 		      ((pScreenInfo->displayWidth * pScreenInfo->bitsPerPixel)
+ 		       / 8));
++    /* Keep the pixmap cache and offscreen pixmaps within the scanline
++     * range the 2D engine can address; on larger cards the area
++     * computed above extends far beyond it, and blits from there
++     * corrupt (visible e.g. as garbled window titles). */
++    if (AvailFBArea.y2 > RENDITIONFbRows(pRendition))
++	AvailFBArea.y2 = RENDITIONFbRows(pRendition);
+     xf86InitFBManager(pScreen, &AvailFBArea);
  
-@@ -233,10 +231,13 @@
+     XAAInit(pScreen, pXAAinfo);
+@@ -233,21 +257,24 @@
  {
      renditionPtr pRendition = RENDITIONPTR(pScreenInfo);
      XAAInfoRecPtr pXAAinfo=pRendition->AccelInfoRec;
@@ -183,16 +251,102 @@ Fix hardware lockup when the 2D acceleration microcode is loaded:
      pXAAinfo->Flags=0;
      pXAAinfo->Sync=NULL;
      pXAAinfo->SetupForScreenToScreenCopy=NULL;
-@@ -324,6 +325,8 @@
+     pXAAinfo->SubsequentScreenToScreenCopy=NULL;
+     pXAAinfo->SetupForSolidFill=NULL;
+     pXAAinfo->SubsequentSolidFillRect=NULL;
++    pXAAinfo->SetupForSolidLine=NULL;
++    pXAAinfo->SubsequentSolidTwoPointLine=NULL;
++    pXAAinfo->SubsequentSolidHorVertLine=NULL;
++
+ 
+-#if 0
+-    pXAAinfo->SubsequentTwoPointLine=NULL;
+-#endif
+-    
+     XAADestroyInfoRec(pRendition->AccelInfoRec);
+     pRendition->AccelInfoRec=NULL;
+ }
+@@ -285,15 +312,39 @@
+ }
+ 
+ 
++/*
++ * Number of scanlines of video memory the 2D engine may address,
++ * counted from the start of the visible framebuffer: all memory from
++ * fbOffset to the end of VRAM, clamped to the 2048 lines the engine's
++ * coordinates can reach.  Used both as the CMD_SETUP surface extent
++ * and as the limit for the XAA pixmap cache/offscreen memory manager.
++ */
++static int
++RENDITIONFbRows(renditionPtr pRendition)
++{
++    int pitch = (pRendition->board.mode.virtualwidth *
++		 pRendition->board.mode.bitsperpixel) >> 3;
++    int rows;
++
++    if (pitch <= 0)
++	return pRendition->board.mode.virtualheight;
++
++    rows = (pRendition->board.mem_size - pRendition->board.fbOffset) / pitch;
++    if (rows > 2047)
++	rows = 2047;
++
++    return rows;
++}
++
+ int
+ RENDITIONInitUcode(ScrnInfoPtr pScreenInfo)
+ {
+     renditionPtr pRendition = RENDITIONPTR(pScreenInfo);
+     unsigned long iob = pRendition->board.io_base;
+ 
+-    if (0 == verite_getstride(pScreenInfo, NULL,
++    if (verite_getstride(pScreenInfo, NULL,
+ 			 &pRendition->board.mode.stride0, 
+-                         &pRendition->board.mode.stride1)) {
++                         &pRendition->board.mode.stride1) == 0) {
+       xf86DrvMsg(pScreenInfo->scrnIndex,X_ERROR,
+ 		   ("Acceleration for this resolution not available\n"));
+         RENDITIONAccelNone(pScreenInfo);
+@@ -324,6 +375,7 @@
      ErrorF("#InitUcode(2)# FIFOIN_FREE 0x%x -- \n",verite_in8(iob+FIFOINFREE));
  #endif
  
-+    waitfifo2(4, 1);
-+
++    /* waitfifo2(4, 1); */    /* do not wait for fifo while in reset */
      verite_out32(iob, 0);     /* a0 - ucode init command */
      verite_out32(iob, 0);     /* a1 - 1024 byte context store area */
      verite_out32(iob, 0);     /* a2 */
-@@ -383,25 +386,19 @@
+@@ -340,16 +392,26 @@
+ #endif
+ 
+     verite_out32(iob, CMD_SETUP);
++    /* extent of the drawing surface: cover the offscreen memory used
++     * for the XAA pixmap cache and offscreen pixmaps too, not just the
++     * visible screen -- otherwise blits from cached pixmaps below the
++     * screen get clipped/mistranslated and corrupt, e.g., window
++     * titles. */
+     verite_out32(iob, P2(pRendition->board.mode.virtualwidth,
+-		    pRendition->board.mode.virtualheight));
++		    RENDITIONFbRows(pRendition)));
+     verite_out32(iob, P2(pRendition->board.mode.bitsperpixel,
+ 		    pRendition->board.mode.pixelformat));
+-    verite_out32(iob, MC_SIZE);
++    /* base address of the drawing surface: must be the real start of
++     * the visible framebuffer, which sits above the microcode block
++     * AND the HW cursor image; a hardcoded MC_SIZE makes the engine
++     * draw 1024 bytes short of the framebuffer whenever the HW cursor
++     * memory is reserved, corrupting the screen with every operation. */
++    verite_out32(iob, pRendition->board.fbOffset);
+ 
+     verite_out32(iob, (pRendition->board.mode.virtualwidth)*
+ 	    (pRendition->board.mode.bitsperpixel>>3));
+     verite_out32(iob, (pRendition->board.mode.stride1<<12)|
+-	    (pRendition->board.mode.stride0<<8)); 
++	    (pRendition->board.mode.stride0<<8));
+ 
+ #ifdef DEBUG
+     ErrorF("#InitUcode(5)# FIFOIN_FREE 0x%x -- \n",verite_in8(iob+FIFOINFREE));
+@@ -383,25 +445,19 @@
      v1k_stop(pScreenInfo);
      memend=verite_in8(iob+MEMENDIAN);
      verite_out8(iob+MEMENDIAN, MEMENDIAN_NO);
@@ -230,7 +384,7 @@ Fix hardware lockup when the 2D acceleration microcode is loaded:
  }
  
  
-@@ -422,14 +419,20 @@
+@@ -422,14 +478,20 @@
      memend=verite_in8(iob+MEMENDIAN);
      verite_out8(iob+MEMENDIAN, MEMENDIAN_NO);
  
@@ -258,11 +412,144 @@ Fix hardware lockup when the 2D acceleration microcode is loaded:
  }
  
  
-@@ -507,6 +510,7 @@
+@@ -507,6 +569,7 @@
      }
  
      /* restart the ucode */
-+    waitfifo(4);
++    /* waitfifo(4); */        /* do not wait for fifo while in reset */
      verite_out32(iob, 0);     /* a0 - ucode init command */
      verite_out32(iob, 0);     /* a1 - 1024 byte context store area */
      verite_out32(iob, 0);     /* a2 */
+@@ -515,11 +578,13 @@
+     /* init the ucode */
+     waitfifo(6);
+     verite_out32(iob, CMD_SETUP);
++    /* surface extent incl. offscreen memory, see RENDITIONInitUcode */
+     verite_out32(iob, P2(pRendition->board.mode.virtualwidth,
+-		    pRendition->board.mode.virtualheight));
++		    RENDITIONFbRows(pRendition)));
+     verite_out32(iob, P2(pRendition->board.mode.bitsperpixel,
+ 		    pRendition->board.mode.pixelformat));
+-    verite_out32(iob, MC_SIZE);
++    /* surface base, see RENDITIONInitUcode */
++    verite_out32(iob, pRendition->board.fbOffset);
+ 
+     verite_out32(iob, pRendition->board.mode.virtualwidth  *
+ 	    (pRendition->board.mode.bitsperpixel>>3));
+@@ -564,7 +629,7 @@
+ #endif
+ 
+ 
+-#if 1 /* def DEBUG */
++#ifdef DEBUG
+     ErrorF("#ScreentoScreen# FIFO_INFREE 0x%x -- \n",verite_in8(iob+FIFOINFREE));
+     ErrorF("#ScreentoScreen# FIFO_OUTVALID 0x%x -- \n",verite_in8(iob+FIFOOUTVALID));
+ #endif
+@@ -633,20 +698,58 @@
+  */
+ 
+ void
+-RENDITIONSubsequentTwoPointLine(ScrnInfoPtr pScreenInfo,
+-				     int x1, int y1,
+-				     int x2, int y2,
+-				     int bias)
++RENDITIONSetupForSolidLine(ScrnInfoPtr pScreenInfo,
++			   int color, int rop,
++			   unsigned int planemask)
++{
++    renditionPtr pRendition = RENDITIONPTR(pScreenInfo);
++
++#ifdef DEBUG
++    ErrorF("RENDITION: RENDITIONSetupForSolidLine called\n");
++    ErrorF("RENDITION: Rop is %x/%x\n", rop, Rop2Rop[rop]);
++#endif
++
++    pRendition->board.Rop=Rop2Rop[rop];
++    pRendition->board.Color=color;
++    if (pRendition->board.mode.bitsperpixel < 32)
++        pRendition->board.Color|=(pRendition->board.Color<<16);
++    if (pRendition->board.mode.bitsperpixel < 16)
++        pRendition->board.Color|=(pRendition->board.Color<<8);
++}
++
++void
++RENDITIONSubsequentSolidTwoPointLine(ScrnInfoPtr pScreenInfo,
++					  int x1, int y1,
++					  int x2, int y2,
++					  int flags)
+ {
+     renditionPtr pRendition = RENDITIONPTR(pScreenInfo);
+     unsigned long iob = pRendition->board.io_base;
+ 
+ 
+ #ifdef DEBUG
+-    ErrorF("RENDITION: RENDITIONSubsequentTwoPointLine("
+-        "%d, %d, %d, %d, %d) called\n", x1, y1, x2, y2, bias);
++    ErrorF("RENDITION: RENDITIONSubsequentSolidTwoPointLine("
++        "%d, %d, %d, %d, %d) called\n", x1, y1, x2, y2, flags);
+ #endif
+ 
++    /* The microcode draws the line inclusive of the end point.  When
++     * XAA asks for the last pixel to be omitted (polyline segment
++     * joins), pull the end point back one step along the major axis.
++     * This is exact for horizontal, vertical and 45 degree lines; for
++     * other slopes the shortened line is re-Bresenhamed and may differ
++     * from the ideal in the last pixels, which is harmless for
++     * non-destructive rops. */
++    if (flags & OMIT_LAST) {
++	int dx=x2-x1, dy=y2-y1;
++
++	if (0 == dx && 0 == dy)
++	    return;
++	if (abs(dx) >= abs(dy))
++	    x2-=(dx > 0) ? 1 : -1;
++	if (abs(dy) >= abs(dx))
++	    y2-=(dy > 0) ? 1 : -1;
++    }
++
+     waitfifo(5);
+     verite_out32(iob, P2(1, CMD_LINE_SOLID));
+     verite_out32(iob, pRendition->board.Rop);
+@@ -655,6 +758,42 @@
+     verite_out32(iob, P2(x2, y2));
+ }
+ 
++void
++RENDITIONSubsequentSolidHorVertLine(ScrnInfoPtr pScreenInfo,
++				    int x, int y,
++				    int len, int dir)
++{
++    renditionPtr pRendition = RENDITIONPTR(pScreenInfo);
++    unsigned long iob = pRendition->board.io_base;
++    int x2, y2;
++
++#ifdef DEBUG
++    ErrorF("RENDITION: RENDITIONSubsequentSolidHorVertLine("
++        "%d, %d, %d, %d) called\n", x, y, len, dir);
++#endif
++
++    /* XAA has already accounted for last-pixel omission in len;
++     * the microcode draws the end point inclusively. */
++    if (len <= 0)
++	return;
++
++    if (DEGREES_0 == dir) {
++	x2=x+len-1;
++	y2=y;
++    }
++    else {
++	x2=x;
++	y2=y+len-1;
++    }
++
++    waitfifo(5);
++    verite_out32(iob, P2(1, CMD_LINE_SOLID));
++    verite_out32(iob, pRendition->board.Rop);
++    verite_out32(iob, pRendition->board.Color);
++    verite_out32(iob, P2(x, y));
++    verite_out32(iob, P2(x2, y2));
++}
++
+ /*
+  * end of file accelX.c
+  */
