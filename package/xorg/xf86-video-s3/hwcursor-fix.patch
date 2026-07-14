@@ -1,0 +1,173 @@
+Finally fix s3 hw cursors.
+
+Signed-off-by: René Rebe <rene@exactco.de>
+
+--- xf86-video-s3-0.7.0/src/s3_driver.c	2026-07-14 13:38:27.914468492 +0200
++++ xf86-video-s3-0.7.0/src/s3_driver.c	2026-07-14 13:25:31.904582452 +0200
+@@ -619,10 +619,7 @@
+ 		pS3->DacInit = S3TiDAC_Init;
+ 		pS3->DacSave = S3TiDAC_Save;
+ 		pS3->DacRestore = S3TiDAC_Restore;
+-#if 0
+-		/* FIXME, cursor is drawn in wrong position */
+ 		pS3->CursorInit = S3Ti_CursorInit;
+-#endif
+ 		pS3->MaxClock = 135000;
+ 		pScrn->rgbBits = 8;
+ 		if (pScrn->bitsPerPixel > 8)
+@@ -646,9 +643,7 @@
+ 		pS3->DacInit = S3Trio64DAC_Init;
+ 		pS3->DacSave = S3Trio64DAC_Save;
+ 		pS3->DacRestore = S3Trio64DAC_Restore;
+-#if 0
+-		pS3->CursorInit = S3_CursorInit;	/* FIXME broken */
+-#endif
++		pS3->CursorInit = S3_CursorInit;
+ 		switch(pScrn->bitsPerPixel) {
+ 		case 8:
+ 			if (pS3->Chipset == PCI_CHIP_TRIO64V2_DXGX)
+@@ -741,7 +736,13 @@
+ 	S3Ptr pS3 = S3PTR(pScrn);
+ 	BoxRec ScreenArea;
+ 	int width, height;
+-	
++	unsigned long memsize = pScrn->videoRam * 1024;
++
++	/* the HW cursor pattern lives in the last KB of video memory,
++	   keep the memory manager off it */
++	if (pS3->HWCursor && pS3->CursorInit == S3_CursorInit)
++		memsize -= 1024;
++
+ 	if (pS3->rotate) {
+ 		height = pScrn->virtualX;
+ 		width = pScrn->virtualY;
+@@ -824,7 +825,7 @@
+ 	ScreenArea.x1 = 0;
+ 	ScreenArea.y1 = 0;
+ 	ScreenArea.x2 = pScrn->displayWidth;
+-	ScreenArea.y2 = (pScrn->videoRam * 1024) / pS3->s3BppDisplayWidth;
++	ScreenArea.y2 = memsize / pS3->s3BppDisplayWidth;
+ 
+ 	if (!xf86InitFBManager(pScreen, &ScreenArea)) {
+ 		xf86DrvMsg(pScrn->scrnIndex, X_ERROR,
+--- xf86-video-s3-0.7.0/src/s3_cursor.c	2018-12-04 03:27:32.000000000 +0100
++++ xf86-video-s3-0.7.0/src/s3_cursor.c	2026-07-14 13:48:40.627365779 +0200
+@@ -44,6 +44,7 @@
+ 	int vgaCRIndex = pS3->vgaCRIndex, vgaCRReg = pS3->vgaCRReg;
+ 	unsigned short packfg, packbg;
+ 
++	/* a set bit in the XOR plane picks CR4A, a clear one CR4B */
+ 	switch (pS3->s3Bpp) {
+ 	case 1:
+ 		/* XXX Trio series only */
+@@ -104,10 +105,31 @@
+ {
+ 	S3Ptr pS3 = S3PTR(pScrn);
+ 	int vgaCRIndex = pS3->vgaCRIndex, vgaCRReg = pS3->vgaCRReg;
++	unsigned char xoff, yoff;
++
++	/* the cursor can only be placed at positive coordinates, a
++	   partially off-screen cursor is done by starting inside the
++	   64x64 pattern instead */
++	if (x < 0) {
++		xoff = (-x) & 0x3f;
++		x = 0;
++	} else
++		xoff = 0;
++
++	if (y < 0) {
++		yoff = (-y) & 0x3f;
++		y = 0;
++	} else
++		yoff = 0;
+ 
+ 	outb(vgaCRIndex, 0x39);
+ 	outb(vgaCRReg, 0xa5);
+ 
++	outb(vgaCRIndex, 0x4e);
++	outb(vgaCRReg, xoff);
++	outb(vgaCRIndex, 0x4f);
++	outb(vgaCRReg, yoff);
++
+ 	outb(vgaCRIndex, 0x46);
+ 	outb(vgaCRReg, x >> 8);
+ 	outb(vgaCRIndex, 0x47);
+@@ -214,8 +236,13 @@
+ 
+ 	pCurs->MaxWidth = 64;
+ 	pCurs->MaxHeight = 64;
++	/* each pair of words is the AND plane followed by the XOR plane:
++	   the AND plane is the mask and decides whether the pixel shows
++	   the cursor or the screen, the XOR plane picks the colour */
+ 	pCurs->Flags = HARDWARE_CURSOR_TRUECOLOR_AT_8BPP |
+-		       HARDWARE_CURSOR_SOURCE_MASK_INTERLEAVE_1 |
++		       HARDWARE_CURSOR_AND_SOURCE_WITH_MASK |
++		       HARDWARE_CURSOR_SWAP_SOURCE_AND_MASK |
++		       HARDWARE_CURSOR_SOURCE_MASK_INTERLEAVE_16 |
+ 		       HARDWARE_CURSOR_BIT_ORDER_MSBFIRST;
+ 
+ 	pCurs->SetCursorColors = S3SetCursorColors;
+--- xf86-video-s3-0.7.0/src/s3_Ti.c	2018-12-04 03:27:32.000000000 +0100
++++ xf86-video-s3-0.7.0/src/s3_Ti.c	2026-07-14 13:37:59.319232593 +0200
+@@ -633,7 +633,13 @@
+         /* unlock sys regs */
+         outb(vgaCRIndex, 0x39);
+         outb(vgaCRReg, 0xa5);
+-        
++
++	/* the DAC places the 64x64 cursor array relative to an origin
++	   64 pixels above and left of the programmed position, which is
++	   also how a cursor hanging off the left/top edge is expressed */
++	x += 64;
++	y += 64;
++
+ 	S3OutTiIndReg(pScrn, TIDAC_cursor_x_low, 0x00, x & 0xff);
+ 	S3OutTiIndReg(pScrn, TIDAC_cursor_x_high, 0x00, (x >> 8) & 0x0f);
+ 	S3OutTiIndReg(pScrn, TIDAC_cursor_y_low, 0x00, y & 0xff);
+@@ -684,9 +690,7 @@
+         int vgaCRIndex = pS3->vgaCRIndex, vgaCRReg = pS3->vgaCRReg;
+         unsigned char tmp, tmp1;
+         register int i;
+-#if 0
+-	register unsigned char *mask = image + 1;
+-#endif
++	register unsigned char *mask = image + 512;
+ 
+         /* unlock sys regs */
+         outb(vgaCRIndex, 0x39);  
+@@ -703,17 +707,13 @@
+ 	outb(TI_DATA_REG, 0x00);
+ 	outb(TI_INDEX_REG, TIDAC_cursor_ram_data);
+ 
+-#if 0
+-	for (i=0; i<512; i++, mask+=2)
+-		outb(TI_DATA_REG, *mask);
+-	for (i=0; i<512; i++, image+=2)
+-		outb(TI_DATA_REG, *image);
+-#else
+-	for (i=0; i<1024; i++) {
+-		outb(TI_DATA_REG, *image);
+-		image++;
+-	}
+-#endif
++	/* the cursor RAM holds the two planes consecutively, not
++	   interleaved: plane 0 (the mask) first, then plane 1 (the
++	   source), 512 bytes each */
++	for (i=0; i<512; i++)
++		outb(TI_DATA_REG, mask[i]);
++	for (i=0; i<512; i++)
++		outb(TI_DATA_REG, image[i]);
+ 
+ 	outb(TI_INDEX_REG, tmp1);
+ 
+@@ -744,8 +744,8 @@
+         pCurs->MaxWidth = 64;
+         pCurs->MaxHeight = 64;
+         pCurs->Flags = HARDWARE_CURSOR_TRUECOLOR_AT_8BPP |
+-		       HARDWARE_CURSOR_SOURCE_MASK_INTERLEAVE_1 |
+-		       HARDWARE_CURSOR_NIBBLE_SWAPPED |
++		       HARDWARE_CURSOR_AND_SOURCE_WITH_MASK |
++		       HARDWARE_CURSOR_SOURCE_MASK_NOT_INTERLEAVED |
+ 		       HARDWARE_CURSOR_BIT_ORDER_MSBFIRST;
+ 
+         pCurs->SetCursorColors = S3TiSetCursorColors;
