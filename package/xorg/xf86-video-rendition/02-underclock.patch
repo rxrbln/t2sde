@@ -1,0 +1,85 @@
+# --- T2-COPYRIGHT-BEGIN ---
+# t2/package/*/xf86-video-rendition/02-accel-state.patch
+# Copyright (C) 2026 The T2 SDE Project
+# SPDX-License-Identifier: GPL-2.0 or patched project license
+# --- T2-COPYRIGHT-END ---
+
+New "Underclock_Mem" option that programs the V2x00 SClkPLL to lower
+mclk=100/sclk=45 clocks (M/N/P/P = 70/5/2/4, register 0xa4846) for
+testing marginal boards/memory.
+
+--- a/src/vtypes.h
++++ b/src/vtypes.h
+@@ -160,6 +160,7 @@
+ 
+     vu32 fbOffset;          /* Currently busy fb-memory marker */
+     Bool overclock_mem;     /* Memory overclock ? */
++    Bool underclock_mem;    /* Memory underclock ? */
+ 
+     Bool shadowfb;          /* Use ShadowFB ? */
+     vu8 *shadowPtr;
+--- a/src/rendition.c
++++ b/src/rendition.c
+@@ -139,6 +139,7 @@
+     { OPTION_SW_CURSOR, "SW_Cursor", OPTV_BOOLEAN, {0}, FALSE },
+     { OPTION_NOACCEL,   "NoAccel",  OPTV_BOOLEAN, {0}, FALSE },
+     { OPTION_OVERCLOCK_MEM,"Overclock_Mem",  OPTV_BOOLEAN, {0}, FALSE },
++    { OPTION_UNDERCLOCK_MEM,"Underclock_Mem",  OPTV_BOOLEAN, {0}, FALSE },
+     { OPTION_NO_DDC,    "NoDDC",    OPTV_BOOLEAN, {0}, FALSE },
+     { OPTION_SHADOW_FB, "ShadowFB", OPTV_BOOLEAN, {0}, FALSE },
+     { OPTION_ROTATE,    "Rotate",   OPTV_ANYSTR,  {0}, FALSE },
+@@ -594,9 +595,14 @@
+     if (!(pRendition->Options = malloc(sizeof(renditionOptions))))
+ 	return FALSE;
+     memcpy(pRendition->Options, renditionOptions, sizeof(renditionOptions));
+-    xf86ProcessOptions(pScreenInfo->scrnIndex, pScreenInfo->options, 
++    xf86ProcessOptions(pScreenInfo->scrnIndex, pScreenInfo->options,
+         pRendition->Options);
+ 
++    /* evaluated here (unlike Overclock_Mem) so that already the
++     * initial mode setup uses the lower clocks */
++    if (xf86ReturnOptValBool(pRendition->Options, OPTION_UNDERCLOCK_MEM, 0))
++	pRendition->board.underclock_mem=TRUE;
++
+ 
+     /* Load fb */
+     if (!xf86LoadSubModule(pScreenInfo, "fb"))
+--- a/src/rendition_options.h
++++ b/src/rendition_options.h
+@@ -8,6 +8,7 @@
+     OPTION_SW_CURSOR,
+     OPTION_NOACCEL,
+     OPTION_OVERCLOCK_MEM,
++    OPTION_UNDERCLOCK_MEM,
+     OPTION_NO_DDC,
+     OPTION_SHADOW_FB,
+     OPTION_ROTATE
+--- a/src/vmodes.c
++++ b/src/vmodes.c
+@@ -244,7 +244,17 @@
+     }
+ 
+     if (pRendition->board.chip != V1000_DEVICE) {
+-      if(!pRendition->board.overclock_mem){
++      /* SClkPLL: M bits[8:0], SClkP bits[12:9], MClkP bits[16:13],
++       * N bits[22:17]; VCO = 14.31818 * M / N (125..250 MHz),
++       * MClk = VCO / MClkP, SClk = VCO / SClkP, MClk >= SClk. */
++      if(pRendition->board.underclock_mem){
++	xf86DrvMsg(pScreenInfo->scrnIndex, X_CONFIG,
++		   (" *** UNDERCLOCKING MEM/CLK mclk=100 sclk=45 ***\n"));
++	/* decrease Mem/Sys clock on request */
++	verite_out32(iob+SCLKPLL, 0xa4846);  /* mclk=100 sclk=45 */
++                                        /* M/N/P/P = 70/5/2/4 */
++      }
++      else if(!pRendition->board.overclock_mem){
+	verite_out32(iob+SCLKPLL, 0xa484d);  /* mclk=110 sclk=50 */
+                                         /* M/N/P/P = 77/5/2/4 */
+       }
+@@ -255,6 +265,7 @@
+ 	verite_out32(iob+SCLKPLL, 0xa4854);  /* mclk=125 sclk=60 */
+                                         /* M/N/P/P = 84/5/2/4 */
+       }
++      /* PLL needs 200us to stabilize after M/N change */
+       usleep(500);
+     }
+ 
