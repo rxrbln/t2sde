@@ -1,0 +1,44 @@
+# --- T2-COPYRIGHT-BEGIN ---
+# t2/package/*/linux/hotfix-applesmc-drvdata.patch
+# Copyright (C) 2026 The T2 SDE Project
+# SPDX-License-Identifier: GPL-2.0 or patched project license
+# --- T2-COPYRIGHT-END ---
+
+hwmon: applesmc: fix NULL deref in applesmc_brightness_set()
+
+applesmc_brightness_set() fetched its private data with
+dev_get_drvdata(led_cdev->dev). The LED core sets the LED class device's
+own drvdata to the led_classdev pointer itself (device_create_with_groups()
+in led_classdev_register_ext()), so this returned &smc->backlight_dev
+rather than the applesmc_device. Reading smc->backlight_wq off that
+mistyped pointer yields a bogus/NULL workqueue, and queue_work() then
+dereferences it:
+
+  BUG: kernel NULL pointer dereference, address: 0000000000000101
+  RIP: __queue_work+0x13/0x420
+   queue_work_on+0x53/0x90
+   led_trigger_set+0x223/0x2e0
+   led_trigger_set_default+0x5f/0xc0
+   led_classdev_register_ext+0x313/0x360 [led_class]
+   applesmc_create_key_backlight+0xac/0xe0 [applesmc]
+   applesmc_add+0x538/0x650 [applesmc]
+
+The "nand-disk" default trigger makes led_classdev_register() set the
+initial brightness, which is what invokes the callback at probe time.
+
+The applesmc_device is stored as drvdata on the parent (ACPI) device via
+dev_set_drvdata(&dev->dev, smc), so fetch it from led_cdev->dev->parent.
+This also fixes the silent corruption from writing backlight_state[] through
+the wrong pointer.
+
+--- a/drivers/hwmon/applesmc.c
++++ b/drivers/hwmon/applesmc.c
+@@ -1467,7 +1467,7 @@
+ static void applesmc_brightness_set(struct led_classdev *led_cdev,
+ 						enum led_brightness value)
+ {
+-	struct applesmc_device *smc = dev_get_drvdata(led_cdev->dev);
++	struct applesmc_device *smc = dev_get_drvdata(led_cdev->dev->parent);
+ 	int ret;
+
+ 	smc->backlight_state[0] = value;
