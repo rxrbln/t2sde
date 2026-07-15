@@ -1,0 +1,54 @@
+# --- T2-COPYRIGHT-BEGIN ---
+# t2/package/*/linux/hotfix-x86-amdnb-kvm-l3.patch
+# Copyright (C) 2026 The T2 SDE Project
+# SPDX-License-Identifier: GPL-2.0 or patched project license
+# --- T2-COPYRIGHT-END ---
+
+x86/amd_nb: fix boot oops in amd_calc_l3_indices() on Zen KVM/QEMU guests
+
+Booting a recent kernel in QEMU/KVM on AMD Zen hosts (7950X, 9950X3D)
+sometimes oopses during CPU hotplug bring-up:
+
+  Oops: 0000 [#1] SMP NOPTI
+  RIP: 0010:pci_read_config_dword+0x7/0x40
+  CR2: 00000000000000cc  RDI: 0000000000000000  RSI: 00000000000001c4
+  Call Trace:
+   amd_init_l3_cache+0x6f/0x120
+   populate_cache_leaves+0x100/0x430
+   detect_cache_attributes+0xe9/0x2a0
+   cacheinfo_cpu_online+0x26/0x220
+
+The guest CPUID advertises an L3 cache (leaf index 3) but exposes no
+Data Fabric PCI functions at 0:0:18.x. In amd_cache_northbridges(),
+amd_northbridges.num is set to amd_num_nodes() (1 in the guest) and
+amd_northbridges.nb is assigned before probing node 0's 'misc' device.
+That probe returns NULL, and the i == 0 error path does:
+
+	kfree(nb);
+	return -ENODEV;
+
+but leaves amd_northbridges.nb pointing at the freed block and
+amd_northbridges.num non-zero. init_amd_nbs() ignores the return value,
+so boot continues. Later, amd_init_l3_cache(3) -> node_to_amd_nb(0)
+returns &amd_northbridges.nb[0] -- freed memory. While that slot still
+reads as zero (nb->l3_cache.indices == 0, nb->misc == NULL),
+amd_calc_l3_indices() runs pci_read_config_dword(nb->misc /* NULL */,
+0x1C4, ...) and dereferences offset 0xcc of a NULL pci_dev. The "sometimes"
+is whether the freed slot has been reused yet.
+
+Fix the root cause by clearing amd_northbridges.{nb,num} on the error
+path so node_to_amd_nb() returns NULL.
+
+Signed-off-by: René Rebe <rene@exactco.de>
+
+--- a/arch/x86/kernel/amd_nb.c
++++ b/arch/x86/kernel/amd_nb.c
+@@ -84,6 +84,8 @@ static int amd_cache_northbridges(void)
+ 		if (!node_to_amd_nb(i)->misc) {
+ 			if (i == 0) {
+ 				kfree(nb);
++				amd_northbridges.nb = NULL;
++				amd_northbridges.num = 0;
+ 				return -ENODEV;
+ 			}
+ 			pr_info("next amd_northbridge not found, limiting to: %d\n", i);
