@@ -1,0 +1,382 @@
+# --- T2-COPYRIGHT-BEGIN ---
+# t2/package/*/broadcom-wl/hotfix.patch
+# Copyright (C) 2026 The T2 SDE Project
+# SPDX-License-Identifier: GPL-2.0 or patched project license
+# --- T2-COPYRIGHT-END ---
+
+diff --git a/Makefile b/Makefile
+index a323a0d..4c55c34 100644
+--- a/Makefile
++++ b/Makefile
+@@ -117,15 +117,15 @@ GCCVERSION := $(subst $(space),$(empty),$(GCCVERSION))
+ GCCVERSION := $(shell expr `echo $(GCCVERSION)` | cut -b1-3)
+ GE_49 := $(shell expr `echo $(GCCVERSION)` \>= 490)
+ 
+-EXTRA_CFLAGS :=
++ccflags-y :=
+ 
+ ifeq ($(APIFINAL),CFG80211)
+-  EXTRA_CFLAGS += -DUSE_CFG80211
++  ccflags-y += -DUSE_CFG80211
+   $(info Using CFG80211 API)
+ endif
+ 
+ ifeq ($(APIFINAL),WEXT)
+-  EXTRA_CFLAGS += -DUSE_IW
++  ccflags-y += -DUSE_IW
+   $(info Using Wireless Extension API)
+ endif
+ 
+@@ -136,33 +136,43 @@ wl-objs            += src/shared/linux_osl.o
+ wl-objs            += src/wl/sys/wl_linux.o
+ wl-objs            += src/wl/sys/wl_iw.o
+ wl-objs            += src/wl/sys/wl_cfg80211_hybrid.o
++wl-objs            += lib/wlc_hybrid.o
+ 
+-EXTRA_CFLAGS       += -I$(src)/src/include -I$(src)/src/common/include
+-EXTRA_CFLAGS       += -I$(src)/src/wl/sys -I$(src)/src/wl/phy -I$(src)/src/wl/ppr/include
+-EXTRA_CFLAGS       += -I$(src)/src/shared/bcmwifi/include
+-#EXTRA_CFLAGS       += -DBCMDBG_ASSERT -DBCMDBG_ERR
++ccflags-y          += -I$(src)/src/include -I$(src)/src/common/include
++ccflags-y          += -I$(src)/src/wl/sys -I$(src)/src/wl/phy -I$(src)/src/wl/ppr/include
++ccflags-y          += -I$(src)/src/shared/bcmwifi/include
++#ccflags-y          += -DBCMDBG_ASSERT -DBCMDBG_ERR
+ ifeq "$(GE_49)" "1"
+-EXTRA_CFLAGS       += -Wno-date-time
++ccflags-y          += -Wno-date-time
+ endif
+ 
+-EXTRA_LDFLAGS      := $(src)/lib/wlc_hybrid.o_shipped
++ifneq ($(KERNELRELEASE),)
++$(obj)/lib/wlc_hybrid.o: $(src)/lib/wlc_hybrid.o_shipped
++	cat $< > $@
++endif
+ 
+ KBASE              ?= /lib/modules/`uname -r`
+ KBUILD_DIR         ?= $(KBASE)/build
+ MDEST_DIR          ?= $(KBASE)/kernel/drivers/net/wireless
+ 
++# Build with LLVM when the target kernel was compiled with clang.
++LLVM_ARG           := $(shell grep -qs '^CONFIG_CC_IS_CLANG=y' $(KBUILD_DIR)/.config && echo LLVM=1)
++
+ # Cross compile setup.  Tool chain and kernel tree, replace with your own.
+ CROSS_TOOLS        = /path/to/tools
+ CROSS_KBUILD_DIR   = /path/to/kernel/tree
+ 
++# objtool=true: skip objtool on wl.o; it cannot process the pre-built
++# wlc_hybrid.o_shipped blob (unannotated intra-function calls) and would
++# abort the build on kernels with delayed objtool (LTO/IBT).
+ all:
+-	KBUILD_NOPEDANTIC=1 make -C $(KBUILD_DIR) M=`pwd`
++	KBUILD_NOPEDANTIC=1 make -C $(KBUILD_DIR) M=`pwd` $(LLVM_ARG) objtool=true
+ 
+ cross:
+-	KBUILD_NOPEDANTIC=1 make CROSS_COMPILE=${CROSS_TOOLS} -C $(CROSS_KBUILD_DIR) M=`pwd`
++	KBUILD_NOPEDANTIC=1 make CROSS_COMPILE=${CROSS_TOOLS} -C $(CROSS_KBUILD_DIR) M=`pwd` objtool=true
+ 
+ clean:
+-	KBUILD_NOPEDANTIC=1 make -C $(KBUILD_DIR) M=`pwd` clean
++	KBUILD_NOPEDANTIC=1 make -C $(KBUILD_DIR) M=`pwd` $(LLVM_ARG) clean
+ 
+ install:
+ 	install -D -m 755 wl.ko $(MDEST_DIR)
+diff --git a/src/include/linuxver.h b/src/include/linuxver.h
+index b05bc32..c4c60f7 100644
+--- a/src/include/linuxver.h
++++ b/src/include/linuxver.h
+@@ -147,7 +147,8 @@ typedef irqreturn_t(*FN_ISR) (int irq, void *dev_id, struct pt_regs *ptregs);
+ #include <linux/sched.h>
+ #endif
+ 
+-#if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 29)
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 29) && \
++	LINUX_VERSION_CODE < KERNEL_VERSION(6, 13, 0)
+ #include <net/lib80211.h>
+ #endif
+ #if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 29)
+diff --git a/src/wl/sys/wl_cfg80211_hybrid.c b/src/wl/sys/wl_cfg80211_hybrid.c
+index a032222..dcf6280 100644
+--- a/src/wl/sys/wl_cfg80211_hybrid.c
++++ b/src/wl/sys/wl_cfg80211_hybrid.c
+@@ -69,7 +69,11 @@ wl_cfg80211_scan(struct wiphy *wiphy,
+ static s32 wl_cfg80211_scan(struct wiphy *wiphy, struct net_device *ndev,
+            struct cfg80211_scan_request *request);
+ #endif
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 17, 0)
++static s32 wl_cfg80211_set_wiphy_params(struct wiphy *wiphy, int radio_idx, u32 changed);
++#else
+ static s32 wl_cfg80211_set_wiphy_params(struct wiphy *wiphy, u32 changed);
++#endif
+ static s32 wl_cfg80211_join_ibss(struct wiphy *wiphy, struct net_device *dev,
+            struct cfg80211_ibss_params *params);
+ static s32 wl_cfg80211_leave_ibss(struct wiphy *wiphy, struct net_device *dev);
+@@ -77,9 +81,12 @@ static s32 wl_cfg80211_leave_ibss(struct wiphy *wiphy, struct net_device *dev);
+ #if LINUX_VERSION_CODE < KERNEL_VERSION(3, 16, 0)
+ static s32 wl_cfg80211_get_station(struct wiphy *wiphy,
+            struct net_device *dev, u8 *mac, struct station_info *sinfo);
+-#else
++#elif LINUX_VERSION_CODE < KERNEL_VERSION(7, 1, 0)
+ static s32 wl_cfg80211_get_station(struct wiphy *wiphy,
+            struct net_device *dev, const u8 *mac, struct station_info *sinfo);
++#else
++static s32 wl_cfg80211_get_station(struct wiphy *wiphy,
++           struct wireless_dev *wdev, const u8 *mac, struct station_info *sinfo);
+ #endif
+ 
+ static s32 wl_cfg80211_set_power_mgmt(struct wiphy *wiphy,
+@@ -88,7 +95,11 @@ static int wl_cfg80211_connect(struct wiphy *wiphy, struct net_device *dev,
+            struct cfg80211_connect_params *sme);
+ static s32 wl_cfg80211_disconnect(struct wiphy *wiphy, struct net_device *dev, u16 reason_code);
+ 
+-#if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 8, 0)
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 17, 0)
++static s32
++wl_cfg80211_set_tx_power(struct wiphy *wiphy, struct wireless_dev *wdev,
++                         int radio_idx, enum nl80211_tx_power_setting type, s32 dbm);
++#elif LINUX_VERSION_CODE >= KERNEL_VERSION(3, 8, 0)
+ static s32
+ wl_cfg80211_set_tx_power(struct wiphy *wiphy, struct wireless_dev *wdev,
+                          enum nl80211_tx_power_setting type, s32 dbm);
+@@ -100,7 +111,13 @@ static s32 wl_cfg80211_set_tx_power(struct wiphy *wiphy,
+            enum tx_power_setting type, s32 dbm);
+ #endif
+ 
+-#if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 8, 0)
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 17, 0)
++static s32 wl_cfg80211_get_tx_power(struct wiphy *wiphy, struct wireless_dev *wdev,
++           int radio_idx, unsigned int link_id, s32 *dbm);
++#elif LINUX_VERSION_CODE >= KERNEL_VERSION(6, 14, 0)
++static s32 wl_cfg80211_get_tx_power(struct wiphy *wiphy, struct wireless_dev *wdev,
++           unsigned int link_id, s32 *dbm);
++#elif LINUX_VERSION_CODE >= KERNEL_VERSION(3, 8, 0)
+ static s32 wl_cfg80211_get_tx_power(struct wiphy *wiphy, struct wireless_dev *wdev, s32 *dbm);
+ #else
+ static s32 wl_cfg80211_get_tx_power(struct wiphy *wiphy, s32 *dbm);
+@@ -114,6 +131,10 @@ static s32 wl_cfg80211_config_default_key(struct wiphy *wiphy,
+ #else
+            struct net_device *dev, u8 key_idx);
+ #endif
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(7, 1, 0)
++static s32 wl_cfg80211_add_key(struct wiphy *wiphy, struct wireless_dev *wdev,
++           int link_id, u8 key_idx, bool pairwise, const u8 *mac_addr, struct key_params *params);
++#else
+ static s32 wl_cfg80211_add_key(struct wiphy *wiphy, struct net_device *dev,
+ #if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 1, 0)
+            int link_id, u8 key_idx, bool pairwise, const u8 *mac_addr, struct key_params *params);
+@@ -122,6 +143,11 @@ static s32 wl_cfg80211_add_key(struct wiphy *wiphy, struct net_device *dev,
+ #else
+            u8 key_idx, const u8 *mac_addr, struct key_params *params);
+ #endif
++#endif
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(7, 1, 0)
++static s32 wl_cfg80211_del_key(struct wiphy *wiphy, struct wireless_dev *wdev,
++           int link_id, u8 key_idx, bool pairwise, const u8 *mac_addr);
++#else
+ static s32 wl_cfg80211_del_key(struct wiphy *wiphy, struct net_device *dev,
+ #if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 1, 0)
+            int link_id, u8 key_idx, bool pairwise, const u8 *mac_addr);
+@@ -130,6 +156,12 @@ static s32 wl_cfg80211_del_key(struct wiphy *wiphy, struct net_device *dev,
+ #else
+ 	   u8 key_idx, const u8 *mac_addr);
+ #endif
++#endif
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(7, 1, 0)
++static s32 wl_cfg80211_get_key(struct wiphy *wiphy, struct wireless_dev *wdev,
++           int link_id, u8 key_idx, bool pairwise, const u8 *mac_addr,
++           void *cookie, void (*callback) (void *cookie, struct key_params *params));
++#else
+ static s32 wl_cfg80211_get_key(struct wiphy *wiphy, struct net_device *dev,
+ #if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 1, 0)
+            int link_id, u8 key_idx, bool pairwise, const u8 *mac_addr,
+@@ -139,6 +171,7 @@ static s32 wl_cfg80211_get_key(struct wiphy *wiphy, struct net_device *dev,
+            u8 key_idx, const u8 *mac_addr,
+ #endif
+            void *cookie, void (*callback) (void *cookie, struct key_params *params));
++#endif
+ 
+ #if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 33)
+ static s32 wl_cfg80211_set_pmksa(struct wiphy *wiphy, struct net_device *dev,
+@@ -686,7 +719,11 @@ static s32 wl_set_retry(struct net_device *dev, u32 retry, bool l)
+ 	return err;
+ }
+ 
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 17, 0)
++static s32 wl_cfg80211_set_wiphy_params(struct wiphy *wiphy, int radio_idx, u32 changed)
++#else
+ static s32 wl_cfg80211_set_wiphy_params(struct wiphy *wiphy, u32 changed)
++#endif
+ {
+ 	struct wl_cfg80211_priv *wl = wiphy_to_wl(wiphy);
+ 	struct net_device *ndev = wl_to_ndev(wl);
+@@ -1123,7 +1160,11 @@ wl_cfg80211_disconnect(struct wiphy *wiphy, struct net_device *dev, u16 reason_c
+ 	return err;
+ }
+ 
+-#if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 8, 0)
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 17, 0)
++static s32
++wl_cfg80211_set_tx_power(struct wiphy *wiphy, struct wireless_dev *wdev,
++                         int radio_idx, enum nl80211_tx_power_setting type, s32 dbm)
++#elif LINUX_VERSION_CODE >= KERNEL_VERSION(3, 8, 0)
+ static s32
+ wl_cfg80211_set_tx_power(struct wiphy *wiphy, struct wireless_dev *wdev,
+                          enum nl80211_tx_power_setting type, s32 dbm)
+@@ -1184,7 +1225,13 @@ wl_cfg80211_set_tx_power(struct wiphy *wiphy, enum tx_power_setting type, s32 db
+ 	return err;
+ }
+ 
+-#if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 8, 0)
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 17, 0)
++static s32 wl_cfg80211_get_tx_power(struct wiphy *wiphy, struct wireless_dev *wdev,
++                                    int radio_idx, unsigned int link_id, s32 *dbm)
++#elif LINUX_VERSION_CODE >= KERNEL_VERSION(6, 14, 0)
++static s32 wl_cfg80211_get_tx_power(struct wiphy *wiphy, struct wireless_dev *wdev,
++                                    unsigned int link_id, s32 *dbm)
++#elif LINUX_VERSION_CODE >= KERNEL_VERSION(3, 8, 0)
+ static s32 wl_cfg80211_get_tx_power(struct wiphy *wiphy, struct wireless_dev *wdev, s32 *dbm)
+ #else
+ static s32 wl_cfg80211_get_tx_power(struct wiphy *wiphy, s32 *dbm)
+@@ -1233,6 +1280,10 @@ wl_cfg80211_config_default_key(struct wiphy *wiphy,
+ }
+ 
+ static s32
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(7, 1, 0)
++wl_cfg80211_add_key(struct wiphy *wiphy, struct wireless_dev *wdev,
++                    int link_id, u8 key_idx, bool pairwise, const u8 *mac_addr, struct key_params *params)
++#else
+ wl_cfg80211_add_key(struct wiphy *wiphy, struct net_device *dev,
+ #if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 1, 0)
+                     int link_id, u8 key_idx, bool pairwise, const u8 *mac_addr, struct key_params *params)
+@@ -1241,7 +1292,11 @@ wl_cfg80211_add_key(struct wiphy *wiphy, struct net_device *dev,
+ #else
+                     u8 key_idx, const u8 *mac_addr, struct key_params *params)
+ #endif
++#endif
+ {
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(7, 1, 0)
++	struct net_device *dev = wdev->netdev;
++#endif
+ 	struct wl_cfg80211_priv *wl = ndev_to_wl(dev);
+ 	struct wl_wsec_key key;
+ 	s32 secval, secnew = 0;
+@@ -1353,6 +1408,10 @@ wl_cfg80211_add_key(struct wiphy *wiphy, struct net_device *dev,
+ 	return err;
+ }
+ static s32
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(7, 1, 0)
++wl_cfg80211_del_key(struct wiphy *wiphy, struct wireless_dev *wdev,
++                    int link_id, u8 key_idx, bool pairwise, const u8 *mac_addr)
++#else
+ wl_cfg80211_del_key(struct wiphy *wiphy, struct net_device *dev,
+ #if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 1, 0)
+                     int link_id, u8 key_idx, bool pairwise, const u8 *mac_addr)
+@@ -1361,7 +1420,11 @@ wl_cfg80211_del_key(struct wiphy *wiphy, struct net_device *dev,
+ #else
+                     u8 key_idx, const u8 *mac_addr)
+ #endif
++#endif
+ {
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(7, 1, 0)
++	struct net_device *dev = wdev->netdev;
++#endif
+ 	struct wl_wsec_key key;
+ 	s32 err = 0;
+ 
+@@ -1396,6 +1459,11 @@ wl_cfg80211_del_key(struct wiphy *wiphy, struct net_device *dev,
+ }
+ 
+ static s32
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(7, 1, 0)
++wl_cfg80211_get_key(struct wiphy *wiphy, struct wireless_dev *wdev,
++                    int link_id, u8 key_idx, bool pairwise, const u8 *mac_addr, void *cookie,
++                    void (*callback) (void *cookie, struct key_params * params))
++#else
+ wl_cfg80211_get_key(struct wiphy *wiphy, struct net_device *dev,
+ #if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 1, 0)
+                     int link_id, u8 key_idx, bool pairwise, const u8 *mac_addr, void *cookie,
+@@ -1405,7 +1473,11 @@ wl_cfg80211_get_key(struct wiphy *wiphy, struct net_device *dev,
+                     u8 key_idx, const u8 *mac_addr, void *cookie,
+ #endif
+                     void (*callback) (void *cookie, struct key_params * params))
++#endif
+ {
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(7, 1, 0)
++	struct net_device *dev = wdev->netdev;
++#endif
+ 	struct key_params params;
+ 	struct wl_wsec_key key;
+ 	struct wl_cfg80211_priv *wl = wiphy_to_wl(wiphy);
+@@ -1465,12 +1537,19 @@ wl_cfg80211_get_key(struct wiphy *wiphy, struct net_device *dev,
+ static s32
+ wl_cfg80211_get_station(struct wiphy *wiphy, struct net_device *dev,
+                         u8 *mac, struct station_info *sinfo)
+-#else
++#elif LINUX_VERSION_CODE < KERNEL_VERSION(7, 1, 0)
+ static s32
+ wl_cfg80211_get_station(struct wiphy *wiphy, struct net_device *dev,
+                         const u8 *mac, struct station_info *sinfo)
++#else
++static s32
++wl_cfg80211_get_station(struct wiphy *wiphy, struct wireless_dev *wdev,
++                        const u8 *mac, struct station_info *sinfo)
+ #endif
+ {
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(7, 1, 0)
++	struct net_device *dev = wdev->netdev;
++#endif
+ 	struct wl_cfg80211_priv *wl = wiphy_to_wl(wiphy);
+ 	scb_val_t scb_val;
+ 	int rssi;
+diff --git a/src/wl/sys/wl_linux.c b/src/wl/sys/wl_linux.c
+index 9de2cc5..e0e2b5b 100644
+--- a/src/wl/sys/wl_linux.c
++++ b/src/wl/sys/wl_linux.c
+@@ -56,7 +56,11 @@
+ #include <asm/irq.h>
+ #include <asm/pgtable.h>
+ #include <asm/uaccess.h>
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 12, 0)
++#include <linux/unaligned.h>
++#else
+ #include <asm/unaligned.h>
++#endif
+ 
+ #include <proto/802.1d.h>
+ 
+@@ -2368,7 +2372,9 @@ wl_timer(
+ #endif
+ ) {
+ 	wl_timer_t *t =
+-#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 15, 0)
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 16, 0)
++		timer_container_of(t, tl, timer);
++#elif LINUX_VERSION_CODE >= KERNEL_VERSION(4, 15, 0)
+ 		from_timer(t, tl, timer);
+ #else
+ 		(wl_timer_t *)data;
+@@ -2474,7 +2480,11 @@ wl_del_timer(wl_info_t *wl, wl_timer_t *t)
+ 	ASSERT(t);
+ 	if (t->set) {
+ 		t->set = FALSE;
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 2, 0)
++		if (!timer_delete(&t->timer)) {
++#else
+ 		if (!del_timer(&t->timer)) {
++#endif
+ #ifdef BCMDBG
+ 			WL_INFORM(("wl%d: Failed to delete timer %s\n", wl->unit, t->name));
+ #endif
+diff --git a/src/wl/sys/wl_linux.h b/src/wl/sys/wl_linux.h
+index f33db07..66a6fc9 100644
+--- a/src/wl/sys/wl_linux.h
++++ b/src/wl/sys/wl_linux.h
+@@ -107,7 +107,8 @@ struct wl_info {
+ 	uint		monitor_type;	
+ 	bool		resched;	
+ 	uint32		pci_psstate[16];	
+-#if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 14)
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 14) && \
++	LINUX_VERSION_CODE < KERNEL_VERSION(6, 13, 0)
+ #define NUM_GROUP_KEYS 4
+ #if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 29)
+ 	struct lib80211_crypto_ops *tkipmodops;
