@@ -1,0 +1,330 @@
+# --- T2-COPYRIGHT-BEGIN ---
+# t2/package/*/firefox/hotfix-ia64-js-pointers.patch
+# Copyright (C) 2026 The T2 SDE Project
+# SPDX-License-Identifier: GPL-2.0 or patched project license
+# --- T2-COPYRIGHT-END ---
+
+# SpiderMonkey packs GC/wasm pointers into fewer than 64 bits and asserts
+# (DEBUG) or silently truncates (release) any pointer with high bits set:
+#
+#  - js/src/wasm/WasmValType.h's PackedTypeCode packs a `const TypeDef*`
+#    into a 48-bit field, asserting the top 16 bits are zero.
+#  - JS::Value NaN-boxing (JSVAL_TAG_SHIFT=47) requires GC-thing pointers
+#    to fit below bit 47, enforced (DEBUG only) by
+#    js::detail::IsValidUserModePointer in js/public/Value.h.
+#  - js/src/gc/Scheduling.h's MemoryTracker::Key (DEBUG-only allocation
+#    accounting for malloc'd memory backing GC things, e.g. TypedArray
+#    and string buffers) packs a pointer into 56 bits.
+#
+# All other 64-bit platforms Firefox supports keep user-mode pointers
+# under 2^47/2^48 by convention. Linux/ia64 cannot: it uses region-based
+# addressing, where the top 3 bits (61-63) select one of 8 regions and
+# every default (unhinted) mmap/malloc allocation lands in a nonzero
+# region (glibc/the kernel hand back region 1, 0x2000000000000000, when
+# no hint is given). Every ia64 pointer therefore violates SpiderMonkey's
+# packing assumptions, which without this patch causes an assert
+# (DEBUG builds) or silent pointer corruption (release builds) very
+# early during JS engine init (js::wasm::BuiltinModuleFuncs::init /
+# WasmStaticTypeDefs::init, building the static wasm RecGroups that
+# js::wasm::Init() creates unconditionally from JS_Init).
+#
+# A precursor of this codebase (Arctic Fox 47.2, an old Firefox fork)
+# carried explicit upstream ia64 support in the equivalent of
+# js/src/gc/Memory.cpp: it forced GC chunk allocations below 2^47 via a
+# region-0 mmap hint with a retry loop, and confirmed the Linux/ia64
+# kernel honors precise low-address mmap hints. That mechanism was lost
+# when SpiderMonkey moved to today's runtime address-space detection
+# (FindAddressLimit/IsInvalidRegion/UsingScattershotAllocator in
+# gc/Memory.cpp), which already uses the same masking approach but was
+# never hardened against silently falling through to an unmasked
+# fallback path. This patch:
+#
+#  1. Adds ia64-only MallocLowVA()/FreeLowVA() helpers to
+#     js/src/wasm/WasmTypeDef.cpp (an mmap-hint allocator forcing
+#     allocations below 2^47, modeled on the old Arctic Fox approach)
+#     and routes wasm::RecGroup allocation through them instead of
+#     js_malloc on ia64. RecGroup no longer inherits
+#     js::AtomicRefCounted<RecGroup> on ia64, since that base class's
+#     Release() hardcodes js_delete()/js_free()/libc free(), which
+#     cannot free mmap'd memory; RecGroup implements its own
+#     AddRef/Release/hasOneRef instead, freeing via FreeLowVA. The
+#     refcount member is declared before the class's trailing
+#     zero-length `TypeDef types_[0]` array so it does not alias the
+#     first inline TypeDef's data.
+#  2. Relaxes js/public/Value.h's IsValidUserModePointer DEBUG check on
+#     ia64 to accept a pointer at its full region-tagged width, requiring
+#     only that it stay below JSVAL_SHIFTED_TAG_MAX_DOUBLE. This predicate
+#     has exactly two callers -- Value::setPrivate and Value::toPrivate --
+#     and is never used to validate a GC-thing pointer, so the 47/48-bit
+#     packing limit that motivates the rest of this patch does not apply to
+#     it: a private value need only stay distinguishable from a NaN-boxed
+#     double, which both callers already assert directly via isDouble(),
+#     and which every ia64 userspace pointer satisfies (all user regions
+#     are below 0xa000'0000'0000'0000).
+#
+#     Note this must NOT be narrowed to "region bits may be set, but bits
+#     47-60 must be clear". That is true of the heap (glibc hands back low
+#     offsets in region 1) but false of the *stack*, which Linux/ia64 places
+#     at the top of region 3 -- e.g. 0x600f'ffff'ffa6'dbf4, bits 47-60 set.
+#     Stack addresses reach PrivateValue routinely: ObserverList's ctor in
+#     js/src/gc/FinalizationObservers.cpp seeds its circular sentinel list
+#     with `next(this), prev(this)`, and addWeakRefTarget constructs that
+#     ObserverList as a stack temporary before handing it to the hash map,
+#     so evaluating any `new WeakRef(o)` asserted and killed the process.
+#  3. Hardens js/src/gc/Memory.cpp so the GC chunk allocator can never
+#     silently hand back a high (region-tagged) address on ia64: asserts
+#     the scattershot allocator (which already validates results against
+#     IsInvalidRegion()) is in use, and adds the same validation to the
+#     MapAlignedPagesSlow() overallocate-and-trim fallback, which
+#     previously skipped it.
+#  4. Widens js/src/gc/Scheduling.h's MemoryTracker::Key to store the
+#     pointer at full width (not packed into 56 bits) on ia64. This is a
+#     DEBUG-only allocation-accounting structure, so the extra space is
+#     harmless; without this, generic malloc'd buffers backing GC things
+#     (e.g. TypedArray or string data) hit the same truncation assert
+#     very early during startup once JS init itself succeeds.
+
+--- firefox-152.0.5/js/src/wasm/WasmTypeDef.h.vanilla
++++ firefox-152.0.5/js/src/wasm/WasmTypeDef.h
+@@ -35,6 +35,14 @@
+
+ class RecGroup;
+
++#ifdef __ia64__
++// Defined in WasmTypeDef.cpp. Forces RecGroup allocations below 2^47 so
++// their TypeDef pointers fit the 48-bit PackedTypeCode field (see
++// RecGroup::allocate / RecGroup::operator delete below, and WasmValType.h).
++void* MallocLowVA(size_t bytes);
++void FreeLowVA(void* p);
++#endif
++
+ //=========================================================================
+ // Function types
+
+@@ -993,7 +1001,17 @@
+ // groups while building them so that pointer equality of types implies
+ // equality of types. There is a global hash set of weak pointers to recursion
+ // groups that holds the current canonical instance of a recursion group.
++#ifdef __ia64__
++// On ia64, RecGroup memory comes from MallocLowVA (mmap), not js_malloc (see
++// RecGroup::allocate below). AtomicRefCounted<T>::Release hardcodes
++// js_delete(this), which frees via js_free (== libc free()) and cannot free
++// mmap'd memory, so RecGroup avoids that base class entirely here and
++// implements AddRef/Release/hasOneRef itself, routing deallocation through
++// FreeLowVA.
++class RecGroup {
++#else
+ class RecGroup : public AtomicRefCounted<RecGroup> {
++#endif
+   // Whether this recursion group has been finished and acquired strong
+   // references to external recursion groups.
+   bool finalizedTypes_;
+@@ -1002,6 +1020,13 @@
+   // The batch allocated super type vectors for all type definitions in this
+   // recursion group.
+   const SuperTypeVector* vectors_;
++#ifdef __ia64__
++  // Must stay before types_[0] below: it is a zero-length trailing array
++  // that TypeDefs are placement-new'd into starting at this exact offset
++  // (see RecGroup::allocate), so any real data member declared after it
++  // would alias the first inline TypeDef instead of getting its own space.
++  mutable mozilla::Atomic<MozRefCountType> lowVARefCnt_{0};
++#endif
+   // The first type definition stored inline in this recursion group.
+   TypeDef types_[0];
+
+@@ -1030,7 +1055,11 @@
+     MOZ_RELEASE_ASSERT(numTypes <= MaxTypes);
+
+     // Allocate the recursion group with the correct size
++#ifdef __ia64__
++    RecGroup* recGroup = (RecGroup*)MallocLowVA(sizeOfRecGroup(numTypes));
++#else
+     RecGroup* recGroup = (RecGroup*)js_malloc(sizeOfRecGroup(numTypes));
++#endif
+     if (!recGroup) {
+       return nullptr;
+     }
+@@ -1145,6 +1174,18 @@
+     }
+   }
+
++#ifdef __ia64__
++  void AddRef() const { ++lowVARefCnt_; }
++  void Release() const {
++    MozRefCountType cnt = --lowVARefCnt_;
++    if (cnt == 0) {
++      this->~RecGroup();
++      FreeLowVA(const_cast<RecGroup*>(this));
++    }
++  }
++  bool hasOneRef() const { return lowVARefCnt_ == 1; }
++#endif
++
+   // Recursion groups cannot be copied or moved
+   RecGroup& operator=(const RecGroup&) = delete;
+   RecGroup& operator=(RecGroup&&) = delete;
+--- firefox-152.0.5/js/src/wasm/WasmTypeDef.cpp.vanilla
++++ firefox-152.0.5/js/src/wasm/WasmTypeDef.cpp
+@@ -38,6 +38,64 @@
+ using mozilla::CheckedUint32;
+ using mozilla::MallocSizeOf;
+
++#ifdef __ia64__
++// ia64 userspace addresses always carry a nonzero region number in bits
++// 61-63, but RecGroup::allocate's TypeDef pointers are packed into a 48-bit
++// PackedTypeCode field (WasmValType.h) that asserts the top 16 bits are
++// zero. Force RecGroup allocations below 2^47 via an mmap hint in region 0.
++#  include <sys/mman.h>
++#  include <unistd.h>
++
++namespace js {
++namespace wasm {
++
++static const uint64_t LowVAHintBase = 0x0000070000000000ULL;
++static const uint64_t LowVARegionMask = 0xffff800000000000ULL;
++
++void* MallocLowVA(size_t bytes) {
++  size_t pageSize = size_t(sysconf(_SC_PAGESIZE));
++  size_t headerSize = std::max(pageSize, size_t(16));
++  size_t mapLen = headerSize + bytes;
++  mapLen = (mapLen + pageSize - 1) & ~(pageSize - 1);
++
++  uint64_t hint = LowVAHintBase;
++  const uint64_t hintStep = uint64_t(1) << 32;
++  const int maxTries = 4096;
++  for (int i = 0; i < maxTries; i++) {
++    void* region = mmap(reinterpret_cast<void*>(uintptr_t(hint)), mapLen,
++                         PROT_READ | PROT_WRITE,
++                         MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
++    if (region == MAP_FAILED) {
++      hint += hintStep;
++      continue;
++    }
++    uint64_t addr = uint64_t(uintptr_t(region));
++    if (((addr + mapLen - 1) & LowVARegionMask) != 0) {
++      munmap(region, mapLen);
++      hint += hintStep;
++      continue;
++    }
++    *reinterpret_cast<size_t*>(region) = mapLen;
++    return reinterpret_cast<uint8_t*>(region) + headerSize;
++  }
++  return nullptr;
++}
++
++void FreeLowVA(void* p) {
++  if (!p) {
++    return;
++  }
++  size_t pageSize = size_t(sysconf(_SC_PAGESIZE));
++  size_t headerSize = std::max(pageSize, size_t(16));
++  uint8_t* region = reinterpret_cast<uint8_t*>(p) - headerSize;
++  size_t mapLen = *reinterpret_cast<size_t*>(region);
++  munmap(region, mapLen);
++}
++
++}  // namespace wasm
++}  // namespace js
++#endif  // __ia64__
++
+ // [SMDOC] Immediate type signature encoding
+ //
+ // call_indirect requires a signature check to ensure the dynamic callee type
+--- firefox-152.0.5/js/public/Value.h.vanilla
++++ firefox-152.0.5/js/public/Value.h
+@@ -314,9 +314,27 @@
+     "ValueObjectOrNullBit must be consistent with object and null tags");
+
+ constexpr uint64_t IsValidUserModePointer(uint64_t bits) {
+-  // All 64-bit platforms that we support actually have a 48-bit address space
+-  // for user-mode pointers, with the top 16 bits all set to zero.
++#ifdef __ia64__
++  // ia64 uses region-based addressing: bits 61-63 select the region, and the
++  // offset within a region is a full 61 bits. Unlike every other platform we
++  // support, Linux/ia64 does not keep that offset small -- the stack sits at
++  // the *top* of region 3 (e.g. 0x600f'ffff'ffa6'dbf4), so bits 47-60 are set
++  // on any stack address.
++  //
++  // That is fine here: this predicate guards nothing but setPrivate/toPrivate,
++  // whose only requirement is that the stored word stay distinguishable from a
++  // NaN-boxed double -- which both callers already assert directly, via
++  // isDouble(). It never validates GC-thing pointers, so SpiderMonkey's 47-bit
++  // packing limit does not apply. Every Linux/ia64 user-mode address is below
++  // 0xa000'0000'0000'0000 (region 5 and up belong to the kernel), hence below
++  // JSVAL_SHIFTED_TAG_MAX_DOUBLE, so accept the full region-tagged width.
++  return bits <= JSVAL_SHIFTED_TAG_MAX_DOUBLE;
++#else
++  // All other 64-bit platforms that we support actually have a 48-bit
++  // address space for user-mode pointers, with the top 16 bits all set to
++  // zero.
+   return (bits & 0xFFFF'0000'0000'0000) == 0;
++#endif
+ }
+
+ #endif /* JS_PUNBOX64 */
+--- firefox-152.0.5/js/src/gc/Memory.cpp.vanilla
++++ firefox-152.0.5/js/src/gc/Memory.cpp
+@@ -457,6 +457,15 @@
+     } else {
+       hugeSplit = (UINT64_C(1) << (numAddressBits - 1)) - 1 - allocGranularity;
+     }
++#  ifdef __ia64__
++    // ia64 userspace addresses always carry a nonzero region number in bits
++    // 61-63, so the plain, unmasked MapMemory() fallback in MapAlignedPages
++    // (used when the scattershot allocator is unavailable) could hand back
++    // a high address that later corrupts JS::Value/PackedTypeCode packing.
++    // Require the scattershot allocator, which validates every result
++    // against IsInvalidRegion(), so that fallback path is never taken.
++    MOZ_RELEASE_ASSERT(UsingScattershotAllocator());
++#  endif
+ #else  // !defined(JS_64BIT)
+     numAddressBits = 32;
+ #endif
+@@ -725,6 +734,17 @@
+     // Note: This will not respect the address space split.
+     region = MapAlignedPagesSlow(length, alignment);
+     if (region) {
++#  ifdef __ia64__
++      // MapAlignedPagesSlow() does not consult IsInvalidRegion(), so on
++      // ia64 (where every default mapping has a nonzero region number) a
++      // high result here would silently violate JS::Value/PackedTypeCode's
++      // 47-bit packing assumption instead of triggering the release assert
++      // in the caller MapAlignedPages().
++      if (IsInvalidRegion(region, length)) {
++        UnmapInternal(region, length);
++        return nullptr;
++      }
++#  endif
+       return region;
+     }
+   }
+--- firefox-152.0.5/js/src/gc/Scheduling.h.vanilla
++++ firefox-152.0.5/js/src/gc/Scheduling.h
+@@ -862,7 +862,14 @@
+     MemoryUse use() const;
+
+    private:
+-#  ifdef JS_64BIT
++#  ifdef __ia64__
++    // ia64 pointers carry a nonzero region number in bits 61-63, so they
++    // don't fit the 56-bit packed field used on other 64-bit platforms.
++    // This struct is DEBUG-only bookkeeping, so just store both fields at
++    // full width instead of packing into a single word.
++    uintptr_t ptr_;
++    uintptr_t use_;
++#  elif defined(JS_64BIT)
+     // Pack this into a single word on 64 bit platforms.
+     uintptr_t ptr_ : 56;
+     uintptr_t use_ : 8;
+--- firefox-152.0.5/js/src/gc/Scheduling.cpp.vanilla
++++ firefox-152.0.5/js/src/gc/Scheduling.cpp
+@@ -856,7 +856,7 @@
+ template <typename Ptr>
+ inline MemoryTracker::Key<Ptr>::Key(Ptr* ptr, MemoryUse use)
+     : ptr_(uint64_t(ptr)), use_(uint64_t(use)) {
+-#  ifdef JS_64BIT
++#  if defined(JS_64BIT) && !defined(__ia64__)
+   static_assert(sizeof(Key) == 8,
+                 "MemoryTracker::Key should be packed into 8 bytes");
+ #  endif

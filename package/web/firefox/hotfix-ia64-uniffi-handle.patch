@@ -1,0 +1,235 @@
+# --- T2-COPYRIGHT-BEGIN ---
+# t2/package/*/firefox/hotfix-ia64-uniffi-handle.patch
+# Copyright (C) 2026 The T2 SDE Project
+# SPDX-License-Identifier: GPL-2.0 or patched project license
+# --- T2-COPYRIGHT-END ---
+
+# A UniFFI callback handle is the address of a refcount cell with bit 0 set
+# (toolkit/components/uniffi-js/Callbacks.cpp's CallbackHandleCreate). That bit
+# is load-bearing: it is how the Rust side's Handle::is_foreign()
+# (third_party/rust/uniffi_core/src/ffi/handle.rs) tells a JS-implemented trait
+# object from a Rust one -- "Foreign handles have the lowest bit set. We know
+# that Rust handles will never have this set, since the pointers that they're
+# cast from have alignment > 1".
+#
+# The handle is handed to JS as a plain number: callbackHandleCreate() is
+# declared `unsigned long long` in dom/chrome-webidl/UniFFI.webidl, so it
+# round-trips through a **double**, which has a 53-bit mantissa. Callbacks.cpp
+# says so itself, and leans on the same 48-bit-pointer assumption that
+# hotfix-ia64-js-pointers.patch had to fix in js/public/Value.h:
+#
+#   "This will safely fit in a JS integer as long as pointers only set the
+#    lower 53 bits or so. This is okay since the JS code itself assumes only
+#    the lower 48 bits of the pointer are set"
+#
+# On ia64 that is false. Region bits 61-63 are always set, so a glibc heap
+# pointer is ~2^61, where a double's ULP is 512 -- the bottom 9 bits, bit 0
+# among them, are silently rounded away:
+#
+#   ptr    = 0x200000080246f3f0
+#   handle = 0x200000080246f3f1   (odd -> foreign)
+#    -> double -> 0x200000080246f400   (even -> "Rust"!)
+#
+# So try_lift takes the Rust branch, does Arc::from_raw() on what is really a
+# JS refcount cell, and Arc::clone dereferences it:
+#
+#   alloc::sync::{impl#32}::clone<dyn logins::encryption::PrimaryPasswordAuthenticator>
+#     (self=0x200000080246f400)                      <- note: 512-aligned
+#   logins::encryption::{impl#8}::try_lift
+#   ...
+#   logins::uniffi_logins_fn_func_create_login_store_with_nss_keymanager
+#
+# reached from JS via UniFFIScaffolding::CallSync, i.e. as soon as anything
+# touches the logins/NSS key manager. (Note this is NOT the rustc ia64
+# aggregate-by-value ABI bug, despite the RustBuffer-then-Handle signature
+# matching its shape: GCC's caller passes RustBuffer in r39-r41 and the Handle
+# in r42, and rustc's callee reads RustBuffer from r32-r34 and tests bit 0 of
+# r35 -- both sides agree. The handle arrives intact, it is already even.)
+#
+# Neither side can notice: the generated FfiValueObjectHandle*::Lift does a bare
+# SetAsDouble() with no range check (unlike FfiValueInt<uint64_t>::Lift, which
+# throws "64-bit value cannot be precisely represented in JS" above 2^53), and
+# Lower's `intValue != floatValue` test compares the already-rounded double
+# against its own cast, so it only ever catches fractions, never lost precision.
+#
+# Fix: on ia64, allocate the refcount cells from an mmap'd arena below 2^47 (a
+# region-0 hint with validation, as in hotfix-ia64-js-pointers.patch's
+# MallocLowVA), so `ptr | 1` fits in 53 bits and round-trips exactly. The handle
+# stays an ordinary pointer, so `| 1` / `& ~1` and every caller are unchanged,
+# and the arena is confined to Callbacks.cpp -- CallbackHandleCreate is the only
+# creator. A MOZ_RELEASE_ASSERT on the 2^53 bound now makes any future
+# regression fail loudly instead of silently corrupting an address.
+#
+# This is a slab with a freelist rather than one mmap per handle as in wasm's
+# MallocLowVA: a HandleRefCount is 4 bytes and there is one per live JS callback
+# object, whereas an ia64 page is 16K. Slots are 8 bytes so a free slot can hold
+# the freelist link and, critically, so bit 0 of every handle stays ours.
+#
+# Only foreign handles are affected. Rust object handles are even and go to JS
+# as a UniFFIPointer object (not a double), so they never lose precision.
+
+--- firefox-152.0.5/toolkit/components/uniffi-js/Callbacks.cpp.vanilla
++++ firefox-152.0.5/toolkit/components/uniffi-js/Callbacks.cpp
+@@ -14,6 +14,13 @@
+ #include "mozilla/Logging.h"
+ #include "mozilla/RefPtr.h"
+ #include "mozilla/UniquePtr.h"
++#ifdef __ia64__
++#  include "mozilla/StaticMutex.h"
++#  include "nsDebug.h"
++#  include <new>
++#  include <sys/mman.h>
++#  include <unistd.h>
++#endif
+ 
+ namespace mozilla::uniffi {
+ extern mozilla::LazyLogModule gUniffiLogger;
+@@ -25,6 +32,104 @@
+ // https://searchfox.org/firefox-main/rev/f26084f2dfc00c1e10377d4433cfea594f7ea8c2/mfbt/Atomics.h#114-119
+ using HandleRefCount = Atomic<uint32_t, MemoryOrdering::ReleaseAcquire>;
+ 
++// The handle must round-trip losslessly through a JS number (a double), which
++// has a 53-bit mantissa.  See CallbackHandleCreate.
++static constexpr uint64_t kMaxSafeHandle = (uint64_t(1) << 53) - 1;
++
++#ifdef __ia64__
++// Low-VA arena for callback handle refcounts (ia64 only).
++//
++// A callback handle is the address of its HandleRefCount with bit 0 set, and
++// it is handed to JS as a plain number -- `callbackHandleCreate()` returns
++// WebIDL `unsigned long long`, i.e. a double (see dom/chrome-webidl/UniFFI.webidl).
++// That requires the handle to fit in 53 bits.  Everywhere else it does: user
++// pointers stay under 2^48.  On ia64 they do not -- region bits 61-63 are
++// always set, so a glibc heap pointer is ~2^61, where a double's ULP is 512.
++// The bottom 9 bits -- including the bit 0 marker -- are silently rounded off,
++// so `Handle::is_foreign()` on the Rust side sees an even handle, decides it
++// owns a leaked `Arc`, and dereferences this refcount cell as one.  Neither
++// direction catches it: the generated FfiValueObjectHandle::Lift does a bare
++// `SetAsDouble()` with no range check, and Lower's `intValue != floatValue`
++// test compares the already-rounded double against its own cast, so it can
++// only catch fractions, never lost precision.
++//
++// Fix: allocate these cells below 2^47 with an mmap hint in region 0, so
++// `ptr | 1` fits in 53 bits and survives the round-trip exactly.  The handle
++// stays an ordinary pointer, so `| 1` / `& ~1` and every caller are unchanged.
++//
++// This is a slab, not one mmap per handle as in wasm's MallocLowVA: a
++// HandleRefCount is 4 bytes and there is one per live JS callback object,
++// whereas an ia64 page is 16K.  Slots are 8 bytes so that a free slot can hold
++// the freelist link and, critically, so bit 0 of every handle stays ours.
++namespace {
++
++constexpr uintptr_t kLowVALimit = uintptr_t(1) << 47;
++constexpr uintptr_t kLowVAHintBase = 0x0000070000000000ULL;
++constexpr uintptr_t kLowVAHintStep = uintptr_t(1) << 32;
++constexpr size_t kLowVASlotSize = 8;
++constexpr size_t kLowVAChunkSize = 64 * 1024;
++
++static_assert(sizeof(HandleRefCount) <= kLowVASlotSize);
++static_assert(alignof(HandleRefCount) <= kLowVASlotSize);
++
++MOZ_RUNINIT StaticMutex gLowVAMutex;
++void* gLowVAFreeList MOZ_GUARDED_BY(gLowVAMutex) = nullptr;
++uint8_t* gLowVACursor MOZ_GUARDED_BY(gLowVAMutex) = nullptr;
++size_t gLowVARemaining MOZ_GUARDED_BY(gLowVAMutex) = 0;
++
++// Map a fresh chunk below kLowVALimit.  Returns false if the address space is
++// exhausted, which would leave callbacks unusable, so callers treat it as OOM.
++bool LowVAGrow() MOZ_REQUIRES(gLowVAMutex) {
++  size_t pageSize = size_t(sysconf(_SC_PAGESIZE));
++  size_t len = (kLowVAChunkSize + pageSize - 1) & ~(pageSize - 1);
++
++  for (uintptr_t hint = kLowVAHintBase; hint < kLowVALimit;
++       hint += kLowVAHintStep) {
++    void* chunk = mmap(reinterpret_cast<void*>(hint), len,
++                       PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS,
++                       -1, 0);
++    if (chunk == MAP_FAILED) {
++      continue;
++    }
++    // The hint is advisory: the kernel may place the mapping anywhere, so the
++    // result has to be validated rather than assumed.
++    if (uintptr_t(chunk) + len > kLowVALimit) {
++      munmap(chunk, len);
++      continue;
++    }
++    gLowVACursor = static_cast<uint8_t*>(chunk);
++    gLowVARemaining = len;
++    return true;
++  }
++  return false;
++}
++
++void* LowVAAlloc() {
++  StaticMutexAutoLock lock(gLowVAMutex);
++
++  if (gLowVAFreeList) {
++    void* slot = gLowVAFreeList;
++    gLowVAFreeList = *reinterpret_cast<void**>(slot);
++    return slot;
++  }
++  if (gLowVARemaining < kLowVASlotSize && !LowVAGrow()) {
++    return nullptr;
++  }
++  void* slot = gLowVACursor;
++  gLowVACursor += kLowVASlotSize;
++  gLowVARemaining -= kLowVASlotSize;
++  return slot;
++}
++
++void LowVAFree(void* aSlot) {
++  StaticMutexAutoLock lock(gLowVAMutex);
++  *reinterpret_cast<void**>(aSlot) = gLowVAFreeList;
++  gLowVAFreeList = aSlot;
++}
++
++}  // namespace
++#endif  // __ia64__
++
+ uint64_t CallbackHandleCreate() {
+   // This allocates an atomic u32 that stores the ref count.
+   // We cast the address to a `u64`, which will be the handle.
+@@ -40,10 +145,28 @@
+   // 48 bits of the pointer are set:
+   // https://searchfox.org/firefox-main/rev/20a1fb35a4d5c2f2ea6c865ecebc8e4bee6f86c9/js/public/Value.h#61-66
+   //
++  // ia64 is the exception -- every pointer there carries a region number in
++  // bits 61-63 -- so the allocation comes from a low-VA arena instead; see the
++  // comment on that arena above.
++  //
+   // Finally, we always set the lowest bit on the handle.  This allows UniFFI to
+   // tell if trait interface handles came from JS or Rust.
++#ifdef __ia64__
++  void* slot = LowVAAlloc();
++  if (!slot) {
++    ::NS_ABORT_OOM(kLowVASlotSize);
++  }
++  HandleRefCount* handlePointer = new (slot) HandleRefCount(1);
++#else
+   HandleRefCount* handlePointer = new HandleRefCount(1);
+-  return reinterpret_cast<uint64_t>(handlePointer) | 1;
++#endif
++  uint64_t handle = reinterpret_cast<uint64_t>(handlePointer) | 1;
++  // A handle above 2^53 cannot survive the trip through JS: it would be
++  // rounded, losing the bit-0 marker and corrupting the address. Fail loudly
++  // rather than hand out a handle that silently means something else.
++  MOZ_RELEASE_ASSERT(handle <= kMaxSafeHandle,
++                     "callback handle cannot be represented exactly in JS");
++  return handle;
+ }
+ 
+ uint32_t CallbackHandleAddRef(uint64_t aHandle) {
+@@ -61,7 +184,13 @@
+ void CallbackHandleFree(uint64_t aHandle) {
+   HandleRefCount* handlePointer =
+       reinterpret_cast<HandleRefCount*>(aHandle & ~1);
++#ifdef __ia64__
++  // Arena memory: destroy in place and recycle the slot, it is not `new`ed.
++  handlePointer->~HandleRefCount();
++  LowVAFree(handlePointer);
++#else
+   delete handlePointer;
++#endif
+ }
+ 
+ void AsyncCallbackMethodHandlerBase::ScheduleAsyncCall(

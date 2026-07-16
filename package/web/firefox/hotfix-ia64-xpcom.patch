@@ -1,0 +1,652 @@
+# --- T2-COPYRIGHT-BEGIN ---
+# t2/package/*/firefox/hotfix-ia64-xpcom.patch
+# Copyright (C) 2026 The T2 SDE Project
+# SPDX-License-Identifier: GPL-2.0 or patched project license
+# --- T2-COPYRIGHT-END ---
+
+# xptcinvoke_ipf64.cpp predates the nsXPTCVariant API rename that other
+# architectures (see hotfix-ppc.patch, hotfix-sparc.patch) already picked
+# up: IsPtrData() -> IsIndirect(), and the old dedicated ".ptr" member is
+# gone in favor of reusing the ".val.p" union member.
+#
+# The straight IsPtrData()->IsIndirect() / .ptr->.val.p rename was wrong
+# for the indirect case: per xptcall.h's own comment on IS_INDIRECT ("we
+# &val.p should be passed on the stack, i.e. that val should be passed by
+# reference"), an indirect argument must be marshalled as the *address* of
+# the variant's storage (&source[indx].val), not the contents of its
+# val.p union member (which is meaningless garbage for non-pointer-typed
+# indirect variants such as a jsval/HandleValue -- val.p and val.jsval
+# alias the same union storage but have different sizes/layouts). Compare
+# xptcinvoke_x86_64_unix.cpp, which already does `value = (uint64_t)
+# &s->val;` for the indirect case.
+#
+# This caused any XPCOM/IDL method taking an indirect-by-reference
+# parameter (e.g. any `jsval`/HandleValue in an nsIXPCComponents_* method,
+# such as Components.utils.getGlobalForObject) to receive a garbage
+# pointer instead of a valid pointer to the caller's Value storage,
+# crashing with a SIGSEGV on first use of the parameter inside the callee
+# (e.g. nsXPCComponents_Utils::GetGlobalForObject dereferencing `object`
+# at XPCComponents.cpp:1825's `object.isPrimitive()`), well after JS
+# engine init succeeds, during general XPConnect/component use.
+#
+# The `default:` (non-indirect, plain-pointer-typed variant) case is
+# unaffected and correctly keeps using val.p, matching the new API on
+# other now-fixed architectures.
+#
+# The reverse direction (xptcstubs_ipf64.cpp's PrepareAndDispatch, used
+# when native code calls into a JS-implemented XPCOM interface) had a
+# second, separate orphaned problem: it unconditionally MOZ_CRASH()ed on
+# every single call ("NYI: support implicit JSContext*, bug 1475699"),
+# i.e. it never actually implemented unpacking arguments for methods
+# whose IDL declares [implicit_jscontext], instead of just those methods.
+# Other architectures (see xptcstubs_x86_64_linux.cpp, xptcstubs_aarch64.cpp)
+# already implement this: when the IDL parameter index reaches
+# info->IndexOfJSContext(), one extra physical argument slot (register or
+# stack, depending on position) must be consumed and skipped, since the
+# implicit JSContext* has a real physical argument slot in the underlying
+# C++ call but no corresponding entry in the IDL parameter list. This adds
+# the same handling to xptcstubs_ipf64.cpp, keyed off a physical-slot
+# counter (physIdx) separate from the IDL parameter index `i`, since the
+# skipped JSContext* slot shifts the physical slot of every later IDL
+# parameter by one relative to `i`. The existing i<7 / i==6 register vs.
+# stack thresholds are updated to use physIdx accordingly.
+
+--- firefox-152.0.5/xpcom/reflect/xptcall/md/unix/xptcinvoke_ipf64.cpp.vanilla	2026-07-14 00:00:00.000000000 +0200
++++ firefox-152.0.5/xpcom/reflect/xptcall/md/unix/xptcinvoke_ipf64.cpp	2026-07-14 00:01:00.000000000 +0200
+@@ -29,10 +29,12 @@
+   /* handle the memory arguments */
+   for (indx = 7; indx < len; ++indx)
+   {
+-    if (source[indx].IsPtrData())
++    if (source[indx].IsIndirect())
+     {
+-      /* 64 bit pointer mode */
+-      *((void**) dest) = source[indx].ptr;
++      /* Indirect params are passed by reference: the pointer to send is
++       * the address of the variant's storage, not the (meaningless, for
++       * non-pointer-typed variants such as jsval) val.p union member. */
++      *((void**) dest) = &source[indx].val;
+     }
+     else
+     switch (source[indx].type)
+@@ -61,10 +63,12 @@
+   dest = iloc;
+   for (indx = 0; indx < endlen; ++indx)
+   {
+-    if (source[indx].IsPtrData())
++    if (source[indx].IsIndirect())
+     {
+-      /* 64 bit pointer mode */
+-      *((void**) dest) = source[indx].ptr;
++      /* Indirect params are passed by reference: the pointer to send is
++       * the address of the variant's storage, not the (meaningless, for
++       * non-pointer-typed variants such as jsval) val.p union member. */
++      *((void**) dest) = &source[indx].val;
+     }
+     else
+     switch (source[indx].type)
+--- firefox-152.0.5/xpcom/reflect/xptcall/md/unix/xptcstubs_ipf64.cpp.vanilla	2026-07-14 00:02:00.000000000 +0200
++++ firefox-152.0.5/xpcom/reflect/xptcall/md/unix/xptcstubs_ipf64.cpp	2026-07-14 00:03:00.000000000 +0200
+@@ -36,6 +36,13 @@
+ 
+   const uint8_t indexOfJSContext = info->IndexOfJSContext();
+ 
++  // Physical argument slot, counting the implicit JSContext* (if any) in
++  // addition to the IDL-visible parameters counted by paramCount/`i`. The
++  // register/memory transition below (and the float register area) is
++  // keyed off physical slot position, since indexOfJSContext shifts the
++  // physical slot of every later IDL parameter by one relative to `i`.
++  uint32_t physIdx = 0;
++
+   for(i = 0; i < paramCount; ++i)
+   {
+     int isfloat = 0;
+@@ -43,7 +50,29 @@
+     const nsXPTType& type = param.GetType();
+     nsXPTCMiniVariant* dp = &paramBuffer[i];
+ 
+-    MOZ_CRASH("NYI: support implicit JSContext*, bug 1475699");
++    if (i == indexOfJSContext)
++    {
++      // Consume the physical slot occupied by the implicit JSContext*,
++      // which has no entry of its own in the IDL parameter list.
++      if (physIdx < 7)
++      {
++        if (physIdx == 6)
++        {
++          iargs = restargs;
++          fargs = restargs;
++        }
++        else
++        {
++          ++iargs;
++        }
++      }
++      else
++      {
++        ++iargs;
++        ++fargs;
++      }
++      ++physIdx;
++    }
+ 
+     if(param.IsOut() || !type.IsArithmetic())
+     {
+@@ -69,7 +98,7 @@
+     case nsXPTType::T_U64    : dp->val.u64 = *(iargs); break;
+     case nsXPTType::T_FLOAT  :
+       isfloat = 1;
+-      if (i < 7)
++      if (physIdx < 7)
+         dp->val.f = (float) *((double*) fargs); /* register */
+       else
+         dp->val.u32 = *(fargs); /* memory */
+@@ -85,10 +114,10 @@
+       NS_ERROR("bad type");
+       break;
+     }
+-    if (i < 7)
++    if (physIdx < 7)
+     {
+       /* we are parsing register arguments */
+-      if (i == 6)
++      if (physIdx == 6)
+       {
+         // run out of register arguments, move on to memory arguments
+         iargs = restargs;
+@@ -106,6 +135,7 @@
+       ++iargs;
+       ++fargs;
+     }
++    ++physIdx;
+   }
+ 
+   nsresult result = self->mOuter->CallMethod((uint16_t) methodIndex, info,
+
+# The xpidl Rust binding generator (xpcom/idl-parser/xpidl/rust.py) models a
+# C++ vtable as a #[repr(C)] struct with one 8-byte function-pointer field per
+# method -- see its own comment, "It contains one pointer field for each method
+# in the interface". That is true on every ABI Gecko supports except ia64.
+#
+# On ia64 an *ordinary function pointer* is the address of a function
+# descriptor {entry, gp} (the @fptr/.opd form), but a *C++ vtable slot* is a
+# 16-byte INLINE descriptor. GCC emits, for a class with 4 virtuals + dtor:
+#
+#   _ZTV3Bar:
+#       data8   0                                 // offset-to-top
+#       data8   _ZTI3Bar#                         // typeinfo
+#       data16.ua @iplt(_ZN3Bar2qiEPv#)           // slot 0: inline {entry, gp}
+#       ...
+#       .size   _ZTV3Bar#, 112                    // 16 header + 6 x 16
+#
+# so slot i lives at vptr + 16*i, not vptr + 8*i. Rust therefore placed
+# nsIProperties::Get at offset 24 (after 3 nsISupports pointers) where GCC puts
+# it at 48; offset 24 lands inside slot 1 (AddRef) -- on AddRef's gp word --
+# which was then called through, crashing Firefox at startup with a jump to
+# 0x3524e30820000000 (data_storage::get_profile_path -> nsIProperties::Get).
+#
+# This is a *layout* bug, not a codegen bug: LLVM's ia64 indirect-call lowering
+# is correct and matches GCC exactly. Nothing in the IR marks a #[repr(C)]
+# struct as mirroring a C++ vtable, and rustc has no `extern "C++"`, so neither
+# rustc nor LLVM can fix this -- the C++ ABI is implemented *in the generated
+# code*, and that is where the knowledge has to live. Plain C interop is
+# unaffected: a C `struct { int (*f)(void); }` really is an 8-byte descriptor
+# pointer, which Rust already matches.
+#
+# No annotation or new calling convention is needed. Because a vtable slot IS a
+# descriptor, the slot's own address is a valid ia64 function pointer, so
+# correct layout plus taking &slot is sufficient. The new `VTableSlot<F>`
+# wrapper (reexports.rs) carries the 16-byte layout and hands back the callable
+# value; it is #[cfg]-gated on target_arch = "ia64" and is layout-identical to a
+# bare function pointer everywhere else (VTableSlotGp is a zero-sized
+# [usize; 0]), so this is a no-op on non-ia64 targets -- verified: x86_64 still
+# emits `movq (%rdi),%rax; movq 24(%rax),%rax; jmpq *%rax`.
+#
+# Resulting ia64 code for `f->Get(p)` now matches GCC instruction-for-
+# instruction (GCC on the right):
+#
+#   ld8  r3 = [r32]     // vptr             ld8  r14 = [r32]
+#   adds r8 = 56, r3    // &get.gp
+#   ld8  r8 = [r8]      // gp               adds r14 = 48, r14
+#   adds r3 = 48, r3    // &get.entry       ld8  r15 = [r14], 8   // entry
+#   ld8  r3 = [r3]      // entry            ld8  r1  = [r14]      // gp
+#   mov  r1 = r8 ; mov b6 = r3             mov  b6 = r15
+#   br.call.sptk rp = b6                    br.call.sptk.many b0 = b6
+#
+# xpcom_macros is touched only because it *constructs* these same VTable
+# structs (for Rust-implemented XPCOM interfaces), so its initializers must
+# build slots to keep compiling. That reverse direction (C++ calling a
+# Rust-implemented interface) remains broken on ia64 -- see the FIXME(ia64) in
+# gen_inner_vtable: a Rust-built slot needs a 16-byte inline descriptor, but
+# rustc/LLVM emit `data8.ua @fptr(f)` for a function item in a static and the
+# IA64 backend has no @iplt support at all. It was equally broken before this
+# change (the whole vtable was 8-byte-slotted), so this is not a regression;
+# fixing it needs either a lazily-initialized vtable or new backend support.
+
+--- firefox-152.0.5/xpcom/idl-parser/xpidl/rust.py.vanilla	2026-07-14 00:04:00.000000000 +0200
++++ firefox-152.0.5/xpcom/idl-parser/xpidl/rust.py	2026-07-14 00:05:00.000000000 +0200
+@@ -158,6 +158,14 @@
+     return str[0].upper() + str[1:]
+ 
+ 
++# Path to the wrapper describing a single C++ vtable slot. A slot is not
++# necessarily a bare function pointer: on ia64 it is a 16-byte inline function
++# descriptor, and the slot's address (not its contents) is the callable value.
++# `VTableSlot` abstracts that difference so this generator stays target-agnostic;
++# see xpcom/rust/xpcom/src/reexports.rs.
++VTABLE_SLOT = "crate::reexports::VTableSlot"
++
++
+ # Attribute VTable Methods
+ def attributeNativeName(a, getter):
+     binaryname = rustSanitize(a.binaryname if a.binaryname else firstCap(a.name))
+@@ -200,11 +208,16 @@
+     try:
+         params = attributeParamList(iface, m, getter)
+         ret_ty = attributeReturnType(m, getter)
+-        return f'pub {name}: unsafe extern "system" fn ({params}) -> {ret_ty}'
++        return (
++            f"pub {name}: {VTABLE_SLOT}<"
++            f'unsafe extern "system" fn ({params}) -> {ret_ty}>'
++        )
+     except xpidl.RustNoncompat as reason:
++        # NOTE: Still a full slot: this occupies a real vtable slot, and using a
++        # bare pointer here would shift the offset of every later slot.
+         return f"""\
+ /// Unable to generate binding because `{reason}`
+-pub {name}: *const ::libc::c_void"""
++pub {name}: {VTABLE_SLOT}<*const ::libc::c_void>"""
+ 
+ 
+ # Method VTable generation functions
+@@ -248,17 +261,22 @@
+     try:
+         params = methodParamList(iface, m)
+         ret_ty = methodReturnType(m)
+-        return f'pub {name}: unsafe extern "system" fn ({params}) -> {ret_ty}'
++        return (
++            f"pub {name}: {VTABLE_SLOT}<"
++            f'unsafe extern "system" fn ({params}) -> {ret_ty}>'
++        )
+     except xpidl.RustNoncompat as reason:
++        # NOTE: Still a full slot: this occupies a real vtable slot, and using a
++        # bare pointer here would shift the offset of every later slot.
+         return f"""\
+ /// Unable to generate binding because `{reason}`
+-pub {name}: *const ::libc::c_void"""
++pub {name}: {VTABLE_SLOT}<*const ::libc::c_void>"""
+ 
+ 
+ method_impl_tmpl = """\
+ #[inline]
+ pub unsafe fn {name}(&self, {params}) -> {ret_ty} {{
+-    ((*self.vtable).{name})(self, {args})
++    ((*self.vtable).{name}.get())(self, {args})
+ }}
+ """
+ 
+@@ -286,7 +304,7 @@
+ #[inline]
+ pub unsafe fn {name}(&self) -> {realtype} {{
+     let mut result = <{realtype} as ::std::default::Default>::default();
+-    let _rv = ((*self.vtable).{name})(self, &mut result);
++    let _rv = ((*self.vtable).{name}.get())(self, &mut result);
+     debug_assert!(_rv.succeeded());
+     result
+ }}
+@@ -381,9 +399,13 @@
+ vtable_tmpl = """\
+ // This struct represents the interface's VTable. A pointer to a statically
+ // allocated version of this struct is at the beginning of every {name}
+-// object. It contains one pointer field for each method in the interface. In
+-// the case where we can't generate a binding for a method, we include a void
+-// pointer.
++// object. It contains one `VTableSlot` field for each method in the interface.
++// In the case where we can't generate a binding for a method, we include a slot
++// holding a void pointer, so that later slots keep their correct offsets.
++//
++// NOTE: a slot is not necessarily a bare function pointer -- on ia64 it is a
++// 16-byte inline function descriptor. Always call through `slot.get()` rather
++// than reading the `entry` field.
+ #[doc(hidden)]
+ #[repr(C)]
+ pub struct {name}VTable {{{base}{entries}}}
+--- firefox-152.0.5/xpcom/rust/xpcom/src/reexports.rs.vanilla	2026-07-14 00:04:00.000000000 +0200
++++ firefox-152.0.5/xpcom/rust/xpcom/src/reexports.rs	2026-07-14 00:05:00.000000000 +0200
+@@ -50,3 +50,70 @@
+     pub typeinfo: *const libc::c_void,
+     pub vtable: T,
+ }
++
++/// The second half of an ia64 C++ vtable slot; zero-sized everywhere else.
++///
++/// See `VTableSlot`. This is a type alias rather than a `#[cfg]` on the field
++/// itself so that the *construction* site in `xpcom_macros` stays uniform
++/// across targets (`VTableSlot { entry, gp: VTABLE_SLOT_GP }`), and so that
++/// `VTableSlot` remains const-constructible -- the generated `get_vtable`
++/// relies on static promotion of a `&VTableExtra { .. }` rvalue, which rules
++/// out a `const fn` constructor.
++#[cfg(target_arch = "ia64")]
++pub type VTableSlotGp = usize;
++#[cfg(not(target_arch = "ia64"))]
++pub type VTableSlotGp = [usize; 0];
++
++#[cfg(target_arch = "ia64")]
++pub const VTABLE_SLOT_GP: VTableSlotGp = 0;
++#[cfg(not(target_arch = "ia64"))]
++pub const VTABLE_SLOT_GP: VTableSlotGp = [];
++
++/// One slot of a C++ vtable.
++///
++/// On every ABI Gecko supports except ia64, a vtable slot is simply a function
++/// pointer, and this is a transparent wrapper around one (`VTableSlotGp` is
++/// zero-sized, so the layout is unchanged).
++///
++/// ia64 is the odd one out. There, a *function pointer* is the address of a
++/// function descriptor `{entry, gp}` (the `@fptr`/`.opd` form), but a C++
++/// vtable slot is a **16-byte inline descriptor** -- GCC emits
++/// `data16.ua @iplt(f)` -- with no extra indirection. Consequently:
++///
++/// * each slot is 16 bytes, not 8, so every slot past the first sits at a
++///   different offset than a naive array of function pointers would imply; and
++/// * because the slot *is* a descriptor, the slot's own **address** is a
++///   perfectly ordinary ia64 function pointer. That is what `get` returns, and
++///   why no special calling convention or backend support is needed to *call*
++///   through one -- see `get`.
++///
++/// Itanium C++ ABI: https://refspecs.linuxbase.org/cxxabi-1.83.html#vtable
++#[repr(C)]
++pub struct VTableSlot<F: Copy> {
++    pub entry: F,
++    pub gp: VTableSlotGp,
++}
++
++#[cfg(not(target_arch = "ia64"))]
++impl<F: Copy> VTableSlot<F> {
++    /// The callable value held in this slot.
++    #[inline]
++    pub unsafe fn get(&self) -> F {
++        self.entry
++    }
++}
++
++#[cfg(target_arch = "ia64")]
++impl<F: Copy> VTableSlot<F> {
++    /// The callable value held in this slot.
++    ///
++    /// The slot is an inline `{entry, gp}` descriptor, so its address -- not
++    /// its contents -- is the function pointer. Reading `self.entry` here would
++    /// yield the raw entry point and then be dereferenced again by the call
++    /// lowering, jumping into the middle of the callee's own machine code.
++    #[inline]
++    pub unsafe fn get(&self) -> F {
++        // `F` is a function pointer, so this is a pointer-sized copy.
++        std::mem::transmute_copy::<*const Self, F>(&(self as *const Self))
++    }
++}
+--- firefox-152.0.5/xpcom/rust/xpcom/xpcom_macros/src/lib.rs.vanilla	2026-07-14 00:04:00.000000000 +0200
++++ firefox-152.0.5/xpcom/rust/xpcom/xpcom_macros/src/lib.rs	2026-07-14 00:05:00.000000000 +0200
+@@ -356,12 +356,33 @@
+     // Include each of the method definitions for this interface.
+     let (_, ty_generics, _) = real.generics.split_for_impl();
+     let turbofish = ty_generics.as_turbofish();
++    // NOTE(ia64): each slot is a `VTableSlot`, whose layout is target-dependent
++    // (see xpcom/rust/xpcom/src/reexports.rs). A struct literal (rather than a
++    // constructor fn) is required here: `get_vtable` below relies on static
++    // promotion of the `&VTableExtra { .. }` rvalue, and promotion does not
++    // cover ordinary `const fn` calls.
++    //
++    // FIXME(ia64): on ia64 a C++ vtable slot must be a 16-byte *inline* function
++    // descriptor (`data16.ua @iplt(f)`), but rustc/LLVM emit `data8.ua @fptr(f)`
++    // -- an 8-byte pointer *to* a descriptor -- for a function item in a static,
++    // and the backend has no way to express the inline form. So the slot below
++    // has the correct size and offset, but the wrong contents on ia64: C++ code
++    // calling a Rust-implemented XPCOM interface will still misbehave. This is
++    // pre-existing breakage, not a regression -- such vtables were entirely
++    // 8-byte-slotted before -- and needs either a lazily-initialized vtable
++    // (copying the 16 bytes at `entry as usize`, which is the descriptor's
++    // address) or `@iplt` support in the IA64 backend.
+     let vtable_init = iface
+         .methods()?
+         .iter()
+         .map(|method| {
+             let name = format_ident!("{}", method.name);
+-            quote! { #name : #name #turbofish, }
++            quote! {
++                #name : ::xpcom::reexports::VTableSlot {
++                    entry: #name #turbofish,
++                    gp: ::xpcom::reexports::VTABLE_SLOT_GP,
++                },
++            }
+         })
+         .collect::<Vec<_>>();
+ 
+
+# =============================================================================
+# FIXME(ia64): HACK -- runtime vtable fix-up. Delete once the IA64 backend can
+# emit `data16.ua @iplt(f)`. Everything below this line is a workaround for a
+# missing toolchain feature, not a design; it is deliberately self-contained so
+# it can be dropped without touching the layout fix above.
+# =============================================================================
+#
+# The change above fixes Rust -> C++ virtual calls (Rust reading a GCC-built
+# vtable). This part fixes the reverse: C++ -> Rust, i.e. GCC-compiled C++
+# making a virtual call on a Rust-implemented XPCOM interface (nsIRunnable,
+# nsIObserver, ...), which xpcom_macros builds the vtable for.
+#
+# Symptom without this: Firefox SIGSEGVs at startup with
+#   #0  0x2000000036e32d50 in ?? ()
+#   #1  mozilla::RefPtrTraits<nsIRunnable>::AddRef (aPtr=0x20000008002f56e0)
+#   #2  nsCOMPtr<nsIRunnable>::nsCOMPtr / nsIEventTarget::Dispatch
+# i.e. C++ calling AddRef() on a Rust-built moz_task RunnableFunction vtable.
+#
+# Why: `VTableSlot` (above) gives Rust-built vtables the correct 16-byte slot
+# *size and offset*, so C++ finds each method where it expects. Verified in the
+# built object -- moz_task RunnableFunction's vtable has its slots at 0x10/0x20/
+# 0x30/0x40 (QueryInterface/AddRef/Release/Run), exactly GCC's layout. But the
+# slot *contents* are still wrong: for a function item in a static, rustc/LLVM
+# emit `data8.ua @fptr(f)` -- an 8-byte pointer *to* a descriptor -- plus our
+# zeroed gp half. The object has 61 FPTR64LSB relocations and zero IPLT ones.
+# So C++ loads entry=&descriptor, gp=0 and branches into .opd data.
+#
+# The IA64 backend has no @iplt/data16 support at all (IA64MCAsmInfo.h defines
+# only S_FPTR/S_LTOFF_FPTR, and IA64AsmPrinter::lowerConstant unconditionally
+# wraps functions in @fptr), and there is no IR-level way to request an inline
+# descriptor -- so this cannot be fixed at compile time today.
+#
+# Since @fptr(f) *is* the address of a descriptor, and a descriptor's 16 bytes
+# are exactly what the slot must contain, the fix is a 16-byte copy per slot.
+# fixup_vtable() does that at runtime: copy the promoted prototype to the heap,
+# inline each descriptor, leak it, cache it. It is the identity function (and
+# inlines away) on every non-ia64 target.
+#
+# Why runtime, and not something cleaner -- all compile-time routes are closed:
+#   * A named `static` per vtable: impossible, Rust has no generic statics, and
+#     #[xpcom] structs may be generic (moz_task's RunnableFunction<F> is). The
+#     existing code relies on const promotion, which *does* give one anonymous
+#     static per monomorphization -- but promoted statics are const.
+#   * Patching that static in an .init_array ctor: impossible, it carries
+#     relocations so it lives in .data.rel.ro, which ld.so makes read-only
+#     before constructors run.
+#   * A OnceLock in a `static` inside the generic get_vtable: a static in a
+#     generic fn is shared across all monomorphizations, so every T would race
+#     to install its own methods into one vtable.
+#
+# The cache key is the prototype's own address, which is per-monomorphization
+# and needs no T: 'static bound. Promoted statics are unnamed_addr so LLVM may
+# merge two -- but only when contents are identical, in which case the fixed-up
+# copies are identical too, so sharing is correct.
+#
+# Relies on the xpidl-generated vtable body being nothing but 16-byte slots,
+# recursively -- verified across all 794 generated interfaces: 7873 VTableSlot
+# fields, 1180 nested base VTables, nothing else. fixup_vtable asserts
+# size_of::<T>() % 16 == 0 so that drift fails loudly instead of silently
+# corrupting vtables.
+#
+# Cost: one RwLock read + hash lookup per XPCOM object allocated from Rust, and
+# one leaked vtable per monomorphization (bounded; must outlive every object
+# pointing at it). Both go away with the backend fix.
+
+--- firefox-152.0.5/xpcom/rust/xpcom/src/reexports.rs.prehack	2026-07-14 00:06:00.000000000 +0200
++++ firefox-152.0.5/xpcom/rust/xpcom/src/reexports.rs	2026-07-14 00:07:00.000000000 +0200
+@@ -117,3 +117,130 @@
+         std::mem::transmute_copy::<*const Self, F>(&(self as *const Self))
+     }
+ }
++
++/// Correct a Rust-built C++ vtable so that C++ can call through it.
++///
++/// FIXME(ia64): THIS IS A HACK. It exists because a Rust-built vtable cannot
++/// currently be emitted correctly on ia64 at compile time, and it should be
++/// deleted once the backend can do so. See "Why this is needed" below.
++///
++/// On every other target this is the identity function and compiles away to
++/// nothing; the whole mechanism is ia64-only.
++///
++/// # Why this is needed
++///
++/// A C++ vtable slot on ia64 is a 16-byte *inline* function descriptor
++/// `{entry, gp}`; GCC emits `data16.ua @iplt(f)`. `VTableSlot` already gives us
++/// the right *size and offset* for those slots, so C++ finds each method where
++/// it expects to. But it cannot give us the right *contents*: for a function
++/// item in a static, rustc/LLVM emit `data8.ua @fptr(f)` -- an 8-byte pointer
++/// *to* a descriptor, followed by our zeroed `gp` -- and the IA64 backend has
++/// no `@iplt`/`data16` support at all, nor any IR-level way to ask for it.
++///
++/// So a Rust-built vtable slot arrives here holding `{&descriptor, 0}` where
++/// C++ requires `{entry, gp}`. Since `@fptr(f)` *is* the address of a
++/// descriptor, and a descriptor's 16 bytes are exactly what the slot must
++/// contain, the fix is a plain 16-byte copy per slot -- done here, at runtime.
++///
++/// # Why it has to be at runtime
++///
++/// The correct bytes are only known to the linker, and none of the compile-time
++/// routes work:
++///
++/// * A named `static` per vtable is impossible: Rust has no generic statics,
++///   and `#[xpcom]` structs may be generic (e.g. `RunnableFunction<F>`). The
++///   caller relies on *const promotion*, which does produce one anonymous
++///   static per monomorphization -- but a promoted static is `const`.
++/// * Patching that static in place is impossible: it holds relocations, so it
++///   lives in `.data.rel.ro`, which ld.so makes read-only *before* running
++///   `.init_array` constructors.
++/// * A `OnceLock` in a `static` inside the generic `get_vtable` would be shared
++///   across every monomorphization, so each `T` would race to install its own
++///   methods into a single vtable.
++///
++/// Hence: copy to fresh heap memory, fix it up, leak it, and cache it.
++///
++/// # Cost
++///
++/// One `RwLock` read plus a hash lookup per XPCOM object allocated from Rust,
++/// and one leaked vtable per monomorphization (bounded by the number of
++/// `#[xpcom]` impls, and intentionally never freed -- it must outlive every
++/// object pointing at it).
++///
++/// The cache key is the *prototype's own address*. Every monomorphization gets
++/// its own promoted static, so the address distinguishes them without needing a
++/// `T: 'static` bound. Promoted statics are `unnamed_addr`, so LLVM may merge
++/// two of them -- but only when their contents are identical, in which case the
++/// fixed-up copies would be identical too, so sharing one is correct.
++#[cfg(not(target_arch = "ia64"))]
++#[inline(always)]
++pub fn fixup_vtable<T>(proto: &'static VTableExtra<T>) -> &'static VTableExtra<T> {
++    proto
++}
++
++#[cfg(target_arch = "ia64")]
++pub fn fixup_vtable<T>(proto: &'static VTableExtra<T>) -> &'static VTableExtra<T> {
++    use std::collections::HashMap;
++    use std::sync::{OnceLock, RwLock};
++
++    // Keyed by prototype address; value is the leaked fixed-up copy.
++    static REGISTRY: OnceLock<RwLock<HashMap<usize, usize>>> = OnceLock::new();
++    let registry = REGISTRY.get_or_init(|| RwLock::new(HashMap::new()));
++
++    let key = proto as *const VTableExtra<T> as usize;
++
++    // Fast path: already fixed up.
++    if let Some(&fixed) = registry.read().unwrap().get(&key) {
++        return unsafe { &*(fixed as *const VTableExtra<T>) };
++    }
++
++    let mut guard = registry.write().unwrap();
++    // Re-check: another thread may have won the race to the write lock.
++    if let Some(&fixed) = guard.get(&key) {
++        return unsafe { &*(fixed as *const VTableExtra<T>) };
++    }
++
++    // The vtable body is nothing but 16-byte slots, recursively (a `{name}VTable`
++    // contains only `VTableSlot` fields and nested base `{name}VTable`s), so it
++    // can be walked blindly as an array of slots. Guard the invariant: if xpidl
++    // ever emits a non-slot field, fail loudly here rather than silently
++    // corrupting the vtable.
++    let size = std::mem::size_of::<T>();
++    assert!(
++        size % 16 == 0,
++        "ia64: vtable body is not a whole number of 16-byte slots; \
++         the xpidl-generated VTable struct must contain only VTableSlot fields"
++    );
++    let slot_count = size / 16;
++
++    let fixed: &'static mut VTableExtra<T> = unsafe {
++        // `T` is neither `Copy` nor `Clone`, so clone the prototype bytewise.
++        let layout = std::alloc::Layout::new::<VTableExtra<T>>();
++        let raw = std::alloc::alloc(layout) as *mut VTableExtra<T>;
++        if raw.is_null() {
++            std::alloc::handle_alloc_error(layout);
++        }
++        std::ptr::copy_nonoverlapping(proto as *const VTableExtra<T>, raw, 1);
++        &mut *raw
++    };
++
++    unsafe {
++        // Replace each slot's `{&descriptor, 0}` with the descriptor's own
++        // `{entry, gp}` bytes, turning it into the inline descriptor C++ wants.
++        let slots = &mut fixed.vtable as *mut T as *mut [usize; 2];
++        for i in 0..slot_count {
++            let slot = slots.add(i);
++            let descriptor = (*slot)[0];
++            // A null entry means a slot xpidl could not generate a binding for.
++            // It is not callable either way; leave it alone rather than
++            // dereferencing null.
++            if descriptor != 0 {
++                *slot = *(descriptor as *const [usize; 2]);
++            }
++        }
++    }
++
++    let fixed: *const VTableExtra<T> = fixed;
++    guard.insert(key, fixed as usize);
++    unsafe { &*fixed }
++}
+--- firefox-152.0.5/xpcom/rust/xpcom/xpcom_macros/src/lib.rs.prehack	2026-07-14 00:06:00.000000000 +0200
++++ firefox-152.0.5/xpcom/rust/xpcom/xpcom_macros/src/lib.rs	2026-07-14 00:07:00.000000000 +0200
+@@ -417,7 +417,17 @@
+         // to allow it to be generic.
+         #[inline]
+         fn get_vtable #impl_generics () -> &'static ::xpcom::reexports::VTableExtra<#vtable_ty> #where_clause {
+-            &::xpcom::reexports::VTableExtra {
++            // FIXME(ia64): HACK. `fixup_vtable` rewrites each vtable slot into
++            // the inline function descriptor C++ requires on ia64, because
++            // rustc/LLVM cannot emit one in a static. It is the identity
++            // function on every other target. Remove once the IA64 backend can
++            // emit `data16.ua @iplt(f)`. See xpcom/rust/xpcom/src/reexports.rs.
++            //
++            // The `&VTableExtra { .. }` rvalue must still be const-promoted --
++            // `fixup_vtable` takes `&'static`, which forces promotion just as
++            // returning it directly did -- since the promoted static is both the
++            // per-monomorphization storage and the cache key.
++            ::xpcom::reexports::fixup_vtable(&::xpcom::reexports::VTableExtra {
+                 #[cfg(not(windows))]
+                 offset: {
+                     // NOTE: workaround required to avoid depending on the
+@@ -428,7 +438,7 @@
+                 #[cfg(not(windows))]
+                 typeinfo: 0 as *const _,
+                 vtable: #vtable,
+-            }
++            })
+         }
+         &get_vtable #turbofish ().vtable
+     },})
