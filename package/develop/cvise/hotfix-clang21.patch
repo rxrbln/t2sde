@@ -1,0 +1,104 @@
+# --- T2-COPYRIGHT-BEGIN ---
+# t2/package/*/cvise/hotfix-clang21.patch
+# Copyright (C) 2026 The T2 SDE Project
+# SPDX-License-Identifier: GPL-2.0 or patched project license
+# --- T2-COPYRIGHT-END ---
+
+--- cvise-2.12.0/clang_delta/CommonRenameClassRewriteVisitor.h	2025-09-23 22:51:29.000000000 +0200
++++ /usr/src/dirtier/src.cvise.260717.233746.14392/cvise-2.12.0/clang_delta/CommonRenameClassRewriteVisitor.h	2026-07-17 23:41:48.655000000 +0200
+@@ -368,7 +368,9 @@
+     dyn_cast<DependentTemplateSpecializationType>(Ty);
+   TransAssert(DTST && "Bad DependentTemplateSpecializationType!");
+ 
+-  const IdentifierInfo *IdInfo = DTST->getIdentifier();
++  const IdentifierInfo *IdInfo = DTST->getDependentTemplateName().getName().getIdentifier();
++  if (!IdInfo)
++    return true;
+   std::string IdName = IdInfo->getName().str();
+   std::string Name;
+   if (getNewNameByName(IdName, Name)) {
+--- cvise-2.12.0/clang_delta/RemoveNamespace.cpp	2025-09-23 22:51:29.000000000 +0200
++++ /usr/src/dirtier/src.cvise.260717.233746.14392/cvise-2.12.0/clang_delta/RemoveNamespace.cpp	2026-07-17 23:41:52.032000000 +0200
+@@ -440,7 +440,9 @@
+     dyn_cast<DependentTemplateSpecializationType>(Ty);
+   TransAssert(DTST && "Bad DependentTemplateSpecializationType!");
+ 
+-  const IdentifierInfo *IdInfo = DTST->getIdentifier();
++  const IdentifierInfo *IdInfo = DTST->getDependentTemplateName().getName().getIdentifier();
++  if (!IdInfo)
++    return true;
+   std::string IdName = IdInfo->getName().str();
+   std::string Name;
+ 
+@@ -562,8 +564,7 @@
+           ND = NAD->getNamespace()->getCanonicalDecl();
+         break;
+       }
+-      case NestedNameSpecifier::TypeSpec: // Fall-through
+-      case NestedNameSpecifier::TypeSpecWithTemplate:
++      case NestedNameSpecifier::TypeSpec:
+         TraverseTypeLoc(Loc.getTypeLoc());
+         break;
+       default:
+--- cvise-2.12.0/clang_delta/RemoveUnusedFunction.cpp	2025-09-23 22:51:29.000000000 +0200
++++ /usr/src/dirtier/src.cvise.260717.233746.14392/cvise-2.12.0/clang_delta/RemoveUnusedFunction.cpp	2026-07-17 23:41:53.093000000 +0200
+@@ -254,7 +254,9 @@
+ 
+   if (FD->isReferenced() ||
+       FD->isMain() ||
++#if LLVM_VERSION_MAJOR < 21
+       FD->hasAttr<OpenCLKernelAttr>() ||
++#endif
+       ConsumerInstance->hasReferencedSpecialization(CanonicalFD) ||
+       ConsumerInstance->isInlinedSystemFunction(CanonicalFD) ||
+       ConsumerInstance->isInReferencedSet(CanonicalFD) ||
+--- cvise-2.12.0/clang_delta/RenameFun.cpp	2025-09-23 22:51:29.000000000 +0200
++++ /usr/src/dirtier/src.cvise.260717.233746.14392/cvise-2.12.0/clang_delta/RenameFun.cpp	2026-07-17 23:44:36.825000000 +0200
+@@ -261,7 +261,11 @@
+ {
+   std::string Name = FD->getNameAsString();
+   // Skip special functions
+-  if (isSpecialFun(Name) || FD->hasAttr<OpenCLKernelAttr>())
++  if (isSpecialFun(Name)
++#if LLVM_VERSION_MAJOR < 21
++      || FD->hasAttr<OpenCLKernelAttr>()
++#endif
++  )
+     FunToNameMap[FD] = Name;
+ 
+   if (FunToNameMap.find(FD) != FunToNameMap.end())
+--- cvise-2.12.0/clang_delta/TransformationManager.cpp	2025-09-23 22:51:29.000000000 +0200
++++ /usr/src/dirtier/src.cvise.260717.233746.14392/cvise-2.12.0/clang_delta/TransformationManager.cpp	2026-07-17 23:45:29.750000000 +0200
+@@ -163,7 +163,7 @@
+     ClangInstance->createFileManager();
+ 
+     if(CLCPath != NULL && ClangInstance->hasFileManager() &&
+-       ClangInstance->getFileManager().getDirectory(CLCPath, false)) {
++       ClangInstance->getFileManager().getDirectoryRef(CLCPath, false)) {
+         Args.push_back("-I");
+         Args.push_back(CLCPath);
+     }
+@@ -184,9 +184,9 @@
+     return false;
+   }
+ 
+-  TargetInfo *Target = 
++    TargetInfo *Target =
+     TargetInfo::CreateTargetInfo(ClangInstance->getDiagnostics(),
+-                                 ClangInstance->getInvocation().TargetOpts);
++                                 ClangInstance->getTargetOpts());
+   ClangInstance->setTarget(Target);
+ 
+   if (const char *env = getenv("CVISE_INCLUDE_PATH")) {
+--- cvise-2.12.0/clang_delta/Transformation.cpp	2025-09-23 22:51:29.000000000 +0200
++++ /usr/src/dirtier/src.cvise.260717.233746.14392/cvise-2.12.0/clang_delta/Transformation.cpp	2026-07-17 23:45:30.752000000 +0200
+@@ -674,8 +674,7 @@
+         const NamespaceAliasDecl *NAD = NNS->getAsNamespaceAlias();
+         return NAD->getNamespace()->getCanonicalDecl();
+       }
+-      case NestedNameSpecifier::TypeSpec: // Fall-through
+-      case NestedNameSpecifier::TypeSpecWithTemplate: {
++      case NestedNameSpecifier::TypeSpec: {
+         const Type *Ty = NNS->getAsType();
+         if (const RecordType *RT = Ty->getAs<RecordType>())
+           return RT->getDecl();
