@@ -1,0 +1,113 @@
+From 91a3d9c163894d7adb64399a1ae3f9bd4efafffe Mon Sep 17 00:00:00 2001
+From: sparc64 BPF Fix <sparc64-fix@kernel.org>
+Date: Thu, 16 Jul 2026 21:10:50 +0000
+Subject: [PATCH] sparc64: flush vmalloc D-cache on vunmap to prevent stale
+ VIPT hits
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+On UltraSPARC III (Cheetah/Cheetah+), the L1 data cache is 64KB,
+write-through, and VIPT (Virtually Indexed, Physically Tagged).
+When a vmalloc region is freed, the page allocator can reuse its
+underlying physical pages for new allocations — potentially mapping
+them back at the same vmalloc virtual address.  Because the D-cache
+indexes by virtual address and tags by physical address, a stale
+line from the old mapping hits on the new mapping (same VA, same PA),
+returning old data despite the page having been modified through the
+direct-map alias (e.g. zeroed via __GFP_ZERO) in the interim.
+
+Neither TLB invalidation nor TSB flushing resolves this: the address
+translation is correct, but the D-cache serves stale data without
+re-reading from the L2 (which is PIPT and always current).
+
+This was observed as memory corruption during BPF program loading
+and kernel module loading on UltraSPARC IIIi systems (Netra 240,
+Sun Ultra 25).  Corrupted data included BPF instructions appearing in
+verifier metadata, bpf_prog structures reading as all-zeros, and
+corrupted module symbol tables — all cases of freed vmalloc pages
+being reused while stale D-cache lines persisted.
+
+Fix by implementing flush_cache_vunmap() on sparc64.  This hook is
+called by the vmalloc core in free_unmap_vmap_area() while PTEs are
+still valid.  Walk the VA range, resolve each page through the page
+table via vmalloc_to_page(), and invalidate D-cache entries for its
+physical address on all CPUs via flush_dcache_folio_all().  On
+Cheetah, this issues per-line ASI_DCACHE_INVALIDATE stores keyed by
+physical address, evicting stale entries regardless of which virtual
+address they were filled through.
+
+Closes: https://github.com/sparclinux/issues/issues/29
+Reported-by: John Paul Adrian Glaubitz <glaubitz@physik.fu-berlin.de>
+Tested-by: lenticularis39
+---
+ arch/sparc/include/asm/cacheflush_64.h |  3 ++-
+ arch/sparc/mm/init_64.c                | 31 ++++++++++++++++++++++++++
+ 2 files changed, 33 insertions(+), 1 deletion(-)
+
+diff --git a/arch/sparc/include/asm/cacheflush_64.h b/arch/sparc/include/asm/cacheflush_64.h
+index 0609257..a9c3fe3 100644
+--- a/arch/sparc/include/asm/cacheflush_64.h
++++ b/arch/sparc/include/asm/cacheflush_64.h
+@@ -76,7 +76,8 @@ void flush_ptrace_access(struct vm_area_struct *, struct page *,
+ 
+ #define flush_cache_vmap(start, end)		do { } while (0)
+ #define flush_cache_vmap_early(start, end)	do { } while (0)
+-#define flush_cache_vunmap(start, end)		do { } while (0)
++
++void flush_cache_vunmap(unsigned long start, unsigned long end);
+ 
+ #endif /* !__ASSEMBLER__ */
+ 
+diff --git a/arch/sparc/mm/init_64.c b/arch/sparc/mm/init_64.c
+index 103db46..e91e771 100644
+--- a/arch/sparc/mm/init_64.c
++++ b/arch/sparc/mm/init_64.c
+@@ -27,6 +27,7 @@
+ #include <linux/percpu.h>
+ #include <linux/mmzone.h>
+ #include <linux/gfp.h>
++#include <linux/vmalloc.h>
+ #include <linux/bootmem_info.h>
+ 
+ #include <asm/head.h>
+@@ -3050,6 +3051,36 @@ arch_initcall(report_memory);
+ #define do_flush_tlb_kernel_range	__flush_tlb_kernel_range
+ #endif
+ 
++void flush_cache_vunmap(unsigned long start, unsigned long end)
++{
++#ifdef DCACHE_ALIASING_POSSIBLE
++	unsigned long addr;
++
++	/*
++	 * On UltraSPARC III (Cheetah), the L1 D-cache is 64KB, VIPT
++	 * (Virtually Indexed, Physically Tagged) and write-through.
++	 *
++	 * When vmalloc pages are freed and their physical pages reused,
++	 * the D-cache can retain stale lines from the old mapping.  If
++	 * the same physical page is later remapped — particularly at the
++	 * same virtual address — the stale D-cache entry hits because
++	 * the physical tag still matches, returning old data instead of
++	 * the page's current contents.
++	 *
++	 * Flush D-cache entries for every physical page in this range on
++	 * all CPUs before the PTEs are torn down.  This is safe because
++	 * flush_cache_vunmap() is called while PTEs are still valid, so
++	 * vmalloc_to_page() can resolve each VA to its struct page.
++	 */
++	for (addr = start; addr < end; addr += PAGE_SIZE) {
++		struct page *page = vmalloc_to_page((void *)addr);
++
++		if (page)
++			flush_dcache_folio_all(NULL, page_folio(page));
++	}
++#endif
++}
++
+ void flush_tlb_kernel_range(unsigned long start, unsigned long end)
+ {
+ 	if (start < HI_OBP_ADDRESS && end > LOW_OBP_ADDRESS) {
+-- 
+2.43.0
+
