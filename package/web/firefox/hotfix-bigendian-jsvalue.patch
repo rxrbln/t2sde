@@ -1,0 +1,46 @@
+# --- T2-COPYRIGHT-BEGIN ---
+# t2/package/*/firefox/hotfix-bigendian-jsvalue-private.patch
+# Copyright (C) 2026 The T2 SDE Project
+# SPDX-License-Identifier: GPL-2.0 or patched project license
+# --- T2-COPYRIGHT-END ---
+
+--- firefox-152.0.6/js/src/vm/NativeObject.h.vanilla
++++ firefox-152.0.6/js/src/vm/NativeObject.h
+@@ -10,6 +10,7 @@
+ #include "mozilla/Maybe.h"
+ 
+ #include <algorithm>
++#include <bit>
+ #include <stdint.h>
+ 
+ #include "NamespaceImports.h"
+@@ -1425,6 +1426,13 @@
+     MOZ_ASSERT(slotIsFixed(slot));
+     MOZ_ASSERT(getReservedSlot(slot).isDouble());
+     void* addr = &getFixedSlotRef(slot);
++#ifdef JS_NUNBOX32
++    if constexpr (std::endian::native == std::endian::big) {
++      // The private pointer is the low word of the 64-bit Value bits, stored
++      // in the second word on big-endian.
++      addr = static_cast<char*>(addr) + sizeof(uint32_t);
++    }
++#endif
+     return reinterpret_cast<T**>(addr);
+   }
+ 
+--- firefox-152.0.6/js/src/vm/TypedArrayObject.cpp.vanilla
++++ firefox-152.0.6/js/src/vm/TypedArrayObject.cpp
+@@ -315,9 +315,10 @@
+ }
+ 
+ void FixedLengthTypedArrayObject::setInlineElements() {
+-  char* dataSlot = reinterpret_cast<char*>(this) + dataOffset();
+-  *reinterpret_cast<void**>(dataSlot) =
+-      this->fixedData(FixedLengthTypedArrayObject::FIXED_DATA_START);
++  // Store through the Value API: a raw pointer store at dataOffset() would
++  // land on the nunbox32 tag word on big-endian.
++  setReservedSlotPrivateUnbarriered(
++      DATA_SLOT, this->fixedData(FixedLengthTypedArrayObject::FIXED_DATA_START));
+ }
+ 
+ bool FixedLengthTypedArrayObject::hasMallocedElements(JSContext* cx) const {
