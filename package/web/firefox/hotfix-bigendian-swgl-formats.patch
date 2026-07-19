@@ -65,3 +65,511 @@
      return;
    }
  
+
+Bug 1716707 followup: place the presentation swizzle before the mapped buffer
+is unmapped/copied (partial updates went to the widget unswizzled), size it to
+the mapped region, and drop the height 46/64 workaround. Image surfaces are
+decoded directly to little-endian B8G8R8A8/B8G8R8X8 to match the Skia/SWGL
+byte-order convention, replacing the imgFrame post-draw byte swap.
+
+--- firefox-152.0.6/gfx/webrender_bindings/RenderCompositorSWGL.cpp.vanilla
++++ firefox-152.0.6/gfx/webrender_bindings/RenderCompositorSWGL.cpp
+@@ -5,6 +5,7 @@
+ #include "RenderCompositorSWGL.h"
+ 
+ #include "mozilla/gfx/Logging.h"
++#include "mozilla/gfx/Swizzle.h"
+ #include "mozilla/widget/CompositorWidget.h"
+ 
+ #ifdef MOZ_WIDGET_GTK
+@@ -215,6 +216,18 @@
+   wr_swgl_init_default_framebuffer(mContext, 0, 0, 0, 0, 0, nullptr);
+   // If we have a draw target at this point, mapping must have succeeded.
+   MOZ_ASSERT(mMappedData != nullptr);
++  if (std::endian::native != std::endian::little) {
++    // SWGL renders in little-endian BGRA8 byte order; convert the mapped
++    // buffer to the native ARGB32 layout before it is copied or handed to
++    // the widget. The buffer only covers the dirty bounds when a temporary
++    // surface is in use.
++    gfx::IntSize mappedSize =
++        mSurface ? mDirtyRegion.GetBounds().Size().ToUnknownSize()
++                 : mDT->GetSize();
++    gfx::SwizzleData(mMappedData, mMappedStride, gfx::SurfaceFormat::B8G8R8A8,
++                     mMappedData, mMappedStride, gfx::SurfaceFormat::A8R8G8B8,
++                     mappedSize);
++  }
+   if (mSurface) {
+     // If we're using a data surface, unmap it and draw it to the DT if there
+     // are any supplied dirty rects.
+--- firefox-152.0.6/image/decoders/icon/gtk/nsIconChannel.cpp.vanilla
++++ firefox-152.0.6/image/decoders/icon/gtk/nsIconChannel.cpp
+@@ -94,7 +94,7 @@
+ 
+   *(out++) = width;
+   *(out++) = height;
+-  *(out++) = uint8_t(mozilla::gfx::SurfaceFormat::OS_RGBA);
++  *(out++) = uint8_t(mozilla::gfx::SurfaceFormat::B8G8R8A8);
+ 
+   // Set all bits to ensure in nsIconDecoder we color manage and premultiply.
+   *(out++) = 0xFF;
+@@ -106,7 +106,7 @@
+   // encode the RGB data and the A data and adjust the stride as necessary.
+   mozilla::gfx::SwizzleData(pixels, instride,
+                             mozilla::gfx::SurfaceFormat::R8G8B8A8, out,
+-                            outstride, mozilla::gfx::SurfaceFormat::OS_RGBA,
++                            outstride, mozilla::gfx::SurfaceFormat::B8G8R8A8,
+                             mozilla::gfx::IntSize(width, height));
+ 
+   *aByteBuf = ByteBuf(buf, buf_size.value(), buf_size.value());
+--- firefox-152.0.6/image/decoders/nsAVIFDecoder.cpp.vanilla
++++ firefox-152.0.6/image/decoders/nsAVIFDecoder.cpp
+@@ -1812,7 +1812,7 @@
+ 
+   // Get suggested format and size. Note that GetYCbCrToRGBDestFormatAndSize
+   // force format to be B8G8R8X8 if it's not.
+-  gfx::SurfaceFormat format = SurfaceFormat::OS_RGBX;
++  gfx::SurfaceFormat format = SurfaceFormat::B8G8R8X8;
+   gfx::GetYCbCrToRGBDestFormatAndSize(*decodedData, format, rgbSize);
+   if (mHasAlpha) {
+     // We would use libyuv to do the YCbCrA -> ARGB convertion, which only
+@@ -1896,7 +1896,7 @@
+ 
+   if (mIsAnimated) {
+     SurfaceFormat outFormat =
+-        decodedData->mAlpha ? SurfaceFormat::OS_RGBA : SurfaceFormat::OS_RGBX;
++        decodedData->mAlpha ? SurfaceFormat::B8G8R8A8 : SurfaceFormat::B8G8R8X8;
+     Maybe<AnimationParams> animParams;
+     if (!IsFirstFrameDecode()) {
+       animParams.emplace(FullFrame().ToUnknownRect(), parsedImage.mDuration,
+--- firefox-152.0.6/image/decoders/nsBMPDecoder.cpp.vanilla
++++ firefox-152.0.6/image/decoders/nsBMPDecoder.cpp
+@@ -752,7 +752,7 @@
+           // We will transform the color table instead of the output pixels.
+           mTransform = GetCMSsRGBTransform(SurfaceFormat::R8G8B8);
+         } else {
+-          mTransform = GetCMSsRGBTransform(SurfaceFormat::OS_RGBA);
++          mTransform = GetCMSsRGBTransform(SurfaceFormat::B8G8R8A8);
+         }
+         break;
+       case InfoColorSpace::LINKED:
+@@ -800,7 +800,7 @@
+       // We will transform the color table instead of the output pixels.
+       mTransform = GetCMSsRGBTransform(SurfaceFormat::R8G8B8);
+     } else {
+-      mTransform = GetCMSsRGBTransform(SurfaceFormat::OS_RGBA);
++      mTransform = GetCMSsRGBTransform(SurfaceFormat::B8G8R8A8);
+     }
+   }
+ }
+@@ -889,12 +889,12 @@
+   SurfacePipeFlags pipeFlags = SurfacePipeFlags();
+ 
+   if (mMayHaveTransparency) {
+-    format = SurfaceFormat::OS_RGBA;
++    format = SurfaceFormat::B8G8R8A8;
+     if (!(GetSurfaceFlags() & SurfaceFlags::NO_PREMULTIPLY_ALPHA)) {
+       pipeFlags |= SurfacePipeFlags::PREMULTIPLY_ALPHA;
+     }
+   } else {
+-    format = SurfaceFormat::OS_RGBX;
++    format = SurfaceFormat::B8G8R8X8;
+   }
+ 
+   if (mH.mHeight >= 0) {
+--- firefox-152.0.6/image/decoders/nsGIFDecoder2.cpp.vanilla
++++ firefox-152.0.6/image/decoders/nsGIFDecoder2.cpp
+@@ -95,7 +95,7 @@
+   memset(mGIFStruct.global_colormap, 0xFF, sizeof(mGIFStruct.global_colormap));
+ 
+   // Each color table will need to be unpacked.
+-  mSwizzleFn = SwizzleRow(SurfaceFormat::R8G8B8, SurfaceFormat::OS_RGBA);
++  mSwizzleFn = SwizzleRow(SurfaceFormat::R8G8B8, SurfaceFormat::B8G8R8A8);
+   MOZ_ASSERT(mSwizzleFn);
+ }
+ 
+@@ -242,10 +242,10 @@
+     // transparency. For an animation, there isn't much benefit to RGBX given
+     // the current frame is constantly changing, and there are many risks
+     // since BlendAnimationFilter is able to clear rows of data.
+-    format = hasTransparency || animParams ? SurfaceFormat::OS_RGBA
+-                                           : SurfaceFormat::OS_RGBX;
++    format = hasTransparency || animParams ? SurfaceFormat::B8G8R8A8
++                                           : SurfaceFormat::B8G8R8X8;
+   } else {
+-    format = SurfaceFormat::OS_RGBA;
++    format = SurfaceFormat::B8G8R8A8;
+   }
+ 
+   Maybe<SurfacePipe> pipe = SurfacePipeFactory::CreateSurfacePipe(
+--- firefox-152.0.6/image/decoders/nsICODecoder.cpp.vanilla
++++ firefox-152.0.6/image/decoders/nsICODecoder.cpp
+@@ -629,8 +629,8 @@
+     DebugOnly<bool> ret =
+         // We know the format is OS_RGBA because we always assume bmp's inside
+         // ico's are transparent.
+-        PremultiplyData(imageData, stride, SurfaceFormat::OS_RGBA, imageData,
+-                        stride, SurfaceFormat::OS_RGBA,
++        PremultiplyData(imageData, stride, SurfaceFormat::B8G8R8A8, imageData,
++                        stride, SurfaceFormat::B8G8R8A8,
+                         mDownscaler->TargetSize());
+     MOZ_ASSERT(ret);
+   }
+--- firefox-152.0.6/image/decoders/nsIconDecoder.cpp.vanilla
++++ firefox-152.0.6/image/decoders/nsIconDecoder.cpp
+@@ -54,7 +54,7 @@
+ 
+   if (format != SurfaceFormat::B8G8R8A8 && format != SurfaceFormat::B8G8R8X8 &&
+       format != SurfaceFormat::R8G8B8A8 && format != SurfaceFormat::R8G8B8X8 &&
+-      format != SurfaceFormat::OS_RGBA && format != SurfaceFormat::OS_RGBX) {
++      format != SurfaceFormat::B8G8R8A8 && format != SurfaceFormat::B8G8R8X8) {
+     return Transition::TerminateFailure();
+   }
+ 
+@@ -91,7 +91,7 @@
+ 
+   MOZ_ASSERT(!mImageData, "Already have a buffer allocated?");
+   Maybe<SurfacePipe> pipe = SurfacePipeFactory::CreateSurfacePipe(
+-      this, Size(), OutputSize(), FullFrame(), format, SurfaceFormat::OS_RGBA,
++      this, Size(), OutputSize(), FullFrame(), format, SurfaceFormat::B8G8R8A8,
+       /* aAnimParams */ Nothing(), mTransform, pipeFlags);
+   if (!pipe) {
+     return Transition::TerminateFailure();
+--- firefox-152.0.6/image/decoders/nsJPEGDecoder.cpp.vanilla
++++ firefox-152.0.6/image/decoders/nsJPEGDecoder.cpp
+@@ -285,7 +285,7 @@
+         case JCS_YCbCr:
+           // By default, we will output directly to BGRA. If we need to apply
+           // special color transforms, this may change.
+-          switch (SurfaceFormat::OS_RGBX) {
++          switch (SurfaceFormat::B8G8R8X8) {
+             case SurfaceFormat::B8G8R8X8:
+               mInfo.out_color_space = JCS_EXT_BGRX;
+               break;
+@@ -356,7 +356,7 @@
+                                                outputType, (qcms_intent)intent);
+           }
+         } else if (mCMSMode == CMSMode::All) {
+-          mTransform = GetCMSsRGBTransform(SurfaceFormat::OS_RGBX);
++          mTransform = GetCMSsRGBTransform(SurfaceFormat::B8G8R8X8);
+         }
+       }
+ 
+@@ -389,8 +389,8 @@
+           mInfo.out_color_space != JCS_GRAYSCALE ? mTransform : nullptr;
+ 
+       Maybe<SurfacePipe> pipe = SurfacePipeFactory::CreateReorientSurfacePipe(
+-          this, Size(), OutputSize(), SurfaceFormat::OS_RGBX,
+-          SurfaceFormat::OS_RGBX, pipeTransform, GetOrientation(),
++          this, Size(), OutputSize(), SurfaceFormat::B8G8R8X8,
++          SurfaceFormat::B8G8R8X8, pipeTransform, GetOrientation(),
+           SurfacePipeFlags());
+       if (!pipe) {
+         mState = JPEG_ERROR;
+--- firefox-152.0.6/image/decoders/nsJXLDecoder.cpp.vanilla
++++ firefox-152.0.6/image/decoders/nsJXLDecoder.cpp
+@@ -469,13 +469,13 @@
+   SurfaceFormat outFormat;
+   if (mPixelFormat.value() == PixelFormat::Cmyk8 && mTransform) {
+     inFormat = SurfaceFormat::R8G8B8;
+-    outFormat = SurfaceFormat::OS_RGBX;
++    outFormat = SurfaceFormat::B8G8R8X8;
+   } else {
+     inFormat = SurfaceFormat::R8G8B8A8;
+     outFormat =
+         basicInfo.has_alpha && mPixelFormat.value() != PixelFormat::Cmyk8
+-            ? SurfaceFormat::OS_RGBA
+-            : SurfaceFormat::OS_RGBX;
++            ? SurfaceFormat::B8G8R8A8
++            : SurfaceFormat::B8G8R8X8;
+   }
+ 
+   // mTransform usage: for Rgba8 it is passed to SurfacePipe for inline CMS;
+--- firefox-152.0.6/image/decoders/nsPNGDecoder.cpp.vanilla
++++ firefox-152.0.6/image/decoders/nsPNGDecoder.cpp
+@@ -177,8 +177,8 @@
+   // Check if we have transparency, and send notifications if needed.
+   auto transparency = GetTransparencyType(aFrameInfo.mFrameRect);
+   PostHasTransparencyIfNeeded(transparency);
+-  mFormat = transparency == TransparencyType::eNone ? SurfaceFormat::OS_RGBX
+-                                                    : SurfaceFormat::OS_RGBA;
++  mFormat = transparency == TransparencyType::eNone ? SurfaceFormat::B8G8R8X8
++                                                    : SurfaceFormat::B8G8R8A8;
+ 
+   // Make sure there's no animation or padding if we're downscaling.
+   MOZ_ASSERT_IF(Size() != OutputSize(), mNumFrames == 0);
+@@ -305,7 +305,7 @@
+ 
+   mNumFrames++;
+ 
+-  Opacity opacity = mFormat == SurfaceFormat::OS_RGBX
++  Opacity opacity = mFormat == SurfaceFormat::B8G8R8X8
+                         ? Opacity::FULLY_OPAQUE
+                         : Opacity::SOME_TRANSPARENCY;
+ 
+@@ -715,7 +715,7 @@
+               decoder->GetCMSsRGBTransform(SurfaceFormat::R8G8B8A8);
+         } else {
+           decoder->mTransform =
+-              decoder->GetCMSsRGBTransform(SurfaceFormat::OS_RGBA);
++              decoder->GetCMSsRGBTransform(SurfaceFormat::B8G8R8A8);
+         }
+       }
+     }
+--- firefox-152.0.6/image/decoders/nsWebPDecoder.cpp.vanilla
++++ firefox-152.0.6/image/decoders/nsWebPDecoder.cpp
+@@ -24,7 +24,7 @@
+       mBlend(BlendMethod::OVER),
+       mDisposal(DisposalMethod::KEEP),
+       mTimeout(FrameTimeout::Forever()),
+-      mFormat(SurfaceFormat::OS_RGBX),
++      mFormat(SurfaceFormat::B8G8R8X8),
+       mLastRow(0),
+       mCurrentFrame(0),
+       mData(nullptr),
+@@ -214,7 +214,7 @@
+   // full frame, then we are transparent even if there is no alpha
+   if (mCurrentFrame == 0 && !aFrameRect.IsEqualEdges(FullFrame())) {
+     MOZ_ASSERT(HasAnimation());
+-    mFormat = SurfaceFormat::OS_RGBA;
++    mFormat = SurfaceFormat::B8G8R8A8;
+     PostHasTransparency();
+   }
+ 
+@@ -226,7 +226,7 @@
+     return NS_ERROR_FAILURE;
+   }
+ 
+-  switch (SurfaceFormat::OS_RGBA) {
++  switch (SurfaceFormat::B8G8R8A8) {
+     case SurfaceFormat::B8G8R8A8:
+       mBuffer.colorspace = MODE_BGRA;
+       break;
+@@ -252,10 +252,10 @@
+   // WebP doesn't guarantee that the alpha generated matches the hint in the
+   // header, so we always need to claim the input is BGRA. If the output is
+   // BGRX, swizzling will mask off the alpha channel.
+-  SurfaceFormat inFormat = SurfaceFormat::OS_RGBA;
++  SurfaceFormat inFormat = SurfaceFormat::B8G8R8A8;
+ 
+   SurfacePipeFlags pipeFlags = SurfacePipeFlags();
+-  if (mFormat == SurfaceFormat::OS_RGBA &&
++  if (mFormat == SurfaceFormat::B8G8R8A8 &&
+       !(GetSurfaceFlags() & SurfaceFlags::NO_PREMULTIPLY_ALPHA)) {
+     pipeFlags |= SurfacePipeFlags::PREMULTIPLY_ALPHA;
+   }
+@@ -284,7 +284,7 @@
+   MOZ_ASSERT(HasSize());
+   MOZ_ASSERT(mDecoder);
+ 
+-  auto opacity = mFormat == SurfaceFormat::OS_RGBA ? Opacity::SOME_TRANSPARENCY
++  auto opacity = mFormat == SurfaceFormat::B8G8R8A8 ? Opacity::SOME_TRANSPARENCY
+                                                    : Opacity::FULLY_OPAQUE;
+ 
+   MOZ_LOG(sWebPLog, LogLevel::Debug,
+@@ -315,7 +315,7 @@
+             ("[this=%p] nsWebPDecoder::ApplyColorProfile -- not tagged, use "
+              "sRGB transform\n",
+              this));
+-    mTransform = GetCMSsRGBTransform(SurfaceFormat::OS_RGBA);
++    mTransform = GetCMSsRGBTransform(SurfaceFormat::B8G8R8A8);
+     return;
+   }
+ 
+@@ -435,7 +435,7 @@
+ 
+   bool alpha = flags & WebPFeatureFlags::ALPHA_FLAG;
+   if (alpha) {
+-    mFormat = SurfaceFormat::OS_RGBA;
++    mFormat = SurfaceFormat::B8G8R8A8;
+     PostHasTransparency();
+   }
+ 
+@@ -593,8 +593,8 @@
+         break;
+     }
+ 
+-    mFormat = iter.has_alpha || mCurrentFrame > 0 ? SurfaceFormat::OS_RGBA
+-                                                  : SurfaceFormat::OS_RGBX;
++    mFormat = iter.has_alpha || mCurrentFrame > 0 ? SurfaceFormat::B8G8R8A8
++                                                  : SurfaceFormat::B8G8R8X8;
+     mTimeout = FrameTimeout::FromRawMilliseconds(iter.duration);
+     OrientedIntRect frameRect(iter.x_offset, iter.y_offset, iter.width,
+                               iter.height);
+--- firefox-152.0.6/image/BlobSurfaceProvider.cpp.vanilla
++++ firefox-152.0.6/image/BlobSurfaceProvider.cpp
+@@ -274,7 +274,7 @@
+   wr::BlobImageKey key = aBlobKey
+                              ? aBlobKey.value()
+                              : wr::BlobImageKey{wrBridge->GetNextImageKey()};
+-  wr::ImageDescriptor descriptor(imageRect.Size(), 0, SurfaceFormat::OS_RGBA,
++  wr::ImageDescriptor descriptor(imageRect.Size(), 0, SurfaceFormat::B8G8R8A8,
+                                  wr::OpacityType::HasAlphaChannel);
+ 
+   auto visibleRect = ImageIntRect::FromUnknownRect(imageRectOrigin);
+--- firefox-152.0.6/image/ClippedImage.cpp.vanilla
++++ firefox-152.0.6/image/ClippedImage.cpp
+@@ -258,7 +258,7 @@
+     // Create a surface to draw into.
+     RefPtr<DrawTarget> target =
+         gfxPlatform::GetPlatform()->CreateOffscreenContentDrawTarget(
+-            IntSize(aSize.width, aSize.height), SurfaceFormat::OS_RGBA);
++            IntSize(aSize.width, aSize.height), SurfaceFormat::B8G8R8A8);
+     if (!target || !target->IsValid()) {
+       NS_ERROR("Could not create a DrawTarget");
+       return std::make_pair(ImgDrawResult::TEMPORARY_ERROR,
+@@ -275,7 +275,7 @@
+     // Actually draw. The callback will end up invoking DrawSingleTile.
+     gfxUtils::DrawPixelSnapped(&ctx, drawable, SizeDouble(aSize),
+                                ImageRegion::Create(aSize),
+-                               SurfaceFormat::OS_RGBA, SamplingFilter::LINEAR,
++                               SurfaceFormat::B8G8R8A8, SamplingFilter::LINEAR,
+                                imgIContainer::FLAG_CLAMP);
+ 
+     // Cache the resulting surface.
+@@ -358,7 +358,7 @@
+ 
+     // Draw.
+     gfxUtils::DrawPixelSnapped(aContext, drawable, SizeDouble(aSize), aRegion,
+-                               SurfaceFormat::OS_RGBA, aSamplingFilter,
++                               SurfaceFormat::B8G8R8A8, aSamplingFilter,
+                                aOpacity);
+ 
+     return result;
+--- firefox-152.0.6/image/DynamicImage.cpp.vanilla
++++ firefox-152.0.6/image/DynamicImage.cpp
+@@ -155,7 +155,7 @@
+                              uint32_t aFlags) {
+   RefPtr<DrawTarget> dt =
+       gfxPlatform::GetPlatform()->CreateOffscreenContentDrawTarget(
+-          aSize, SurfaceFormat::OS_RGBA);
++          aSize, SurfaceFormat::B8G8R8A8);
+   if (!dt || !dt->IsValid()) {
+     gfxWarning()
+         << "DynamicImage::GetFrame failed in CreateOffscreenContentDrawTarget";
+@@ -200,7 +200,7 @@
+ 
+   if (aSize == drawableSize) {
+     gfxUtils::DrawPixelSnapped(aContext, mDrawable, SizeDouble(drawableSize),
+-                               aRegion, SurfaceFormat::OS_RGBA, aSamplingFilter,
++                               aRegion, SurfaceFormat::B8G8R8A8, aSamplingFilter,
+                                aOpacity);
+     return ImgDrawResult::SUCCESS;
+   }
+@@ -215,7 +215,7 @@
+   aContext->Multiply(gfxMatrix::Scaling(scale));
+ 
+   gfxUtils::DrawPixelSnapped(aContext, mDrawable, SizeDouble(drawableSize),
+-                             region, SurfaceFormat::OS_RGBA, aSamplingFilter,
++                             region, SurfaceFormat::B8G8R8A8, aSamplingFilter,
+                              aOpacity);
+   return ImgDrawResult::SUCCESS;
+ }
+--- firefox-152.0.6/image/OrientedImage.cpp.vanilla
++++ firefox-152.0.6/image/OrientedImage.cpp
+@@ -92,8 +92,8 @@
+ 
+   // Determine an appropriate format for the surface.
+   gfx::SurfaceFormat surfaceFormat = IsOpaque(aSurface->GetFormat())
+-                                         ? gfx::SurfaceFormat::OS_RGBX
+-                                         : gfx::SurfaceFormat::OS_RGBA;
++                                         ? gfx::SurfaceFormat::B8G8R8X8
++                                         : gfx::SurfaceFormat::B8G8R8A8;
+ 
+   // Create the new surface to draw into.
+   RefPtr<DrawTarget> target =
+--- firefox-152.0.6/image/SurfacePipeFactory.h.vanilla
++++ firefox-152.0.6/image/SurfacePipeFactory.h
+@@ -716,18 +716,18 @@
+     MOZ_ASSERT(aInFormat == gfx::SurfaceFormat::R8G8B8 ||
+                aInFormat == gfx::SurfaceFormat::R8G8B8A8 ||
+                aInFormat == gfx::SurfaceFormat::R8G8B8X8 ||
+-               aInFormat == gfx::SurfaceFormat::OS_RGBA ||
+-               aInFormat == gfx::SurfaceFormat::OS_RGBX);
++               aInFormat == gfx::SurfaceFormat::B8G8R8A8 ||
++               aInFormat == gfx::SurfaceFormat::B8G8R8X8);
+ 
+-    MOZ_ASSERT(aOutFormat == gfx::SurfaceFormat::OS_RGBA ||
+-               aOutFormat == gfx::SurfaceFormat::OS_RGBX);
++    MOZ_ASSERT(aOutFormat == gfx::SurfaceFormat::B8G8R8A8 ||
++               aOutFormat == gfx::SurfaceFormat::B8G8R8X8);
+ 
+     const bool inFormatRgb = aInFormat == gfx::SurfaceFormat::R8G8B8;
+ 
+-    const bool inFormatOpaque = aInFormat == gfx::SurfaceFormat::OS_RGBX ||
++    const bool inFormatOpaque = aInFormat == gfx::SurfaceFormat::B8G8R8X8 ||
+                                 aInFormat == gfx::SurfaceFormat::R8G8B8X8 ||
+                                 inFormatRgb;
+-    const bool outFormatOpaque = aOutFormat == gfx::SurfaceFormat::OS_RGBX;
++    const bool outFormatOpaque = aOutFormat == gfx::SurfaceFormat::B8G8R8X8;
+ 
+     const bool inFormatOrder = aInFormat == gfx::SurfaceFormat::R8G8B8A8 ||
+                                aInFormat == gfx::SurfaceFormat::R8G8B8X8;
+--- firefox-152.0.6/image/VectorImage.cpp.vanilla
++++ firefox-152.0.6/image/VectorImage.cpp
+@@ -865,7 +865,7 @@
+     // scale here.)
+     auto frame = MakeNotNull<RefPtr<imgFrame>>();
+     nsresult rv = frame->InitWithDrawable(
+-        svgDrawable, params.size, SurfaceFormat::OS_RGBA, SamplingFilter::POINT,
++        svgDrawable, params.size, SurfaceFormat::B8G8R8A8, SamplingFilter::POINT,
+         params.flags, backend);
+ 
+     // If we couldn't create the frame, it was probably because it would end
+@@ -1331,7 +1331,7 @@
+   // our gfxDrawable into it. (We use FILTER_NEAREST since we never scale here.)
+   auto frame = MakeNotNull<RefPtr<imgFrame>>();
+   nsresult rv = frame->InitWithDrawable(
+-      aSVGDrawable, aParams.size, SurfaceFormat::OS_RGBA, SamplingFilter::POINT,
++      aSVGDrawable, aParams.size, SurfaceFormat::B8G8R8A8, SamplingFilter::POINT,
+       aParams.flags, backend);
+ 
+   // If we couldn't create the frame, it was probably because it would end
+@@ -1416,7 +1416,7 @@
+   MOZ_ASSERT(aDrawable, "Should have a gfxDrawable by now");
+   gfxUtils::DrawPixelSnapped(aParams.context, aDrawable,
+                              SizeDouble(aParams.size), region,
+-                             SurfaceFormat::OS_RGBA, aParams.samplingFilter,
++                             SurfaceFormat::B8G8R8A8, aParams.samplingFilter,
+                              aParams.flags, aParams.opacity);
+ 
+   AutoProfilerImagePaintMarker PROFILER_RAII(this);
+--- firefox-152.0.6/image/imgFrame.h.vanilla
++++ firefox-152.0.6/image/imgFrame.h
+@@ -161,7 +161,7 @@
+   FrameTimeout GetTimeout() const { return mTimeout; }
+   BlendMethod GetBlendMethod() const { return mBlendMethod; }
+   DisposalMethod GetDisposalMethod() const { return mDisposalMethod; }
+-  bool FormatHasAlpha() const { return mFormat == SurfaceFormat::OS_RGBA; }
++  bool FormatHasAlpha() const { return mFormat == SurfaceFormat::B8G8R8A8; }
+ 
+   const IntRect& GetDirtyRect() const { return mDirtyRect; }
+   void SetDirtyRect(const IntRect& aDirtyRect) { mDirtyRect = aDirtyRect; }
+--- firefox-152.0.6/image/imgFrame.cpp.vanilla
++++ firefox-152.0.6/image/imgFrame.cpp
+@@ -103,7 +103,7 @@
+   uint8_t* data = aSurface->GetData();
+   MOZ_ASSERT(data);
+ 
+-  if (aFormat == SurfaceFormat::OS_RGBX) {
++  if (aFormat == SurfaceFormat::B8G8R8X8) {
+     // Skia doesn't support RGBX surfaces, so ensure the alpha value is set
+     // to opaque white. While it would be nice to only do this for Skia,
+     // imgFrame can run off main thread and past shutdown where
+@@ -174,7 +174,7 @@
+     // surface because if we use BGRX, the next frame composited into the
+     // surface could be BGRA and cause rendering problems.
+     MOZ_ASSERT(aAnimParams);
+-    mFormat = SurfaceFormat::OS_RGBA;
++    mFormat = SurfaceFormat::B8G8R8A8;
+   } else {
+     mFormat = aFormat;
+   }
+@@ -423,7 +423,7 @@
+     // transparent pixels in the padding or undecoded area
+     RefPtr<DrawTarget> target =
+         gfxPlatform::GetPlatform()->CreateOffscreenContentDrawTarget(
+-            mImageSize, SurfaceFormat::OS_RGBA);
++            mImageSize, SurfaceFormat::B8G8R8A8);
+     if (!target) {
+       return SurfaceWithFormat();
+     }
