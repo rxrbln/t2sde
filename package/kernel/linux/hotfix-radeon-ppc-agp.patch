@@ -1,0 +1,82 @@
+# --- T2-COPYRIGHT-BEGIN ---
+# t2/package/*/linux/hotfix-radeon-ppc-agp.patch
+# Copyright (C) 2026 The T2 SDE Project
+# SPDX-License-Identifier: GPL-2.0 or patched project license
+# --- T2-COPYRIGHT-END ---
+
+From: René Rebe <rene@exactco.de>
+Subject: [PATCH] drm/radeon: default to AGP on PowerMac
+
+On Apple PowerMac G4 r1xx/r2xx the PCI/AIC GART path intermittently stalls
+the CP's register delivery to the 2D engine under load and hard locks the
+machine, whereas AGP appears to be stable.
+
+Upstream defaults radeon_agpmode to -1 (force PCI) for x86-stability
+reasons, which is the wrong default for this hardware.  So when running
+on a PowerMac (runtime machine_is(powermac) check, not just a PMAC-enabled
+kernel), promote the untouched default (-1) to auto (0) for AGP-capable
+asics, using the bridge-negotiated AGP mode.  An explicit user agpmode=
+still takes effect; to force PCI, blacklist the uninorth-agp driver.
+
+Signed-off-by: René Rebe <rene@exactco.de>
+
+--- a/drivers/gpu/drm/radeon/radeon_device.c
++++ b/drivers/gpu/drm/radeon/radeon_device.c
+@@ -33,6 +33,10 @@
+ #include <linux/vga_switcheroo.h>
+ #include <linux/vgaarb.h>
+
++#ifdef CONFIG_PPC_PMAC
++#include <asm/machdep.h>
++#endif
++
+ #include <drm/drm_cache.h>
+ #include <drm/drm_client_event.h>
+ #include <drm/drm_crtc_helper.h>
+@@ -1338,6 +1342,16 @@
+ 		rdev->flags &= ~RADEON_IS_AGP;
+ 	}
+
++	/*
++	 * On PowerMac (UniNorth/U3 AGP bridges) the on-chip PCI/AIC GART path is
++	 * unreliable on r1xx/r2xx: it intermittently stalls the CP.
++	 */
++#ifdef CONFIG_PPC_PMAC
++	if (machine_is(powermac) &&
++	    (rdev->flags & RADEON_IS_AGP) && radeon_agpmode == -2)
++		radeon_agpmode = 0;
++#endif
++
+ 	if (rdev->flags & RADEON_IS_AGP && radeon_agpmode == -1) {
+ 		radeon_agp_disable(rdev);
+ 	}
+--- linux-7.1/drivers/gpu/drm/radeon/radeon_device.c.vanilla	2026-07-19 21:01:20.344596200 +0200
++++ linux-7.1/drivers/gpu/drm/radeon/radeon_device.c	2026-07-19 21:33:37.711260839 +0200
+@@ -1139,6 +1139,7 @@
+ 
+ 	/* AGP mode can only be -1, 1, 2, 4, 8 */
+ 	switch (radeon_agpmode) {
++	case -2:
+ 	case -1:
+ 	case 0:
+ 	case 1:
+@@ -1338,7 +1339,7 @@
+ 		rdev->flags &= ~RADEON_IS_AGP;
+ 	}
+ 
+-	if (rdev->flags & RADEON_IS_AGP && radeon_agpmode == -1) {
++	if (rdev->flags & RADEON_IS_AGP && radeon_agpmode < 0) {
+ 		radeon_agp_disable(rdev);
+ 	}
+ 
+--- linux-7.1/drivers/gpu/drm/radeon/radeon_drv.c.vanilla	2026-07-19 21:31:21.870509292 +0200
++++ linux-7.1/drivers/gpu/drm/radeon/radeon_drv.c	2026-07-19 21:31:48.177398186 +0200
+@@ -120,7 +120,7 @@
+ int radeon_modeset = -1;
+ int radeon_dynclks = -1;
+ int radeon_r4xx_atom;
+-int radeon_agpmode = -1;
++int radeon_agpmode = -2;
+ int radeon_vram_limit;
+ int radeon_gart_size = -1; /* auto */
+ int radeon_benchmarking;
