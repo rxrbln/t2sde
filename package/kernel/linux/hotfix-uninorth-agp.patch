@@ -1,0 +1,126 @@
+# --- T2-COPYRIGHT-BEGIN ---
+# t2/package/*/linux/hotfix-uninorth-agp.patch
+# Copyright (C) 2026 The T2 SDE Project
+# SPDX-License-Identifier: GPL-2.0 or patched project license
+# --- T2-COPYRIGHT-END ---
+
+From: René Rebe <rene@exactco.de>
+Subject: [PATCH] agp/uninorth: fix highmem page cache flush in uninorth_insert_memory
+
+uninorth_insert_memory() flushes each freshly bound page's cache with
+
+	flush_dcache_range((unsigned long)__va(page_to_phys(page)),
+			   (unsigned long)__va(page_to_phys(page)) + 0x1000);
+
+__va() is only valid for lowmem.  With CONFIG_HIGHMEM=y (all 32-bit
+PowerMac configs with more than ~768 MB of RAM, the TTM pages the radeon
+driver binds into the AGP GATT can be highmem, whose linear-map address is
+not mapped. Flushing it faults:
+
+BUG: Unable to handle kernel data access on read at 0xf04dc000
+Faulting instruction address: 0xbebdd138
+Oops: Kernel access of bad area, sig: 11 [#1]
+BE PAGE_SIZE=4K MMU=Hash  SMP NR_CPUS=4 PowerMac
+Modules linked in: radeon(+) drm_suballoc_helper drm_ttm_helper ttm drm_exec drm_client_lib drm_display_helper cec i2c_algo_bit rc_core drm_kms_helper drm drm_panel_orientation_quirks syscopyarea sysfillrect sysimgblt fb_sys_fops uninorth_agp agpgart nfsv
+nfs lockd grace sunrpc offb cfbfillrect cfbimgblt fb_io_fops cfbcopyarea fb lcd font ledtrig_backlight backlight sr_mod cdrom sd_mod pata_macio libata scsi_mod ohci_pci ehci_pci ehci_hcd ohci_hcd firewire_ohci usbcore firewire_core scsi_common sungem sung
+t nls_base usb_common
+CPU: 1 UID: 0 PID: 684 Comm: (udev-worker) Not tainted 7.1.4-t2 #1 PREEMPTLAZY 
+Hardware name: PowerMac3,6 7455 0x80010201 PowerMac
+NIP:  bebdd138 LR: bebdd038 CTR: 00000020
+REGS: f2f698a0 TRAP: 0300   Not tainted  (7.1.4-t2)
+MSR:  00009032 <EE,ME,IR,DR,RI>  CR: 28228888  XER: 00000000
+DAR: f04dc000 DSISR: 40000000 
+GPR00: bebd5f90 f2f69960 c1364080 f1958000 f2e93000 c1fae418 c0dbf36c 38e38e39 
+GPR08: 00000000 f04dc000 ef4aeef0 c1f14800 28228888 1024ad8c 48222868 00000000 
+GPR16: 2842446c 24424448 28222868 1051e14d 00000000 00000000 c3db89d0 f2f69a7c 
+GPR24: 00000000 f2f69ae8 00000001 c340a100 00000000 f1930000 00000000 c340a180 
+NIP [bebdd138] uninorth_insert_memory+0x14c/0x22c [uninorth_agp]
+LR [bebdd038] uninorth_insert_memory+0x4c/0x22c [uninorth_agp]
+Call Trace:
+[f2f69960] [bebd7a60] agp_generic_alloc_user+0x70/0x1e0 [agpgart] (unreliable)
+[f2f69980] [bebd5f90] agp_bind_memory+0x58/0x14c [agpgart]
+[f2f699a0] [bec9f368] ttm_agp_bind+0x110/0x150 [ttm]
+[f2f699d0] [becc4b90] radeon_bo_move+0x2a4/0x618 [radeon]
+[f2f69a20] [bec95cdc] ttm_bo_handle_move_mem+0xec/0x210 [ttm]
+[f2f69a60] [bec96424] ttm_bo_validate+0x12c/0x234 [ttm]
+[f2f69aa0] [bec9669c] ttm_bo_init_reserved+0x170/0x1ac [ttm]
+[f2f69ac0] [bec96728] ttm_bo_init_validate+0x50/0xdc [ttm]
+[f2f69b10] [becc5a6c] radeon_bo_create+0x154/0x1bc [radeon]
+[f2f69b50] [beca5dd4] radeon_wb_init+0x4c/0x258 [radeon]
+[f2f69b70] [becec154] r100_startup.constprop.0+0x15c/0x2d0 [radeon]
+[f2f69bb0] [becec82c] r100_init+0x244/0x4cc [radeon]
+[f2f69bd0] [beca6d88] radeon_device_init+0x534/0xc64 [radeon]
+[f2f69c00] [beca87c0] radeon_driver_load_kms+0x94/0x1e8 [radeon]
+[f2f69c30] [beca5364] radeon_pci_probe+0x11c/0x274 [radeon]
+[f2f69c50] [c05aa2ac] pci_device_probe+0xf4/0x29c
+[f2f69c80] [c0682e58] really_probe+0xe4/0x320
+[f2f69ca0] [c0683130] __driver_probe_device+0x9c/0x230
+[f2f69cc0] [c06833e0] driver_probe_device+0x4c/0x150
+[f2f69cf0] [c06836f8] __driver_attach+0xb8/0x1ec
+[f2f69d10] [c067ffac] bus_for_each_dev+0x94/0xf8
+[f2f69d40] [c0681c0c] bus_add_driver+0x188/0x290
+[f2f69d70] [c0684804] driver_register+0x88/0x160
+[f2f69d90] [c0007acc] do_one_initcall+0x64/0x2a4
+[f2f69e00] [c0122c9c] do_init_module+0x60/0x27c
+[f2f69e20] [c012544c] init_module_from_file+0xfc/0x114
+[f2f69ea0] [c0125808] sys_finit_module+0x218/0x3ac
+[f2f69f10] [c00131e0] system_call_exception+0x80/0x158
+[f2f69f30] [c001d1ac] ret_from_syscall+0x0/0x2c
+---- interrupt: c00 at 0xfd5c660
+NIP:  0fd5c660 LR: 0ff9edac CTR: 00000004
+REGS: f2f69f40 TRAP: 0c00   Not tainted  (7.1.4-t2)
+MSR:  0000d032 <EE,PR,ME,IR,DR,RI>  CR: 2422246c  XER: 00000000
+
+GPR00: 00000161 af990430 41ee6180 0000001e 1051e100 00000000 0fd519fc 60613f1c 
+GPR08: 10525690 0000007f af990404 40cc5cfa 40cc59c7 1024ad8c 48222868 00000000 
+GPR16: 2842446c 24424448 28222868 1051e14d 00000000 00000000 10534960 1051e100 
+GPR24: 00020000 1051e100 105384c0 1051e100 00000000 10534790 0ffafc3c 00000000 
+NIP [0fd5c660] 0xfd5c660
+LR [0ff9edac] 0xff9edac
+---- interrupt: c00
+Code: 65258000 94a40004 39200020 7d2903a6 80bf000c 81260000 7d45502e 7d295050 7d291670 7d2939d6 55296026 3d29c000 <7c0048ac> 39490020 7c0050ac 394a0020 
+---[ end trace 0000000000000000 ]---
+
+Map the page to obtain a valid virtual address for the flush.
+
+Signed-off-by: René Rebe <rene@exactco.de>
+
+--- a/drivers/char/agp/uninorth-agp.c
++++ b/drivers/char/agp/uninorth-agp.c
+@@ -10,6 +10,7 @@
+ #include <linux/pagemap.h>
+ #include <linux/agp_backend.h>
+ #include <linux/delay.h>
++#include <linux/highmem.h>
+ #include <linux/vmalloc.h>
+ #include <asm/uninorth.h>
+ #include <asm/prom.h>
+@@ -183,13 +184,24 @@
+ 	}
+
+ 	for (i = 0; i < mem->page_count; i++) {
++		struct page *page = mem->pages[i];
++		unsigned long va;
++
+ 		if (is_u3)
+-			gp[i] = (page_to_phys(mem->pages[i]) >> PAGE_SHIFT) | 0x80000000UL;
++			gp[i] = (page_to_phys(page) >> PAGE_SHIFT) | 0x80000000UL;
+ 		else
+-			gp[i] =	cpu_to_le32((page_to_phys(mem->pages[i]) & 0xFFFFF000UL) |
++			gp[i] =	cpu_to_le32((page_to_phys(page) & 0xFFFFF000UL) |
+ 					    0x1UL);
+-		flush_dcache_range((unsigned long)__va(page_to_phys(mem->pages[i])),
+-				   (unsigned long)__va(page_to_phys(mem->pages[i]))+0x1000);
++		/* Flush the CPU cache for this page so the GART/GPU sees the
++		 * freshly written data.  __va(page_to_phys()) is only valid
++		 * for lowmem; with CONFIG_HIGHMEM the AGP-bound TTM pages can
++		 * be highmem, whose linear-map address is not mapped and
++		 * faults when flushed.  Map the page to obtain a valid virtual
++		 * address (the PowerPC data cache is physically tagged, so a
++		 * flush through any mapping evicts the right lines). */
++		va = (unsigned long)kmap_local_page(page);
++		flush_dcache_range(va, va + PAGE_SIZE);
++		kunmap_local((void *)va);
+ 	}
+ 	mb();
+ 	uninorth_tlbflush(mem);
