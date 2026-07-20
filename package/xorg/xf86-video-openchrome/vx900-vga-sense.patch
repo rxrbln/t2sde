@@ -1,0 +1,185 @@
+# --- T2-COPYRIGHT-BEGIN ---
+# t2/package/*/xf86-video-openchrome/vx900-vga-sense.patch
+# Copyright (C) 2026 The T2 SDE Project
+# SPDX-License-Identifier: GPL-2.0 or patched project license
+# --- T2-COPYRIGHT-END ---
+
+VX900 (VT3410): detect the analog VGA connector via DDC/EDID.
+
+The analog CRT connector was detected with the DAC load-sense comparator
+(viaAnalogDetectConnector, reading Input Status 0 / port 0x3C2 bit 4).  On the
+CX700 / VX800 / VX855 / VX900 family that comparator does not give a reliable
+reading and a disconnected VGA was frequently reported as connected. The phantom
+VGA then dragged the real DVI output down to a generic low resolution.
+
+Detect these chips via DDC/EDID instead: viaAnalogDetectEDID() reads the EDID on
+the VGA I2C bus and reports the connector present only when a valid EDID with an
+analog input type is found, so a digital monitor whose DDC shares the bus (DVI-I)
+is not misreported as VGA.  The older chips keep the legacy load-sense.
+
+Verified on HP t5550 (VX900) hardware: with no VGA cable the connector reads
+"not detected" across a cold boot and repeated warm restarts, and DVI keeps its
+native 1920x1080 mode.
+
+Signed-off-by: René Rebe <rene@exactco.de>
+
+--- xf86-video-openchrome.git/src/via_analog.c
++++ xf86-video-openchrome.git.new/src/via_analog.c
+@@ -166,9 +166,8 @@ static Bool
+ viaAnalogDetectConnector(ScrnInfoPtr pScrn)
+ {
+     vgaHWPtr hwp = VGAHWPTR(pScrn);
+-    VIAPtr pVia = VIAPTR(pScrn);
+     Bool connectorDetected = FALSE;
+-    CARD8 sr40, cr36, cr37, cr43, cr44, cr47;
++    CARD8 sr40, cr36, cr37, cr47;
+ 
+     DEBUG(xf86DrvMsg(pScrn->scrnIndex, X_INFO,
+                         "Entered viaAnalogDetectConnector.\n"));
+@@ -176,18 +175,8 @@ viaAnalogDetectConnector(ScrnInfoPtr pSc
+     sr40 = hwp->readSeq(hwp, 0x40);
+     cr36 = hwp->readCrtc(hwp, 0x36);
+     cr37 = hwp->readCrtc(hwp, 0x37);
+-    cr43 = hwp->readCrtc(hwp, 0x43);
+-    cr44 = hwp->readCrtc(hwp, 0x44);
+     cr47 = hwp->readCrtc(hwp, 0x47);
+ 
+-    if ((pVia->Chipset == VIA_CX700)
+-        || (pVia->Chipset == VIA_VX800)
+-        || (pVia->Chipset == VIA_VX855)
+-        || (pVia->Chipset == VIA_VX900)) {
+-        ViaCrtcMask(hwp, 0x43, 0x90, BIT(7) | BIT(6) | BIT(5) | BIT(4));
+-        hwp->writeCrtc(hwp, 0x44, 0x00);
+-    }
+-
+     /* Turn on DAC. */
+     ViaCrtcMask(hwp, 0x37, 0x04, 0xff);
+     ViaCrtcMask(hwp, 0x47, 0x00, BIT(2));
+@@ -201,17 +190,6 @@ viaAnalogDetectConnector(ScrnInfoPtr pSc
+     /* Enable CRT Sense. */
+     ViaSeqMask(hwp, 0x40, BIT(7), BIT(7));
+ 
+-    if ((pVia->Chipset == VIA_CX700)
+-        || (pVia->Chipset == VIA_VX800)
+-        || (pVia->Chipset == VIA_VX855)
+-        || (pVia->Chipset == VIA_VX900)) {
+-        ViaSeqMask(hwp, 0x40, 0x00, BIT(7));
+-    }
+-
+-    /*
+-    VT3324, VT3353: SR40[7]=1 --> SR40[7] = 0 --> check 3C2[4]
+-    other: SR40[7]=1 --> check 3C2[4] --> SR40[7]=0
+-    */
+     if (ViaVgahwIn(hwp, 0x3C2) & BIT(4)) {
+         connectorDetected = TRUE;
+         DEBUG(xf86DrvMsg(pScrn->scrnIndex, X_INFO,
+@@ -221,24 +199,10 @@ viaAnalogDetectConnector(ScrnInfoPtr pSc
+                             "VGA connector not detected.\n"));
+     }
+ 
+-    if ((pVia->Chipset != VIA_CX700)
+-        && (pVia->Chipset != VIA_VX800)
+-        && (pVia->Chipset != VIA_VX855)
+-        && (pVia->Chipset != VIA_VX900)) {
+-        ViaSeqMask(hwp, 0x40, 0x00, BIT(7));
+-    }
++    ViaSeqMask(hwp, 0x40, 0x00, BIT(7));
+ 
+     /* Restore */
+     hwp->writeCrtc(hwp, 0x47, cr47);
+-
+-    if ((pVia->Chipset == VIA_CX700)
+-        || (pVia->Chipset == VIA_VX800)
+-        || (pVia->Chipset == VIA_VX855)
+-        || (pVia->Chipset == VIA_VX900)) {
+-        hwp->writeCrtc(hwp, 0x44, cr44);
+-        hwp->writeCrtc(hwp, 0x43, cr43);
+-    }
+-
+     hwp->writeCrtc(hwp, 0x37, cr37);
+     hwp->writeCrtc(hwp, 0x36, cr36);
+     hwp->writeSeq(hwp, 0x40, sr40);
+@@ -367,10 +331,52 @@ via_analog_mode_set(xf86OutputPtr output
+                         "Exiting via_analog_mode_set.\n"));
+ }
+ 
++/*
++ * Detect an analog VGA monitor via DDC/EDID on the VGA I2C bus.
++ *
++ * Only an EDID with an analog input type is accepted, so a digital monitor
++ * whose DDC happens to share the bus (DVI-I) is not misreported as VGA.
++ */
++static Bool
++viaAnalogDetectEDID(xf86OutputPtr output)
++{
++    ScrnInfoPtr pScrn = output->scrn;
++    VIAPtr pVia = VIAPTR(pScrn);
++    VIADisplayPtr pVIADisplay = pVia->pVIADisplay;
++    VIAAnalogPtr pVIAAnalog = (VIAAnalogPtr) output->driver_private;
++    xf86MonPtr pMon;
++    I2CBusPtr pI2CBus;
++
++    if (pVIAAnalog->i2cBus & VIA_I2C_BUS1) {
++        pI2CBus = pVIADisplay->pI2CBus1;
++        if (pI2CBus) {
++            pMon = xf86OutputGetEDID(output, pI2CBus);
++            if (pMon && (!pMon->features.input_type)) {
++                xf86OutputSetEDID(output, pMon);
++                return TRUE;
++            }
++        }
++    }
++
++    if (pVIAAnalog->i2cBus & VIA_I2C_BUS2) {
++        pI2CBus = pVIADisplay->pI2CBus2;
++        if (pI2CBus) {
++            pMon = xf86OutputGetEDID(output, pI2CBus);
++            if (pMon && (!pMon->features.input_type)) {
++                xf86OutputSetEDID(output, pMon);
++                return TRUE;
++            }
++        }
++    }
++
++    return FALSE;
++}
++
+ static xf86OutputStatus
+ via_analog_detect(xf86OutputPtr output)
+ {
+     ScrnInfoPtr pScrn = output->scrn;
++    VIAPtr pVia = VIAPTR(pScrn);
+     xf86OutputStatus status = XF86OutputStatusDisconnected;
+     Bool connectorDetected;
+ 
+@@ -380,7 +386,29 @@ via_analog_detect(xf86OutputPtr output)
+     xf86DrvMsg(pScrn->scrnIndex, X_PROBED,
+                 "Probing for a VGA connector . . .\n");
+ 
+-    connectorDetected = viaAnalogDetectConnector(pScrn);
++    /*
++     * The DAC load-sense comparator (port 0x3C2 bit 4) does not give a reading
++     * that tracks the VGA cable on the CX700 / VX800 / VX855 / VX900 family
++     * outside of the video BIOS POST environment: it returns a value driven by
++     * the ambient DAC power state, so a disconnected VGA was frequently
++     * reported as connected -- a phantom that then forced the real DVI output
++     * to a wrong mode.  (The Linux viafb driver does no analog load-sense on
++     * these chips either.)  Detect these via DDC/EDID instead, which is a
++     * reliable indication of an attached monitor.  The older chips keep the
++     * legacy load-sense.
++     */
++    switch (pVia->Chipset) {
++    case VIA_CX700:
++    case VIA_VX800:
++    case VIA_VX855:
++    case VIA_VX900:
++        connectorDetected = viaAnalogDetectEDID(output);
++        break;
++    default:
++        connectorDetected = viaAnalogDetectConnector(pScrn);
++        break;
++    }
++
+     if (!connectorDetected) {
+         xf86DrvMsg(pScrn->scrnIndex, X_PROBED,
+                     "VGA connector not detected.\n");
