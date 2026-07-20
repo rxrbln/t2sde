@@ -61,7 +61,7 @@ while [ "$1" ]; do
   shift
 done
 
-# -e ps3vram -e net/phy
+# -e ps3vram
 [ -z "$minimal" ] && filter="$filter -e reiserfs -e btrfs -e /jfs -e /zfs -e jffs2
 -e /udf -e overlayfs -e ntfs -e /fat -e /exfat -e /hfs -e floppy -e efivarfs -e watchdog
 -e pci/controller -e /ata/ -e /scsi/ -e /fusion/ -e nvme/host -e mmc/host -e mmc_block
@@ -81,10 +81,10 @@ done
 -e dw-axi-dmac -e gpio-regulator"
 
 if [ "$network" ]; then
-	filter="$filter -e '/ipv4\.' -e nfsv4"
+	filter="$filter -e '/ipv4\.' -e nfsv4 -e ethernet"
 
 	[ "$minimal" ] ||
-		filter="$filter -e '/ipv6\.' -e netconsole -e ethernet \
+		filter="$filter -e '/ipv6\.' -e netconsole -e net/phy \
 -e aqc111 -e asix -e ax88179_178a -e cdc_ether -e /cdc_ncm -e cx82310_eth -e r8153_ecm \
 -e rtl8150 -e r8152"
 fi
