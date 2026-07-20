@@ -1,0 +1,241 @@
+VX900 DVI/HDMI: give the hardware DDC master its PHY PLL clock so EDID reads
+succeed, properly enable + lock the PHY PLL on modeset, and keep EDID probing
+side-effect free so it cannot disturb analog VGA load-sense on a warm restart.
+
+The integrated DDC master (0xC0B4) derives its bit clock from the PHY PLL
+(0xC740).  The VBIOS detection routine (VT3410 ROM 0x9855) always brings the
+PLL up (ROM 0x9C42: enable 0x9D19, load DDC divider 0xC740|=0x00029E18, lock
+0xC740|=0x06000006) before reading EDID from slave 0xA0, then restores it.
+The driver read EDID without a PLL clock, so at probe time (PHY off) the DDC
+timed out and the DVI/HDMI display was reported disconnected.
+
+viaHDMISetPHYState() is also corrected: it never set the PLL enable bit
+(0xC740[0]) and wrongly cleared the PLL/bias bits (0x06000000) before the
+clock-range write.  It now shares viaHDMIPLLEnable() with the DDC path and
+preserves the PLL bits in the range write, matching the VBIOS enable sequence
+(ROM 0x98FD/0x996E/0x9D36).
+
+Finally, a probe that has to power the PLL up now captures and restores the
+full 0xC740 / 0xC748 state afterwards instead of only dropping bit 0, so EDID
+probing leaves the combined DisplayPort/HDMI PHY exactly as found.
+
+Signed-off-by: René Rebe <rene@exactco.de>
+
+--- xf86-video-openchrome.git/src/via_hdmi.h	2026-07-20 18:39:18.201028345 +0200
++++ xf86-video-openchrome.git.new/src/via_hdmi.h	2026-07-20 18:39:18.202053962 +0200
+@@ -61,6 +61,37 @@
+ #define VIA_HDMI_CLOCK_RANGE_MASK       0xC0000000
+ #define VIA_HDMI_CLOCK_PLL_MASK         0x06000000
+ 
++/*
++ * PHY PLL / DDC clock bring-up.  The hardware DDC master (0xC0B4) derives its
++ * bit clock from this PHY PLL, so EDID cannot be read unless the PLL is running
++ * and the DDC clock divider is loaded.  The VBIOS detection routine (ROM
++ * 0x9855) always ensures this before an EDID read by calling the PLL/clock
++ * setup at ROM 0x9C42, guarded so that an already-running PLL (i.e. an active
++ * display mode on the PHY) is left untouched.
++ *
++ *  [0]     PHY PLL enable                       (VBIOS 0x9D19: 0xC740 |= 0x01)
++ *  divider fixed DDC I2C clock divider          (VBIOS 0x9C42)
++ *  [26:25]+[2:1] PLL / bias enable + lock       (VBIOS 0x9D6A: |= 0x06000006)
++ */
++#define VIA_HDMI_CLOCK_PLL_EN           BIT(0)
++#define VIA_HDMI_CLOCK_DDC_DIV_MASK     0xFFF800E7
++#define VIA_HDMI_CLOCK_DDC_DIV          0x00029E18
++#define VIA_HDMI_CLOCK_LOCK_MASK        0xF9FFFFF9
++#define VIA_HDMI_CLOCK_LOCK_EN          0x06000006
++
++/*
++ * Auxiliary PHY bias registers programmed as part of the VBIOS PLL bring-up.
++ * 0xC748 receives a two-step [15:14] pulse in the PLL lock routine (0x9D64);
++ * 0xC640 bit0/bit3 gate the PLL output stage (0x9C42 sets bit0, the enable-path
++ * helper 0x9D36 sets bits 0 and 3).
++ */
++#define VIA_HDMI_REG_BIAS               0xC748
++#define VIA_HDMI_BIAS_MASK              0x00003FFF
++#define VIA_HDMI_BIAS_STEP1             0x00004000
++#define VIA_HDMI_BIAS_STEP2             0x00008000
++#define VIA_HDMI_REG_PLL_AUX            0xC640
++#define VIA_HDMI_PLL_AUX_EN             0x09
++
+ /* Clock range field values, high pixel clock -> low divider. */
+ #define VIA_HDMI_CLOCK_RANGE_ABOVE_135M 0x0
+ #define VIA_HDMI_CLOCK_RANGE_67M_135M   0x1
+--- xf86-video-openchrome.git/src/via_hdmi.c	2026-07-20 18:39:18.200313223 +0200
++++ xf86-video-openchrome.git.new/src/via_hdmi.c	2026-07-20 18:39:18.201544517 +0200
+@@ -67,6 +67,40 @@ viaHDMIClockRange(CARD32 dotClock)
+ }
+ 
+ /*
++ * Enable and lock the PHY PLL.  Mirrors the VBIOS PLL enable / lock routines
++ * (ROM 0x9D19 -> 0x9D64 -> 0x9D74): set the PLL enable bit, enable and lock the
++ * PLL / bias bits, and pulse the auxiliary bias register.  The DDC master and
++ * the display output both depend on the PLL being locked.
++ */
++static void
++viaHDMIPLLEnable(ScrnInfoPtr pScrn)
++{
++    VIAPtr pVia = VIAPTR(pScrn);
++    CARD32 clock;
++
++    /* PLL enable (VBIOS 0x9D19: 0xC740 |= 0x01). */
++    VIASETREG(VIA_HDMI_REG_CLOCK,
++              VIAGETREG(VIA_HDMI_REG_CLOCK) | VIA_HDMI_CLOCK_PLL_EN);
++    usleep(1);
++
++    /* PLL / bias enable + lock, unless it is already locked
++     * (VBIOS 0x9D74: 0xC740 |= 0x06000006). */
++    clock = VIAGETREG(VIA_HDMI_REG_CLOCK);
++    if ((clock & VIA_HDMI_CLOCK_LOCK_EN) != VIA_HDMI_CLOCK_LOCK_EN) {
++        VIASETREG(VIA_HDMI_REG_CLOCK,
++                  (clock & VIA_HDMI_CLOCK_LOCK_MASK) | VIA_HDMI_CLOCK_LOCK_EN);
++
++        /* Two-step bias pulse on 0xC748[15:14] (VBIOS 0x9D9D / 0x9DAC). */
++        VIASETREG(VIA_HDMI_REG_BIAS,
++                  (VIAGETREG(VIA_HDMI_REG_BIAS) & VIA_HDMI_BIAS_MASK) |
++                  VIA_HDMI_BIAS_STEP1);
++        VIASETREG(VIA_HDMI_REG_BIAS,
++                  (VIAGETREG(VIA_HDMI_REG_BIAS) & VIA_HDMI_BIAS_MASK) |
++                  VIA_HDMI_BIAS_STEP2);
++    }
++}
++
++/*
+  * Powers the VX900 / VX855 HDMI (DisplayPort/HDMI combo) PHY on or off and,
+  * when enabling, programs the TMDS clock range for the requested pixel clock.
+  *
+@@ -82,6 +116,10 @@ viaHDMISetPHYState(ScrnInfoPtr pScrn, Bo
+                         "Entered %s.\n", __func__));
+ 
+     if (enable) {
++        /* Bring the PLL up and lock it first; the VBIOS does this (0x98FD)
++         * before touching the controller / transmitter enables. */
++        viaHDMIPLLEnable(pScrn);
++
+         /* DP/HDMI controller master enable: 0xC280 |= 0x42. */
+         VIASETREGMASK(VIA_HDMI_REG_CONTROL,
+                       VIA_HDMI_CONTROL_ENABLE, VIA_HDMI_CONTROL_ENABLE);
+@@ -94,19 +132,12 @@ viaHDMISetPHYState(ScrnInfoPtr pScrn, Bo
+         VIASETREGMASK(VIA_HDMI_REG_OUTPUT,
+                       VIA_HDMI_OUTPUT_ENABLE, VIA_HDMI_OUTPUT_ENABLE);
+ 
+-        /* Clear the PLL / bias enable bits [26:25] before reprogramming. */
+-        VIASETREG(VIA_HDMI_REG_CLOCK,
+-                  VIAGETREG(VIA_HDMI_REG_CLOCK) & ~VIA_HDMI_CLOCK_PLL_MASK);
+-        usleep(1);
+-
+-        /* Program the clock range field [31:30] from the pixel clock. */
++        /* Program the clock range field [31:30] from the pixel clock,
++         * preserving the PLL / bias / divider bits [29:0] (VBIOS 0x996E
++         * masks with 0x3FFFFFFF; it does NOT clear the PLL bits). */
+         clockReg = VIAGETREG(VIA_HDMI_REG_CLOCK) & ~VIA_HDMI_CLOCK_RANGE_MASK;
+         clockReg |= viaHDMIClockRange(dotClock) << VIA_HDMI_CLOCK_RANGE_SHIFT;
+         VIASETREG(VIA_HDMI_REG_CLOCK, clockReg);
+-
+-        /* Turn the PLL / bias back on. */
+-        VIASETREG(VIA_HDMI_REG_CLOCK,
+-                  VIAGETREG(VIA_HDMI_REG_CLOCK) | VIA_HDMI_CLOCK_PLL_MASK);
+         usleep(1);
+ 
+         /* PHY calibration pattern pulse on [31:24]: 0x55, wait, then clear. */
+@@ -116,6 +147,10 @@ viaHDMISetPHYState(ScrnInfoPtr pScrn, Bo
+         usleep(5);
+         VIASETREG(VIA_HDMI_REG_PATTERN,
+                   VIAGETREG(VIA_HDMI_REG_PATTERN) & VIA_HDMI_PATTERN_MASK);
++
++        /* Enable the PLL output stage: 0xC640 |= 0x09 (VBIOS 0x9D36). */
++        VIASETREGMASK(VIA_HDMI_REG_PLL_AUX,
++                      VIA_HDMI_PLL_AUX_EN, VIA_HDMI_PLL_AUX_EN);
+     } else {
+         /* Transmitter output disable followed by controller disable. */
+         VIASETREGMASK(VIA_HDMI_REG_OUTPUT, 0, VIA_HDMI_OUTPUT_ENABLE);
+@@ -173,6 +208,61 @@ viaHDMII2CWait(ScrnInfoPtr pScrn, CARD32
+     return FALSE;
+ }
+ 
++/*
++ * Bring up the PHY PLL and load the DDC clock divider so the hardware DDC
++ * master has a bit clock.  Mirrors the VBIOS pre-EDID setup (ROM 0x9855 ->
++ * 0x9C42): the PLL is only touched when it is currently off, so a PHY that is
++ * already driving a display mode is left running as-is.  Returns TRUE if this
++ * call enabled the PLL (and the caller must therefore restore it afterwards).
++ *
++ * When the PLL is off (probe time), the full prior contents of the clock and
++ * bias registers are captured so the transaction can be made completely
++ * side-effect free.  EDID probing must not leave the combined DisplayPort /
++ * HDMI PHY biased differently, otherwise the shared reference used by the
++ * analog VGA DAC load-sense (viaAnalogDetectConnector) can be disturbed and
++ * report a phantom VGA connector on a warm restart.
++ */
++static Bool
++viaHDMIDDCClockEnable(ScrnInfoPtr pScrn, CARD32 *savedClock, CARD32 *savedBias)
++{
++    VIAPtr pVia = VIAPTR(pScrn);
++    CARD32 clock;
++
++    clock = VIAGETREG(VIA_HDMI_REG_CLOCK);
++    if (clock & VIA_HDMI_CLOCK_PLL_EN) {
++        /* A mode is active on the PHY; the DDC clock is already present. */
++        return FALSE;
++    }
++
++    /* Remember the exact prior state so it can be put back verbatim. */
++    *savedClock = clock;
++    *savedBias = VIAGETREG(VIA_HDMI_REG_BIAS);
++
++    /* Bring up and lock the PLL (VBIOS 0x9C42 -> 0x9D19). */
++    viaHDMIPLLEnable(pScrn);
++
++    /* Load the fixed DDC I2C clock divider (VBIOS 0x9C42). */
++    VIASETREG(VIA_HDMI_REG_CLOCK,
++              (VIAGETREG(VIA_HDMI_REG_CLOCK) & VIA_HDMI_CLOCK_DDC_DIV_MASK) |
++              VIA_HDMI_CLOCK_DDC_DIV);
++    usleep(1);
++
++    return TRUE;
++}
++
++/*
++ * Undo viaHDMIDDCClockEnable(), restoring the clock and bias registers to
++ * exactly what they were before the probe so no PHY residue is left behind.
++ */
++static void
++viaHDMIDDCClockDisable(ScrnInfoPtr pScrn, CARD32 savedClock, CARD32 savedBias)
++{
++    VIAPtr pVia = VIAPTR(pScrn);
++
++    VIASETREG(VIA_HDMI_REG_BIAS, savedBias);
++    VIASETREG(VIA_HDMI_REG_CLOCK, savedClock);
++}
++
+ static void
+ viaHDMII2CSetTxByte(VIAPtr pVia, CARD8 value)
+ {
+@@ -217,8 +307,14 @@ viaHDMII2CWriteRead(I2CDevPtr d,
+     CARD32 savedEnable;
+     const char *phase = "init";
+     Bool ok = FALSE;
++    Bool pllTurnedOn;
++    CARD32 savedClock = 0, savedBias = 0;
+     int i = 0;
+ 
++    /* The DDC master runs off the PHY PLL clock; make sure it is running
++     * before the transaction (mirrors the VBIOS 0x9855 -> 0x9C42 sequence). */
++    pllTurnedOn = viaHDMIDDCClockEnable(pScrn, &savedClock, &savedBias);
++
+     /* Enable the DDC engine (0xC000[0]), remembering its previous state. */
+     savedEnable = VIAGETREG(VIA_HDMI_I2C_REG_ENABLE);
+     VIASETREGMASK(VIA_HDMI_I2C_REG_ENABLE,
+@@ -307,6 +403,12 @@ stop:
+     /* Restore the engine enable bit to its previous state. */
+     VIASETREGMASK(VIA_HDMI_I2C_REG_ENABLE, savedEnable, VIA_HDMI_I2C_ENABLE);
+ 
++    /* Restore the PHY clock / bias if we only powered it up for this
++     * transaction, leaving the combined PHY exactly as we found it. */
++    if (pllTurnedOn) {
++        viaHDMIDDCClockDisable(pScrn, savedClock, savedBias);
++    }
++
+     return ok;
+ }
+ 
