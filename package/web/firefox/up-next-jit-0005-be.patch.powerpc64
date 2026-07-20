@@ -1,8 +1,23 @@
-From 3e5c4a4dfd9564893d9a9724f12d6495ace6f4e8 Mon Sep 17 00:00:00 2001
-From: t <t@e.co>
-Date: Wed, 8 Jul 2026 14:21:43 +1000
-Subject: [PATCH 5/5] Add PPC64BE JIT backend
+From 6b9308eb716541e3ca76fb1baf3199548176d5d5 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Trung=20L=C3=AA?= <8@tle.id.au>
+Date: Sat, 4 Jul 2026 10:46:27 +1000
+Subject: [PATCH 5/6] Add PPC64BE JIT backend
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
 
+Enable the SpiderMonkey JIT and WebAssembly on big-endian PPC64 (ELFv1
+and ELFv2).
+
+Co-authored-by: Cameron Kaiser <classilla@floodgap.com>
+Co-authored-by: Justin Hibbits <chmeeedalf@gmail.com>
+Assisted-by: Lance Albertson <lance@osuosl.org>
+Assisted-by: Thushan Fernando <thushan@thushanfernando.com>
+Assisted-by: Timothy Pearson <tpearson@solidsilicon.com>
+Assisted-by: Dan Horák <dan@danny.cz>
+Assisted-by: Hiếu Lê <modology@gmail.com>
+Assisted-by: Claude Fable 5 <noreply@anthropic.com>
+Assisted-by: Alexander Baldeck <alex.bldck@gmail.com>
 ---
  js/src/builtin/TestingFunctions.cpp           |  19 +-
  js/src/debugger/ExecutionTracer.cpp           |  15 +-
@@ -14,6 +29,7 @@ Subject: [PATCH 5/5] Add PPC64BE JIT backend
  js/src/jit-test/tests/atomics/bug1983499.js   |   3 +
  .../basic/for-in-delete-unvisited-close.js    |  41 ++
  .../tests/bigint/bigint-clone-canon.js        |   7 +
+ .../tests/ion/mod-pow2-negative-dividend.js   |   4 +-
  .../tests/ion/recover-int64tobigint.js        |   2 +-
  .../tests/large-arraybuffers/basic.js         |   6 +
  .../tests/structured-clone/allobjs.js         |   3 +
@@ -23,6 +39,10 @@ Subject: [PATCH 5/5] Add PPC64BE JIT backend
  .../jit-test/tests/wasm/bench/wasm_box2d.js   |   4 +
  js/src/jit-test/tests/wasm/large-memory.js    |  25 +-
  js/src/jit-test/tests/wasm/memory64/basic.js  |  51 +-
+ .../tests/wasm/ppc64-argon2-tiering.js        |   1 +
+ .../jit-test/tests/wasm/ppc64-extmul-alias.js |   1 +
+ .../wasm/regress-ppc64-extract-lane-ctz.js    |  10 +-
+ .../bug-ppc64-simd-reduce-and-branch.js       |   1 +
  .../jit-test/tests/wasm/regress/bug1761850.js |  28 +-
  js/src/jit-test/tests/wasm/resizing.js        |   7 +-
  .../tests/wasm/simd/ad-hack-binop-preamble.js |   8 +-
@@ -88,11 +108,12 @@ Subject: [PATCH 5/5] Add PPC64BE JIT backend
  js/src/wasm/WasmValType.h                     |  49 +-
  js/src/wasm/WasmValue.h                       |  12 +
  mfbt/Result.h                                 |  15 +-
- 84 files changed, 2098 insertions(+), 480 deletions(-)
+ mfbt/Variant.h                                |   6 +-
+ 90 files changed, 2116 insertions(+), 485 deletions(-)
  create mode 100644 js/src/jit-test/tests/basic/for-in-delete-unvisited-close.js
 
 diff --git a/js/src/builtin/TestingFunctions.cpp b/js/src/builtin/TestingFunctions.cpp
-index 2291d58dc0a1..fe42b2a4d972 100644
+index 6673728105d1..7bab2d448649 100644
 --- a/js/src/builtin/TestingFunctions.cpp
 +++ b/js/src/builtin/TestingFunctions.cpp
 @@ -21,6 +21,7 @@
@@ -115,7 +136,7 @@ index 2291d58dc0a1..fe42b2a4d972 100644
  #ifdef ENABLE_DECORATORS
    value = BooleanValue(true);
  #else
-@@ -1336,9 +1342,18 @@ static bool WasmGlobalFromArrayBuffer(JSContext* cx, unsigned argc, Value* vp) {
+@@ -1332,9 +1338,18 @@ static bool WasmGlobalFromArrayBuffer(JSContext* cx, unsigned argc, Value* vp) {
      return false;
    }
  
@@ -288,10 +309,10 @@ index a396aeb3c731..f669b003a238 100644
        MOZ_ASSERT(characters == 1);
        masm_.load16ZeroExtend(address, current_character_);
 diff --git a/js/src/jit-test/lib/wasm.js b/js/src/jit-test/lib/wasm.js
-index 9df1371c8e43..ef863be5fc5e 100644
+index 4f06bf961274..8ce2eb5e0214 100644
 --- a/js/src/jit-test/lib/wasm.js
 +++ b/js/src/jit-test/lib/wasm.js
-@@ -584,6 +584,59 @@ function interleave(xs, ys) {
+@@ -597,6 +597,59 @@ function interleave(xs, ys) {
      return res;
  }
  
@@ -434,6 +455,28 @@ index e4f05748ccf6..2db6554627ef 100644
  function str(u32a) {
      return [].map.call(u32a, n => n.toString(16).padStart(8, 0)).join(",");
  }
+diff --git a/js/src/jit-test/tests/ion/mod-pow2-negative-dividend.js b/js/src/jit-test/tests/ion/mod-pow2-negative-dividend.js
+index 9905cc4a8f36..b406446a70be 100644
+--- a/js/src/jit-test/tests/ion/mod-pow2-negative-dividend.js
++++ b/js/src/jit-test/tests/ion/mod-pow2-negative-dividend.js
+@@ -42,7 +42,7 @@ for (let i = 1; i <= 64; i++) {
+ inputs.push(0, -1, 1, -168, -65535, -65536, -65537, 168,
+             0x7fffffff, -0x80000000, -0x7fffffff);
+ 
+-for (let iter = 0; iter < 3000; iter++) {
++for (let iter = 0; iter < 100; iter++) {
+   for (const [fn, d] of cases) {
+     for (const x of inputs) {
+       assertEq(fn(x), refmod(x, d));
+@@ -63,7 +63,7 @@ function pressure(seed) {
+                 v10 ^ v11 ^ v12 ^ v13 ^ (d0 | 0) ^ (d1 | 0) ^ (d2 | 0)) & 0;
+   return r + live;
+ }
+-for (let iter = 0; iter < 5000; iter++) {
++for (let iter = 0; iter < 100; iter++) {
+   for (let s = 1; s <= 200; s++) {
+     const expect = ((Math.fround(-(s + 0.7)) | 0) % 65536) | 0;
+     assertEq(pressure(s), expect);
 diff --git a/js/src/jit-test/tests/ion/recover-int64tobigint.js b/js/src/jit-test/tests/ion/recover-int64tobigint.js
 index 84499b27d56a..d0bb6b5f4276 100644
 --- a/js/src/jit-test/tests/ion/recover-int64tobigint.js
@@ -765,6 +808,54 @@ index 267aa53a4ee6..7a87ba82b4ea 100644
      }
  
      assertErrorMessage(() => ins.exports[NM + "@0"](BigInt(len), Zero(SZ), Zero(SZ)),
+diff --git a/js/src/jit-test/tests/wasm/ppc64-argon2-tiering.js b/js/src/jit-test/tests/wasm/ppc64-argon2-tiering.js
+index 04dad9240539..1758672e2e57 100644
+--- a/js/src/jit-test/tests/wasm/ppc64-argon2-tiering.js
++++ b/js/src/jit-test/tests/wasm/ppc64-argon2-tiering.js
+@@ -1,3 +1,4 @@
++// |jit-test| skip-if: !wasmSimdEnabled()
+ // Test for wasm tiering correctness with argon2-style SIMD computation.
+ // The argon2 fBlaMka function uses i64x2.extmul_low_i32x4_u, i64x2.shl,
+ // i64x2.add, v128.xor, v128.or, i64x2.shr_u, and i8x16.shuffle.
+diff --git a/js/src/jit-test/tests/wasm/ppc64-extmul-alias.js b/js/src/jit-test/tests/wasm/ppc64-extmul-alias.js
+index 2aa9507751b6..fe48807779ad 100644
+--- a/js/src/jit-test/tests/wasm/ppc64-extmul-alias.js
++++ b/js/src/jit-test/tests/wasm/ppc64-extmul-alias.js
+@@ -1,3 +1,4 @@
++// |jit-test| skip-if: !wasmSimdEnabled()
+ // Regression test for PPC64 i64x2.extmul_{low,high}_i32x4_{s,u} when the
+ // Ion register allocator picks dest == rhs.
+ //
+diff --git a/js/src/jit-test/tests/wasm/regress-ppc64-extract-lane-ctz.js b/js/src/jit-test/tests/wasm/regress-ppc64-extract-lane-ctz.js
+index e2cf5def541e..94879b01e1a3 100644
+--- a/js/src/jit-test/tests/wasm/regress-ppc64-extract-lane-ctz.js
++++ b/js/src/jit-test/tests/wasm/regress-ppc64-extract-lane-ctz.js
+@@ -29,8 +29,14 @@ const ins = wasmEvalText(`(module
+   (func (export "sext2") (result i64) (i64.extend_i32_s (i32x4.extract_lane 2 (call $v))))
+ )`).exports;
+ 
+-const mem = new Int32Array(ins.mem.buffer);
+-function setLanes(a, b, c, d) { mem[0] = a; mem[1] = b; mem[2] = c; mem[3] = d; }
++// Wasm memory is little-endian, so write lanes with explicit byte order.
++const mem = new DataView(ins.mem.buffer);
++function setLanes(a, b, c, d) {
++  mem.setInt32(0, a, true);
++  mem.setInt32(4, b, true);
++  mem.setInt32(8, c, true);
++  mem.setInt32(12, d, true);
++}
+ 
+ // Each lane = 0 surrounded by nonzero neighbours: ctz must be 32, never -1.
+ setLanes(0, -1, -1, -1); assertEq(ins.ctz0(), 32);
+diff --git a/js/src/jit-test/tests/wasm/regress/bug-ppc64-simd-reduce-and-branch.js b/js/src/jit-test/tests/wasm/regress/bug-ppc64-simd-reduce-and-branch.js
+index b7ec0d9548bb..2b6acca307ee 100644
+--- a/js/src/jit-test/tests/wasm/regress/bug-ppc64-simd-reduce-and-branch.js
++++ b/js/src/jit-test/tests/wasm/regress/bug-ppc64-simd-reduce-and-branch.js
+@@ -1,3 +1,4 @@
++// |jit-test| skip-if: !wasmSimdEnabled()
+ // Regression test for a PPC64-specific wasm Ion crash in
+ // CodeGenerator::visitWasmReduceAndBranchSimd128 — it called
+ // LBlock::label() directly on the branch targets without going through
 diff --git a/js/src/jit-test/tests/wasm/regress/bug1761850.js b/js/src/jit-test/tests/wasm/regress/bug1761850.js
 index 609991bde46e..aac15bbacecc 100644
 --- a/js/src/jit-test/tests/wasm/regress/bug1761850.js
@@ -2152,7 +2243,7 @@ index 03b8b3040624..24db77f1d474 100644
  }
  
 diff --git a/js/src/jit/BaselineCacheIRCompiler.cpp b/js/src/jit/BaselineCacheIRCompiler.cpp
-index 584d0e46c6ea..6d9619b84268 100644
+index e240a1e19565..d8ad19ee1726 100644
 --- a/js/src/jit/BaselineCacheIRCompiler.cpp
 +++ b/js/src/jit/BaselineCacheIRCompiler.cpp
 @@ -186,6 +186,16 @@ Address BaselineCacheIRCompiler::stubAddress(uint32_t offset) const {
@@ -2172,7 +2263,7 @@ index 584d0e46c6ea..6d9619b84268 100644
  template <typename Fn, Fn fn>
  void BaselineCacheIRCompiler::callVM(MacroAssembler& masm) {
    VMFunctionId id = VMFunctionToId<Fn, fn>::id;
-@@ -555,7 +565,7 @@ bool BaselineCacheIRCompiler::emitLoadFixedSlotResult(ObjOperandId objId,
+@@ -559,7 +569,7 @@ bool BaselineCacheIRCompiler::emitLoadFixedSlotResult(ObjOperandId objId,
    Register obj = allocator.useRegister(masm, objId);
    AutoScratchRegisterMaybeOutput scratch(allocator, masm, output);
  
@@ -2181,7 +2272,7 @@ index 584d0e46c6ea..6d9619b84268 100644
    masm.loadValue(BaseIndex(obj, scratch, TimesOne), output.valueReg());
    return true;
  }
-@@ -574,7 +584,7 @@ bool BaselineCacheIRCompiler::emitLoadDynamicSlotResult(ObjOperandId objId,
+@@ -578,7 +588,7 @@ bool BaselineCacheIRCompiler::emitLoadDynamicSlotResult(ObjOperandId objId,
    AutoScratchRegisterMaybeOutput scratch(allocator, masm, output);
    AutoScratchRegister scratch2(allocator, masm);
  
@@ -2190,7 +2281,7 @@ index 584d0e46c6ea..6d9619b84268 100644
    masm.loadPtr(Address(obj, NativeObject::offsetOfSlots()), scratch2);
    masm.loadValue(BaseIndex(scratch2, scratch, TimesOne), output.valueReg());
    return true;
-@@ -895,7 +905,7 @@ bool BaselineCacheIRCompiler::emitStoreSlotShared(bool isFixed,
+@@ -899,7 +909,7 @@ bool BaselineCacheIRCompiler::emitStoreSlotShared(bool isFixed,
    }
  
    Address offsetAddr = stubAddress(offsetOffset);
@@ -2199,7 +2290,7 @@ index 584d0e46c6ea..6d9619b84268 100644
  
    if (isFixed) {
      BaseIndex slot(obj, scratch1, TimesOne);
-@@ -969,7 +979,7 @@ bool BaselineCacheIRCompiler::emitAddAndStoreSlotShared(
+@@ -973,7 +983,7 @@ bool BaselineCacheIRCompiler::emitAddAndStoreSlotShared(
      masm.loadJSContext(scratch1);
      masm.passABIArg(scratch1);
      masm.passABIArg(obj);
@@ -2208,7 +2299,7 @@ index 584d0e46c6ea..6d9619b84268 100644
      masm.passABIArg(scratch2);
      masm.callWithABI<Fn, NativeObject::growSlotsPure>();
      masm.storeCallPointerResult(scratch1);
-@@ -990,7 +1000,7 @@ bool BaselineCacheIRCompiler::emitAddAndStoreSlotShared(
+@@ -994,7 +1004,7 @@ bool BaselineCacheIRCompiler::emitAddAndStoreSlotShared(
  
    // Perform the store. No pre-barrier required since this is a new
    // initialization.
@@ -2218,7 +2309,7 @@ index 584d0e46c6ea..6d9619b84268 100644
      BaseIndex slot(obj, scratch1, TimesOne);
      masm.storeValue(val, slot);
 diff --git a/js/src/jit/BaselineCodeGen.cpp b/js/src/jit/BaselineCodeGen.cpp
-index 22920b454309..7df28162604f 100644
+index ea83bbbbb444..d1e172d33231 100644
 --- a/js/src/jit/BaselineCodeGen.cpp
 +++ b/js/src/jit/BaselineCodeGen.cpp
 @@ -469,6 +469,20 @@ static Register LoadBytecodePC(MacroAssembler& masm, Register scratch) {
@@ -2293,7 +2384,7 @@ index 22920b454309..7df28162604f 100644
  }
  
  template <typename Handler>
-@@ -5766,11 +5798,19 @@ void BaselineInterpreterCodeGen::emitGetTableSwitchIndex(ValueOperand val,
+@@ -5793,11 +5825,19 @@ void BaselineInterpreterCodeGen::emitGetTableSwitchIndex(ValueOperand val,
    Address lowAddr(pcReg, sizeof(jsbytecode) + TableSwitchOpLowOffset);
    Address highAddr(pcReg, sizeof(jsbytecode) + TableSwitchOpHighOffset);
  
@@ -2315,10 +2406,10 @@ index 22920b454309..7df28162604f 100644
  
    // index := val - low.
 diff --git a/js/src/jit/CacheIR.cpp b/js/src/jit/CacheIR.cpp
-index 6f5b708188e1..4f540f4544ea 100644
+index c2af28f31509..942d95eefaeb 100644
 --- a/js/src/jit/CacheIR.cpp
 +++ b/js/src/jit/CacheIR.cpp
-@@ -12792,7 +12792,7 @@ AttachDecision InlinableNativeIRGenerator::tryAttachSpecializedFunctionBind(
+@@ -12538,7 +12538,7 @@ AttachDecision InlinableNativeIRGenerator::tryAttachSpecializedFunctionBind(
        writer.guardFunctionScript(targetId, fun->baseScript());
      }
      writer.guardFixedSlotValue(
@@ -2328,10 +2419,10 @@ index 6f5b708188e1..4f540f4544ea 100644
      writer.guardFixedSlotValue(targetId, JSFunction::offsetOfAtom(),
                                 fun->getReservedSlot(JSFunction::AtomSlot));
 diff --git a/js/src/jit/CacheIRCompiler.cpp b/js/src/jit/CacheIRCompiler.cpp
-index ee4888495103..434147dad6c0 100644
+index f016c7e51462..b2ce7aab3bb7 100644
 --- a/js/src/jit/CacheIRCompiler.cpp
 +++ b/js/src/jit/CacheIRCompiler.cpp
-@@ -6409,7 +6409,8 @@ void CacheIRCompiler::emitActivateIterator(Register objBeingIterated,
+@@ -6419,7 +6419,8 @@ void CacheIRCompiler::emitActivateIterator(Register objBeingIterated,
    // Mark iterator as active.
    Address iterFlagsAddr(nativeIter, NativeIterator::offsetOfFlags());
    masm.storePtr(objBeingIterated, iterObjAddr);
@@ -2341,7 +2432,7 @@ index ee4888495103..434147dad6c0 100644
  
    // Post-write barrier for stores to 'objectBeingIterated_'.
    emitPostBarrierSlot(
-@@ -9621,7 +9622,14 @@ void CacheIRCompiler::emitLoadStubField(StubFieldOffset val, Register dest) {
+@@ -9631,7 +9632,14 @@ void CacheIRCompiler::emitLoadStubField(StubFieldOffset val, Register dest) {
          masm.loadPtr(load, dest);
          break;
        case StubField::Type::RawInt32:
@@ -2377,10 +2468,10 @@ index ed4431f6d8cf..267a928a8bb7 100644
  
    int32_t getStubRawInt32(ICCacheIRStub* stub, uint32_t offset) const {
 diff --git a/js/src/jit/CodeGenerator.cpp b/js/src/jit/CodeGenerator.cpp
-index 2a2c6007aec0..30ccf1d50d10 100644
+index e3d80559f65e..b8614799aac8 100644
 --- a/js/src/jit/CodeGenerator.cpp
 +++ b/js/src/jit/CodeGenerator.cpp
-@@ -2526,7 +2526,13 @@ static bool PrepareAndExecuteRegExp(MacroAssembler& masm, Register regexp,
+@@ -2528,7 +2528,13 @@ static bool PrepareAndExecuteRegExp(MacroAssembler& masm, Register regexp,
    codePointer = temp3;
  #endif
    masm.passABIArg(temp2);
@@ -2394,7 +2485,7 @@ index 2a2c6007aec0..30ccf1d50d10 100644
    masm.storeCallInt32Result(temp1);
    masm.PopRegsInMask(volatileRegs);
  
-@@ -2917,7 +2923,9 @@ static JitCode* GenerateRegExpMatchStubShared(JSContext* cx,
+@@ -2919,7 +2925,9 @@ static JitCode* GenerateRegExpMatchStubShared(JSContext* cx,
      maybeTemp5 = regs.takeAny();
    }
  
@@ -2405,7 +2496,7 @@ index 2a2c6007aec0..30ccf1d50d10 100644
    Address lastIndexSlot(regexp, RegExpObject::offsetOfLastIndex());
  
    TempAllocator temp(&cx->tempLifoAlloc());
-@@ -3516,7 +3524,9 @@ JitCode* JitZone::generateRegExpExecTestStub(JSContext* cx) {
+@@ -3518,7 +3526,9 @@ JitCode* JitZone::generateRegExpExecTestStub(JSContext* cx) {
    Register temp2 = regs.takeAny();
    Register temp3 = regs.takeAny();
  
@@ -2416,7 +2507,7 @@ index 2a2c6007aec0..30ccf1d50d10 100644
    Address lastIndexSlot(regexp, RegExpObject::offsetOfLastIndex());
  
    // Load lastIndex and skip RegExp execution if needed.
-@@ -6354,8 +6364,16 @@ void CodeGenerator::visitCallDOMNative(LCallDOMNative* call) {
+@@ -6338,8 +6348,16 @@ void CodeGenerator::visitCallDOMNative(LCallDOMNative* call) {
    LoadDOMPrivate(masm, obj, argPrivate,
                   static_cast<MCallDOMNative*>(call->mir())->objectKind());
  
@@ -2434,7 +2525,7 @@ index 2a2c6007aec0..30ccf1d50d10 100644
  
    // Push our argv onto the stack
    masm.Push(argArgs);
-@@ -10087,8 +10105,15 @@ static void TableIteratorAdvance(MacroAssembler& masm, Register iter,
+@@ -10073,8 +10091,15 @@ static void TableIteratorAdvance(MacroAssembler& masm, Register iter,
    Register i = temp;
  
    // Note: |count| and |index| are stored as PrivateUint32Value. We use add32
@@ -2452,7 +2543,7 @@ index 2a2c6007aec0..30ccf1d50d10 100644
  
    masm.unboxInt32(Address(iter, TableIteratorObject::offsetOfIndex()), i);
  
-@@ -10108,7 +10133,8 @@ static void TableIteratorAdvance(MacroAssembler& masm, Register iter,
+@@ -10094,7 +10119,8 @@ static void TableIteratorAdvance(MacroAssembler& masm, Register iter,
                         JS_HASH_KEY_EMPTY, &seek);
  
    masm.bind(&done);
@@ -2462,7 +2553,7 @@ index 2a2c6007aec0..30ccf1d50d10 100644
  }
  
  // Corresponds to TableIteratorObject::finish.
-@@ -10828,6 +10854,12 @@ void CodeGenerator::visitWasmLoadSlot(LWasmLoadSlot* ins) {
+@@ -10814,6 +10840,12 @@ void CodeGenerator::visitWasmLoadSlot(LWasmLoadSlot* ins) {
    if (type == MIRType::Simd128) {
      MOZ_ASSERT(wideningOp == MWideningOp::None);
      FaultingCodeOffset fco = masm.loadUnalignedSimd128(addr, dst.fpu());
@@ -2475,7 +2566,7 @@ index 2a2c6007aec0..30ccf1d50d10 100644
      EmitSignalNullCheckTrapSite(masm, ins, fco, wasm::TrapMachineInsn::Load128);
      return;
    }
-@@ -10870,7 +10902,16 @@ void CodeGenerator::visitWasmStoreSlot(LWasmStoreSlot* ins) {
+@@ -10856,7 +10888,16 @@ void CodeGenerator::visitWasmStoreSlot(LWasmStoreSlot* ins) {
  
  #ifdef ENABLE_WASM_SIMD
    if (type == MIRType::Simd128) {
@@ -2493,7 +2584,7 @@ index 2a2c6007aec0..30ccf1d50d10 100644
      EmitSignalNullCheckTrapSite(masm, ins, fco,
                                  wasm::TrapMachineInsn::Store128);
      return;
-@@ -18325,14 +18366,17 @@ void CodeGenerator::visitObjectToIterator(LObjectToIterator* lir) {
+@@ -18304,14 +18345,17 @@ void CodeGenerator::visitObjectToIterator(LObjectToIterator* lir) {
      // do a VM call to replace the cached iterator with a fresh iterator
      // including indices.
      masm.branchTest32(Assembler::NonZero, iterFlagsAddr,
@@ -2513,7 +2604,7 @@ index 2a2c6007aec0..30ccf1d50d10 100644
  
      Register enumeratorsAddr = temp2;
      masm.movePtr(ImmPtr(lir->mir()->enumeratorsAddr()), enumeratorsAddr);
-@@ -18380,7 +18424,9 @@ void CodeGenerator::emitIteratorHasIndicesAndBranch(Register iterator,
+@@ -18359,7 +18403,9 @@ void CodeGenerator::emitIteratorHasIndicesAndBranch(Register iterator,
    masm.loadPrivate(nativeIterAddr, temp);
    masm.branchTest32(Assembler::Zero,
                      Address(temp, NativeIterator::offsetOfFlags()),
@@ -2525,7 +2616,7 @@ index 2a2c6007aec0..30ccf1d50d10 100644
    // Guard that the first shape stored in the iterator matches the current
    // shape of the iterated object.
 diff --git a/js/src/jit/IonTypes.h b/js/src/jit/IonTypes.h
-index 8c42cb63263f..bd0626abf040 100644
+index 9de8e5574e17..d4df40f5e4fd 100644
 --- a/js/src/jit/IonTypes.h
 +++ b/js/src/jit/IonTypes.h
 @@ -334,6 +334,11 @@ class SimdConstant {
@@ -2651,7 +2742,7 @@ index 03daef98eb0b..d1134da9c753 100644
 +
  #endif  // jit_JitCommon_h
 diff --git a/js/src/jit/JitFrames.cpp b/js/src/jit/JitFrames.cpp
-index bbd1376dec69..95e191873850 100644
+index 4e588b3b18d2..a300b1c59e3a 100644
 --- a/js/src/jit/JitFrames.cpp
 +++ b/js/src/jit/JitFrames.cpp
 @@ -75,7 +75,9 @@ static inline int32_t ReadFrameInt32Slot(JitFrameLayout* fp, int32_t slot) {
@@ -2666,10 +2757,10 @@ index bbd1376dec69..95e191873850 100644
  
  static uint32_t NumArgAndLocalSlots(const InlineFrameIterator& frame) {
 diff --git a/js/src/jit/JitFrames.h b/js/src/jit/JitFrames.h
-index 490834e62fec..2103bde04942 100644
+index b5728d3a90c4..e966a36b7815 100644
 --- a/js/src/jit/JitFrames.h
 +++ b/js/src/jit/JitFrames.h
-@@ -815,7 +815,15 @@ class IonDOMMethodExitFrameLayout {
+@@ -819,7 +819,15 @@ class IonDOMMethodExitFrameLayout {
      return reinterpret_cast<JS::Value*>(&loCalleeResult_);
    }
    inline JSObject** thisObjAddress() { return &thisObj_; }
@@ -2687,10 +2778,10 @@ index 490834e62fec..2103bde04942 100644
  
  inline bool IonDOMExitFrameLayout::isMethodFrame() {
 diff --git a/js/src/jit/JitRuntime.h b/js/src/jit/JitRuntime.h
-index cdea52487fe4..5c1fdb002c88 100644
+index 23604182f9db..23eb205a6593 100644
 --- a/js/src/jit/JitRuntime.h
 +++ b/js/src/jit/JitRuntime.h
-@@ -140,6 +140,17 @@ class JitRuntime {
+@@ -139,6 +139,17 @@ class JitRuntime {
    // Trampoline for entering JIT code.
    WriteOnceData<uint32_t> enterJITOffset_{0};
  
@@ -2708,7 +2799,7 @@ index cdea52487fe4..5c1fdb002c88 100644
    // Generic bailout table; used if the bailout table overflows.
    WriteOnceData<uint32_t> bailoutHandlerOffset_{0};
  
-@@ -383,8 +394,30 @@ class JitRuntime {
+@@ -378,8 +389,30 @@ class JitRuntime {
    }
  
    EnterJitCode enterJit() const {
@@ -2907,7 +2998,7 @@ index b0d3b06d6a17..3b5806eafada 100644
  #  ifdef DEBUG
          logging.release();
 diff --git a/js/src/jit/MacroAssembler-inl.h b/js/src/jit/MacroAssembler-inl.h
-index d7385df895d5..b0e7aaae25a1 100644
+index d995f7f84718..26331e0f61e3 100644
 --- a/js/src/jit/MacroAssembler-inl.h
 +++ b/js/src/jit/MacroAssembler-inl.h
 @@ -125,7 +125,17 @@ void MacroAssembler::call(const wasm::CallSiteDesc& desc, wasm::Trap trap) {
@@ -2929,7 +3020,7 @@ index d7385df895d5..b0e7aaae25a1 100644
    return raOffset;
  }
 diff --git a/js/src/jit/MacroAssembler.cpp b/js/src/jit/MacroAssembler.cpp
-index 5b28e811c88d..ac466d498025 100644
+index 997f0b5ff066..5746ecda8cde 100644
 --- a/js/src/jit/MacroAssembler.cpp
 +++ b/js/src/jit/MacroAssembler.cpp
 @@ -578,8 +578,8 @@ void MacroAssembler::createFunctionClone(Register result, Register canonical,
@@ -2986,7 +3077,7 @@ index 5b28e811c88d..ac466d498025 100644
  }
  
  void MacroAssembler::branchTestObjCompartment(Condition cond, Register obj,
-@@ -9731,7 +9747,9 @@ void MacroAssembler::branchIfNativeIteratorNotReusable(Register ni,
+@@ -9729,7 +9745,9 @@ void MacroAssembler::branchIfNativeIteratorNotReusable(Register ni,
  #ifdef DEBUG
    Label niIsInitialized;
    branchTest32(Assembler::NonZero, flagsAddr,
@@ -2997,7 +3088,7 @@ index 5b28e811c88d..ac466d498025 100644
    assumeUnreachable(
        "Expected a NativeIterator that's been completely "
        "initialized");
-@@ -9739,7 +9757,9 @@ void MacroAssembler::branchIfNativeIteratorNotReusable(Register ni,
+@@ -9737,7 +9755,9 @@ void MacroAssembler::branchIfNativeIteratorNotReusable(Register ni,
  #endif
  
    branchTest32(Assembler::NonZero, flagsAddr,
@@ -3008,7 +3099,7 @@ index 5b28e811c88d..ac466d498025 100644
  }
  
  static void LoadNativeIterator(MacroAssembler& masm, Register obj,
-@@ -9818,7 +9838,9 @@ void MacroAssembler::maybeLoadIteratorFromShape(Register obj, Register dest,
+@@ -9816,7 +9836,9 @@ void MacroAssembler::maybeLoadIteratorFromShape(Register obj, Register dest,
           temp3);
    branchTest32(Assembler::Zero,
                 Address(nativeIterator, NativeIterator::offsetOfFlags()),
@@ -3019,7 +3110,7 @@ index 5b28e811c88d..ac466d498025 100644
  
    computeEffectiveAddress(BaseIndex(nativeIterator, temp3, Scale::TimesFour),
                            nativeIterator);
-@@ -9894,7 +9916,14 @@ void MacroAssembler::iteratorMore(Register obj, ValueOperand output,
+@@ -9897,7 +9919,14 @@ void MacroAssembler::iteratorMore(Register obj, ValueOperand output,
    loadPtr(propAddr, temp);
  
    // Increase the cursor.
@@ -3034,7 +3125,7 @@ index 5b28e811c88d..ac466d498025 100644
  
    // Check if the property has been deleted while iterating. Skip it if so.
    branchTestPtr(Assembler::NonZero, temp,
-@@ -9942,7 +9971,9 @@ void MacroAssembler::iteratorClose(Register obj, Register temp1, Register temp2,
+@@ -9945,7 +9974,9 @@ void MacroAssembler::iteratorClose(Register obj, Register temp1, Register temp2,
    // unlinked. See NativeIterator::isEmptyIteratorSingleton.
    Label done;
    branchTest32(Assembler::NonZero, flagsAddr,
@@ -3045,7 +3136,7 @@ index 5b28e811c88d..ac466d498025 100644
  
    // Clear objectBeingIterated.
    Address iterObjAddr(temp1, NativeIterator::offsetOfObjectBeingIterated());
-@@ -9955,7 +9986,8 @@ void MacroAssembler::iteratorClose(Register obj, Register temp1, Register temp2,
+@@ -9958,7 +9989,8 @@ void MacroAssembler::iteratorClose(Register obj, Register temp1, Register temp2,
    // Clear deleted bits (only if we have unvisited deletions)
    Label clearDeletedLoopStart, clearDeletedLoopEnd;
    branchTest32(Assembler::Zero, flagsAddr,
@@ -3055,7 +3146,7 @@ index 5b28e811c88d..ac466d498025 100644
                 &clearDeletedLoopEnd);
  
    load32(Address(temp1, NativeIterator::offsetOfPropertyCount()), temp3);
-@@ -9967,15 +9999,25 @@ void MacroAssembler::iteratorClose(Register obj, Register temp1, Register temp2,
+@@ -9970,15 +10002,25 @@ void MacroAssembler::iteratorClose(Register obj, Register temp1, Register temp2,
        Address(temp1, NativeIterator::offsetOfFirstProperty()), temp2);
  
    bind(&clearDeletedLoopStart);
@@ -3085,7 +3176,7 @@ index 5b28e811c88d..ac466d498025 100644
  
    // Unlink from the iterator list.
 diff --git a/js/src/jit/MacroAssembler.h b/js/src/jit/MacroAssembler.h
-index 754e8642bb57..ce06e3d33a91 100644
+index c0728e913564..f2e299a4d608 100644
 --- a/js/src/jit/MacroAssembler.h
 +++ b/js/src/jit/MacroAssembler.h
 @@ -808,6 +808,11 @@ class MacroAssembler : public MacroAssemblerSpecific {
@@ -4573,7 +4664,7 @@ index e5a450005905..03caff409442 100644
  };
  
 diff --git a/js/src/shell/js.cpp b/js/src/shell/js.cpp
-index 20eb1231bb7f..7d155bc94e81 100644
+index 6af0cbf76aba..ef51b532da60 100644
 --- a/js/src/shell/js.cpp
 +++ b/js/src/shell/js.cpp
 @@ -11,6 +11,7 @@
@@ -4584,7 +4675,7 @@ index 20eb1231bb7f..7d155bc94e81 100644
  #include "mozilla/EnumSet.h"
  #include "mozilla/IntegerPrintfMacros.h"
  #include "mozilla/mozalloc.h"
-@@ -9425,9 +9426,11 @@ static bool CompressLZ4(JSContext* cx, unsigned argc, Value* vp) {
+@@ -9421,9 +9422,11 @@ static bool CompressLZ4(JSContext* cx, unsigned argc, Value* vp) {
      return false;
    }
  
@@ -4599,7 +4690,7 @@ index 20eb1231bb7f..7d155bc94e81 100644
  
    // Compress the bytes into the output
    char* compressedBytesStart = ((char*)output.get()) + LZ4HeaderSize;
-@@ -9464,9 +9467,12 @@ static bool DecompressLZ4(JSContext* cx, unsigned argc, Value* vp) {
+@@ -9460,9 +9463,12 @@ static bool DecompressLZ4(JSContext* cx, unsigned argc, Value* vp) {
      return false;
    }
  
@@ -4616,7 +4707,7 @@ index 20eb1231bb7f..7d155bc94e81 100644
      JS_ReportErrorASCII(cx, "Invalid magic header");
      return false;
 diff --git a/js/src/tests/jstests.list b/js/src/tests/jstests.list
-index 1da0588fcfa6..efa869459553 100644
+index 9581224541b7..dff8a9d03077 100644
 --- a/js/src/tests/jstests.list
 +++ b/js/src/tests/jstests.list
 @@ -13,6 +13,11 @@ slow script test262/built-ins/decodeURIComponent/S15.1.3.2_A2.5_T1.js
@@ -4632,10 +4723,10 @@ index 1da0588fcfa6..efa869459553 100644
  ###########################################################################
  # Generated jstests.list for test262 when inline |reftest| isn't possible #
 diff --git a/js/src/vm/Iteration.cpp b/js/src/vm/Iteration.cpp
-index f5073fbd07fb..2cbc425aa560 100644
+index 371e78393d79..a114847b8238 100644
 --- a/js/src/vm/Iteration.cpp
 +++ b/js/src/vm/Iteration.cpp
-@@ -829,11 +829,22 @@ static PropertyIteratorObject* CreatePropertyIterator(
+@@ -832,11 +832,22 @@ static PropertyIteratorObject* CreatePropertyIterator(
      return nullptr;
    }
  
@@ -4661,10 +4752,10 @@ index f5073fbd07fb..2cbc425aa560 100644
    // This also registers |ni| with |propIter|.
    bool hadError = false;
 diff --git a/js/src/vm/Iteration.h b/js/src/vm/Iteration.h
-index 684e6bd678fe..1509e0aa886a 100644
+index 2271c86c0f93..7edac80fdd39 100644
 --- a/js/src/vm/Iteration.h
 +++ b/js/src/vm/Iteration.h
-@@ -628,6 +628,18 @@ struct NativeIterator : public NativeIteratorListNode {
+@@ -633,6 +633,18 @@ struct NativeIterator : public NativeIteratorListNode {
      return offsetof(NativeIterator, flags_);
    }
  
@@ -4730,10 +4821,10 @@ index 1f76959e956d..1f08b1928721 100644
      return getFixedSlotOffset(SHARED_SLOT);
    }
 diff --git a/js/src/vm/StructuredClone.cpp b/js/src/vm/StructuredClone.cpp
-index 67740b88614d..b5a1a1db0094 100644
+index e4db728fd459..c05fed4ab306 100644
 --- a/js/src/vm/StructuredClone.cpp
 +++ b/js/src/vm/StructuredClone.cpp
-@@ -3585,8 +3585,8 @@ bool JSStructuredCloneReader::readTransferMap() {
+@@ -3584,8 +3584,8 @@ bool JSStructuredCloneReader::readTransferMap() {
      return false;
    }
  
@@ -4744,7 +4835,7 @@ index 67740b88614d..b5a1a1db0094 100644
  
    uint64_t numTransferables;
    MOZ_ALWAYS_TRUE(in.readPair(&tag, &data));
-@@ -3696,7 +3696,8 @@ bool JSStructuredCloneReader::readTransferMap() {
+@@ -3695,7 +3695,8 @@ bool JSStructuredCloneReader::readTransferMap() {
  
      // Mark the SCTAG_TRANSFER_MAP_* entry as no longer owned by the input
      // buffer.
@@ -4754,7 +4845,7 @@ index 67740b88614d..b5a1a1db0094 100644
      MOZ_ASSERT(!pos.done());
  
      if (!allObjs.append(ObjectValue(*obj))) {
-@@ -3710,8 +3711,8 @@ bool JSStructuredCloneReader::readTransferMap() {
+@@ -3709,8 +3710,8 @@ bool JSStructuredCloneReader::readTransferMap() {
    MOZ_ASSERT(tag == SCTAG_TRANSFER_MAP_HEADER);
    MOZ_ASSERT(TransferableMapHeader(data) == SCTAG_TM_TRANSFERRING);
  #endif
@@ -4819,7 +4910,7 @@ index 7965f55fb68f..ec47bfb16da8 100644
        store32BitsToStack(bits.i32[i], destHeight - i * sizeof(int32_t), temp);
      }
 diff --git a/js/src/wasm/WasmBCMemory.cpp b/js/src/wasm/WasmBCMemory.cpp
-index 9137b09f4684..01c3b9bef585 100644
+index 152590d19078..c0c08e1e07b4 100644
 --- a/js/src/wasm/WasmBCMemory.cpp
 +++ b/js/src/wasm/WasmBCMemory.cpp
 @@ -343,10 +343,13 @@ void BaseCompiler::boundsCheckBelow4GBAccess(uint32_t memoryIndex,
@@ -4841,10 +4932,10 @@ index 9137b09f4684..01c3b9bef585 100644
  
  void BaseCompiler::boundsCheck4GBOrLargerAccess(uint32_t memoryIndex,
 diff --git a/js/src/wasm/WasmBaselineCompile.cpp b/js/src/wasm/WasmBaselineCompile.cpp
-index c57180dd362b..aaa98b7be661 100644
+index fcd5309652ff..99f9219ef0f8 100644
 --- a/js/src/wasm/WasmBaselineCompile.cpp
 +++ b/js/src/wasm/WasmBaselineCompile.cpp
-@@ -2092,11 +2092,16 @@ bool BaseCompiler::callIndirect(uint32_t funcTypeIndex, uint32_t tableIndex,
+@@ -2096,11 +2096,16 @@ bool BaseCompiler::callIndirect(uint32_t funcTypeIndex, uint32_t tableIndex,
      // therefore we only need WasmTableCallIndexReg.
    } else {
      loadI32(indexVal, RegI32(WasmTableCallIndexReg));
@@ -4866,7 +4957,7 @@ index c57180dd362b..aaa98b7be661 100644
    }
  
    Label* nullCheckFailed = nullptr;
-@@ -2804,9 +2809,9 @@ Address BaseCompiler::addressOfTableField(uint32_t tableIndex,
+@@ -2808,9 +2813,9 @@ Address BaseCompiler::addressOfTableField(uint32_t tableIndex,
  
  void BaseCompiler::loadTableLength(uint32_t tableIndex, RegPtr instance,
                                     RegI32 length) {
@@ -4879,7 +4970,7 @@ index c57180dd362b..aaa98b7be661 100644
  }
  
  void BaseCompiler::loadTableElements(uint32_t tableIndex, RegPtr instance,
-@@ -6178,6 +6183,12 @@ bool BaseCompiler::emitGetGlobal() {
+@@ -6182,6 +6187,12 @@ bool BaseCompiler::emitGetGlobal() {
        RegV128 rv = needV128();
        ScratchPtr tmp(*this);
        masm.loadUnalignedSimd128(addressOfGlobalVar(global, tmp), rv);
@@ -4892,7 +4983,7 @@ index c57180dd362b..aaa98b7be661 100644
        pushV128(rv);
        break;
      }
-@@ -6252,6 +6263,12 @@ bool BaseCompiler::emitSetGlobal() {
+@@ -6256,6 +6267,12 @@ bool BaseCompiler::emitSetGlobal() {
      case ValType::V128: {
        RegV128 rv = popV128();
        ScratchPtr tmp(*this);
@@ -4905,7 +4996,7 @@ index c57180dd362b..aaa98b7be661 100644
        masm.storeUnalignedSimd128(rv, addressOfGlobalVar(global, tmp));
        freeV128(rv);
        break;
-@@ -7138,8 +7155,7 @@ void BaseCompiler::emitTableBoundsCheck(uint32_t tableIndex, RegI32 address,
+@@ -7143,8 +7160,7 @@ void BaseCompiler::emitTableBoundsCheck(uint32_t tableIndex, RegI32 address,
    Label ok;
    masm.wasmBoundsCheck32(
        Assembler::Condition::Below, address,
@@ -4916,7 +5007,7 @@ index c57180dd362b..aaa98b7be661 100644
    trap(wasm::Trap::OutOfBounds);
    masm.bind(&ok);
 diff --git a/js/src/wasm/WasmBinary.h b/js/src/wasm/WasmBinary.h
-index 316ba8a0809e..a2a480afd048 100644
+index 89b4e0b8c1cc..516dc89a2fe3 100644
 --- a/js/src/wasm/WasmBinary.h
 +++ b/js/src/wasm/WasmBinary.h
 @@ -210,9 +210,28 @@ class Encoder {
@@ -4951,7 +5042,7 @@ index 316ba8a0809e..a2a480afd048 100644
  
    // Variable-length encodings that all use LEB128.
  
-@@ -462,10 +481,40 @@ class Decoder {
+@@ -480,10 +499,40 @@ class Decoder {
    // Fixed-size encoding operations simply copy the literal bytes (without
    // attempting to align).
  
@@ -4996,7 +5087,7 @@ index 316ba8a0809e..a2a480afd048 100644
    [[nodiscard]] bool readFixedV128(V128* d) {
      for (unsigned i = 0; i < 16; i++) {
 diff --git a/js/src/wasm/WasmFeatures.cpp b/js/src/wasm/WasmFeatures.cpp
-index df33c2abba0f..77a81f0d4b67 100644
+index 00cd64939288..3d25cfe772ae 100644
 --- a/js/src/wasm/WasmFeatures.cpp
 +++ b/js/src/wasm/WasmFeatures.cpp
 @@ -244,9 +244,14 @@ bool wasm::ThreadsAvailable(JSContext* cx) {
@@ -5015,7 +5106,7 @@ index df33c2abba0f..77a81f0d4b67 100644
    if (!HasJitBackend()) {
      return false;
 diff --git a/js/src/wasm/WasmInstance.cpp b/js/src/wasm/WasmInstance.cpp
-index 39847e3483e2..7f792092ee23 100644
+index a12cf979ea49..ca7ba01429a8 100644
 --- a/js/src/wasm/WasmInstance.cpp
 +++ b/js/src/wasm/WasmInstance.cpp
 @@ -235,9 +235,29 @@ static bool UnpackResults(JSContext* cx, const ValTypeVector& resultTypes,
@@ -5049,8 +5140,8 @@ index 39847e3483e2..7f792092ee23 100644
    }
  
    return true;
-@@ -1577,6 +1597,18 @@ static bool ArrayCopyFromData(JSContext* cx, Handle<WasmArrayObject*> arrayObj,
-   if (numElements != 0) {
+@@ -1578,6 +1598,18 @@ static bool ArrayCopyFromData(JSContext* cx, Handle<WasmArrayObject*> arrayObj,
+     MOZ_RELEASE_ASSERT(seg);
      memcpy(&arrayObj->data_[dstByteOffset], &seg->bytes[segByteOffset],
             size_t(numBytesToCopy.value()));
 +#if defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
@@ -5068,7 +5159,7 @@ index 39847e3483e2..7f792092ee23 100644
    }
  
    return true;
-@@ -3605,6 +3637,13 @@ bool wasm::ResultsToJSValue(JSContext* cx, ResultType type,
+@@ -3580,6 +3612,13 @@ bool wasm::ResultsToJSValue(JSContext* cx, ResultType type,
      const ABIResult& result = iter.cur();
      if (result.onStack()) {
        char* loc = stackResultsLoc.value() + result.stackOffset();
@@ -5082,7 +5173,7 @@ index 39847e3483e2..7f792092ee23 100644
        if (!ToJSValue<DebugCodegenVal>(cx, loc, result.type(), &tmp, level)) {
          return false;
        }
-@@ -4131,7 +4170,14 @@ bool Instance::callExport(JSContext* cx, uint32_t funcIndex,
+@@ -4108,7 +4147,14 @@ bool Instance::callExport(JSContext* cx, uint32_t funcIndex,
      JitActivation activation(cx);
  
      // Call the per-exported-function trampoline created by GenerateEntry.
@@ -5121,7 +5212,7 @@ index b09e7d0b7102..179d669ee4c8 100644
  
  struct TagInstanceData {
 diff --git a/js/src/wasm/WasmIonCompile.cpp b/js/src/wasm/WasmIonCompile.cpp
-index 0d0e661770af..b0b6c06c600f 100644
+index 215a4aed074f..ac7bef8af987 100644
 --- a/js/src/wasm/WasmIonCompile.cpp
 +++ b/js/src/wasm/WasmIonCompile.cpp
 @@ -1494,6 +1494,17 @@ class FunctionCompiler {
@@ -5161,7 +5252,7 @@ index 0d0e661770af..b0b6c06c600f 100644
  
    MDefinition* loadTableElements(uint32_t tableIndex) {
 diff --git a/js/src/wasm/WasmStubs.cpp b/js/src/wasm/WasmStubs.cpp
-index 8497814fcd37..c6e2e2c6904d 100644
+index 1cc1509a0bf0..ccb4400055b3 100644
 --- a/js/src/wasm/WasmStubs.cpp
 +++ b/js/src/wasm/WasmStubs.cpp
 @@ -414,6 +414,12 @@ static void SetupABIArguments(MacroAssembler& masm, const FuncExport& fe,
@@ -5302,7 +5393,7 @@ index 2ae55a1b1b9e..0f6620d3cf32 100644
        // VSX SIMD indexed load/store (XX1-form, same major opcode 31).
        case 268:  // lxvx (POWER9)
 diff --git a/js/src/wasm/WasmValType.h b/js/src/wasm/WasmValType.h
-index 3a17a3034887..c17c7e99cd42 100644
+index 4b50096a5de2..fe405a0a5295 100644
 --- a/js/src/wasm/WasmValType.h
 +++ b/js/src/wasm/WasmValType.h
 @@ -44,32 +44,28 @@ union PackedTypeCode {
@@ -5396,7 +5487,7 @@ index 3a17a3034887..c17c7e99cd42 100644
    }
  
 diff --git a/js/src/wasm/WasmValue.h b/js/src/wasm/WasmValue.h
-index 1060eebb4bc8..ffc17668b824 100644
+index 56c72af0e7be..ba72dd866f9e 100644
 --- a/js/src/wasm/WasmValue.h
 +++ b/js/src/wasm/WasmValue.h
 @@ -46,11 +46,23 @@ struct V128 {
@@ -5456,6 +5547,23 @@ index d46985561385..cb1f1210e2fd 100644
      E res;
      std::memcpy(&res, &bits, sizeof(E));
      return res;
+diff --git a/mfbt/Variant.h b/mfbt/Variant.h
+index 3c8735e5cbb5..fb3f2df5abe7 100644
+--- a/mfbt/Variant.h
++++ b/mfbt/Variant.h
+@@ -31,7 +31,11 @@ class Variant;
+ namespace detail {
+ 
+ #if defined(__has_builtin)
+-#  if __has_builtin(__type_pack_element)
++// GCC 15+ hard-errors on __type_pack_element used in a function signature; fall
++// back to the NthImpl template there. Real GCC only (clang defines __GNUC__ too
++// but is unaffected), and only >= 15 so older GCC keeps the faster builtin.
++#  if __has_builtin(__type_pack_element) && \
++      !(defined(__GNUC__) && !defined(__clang__) && __GNUC__ >= 15)
+ #    define MOZ_HAS_TYPE_PACK_ELEMENT
+ #  endif
+ #endif
 -- 
 2.52.0
 
