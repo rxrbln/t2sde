@@ -1,0 +1,134 @@
+VX900 (and all HI-engine chips): fix two-color hardware cursor showing garbage.
+
+The Hardware Icon (HI) engine used by CX700 and later parts is ARGB-only and
+has no two-color cursor mode.  For those chips iga_crtc_load_cursor_image()
+(the X server's two-color / core-cursor path) could not feed the engine, so a
+two-color cursor left it fetching stale video RAM at the cursor position -- the
+cursor appeared at the correct location but showing random data.
+
+Withhold the load_cursor_image callback for HI-engine chips (only the CLE266 /
+KM400 dedicated two-color engine keeps it).  The X server then expands two-color
+cursors to ARGB itself and drives them through iga_crtc_load_cursor_argb(),
+re-converting on every color and image change, which also avoids foreground /
+background getting swapped when alternating cursors.  Full-color ARGB cursors
+were already handled by iga_crtc_load_cursor_argb() and are unchanged.
+
+Signed-off-by: René Rebe <rene@exactco.de>
+
+--- xf86-video-openchrome.git/src/via_ums.h	2026-07-20 18:19:18.468012621 +0200
++++ xf86-video-openchrome.git.new/src/via_ums.h	2026-07-20 18:19:18.468454011 +0200
+@@ -1620,8 +1620,8 @@
+ void viaIGA2Save(ScrnInfoPtr pScrn);
+ void viaIGA2Restore(ScrnInfoPtr pScrn);
+ void ViaShadowCRTCSetMode(ScrnInfoPtr pScrn, DisplayModePtr mode);
+-extern const xf86CrtcFuncsRec iga1_crtc_funcs;
+-extern const xf86CrtcFuncsRec iga2_crtc_funcs;
++extern xf86CrtcFuncsRec iga1_crtc_funcs;
++extern xf86CrtcFuncsRec iga2_crtc_funcs;
+ 
+ /* via_analog.c */
+ void viaAnalogProbe(ScrnInfoPtr pScrn);
+--- xf86-video-openchrome.git/src/via_ums.c	2026-07-20 18:19:18.465692915 +0200
++++ xf86-video-openchrome.git.new/src/via_ums.c	2026-07-20 18:19:18.466214438 +0200
+@@ -1428,6 +1428,19 @@
+     pScrn->clockRanges = clockRanges;
+ 
+     /*
++     * The Hardware Icon (HI) engine used by CX700 and later chipsets is
++     * ARGB-only.  Withhold the two-color (load_cursor_image) callback for
++     * those parts so the X server expands two-color cursors to ARGB itself and
++     * drives them through load_cursor_argb; otherwise the two-color path has no
++     * way to feed the HI engine and it scans out stale video RAM.  Only the
++     * CLE266 / KM400 dedicated two-color engine keeps the callback.
++     */
++    if ((pVia->Chipset != VIA_CLE266) && (pVia->Chipset != VIA_KM400)) {
++        iga1_crtc_funcs.load_cursor_image = NULL;
++        iga2_crtc_funcs.load_cursor_image = NULL;
++    }
++
++    /*
+      * Now handle the outputs
+      */
+     iga1_rec = (drmmode_crtc_private_ptr) xnfcalloc(sizeof(drmmode_crtc_private_rec), 1);
+--- xf86-video-openchrome.git/src/via_display.c	2026-07-20 18:19:18.462974280 +0200
++++ xf86-video-openchrome.git.new/src/via_display.c	2026-07-20 18:19:18.463487154 +0200
+@@ -3421,35 +3421,18 @@
+ {
+     ScrnInfoPtr pScrn = crtc->scrn;
+     VIAPtr pVia = VIAPTR(pScrn);
+-    drmmode_crtc_private_ptr iga = crtc->driver_private;
+-    xf86CrtcConfigPtr xf86_config = XF86_CRTC_CONFIG_PTR(pScrn);
+ 
++    /*
++     * Only the CLE266 / KM400 dedicated two-color cursor engine consumes
++     * separate foreground / background colors.  HI-engine chips do not
++     * register load_cursor_image (see iga1_crtc_funcs / iga2_crtc_funcs), so
++     * the X server expands two-color cursors to ARGB itself and never calls
++     * this for them.
++     */
+     if (viaCursorOldEngine(pVia)) {
+-        /* Two-color cursor: foreground / background come from registers. */
+         VIASETREG(VIA_REG_CURSOR_BG, bg);
+         VIASETREG(VIA_REG_CURSOR_FG, fg);
+-        return;
+-    }
+-
+-    if (xf86_config->cursor_fg)
+-        return;
+-
+-    /*
+-     * Don't recolour the image if we don't have to.
+-     */
+-    if ((fg == xf86_config->cursor_fg) &&
+-        (bg == xf86_config->cursor_bg)) {
+-        return;
+     }
+-
+-    if (!iga->index) {
+-        viaIGA1DisplayHI(pScrn, FALSE);
+-    } else {
+-        viaIGA2DisplayHI(pScrn, FALSE);
+-    }
+-
+-    xf86_config->cursor_fg = fg;
+-    xf86_config->cursor_bg = bg;
+ }
+ 
+ static void
+@@ -3555,11 +3538,13 @@
+ }
+ 
+ /*
+- * Upload a two-color cursor image for the CLE266 / KM400 UniChrome cursor
+- * engine.  The X server hands us a 32x32 two-plane (AND source + mask) image
+- * (256 bytes) which is copied verbatim into video RAM, and the cursor engine
+- * is pointed at it via VIA_REG_CURSOR_MODE (byte offset in the low address
+- * bits, cursor control in bits [1:0]).
++ * Upload a two-color (source/mask) cursor image for the CLE266 / KM400
++ * UniChrome dedicated 32x32 two-color cursor engine.
++ *
++ * All later parts drive the cursor through the ARGB-only Hardware Icon (HI)
++ * engine, which has no two-color mode.  Those chips therefore do NOT register
++ * this callback (see iga1_crtc_funcs / iga2_crtc_funcs); the X server expands
++ * their two-color cursors to ARGB via iga_crtc_load_cursor_argb() instead.
+  */
+ static void
+ iga_crtc_load_cursor_image(xf86CrtcPtr crtc, CARD8 *image)
+@@ -3603,7 +3588,7 @@
+         free(crtc->driver_private);
+ }
+ 
+-const xf86CrtcFuncsRec iga1_crtc_funcs = {
++xf86CrtcFuncsRec iga1_crtc_funcs = {
+     .dpms                   = iga1_crtc_dpms,
+     .save                   = iga1_crtc_save,
+     .restore                = iga1_crtc_restore,
+@@ -3917,7 +3902,7 @@
+ {
+ }
+ 
+-const xf86CrtcFuncsRec iga2_crtc_funcs = {
++xf86CrtcFuncsRec iga2_crtc_funcs = {
+     .dpms                   = iga2_crtc_dpms,
+     .save                   = iga2_crtc_save,
+     .restore                = iga2_crtc_restore,
