@@ -1,0 +1,1270 @@
+# --- T2-COPYRIGHT-BEGIN ---
+# t2/package/*/firefox/up-next-jit-0009-opt-vsx.patch.powerpc64
+# Copyright (C) 2026 The T2 SDE Project
+# SPDX-License-Identifier: GPL-2.0 or patched project license
+# --- T2-COPYRIGHT-END ---
+
+--- a/js/src/jit/ppc64/Architecture-ppc64.cpp
++++ b/js/src/jit/ppc64/Architecture-ppc64.cpp
+@@ -93,6 +93,7 @@ uint32_t FloatRegister::getRegisterDumpO
+ 
+ static bool sPOWER9Detected = false;
+ static bool sPOWER10Detected = false;
++static bool sVSXDetected = false;
+ static bool sCPUFlagsComputed = false;
+ 
+ #ifndef JS_SIMULATOR
+@@ -107,7 +108,13 @@ void PPC64Flags::Init() {
+     return;
+   }
+ #ifndef JS_SIMULATOR
++  unsigned long hwcap = getauxval(AT_HWCAP);
+   unsigned long hwcap2 = getauxval(AT_HWCAP2);
++  // PPC_FEATURE_HAS_VSX = 0x00000080 (ISA 2.07 / POWER8 VSX). Cleared on
++  // pre-VSX hardware such as the PowerPC 970 (ISA 2.01), where the JIT must
++  // avoid VSX GPR<->FPR moves and the ISA 2.02-2.07 FP conversion/rounding
++  // instructions the 970 lacks (see HasVSX() in the header).
++  sVSXDetected = (hwcap & 0x00000080) != 0;
+   // PPC_FEATURE2_ARCH_3_00 = 0x00800000 (ISA 3.0 / POWER9)
+   sPOWER9Detected = (hwcap2 & 0x00800000) != 0;
+   // PPC_FEATURE2_ARCH_3_1 = 0x00040000 (ISA 3.1 / POWER10)
+@@ -119,6 +126,14 @@ void PPC64Flags::Init() {
+     sPOWER9Detected = false;
+     sPOWER10Detected = false;
+   }
++  // Allow forcing the pre-VSX (PowerPC 970) code paths for testing on VSX
++  // hardware or under the simulator: MOZ_PPC64_FORCE_NOVSX=1.
++  const char* forceNoVSX = getenv("MOZ_PPC64_FORCE_NOVSX");
++  if (forceNoVSX && forceNoVSX[0] == '1') {
++    sVSXDetected = false;
++    sPOWER9Detected = false;
++    sPOWER10Detected = false;
++  }
+ 
+   size_t dcache = getauxval(AT_DCACHEBSIZE);
+   size_t icache = getauxval(AT_ICACHEBSIZE);
+@@ -142,6 +157,17 @@ void PPC64Flags::Init() {
+     sPOWER10Detected = true;
+     sPOWER9Detected = true;
+   }
++#ifdef JS_SIMULATOR
++  // The simulator implements the full VSX/ISA 3.x instruction set, so default
++  // to VSX-available there unless MOZ_PPC64_FORCE_NOVSX opted out above.
++  const char* forceNoVSXSim = getenv("MOZ_PPC64_FORCE_NOVSX");
++  sVSXDetected = !(forceNoVSXSim && forceNoVSXSim[0] == '1');
++#endif
++  // Any POWER9+ level implies VSX (ISA 2.07 is a subset of 3.0/3.1). This also
++  // re-establishes VSX after a FORCE_POWER9/10 opt-in under the simulator.
++  if (sPOWER9Detected || sPOWER10Detected) {
++    sVSXDetected = true;
++  }
+   sCPUFlagsComputed = true;
+ }
+ 
+@@ -155,6 +181,11 @@ bool HasPOWER10() {
+   return sPOWER10Detected;
+ }
+ 
++bool HasVSX() {
++  MOZ_ASSERT(sCPUFlagsComputed);
++  return sVSXDetected;
++}
++
+ bool CPUFlagsHaveBeenComputed() { return sCPUFlagsComputed; }
+ 
+ // Per-bit feature flags packed into the wasm code signature. Adding a
+@@ -168,6 +199,9 @@ uint32_t GetPPC64Flags() {
+   if (sPOWER9Detected) {
+     flags |= PPC64Flag_POWER9;
+   }
++  if (sVSXDetected) {
++    flags |= PPC64Flag_VSX;
++  }
+   return flags;
+ }
+ 
+--- a/js/src/jit/ppc64/Architecture-ppc64.h
++++ b/js/src/jit/ppc64/Architecture-ppc64.h
+@@ -557,7 +557,11 @@ inline bool hasMultiAlias() { return fal
+ // must keep meaning the same set of features.
+ enum PPC64FeatureFlags : uint32_t {
+   PPC64Flag_POWER9 = 1u << 0,
+-  // Future: PPC64Flag_POWER10 = 1u << 1, PPC64Flag_VSX4 = 1u << 2, ...
++  // VSX (ISA 2.07 / POWER8). Distinguishes a pre-VSX 970 from a POWER8 in the
++  // wasm code signature: both have POWER9=0, but they need different codegen,
++  // so a module compiled for one must not be loaded on the other.
++  PPC64Flag_VSX = 1u << 1,
++  // Future: PPC64Flag_POWER10 = 1u << 2, PPC64Flag_VSX4 = 1u << 3, ...
+ };
+ 
+ uint32_t GetPPC64Flags();
+@@ -575,6 +579,18 @@ class PPC64Flags final {
+ bool HasPOWER9();
+ bool HasPOWER10();
+ 
++// True when the CPU implements VSX (ISA 2.07 / POWER8 and later). When false
++// the target is a pre-VSX PowerPC 970 (ISA 2.01), which the ppc64 backend
++// otherwise assumes as its POWER8 baseline. The 970 lacks not only the VSX
++// GPR<->FPR moves (mtvsrd/mfvsrd/mtvsrwz, the mtfprd/mffprd mnemonics) but
++// also the ISA 2.02-2.07 floating-point instructions the backend emits:
++// fri[mnpz]/fcpsgn (round-to-integer, copy-sign), fcfid[u]s/fcfidu/fctidu[z]
++// (unsigned and single-precision conversions) and the xscv* single<->double
++// reinterpret ops. Since the 970 is the only non-VSX target, HasVSX() gates
++// all of these; the memory-round-trip / synthesized fallbacks live in
++// MacroAssemblerPPC64.
++bool HasVSX();
++
+ }  // namespace jit
+ }  // namespace js
+ 
+--- a/js/src/jit/ppc64/Assembler-ppc64.cpp
++++ b/js/src/jit/ppc64/Assembler-ppc64.cpp
+@@ -1271,6 +1271,11 @@ DEF_FMEMx(lfdx) DEF_FMEMx(lfsx) DEF_FMEM
+   return writeInst(PPC_mtfsb0 | (uint32_t)bt << 21);
+ }
+ 
++BufferOffset Assembler::as_mtfsb1(uint8_t bt) {
++  spew("mtfsb1\t%d", bt);
++  return writeInst(PPC_mtfsb1 | (uint32_t)bt << 21);
++}
++
+ BufferOffset Assembler::as_mcrfs(CRegisterID bf, uint8_t bfa) {
+   spew("mcrfs\tcr%d,%d", bf, bfa);
+   return writeInst(PPC_mcrfs | (uint32_t)bf << 23 | (uint32_t)bfa << 18);
+--- a/js/src/jit/ppc64/Assembler-ppc64.h
++++ b/js/src/jit/ppc64/Assembler-ppc64.h
+@@ -521,6 +521,7 @@ enum PPCOpcodes {
+   PPC_mfvsrd = 0x7C000066,
+   PPC_mtcrf = 0x7C000120,
+   PPC_mtfsb0 = 0xFC00008C,
++  PPC_mtfsb1 = 0xFC00004C,
+   PPC_mtvsrd = 0x7C000166,
+   // POWER8+ (ISA 2.07). VSR[XT].dw[0] = sign_ext_64(RA[32:63]).
+   // XO=211 at bits 21-30. Combines extsw + mtvsrd into one insn.
+@@ -1649,6 +1650,7 @@ class Assembler : public AssemblerShared
+ 
+   // FPSCR operations.
+   BufferOffset as_mtfsb0(uint8_t bt);
++  BufferOffset as_mtfsb1(uint8_t bt);
+   BufferOffset as_mcrfs(CRegisterID bf, uint8_t bfa);
+ 
+   // VSX (FPR-only subset).
+@@ -1983,7 +1985,10 @@ class Assembler : public AssemblerShared
+ 
+   // --- Static capability queries.
+   static bool SupportsFloatingPoint() { return true; }
+-  static bool SupportsWasmSimd() { return true; }
++  // The wasm SIMD (v128) lowering is built on VSX; the pre-VSX PowerPC 970
++  // has no matching vector unit, so report SIMD unsupported there to keep the
++  // engine from compiling modules that would emit trapping VSX instructions.
++  static bool SupportsWasmSimd() { return HasVSX(); }
+   static bool SupportsUnalignedAccesses() { return true; }
+   static bool SupportsFastUnalignedFPAccesses() { return true; }
+   // POWER9 has scalar FP16 hardware (xscvdphp/xscvhpdp); POWER8 doesn't.
+--- a/js/src/jit/ppc64/MacroAssembler-ppc64.cpp
++++ b/js/src/jit/ppc64/MacroAssembler-ppc64.cpp
+@@ -33,6 +33,93 @@ const MacroAssembler& MacroAssemblerPPC6
+ }
+ 
+ // ===============================================================
++// GPR<->FPR moves and FP primitives with pre-VSX (PowerPC 970) fallbacks.
++
++// 8-byte scratch slot in the ELF red zone (288 bytes below r1, reserved by
++// both PPC64 ELF ABIs), used to shuttle values between GPRs and FPRs without
++// VSX. Kept clear of the 16-byte SIMD red-zone slots (offsets -16/-32), which
++// are never live across these scalar helpers.
++static constexpr int16_t kFprGprRedZoneSlot = -8;
++
++// FPSCR rounding-control bits, in mtfsb {0,1} bit numbering (the 0-31 view of
++// the 32-bit FPSCR). RN occupies bits 30:31.
++static constexpr uint8_t kFPSCR_RN_hi = 30;
++static constexpr uint8_t kFPSCR_RN_lo = 31;
++
++void MacroAssemblerPPC64::moveGPRToFPR64(Register src, FloatRegister dest) {
++  if (HasVSX()) {
++    as_mtvsrd(dest, src);
++  } else {
++    as_std(src, StackPointer, kFprGprRedZoneSlot);
++    as_lfd(dest, StackPointer, kFprGprRedZoneSlot);
++  }
++}
++
++void MacroAssemblerPPC64::moveFPR64ToGPR(FloatRegister src, Register dest) {
++  if (HasVSX()) {
++    as_mfvsrd(dest, src);
++  } else {
++    as_stfd(src, StackPointer, kFprGprRedZoneSlot);
++    as_ld(dest, StackPointer, kFprGprRedZoneSlot);
++  }
++}
++
++void MacroAssemblerPPC64::moveGPRWordZeroToFPR(Register src,
++                                               FloatRegister dest) {
++  if (HasVSX()) {
++    as_mtvsrwz(dest, src);
++  } else {
++    UseScratchRegisterScope temps(asMasm());
++    Register tmp = temps.Acquire();
++    as_rldicl(tmp, src, 0, 32);  // clrldi 32: zero-extend the low word
++    as_std(tmp, StackPointer, kFprGprRedZoneSlot);
++    as_lfd(dest, StackPointer, kFprGprRedZoneSlot);
++  }
++}
++
++void MacroAssemblerPPC64::emitCopySign(FloatRegister dest, FloatRegister signSrc,
++                                       FloatRegister magSrc) {
++  if (HasVSX()) {
++    as_fcpsgn(dest, signSrc, magSrc);
++    return;
++  }
++  // 970: rebuild the doubleword as (magnitude of magSrc) | (sign of signSrc).
++  UseScratchRegisterScope temps(asMasm());
++  Register mag = temps.Acquire();
++  Register sign = temps.Acquire();
++  moveFPR64ToGPR(magSrc, mag);
++  moveFPR64ToGPR(signSrc, sign);
++  as_rldicl(mag, mag, 0, 1);   // clear bit 0 (sign): keep bits 1..63
++  as_rldicr(sign, sign, 0, 0);  // keep bit 0 (sign) only
++  as_or_(mag, mag, sign);
++  moveGPRToFPR64(mag, dest);
++}
++
++void MacroAssemblerPPC64::roundToInt64FPR(FloatRegister fpDest,
++                                          FloatRegister src, FpIntRound m) {
++  if (HasVSX()) {
++    if (m == RoundDown) {
++      as_frim(fpDest, src);
++    } else {
++      as_frip(fpDest, src);
++    }
++    as_fctidz(fpDest, fpDest);
++    return;
++  }
++  // 970: fctid honors the FPSCR rounding mode and saturates out-of-range /
++  // NaN inputs exactly as fri*+fctidz does. Set RN, convert, restore nearest.
++  as_mtfsb1(kFPSCR_RN_hi);
++  if (m == RoundDown) {
++    as_mtfsb1(kFPSCR_RN_lo);  // RN = 0b11, toward -inf
++  } else {
++    as_mtfsb0(kFPSCR_RN_lo);  // RN = 0b10, toward +inf
++  }
++  as_fctid(fpDest, src);
++  as_mtfsb0(kFPSCR_RN_hi);
++  as_mtfsb0(kFPSCR_RN_lo);  // restore RN = 0b00, round-to-nearest-even
++}
++
++// ===============================================================
+ // Out-of-line fake exit frame
+ 
+ bool MacroAssemblerPPC64Compat::buildOOLFakeExitFrame(void* fakeReturnAddr) {
+@@ -55,14 +142,14 @@ void MacroAssemblerPPC64Compat::loadInt3
+   // GPR for the tag test.  Only one scratch GPR is held here so that
+   // branchTestInt32 can acquire the second one for the ImmTag constant.
+   loadPtr(Address(src.base, src.offset), scratch);
+-  as_mtvsrd(dest, scratch);
++  moveGPRToFPR64(scratch, dest);
+   x_srdi(scratch, scratch, JSVAL_TAG_SHIFT);
+   asMasm().branchTestInt32(Assembler::NotEqual, scratch, &end);
+   // It was an int32.  Recover the boxed value from the FPR, sign-extend
+   // the low 32 bits, and convert to double.
+-  as_mfvsrd(scratch, dest);
++  moveFPR64ToGPR(dest, scratch);
+   as_extsw(scratch, scratch);
+-  as_mtvsrd(dest, scratch);
++  moveGPRToFPR64(scratch, dest);
+   as_fcfid(dest, dest);
+ 
+   bind(&end);
+@@ -76,12 +163,12 @@ void MacroAssemblerPPC64Compat::loadInt3
+ 
+   computeScaledAddress(addr, scratch);
+   loadPtr(Address(scratch, addr.offset), scratch);
+-  as_mtvsrd(dest, scratch);
++  moveGPRToFPR64(scratch, dest);
+   x_srdi(scratch, scratch, JSVAL_TAG_SHIFT);
+   asMasm().branchTestInt32(Assembler::NotEqual, scratch, &end);
+-  as_mfvsrd(scratch, dest);
++  moveFPR64ToGPR(dest, scratch);
+   as_extsw(scratch, scratch);
+-  as_mtvsrd(dest, scratch);
++  moveGPRToFPR64(scratch, dest);
+   as_fcfid(dest, dest);
+ 
+   bind(&end);
+@@ -93,16 +180,24 @@ void MacroAssemblerPPC64Compat::loadInt3
+ void MacroAssemblerPPC64Compat::convertUInt32ToDouble(Register src,
+                                                       FloatRegister dest) {
+   // mtvsrwz: VSR[dest].dw0 = zero_ext_64(src[32:63]); P8+ (ISA 2.07).
+-  // Replaces rldicl + mtvsrd (2 insns + scratch) with 1 insn.
+-  as_mtvsrwz(dest, src);
++  // Replaces rldicl + mtvsrd (2 insns + scratch) with 1 insn. On the 970 the
++  // helper synthesizes the zero-extended doubleword through the red zone.
++  moveGPRWordZeroToFPR(src, dest);
+   as_fcfid(dest, dest);
+ }
+ 
+ void MacroAssemblerPPC64Compat::convertUInt32ToFloat32(Register src,
+                                                        FloatRegister dest) {
+-  // mtvsrwz + fcfids; same recipe as convertUInt32ToDouble.
+-  as_mtvsrwz(dest, src);
+-  as_fcfids(dest, dest);
++  // mtvsrwz + fcfids; same recipe as convertUInt32ToDouble. A uint32 is
++  // exactly representable in a double, so on the 970 fcfid + frsp (round to
++  // single) matches fcfids without any double-rounding error.
++  moveGPRWordZeroToFPR(src, dest);
++  if (HasVSX()) {
++    as_fcfids(dest, dest);
++  } else {
++    as_fcfid(dest, dest);
++    as_frsp(dest, dest);
++  }
+ }
+ 
+ // Helper for the negative-zero check after a successful round-trip.
+@@ -120,7 +215,7 @@ static void EmitNegativeZeroCheck(MacroA
+   masm.ma_b(Assembler::NotEqual, &notZero);
+   UseScratchRegisterScope temps(masm);
+   Register scratch = temps.Acquire();
+-  masm.as_mfvsrd(scratch, src);
++  masm.moveFPR64ToGPR(src, scratch);
+   masm.as_cmpdi(scratch, 0);
+   masm.ma_b(Assembler::LessThan, fail);
+   masm.bind(&notZero);
+@@ -135,9 +230,9 @@ void MacroAssemblerPPC64Compat::convertD
+   // The compare also catches NaN (unordered) and Inf (saturated to
+   // INT32_{MIN,MAX}, won't round-trip equal).
+   as_fctiwz(ScratchDoubleReg, src);
+-  as_mfvsrd(dest, ScratchDoubleReg);
++  moveFPR64ToGPR(ScratchDoubleReg, dest);
+   as_extsw(dest, dest);
+-  as_mtvsrd(ScratchDoubleReg, dest);
++  moveGPRToFPR64(dest, ScratchDoubleReg);
+   as_fcfid(ScratchDoubleReg, ScratchDoubleReg);
+   as_fcmpu(ScratchDoubleReg, src);
+   ma_b(Assembler::DoubleNotEqualOrUnordered, fail);
+@@ -153,8 +248,8 @@ void MacroAssemblerPPC64Compat::convertD
+   // Same pattern as convertDoubleToInt32 but to int64 (no sign-extend
+   // needed since fctidz already produces a 64-bit result).
+   as_fctidz(ScratchDoubleReg, src);
+-  as_mfvsrd(dest, ScratchDoubleReg);
+-  as_mtvsrd(ScratchDoubleReg, dest);
++  moveFPR64ToGPR(ScratchDoubleReg, dest);
++  moveGPRToFPR64(dest, ScratchDoubleReg);
+   as_fcfid(ScratchDoubleReg, ScratchDoubleReg);
+   as_fcmpu(ScratchDoubleReg, src);
+   ma_b(Assembler::DoubleNotEqualOrUnordered, fail);
+@@ -171,10 +266,16 @@ void MacroAssemblerPPC64Compat::convertF
+   // Same as convertDoubleToInt32 but the round-trip uses fcfids so the
+   // comparison happens at single precision (matches src's actual width).
+   as_fctiwz(ScratchDoubleReg, src);
+-  as_mfvsrd(dest, ScratchDoubleReg);
++  moveFPR64ToGPR(ScratchDoubleReg, dest);
+   as_extsw(dest, dest);
+-  as_mtvsrd(ScratchDoubleReg, dest);
+-  as_fcfids(ScratchDoubleReg, ScratchDoubleReg);
++  moveGPRToFPR64(dest, ScratchDoubleReg);
++  if (HasVSX()) {
++    as_fcfids(ScratchDoubleReg, ScratchDoubleReg);
++  } else {
++    // int32 is exact in a double, so fcfid + frsp equals fcfids here.
++    as_fcfid(ScratchDoubleReg, ScratchDoubleReg);
++    as_frsp(ScratchDoubleReg, ScratchDoubleReg);
++  }
+   as_fcmpu(ScratchDoubleReg, src);
+   ma_b(Assembler::DoubleNotEqualOrUnordered, fail);
+ 
+@@ -378,7 +479,7 @@ void MacroAssembler::clampDoubleToUint8(
+     zeroDouble(fpscratch);
+     as_xsmaxjdp(fpscratch, input, fpscratch);
+     as_fctid(fpscratch, fpscratch);
+-    as_mfvsrd(output, fpscratch);
++    moveFPR64ToGPR(fpscratch, output);
+     UseScratchRegisterScope temps(asMasm());
+     Register max255 = temps.Acquire();
+     xs_li(max255, 255);
+@@ -410,7 +511,7 @@ void MacroAssembler::clampDoubleToUint8(
+   bind(&below255);
+ 
+   as_fctid(fpscratch, input);
+-  as_mfvsrd(output, fpscratch);
++  moveFPR64ToGPR(fpscratch, output);
+   bind(&done);
+ }
+ 
+@@ -482,7 +583,13 @@ void MacroAssembler::PushRegsInMask(Live
+     FloatRegister reg = *iter;
+     diff -= reg.size();
+     if (reg.isSimd128()) {
+-      storeUnalignedSimd128(reg, Address(StackPointer, diff));
++      // Pre-VSX 970: a VR cannot be spilled without VSX, but wasm SIMD is
++      // disabled there (SupportsWasmSimd() == HasVSX()), so no v128 value is
++      // ever live in these registers — the mask includes them only
++      // statically. Skip the trapping stxvd2x; the reserved slot is unwritten.
++      if (HasVSX()) {
++        storeUnalignedSimd128(reg, Address(StackPointer, diff));
++      }
+     } else {
+       storeDouble(reg.asDouble(), Address(StackPointer, diff));
+     }
+@@ -509,7 +616,10 @@ void MacroAssembler::PopRegsInMaskIgnore
+     diff -= reg.size();
+     if (!ignore.has(reg)) {
+       if (reg.isSimd128()) {
+-        loadUnalignedSimd128(Address(StackPointer, diff), reg);
++        // See PushRegsInMask: skipped on the pre-VSX 970 (no live v128).
++        if (HasVSX()) {
++          loadUnalignedSimd128(Address(StackPointer, diff), reg);
++        }
+       } else {
+         loadDouble(Address(StackPointer, diff), reg.asDouble());
+       }
+@@ -937,10 +1047,44 @@ void MacroAssembler::shiftIndex32AndAdd(
+ }
+ 
+ void MacroAssembler::convertInt64ToDouble(Register64 src, FloatRegister dest) {
+-  as_mtvsrd(dest, src.reg);
++  moveGPRToFPR64(src.reg, dest);
+   as_fcfid(dest, dest);
+ }
+ 
++// 970 synthesis of the friz/frip/frim integral-round-to-double ops, which the
++// hardware lacks. Rounds |src| < 2^52 to an integral double via fctid[z] under
++// the appropriate rounding mode, restoring the sign of src so that e.g.
++// floor(-0.0) stays -0.0; passes NaN, Inf and already-integral magnitudes
++// through unchanged. mode is TowardsZero, Up or Down (not NearestTiesToEven).
++static void EmitNearbyIntDouble970(MacroAssembler& masm, RoundingMode mode,
++                                   FloatRegister src, FloatRegister dest) {
++  Label done;
++  UseScratchRegisterScope temps(masm);
++  Register scratch = temps.Acquire();
++  masm.moveDouble(src, ScratchDoubleReg);
++  if (src != dest) {
++    masm.moveDouble(src, dest);  // passthrough value for the guard-taken case
++  }
++  masm.moveFPR64ToGPR(ScratchDoubleReg, scratch);
++  masm.x_srdi(scratch, scratch, 52);
++  masm.as_andi_rc(scratch, scratch, 0x7FF);
++  masm.ma_cmp(scratch, Imm32(1075), Assembler::GreaterThanOrEqual);
++  masm.ma_b(Assembler::GreaterThanOrEqual, &done);
++  if (mode == RoundingMode::TowardsZero) {
++    masm.as_fctidz(dest, ScratchDoubleReg);
++  } else {
++    masm.roundToInt64FPR(dest, ScratchDoubleReg,
++                         mode == RoundingMode::Up
++                             ? MacroAssemblerPPC64::RoundUp
++                             : MacroAssemblerPPC64::RoundDown);
++  }
++  masm.as_fcfid(dest, dest);
++  // scratch is dead here; release it so emitCopySign can reclaim both GPRs.
++  temps.Release(scratch);
++  masm.emitCopySign(dest, ScratchDoubleReg, dest);
++  masm.bind(&done);
++}
++
+ void MacroAssembler::nearbyIntDouble(RoundingMode mode, FloatRegister src,
+                                      FloatRegister dest) {
+   switch (mode) {
+@@ -965,7 +1109,7 @@ void MacroAssembler::nearbyIntDouble(Rou
+         as_xsxexpdp(expScratch, ScratchDoubleReg);
+         as_mfvsrd(scratch, expScratch);
+       } else {
+-        as_mfvsrd(scratch, ScratchDoubleReg);
++        moveFPR64ToGPR(ScratchDoubleReg, scratch);
+         x_srdi(scratch, scratch, 52);
+         as_andi_rc(scratch, scratch, 0x7FF);
+       }
+@@ -975,18 +1119,33 @@ void MacroAssembler::nearbyIntDouble(Rou
+       ma_b(Assembler::GreaterThanOrEqual, &done);
+       as_fctid(dest, ScratchDoubleReg);
+       as_fcfid(dest, dest);
+-      as_fcpsgn(dest, ScratchDoubleReg, dest);
++      // scratch is dead here; release it so emitCopySign's 970 fallback can
++      // reclaim both scratch GPRs.
++      temps.Release(scratch);
++      emitCopySign(dest, ScratchDoubleReg, dest);
+       bind(&done);
+       break;
+     }
+     case RoundingMode::TowardsZero:
+-      as_friz(dest, src);
++      if (HasVSX()) {
++        as_friz(dest, src);
++      } else {
++        EmitNearbyIntDouble970(*this, mode, src, dest);
++      }
+       break;
+     case RoundingMode::Up:
+-      as_frip(dest, src);
++      if (HasVSX()) {
++        as_frip(dest, src);
++      } else {
++        EmitNearbyIntDouble970(*this, mode, src, dest);
++      }
+       break;
+     case RoundingMode::Down:
+-      as_frim(dest, src);
++      if (HasVSX()) {
++        as_frim(dest, src);
++      } else {
++        EmitNearbyIntDouble970(*this, mode, src, dest);
++      }
+       break;
+     default:
+       MOZ_CRASH("Unexpected rounding mode");
+@@ -1101,7 +1260,10 @@ void MacroAssembler::storeRegsInMask(Liv
+     numFpu -= 1;
+     dest.offset -= reg.size();
+     if (reg.isSimd128()) {
+-      storeUnalignedSimd128(reg, dest);
++      // See PushRegsInMask: skipped on the pre-VSX 970 (no live v128).
++      if (HasVSX()) {
++        storeUnalignedSimd128(reg, dest);
++      }
+     } else {
+       storeDouble(reg.asDouble(), dest);
+     }
+@@ -1379,9 +1541,8 @@ void MacroAssembler::floorDoubleToInt32(
+   Register scratch = temps.Acquire();
+ 
+   // Round toward negative infinity, then convert to int64.
+-  as_frim(fpscratch, src);
+-  as_fctidz(fpscratch, fpscratch);
+-  as_mfvsrd(dest, fpscratch);
++  roundToInt64FPR(fpscratch, src, RoundDown);
++  moveFPR64ToGPR(fpscratch, dest);
+ 
+   // Check if result fits in int32.
+   as_extsw(scratch, dest);
+@@ -1394,7 +1555,7 @@ void MacroAssembler::floorDoubleToInt32(
+   ma_b(NotEqual, &notZero);
+   {
+     // If top 2 bits of src are set, it's negative or NaN.
+-    as_mfvsrd(dest, src);
++    moveFPR64ToGPR(src, dest);
+     // rldicl. = x_srdi + record form: dest = top 2 bits, CR0[eq]=(dest==0).
+     // Folds the explicit cmpdi src,0 that would otherwise drive the branch.
+     as_rldicl_rc(dest, dest, 2, 62);
+@@ -1411,9 +1572,8 @@ void MacroAssembler::floorFloat32ToInt32
+ 
+   // PPC FP rounding works on doubles. Single-precision FPRs are
+   // already in double-width registers, so frim works fine.
+-  as_frim(fpscratch, src);
+-  as_fctidz(fpscratch, fpscratch);
+-  as_mfvsrd(dest, fpscratch);
++  roundToInt64FPR(fpscratch, src, RoundDown);
++  moveFPR64ToGPR(fpscratch, dest);
+ 
+   // Check if result fits in int32.
+   as_extsw(scratch, dest);
+@@ -1429,7 +1589,7 @@ void MacroAssembler::floorFloat32ToInt32
+     // double on load), so the same top-2-bits check used for doubles
+     // applies: bit 63 = sign, bit 62 = exponent MSB. Nonzero means -0,
+     // ±Inf, NaN, or a large magnitude — none of which is +0.
+-    as_mfvsrd(dest, src);
++    moveFPR64ToGPR(src, dest);
+     // rldicl. = x_srdi + record form: dest = top 2 bits, CR0[eq]=(dest==0).
+     // Folds the explicit cmpdi src,0 that would otherwise drive the branch.
+     as_rldicl_rc(dest, dest, 2, 62);
+@@ -1444,9 +1604,8 @@ void MacroAssembler::ceilDoubleToInt32(F
+   UseScratchRegisterScope temps(asMasm());
+   Register scratch = temps.Acquire();
+ 
+-  as_frip(fpscratch, src);
+-  as_fctidz(fpscratch, fpscratch);
+-  as_mfvsrd(dest, fpscratch);
++  roundToInt64FPR(fpscratch, src, RoundUp);
++  moveFPR64ToGPR(fpscratch, dest);
+ 
+   // Check if result fits in int32.
+   as_extsw(scratch, dest);
+@@ -1459,7 +1618,7 @@ void MacroAssembler::ceilDoubleToInt32(F
+   ma_b(NotEqual, &notZero);
+   {
+     // If binary value is not zero, input was not 0 (could be -0 or NaN).
+-    as_mfvsrd(dest, src);
++    moveFPR64ToGPR(src, dest);
+     as_cmpdi(dest, 0);
+     ma_b(NotEqual, fail);
+   }
+@@ -1472,9 +1631,8 @@ void MacroAssembler::ceilFloat32ToInt32(
+   UseScratchRegisterScope temps(asMasm());
+   Register scratch = temps.Acquire();
+ 
+-  as_frip(fpscratch, src);
+-  as_fctidz(fpscratch, fpscratch);
+-  as_mfvsrd(dest, fpscratch);
++  roundToInt64FPR(fpscratch, src, RoundUp);
++  moveFPR64ToGPR(fpscratch, dest);
+ 
+   // Check if result fits in int32.
+   as_extsw(scratch, dest);
+@@ -1486,7 +1644,7 @@ void MacroAssembler::ceilFloat32ToInt32(
+   as_cmpdi(dest, 0);
+   ma_b(NotEqual, &notZero);
+   {
+-    as_mfvsrd(dest, src);
++    moveFPR64ToGPR(src, dest);
+     as_cmpdi(dest, 0);
+     ma_b(NotEqual, fail);
+   }
+@@ -1500,7 +1658,7 @@ void MacroAssembler::truncDoubleToInt32(
+   Register scratch = temps.Acquire();
+ 
+   as_fctidz(fpscratch, src);
+-  as_mfvsrd(dest, fpscratch);
++  moveFPR64ToGPR(fpscratch, dest);
+ 
+   // Check if result fits in int32.
+   as_extsw(scratch, dest);
+@@ -1512,7 +1670,7 @@ void MacroAssembler::truncDoubleToInt32(
+   as_cmpdi(dest, 0);
+   ma_b(NotEqual, &notZero);
+   {
+-    as_mfvsrd(dest, src);
++    moveFPR64ToGPR(src, dest);
+     // rldicl. = x_srdi + record form: dest = top 2 bits, CR0[eq]=(dest==0).
+     // Folds the explicit cmpdi src,0 that would otherwise drive the branch.
+     as_rldicl_rc(dest, dest, 2, 62);
+@@ -1528,7 +1686,7 @@ void MacroAssembler::truncFloat32ToInt32
+   Register scratch = temps.Acquire();
+ 
+   as_fctidz(fpscratch, src);
+-  as_mfvsrd(dest, fpscratch);
++  moveFPR64ToGPR(fpscratch, dest);
+ 
+   // Check if result fits in int32.
+   as_extsw(scratch, dest);
+@@ -1540,7 +1698,7 @@ void MacroAssembler::truncFloat32ToInt32
+   as_cmpdi(dest, 0);
+   ma_b(NotEqual, &notZero);
+   {
+-    as_mfvsrd(dest, src);
++    moveFPR64ToGPR(src, dest);
+     // rldicl. = x_srdi + record form: dest = top 2 bits, CR0[eq]=(dest==0).
+     // Folds the explicit cmpdi src,0 that would otherwise drive the branch.
+     as_rldicl_rc(dest, dest, 2, 62);
+@@ -1569,9 +1727,8 @@ void MacroAssembler::roundDoubleToInt32(
+   {
+     loadConstantDouble(GetBiggestNumberLessThan(0.5), temp);
+     as_fadd(fpscratch, src, temp);
+-    as_frim(fpscratch, fpscratch);
+-    as_fctidz(fpscratch, fpscratch);
+-    as_mfvsrd(dest, fpscratch);
++    roundToInt64FPR(fpscratch, fpscratch, RoundDown);
++    moveFPR64ToGPR(fpscratch, dest);
+ 
+     // Check if result fits in int32.
+     as_extsw(scratch, dest);
+@@ -1584,7 +1741,7 @@ void MacroAssembler::roundDoubleToInt32(
+   as_cmpdi(dest, 0);
+   ma_b(NotEqual, &notZero);
+   {
+-    as_mfvsrd(dest, src);
++    moveFPR64ToGPR(src, dest);
+     as_cmpdi(dest, 0);
+     ma_b(NotEqual, fail);
+   }
+@@ -1611,9 +1768,8 @@ void MacroAssembler::roundFloat32ToInt32
+   {
+     loadConstantFloat32(float(GetBiggestNumberLessThan(0.5)), temp);
+     as_fadds(fpscratch, src, temp);
+-    as_frim(fpscratch, fpscratch);
+-    as_fctidz(fpscratch, fpscratch);
+-    as_mfvsrd(dest, fpscratch);
++    roundToInt64FPR(fpscratch, fpscratch, RoundDown);
++    moveFPR64ToGPR(fpscratch, dest);
+ 
+     // Check if result fits in int32.
+     as_extsw(scratch, dest);
+@@ -1626,7 +1782,7 @@ void MacroAssembler::roundFloat32ToInt32
+   as_cmpdi(dest, 0);
+   ma_b(NotEqual, &notZero);
+   {
+-    as_mfvsrd(dest, src);
++    moveFPR64ToGPR(src, dest);
+     as_cmpdi(dest, 0);
+     ma_b(NotEqual, fail);
+   }
+@@ -1644,12 +1800,12 @@ void MacroAssembler::copySignDouble(Floa
+                                     FloatRegister output) {
+   // fcpsgn frt, fra, frb: copies sign of fra to magnitude of frb.
+   // lhs = magnitude source, rhs = sign source.
+-  as_fcpsgn(output, rhs, lhs);
++  emitCopySign(output, rhs, lhs);
+ }
+ 
+ void MacroAssembler::copySignFloat32(FloatRegister lhs, FloatRegister rhs,
+                                      FloatRegister output) {
+-  as_fcpsgn(output, rhs, lhs);
++  emitCopySign(output, rhs, lhs);
+ }
+ 
+ // ===============================================================
+@@ -1794,26 +1950,72 @@ bool MacroAssembler::convertUInt64ToDoub
+ 
+ void MacroAssembler::call(ImmWord imm) { call(ImmPtr((void*)imm.value)); }
+ 
++// 970 synthesis of fcfidu (unsigned i64 → f64), which the hardware lacks
++// (fcfid only converts signed). For values < 2^63 the signed fcfid is exact;
++// for values >= 2^63 halve with round-to-odd to preserve the low bit, convert
++// the (now in-range) signed value, then double. Round-to-odd makes the result
++// correctly rounded — and correctly re-roundable to single precision.
++static void EmitConvertU64ToDouble970(MacroAssembler& masm, Register64 src,
++                                      FloatRegister dest) {
++  Label bigVal, done;
++  UseScratchRegisterScope temps(masm);
++  Register t = temps.Acquire();
++  Register lo = temps.Acquire();
++  masm.as_cmpdi(src.reg, 0);
++  masm.ma_b(Assembler::LessThan, &bigVal);
++  masm.moveGPRToFPR64(src.reg, dest);
++  masm.as_fcfid(dest, dest);
++  masm.jump(&done);
++  masm.bind(&bigVal);
++  masm.x_srdi(t, src.reg, 1);          // t = src >> 1 (unsigned)
++  masm.as_andi_rc(lo, src.reg, 1);     // lo = src & 1 (the dropped bit)
++  masm.as_or_(t, t, lo);               // round to odd
++  masm.moveGPRToFPR64(t, dest);
++  masm.as_fcfid(dest, dest);
++  masm.as_fadd(dest, dest, dest);      // * 2
++  masm.bind(&done);
++}
++
+ void MacroAssembler::convertUInt64ToDouble(Register64 src, FloatRegister dest,
+                                            Register temp) {
+   MOZ_ASSERT(temp == Register::Invalid());
+-  // POWER7+ has fcfidu (unsigned i64 → f64) as a single instruction; no
+-  // sign-split / branch / GPR scratch needed.
+-  as_mtvsrd(dest, src.reg);
+-  as_fcfidu(dest, dest);
++  if (HasVSX()) {
++    // POWER7+ has fcfidu (unsigned i64 → f64) as a single instruction; no
++    // sign-split / branch / GPR scratch needed.
++    moveGPRToFPR64(src.reg, dest);
++    as_fcfidu(dest, dest);
++  } else {
++    EmitConvertU64ToDouble970(*this, src, dest);
++  }
+ }
+ 
+ void MacroAssembler::convertInt64ToFloat32(Register64 src, FloatRegister dest) {
+-  as_mtvsrd(dest, src.reg);
+-  as_fcfids(dest, dest);
++  moveGPRToFPR64(src.reg, dest);
++  if (HasVSX()) {
++    as_fcfids(dest, dest);
++  } else {
++    // 970: fcfid (i64 → f64) then frsp (→ f32). This can differ from a direct
++    // fcfids by at most 1 ULP through double rounding, only for magnitudes
++    // above 2^24 that land exactly on a single-precision rounding boundary.
++    as_fcfid(dest, dest);
++    as_frsp(dest, dest);
++  }
+ }
+ 
+ void MacroAssembler::convertUInt64ToFloat32(Register64 src, FloatRegister dest,
+                                             Register temp) {
+   MOZ_ASSERT(temp == Register::Invalid());
+-  // POWER7+ has fcfidus (unsigned i64 → f32) as a single instruction.
+-  as_mtvsrd(dest, src.reg);
+-  as_fcfidus(dest, dest);
++  if (HasVSX()) {
++    // POWER7+ has fcfidus (unsigned i64 → f32) as a single instruction.
++    moveGPRToFPR64(src.reg, dest);
++    as_fcfidus(dest, dest);
++  } else {
++    // 970: build the round-to-odd double (correctly re-roundable for the
++    // >= 2^63 range) then round to single. See convertInt64ToFloat32 for the
++    // rare 1-ULP double-rounding caveat that applies to the < 2^63 range.
++    EmitConvertU64ToDouble970(*this, src, dest);
++    as_frsp(dest, dest);
++  }
+ }
+ 
+ void MacroAssembler::flexibleQuotient32(
+@@ -2032,7 +2234,7 @@ void MacroAssembler::wasmTruncateDoubleT
+   // Clear VXCVI (bit 23) before the conversion so we can detect overflow.
+   as_mtfsb0(23);
+   as_fctiwz(fpscratch, input);
+-  as_mfvsrd(output, fpscratch);
++  moveFPR64ToGPR(fpscratch, output);
+   as_extsw(output, output);
+   // Move FPSCR field 5 (which contains VXCVI) to CR0.
+   // If the conversion was invalid (NaN or out-of-range), VXCVI=1 → SO set.
+@@ -2051,7 +2253,7 @@ void MacroAssembler::wasmTruncateDoubleT
+   as_fcmpu(input, input);
+   ma_b(DoubleUnordered, oolEntry);
+   as_fctidz(fpscratch, input);
+-  as_mfvsrd(output, fpscratch);
++  moveFPR64ToGPR(fpscratch, output);
+   x_srdi(scratch, output, 32);
+   as_extsw(output, output);
+   as_cmpdi(scratch, 0);
+@@ -2065,7 +2267,7 @@ void MacroAssembler::wasmTruncateFloat32
+   ScratchDoubleScope fpscratch(asMasm());
+   as_mtfsb0(23);
+   as_fctiwz(fpscratch, input);
+-  as_mfvsrd(output, fpscratch);
++  moveFPR64ToGPR(fpscratch, output);
+   as_extsw(output, output);
+   as_mcrfs(cr0, 5);
+   ma_b(SOBit, oolEntry);
+@@ -2081,7 +2283,7 @@ void MacroAssembler::wasmTruncateFloat32
+   as_fcmpu(input, input);
+   ma_b(DoubleUnordered, oolEntry);
+   as_fctidz(fpscratch, input);
+-  as_mfvsrd(output, fpscratch);
++  moveFPR64ToGPR(fpscratch, output);
+   x_srdi(scratch, output, 32);
+   as_extsw(output, output);
+   as_cmpdi(scratch, 0);
+@@ -2095,7 +2297,7 @@ void MacroAssembler::wasmTruncateDoubleT
+   ScratchDoubleScope fpscratch(asMasm());
+   as_mtfsb0(23);
+   as_fctidz(fpscratch, input);
+-  as_mfvsrd(output.reg, fpscratch);
++  moveFPR64ToGPR(fpscratch, output.reg);
+   as_mcrfs(cr0, 5);
+   ma_b(SOBit, oolEntry);
+   if (isSaturating) {
+@@ -2110,7 +2312,7 @@ void MacroAssembler::wasmTruncateFloat32
+   ScratchDoubleScope fpscratch(asMasm());
+   as_mtfsb0(23);
+   as_fctidz(fpscratch, input);
+-  as_mfvsrd(output.reg, fpscratch);
++  moveFPR64ToGPR(fpscratch, output.reg);
+   as_mcrfs(cr0, 5);
+   ma_b(SOBit, oolEntry);
+   if (isSaturating) {
+@@ -2118,14 +2320,71 @@ void MacroAssembler::wasmTruncateFloat32
+   }
+ }
+ 
++// 970 synthesis of fctiduz (f64/f32 → uint64, truncating), which the hardware
++// lacks. Values in [0, 2^63) go through fctidz directly; values in [2^63,
++// 2^64) are biased down by 2^63, converted, and have bit 63 set back. NaN,
++// values <= -1, and values >= 2^64 branch to oolEntry (the truncation and
++// VXCVI probe mirror the signed fctidz-based helpers above). Works for both
++// double and float32 inputs since the FPR holds the widened double value.
++static void EmitTruncateToUInt64_970(MacroAssembler& masm, FloatRegister input,
++                                     Register64 output, bool isSaturating,
++                                     Label* oolEntry, Label* oolRejoin) {
++  Label small, joined;
++  ScratchDoubleScope fpscratch(masm);
++  // NaN → invalid.
++  masm.as_fcmpu(input, input);
++  masm.ma_b(Assembler::DoubleUnordered, oolEntry);
++  // Split at 2^63.
++  masm.loadConstantDouble(9223372036854775808.0, fpscratch);  // 2^63
++  masm.as_fcmpu(input, fpscratch);
++  masm.ma_b(Assembler::DoubleLessThan, &small);
++  {
++    // input >= 2^63: convert (input - 2^63), which lies in [0, 2^63) when
++    // valid; fctidz signals VXCVI when input >= 2^64.
++    masm.as_fsub(fpscratch, input, fpscratch);
++    masm.as_mtfsb0(23);
++    masm.as_fctidz(fpscratch, fpscratch);
++    masm.as_mcrfs(cr0, 5);
++    masm.ma_b(Assembler::SOBit, oolEntry);
++    masm.moveFPR64ToGPR(fpscratch, output.reg);
++    UseScratchRegisterScope temps(masm);
++    Register bit = temps.Acquire();
++    masm.xs_li(bit, 1);
++    masm.x_sldi(bit, bit, 63);
++    masm.as_or_(output.reg, output.reg, bit);  // add back 2^63
++    masm.jump(&joined);
++  }
++  masm.bind(&small);
++  {
++    // input < 2^63: fctidz truncates toward zero. Inputs in (-1, 0] give 0;
++    // inputs <= -1 give a negative result, which is invalid for uint64.
++    masm.as_mtfsb0(23);
++    masm.as_fctidz(fpscratch, input);
++    masm.as_mcrfs(cr0, 5);
++    masm.ma_b(Assembler::SOBit, oolEntry);
++    masm.moveFPR64ToGPR(fpscratch, output.reg);
++    masm.as_cmpdi(output.reg, 0);
++    masm.ma_b(Assembler::LessThan, oolEntry);
++  }
++  masm.bind(&joined);
++  if (isSaturating) {
++    masm.bind(oolRejoin);
++  }
++}
++
+ void MacroAssembler::wasmTruncateDoubleToUInt64(
+     FloatRegister input, Register64 output, bool isSaturating, Label* oolEntry,
+     Label* oolRejoin, FloatRegister tempDouble) {
+   MOZ_ASSERT(tempDouble.isInvalid());
++  if (!HasVSX()) {
++    EmitTruncateToUInt64_970(*this, input, output, isSaturating, oolEntry,
++                             oolRejoin);
++    return;
++  }
+   ScratchDoubleScope fpscratch(asMasm());
+   as_mtfsb0(23);
+   as_fctiduz(fpscratch, input);
+-  as_mfvsrd(output.reg, fpscratch);
++  moveFPR64ToGPR(fpscratch, output.reg);
+   as_mcrfs(cr0, 5);
+   ma_b(SOBit, oolEntry);
+   if (isSaturating) {
+@@ -2137,10 +2396,15 @@ void MacroAssembler::wasmTruncateFloat32
+     FloatRegister input, Register64 output, bool isSaturating, Label* oolEntry,
+     Label* oolRejoin, FloatRegister tempFloat) {
+   MOZ_ASSERT(tempFloat.isInvalid());
++  if (!HasVSX()) {
++    EmitTruncateToUInt64_970(*this, input, output, isSaturating, oolEntry,
++                             oolRejoin);
++    return;
++  }
+   ScratchDoubleScope fpscratch(asMasm());
+   as_mtfsb0(23);
+   as_fctiduz(fpscratch, input);
+-  as_mfvsrd(output.reg, fpscratch);
++  moveFPR64ToGPR(fpscratch, output.reg);
+   as_mcrfs(cr0, 5);
+   ma_b(SOBit, oolEntry);
+   if (isSaturating) {
+@@ -3621,7 +3885,7 @@ void MacroAssemblerPPC64Compat::wasmLoad
+         UseScratchRegisterScope temps(asMasm());
+         Register tmp = temps.Acquire();
+         as_ldbrx(tmp, memoryBase, ptr);
+-        as_mtvsrd(output.fpu(), tmp);
++        moveGPRToFPR64(tmp, output.fpu());
+ #else
+         as_lfdx(output.fpu(), memoryBase, ptr);
+ #endif
+@@ -3660,9 +3924,15 @@ void MacroAssemblerPPC64Compat::wasmLoad
+         UseScratchRegisterScope temps(asMasm());
+         Register tmp = temps.Acquire();
+         as_lwbrx(tmp, memoryBase, ptr);
+-        x_sldi(tmp, tmp, 32);
+-        as_mtvsrd(output.fpu(), tmp);
+-        as_xscvspdpn(output.fpu(), output.fpu());
++        if (HasVSX()) {
++          x_sldi(tmp, tmp, 32);
++          as_mtvsrd(output.fpu(), tmp);
++          as_xscvspdpn(output.fpu(), output.fpu());
++        } else {
++          // 970: reinterpret the raw single bits via the red zone + lfs, which
++          // performs the same single->double widening as xscvspdpn.
++          asMasm().moveGPRToFloat32(tmp, output.fpu());
++        }
+ #else
+         as_lfsx(output.fpu(), memoryBase, ptr);
+ #endif
+@@ -3773,7 +4043,7 @@ void MacroAssemblerPPC64Compat::wasmStor
+       // byte-reversed. Record the trap site at the faulting stdbrx.
+       UseScratchRegisterScope temps(asMasm());
+       Register tmp = temps.Acquire();
+-      as_mfvsrd(tmp, value.fpu());
++      moveFPR64ToGPR(value.fpu(), tmp);
+       m_buffer.flushPool();
+       append(access, wasm::TrapMachineInsnForStore(8),
+              FaultingCodeOffset(currentOffset()));
+--- a/js/src/jit/ppc64/MacroAssembler-ppc64.h
++++ b/js/src/jit/ppc64/MacroAssembler-ppc64.h
+@@ -116,6 +116,38 @@ class MacroAssemblerPPC64 : public Assem
+  protected:
+   MacroAssembler& asMasm();
+   const MacroAssembler& asMasm() const;
++
++ public:
++  // ===============================================================
++  // GPR<->FPR moves and FP primitives with pre-VSX (PowerPC 970) fallbacks.
++  //
++  // On VSX hardware (POWER8+) these emit the direct ISA 2.07 instruction; on
++  // the 970 they round-trip the value through an 8-byte slot in the ELF red
++  // zone (288 bytes below the stack pointer, reserved by both the ELFv1 and
++  // ELFv2 ABIs) or synthesize the operation from ISA 2.01 instructions. See
++  // HasVSX() in Architecture-ppc64.h.
++
++  // 64-bit GPR<->FPR doubleword move (mtvsrd / mfvsrd, a.k.a. the mtfprd /
++  // mffprd extended mnemonics). Bit-for-bit identical to the VSX form: the
++  // 970 fallback is std+lfd / stfd+ld, which move the raw doubleword without
++  // any format conversion.
++  void moveGPRToFPR64(Register src, FloatRegister dest);
++  void moveFPR64ToGPR(FloatRegister src, Register dest);
++  // 32-bit GPR low word zero-extended into FPR doubleword 0 (mtvsrwz).
++  void moveGPRWordZeroToFPR(Register src, FloatRegister dest);
++
++  // dest = magnitude(magSrc) with the sign bit of signSrc (fcpsgn). magSrc
++  // and dest may alias; signSrc must differ from dest only when it also
++  // aliases magSrc is not required.
++  void emitCopySign(FloatRegister dest, FloatRegister signSrc,
++                    FloatRegister magSrc);
++
++  // Round src to an integral value converted to int64 in fpDest (the bit
++  // pattern an fctid* leaves in the FPR). VSX: fri[mp] + fctidz; 970: fctid
++  // under a temporarily-set FPSCR rounding mode. RoundDown = toward -inf
++  // (floor), RoundUp = toward +inf (ceil).
++  enum FpIntRound { RoundDown, RoundUp };
++  void roundToInt64FPR(FloatRegister fpDest, FloatRegister src, FpIntRound m);
+ };
+ 
+ class MacroAssemblerPPC64Compat : public MacroAssemblerPPC64 {
+@@ -158,7 +190,16 @@ class MacroAssemblerPPC64Compat : public
+   void convertInt32ToDouble(Register src, FloatRegister dest) {
+     // mtvsrwa: VSR[dest].dw0 = sign_ext_64(src[32:63]); P8+ (ISA 2.07).
+     // Replaces extsw + mtvsrd (2 insns + scratch GPR) with 1 insn.
+-    as_mtvsrwa(dest, src);
++    if (HasVSX()) {
++      as_mtvsrwa(dest, src);
++      as_fcfid(dest, dest);
++      return;
++    }
++    // 970: sign-extend into a GPR, move to the FPR, convert.
++    UseScratchRegisterScope temps(*this);
++    Register scratch = temps.Acquire();
++    as_extsw(scratch, src);
++    moveGPRToFPR64(scratch, dest);
+     as_fcfid(dest, dest);
+   }
+   void convertInt32ToDouble(const Address& srcArg, FloatRegister dest) {
+@@ -168,6 +209,16 @@ class MacroAssemblerPPC64Compat : public
+     // unboxInt32(Address)'s valuePayload() shift so we read the low word rather
+     // than the high word. No-op on little-endian.
+     Address src = valuePayload(srcArg);
++    if (!HasVSX()) {
++      // 970: lfiwax is unavailable; sign-extend load into a GPR (load32 uses
++      // lwa/lwax), move to the FPR, convert.
++      UseScratchRegisterScope temps(*this);
++      Register scratch = temps.Acquire();
++      load32(src, scratch);
++      moveGPRToFPR64(scratch, dest);
++      as_fcfid(dest, dest);
++      return;
++    }
+     // lfiwax (P7+): FPR.dw[0] = sign_ext_64(MEM[addr, 4]). X-form indexed
+     // — no immediate offset, so when offset != 0 we add it into a scratch
+     // first. Replaces lwz + extsw + mtvsrd with lfiwax (one insn) plus
+@@ -243,11 +294,30 @@ class MacroAssemblerPPC64Compat : public
+   }
+   void convertInt32ToFloat32(Register src, FloatRegister dest) {
+     // mtvsrwa + fcfids; same recipe as convertInt32ToDouble(Register).
+-    as_mtvsrwa(dest, src);
+-    as_fcfids(dest, dest);
++    if (HasVSX()) {
++      as_mtvsrwa(dest, src);
++      as_fcfids(dest, dest);
++      return;
++    }
++    // 970: an int32 is exact in a double, so fcfid + frsp equals fcfids.
++    UseScratchRegisterScope temps(*this);
++    Register scratch = temps.Acquire();
++    as_extsw(scratch, src);
++    moveGPRToFPR64(scratch, dest);
++    as_fcfid(dest, dest);
++    as_frsp(dest, dest);
+   }
+   void convertInt32ToFloat32(const Address& src, FloatRegister dest) {
+     // lfiwax + fcfids; same recipe as convertInt32ToDouble(Address).
++    if (!HasVSX()) {
++      UseScratchRegisterScope temps(*this);
++      Register scratch = temps.Acquire();
++      load32(src, scratch);
++      moveGPRToFPR64(scratch, dest);
++      as_fcfid(dest, dest);
++      as_frsp(dest, dest);
++      return;
++    }
+     if (src.offset == 0) {
+       as_lfiwax(dest, r0, src.base);
+     } else {
+@@ -1044,7 +1114,7 @@ class MacroAssemblerPPC64Compat : public
+   }
+ 
+   void boxDouble(FloatRegister src, const ValueOperand& dest, FloatRegister) {
+-    as_mfvsrd(dest.valueReg(), src);
++    moveFPR64ToGPR(src, dest.valueReg());
+   }
+   void boxNonDouble(JSValueType type, Register src, const ValueOperand& dest) {
+     boxValue(type, src, dest.valueReg());
+@@ -1071,7 +1141,7 @@ class MacroAssemblerPPC64Compat : public
+     load32(valuePayload(src), dest);
+   }
+   void unboxDouble(const ValueOperand& operand, FloatRegister dest) {
+-    as_mtvsrd(dest, operand.valueReg());
++    moveGPRToFPR64(operand.valueReg(), dest);
+   }
+   void unboxDouble(const Address& src, FloatRegister dest) {
+     loadDouble(src, dest);
+@@ -1610,7 +1680,7 @@ class MacroAssemblerPPC64Compat : public
+   // HasPOWER9() is true (the pool path calls `allocEntry`, which asserts
+   // `inhibitPools_ == 0`). The POWER8 inline path is unaffected.
+   void loadConstantDouble(double dp, FloatRegister dest) {
+-    if (mozilla::IsPositiveZero(dp)) {
++    if (mozilla::IsPositiveZero(dp) && HasVSX()) {
+       as_xxlxor(dest, dest, dest);
+       return;
+     }
+@@ -1618,6 +1688,9 @@ class MacroAssemblerPPC64Compat : public
+       loadFromPoolFloat64(dest, dp);
+       return;
+     }
++    // POWER8 inline path / pre-VSX 970: materialize the bit pattern in a GPR
++    // and move it into the FPR (mtvsrd, or a red-zone round-trip on the 970).
++    // This also covers +0.0 when VSX is unavailable.
+     UseScratchRegisterScope temps(*this);
+     Register scratch = temps.Acquire();
+     union {
+@@ -1626,10 +1699,10 @@ class MacroAssemblerPPC64Compat : public
+     } u;
+     u.d = dp;
+     movePtr(ImmWord(u.u), scratch);
+-    as_mtvsrd(dest, scratch);
++    moveGPRToFPR64(scratch, dest);
+   }
+   void loadConstantFloat32(float f, FloatRegister dest) {
+-    if (mozilla::IsPositiveZero(f)) {
++    if (mozilla::IsPositiveZero(f) && HasVSX()) {
+       as_xxlxor(dest, dest, dest);
+       return;
+     }
+@@ -1637,6 +1710,13 @@ class MacroAssemblerPPC64Compat : public
+       loadFromPoolFloat32(dest, f);
+       return;
+     }
++    if (!HasVSX()) {
++      // 970: a float widened to double is exact and Float32 FPRs hold the
++      // double-format value (lfs semantics), so load it as a double constant.
++      loadConstantDouble(double(f), dest);
++      return;
++    }
++    // POWER8 inline path.
+     UseScratchRegisterScope temps(*this);
+     Register scratch = temps.Acquire();
+     union {
+@@ -1988,7 +2068,13 @@ class MacroAssemblerPPC64Compat : public
+ 
+   inline void incrementInt32Value(const Address& addr);
+ 
+-  void zeroDouble(FloatRegister reg) { as_xxlxor(reg, reg, reg); }
++  void zeroDouble(FloatRegister reg) {
++    if (HasVSX()) {
++      as_xxlxor(reg, reg, reg);
++    } else {
++      loadConstantDouble(0.0, reg);
++    }
++  }
+ 
+   void writeCodePointer(CodeLabel* label) {
+     label->patchAt()->bind(currentOffset());
+--- a/js/src/jit/ppc64/MacroAssembler-ppc64-inl.h
++++ b/js/src/jit/ppc64/MacroAssembler-ppc64-inl.h
+@@ -26,11 +26,11 @@ void MacroAssembler::move64(Imm64 imm, R
+ }
+ 
+ void MacroAssembler::moveDoubleToGPR64(FloatRegister src, Register64 dest) {
+-  as_mfvsrd(dest.reg, src);
++  moveFPR64ToGPR(src, dest.reg);
+ }
+ 
+ void MacroAssembler::moveGPR64ToDouble(Register64 src, FloatRegister dest) {
+-  as_mtvsrd(dest, src.reg);
++  moveGPRToFPR64(src.reg, dest);
+ }
+ 
+ void MacroAssembler::moveLowDoubleToGPR(FloatRegister src, Register dest) {
+@@ -61,14 +61,29 @@ void MacroAssembler::move32To64SignExten
+ void MacroAssembler::moveFloat32ToGPR(FloatRegister src, Register dest) {
+   // FPR holds double-format value (PPC convention). Convert to
+   // single-precision bits in bits 0:31 of the VSR, then extract.
+-  as_xscvdpspn(ScratchDoubleReg, src);
+-  as_mfvsrd(dest, ScratchDoubleReg);
+-  x_srdi(dest, dest, 32);
++  if (HasVSX()) {
++    as_xscvdpspn(ScratchDoubleReg, src);
++    as_mfvsrd(dest, ScratchDoubleReg);
++    x_srdi(dest, dest, 32);
++  } else {
++    // 970: stfs rounds the double-format value back to its single pattern in
++    // memory; reload it zero-extended. The 8-byte ELF red-zone slot (-8(r1))
++    // is the same one used by the GPR<->FPR move helpers.
++    as_stfs(src, StackPointer, -8);
++    as_lwz(dest, StackPointer, -8);
++  }
+ }
+ 
+ void MacroAssembler::moveGPRToFloat32(Register src, FloatRegister dest) {
+   // Place raw single-precision bits in VSR bits 0:31, then convert
+   // to double-precision format (matching PPC's FPR convention, like lfs).
++  if (!HasVSX()) {
++    // 970: store the raw single bits and load them with lfs, which widens to
++    // the double-format value exactly as mtvsr* + xscvspdpn would.
++    as_stw(src, StackPointer, -8);
++    as_lfs(dest, StackPointer, -8);
++    return;
++  }
+   if (HasPOWER9()) {
+     // mtvsrws splats the 32-bit word to both halves of the VSR.
+     as_mtvsrws(dest, src);
+@@ -1923,7 +1938,7 @@ void MacroAssembler::branchTruncateFloat
+                                                          Label* fail) {
+   // Convert float32 to int64 (truncating toward zero), fail on NaN/overflow.
+   as_fctidz(ScratchDoubleReg, src);
+-  as_mfvsrd(dest, ScratchDoubleReg);
++  moveFPR64ToGPR(ScratchDoubleReg, dest);
+   // PPC64 fctidz saturates to INT64_MIN on negative overflow/NaN,
+   // and to INT64_MAX on positive overflow. Check both.
+   asMasm().branchPtr(Assembler::Equal, dest, ImmWord(int64_t(INT64_MIN)), fail);
+@@ -1948,7 +1963,7 @@ void MacroAssembler::branchTruncateDoubl
+                                                         Label* fail) {
+   // Convert double to int64 (truncating toward zero), fail on NaN/overflow.
+   as_fctidz(ScratchDoubleReg, src);
+-  as_mfvsrd(dest, ScratchDoubleReg);
++  moveFPR64ToGPR(ScratchDoubleReg, dest);
+   // PPC64 fctidz saturates to INT64_MIN on negative overflow/NaN,
+   // and to INT64_MAX on positive overflow. Check both.
+   asMasm().branchPtr(Assembler::Equal, dest, ImmWord(int64_t(INT64_MIN)), fail);
+@@ -2464,7 +2479,7 @@ void MacroAssembler::branchTestDoubleTru
+   UseScratchRegisterScope temps(asMasm());
+   Register scratch = temps.Acquire();
+   xs_li(scratch, 0);
+-  as_mtvsrd(ScratchDoubleReg, scratch);
++  moveGPRToFPR64(scratch, ScratchDoubleReg);
+   as_fcmpu(value, ScratchDoubleReg);
+   DoubleCondition cond = b ? DoubleNotEqual : DoubleEqualOrUnordered;
+   ma_b(cond, label);
+--- a/js/src/jit/ppc64/MoveEmitter-ppc64.cpp
++++ b/js/src/jit/ppc64/MoveEmitter-ppc64.cpp
+@@ -261,8 +261,8 @@ void MoveEmitterPPC64::emitDoubleMove(co
+     if (to.isFloatReg()) {
+       masm.moveDouble(from.floatReg(), to.floatReg());
+     } else if (to.isGeneralReg()) {
+-      // FPR -> GPR: use mfvsrd directly.
+-      masm.as_mfvsrd(to.reg(), from.floatReg());
++      // FPR -> GPR: mfvsrd on VSX, red-zone round-trip on the 970.
++      masm.moveFPR64ToGPR(from.floatReg(), to.reg());
+     } else {
+       MOZ_ASSERT(to.isMemory());
+       masm.storeDouble(from.floatReg(), getAdjustedAddress(to));
+@@ -271,8 +271,8 @@ void MoveEmitterPPC64::emitDoubleMove(co
+     if (from.isMemory()) {
+       masm.loadDouble(getAdjustedAddress(from), to.floatReg());
+     } else {
+-      // GPR -> FPR: use mtvsrd directly.
+-      masm.as_mtvsrd(to.floatReg(), from.reg());
++      // GPR -> FPR: mtvsrd on VSX, red-zone round-trip on the 970.
++      masm.moveGPRToFPR64(from.reg(), to.floatReg());
+     }
+   } else {
+     MOZ_ASSERT(from.isMemory());
+--- a/js/src/jit/ppc64/Simulator-ppc64.cpp
++++ b/js/src/jit/ppc64/Simulator-ppc64.cpp
+@@ -4321,6 +4321,14 @@ void Simulator::decodeFP(SimInstruction*
+       // the high half of FPSCR_ where mcrfs etc. would never see them — so
+       // the wasm trap sequence `mtfsb0 23; fctidz; mcrfs cr0,5; bt SO,oolEntry`
+       // could not detect VXCVI.
++      case 38: {
++        // mtfsb1: set FPSCR bit. XO=38. Same PPC bit numbering as mtfsb0
++        // (PPC bit N → int64 bit (31-N)); used by the pre-VSX 970 rounding
++        // helper to set the FPSCR RN field (PPC bits 30-31) around fctid.
++        uint32_t bt = instr->rtValue();
++        FPSCR_ |= (1ULL << (31 - bt));
++        break;
++      }
+       case 70: {
+         // mtfsb0: clear FPSCR bit. XO=70.
+         // (Cases 38 and 70 had the labels swapped, so wasm's
