@@ -1,0 +1,154 @@
+# --- T2-COPYRIGHT-BEGIN ---
+# t2/package/*/dosbox/hotfix-fullscreen.patch
+# Copyright (C) 2026 The T2 SDE Project
+# SPDX-License-Identifier: GPL-2.0 or patched project license
+# --- T2-COPYRIGHT-END ---
+
+Index: configure.ac
+===================================================================
+--- ./configure.ac	(working copy)
++++ ./configure.ac	(working copy)
+@@ -437,6 +437,18 @@ else
+    AC_MSG_RESULT(no)
+ fi
+ 
++dnl Xinerama, used to confine alt-enter fullscreen to the current monitor.
++dnl The X11 libraries usually live outside the default linker path (e.g.
++dnl /usr/X11R7/lib64); rely on pkg-config to locate them. The generated
++dnl configure/src/Makefile.in carry the same change so no autogen is required.
++AC_MSG_CHECKING(for Xinerama support)
++if (pkg-config --exists xinerama x11) >/dev/null 2>&1 ; then
++   CPPFLAGS="$CPPFLAGS -DC_XINERAMA=1 `pkg-config --cflags xinerama x11`"
++   AC_MSG_RESULT(yes)
++else
++   AC_MSG_RESULT(no)
++fi
++
+ AH_TEMPLATE(C_OPENGL,[Define to 1 to use opengl display output support])
+ AC_CHECK_LIB(GL, main, have_gl_lib=yes, have_gl_lib=no , )
+ AC_CHECK_LIB(opengl32, main, have_opengl32_lib=yes,have_opengl32_lib=no , )
+Index: configure
+===================================================================
+--- ./configure	(working copy)
++++ ./configure	(working copy)
+@@ -7150,6 +7150,18 @@ $as_echo "no" >&6; }
+ fi
+ 
+ 
++{ $as_echo "$as_me:${as_lineno-$LINENO}: checking for Xinerama support" >&5
++$as_echo_n "checking for Xinerama support... " >&6; }
++if (pkg-config --exists xinerama x11) >/dev/null 2>&1 ; then
++   CPPFLAGS="$CPPFLAGS -DC_XINERAMA=1 `pkg-config --cflags xinerama x11`"
++   { $as_echo "$as_me:${as_lineno-$LINENO}: result: yes" >&5
++$as_echo "yes" >&6; }
++else
++   { $as_echo "$as_me:${as_lineno-$LINENO}: result: no" >&5
++$as_echo "no" >&6; }
++fi
++
++
+ { $as_echo "$as_me:${as_lineno-$LINENO}: checking for main in -lGL" >&5
+ $as_echo_n "checking for main in -lGL... " >&6; }
+ if ${ac_cv_lib_GL_main+:} false; then :
+Index: src/gui/sdlmain.cpp
+===================================================================
+--- ./src/gui/sdlmain.cpp	(working copy)
++++ ./src/gui/sdlmain.cpp	(working copy)
+@@ -91,6 +91,16 @@ PFNGLUNMAPBUFFERARBPROC glUnmapBufferARB
+ 
+ #endif //C_OPENGL
+ 
++#if C_XINERAMA && !defined(WIN32) && !defined(MACOSX)
++// On X11/Xinerama multi-monitor setups SDL 1.2 spans fullscreen across the
++// whole virtual desktop unless a specific head is requested. Confine alt-enter
++// fullscreen to the monitor the user is currently on. See end of this file.
++#define C_FULLSCREEN_CURRENT_HEAD 1
++static void SetFullscreenCurrentHead(void);
++#else
++static void SetFullscreenCurrentHead(void) { }
++#endif
++
+ #if !(ENVIRON_INCLUDED)
+ extern char** environ;
+ #endif
+@@ -1930,7 +1940,10 @@ int main(int argc, char* argv[]) {
+ 	 */
+ 	putenv(const_cast<char*>("SDL_DISABLE_LOCK_KEYS=1"));
+ #endif
+-	// Don't init timers, GetTicks seems to work fine and they can use a fair amount of power (Macs again) 
++	// Pin fullscreen to the monitor the user is currently on (must run before
++	// SDL_Init, as SDL 1.2 latches the fullscreen head during video init).
++	SetFullscreenCurrentHead();
++	// Don't init timers, GetTicks seems to work fine and they can use a fair amount of power (Macs again)
+ 	// Please report problems with audio and other things.
+ 	if ( SDL_Init( SDL_INIT_AUDIO|SDL_INIT_VIDEO | /*SDL_INIT_TIMER |*/ SDL_INIT_CDROM
+ 		|SDL_INIT_NOPARACHUTE
+@@ -2093,3 +2106,55 @@ void GFX_GetSize(int &width, int &height
+ 	height = sdl.draw.height;
+ 	fullscreen = sdl.desktop.fullscreen;
+ }
++
++#if C_FULLSCREEN_CURRENT_HEAD
++// Kept at the very end of the translation unit so the X11 headers (which define
++// clashing preprocessor macros like KeyPress/Bool) cannot leak into the rest of
++// the DOSBox code above.
++#include <X11/Xlib.h>
++#include <X11/extensions/Xinerama.h>
++
++// SDL 1.2 only confines fullscreen to a single Xinerama head when
++// SDL_VIDEO_FULLSCREEN_HEAD (or _DISPLAY) is set, and it reads that value once,
++// during video initialisation. Without it, alt-enter fullscreen stretches over
++// the whole virtual desktop. Pick the head that currently holds the mouse
++// pointer so fullscreen only covers the monitor the user is working on.
++static void SetFullscreenCurrentHead(void) {
++	// Honour an explicit choice made by the user.
++	if (getenv("SDL_VIDEO_FULLSCREEN_HEAD") || getenv("SDL_VIDEO_FULLSCREEN_DISPLAY"))
++		return;
++
++	Display *dpy = XOpenDisplay(NULL);
++	if (!dpy)
++		return;
++
++	int event_base, error_base;
++	if (XineramaQueryExtension(dpy, &event_base, &error_base) && XineramaIsActive(dpy)) {
++		int screens = 0;
++		XineramaScreenInfo *xi = XineramaQueryScreens(dpy, &screens);
++		if (xi && screens > 1) {
++			int head = xi[0].screen_number;
++			Window root = DefaultRootWindow(dpy);
++			Window root_ret, child_ret;
++			int root_x = 0, root_y = 0, win_x, win_y;
++			unsigned int mask;
++			if (XQueryPointer(dpy, root, &root_ret, &child_ret,
++			                  &root_x, &root_y, &win_x, &win_y, &mask)) {
++				for (int i = 0; i < screens; i++) {
++					if (root_x >= xi[i].x_org && root_x < xi[i].x_org + xi[i].width &&
++					    root_y >= xi[i].y_org && root_y < xi[i].y_org + xi[i].height) {
++						head = xi[i].screen_number;
++						break;
++					}
++				}
++			}
++			char buf[16];
++			snprintf(buf, sizeof(buf), "%d", head);
++			setenv("SDL_VIDEO_FULLSCREEN_HEAD", buf, 1);
++		}
++		if (xi)
++			XFree(xi);
++	}
++	XCloseDisplay(dpy);
++}
++#endif // C_FULLSCREEN_CURRENT_HEAD
+Index: src/Makefile.in
+===================================================================
+--- ./src/Makefile.in	(working copy)
++++ ./src/Makefile.in	(working copy)
+@@ -243,7 +243,7 @@ INSTALL_SCRIPT = @INSTALL_SCRIPT@
+ INSTALL_STRIP_PROGRAM = @INSTALL_STRIP_PROGRAM@
+ LDFLAGS = @LDFLAGS@
+ LIBOBJS = @LIBOBJS@
+-LIBS = @LIBS@
++LIBS = @LIBS@ $(shell pkg-config --libs xinerama x11 2>/dev/null)
+ LTLIBOBJS = @LTLIBOBJS@
+ MAKEINFO = @MAKEINFO@
+ MKDIR_P = @MKDIR_P@
