@@ -1,9 +1,3 @@
-# --- T2-COPYRIGHT-BEGIN ---
-# t2/package/*/dosbox/hotfix-fullscreen.patch
-# Copyright (C) 2026 The T2 SDE Project
-# SPDX-License-Identifier: GPL-2.0 or patched project license
-# --- T2-COPYRIGHT-END ---
-
 Index: configure.ac
 ===================================================================
 --- ./configure.ac	(working copy)
@@ -54,91 +48,236 @@ Index: src/gui/sdlmain.cpp
 ===================================================================
 --- ./src/gui/sdlmain.cpp	(working copy)
 +++ ./src/gui/sdlmain.cpp	(working copy)
-@@ -91,6 +91,16 @@ PFNGLUNMAPBUFFERARBPROC glUnmapBufferARB
+@@ -91,6 +91,22 @@ PFNGLUNMAPBUFFERARBPROC glUnmapBufferARB
  
  #endif //C_OPENGL
  
 +#if C_XINERAMA && !defined(WIN32) && !defined(MACOSX)
-+// On X11/Xinerama multi-monitor setups SDL 1.2 spans fullscreen across the
-+// whole virtual desktop unless a specific head is requested. Confine alt-enter
-+// fullscreen to the monitor the user is currently on. See end of this file.
-+#define C_FULLSCREEN_CURRENT_HEAD 1
-+static void SetFullscreenCurrentHead(void);
-+#else
-+static void SetFullscreenCurrentHead(void) { }
++// SDL 1.2 has no Wayland backend and its own (override-redirect + Xinerama)
++// fullscreen does not confine to the current monitor under Wayland compositors
++// such as KWin (which run SDL through XWayland and arbitrate fullscreen
++// themselves). Instead of using SDL's fullscreen we keep a normal, WM-managed
++// window and ask the window manager for _NET_WM_STATE_FULLSCREEN: EWMH-compliant
++// managers (KWin, Mutter, ...) then fullscreen it on whichever output the window
++// currently occupies - i.e. the current screen - on both X11 and XWayland.
++// Implementations live at the end of this file (kept away from the X11 headers).
++#define C_X11_WM_FULLSCREEN 1
++static bool WMFullscreenActive(void);
++static bool GetCurrentOutputGeometry(int *x, int *y, int *w, int *h);
++static void X11_SetWMFullscreen(bool enable);
++static bool sdl_wm_fs_active = false;
 +#endif
 +
  #if !(ENVIRON_INCLUDED)
  extern char** environ;
  #endif
-@@ -1930,7 +1940,10 @@ int main(int argc, char* argv[]) {
+@@ -224,6 +240,21 @@ static SDL_Block sdl;
+ #define SETMODE_SAVES 1  //Don't set Video Mode if nothing changes.
+ #define SETMODE_SAVES_CLEAR 1 //Clear the screen, when the Video Mode is reused
+ SDL_Surface* SDL_SetVideoMode_Wrap(int width,int height,int bpp,Bit32u flags){
++#if C_X11_WM_FULLSCREEN
++	bool wm_fs_enter = false;
++	if ((flags & SDL_FULLSCREEN) && WMFullscreenActive()) {
++		// Don't use SDL's own (override-redirect) fullscreen. Keep a normal,
++		// borderless WM-managed window; the manager fullscreens it on the
++		// output it currently sits on (see GFX_SetSize for the sizing).
++		flags = (flags & ~SDL_FULLSCREEN) | SDL_NOFRAME;
++		wm_fs_enter = true;
++	} else if (sdl_wm_fs_active && !(flags & SDL_FULLSCREEN)) {
++		// Leaving fullscreen: drop the WM state first, otherwise the manager
++		// keeps the window fullscreen and ignores the resize back to a window.
++		X11_SetWMFullscreen(false);
++		sdl_wm_fs_active = false;
++	}
++#endif
+ #if SETMODE_SAVES
+ 	static int i_height = 0;
+ 	static int i_width = 0;
+@@ -275,6 +306,12 @@ SDL_Surface* SDL_SetVideoMode_Wrap(int w
+ 	i_bpp = bpp;
+ 	i_flags = flags;
+ #endif
++#if C_X11_WM_FULLSCREEN
++	if (s && wm_fs_enter) {
++		X11_SetWMFullscreen(true);
++		sdl_wm_fs_active = true;
++	}
++#endif
+ 	return s;
+ }
+ 
+@@ -482,7 +519,9 @@ static SDL_Surface * GFX_SetupSurfaceSca
+ 			sdl.surface = SDL_SetVideoMode_Wrap(fixedWidth,fixedHeight,bpp,sdl_flags);
+ 		else
+ 			sdl.surface = SDL_SetVideoMode_Wrap(sdl.clip.w,sdl.clip.h,bpp,sdl_flags);
+-		if (sdl.surface && sdl.surface->flags & SDL_FULLSCREEN) {
++		// Centre the image on a fullscreen surface. In WM-managed fullscreen the
++		// surface has no SDL_FULLSCREEN flag, so key off sdl.desktop.fullscreen.
++		if (sdl.surface && ((sdl.surface->flags & SDL_FULLSCREEN) || sdl.desktop.fullscreen)) {
+ 			sdl.clip.x=(Sint16)((sdl.surface->w-sdl.clip.w)/2);
+ 			sdl.clip.y=(Sint16)((sdl.surface->h-sdl.clip.h)/2);
+ 		} else {
+@@ -503,6 +542,20 @@ Bitu GFX_SetSize(Bitu width,Bitu height,
+ 	if (sdl.updating)
+ 		GFX_EndUpdate( 0 );
+ 
++#if C_X11_WM_FULLSCREEN
++	// When the window manager will do the fullscreen for us, size the window to
++	// the monitor it currently sits on so the WM has nothing to rescale. This
++	// runs before the window is (re)created, while it is still the windowed one.
++	if (sdl.desktop.fullscreen && WMFullscreenActive()) {
++		int ox, oy, ow, oh;
++		if (GetCurrentOutputGeometry(&ox, &oy, &ow, &oh) && ow > 0 && oh > 0) {
++			sdl.desktop.full.fixed  = true;
++			sdl.desktop.full.width  = (Bit16u)ow;
++			sdl.desktop.full.height = (Bit16u)oh;
++		}
++	}
++#endif
++
+ 	sdl.draw.width=width;
+ 	sdl.draw.height=height;
+ 	sdl.draw.callback=callback;
+@@ -1930,7 +1983,7 @@ int main(int argc, char* argv[]) {
  	 */
  	putenv(const_cast<char*>("SDL_DISABLE_LOCK_KEYS=1"));
  #endif
 -	// Don't init timers, GetTicks seems to work fine and they can use a fair amount of power (Macs again) 
-+	// Pin fullscreen to the monitor the user is currently on (must run before
-+	// SDL_Init, as SDL 1.2 latches the fullscreen head during video init).
-+	SetFullscreenCurrentHead();
 +	// Don't init timers, GetTicks seems to work fine and they can use a fair amount of power (Macs again)
  	// Please report problems with audio and other things.
  	if ( SDL_Init( SDL_INIT_AUDIO|SDL_INIT_VIDEO | /*SDL_INIT_TIMER |*/ SDL_INIT_CDROM
  		|SDL_INIT_NOPARACHUTE
-@@ -2093,3 +2106,55 @@ void GFX_GetSize(int &width, int &height
+@@ -2093,3 +2146,130 @@ void GFX_GetSize(int &width, int &height
  	height = sdl.draw.height;
  	fullscreen = sdl.desktop.fullscreen;
  }
 +
-+#if C_FULLSCREEN_CURRENT_HEAD
++#if C_X11_WM_FULLSCREEN
 +// Kept at the very end of the translation unit so the X11 headers (which define
 +// clashing preprocessor macros like KeyPress/Bool) cannot leak into the rest of
 +// the DOSBox code above.
 +#include <X11/Xlib.h>
++#include <X11/Xatom.h>
 +#include <X11/extensions/Xinerama.h>
++#include "SDL_syswm.h"
 +
-+// SDL 1.2 only confines fullscreen to a single Xinerama head when
-+// SDL_VIDEO_FULLSCREEN_HEAD (or _DISPLAY) is set, and it reads that value once,
-+// during video initialisation. Without it, alt-enter fullscreen stretches over
-+// the whole virtual desktop. Pick the head that currently holds the mouse
-+// pointer so fullscreen only covers the monitor the user is working on.
-+static void SetFullscreenCurrentHead(void) {
-+	// Honour an explicit choice made by the user.
-+	if (getenv("SDL_VIDEO_FULLSCREEN_HEAD") || getenv("SDL_VIDEO_FULLSCREEN_DISPLAY"))
-+		return;
++// Grab the X11 handles SDL is currently driving. Returns false for any non-X11
++// video target (then the caller transparently falls back to SDL fullscreen).
++static bool GetX11Info(SDL_SysWMinfo *info) {
++	SDL_VERSION(&info->version);
++	return SDL_GetWMInfo(info) == 1 && info->subsystem == SDL_SYSWM_X11;
++}
 +
-+	Display *dpy = XOpenDisplay(NULL);
-+	if (!dpy)
-+		return;
++// True when the running window manager advertises _NET_WM_STATE_FULLSCREEN, so
++// we can hand fullscreen placement to it. Probed once and cached.
++static bool WMFullscreenActive(void) {
++	static int cached = -1;
++	if (cached >= 0)
++		return cached != 0;
 +
++	cached = 0;
++	SDL_SysWMinfo info;
++	if (!GetX11Info(&info))
++		return false;
++
++	Display *dpy = info.info.x11.display;
++	Atom net_supported = XInternAtom(dpy, "_NET_SUPPORTED", True);
++	Atom net_fs = XInternAtom(dpy, "_NET_WM_STATE_FULLSCREEN", True);
++	if (net_supported == None || net_fs == None)
++		return false;
++
++	Atom type; int format; unsigned long nitems, after; unsigned char *data = NULL;
++	info.info.x11.lock_func();
++	if (XGetWindowProperty(dpy, DefaultRootWindow(dpy), net_supported, 0, 4096,
++	                       False, XA_ATOM, &type, &format, &nitems, &after, &data)
++	        == Success && data) {
++		Atom *atoms = (Atom *)data;
++		for (unsigned long i = 0; i < nitems; i++) {
++			if (atoms[i] == net_fs) { cached = 1; break; }
++		}
++		XFree(data);
++	}
++	info.info.x11.unlock_func();
++	return cached != 0;
++}
++
++// Geometry (in root coordinates) of the monitor the SDL window currently sits
++// on, so the WM-managed fullscreen window is created at exactly that size and no
++// rescale/letterboxing mismatch occurs. Falls back to the whole X screen.
++static bool GetCurrentOutputGeometry(int *x, int *y, int *w, int *h) {
++	SDL_SysWMinfo info;
++	if (!GetX11Info(&info))
++		return false;
++
++	Display *dpy = info.info.x11.display;
++	Window win = info.info.x11.wmwindow;
++	Window root = DefaultRootWindow(dpy);
++
++	*x = 0; *y = 0;
++	*w = DisplayWidth(dpy, DefaultScreen(dpy));
++	*h = DisplayHeight(dpy, DefaultScreen(dpy));
++
++	info.info.x11.lock_func();
++	// Centre of the SDL window in root coordinates.
++	Window rroot, child; int wx, wy; unsigned int ww, wh, bw, depth;
++	int cx = *w / 2, cy = *h / 2;
++	if (win && XGetGeometry(dpy, win, &rroot, &wx, &wy, &ww, &wh, &bw, &depth)) {
++		int rx = 0, ry = 0;
++		XTranslateCoordinates(dpy, win, root, 0, 0, &rx, &ry, &child);
++		cx = rx + (int)ww / 2;
++		cy = ry + (int)wh / 2;
++	}
 +	int event_base, error_base;
 +	if (XineramaQueryExtension(dpy, &event_base, &error_base) && XineramaIsActive(dpy)) {
 +		int screens = 0;
 +		XineramaScreenInfo *xi = XineramaQueryScreens(dpy, &screens);
-+		if (xi && screens > 1) {
-+			int head = xi[0].screen_number;
-+			Window root = DefaultRootWindow(dpy);
-+			Window root_ret, child_ret;
-+			int root_x = 0, root_y = 0, win_x, win_y;
-+			unsigned int mask;
-+			if (XQueryPointer(dpy, root, &root_ret, &child_ret,
-+			                  &root_x, &root_y, &win_x, &win_y, &mask)) {
-+				for (int i = 0; i < screens; i++) {
-+					if (root_x >= xi[i].x_org && root_x < xi[i].x_org + xi[i].width &&
-+					    root_y >= xi[i].y_org && root_y < xi[i].y_org + xi[i].height) {
-+						head = xi[i].screen_number;
-+						break;
-+					}
++		if (xi) {
++			int best = 0;
++			for (int i = 0; i < screens; i++) {
++				if (cx >= xi[i].x_org && cx < xi[i].x_org + xi[i].width &&
++				    cy >= xi[i].y_org && cy < xi[i].y_org + xi[i].height) {
++					best = i;
++					break;
 +				}
 +			}
-+			char buf[16];
-+			snprintf(buf, sizeof(buf), "%d", head);
-+			setenv("SDL_VIDEO_FULLSCREEN_HEAD", buf, 1);
-+		}
-+		if (xi)
++			*x = xi[best].x_org; *y = xi[best].y_org;
++			*w = xi[best].width; *h = xi[best].height;
 +			XFree(xi);
++		}
 +	}
-+	XCloseDisplay(dpy);
++	info.info.x11.unlock_func();
++	return true;
 +}
-+#endif // C_FULLSCREEN_CURRENT_HEAD
++
++// Ask the window manager to add/remove the fullscreen state on SDL's managed
++// top-level window. KWin/Mutter honour this on the window's current output.
++static void X11_SetWMFullscreen(bool enable) {
++	SDL_SysWMinfo info;
++	if (!GetX11Info(&info))
++		return;
++
++	Display *dpy = info.info.x11.display;
++	Window win = info.info.x11.wmwindow;
++	Atom net_state = XInternAtom(dpy, "_NET_WM_STATE", False);
++	Atom net_fs = XInternAtom(dpy, "_NET_WM_STATE_FULLSCREEN", False);
++
++	info.info.x11.lock_func();
++	XEvent ev;
++	memset(&ev, 0, sizeof(ev));
++	ev.type = ClientMessage;
++	ev.xclient.window = win;
++	ev.xclient.message_type = net_state;
++	ev.xclient.format = 32;
++	ev.xclient.data.l[0] = enable ? 1 : 0;	// _NET_WM_STATE_ADD / _REMOVE
++	ev.xclient.data.l[1] = (long)net_fs;
++	ev.xclient.data.l[2] = 0;
++	ev.xclient.data.l[3] = 1;		// source indication: application
++	XSendEvent(dpy, DefaultRootWindow(dpy), False,
++	           SubstructureNotifyMask | SubstructureRedirectMask, &ev);
++	XFlush(dpy);
++	info.info.x11.unlock_func();
++}
++#endif // C_X11_WM_FULLSCREEN
 Index: src/Makefile.in
 ===================================================================
 --- ./src/Makefile.in	(working copy)
