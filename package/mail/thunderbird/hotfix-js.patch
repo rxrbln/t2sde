@@ -1,0 +1,158 @@
+# --- T2-COPYRIGHT-BEGIN ---
+# t2/package/*/thunderbird/hotfix-js.patch
+# Copyright (C) 2026 The T2 SDE Project
+# SPDX-License-Identifier: GPL-2.0 or patched project license
+# --- T2-COPYRIGHT-END ---
+
+Fix 1: "This login already exists" freeze
+
+  The error comes from storage-rust.sys.mjs:467 in modifyLoginAsync,
+  which is called during Thunderbird account loading. When a duplicate
+  login exists, it throws and the error propagates uncaught, freezing
+  the account loading.
+
+Fix 2: EmptyDatabaseError for blocklists
+
+  The EmptyDatabaseError is thrown from Database.sys.mjs:96 when a
+  RemoteSettings collection hasn't been synced yet. It's expected on
+  first launch but was being reported as an error via Cu.reportError().
+
+Fix 3. Email accounts with calendars
+
+  Works until second message sent and thundebrird silently fails in background. 
+
+	JavaScript error: resource:///modules/calendar/Ical.sys.mjs, line 2302: ParserError: invalid line (no token ";" or ":") "Europe/Helsinki[2026a]"
+	JavaScript error: resource:///modules/CalStartupService.sys.mjs, line 16: NS_ERROR_XPC_JAVASCRIPT_ERROR_WITH_DETAILS: [JavaScript Error: "invalid line (no token ";" or ":") "Europe/Helsinki[2026a]"" {file: "resource:///modules/calendar/Ical.sys.mjs" line: 2302}]'[JavaScript Error: "invalid line (no token ";" or ":") "Europe/Helsinki[2026a]"" {file: "resource:///modules/calendar/Ical.sys.mjs" line: 2302}]' when calling method: [calIStartupService::startup]
+
+ 	Clanker - Qwen Aleksi Venäläinen 
+
+
+--- a/comm/mailnews/base/src/MsgIncomingServer.sys.mjs
++++ b/comm/mailnews/base/src/MsgIncomingServer.sys.mjs
+@@ -47,7 +47,30 @@
+         "",
+         ""
+       );
+-      await Services.logins.modifyLoginAsync(login, newLogin);
++      try {
++        await Services.logins.modifyLoginAsync(login, newLogin);
++      } catch (e) {
++        if (e.message?.includes("This login already exists")) {
++          // A duplicate login exists, skip migration for this entry.
++          Services.logins.removeLogin(login);
++          // Re-create with new credentials to avoid stale data.
++          const newLogin2 = Cc[
++            "@mozilla.org/login-manager/loginInfo;1"
++          ].createInstance(Ci.nsILoginInfo);
++          newLogin2.init(
++            newServerUri,
++            null,
++            newServerUri,
++            newUsername,
++            login.password,
++            "",
++            ""
++          );
++          await Services.logins.addLoginAsync(newLogin2);
++        } else {
++          throw e;
++        }
++      }
+     }
+   }
+ }
+
+--- a/comm/mailnews/base/src/OAuth2Module.sys.mjs
++++ b/comm/mailnews/base/src/OAuth2Module.sys.mjs
+@@ -218,7 +218,14 @@
+             `Updating existing token for ${this._username} at ${this._loginOrigin} with scope "${scope}"`
+           );
+           propBag.setProperty("timePasswordChanged", Date.now());
+-          await Services.logins.modifyLoginAsync(login, propBag);
++          try {
++            await Services.logins.modifyLoginAsync(login, propBag);
++          } catch (e) {
++            if (!e.message?.includes("This login already exists")) {
++              throw e;
++            }
++            log.debug(`Skipping login update: ${e.message}`);
++          }
+         }
+         didChangePassword = true;
+       }
+
+--- a/toolkit/mozapps/extensions/Blocklist.sys.mjs
++++ b/toolkit/mozapps/extensions/Blocklist.sys.mjs
+@@ -519,7 +519,15 @@
+     if (!gBlocklistEnabled) {
+       return []; // return value expected by tests.
+     }
+-    let entries = await this._client.get().catch(ex => Cu.reportError(ex));
++    let entries = await this._client
++      .get()
++      .catch(ex => {
++        if (ex instanceof lazy.RemoteSettingsClient.EmptyDatabaseError) {
++          // Collection hasn't been synced yet, return empty list silently.
++          return [];
++        }
++        Cu.reportError(ex);
++      });
+     // Handle error silently. This can happen if our request to fetch data is aborted,
+     // e.g. by application shutdown.
+     if (!entries) {
+@@ -724,7 +732,15 @@
+       this._entries = [];
+       return;
+     }
+-    this._entries = await this._client.get().catch(ex => Cu.reportError(ex));
++    this._entries = await this._client
++      .get()
++      .catch(ex => {
++        if (ex instanceof lazy.RemoteSettingsClient.EmptyDatabaseError) {
++          // Collection hasn't been synced yet, return empty list silently.
++          return [];
++        }
++        Cu.reportError(ex);
++      });
+     // Handle error silently. This can happen if our request to fetch data is aborted,
+     // e.g. by application shutdown.
+     if (!this._entries) {
+@@ -1062,7 +1078,14 @@
+       if (!gBlocklistSoftBlockEnabled) {
+         this._mlbfDataSoftBlocks = null;
+       }
+-      let records = await this._client.get();
++      let records = await this._client
++        .get()
++        .catch(ex => {
++          if (ex instanceof lazy.RemoteSettingsClient.EmptyDatabaseError) {
++            return [];
++          }
++          Cu.reportError(ex);
++        });
+       if (isUpdateReplaced()) {
+         return;
+       }
+
+--- a/comm/calendar/base/modules/Ical.sys.mjs.orig	2025-07-23 07:00:11.000000000 +0300
++++ b/comm/calendar/base/modules/Ical.sys.mjs	2025-08-03 23:41:52.223172079 +0300
+@@ -1967,6 +1967,19 @@
+  * @param {ICAL.parse.parserState}    The current state of the line parsing
+  */
+ parse._handleContentLine = function(line, state) {
++
++  //icu4c format removal	
++  line = line.replace(/\[\d{4}[a-z]\]$/, "");
++
++if (!line.includes(":") && !line.includes(";")) {
++  // Try to turn raw timezone strings into TZID format
++  if (/^[A-Za-z/_-]+$/.test(line)) {
++    line = "TZID:" + line;
++  } else {
++    console.warn("Dropping invalid line:", line);
++    return;
++  }
++}
+   // break up the parts of the line
+   let valuePos = line.indexOf(VALUE_DELIMITER);
+   let paramPos = line.indexOf(PARAM_DELIMITER);
