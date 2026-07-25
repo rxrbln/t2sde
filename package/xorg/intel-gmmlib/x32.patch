@@ -1,0 +1,65 @@
+# --- T2-COPYRIGHT-BEGIN ---
+# t2/package/*/intel-gmmlib/x32.patch
+# Copyright (C) 2026 The T2 SDE Project
+# SPDX-License-Identifier: GPL-2.0 or patched project license
+# --- T2-COPYRIGHT-END ---
+
+On x32 CMAKE_SIZEOF_VOID_P is 4, so GMMLIB_ARCH becomes "32" and the build
+passes -m32, which switches the x86_64 compiler to plain i386. Compiles still
+use the default x32 ABI, so linking mixes the two and LTO aborts with an
+internal compiler error while reading the cgraph. That already broke the
+FindThreads probes at configure time:
+
+  lto1: internal compiler error: Segmentation fault
+  CMake Error: Could NOT find Threads (missing: Threads_FOUND)
+
+Select the ABI flag separately from the pointer size, so x86_64 with 32 bit
+pointers gets -mx32.
+
+--- gmmlib-intel-gmmlib-22.10.0/Source/GmmLib/CMakeLists.txt.vanilla	2026-07-25 13:10:18.190270820 +0200
++++ gmmlib-intel-gmmlib-22.10.0/Source/GmmLib/CMakeLists.txt	2026-07-25 13:08:44.441512585 +0200
+@@ -165,6 +165,14 @@ else()
+     set (GMMLIB_ARCH "32")
+ endif()
+ 
++# x86_64 with 32 bit pointers is the x32 ABI: it needs -mx32, as -m32 would
++# switch the compiler to plain i386 and produce objects the linker rejects.
++if("${GMMLIB_ARCH}" STREQUAL "32" AND "${CMAKE_SYSTEM_PROCESSOR}" MATCHES "x86_64|amd64")
++    set (GMMLIB_ABI "x32")
++else()
++    set (GMMLIB_ABI "${GMMLIB_ARCH}")
++endif()
++
+ if (${CMAKE_SYSTEM_PROCESSOR} MATCHES "^aarch")
+     set(GMMLIB_MARCH "armv8-a+fp+simd")
+ elseif("${GMMLIB_MARCH}" STREQUAL "")
+@@ -174,6 +182,7 @@ endif()
+ MESSAGE("platform: ${CMAKE_HOST_SYSTEM_NAME}")
+ MESSAGE("source_dir: ${BS_DIR_GMMLIB}")
+ MESSAGE("arch: ${GMMLIB_ARCH}")
++MESSAGE("abi: ${GMMLIB_ABI}")
+ MESSAGE("build type: ${CMAKE_BUILD_TYPE}")
+ MESSAGE("SourceConfiguration:")
+ MESSAGE("CommonDir: ${BS_DIR_COMMON}")
+--- gmmlib-intel-gmmlib-22.10.0/Source/GmmLib/Linux.cmake.vanilla	2026-07-25 13:10:18.191087490 +0200
++++ gmmlib-intel-gmmlib-22.10.0/Source/GmmLib/Linux.cmake	2026-07-25 13:08:57.495644943 +0200
+@@ -104,8 +104,8 @@ else()
+     -fvisibility=hidden
+     -fPIC
+     -g
+-    # -m32 or -m64
+-    -m${GMMLIB_ARCH}
++    # -m32, -m64 or -mx32
++    -m${GMMLIB_ABI}
+     )
+ endif()
+ 
+@@ -178,6 +178,6 @@ if (${CMAKE_SYSTEM_PROCESSOR} MATCHES "^
+     SET(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS}")
+     SET(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS}")
+ else()
+-    SET(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -m${GMMLIB_ARCH}")
+-    SET(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} -m${GMMLIB_ARCH}")
++    SET(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -m${GMMLIB_ABI}")
++    SET(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} -m${GMMLIB_ABI}")
+ endif()
