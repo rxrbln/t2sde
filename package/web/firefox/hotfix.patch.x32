@@ -321,3 +321,35 @@ Start x32 by disabling x86 assembly, needs more bits e.g. xpcom, old patches:
      return False
  
  
+--- firefox-153.0/tools/profiler/lul/LulMain.cpp.vanilla
++++ firefox-153.0/tools/profiler/lul/LulMain.cpp
+@@ -1682,7 +1682,28 @@ static __attribute__((noinline)) bool Ge
+   // Get hold of the current unwind-start registers.
+   UnwindRegs startRegs;
+   memset(&startRegs, 0, sizeof(startRegs));
+-#if defined(GP_ARCH_amd64)
++#if defined(GP_ARCH_amd64) && defined(__ILP32__)
++  // x32 ABI: amd64 registers, but 32-bit pointers.
++  volatile uintptr_t block[3];
++  static_assert(sizeof(block) == 12);
++  __asm__ __volatile__(
++      "leaq 0(%%rip), %%r15"
++      "\n\t"
++      "movl %%r15d, 0(%0)"
++      "\n\t"
++      "movl %%esp, 4(%0)"
++      "\n\t"
++      "movl %%ebp, 8(%0)"
++      "\n"
++      :
++      : "r"(&block[0])
++      : "memory", "r15");
++  startRegs.xip = TaggedUWord(block[0]);
++  startRegs.xsp = TaggedUWord(block[1]);
++  startRegs.xbp = TaggedUWord(block[2]);
++  const uintptr_t REDZONE_SIZE = 128;
++  uintptr_t start = block[1] - REDZONE_SIZE;
++#elif defined(GP_ARCH_amd64)
+   volatile uintptr_t block[3];
+   static_assert(sizeof(block) == 24);
+   __asm__ __volatile__(
