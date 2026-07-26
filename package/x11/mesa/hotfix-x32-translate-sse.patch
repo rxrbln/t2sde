@@ -1,0 +1,186 @@
+# --- T2-COPYRIGHT-BEGIN ---
+# t2/package/*/mesa/hotfix-x32-translate-sse.patch
+# Copyright (C) 2026 The T2 SDE Project
+# SPDX-License-Identifier: GPL-2.0 or patched project license
+# --- T2-COPYRIGHT-END ---
+
+translate_sse: do not widen pointer arithmetic to 64 bit on x32
+
+The runtime vertex-translate code generator in translate_sse.c emits raw
+machine code via rtasm.  On x32 DETECT_ARCH_X86_64 is set, so x86_target()
+returns X86_64_STD_ABI and x64_rexw() put a REX.W prefix on every pointer
+computation - but x32 pointers, and thus struct translate_buffer::base_ptr,
+::stride and translate_buffer_variant::ptr, are only 32 bit wide.
+
+incr_inputs() therefore advanced the input pointer with a 64-bit
+
+	add 0x4e0(%rdi),%rsi
+
+which read the 4-byte stride together with the max_index field behind it,
+so the second iteration dereferenced a garbage pointer:
+
+ #0  0xc2efb03a in ?? ()
+ #3  0xf585d273 in ?? () from /usr/libx32/libgallium-26.1.5.so
+ #4  0xf585a2f9 in ?? () from /usr/libx32/libgallium-26.1.5.so
+
+Add x86_target_ptr64() and emit REX.W for pointer-sized operations only when
+pointers really are 64 bit.  x32 keeps the x86-64 instruction set, calling
+convention and register file, so only the operand width changes: dropping
+REX.W turns the address arithmetic into 32-bit forms whose results are
+zero-extended, which is what the ABI wants.  Genuine 64-bit data moves
+(emit_mov64() for doubles) keep using x64_mov64().
+
+Signed-off-by: René Rebe <rene@exactco.de>
+
+--- mesa-26.1.5/src/gallium/auxiliary/rtasm/rtasm_x86sse.h.vanilla
++++ mesa-26.1.5/src/gallium/auxiliary/rtasm/rtasm_x86sse.h
+@@ -147,6 +147,18 @@ static inline enum x86_target x86_target
+ #endif
+ }
+ 
++/* x32 shares the instruction set and calling convention of X86_64_STD_ABI,
++ * but keeps 32-bit pointers, so pointer arithmetic must not be widened.
++ */
++static inline bool x86_target_ptr64( struct x86_function* p )
++{
++#if DETECT_ARCH_X86_64
++   return sizeof(void *) == 8;
++#else
++   return false;
++#endif
++}
++
+ static inline unsigned x86_target_caps( struct x86_function* p )
+ {
+    return p->caps;
+@@ -181,6 +193,8 @@ int x86_get_label( struct x86_function *
+ 
+ void x64_rexw(struct x86_function *p);
+ 
++void x86_rexw_ptr(struct x86_function *p);
++
+ void x86_jcc( struct x86_function *p,
+ 	      enum x86_cc cc,
+ 	      int label );
+--- mesa-26.1.5/src/gallium/auxiliary/rtasm/rtasm_x86sse.c.vanilla
++++ mesa-26.1.5/src/gallium/auxiliary/rtasm/rtasm_x86sse.c
+@@ -375,6 +375,13 @@ void x64_rexw(struct x86_function *p)
+       emit_1ub(p, 0x48);
+ }
+ 
++/* Promote the next instruction to the width of a pointer. */
++void x86_rexw_ptr(struct x86_function *p)
++{
++   if(x86_target_ptr64(p))
++      emit_1ub(p, 0x48);
++}
++
+ void x86_jcc( struct x86_function *p,
+               enum x86_cc cc,
+               int label )
+--- mesa-26.1.5/src/gallium/auxiliary/translate/translate_sse.c.vanilla
++++ mesa-26.1.5/src/gallium/auxiliary/translate/translate_sse.c
+@@ -1160,9 +1160,9 @@ init_inputs(struct translate_sse *p, uns
+          }
+ 
+          x86_mov(p->func, p->tmp2_EDX, buf_stride);
+-         x64_rexw(p->func);
++         x86_rexw_ptr(p->func);
+          x86_imul(p->func, tmp_EAX, p->tmp2_EDX);
+-         x64_rexw(p->func);
++         x86_rexw_ptr(p->func);
+          x86_add(p->func, tmp_EAX, buf_base_ptr);
+ 
+          x86_cmp(p->func, p->count_EBP, p->tmp_EAX);
+@@ -1171,11 +1171,11 @@ init_inputs(struct translate_sse *p, uns
+           * index number.
+           */
+          if (!index_size && p->nr_buffer_variants == 1) {
+-            x64_rexw(p->func);
++            x86_rexw_ptr(p->func);
+             x86_mov(p->func, elt, tmp_EAX);
+          }
+          else {
+-            x64_rexw(p->func);
++            x86_rexw_ptr(p->func);
+             x86_mov(p->func, buf_ptr, tmp_EAX);
+          }
+       }
+@@ -1201,7 +1201,7 @@ get_buffer_ptr(struct translate_sse *p,
+          x86_make_disp(p->machine_EDI,
+                        get_offset(p, &p->buffer_variant[var_idx].ptr));
+ 
+-      x64_rexw(p->func);
++      x86_rexw_ptr(p->func);
+       x86_mov(p->func, ptr, buf_ptr);
+       return ptr;
+    }
+@@ -1239,9 +1239,9 @@ get_buffer_ptr(struct translate_sse *p,
+       x86_cmovcc(p->func, ptr, buf_max_index, cc_AE);
+ 
+       x86_mov(p->func, p->tmp2_EDX, buf_stride);
+-      x64_rexw(p->func);
++      x86_rexw_ptr(p->func);
+       x86_imul(p->func, ptr, p->tmp2_EDX);
+-      x64_rexw(p->func);
++      x86_rexw_ptr(p->func);
+       x86_add(p->func, ptr, buf_base_ptr);
+       return ptr;
+    }
+@@ -1258,7 +1258,7 @@ incr_inputs(struct translate_sse *p, uns
+                        get_offset(p, &p->buffer[buffer_index].stride));
+ 
+       if (p->buffer_variant[0].instance_divisor == 0) {
+-         x64_rexw(p->func);
++         x86_rexw_ptr(p->func);
+          x86_add(p->func, p->idx_ESI, stride);
+          sse_prefetchnta(p->func, x86_make_disp(p->idx_ESI, 192));
+       }
+@@ -1278,17 +1278,17 @@ incr_inputs(struct translate_sse *p, uns
+ 
+          if (variant->instance_divisor == 0) {
+             x86_mov(p->func, p->tmp_EAX, buf_stride);
+-            x64_rexw(p->func);
++            x86_rexw_ptr(p->func);
+             x86_add(p->func, p->tmp_EAX, buf_ptr);
+             if (i == 0)
+                sse_prefetchnta(p->func, x86_make_disp(p->tmp_EAX, 192));
+-            x64_rexw(p->func);
++            x86_rexw_ptr(p->func);
+             x86_mov(p->func, buf_ptr, p->tmp_EAX);
+          }
+       }
+    }
+    else {
+-      x64_rexw(p->func);
++      x86_rexw_ptr(p->func);
+       x86_lea(p->func, p->idx_ESI, x86_make_disp(p->idx_ESI, index_size));
+    }
+ 
+@@ -1353,7 +1353,7 @@ build_vertex_emit(struct translate_sse *
+       x86_push(p->func, p->machine_EDI);
+       x86_push(p->func, p->idx_ESI);
+ 
+-      if (x86_target(p->func) != X86_32) {
++      if (x86_target_ptr64(p->func)) {
+          x64_mov64(p->func, p->machine_EDI, x86_fn_arg(p->func, 1));
+          x64_mov64(p->func, p->idx_ESI, x86_fn_arg(p->func, 2));
+       }
+@@ -1365,7 +1365,7 @@ build_vertex_emit(struct translate_sse *
+ 
+    x86_mov(p->func, p->count_EBP, x86_fn_arg(p->func, 3));
+ 
+-   if (x86_target(p->func) != X86_32)
++   if (x86_target_ptr64(p->func))
+       x64_mov64(p->func, p->outbuf_EBX, x86_fn_arg(p->func, 6));
+    else
+       x86_mov(p->func, p->outbuf_EBX, x86_fn_arg(p->func, 6));
+@@ -1421,7 +1421,7 @@ build_vertex_emit(struct translate_sse *
+ 
+       /* Next output vertex:
+        */
+-      x64_rexw(p->func);
++      x86_rexw_ptr(p->func);
+       x86_lea(p->func, p->outbuf_EBX,
+               x86_make_disp(p->outbuf_EBX, p->translate.key.output_stride));
+ 
