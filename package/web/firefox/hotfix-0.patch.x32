@@ -712,3 +712,62 @@ single SIGSYS trap - each sandboxed child died right after seccomp tsync.
  #else
  // This true for supported architectures (Intel and ARM EABI).
  static_assert(MIN_SYSCALL == 0u,
+
+
+Fix x32 sandbox panic "Illegal mixing of system call ABIs".
+
+The x32 vDSO is built by compiling the x86-64 vDSO objects and converting
+them with objcopy -O elf32-x86-64, so its system call fallbacks use plain
+x86-64 numbers without __X32_SYSCALL_BIT.  seccomp-bpf sees those numbers
+in seccomp_data::nr and the ABI check turned them into a sandbox panic,
+killing every content, RDD, socket and utility process as soon as glibc
+took the fallback path in clock_gettime() and friends:
+
+  [3280] Sandbox: Panic: Illegal mixing of system call ABIs
+  [3280] Hit MOZ_CRASH(Sandbox Panic) at security/sandbox/linux/Sandbox.cpp:648
+  #07: __vdso_clock_gettime[linux-vdso.so.1 +0xa59]
+  #08: clock_gettime[/libx32/libc.so.6 +0xc810e]
+
+Accept the three fallbacks the x32 vDSO can issue - clock_gettime,
+clock_getres and gettimeofday - and evaluate them under the very policy
+of their x32 counterpart, so the argument filtering (the clockid_t
+restrictions) still applies.  Everything else keeps panicking as before.
+
+--- firefox-153.0/security/sandbox/chromium/sandbox/linux/bpf_dsl/policy_compiler.cc.vanilla	2026-07-26 19:49:12.346731525 +0200
++++ firefox-153.0/security/sandbox/chromium/sandbox/linux/bpf_dsl/policy_compiler.cc	2026-07-26 19:46:48.499272255 +0200
+@@ -37,6 +37,13 @@ const bool kIsIntel = false;
+ #endif
+ #if defined(__x86_64__) && defined(__ILP32__)
+ const bool kIsX32 = true;
++// The x32 vDSO is the x86-64 vDSO converted with objcopy, so its system call
++// fallbacks use plain x86-64 numbers without __X32_SYSCALL_BIT.
++const int kX32VdsoFallbacks[] = {
++    __NR_clock_gettime,
++    __NR_clock_getres,
++    __NR_gettimeofday,
++};
+ #else
+ const bool kIsX32 = false;
+ #endif
+@@ -201,9 +208,19 @@ CodeGen::Node PolicyCompiler::CheckSysca
+     CodeGen::Node invalidX32 =
+         CompileResult(panic_func_("Illegal mixing of system call ABIs"));
+     if (kIsX32) {
+-      // The newer x32 API always sets bit 30.
++      // The newer x32 API always sets bit 30, except for the vDSO fallbacks,
++      // which are evaluated under the policy of their x32 counterpart.
++      CodeGen::Node unset = invalidX32;
++#if defined(__x86_64__) && defined(__ILP32__)
++      for (int sysnum : kX32VdsoFallbacks) {
++        unset = gen_.MakeInstruction(
++            BPF_JMP + BPF_JEQ + BPF_K,
++            static_cast<uint32_t>(sysnum) & ~0x40000000u,
++            CompileResult(policy_->EvaluateSyscall(sysnum)), unset);
++      }
++#endif
+       return gen_.MakeInstruction(
+-          BPF_JMP + BPF_JSET + BPF_K, 0x40000000, passed, invalidX32);
++          BPF_JMP + BPF_JSET + BPF_K, 0x40000000, passed, unset);
+     } else {
+       // The older i386 and x86-64 APIs clear bit 30 on all system calls.
+       return gen_.MakeInstruction(
