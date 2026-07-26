@@ -623,7 +623,14 @@ the -Wpointer-to-int-cast warning gcc emits here.
      (DYNAMIC_BMI2 || defined(__BMI2__))
  # define ZSTD_ENABLE_ASM_X86_64_BMI2 1
  #else
+ #
+Fix x32 content process crashes: the glibc struct pthread TID-cache fixup used
+the LP64 tcbhead_t size, so MaybeUpdateGlibcTidCache() poked offset 712 instead
+of 648 and every fork server child died on the CHECK_EQ (MOZ_CRASH) right away.
+On x32 the pointers and longs of tcbhead_t are 4 bytes, shrinking it to 640.
 
+Note SandboxLaunch.cpp compiles namespace_sandbox.inc, not the vendored
+sandbox/linux/services/namespace_sandbox.cc, so the .inc needs the fix too.
 
 --- firefox-153.0/security/sandbox/linux/launch/glibc_hack/sandbox/linux/services/namespace_sandbox.cc.vanilla	2026-07-15 22:09:52.000000000 +0200
 +++ firefox-153.0/security/sandbox/linux/launch/glibc_hack/sandbox/linux/services/namespace_sandbox.cc	2026-07-26 18:05:35.291851577 +0200
@@ -642,5 +649,26 @@ the -Wpointer-to-int-cast warning gcc emits here.
 +    // On x32 the pointers and longs of tcbhead_t are 4 bytes, shrinking it to 640.
 +    char header[640];
  #  endif
+     void* padding[24];
+   } header;
+
+
+--- firefox-153.0/security/sandbox/linux/launch/glibc_hack/namespace_sandbox.inc.vanilla	2026-07-26 18:50:29.827214476 +0200
++++ firefox-153.0/security/sandbox/linux/launch/glibc_hack/namespace_sandbox.inc	2026-07-26 18:50:05.750884929 +0200
+@@ -4,12 +4,15 @@
+ // https://sourceware.org/git/?p=glibc.git;a=blob;f=nptl/descr.h;hb=95a73392580761abc62fc9b1386d232cd55878e9#l121
+ struct glibc_pthread {
+   union {
+-#if defined(ARCH_CPU_X86_64)
++#if defined(ARCH_CPU_X86_64) && !defined(__ILP32__)
+     // On x86_64, sizeof(tcbhead_t) > sizeof(void*)*24.
+     // https://sourceware.org/git/?p=glibc.git;a=blob;f=sysdeps/x86_64/nptl/tls.h;hb=95a73392580761abc62fc9b1386d232cd55878e9#l65
+     // For all other architectures, sizeof(tcbhead_t) <= sizeof(void*)*24.
+     // https://sourceware.org/git/?p=glibc.git&a=search&h=HEAD&st=grep&s=%7D+tcbhead_t
+     char header[704];
++#elif defined(ARCH_CPU_X86_64)
++    // On x32 the pointers and longs of tcbhead_t are 4 bytes, shrinking it to 640.
++    char header[640];
+ #endif
      void* padding[24];
    } header;
