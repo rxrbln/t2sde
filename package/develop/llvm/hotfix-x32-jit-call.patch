@@ -1,0 +1,46 @@
+# --- T2-COPYRIGHT-BEGIN ---
+# t2/package/*/llvm/hotfix-x32-jit-call.patch
+# Copyright (C) 2026 The T2 SDE Project
+# SPDX-License-Identifier: GPL-2.0 or patched project license
+# --- T2-COPYRIGHT-END ---
+
+X86: zero-extend the x32 callee address for all code models
+
+On x32 the callee address is an ILP32 pointer, but every 64-bit call
+instruction branches to a 64-bit register, so LowerCall() has to zero-extend
+it. That only happened in the last arm of an else-if chain, thus it was
+skipped for the large code model - the default of the LLVM JIT on 64-bit
+targets, as used by mesa/llvmpipe - and also whenever LowerGlobalOrExternal()
+returned a wrapper or GOT load instead of a bare target symbol (-fno-plt).
+Both crashed instruction selection:
+
+LLVM ERROR: Cannot select: 0x57e9ee08: ch,glue = X86ISD::CALL 0x57e9edb0, 0x57e9ec50, Register:i64 $rdi, Register:v8i32 $ymm0, RegisterMask:Untyped, 0x57e9edb0:1
+  0x57e9ec50: i32 = truncate 0x57e9ebf8
+
+Zero-extend after the chain instead, skipping only the target symbols that
+feed the direct pc-relative call patterns.
+
+Signed-off-by: René Rebe <rene@exactco.de>
+
+--- llvm/lib/Target/X86/X86ISelLoweringCall.cpp.vanilla	2026-07-26 13:32:56.087459761 +0200
++++ llvm/lib/Target/X86/X86ISelLoweringCall.cpp	2026-07-26 13:32:56.059977827 +0200
+@@ -2565,12 +2565,15 @@ X86TargetLowering::LowerCall(TargetLower
+     // to allow direct calls to be selected without first materializing the
+     // address into a register.
+     Callee = LowerGlobalOrExternal(Callee, DAG, /*ForCall=*/true, &IsImpCall);
+-  } else if (Subtarget.isTarget64BitILP32() &&
+-             Callee.getValueType() == MVT::i32) {
+-    // Zero-extend the 32-bit Callee address into a 64-bit according to x32 ABI
+-    Callee = DAG.getNode(ISD::ZERO_EXTEND, dl, MVT::i64, Callee);
+   }
+
++  // Calls always branch to a 64-bit target, so zero-extend the 32-bit x32
++  // callee address unless it stayed a direct pc-relative call target above.
++  if (Subtarget.isTarget64BitILP32() && Callee.getValueType() == MVT::i32 &&
++      Callee->getOpcode() != ISD::TargetGlobalAddress &&
++      Callee->getOpcode() != ISD::TargetExternalSymbol)
++    Callee = DAG.getNode(ISD::ZERO_EXTEND, dl, MVT::i64, Callee);
++
+   SmallVector<SDValue, 8> Ops;
+
+   if (!IsSibcall && isTailCall && !IsMustTail) {
