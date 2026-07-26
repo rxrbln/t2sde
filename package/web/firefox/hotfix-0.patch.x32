@@ -672,3 +672,43 @@ sandbox/linux/services/namespace_sandbox.cc, so the .inc needs the fix too.
  #endif
      void* padding[24];
    } header;
+
+
+Fix x32 content process startup: seccomp-bpf sees system call numbers with
+__X32_SYSCALL_BIT set, but MIN_SYSCALL/MAX_SYSCALL were the plain x86-64
+range 0..1024.  No syscall ever matched the compiled jump table, so every
+call fell through to InvalidSyscall() and the whole policy collapsed into a
+single SIGSYS trap - each sandboxed child died right after seccomp tsync.
+
+--- firefox-153.0/security/sandbox/chromium/sandbox/linux/bpf_dsl/linux_syscall_ranges.h.vanilla	2026-07-26 19:20:22.926702545 +0200
++++ firefox-153.0/security/sandbox/chromium/sandbox/linux/bpf_dsl/linux_syscall_ranges.h	2026-07-26 19:19:38.868234172 +0200
+@@ -7,7 +7,15 @@
+ 
+ #include "build/build_config.h"
+ 
+-#if defined(__x86_64__)
++#if defined(__x86_64__) && defined(__ILP32__)
++
++// On x32 every system call number carries __X32_SYSCALL_BIT, and that is what
++// seccomp-bpf sees in seccomp_data::nr, so the ranges have to include it.
++#define MIN_SYSCALL         0x40000000u
++#define MAX_PUBLIC_SYSCALL  (MIN_SYSCALL + 1024u)
++#define MAX_SYSCALL         MAX_PUBLIC_SYSCALL
++
++#elif defined(__x86_64__)
+ 
+ #define MIN_SYSCALL         0u
+ #define MAX_PUBLIC_SYSCALL  1024u
+--- firefox-153.0/security/sandbox/chromium/sandbox/linux/bpf_dsl/syscall_set.cc.vanilla	2026-07-26 19:20:22.927702556 +0200
++++ firefox-153.0/security/sandbox/chromium/sandbox/linux/bpf_dsl/syscall_set.cc	2026-07-26 19:19:45.560305021 +0200
+@@ -20,6 +20,10 @@ static_assert(MIN_SYSCALL == __NR_Linux,
+ #elif defined(ARCH_CPU_MIPS_FAMILY) && defined(ARCH_CPU_64_BITS)
+ // This is true for MIPS N64 ABI.
+ static_assert(MIN_SYSCALL == __NR_Linux, "min syscall number should be 5000");
++#elif defined(__x86_64__) && defined(__ILP32__)
++// x32 system call numbers are offset by __X32_SYSCALL_BIT.
++static_assert(MIN_SYSCALL == 0x40000000u,
++              "min syscall number should be the x32 syscall bit");
+ #else
+ // This true for supported architectures (Intel and ARM EABI).
+ static_assert(MIN_SYSCALL == 0u,
