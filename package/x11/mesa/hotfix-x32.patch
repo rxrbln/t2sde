@@ -1,0 +1,81 @@
+# --- T2-COPYRIGHT-BEGIN ---
+# t2/package/*/mesa/hotfix-x32.patch
+# Copyright (C) 2026 The T2 SDE Project
+# SPDX-License-Identifier: GPL-2.0 or patched project license
+# --- T2-COPYRIGHT-END ---
+
+On x32 the gallivm JIT emitted i386 objects and crashed on the first shader:
+"JITed object file architecture i386 is not compatible with target
+architecture i386:x64-32".
+
+llvm::sys::getProcessTriple() reduces LLVM_HOST_TRIPLE to the pointer-size
+variant based on sizeof(void *) alone, and Triple::get32BitArchVariant() maps
+x86_64 to plain x86 regardless of the environment, so x32 ends up as i386.
+MCJIT reaches that via EngineBuilder::selectTarget(), since the module has no
+target triple set outside Windows.
+
+--- mesa-26.1.5/src/gallium/auxiliary/gallivm/lp_bld_misc.h.vanilla	2026-07-15 22:03:19.000000000 +0200
++++ mesa-26.1.5/src/gallium/auxiliary/gallivm/lp_bld_misc.h	2026-07-26 12:38:40.458396035 +0200
+@@ -104,6 +104,9 @@ lp_build_fill_mattrs(std::vector<std::st
+ void
+ lp_build_dump_mattrs(std::vector<std::string> &MAttrs);
+ 
++std::string
++lp_build_jit_triple(void);
++
+ }
+ #endif
+ 
+--- mesa-26.1.5/src/gallium/auxiliary/gallivm/lp_bld_misc.cpp.vanilla	2026-07-26 12:40:22.401743006 +0200
++++ mesa-26.1.5/src/gallium/auxiliary/gallivm/lp_bld_misc.cpp	2026-07-26 12:38:36.764375593 +0200
+@@ -460,6 +460,29 @@ lp_build_dump_mattrs(std::vector<std::st
+ }
+ 
+ /**
++ * Triple the JIT should generate code for.
++ *
++ * llvm::sys::getProcessTriple() picks the pointer-size variant of
++ * LLVM_HOST_TRIPLE based on sizeof(void *) alone, and Triple's
++ * get32BitArchVariant() maps x86_64 to plain x86 without regard for the
++ * environment.  On x32 that yields an i386 triple, so the JIT emits i386
++ * objects which then crash when called with the x32 ABI.  Put the x32 ABI
++ * back.
++ */
++std::string
++lp_build_jit_triple(void)
++{
++   llvm::Triple TT(llvm::sys::getProcessTriple());
++
++#if DETECT_ARCH_X86_64 && defined(__ILP32__)
++   TT.setArch(llvm::Triple::x86_64);
++   TT.setEnvironment(TT.isMusl() ? llvm::Triple::MuslX32 : llvm::Triple::GNUX32);
++#endif
++
++   return TT.str();
++}
++
++/**
+  * Same as LLVMCreateJITCompilerForModule, but:
+  * - allows using MCJIT and enabling AVX feature where available.
+  * - set target options
+@@ -519,6 +542,9 @@ lp_build_create_jit_compiler_for_module(
+ #  else
+ #    error Unsupported architecture for MCJIT on Windows.
+ #  endif
++#elif DETECT_ARCH_X86_64 && defined(__ILP32__)
++    /* EngineBuilder::selectTarget() would fall back to an i386 triple */
++    LLVMSetTarget(M, lp_build_jit_triple().c_str());
+ #endif
+ 
+    std::vector<std::string> MAttrs;
+--- mesa-26.1.5/src/gallium/auxiliary/gallivm/lp_bld_init_orc.cpp.vanilla	2026-07-26 12:40:22.401812599 +0200
++++ mesa-26.1.5/src/gallium/auxiliary/gallivm/lp_bld_init_orc.cpp	2026-07-26 12:38:47.355435507 +0200
+@@ -391,7 +391,7 @@ llvm::orc::JITTargetMachineBuilder LPJit
+     * llvm::sys::getProcessTriple() is bogus. It returns the host LLVM was
+     * compiled on. Be careful when doing cross compilation
+     */
+-   JITTargetMachineBuilder JTMB((Triple(sys::getProcessTriple())));
++   JITTargetMachineBuilder JTMB((Triple(lp_build_jit_triple())));
+ #endif
+ 
+    TargetOptions options;
