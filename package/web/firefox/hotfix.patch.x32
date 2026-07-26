@@ -420,3 +420,93 @@ the -Wpointer-to-int-cast warning gcc emits here.
              }
          }
  
+
+
+--- firefox-153.0/security/nss/lib/freebl/intel-gcm.S.vanilla	2026-07-26 16:16:48.227406417 +0200
++++ firefox-153.0/security/nss/lib/freebl/intel-gcm.S	2026-07-26 16:16:48.227816423 +0200
+@@ -401,6 +401,7 @@ cdecl(intel_aes_gcmENC):
+ .set Htbl, %rdx
+ .set len, %rcx
+ .set KS,%r9
++.set KS32,%r9d
+ .set NR,%r10d
+ 
+ .set Gctx, %rdx
+@@ -490,7 +491,11 @@ cdecl(intel_aes_gcmENC):
+ 
+     vmovdqu  288(Gctx), CTR
+     vmovdqu  272(Gctx), T
++#if defined(__ILP32__)
++    movl 304(Gctx), KS32
++#else
+     mov  304(Gctx), KS
++#endif
+ # AESContext->Nr
+     mov  244(KS), NR
+ 
+@@ -992,6 +998,7 @@ cdecl(intel_aes_gcmDEC):
+ .set Htbl, %rdx
+ .set len, %rcx
+ .set KS,%r9
++.set KS32,%r9d
+ .set NR,%r10d
+ 
+ .set Gctx, %rdx
+@@ -1025,7 +1032,12 @@ cdecl(intel_aes_gcmDEC):
+     andq    $-16, %rsp
+     vmovdqu 288(Gctx), CTR
+     vmovdqu 272(Gctx), T
++# platform_AES_GCMContext->aes_context is a 32-bit pointer under ILP32 (x32)
++#if defined(__ILP32__)
++    movl    304(Gctx), KS32
++#else
+     mov     304(Gctx), KS
++#endif
+ # AESContext->Nr
+     mov     244(KS), NR
+ 
+--- firefox-153.0/security/nss/lib/freebl/intel-gcm-wrap.c.vanilla	2026-07-26 16:16:48.228509799 +0200
++++ firefox-153.0/security/nss/lib/freebl/intel-gcm-wrap.c	2026-07-26 16:16:48.229091802 +0200
+@@ -42,11 +42,15 @@ void intel_aes_gcmINIT(unsigned char Htb
+                        unsigned char *KS,
+                        int NR);
+ 
++/* The assembly consumes the lengths below as full 64-bit register values, so
++   they must be declared as such: under ILP32 (x32) "unsigned long" would only
++   define the low half of the argument register. */
++
+ /* Produces the final GHASH value */
+ void intel_aes_gcmTAG(unsigned char Htbl[16 * 16],
+                       unsigned char *Tp,
+-                      unsigned long Mlen,
+-                      unsigned long Alen,
++                      PRUint64 Mlen,
++                      PRUint64 Alen,
+                       unsigned char *X0,
+                       unsigned char *TAG);
+ 
+@@ -54,7 +58,7 @@ void intel_aes_gcmTAG(unsigned char Htbl
+    Operates on whole blocks only. Partial blocks should be padded externally. */
+ void intel_aes_gcmAAD(unsigned char Htbl[16 * 16],
+                       unsigned char *AAD,
+-                      unsigned long Alen,
++                      PRUint64 Alen,
+                       unsigned char *Tp);
+ 
+ /* Encrypts and hashes the Plaintext.
+@@ -63,13 +67,13 @@ void intel_aes_gcmAAD(unsigned char Htbl
+ void intel_aes_gcmENC(const unsigned char *PT,
+                       unsigned char *CT,
+                       void *Gctx,
+-                      unsigned long len);
++                      PRUint64 len);
+ 
+ /* Similar to ENC, but decrypts the Ciphertext. */
+ void intel_aes_gcmDEC(const unsigned char *CT,
+                       unsigned char *PT,
+                       void *Gctx,
+-                      unsigned long len);
++                      PRUint64 len);
+ 
+ struct platform_AES_GCMContextStr {
+     unsigned char Htbl[16 * AES_BLOCK_SIZE];
