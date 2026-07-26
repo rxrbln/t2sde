@@ -381,3 +381,42 @@ call faults. Segfault seen in every XPConnect call into native code.
  
  # r12 and r13 were pushed relative to the old stack pointer which is now the
  # frame pointer.
+
+
+InvokeCopyToStack() widens each XPCOM argument into the uint64_t gpregs[]
+array that NS_InvokeByIndex later loads into rsi/rdx/rcx/r8/r9 with full
+64 bit moves.  Pointers are widened with a plain (uint64_t) cast, which on
+x32 is a cast from a 32 bit pointer to a wider integer: gcc emits movslq and
+sign extends.  Any pointer at or above 0x80000000 therefore reaches the
+callee as 0xffffffffxxxxxxxx and faults on first dereference.
+
+x32 puts the stack near the top of the 4 GB address space (0xfff5c000) and
+maps libxul plus the malloc arenas well above 2 GB, so both the indirect
+case (&s->val, typically stack) and the T_CHAR_STR / T_INTERFACE default
+case are hit in practice.  Firefox segfaults during startup in strlen(),
+called from nsTSubstring::Assign(const char*, size_type(-1)) on a "utf-8"
+charset string passed through xptcall.
+
+Casting via uintptr_t makes the widening a zero extension, and also drops
+the -Wpointer-to-int-cast warning gcc emits here.
+
+--- firefox-153.0/xpcom/reflect/xptcall/md/unix/xptcinvoke_x86_64_unix.cpp.vanilla
++++ firefox-153.0/xpcom/reflect/xptcall/md/unix/xptcinvoke_x86_64_unix.cpp
+@@ -26,7 +26,7 @@ InvokeCopyToStack(uint64_t * gpregs, dou
+ 
+     for (uint32_t i = 0; i < paramCount; i++, s++) {
+         if (s->IsIndirect())
+-            value = (uint64_t) &s->val;
++            value = (uint64_t)(uintptr_t) &s->val;
+         else {
+             switch (s->type) {
+             case nsXPTType::T_FLOAT:                                break;
+@@ -42,7 +42,7 @@ InvokeCopyToStack(uint64_t * gpregs, dou
+             case nsXPTType::T_BOOL:   value = s->val.b;             break;
+             case nsXPTType::T_CHAR:   value = s->val.c;             break;
+             case nsXPTType::T_WCHAR:  value = s->val.wc;            break;
+-            default:                  value = (uint64_t) s->val.p;  break;
++            default:                  value = (uint64_t)(uintptr_t) s->val.p; break;
+             }
+         }
+ 
