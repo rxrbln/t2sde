@@ -510,3 +510,116 @@ the -Wpointer-to-int-cast warning gcc emits here.
  
  struct platform_AES_GCMContextStr {
      unsigned char Htbl[16 * AES_BLOCK_SIZE];
+
+
+--- firefox-153.0/security/nss/lib/freebl/intel-aes.S.vanilla	2026-07-26 17:28:10.366800860 +0200
++++ firefox-153.0/security/nss/lib/freebl/intel-aes.S	2026-07-26 17:28:10.376819712 +0200
+@@ -4,7 +4,13 @@
+ 
+ 	.text
+ 
++/* AESContext.iv follows the freeblCipherFunc worker pointer, so it starts four
++ * bytes earlier when that pointer is 32 bits wide (ILP32 / x32). */
++#ifdef __ILP32__
++#define IV_OFFSET 252
++#else
+ #define IV_OFFSET 256
++#endif
+ 
+ /*
+  * Warning: the length values used in this module are "unsigned int"
+@@ -536,8 +542,7 @@ cdecl(intel_aes_encrypt_cbc_128):
+ 	testl	%r9d, %r9d
+ 	je	2f
+ 
+-//	leaq	IV_OFFSET(%rdi), %rdx
+-	leaq	256(%rdi), %rdx
++	leaq	IV_OFFSET(%rdi), %rdx
+ 
+ 	movdqu	(%rdx), %xmm0
+ 	movdqu	(%rdi), %xmm2
+@@ -597,8 +602,7 @@ cdecl(intel_aes_encrypt_cbc_128):
+ 	.globl cdecl(intel_aes_decrypt_cbc_128)
+ 	.balign	16
+ cdecl(intel_aes_decrypt_cbc_128):
+-//	leaq	IV_OFFSET(%rdi), %rdx
+-	leaq	256(%rdi), %rdx
++	leaq	IV_OFFSET(%rdi), %rdx
+ 
+ 	movdqu	(%rdx), %xmm0   /* iv */
+ 	movdqu	(%rdi), %xmm2   /* first key block */
+@@ -1358,8 +1362,7 @@ cdecl(intel_aes_encrypt_cbc_192):
+ 	testl	%r9d, %r9d
+ 	je	2f
+ 
+-//	leaq	IV_OFFSET(%rdi), %rdx
+-	leaq	256(%rdi), %rdx
++	leaq	IV_OFFSET(%rdi), %rdx
+ 
+ 	movdqu	(%rdx), %xmm0
+ 	movdqu	(%rdi), %xmm2
+@@ -1423,8 +1426,7 @@ cdecl(intel_aes_encrypt_cbc_192):
+ 	.globl cdecl(intel_aes_decrypt_cbc_192)
+ 	.balign	16
+ cdecl(intel_aes_decrypt_cbc_192):
+-//	leaq	IV_OFFSET(%rdi), %rdx
+-	leaq	256(%rdi), %rdx
++	leaq	IV_OFFSET(%rdi), %rdx
+ 
+ 	movdqu	(%rdx), %xmm0
+ 	movdqu	(%rdi), %xmm2
+@@ -2264,8 +2266,7 @@ cdecl(intel_aes_encrypt_cbc_256):
+ 	testl	%r9d, %r9d
+ 	je	2f
+ 
+-//	leaq	IV_OFFSET(%rdi), %rdx
+-	leaq	256(%rdi), %rdx
++	leaq	IV_OFFSET(%rdi), %rdx
+ 
+ 	movdqu	(%rdx), %xmm0
+ 	movdqu	(%rdi), %xmm8
+@@ -2334,8 +2335,7 @@ cdecl(intel_aes_encrypt_cbc_256):
+ 	.globl cdecl(intel_aes_decrypt_cbc_256)
+ 	.balign	16
+ cdecl(intel_aes_decrypt_cbc_256):
+-//	leaq	IV_OFFSET(%rdi), %rdx
+-	leaq	256(%rdi), %rdx
++	leaq	IV_OFFSET(%rdi), %rdx
+ 
+ 	movdqu	(%rdx), %xmm0
+ 	movdqu	(%rdi), %xmm2
+
+
+--- firefox-153.0/security/nss/lib/freebl/rijndael.c.vanilla	2026-07-26 17:28:10.377561489 +0200
++++ firefox-153.0/security/nss/lib/freebl/rijndael.c	2026-07-26 17:28:10.377975533 +0200
+@@ -878,6 +878,13 @@ FREEBL_CIPHER_WRAP(platform_AES_GCMConte
+ 
+ #if defined(USE_HW_AES)
+ #if defined(NSS_X86_OR_X64)
++/* The cbc entry points in intel-aes.S reach AESContext.iv through a hardcoded
++ * IV_OFFSET, which shifts with the width of the worker pointer ahead of it. */
++#ifdef __ILP32__
++PR_STATIC_ASSERT(offsetof(AESContext, iv) == 252);
++#else
++PR_STATIC_ASSERT(offsetof(AESContext, iv) == 256);
++#endif
+ FREEBL_CIPHER_WRAP(AESContext, intel_aes_encrypt_ecb_128);
+ FREEBL_CIPHER_WRAP(AESContext, intel_aes_decrypt_ecb_128);
+ FREEBL_CIPHER_WRAP(AESContext, intel_aes_encrypt_cbc_128);
+--- firefox-153.0/third_party/zstd/lib/common/portability_macros.h.vanilla	2026-07-26 17:28:10.378326056 +0200
++++ firefox-153.0/third_party/zstd/lib/common/portability_macros.h	2026-07-26 17:28:10.378664587 +0200
+@@ -139,10 +139,13 @@
+  * - We are compiling for x86-64 and either:
+  *   - DYNAMIC_BMI2 is enabled
+  *   - BMI2 is supported at compile time
++ *
++ * The loop reads HUF_DecompressFastArgs with a hardcoded 8-byte stride, so it
++ * is unusable under ILP32 (x32), where the pointer members are 4 bytes wide.
+  */
+ #if !defined(ZSTD_DISABLE_ASM) &&                                 \
+     ZSTD_ASM_SUPPORTED &&                                         \
+-    defined(__x86_64__) &&                                        \
++    defined(__x86_64__) && !defined(__ILP32__) &&                 \
+     (DYNAMIC_BMI2 || defined(__BMI2__))
+ # define ZSTD_ENABLE_ASM_X86_64_BMI2 1
+ #else
