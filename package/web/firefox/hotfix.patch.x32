@@ -353,3 +353,31 @@ Start x32 by disabling x86 assembly, needs more bits e.g. xpcom, old patches:
    volatile uintptr_t block[3];
    static_assert(sizeof(block) == 24);
    __asm__ __volatile__(
+
+NS_InvokeByIndex hardcodes the LP64 vtable layout: an 8 byte slot stride, an
+8 byte load of the vtable pointer and an 8 byte indirect call through memory.
+On x32 the vtable pointer and every slot are 4 bytes, so the 8 byte load picks
+up the following object member as the high half of the vtable address and the
+call faults. Segfault seen in every XPConnect call into native code.
+
+--- firefox-153.0/xpcom/reflect/xptcall/md/unix/xptcinvoke_asm_x86_64_unix.S.vanilla
++++ firefox-153.0/xpcom/reflect/xptcall/md/unix/xptcinvoke_asm_x86_64_unix.S
+@@ -96,9 +96,18 @@ SYM(NS_InvokeByIndex):
+   add rsp, 112
+ 
+ # load the function pointer and call
++#ifdef __ILP32__
++# On x32 the vtable pointer and every vtable slot are 4 bytes wide, and an
++# indirect call through memory would read 8, so load the target explicitly.
++  lea eax, [r13d * 4]
++  add eax, [rdi]
++  mov eax, [eax]
++  call rax
++#else
+   lea eax, [r13d * 8]
+   add rax, [rdi]
+   call [rax]
++#endif
+ 
+ # r12 and r13 were pushed relative to the old stack pointer which is now the
+ # frame pointer.
