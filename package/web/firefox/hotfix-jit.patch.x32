@@ -1,3 +1,9 @@
+# --- T2-COPYRIGHT-BEGIN ---
+# t2/package/*/firefox/hotfix-jit.patch.x32
+# Copyright (C) 2026 The T2 SDE Project
+# SPDX-License-Identifier: GPL-2.0 or patched project license
+# --- T2-COPYRIGHT-END ---
+
 --- firefox-153.0/js/moz.configure
 +++ firefox-153.0/js/moz.configure
 @@ -57,8 +57,28 @@ set_config("JS_DISABLE_SHELL", js_disabl
@@ -33,36 +39,6 @@
  # SpiderMonkey as a shared library, and how its symbols are exported
 --- firefox-153.0/js/public/Value.h
 +++ firefox-153.0/js/public/Value.h
-@@ -312,9 +312,27 @@ static_assert(
-     "ValueObjectOrNullBit must be consistent with object and null tags");
- 
- constexpr uint64_t IsValidUserModePointer(uint64_t bits) {
--  // All 64-bit platforms that we support actually have a 48-bit address space
--  // for user-mode pointers, with the top 16 bits all set to zero.
-+#ifdef __ia64__
-+  // ia64 uses region-based addressing: bits 61-63 select the region, and the
-+  // offset within a region is a full 61 bits. Unlike every other platform we
-+  // support, Linux/ia64 does not keep that offset small -- the stack sits at
-+  // the *top* of region 3 (e.g. 0x600f'ffff'ffa6'dbf4), so bits 47-60 are set
-+  // on any stack address.
-+  //
-+  // That is fine here: this predicate guards nothing but setPrivate/toPrivate,
-+  // whose only requirement is that the stored word stay distinguishable from a
-+  // NaN-boxed double -- which both callers already assert directly, via
-+  // isDouble(). It never validates GC-thing pointers, so SpiderMonkey's 47-bit
-+  // packing limit does not apply. Every Linux/ia64 user-mode address is below
-+  // 0xa000'0000'0000'0000 (region 5 and up belong to the kernel), hence below
-+  // JSVAL_SHIFTED_TAG_MAX_DOUBLE, so accept the full region-tagged width.
-+  return bits <= JSVAL_SHIFTED_TAG_MAX_DOUBLE;
-+#else
-+  // All other 64-bit platforms that we support actually have a 48-bit
-+  // address space for user-mode pointers, with the top 16 bits all set to
-+  // zero.
-   return (bits & 0xFFFF'0000'0000'0000) == 0;
-+#endif
- }
- 
- #endif /* JS_PUNBOX64 */
 @@ -539,6 +557,12 @@ class Value {
      return (uint64_t(tag) << JSVAL_TAG_SHIFT) | payload;
    }
@@ -1013,7 +989,18 @@
    if (MWasmRegisterResult* mir = lir->mir()) {
      if (mir->type() == MIRType::Int32) {
        masm.widenInt32(ToRegister(lir->output()));
-@@ -11119,7 +11133,7 @@ void CodeGenerator::visitWasmLoadSlotI64
+@@ -10882,7 +10896,9 @@ void CodeGenerator::visitWasmStoreStackR
+       break;
+ #endif
+     case MIRType::WasmAnyRef:
+-      masm.storePtr(ToRegister(value), addr);
++      // The slot is ABIResult::StackSizeOfPtr wide and is read back with a
++      // general move, which carries a whole stack word.
++      StoreJitStackWord(masm, ToRegister(value), addr);
+       break;
+     default:
+       MOZ_CRASH("unexpected type in ::visitWasmStoreStackResult");
+@@ -11119,7 +11135,7 @@ void CodeGenerator::visitWasmLoadSlotI64
    // Either 1 or 2 words.  On a 32-bit target, it is hard to argue that one
    // transaction will always trap before the other, so it seems safest to
    // register both of them as potentially trapping.
@@ -1022,7 +1009,7 @@
    FaultingCodeOffset fco = masm.load64(addr, output);
    EmitSignalNullCheckTrapSite(masm, ins, fco, wasm::TrapMachineInsn::Load64);
  #else
-@@ -11139,7 +11153,7 @@ void CodeGenerator::visitWasmLoadElement
+@@ -11139,7 +11155,7 @@ void CodeGenerator::visitWasmLoadElement
    // Either 1 or 2 words.  On a 32-bit target, it is hard to argue that one
    // transaction will always trap before the other, so it seems safest to
    // register both of them as potentially trapping.
@@ -1031,7 +1018,7 @@
    FaultingCodeOffset fco = masm.load64(addr, output);
    EmitSignalNullCheckTrapSite(masm, ins, fco, wasm::TrapMachineInsn::Load64);
  #else
-@@ -11157,7 +11171,7 @@ void CodeGenerator::visitWasmStoreSlotI6
+@@ -11157,7 +11173,7 @@ void CodeGenerator::visitWasmStoreSlotI6
    Register64 value = ToRegister64(ins->value());
    // Either 1 or 2 words.  As above we register both transactions in the
    // 2-word case.
@@ -1040,7 +1027,7 @@
    FaultingCodeOffset fco = masm.store64(value, addr);
    EmitSignalNullCheckTrapSite(masm, ins, fco, wasm::TrapMachineInsn::Store64);
  #else
-@@ -11176,7 +11190,7 @@ void CodeGenerator::visitWasmStoreElemen
+@@ -11176,7 +11192,7 @@ void CodeGenerator::visitWasmStoreElemen
    Register64 value = ToRegister64(ins->value());
    // Either 1 or 2 words.  As above we register both transactions in the
    // 2-word case.
@@ -1049,7 +1036,7 @@
    FaultingCodeOffset fco = masm.store64(value, addr);
    EmitSignalNullCheckTrapSite(masm, ins, fco, wasm::TrapMachineInsn::Store64);
  #else
-@@ -11460,7 +11474,7 @@ void CodeGenerator::visitGuardNumberToIn
+@@ -11460,7 +11476,7 @@ void CodeGenerator::visitGuardNumberToIn
  
    auto* ool = new (alloc()) LambdaOutOfLineCode([=, this](OutOfLineCode& ool) {
      // Substitute the invalid index with an arbitrary out-of-bounds index.
@@ -1058,7 +1045,7 @@
      masm.jump(ool.rejoin());
    });
    addOutOfLineCode(ool, lir->mir());
-@@ -14211,10 +14225,11 @@ void JitRuntime::generateInterpreterStub
+@@ -14211,10 +14227,11 @@ void JitRuntime::generateInterpreterStub
    masm.pop(FramePointer);
  
    // InvokeFromInterpreterStub stores the return value in argv[0], where the
@@ -1073,7 +1060,7 @@
                   JSReturnOperand);
    masm.ret();
  }
-@@ -16726,14 +16741,14 @@ static bool CreateStackMapFromLSafepoint
+@@ -16726,14 +16743,14 @@ static bool CreateStackMapFromLSafepoint
      case WasmSafepointKind::LirCall:
      case WasmSafepointKind::StackSwitch:
      case WasmSafepointKind::CodegenCall: {
@@ -1090,7 +1077,7 @@
          MOZ_ASSERT(0 < offsetFromSpillBase &&
                     offsetFromSpillBase <= spilledNumWords);
          size_t index = spilledNumWords - offsetFromSpillBase;
-@@ -21213,7 +21228,7 @@ void CodeGenerator::visitWasmAlignmentCh
+@@ -21213,7 +21230,7 @@ void CodeGenerator::visitWasmAlignmentCh
  void CodeGenerator::visitWasmAlignmentCheck64(LWasmAlignmentCheck64* ins) {
    const MWasmAlignmentCheck* mir = ins->mir();
    Register64 ptr = ToRegister64(ins->ptr());
@@ -1099,7 +1086,7 @@
    Register r = ptr.reg;
  #else
    Register r = ptr.low;
-@@ -23022,7 +23037,7 @@ void CodeGenerator::visitWasmI31RefGet(L
+@@ -23022,7 +23039,7 @@ void CodeGenerator::visitWasmI31RefGet(L
    }
  }
  
@@ -1108,7 +1095,7 @@
  void CodeGenerator::visitWasmAddSubI128HI64(LWasmAddSubI128HI64* lir) {
    Register lhsLo = ToRegister(lir->lhsLo());
    Register lhsHi = ToRegister(lir->lhsHi());
-@@ -23036,7 +23051,7 @@ void CodeGenerator::visitWasmAddSubI128H
+@@ -23036,7 +23053,7 @@ void CodeGenerator::visitWasmAddSubI128H
  }
  #endif
  
@@ -3812,7 +3799,47 @@
  }
  
  const int32_t SlowCallMarker = 0x00ce8349;  // OR r14, 0
-@@ -2138,7 +2180,7 @@ void MacroAssemblerX64::minMaxPtr(Regist
+@@ -1898,7 +1940,8 @@ void MacroAssemblerX64::cmpMove(Conditio
+     cmp32(lhs, rhs);
+   } else {
+     static_assert(CmpSize == 64);
+-    cmpPtr(lhs, rhs);
++    // A 64-bit compare, which cmpPtr is not under the x32 ABI.
++    cmpq(rhs, lhs);
+   }
+   if constexpr (MoveSize == 32) {
+     cmovCCl(cond, Operand(falseVal), trueValAndDest);
+@@ -1934,7 +1977,8 @@ void MacroAssemblerX64::cmpMove(Conditio
+     cmp32(lhs, Operand(rhs));
+   } else {
+     static_assert(CmpSize == 64);
+-    cmpPtr(lhs, Operand(rhs));
++    // A 64-bit compare, which cmpPtr is not under the x32 ABI.
++    cmpq(Operand(rhs), lhs);
+   }
+   if constexpr (MoveSize == 32) {
+     cmovCCl(cond, Operand(falseVal), trueValAndDest);
+@@ -1970,7 +2014,8 @@ void MacroAssemblerX64::cmpLoad(Conditio
+     cmp32(lhs, rhs);
+   } else {
+     static_assert(CmpSize == 64);
+-    cmpPtr(lhs, rhs);
++    // A 64-bit compare, which cmpPtr is not under the x32 ABI.
++    cmpq(rhs, lhs);
+   }
+   if constexpr (LoadSize == 32) {
+     cmovCCl(cond, Operand(falseVal), trueValAndDest);
+@@ -2006,7 +2051,8 @@ void MacroAssemblerX64::cmpLoad(Conditio
+     cmp32(lhs, Operand(rhs));
+   } else {
+     static_assert(CmpSize == 64);
+-    cmpPtr(lhs, Operand(rhs));
++    // A 64-bit compare, which cmpPtr is not under the x32 ABI.
++    cmpq(Operand(rhs), lhs);
+   }
+   if constexpr (LoadSize == 32) {
+     cmovCCl(cond, Operand(falseVal), trueValAndDest);
+@@ -2138,7 +2184,7 @@ void MacroAssemblerX64::minMaxPtr(Regist
    if (lhs != dest) {
      movq(lhs, dest);
    }
@@ -4558,7 +4585,26 @@
      }
 --- firefox-153.0/js/src/jit/x86-shared/CodeGenerator-x86-shared.cpp
 +++ firefox-153.0/js/src/jit/x86-shared/CodeGenerator-x86-shared.cpp
-@@ -1894,7 +1894,7 @@ void CodeGeneratorX86Shared::emitTableSw
+@@ -231,10 +231,17 @@ void CodeGenerator::visitCompareFAndBran
+ void CodeGenerator::visitWasmStackArg(LWasmStackArg* ins) {
+   const MWasmStackArg* mir = ins->mir();
+   Address dst(StackPointer, mir->spOffset());
++  // A general-purpose argument occupies a whole stack word and a reference or
++  // stack-results pointer is read back from it with a general move, which is
++  // wider than a pointer under the x32 ABI.
+   if (ins->arg()->isConstant()) {
++#if defined(JS_CODEGEN_X64) && !defined(JS_64BIT)
++    masm.store64(Imm64(ToInt32(ins->arg())), dst);
++#else
+     masm.storePtr(ImmWord(ToInt32(ins->arg())), dst);
++#endif
+   } else if (ins->arg()->isGeneralReg()) {
+-    masm.storePtr(ToRegister(ins->arg()), dst);
++    StoreJitStackWord(masm, ToRegister(ins->arg()), dst);
+   } else {
+     switch (mir->input()->type()) {
+       case MIRType::Double:
+@@ -1894,7 +1901,7 @@ void CodeGeneratorX86Shared::emitTableSw
  
    // Compute the position where a pointer to the right case stands.
    masm.mov(ool->jumpLabel(), base);
@@ -5285,7 +5331,44 @@
  #elif defined(JS_CODEGEN_ARM)
    // Flush constant pools: offset must reflect the distance from the MOV
    // to the start of the table; as the address of the MOV is given by the
-@@ -3002,7 +3004,7 @@ static void ShrUImmI64(MacroAssembler& m
+@@ -1736,8 +1738,8 @@ void BaseCompiler::passArg(ValType type,
+         ScratchI32 scratch(*this);
+ #ifdef JS_PUNBOX64
+         loadI64(arg, fromI32(scratch));
+-        masm.storePtr(scratch, Address(masm.getStackPointer(),
+-                                       argLoc.offsetFromArgBase()));
++        masm.store64(Register64(scratch), Address(masm.getStackPointer(),
++                                                  argLoc.offsetFromArgBase()));
+ #else
+         loadI64Low(arg, scratch);
+         masm.store32(scratch, LowWord(Address(masm.getStackPointer(),
+@@ -1852,8 +1854,11 @@ void BaseCompiler::passArg(ValType type,
+       if (argLoc.kind() == ABIArg::Stack) {
+         ScratchRef scratch(*this);
+         loadRef(arg, scratch);
+-        masm.storePtr(scratch, Address(masm.getStackPointer(),
+-                                       argLoc.offsetFromArgBase()));
++        // The slot is a whole stack word and the callee may read it with a
++        // general move, which is wider than a pointer under the x32 ABI.
++        StoreJitStackWord(masm, scratch,
++                          Address(masm.getStackPointer(),
++                                  argLoc.offsetFromArgBase()));
+       } else {
+         loadRef(arg, RegRef(argLoc.gpr()));
+       }
+@@ -1892,8 +1897,9 @@ bool BaseCompiler::emitCallArgs(const Va
+       if (argLoc.kind() == ABIArg::Stack) {
+         ScratchPtr scratch(*this);
+         results.getStackResultArea(fr, scratch);
+-        masm.storePtr(scratch, Address(masm.getStackPointer(),
+-                                       argLoc.offsetFromArgBase()));
++        StoreJitStackWord(masm, scratch,
++                          Address(masm.getStackPointer(),
++                                  argLoc.offsetFromArgBase()));
+       } else {
+         results.getStackResultArea(fr, RegPtr(argLoc.gpr()));
+       }
+@@ -3002,7 +3008,7 @@ static void ShrUImmI64(MacroAssembler& m
  
  static void EqzI64(MacroAssembler& masm, RegI64 rs, RegI32 rd) {
  #ifdef JS_PUNBOX64
@@ -5294,7 +5377,7 @@
  #else
    MOZ_ASSERT(rs.low == rd);
    masm.or32(rs.high, rs.low);
-@@ -6548,7 +6550,14 @@ bool BaseCompiler::emitInstanceCall(cons
+@@ -6548,7 +6554,14 @@ bool BaseCompiler::emitInstanceCall(cons
          // Instance function args can now be uninterpreted pointers (eg, for
          // the cases PostBarrier and PostBarrierFilter) so we simply treat
          // them like the equivalently sized integer.
@@ -5310,7 +5393,7 @@
          break;
        default:
          MOZ_CRASH("Unexpected type");
-@@ -7209,7 +7218,7 @@ bool BaseCompiler::emitI64AddSub128(bool
+@@ -7209,7 +7222,7 @@ bool BaseCompiler::emitI64AddSub128(bool
      return true;
    }
  
@@ -5319,7 +5402,7 @@
    // All 64-bit targets.  Produce inline code.
    RegI64 temp = needI64();
    RegI64 xHi, xLo, yHi, yLo;
-@@ -7273,7 +7282,7 @@ bool BaseCompiler::emitI64AddSub128(bool
+@@ -7273,7 +7286,7 @@ bool BaseCompiler::emitI64AddSub128(bool
    pushI64(reg64);  // zHi
  
    freePtr(instance);
@@ -5328,7 +5411,7 @@
  
    return true;
  }
-@@ -7312,7 +7321,7 @@ bool BaseCompiler::emitI64MulWide(bool i
+@@ -7312,7 +7325,7 @@ bool BaseCompiler::emitI64MulWide(bool i
    free(x);
    free(y);
  
@@ -5337,7 +5420,7 @@
    // All other 64-bit targets.  Produce inline code.  We need just one
    // temporary.
    RegI64 y = popI64();
-@@ -7370,7 +7379,7 @@ bool BaseCompiler::emitI64MulWide(bool i
+@@ -7370,7 +7383,7 @@ bool BaseCompiler::emitI64MulWide(bool i
    pushI64(reg64);  // zHi
  
    freePtr(instance);
@@ -5346,7 +5429,7 @@
  
    return true;
  }
-@@ -7712,7 +7721,7 @@ void BaseCompiler::emitGcGet(StorageType
+@@ -7712,7 +7725,7 @@ void BaseCompiler::emitGcGet(StorageType
      case StorageType::I64: {
        MOZ_ASSERT(wideningOp == FieldWideningOp::None);
        RegI64 r = needI64();
@@ -5355,7 +5438,7 @@
        FaultingCodeOffset fco = masm.load64(src, r);
        NullCheckPolicy::emitTrapSite(this, fco, TrapMachineInsn::Load64);
  #else
-@@ -7783,7 +7792,7 @@ void BaseCompiler::emitGcSetScalar(const
+@@ -7783,7 +7796,7 @@ void BaseCompiler::emitGcSetScalar(const
        break;
      }
      case StorageType::I64: {
@@ -5364,7 +5447,7 @@
        FaultingCodeOffset fco = masm.store64(value.i64(), dst);
        NullCheckPolicy::emitTrapSite(this, fco, TrapMachineInsn::Store64);
  #else
-@@ -8940,7 +8949,7 @@ bool BaseCompiler::emitArrayFill() {
+@@ -8940,7 +8953,7 @@ bool BaseCompiler::emitArrayFill() {
      masm.lshift32(Imm32(shift), index);
      // `index` is a 32 bit value, so we must zero-extend it to 64 bits before
      // adding it on to `rdata`.
@@ -5464,6 +5547,20 @@
                "There are only two additional slots");
  
  #if defined(JS_CODEGEN_ARM64)
+--- firefox-153.0/js/src/wasm/WasmFrameIter.cpp
++++ firefox-153.0/js/src/wasm/WasmFrameIter.cpp
+@@ -1371,7 +1371,10 @@ void wasm::GenerateExitEpilogue(MacroAss
+   // Restore the original stack pointer before we had dynamically aligned it.
+   if (alignment == ExitFrameAlignment::Dynamic) {
+ #ifndef JS_CODEGEN_ARM64
+-    masm.pop(scratch1);
++    // The prologue saved the pointer with storePtr, so read it back at pointer
++    // width: a machine pop would read a whole stack word, which is wider than a
++    // pointer under the x32 ABI.
++    masm.loadPtr(Address(masm.getStackPointer(), 0), scratch1);
+     masm.moveToStackPtr(scratch1);
+ #endif
+   }
 --- firefox-153.0/js/src/wasm/WasmSignalHandlers.cpp
 +++ firefox-153.0/js/src/wasm/WasmSignalHandlers.cpp
 @@ -19,6 +19,8 @@
