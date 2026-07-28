@@ -1,0 +1,137 @@
+# --- T2-COPYRIGHT-BEGIN ---
+# t2/package/*/krdc/hotfix-vnc-resize.patch
+# Copyright (C) 2026 The T2 SDE Project
+# SPDX-License-Identifier: GPL-2.0 or patched project license
+# --- T2-COPYRIGHT-END ---
+
+diff -pruN krdc-26.04.3.orig/vnc/vncclientthread.cpp krdc-26.04.3/vnc/vncclientthread.cpp
+--- krdc-26.04.3.orig/vnc/vncclientthread.cpp	2026-06-26 21:55:52.000000000 +0200
++++ krdc-26.04.3/vnc/vncclientthread.cpp	2026-07-28 15:24:54.731025307 +0200
+@@ -193,12 +193,36 @@ rfbBool VncClientThread::newclient()
+     if (size <= 0) {
+         return false;
+     }
+-    if (frameBuffer)
+-        delete[] frameBuffer; // do not leak if we get a new framebuffer size
++
++    // Called again on an established connection whenever the server announces a new
++    // framebuffer size via the DesktopSize (-223) or ExtendedDesktopSize (-308) pseudo
++    // encoding. m_frameBufferSize is reset in clientDestroy(), so a reconnect with a
++    // different size is not mistaken for a resize.
++    const bool resized = m_frameBufferSize.isValid() && m_frameBufferSize != QSize(width, height);
++
++    // The QImage handed to the view wraps frameBuffer without copying it, so the old
++    // buffer must stay alive until the view has picked up an image of the new size.
++    delete[] m_retiredFrameBuffer;
++    m_retiredFrameBuffer = frameBuffer;
++
+     frameBuffer = new uint8_t[size];
+     cl->frameBuffer = frameBuffer;
+     memset(cl->frameBuffer, '\0', size);
+ 
++    m_frameBufferSize = QSize(width, height);
++    m_dirtyRect = QRect(0, 0, width, height);
++
++    if (resized) {
++        qCDebug(KRDC) << "Server resized the desktop to" << m_frameBufferSize;
++        // Pixel format and encodings are unchanged, resending them in the middle of an
++        // update would desynchronize pixels the server has already queued. Only request
++        // the resized screen: libvncclient does that for DesktopSize but not for
++        // ExtendedDesktopSize.
++        QMutexLocker locker(&mutex);
++        m_eventQueue.enqueue(new FramebufferUpdateEvent);
++        return true;
++    }
++
+     switch (quality()) {
+     case RemoteView::High:
+         cl->appData.encodingsString = "copyrect zlib hextile raw";
+@@ -265,6 +289,10 @@ void VncClientThread::updatefbFinished()
+ 
+     //    qCDebug(KRDC) << Q_FUNC_INFO << updateRect;
+     emitUpdated(updateRect.x(), updateRect.y(), updateRect.width(), updateRect.height());
++
++    // The view took the new image (blocking connection), so the old buffer is unreferenced.
++    delete[] m_retiredFrameBuffer;
++    m_retiredFrameBuffer = nullptr;
+ }
+ 
+ void VncClientThread::cuttext(const char *text, int textlen, bool utf8)
+@@ -381,6 +409,7 @@ VncClientThread::VncClientThread(QObject
+     , frameBuffer(nullptr)
+     , cl(nullptr)
+     , m_devicePixelRatio(1.0)
++    , m_retiredFrameBuffer(nullptr)
+ {
+     // We choose a small value for interval...after all if the connection is
+     // supposed to sustain a VNC session, a reasonably frequent ping should
+@@ -411,6 +440,7 @@ VncClientThread::~VncClientThread()
+     clientDestroy();
+ 
+     delete[] frameBuffer;
++    delete[] m_retiredFrameBuffer;
+ }
+ 
+ void VncClientThread::checkOutputErrorMessage()
+@@ -604,6 +634,8 @@ bool VncClientThread::clientCreate(bool
+     cl = rfbGetClient(8, 3, 4);
+     setClientColorDepth(cl, this->colorDepth());
+     cl->MallocFrameBuffer = newclientStatic;
++    // makes libvncclient request the DesktopSize (-223) pseudo encoding, so servers such
++    // as QEMU announce guest resolution changes instead of keeping the initial geometry
+     cl->canHandleNewFBSize = true;
+     cl->GetPassword = passwdHandlerStatic;
+     cl->GetCredential = credentialHandlerStatic;
+@@ -653,6 +685,7 @@ void VncClientThread::clientDestroy()
+         rfbClientCleanup(cl);
+         cl = nullptr;
+     }
++    m_frameBufferSize = QSize();
+ }
+ 
+ /**
+diff -pruN krdc-26.04.3.orig/vnc/vncclientthread.h krdc-26.04.3/vnc/vncclientthread.h
+--- krdc-26.04.3.orig/vnc/vncclientthread.h	2026-06-26 21:55:52.000000000 +0200
++++ krdc-26.04.3/vnc/vncclientthread.h	2026-07-28 15:24:54.731060020 +0200
+@@ -200,6 +200,11 @@ private:
+ 
+     QRect m_dirtyRect;
+ 
++    // Current remote framebuffer geometry, used to detect DesktopSize changes.
++    QSize m_frameBufferSize;
++    // Previous framebuffer, kept alive until the view picked up the resized image.
++    uint8_t *m_retiredFrameBuffer;
++
+     volatile bool m_passwordError;
+ 
+     /**
+diff -pruN krdc-26.04.3.orig/vnc/vncview.cpp krdc-26.04.3/vnc/vncview.cpp
+--- krdc-26.04.3.orig/vnc/vncview.cpp	2026-06-26 21:55:52.000000000 +0200
++++ krdc-26.04.3/vnc/vncview.cpp	2026-07-28 15:24:54.731072229 +0200
+@@ -306,9 +306,12 @@ void VncView::updateImage(int x, int y,
+         }
+     }
+ 
++    // The remote desktop size changed (DesktopSize/ExtendedDesktopSize pseudo encoding),
++    // or this is the first frame of the session.
+     const QSize frameSize = m_frame.size() / m_frame.devicePixelRatio();
+-    if ((y == 0 && x == 0) && (frameSize != size())) {
+-        qCDebug(KRDC) << "Updating framebuffer size";
++    if (frameSize != m_framebufferSize) {
++        qCDebug(KRDC) << "Updating framebuffer size from" << m_framebufferSize << "to" << frameSize;
++        m_framebufferSize = frameSize;
+         if (m_scale) {
+             setMaximumSize(QSize(QWIDGETSIZE_MAX, QWIDGETSIZE_MAX));
+             if (parentWidget())
+diff -pruN krdc-26.04.3.orig/vnc/vncview.h krdc-26.04.3/vnc/vncview.h
+--- krdc-26.04.3.orig/vnc/vncview.h	2026-06-26 21:55:52.000000000 +0200
++++ krdc-26.04.3/vnc/vncview.h	2026-07-28 15:24:54.731084130 +0200
+@@ -68,6 +68,8 @@ private:
+     int m_wheelRemainderH;
+     VncHostPreferences *m_hostPreferences;
+     QImage m_frame;
++    // Last framebuffer size seen, to detect remote DesktopSize changes.
++    QSize m_framebufferSize;
+     bool m_forceLocalCursor;
+ 
+ private Q_SLOTS:
