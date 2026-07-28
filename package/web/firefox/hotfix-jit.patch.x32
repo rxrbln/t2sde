@@ -1,9 +1,3 @@
-# --- T2-COPYRIGHT-BEGIN ---
-# t2/package/*/firefox/hotfix-jit.patch.x32
-# Copyright (C) 2026 The T2 SDE Project
-# SPDX-License-Identifier: GPL-2.0 or patched project license
-# --- T2-COPYRIGHT-END ---
-
 --- firefox-153.0/js/moz.configure
 +++ firefox-153.0/js/moz.configure
 @@ -57,8 +57,28 @@ set_config("JS_DISABLE_SHELL", js_disabl
@@ -1060,24 +1054,17 @@
                   JSReturnOperand);
    masm.ret();
  }
-@@ -16726,14 +16743,14 @@ static bool CreateStackMapFromLSafepoint
+@@ -16726,6 +16743,9 @@ static bool CreateStackMapFromLSafepoint
      case WasmSafepointKind::LirCall:
      case WasmSafepointKind::StackSwitch:
      case WasmSafepointKind::CodegenCall: {
--      size_t spilledNumWords = nRegisterDumpBytes / sizeof(void*);
-+      size_t spilledNumWords = nRegisterDumpBytes / JitStackWordSize;
++      // The stackmap is indexed in pointer-sized words, while a spill slot is
++      // a whole stack word: under the x32 ABI those differ, and
++      // offsetOfPushedRegister already accounts for the wider slot.
+       size_t spilledNumWords = nRegisterDumpBytes / sizeof(void*);
        regDumpWords += spilledNumWords;
  
-       for (; refRegsIter.more(); ++refRegsIter) {
-         Register reg = *refRegsIter;
-         size_t offsetFromSpillBase =
-             safepoint.liveRegs().gprs().offsetOfPushedRegister(reg) /
--            sizeof(void*);
-+            JitStackWordSize;
-         MOZ_ASSERT(0 < offsetFromSpillBase &&
-                    offsetFromSpillBase <= spilledNumWords);
-         size_t index = spilledNumWords - offsetFromSpillBase;
-@@ -21213,7 +21230,7 @@ void CodeGenerator::visitWasmAlignmentCh
+@@ -21213,7 +21233,7 @@ void CodeGenerator::visitWasmAlignmentCh
  void CodeGenerator::visitWasmAlignmentCheck64(LWasmAlignmentCheck64* ins) {
    const MWasmAlignmentCheck* mir = ins->mir();
    Register64 ptr = ToRegister64(ins->ptr());
@@ -1086,7 +1073,7 @@
    Register r = ptr.reg;
  #else
    Register r = ptr.low;
-@@ -23022,7 +23039,7 @@ void CodeGenerator::visitWasmI31RefGet(L
+@@ -23022,7 +23042,7 @@ void CodeGenerator::visitWasmI31RefGet(L
    }
  }
  
@@ -1095,7 +1082,7 @@
  void CodeGenerator::visitWasmAddSubI128HI64(LWasmAddSubI128HI64* lir) {
    Register lhsLo = ToRegister(lir->lhsLo());
    Register lhsHi = ToRegister(lir->lhsHi());
-@@ -23036,7 +23053,7 @@ void CodeGenerator::visitWasmAddSubI128H
+@@ -23036,7 +23056,7 @@ void CodeGenerator::visitWasmAddSubI128H
  }
  #endif
  
@@ -1816,6 +1803,24 @@
    LWasmStoreInstanceScratch2xI32* lir = new (alloc())
        LWasmStoreInstanceScratch2xI32(useInt64Register(ins->value()),
                                       useRegister(ins->instance()),
+@@ -8919,7 +8919,7 @@ void LIRGenerator::visitWasmNewArrayObje
+ }
+ 
+ void LIRGenerator::visitWasmAddSubI128HI64(MWasmAddSubI128HI64* ins) {
+-#ifdef JS_64BIT
++#if JS_64BIT_REGISTERS
+   // Don't change any of the operands to the `useRegisterAtStart` variant,
+   // since some of the operands are used multiple times within the LIR.
+   LWasmAddSubI128HI64* lir = new (alloc()) LWasmAddSubI128HI64(
+@@ -8942,7 +8942,7 @@ void LIRGenerator::visitWasmMulI64WideHI
+       LWasmMulI64WideHI64(useFixed(ins->lhs(), rax), useFixed(ins->rhs(), rdx),
+                           temp(), temp(), ins->isSigned());
+   define(lir, ins);
+-#elif defined(JS_64BIT)
++#elif JS_64BIT_REGISTERS
+   // All other 64-bit targets
+   LWasmMulI64WideHI64* lir = new (alloc()) LWasmMulI64WideHI64(
+       useRegister(ins->lhs()), useRegister(ins->rhs()), ins->isSigned());
 --- firefox-153.0/js/src/jit/MachineState.h
 +++ firefox-153.0/js/src/jit/MachineState.h
 @@ -93,6 +93,12 @@ class MOZ_STACK_CLASS MachineState {
@@ -5561,6 +5566,36 @@
      masm.moveToStackPtr(scratch1);
  #endif
    }
+--- firefox-153.0/js/src/wasm/WasmIonCompile.cpp
++++ firefox-153.0/js/src/wasm/WasmIonCompile.cpp
+@@ -8282,7 +8282,8 @@ bool FunctionCompiler::emitI64AddSub128(
+   MInstruction* zHi;
+   MInstruction* zLo;
+ 
+-#ifdef JS_64BIT
++// The inline form needs 64-bit registers, not 64-bit pointers.
++#if JS_64BIT_REGISTERS
+   // 64 bit implementation.  Produce inline code.
+   if (isAdd) {
+     zLo = MAdd::NewWasm(alloc(), xLo, yLo, MIRType::Int64);
+@@ -8335,7 +8336,7 @@ bool FunctionCompiler::emitI64AddSub128(
+     return false;
+   }
+   curBlock_->add(zHi);
+-#endif  // JS_64BIT
++#endif  // JS_64BIT_REGISTERS
+ 
+   DefVector results;
+   if (!results.reserve(2)) {
+@@ -8362,7 +8363,7 @@ bool FunctionCompiler::emitI64MulWide(bo
+   MInstruction* zLo;
+   MInstruction* zHi;
+ 
+-#ifdef JS_64BIT
++#if JS_64BIT_REGISTERS
+   // 64 bit implementation.  Produce inline code.
+ 
+   // We can compute the low and high halves in either order.  However, the
 --- firefox-153.0/js/src/wasm/WasmSignalHandlers.cpp
 +++ firefox-153.0/js/src/wasm/WasmSignalHandlers.cpp
 @@ -19,6 +19,8 @@
@@ -5631,7 +5666,30 @@
    GenPrintf(channel, masm, "i64 ");
    GenPrintIsize(channel, masm, src.reg);
  #  else
-@@ -554,7 +554,9 @@ static const LiveRegisterSet NonVolatile
+@@ -437,8 +437,11 @@ static void SetupABIArguments(MacroAssem
+             break;
+           }
+           case MIRType::WasmAnyRef:
++            // The callee may read the slot with a general move, which carries
++            // a whole stack word: wider than a pointer under the x32 ABI.
+             masm.loadPtr(src, scratch);
+-            masm.storePtr(scratch, Address(masm.getStackPointer(),
++            jit::StoreJitStackWord(masm, scratch,
++                                   Address(masm.getStackPointer(),
+                                            iter->offsetFromArgBase()));
+             break;
+           case MIRType::Double: {
+@@ -473,7 +476,8 @@ static void SetupABIArguments(MacroAssem
+           case MIRType::StackResults: {
+             MOZ_ASSERT(args.isSyntheticStackResultPointerArg(iter.index()));
+             masm.loadPtr(src, scratch);
+-            masm.storePtr(scratch, Address(masm.getStackPointer(),
++            jit::StoreJitStackWord(masm, scratch,
++                                   Address(masm.getStackPointer(),
+                                            iter->offsetFromArgBase()));
+             break;
+           }
+@@ -554,7 +558,9 @@ static const LiveRegisterSet NonVolatile
  #ifdef JS_CODEGEN_ARM64
  static const unsigned WasmPushSize = 16;
  #else
@@ -5642,7 +5700,7 @@
  #endif
  
  static void AssertExpectedSP(MacroAssembler& masm) {
-@@ -687,7 +689,8 @@ static bool GenerateInterpEntry(MacroAss
+@@ -687,7 +693,8 @@ static bool GenerateInterpEntry(MacroAss
    masm.assertStackAlignment(WasmStackAlignment);
  
    // Create a fake frame: just previous RA and an FP.
@@ -5652,7 +5710,7 @@
  #ifdef JS_CODEGEN_ARM64
    masm.Ldr(ARMRegister(ABINonArgReturnReg0, 64),
             MemOperand(ARMRegister(scratch, 64), nonVolatileRegsPushSize));
-@@ -712,13 +715,13 @@ static bool GenerateInterpEntry(MacroAss
+@@ -712,13 +719,13 @@ static bool GenerateInterpEntry(MacroAss
  #ifdef JS_CODEGEN_ARM64
    DebugOnly<size_t> fakeFramePushed = 0;
  #else
@@ -5668,7 +5726,7 @@
    ABIArgGenerator abi(ABIKind::System);
    ABIArg arg;
  
-@@ -887,7 +890,7 @@ static void GenerateBigIntInitialization
+@@ -887,7 +894,7 @@ static void GenerateBigIntInitialization
                                           unsigned bytesPushedByPrologue,
                                           Register64 input, Register scratch,
                                           const FuncExport& fe, Label* fail) {
@@ -5677,7 +5735,7 @@
    MOZ_ASSERT(input.low != scratch);
    MOZ_ASSERT(input.high != scratch);
  #else
-@@ -987,9 +990,9 @@ static bool GenerateJitEntry(MacroAssemb
+@@ -987,9 +994,9 @@ static bool GenerateJitEntry(MacroAssemb
    MOZ_ASSERT(masm.framePushed() == frameSize);
  
    // Initialize the ExitFooterFrame.
@@ -5690,7 +5748,7 @@
  
    GenerateJitEntryLoadInstance(masm);
  
-@@ -1168,7 +1171,7 @@ static bool GenerateJitEntry(MacroAssemb
+@@ -1168,7 +1175,7 @@ static bool GenerateJitEntry(MacroAssemb
          if (isStackArg) {
            Address dst(sp, iter->offsetFromArgBase());
            Register src = scratchV.payloadOrValueReg();
@@ -5699,7 +5757,17 @@
            Register64 scratch64(scratchG);
  #else
            Register64 scratch64(scratchG, ABINonArgReg3);
-@@ -1263,7 +1266,7 @@ static bool GenerateJitEntry(MacroAssemb
+@@ -1220,7 +1227,8 @@ static bool GenerateJitEntry(MacroAssemb
+         masm.bind(&join);
+         GenPrintPtr(DebugChannel::Function, masm, target);
+         if (isStackArg) {
+-          masm.storePtr(target, Address(sp, iter->offsetFromArgBase()));
++          jit::StoreJitStackWord(masm, target,
++                                 Address(sp, iter->offsetFromArgBase()));
+         }
+         break;
+       }
+@@ -1263,7 +1271,7 @@ static bool GenerateJitEntry(MacroAssemb
      switch (results[0].kind()) {
        case ValType::I32:
          GenPrintIsize(DebugChannel::Function, masm, ReturnReg);
@@ -5708,7 +5776,25 @@
          // boxNonDouble requires a widened int32 value.
          masm.widenInt32(ReturnReg);
  #endif
-@@ -1564,7 +1567,7 @@ void wasm::GenerateDirectCallFromJit(Mac
+@@ -1461,7 +1469,7 @@ void wasm::GenerateDirectCallFromJit(Mac
+         MOZ_ASSERT(stackArg.gpr() != scratch);
+         MOZ_ASSERT(stackArg.gpr() != FramePointer);
+         GenPrintIsize(DebugChannel::Function, masm, stackArg.gpr());
+-        masm.storePtr(stackArg.gpr(), dst);
++        jit::StoreJitStackWord(masm, stackArg.gpr(), dst);
+         break;
+       case JitCallStackArg::Tag::FPU:
+         switch (iter.mirType()) {
+@@ -1508,7 +1516,7 @@ void wasm::GenerateDirectCallFromJit(Mac
+           case MIRType::WasmAnyRef: {
+             masm.loadPtr(src, scratch);
+             GenPrintPtr(DebugChannel::Function, masm, scratch);
+-            masm.storePtr(scratch, dst);
++            jit::StoreJitStackWord(masm, scratch, dst);
+             break;
+           }
+           case MIRType::StackResults: {
+@@ -1564,7 +1572,7 @@ void wasm::GenerateDirectCallFromJit(Mac
        case wasm::ValType::I32:
          // The return value is in ReturnReg, which is what Ion expects.
          GenPrintIsize(DebugChannel::Function, masm, ReturnReg);
@@ -5717,7 +5803,7 @@
          masm.widenInt32(ReturnReg);
  #endif
          break;
-@@ -1611,7 +1614,7 @@ static void StackCopy(MacroAssembler& ma
+@@ -1611,7 +1619,7 @@ static void StackCopy(MacroAssembler& ma
      GenPrintIsize(DebugChannel::Import, masm, scratch);
      masm.store32(scratch, dst);
    } else if (type == MIRType::Int64) {
@@ -5726,7 +5812,7 @@
      MOZ_RELEASE_ASSERT(src.base != scratch && dst.base != scratch);
      GenPrintf(DebugChannel::Import, masm, "i64(");
      masm.load32(LowWord(src), scratch);
-@@ -2180,7 +2183,8 @@ static bool GenerateImportJitExit(MacroA
+@@ -2180,7 +2188,8 @@ static bool GenerateImportJitExit(MacroA
    // because alignment padding will round it up anyway. Treating it as 8 bytes
    // is easier in the OOL underflow path.
    const unsigned sizeOfInstanceSlot = sizeof(Value);
@@ -5736,7 +5822,7 @@
    const unsigned sizeOfPreFrame =
        WasmToJSJitFrameLayout::Size() - sizeOfRetAddrAndFP;
  
-@@ -2231,13 +2235,17 @@ static bool GenerateImportJitExit(MacroA
+@@ -2231,13 +2240,17 @@ static bool GenerateImportJitExit(MacroA
    size_t argOffset = 0;
    uint32_t descriptor =
        MakeFrameDescriptorForJitCall(FrameType::WasmToJSJit, argc);
@@ -5758,15 +5844,29 @@
    MOZ_ASSERT(argOffset == sizeOfPreFrame);
  
    // 3. |this| value.
-@@ -2697,7 +2705,7 @@ static const LiveRegisterSet RegsToPrese
+@@ -2696,6 +2709,11 @@ static const LiveRegisterSet RegsToPrese
+ // the save area.  That is, a higher value implies a lower address.
  void wasm::GenerateTrapExitRegisterOffsets(RegisterOffsets* offsets,
                                             size_t* numWords) {
++  // These offsets are in pointer-sized words, while a pushed register occupies
++  // a whole stack word: under the x32 ABI those differ, and the register value
++  // lands in the lowest-addressed word of its slot.
++  constexpr size_t wordsPerSlot = jit::JitStackWordSize / sizeof(void*);
++
    // This is the number of words pushed by the initial WasmPush().
--  *numWords = WasmPushSize / sizeof(void*);
-+  *numWords = WasmPushSize / jit::JitStackWordSize;
+   *numWords = WasmPushSize / sizeof(void*);
    MOZ_ASSERT(*numWords == TrapExitDummyValueOffsetFromTop + 1);
- 
+@@ -2703,8 +2721,8 @@ void wasm::GenerateTrapExitRegisterOffse
    // And these correspond to the PushRegsInMask() that immediately follows.
+   for (GeneralRegisterBackwardIterator iter(RegsToPreserve.gprs()); iter.more();
+        ++iter) {
+-    offsets->setOffset(*iter, *numWords);
+-    (*numWords)++;
++    offsets->setOffset(*iter, *numWords + wordsPerSlot - 1);
++    *numWords += wordsPerSlot;
+   }
+ }
+ 
 --- firefox-153.0/js/src/wasm/WasmStubs.h
 +++ firefox-153.0/js/src/wasm/WasmStubs.h
 @@ -76,7 +76,10 @@ class ABIResult {
@@ -5781,6 +5881,16 @@
    static constexpr size_t StackSizeOfInt32 = StackSizeOfPtr;
    static constexpr size_t StackSizeOfInt64 = sizeof(int64_t);
  #if defined(JS_CODEGEN_ARM)
+@@ -276,7 +279,8 @@ static constexpr uintptr_t TrapExitDummy
+ #ifdef JS_CODEGEN_ARM64
+ static constexpr size_t TrapExitDummyValueOffsetFromTop = 1;
+ #else
+-static constexpr size_t TrapExitDummyValueOffsetFromTop = 0;
++static constexpr size_t TrapExitDummyValueOffsetFromTop =
++    jit::JitStackWordSize / sizeof(void*) - 1;
+ #endif
+ 
+ // An argument that will end up on the stack according to the system ABI, to be
 --- firefox-153.0/js/src/wasm/WasmSummarizeInsn.cpp
 +++ firefox-153.0/js/src/wasm/WasmSummarizeInsn.cpp
 @@ -77,7 +77,13 @@ static bool hasOnly(uint32_t set, uint32
