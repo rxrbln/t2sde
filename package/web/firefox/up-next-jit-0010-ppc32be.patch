@@ -68,10 +68,23 @@ diff -Nurp -p '--exclude=*.orig' '--exclude=*.rej' '--exclude=*.pyc' '--exclude=
  set_define("JS_CODEGEN_PPC64", jit_codegen.ppc64)
  set_define("JS_CODEGEN_RISCV64", jit_codegen.riscv64)
  set_define("JS_CODEGEN_X86", jit_codegen.x86)
+diff -Nurp -p '--exclude=*.orig' '--exclude=*.rej' '--exclude=*.pyc' '--exclude=__pycache__' /srv/t2/tmp/ppc-jit-work/baseline/js/src/build-tf.log /srv/t2/src-firefox.ppc-desktop.260728.163810.1997595/firefox-153.0/js/src/build-tf.log
+--- a/js/src/build-tf.log	1970-01-01 01:00:00.000000000 +0100
++++ b/js/src/build-tf.log	2026-07-29 11:43:49.088951651 +0200
+@@ -0,0 +1 @@
++scripts/Build-Pkg: line 23: ./jsbuild.sh: No such file or directory
 diff -Nurp -p '--exclude=*.orig' '--exclude=*.rej' '--exclude=*.pyc' '--exclude=__pycache__' /srv/t2/tmp/ppc-jit-work/baseline/js/src/builtin/TestingFunctions.cpp /srv/t2/src-firefox.ppc-desktop.260728.163810.1997595/firefox-153.0/js/src/builtin/TestingFunctions.cpp
 --- a/js/src/builtin/TestingFunctions.cpp	2026-07-28 16:38:22.649440867 +0200
-+++ b/js/src/builtin/TestingFunctions.cpp	2026-07-28 16:57:40.904098055 +0200
-@@ -448,6 +448,15 @@ static bool GetBuildConfiguration(JSCont
++++ b/js/src/builtin/TestingFunctions.cpp	2026-07-29 11:44:30.690589076 +0200
+@@ -57,6 +57,7 @@
+ #include "gc/GCEnum.h"
+ #include "gc/GCLock.h"
+ #include "gc/Zone.h"
++#include "jit/AtomicOperations.h"
+ #include "jit/BaselineJIT.h"
+ #include "jit/CacheIRSpewer.h"
+ #include "jit/Disassemble.h"
+@@ -448,6 +449,15 @@ static bool GetBuildConfiguration(JSCont
      return false;
    }
  
@@ -87,7 +100,7 @@ diff -Nurp -p '--exclude=*.orig' '--exclude=*.rej' '--exclude=*.pyc' '--exclude=
  #ifdef JS_CODEGEN_PPC64
    value = BooleanValue(true);
  #else
-@@ -493,6 +502,15 @@ static bool GetBuildConfiguration(JSCont
+@@ -493,6 +503,15 @@ static bool GetBuildConfiguration(JSCont
      return false;
    }
  
@@ -103,6 +116,17 @@ diff -Nurp -p '--exclude=*.orig' '--exclude=*.rej' '--exclude=*.pyc' '--exclude=
  #ifdef JS_SIMULATOR_PPC64
    value = BooleanValue(true);
  #else
+@@ -1103,7 +1122,9 @@ static bool GetWasmSupportedFeatures(JSC
+     return false;
+   }
+ 
+-  value.setBoolean(true);
++  // Threads need lock-free 8-byte atomics, which not every target has; the
++  // 32-bit PowerPC 603 has lwarx/stwcx. but no ldarx/stdcx.
++  value.setBoolean(jit::AtomicOperations::isLockfree8());
+   if (!JS_SetProperty(cx, features, "threads", value)) {
+     return false;
+   }
 diff -Nurp -p '--exclude=*.orig' '--exclude=*.rej' '--exclude=*.pyc' '--exclude=__pycache__' /srv/t2/tmp/ppc-jit-work/baseline/js/src/irregexp/RegExpNativeMacroAssembler.cpp /srv/t2/src-firefox.ppc-desktop.260728.163810.1997595/firefox-153.0/js/src/irregexp/RegExpNativeMacroAssembler.cpp
 --- a/js/src/irregexp/RegExpNativeMacroAssembler.cpp	2026-07-28 16:38:22.649987822 +0200
 +++ b/js/src/irregexp/RegExpNativeMacroAssembler.cpp	2026-07-28 16:57:40.905337060 +0200
@@ -153,6 +177,125 @@ diff -Nurp -p '--exclude=*.orig' '--exclude=*.rej' '--exclude=*.pyc' '--exclude=
    // CheckBacktrackStackLimit pushes LR before calling us, so there's a
    // second return address on the stack.
    frameOffset += sizeof(void*);
+diff -Nurp -p '--exclude=*.orig' '--exclude=*.rej' '--exclude=*.pyc' '--exclude=__pycache__' /srv/t2/tmp/ppc-jit-work/baseline/js/src/jit/ABIFunctionList-inl.h /srv/t2/src-firefox.ppc-desktop.260728.163810.1997595/firefox-153.0/js/src/jit/ABIFunctionList-inl.h
+--- a/js/src/jit/ABIFunctionList-inl.h	2026-07-15 22:44:59.000000000 +0200
++++ b/js/src/jit/ABIFunctionList-inl.h	2026-07-28 23:52:17.035495381 +0200
+@@ -158,6 +158,7 @@ namespace jit {
+   _(js::jit::GetInt32FromStringPure)                                           \
+   _(js::jit::GetNativeDataPropertyPure)                                        \
+   _(js::jit::GetNativeDataPropertyPureWithCacheLookup)                         \
++  _(js::jit::GetNativeDataPropertyPureRaw)                                     \
+   _(js::jit::GetNativeDataPropertyByValuePure)                                 \
+   _(js::jit::GlobalHasLiveOnDebuggerStatement)                                 \
+   _(js::jit::HandleCodeCoverageAtPC)                                           \
+@@ -172,6 +173,7 @@ namespace jit {
+   _(js::jit::LazyLinkTopActivation)                                            \
+   _(js::jit::LinearizeForCharAccessPure)                                       \
+   _(js::jit::ObjectHasGetterSetterPure)                                        \
++  _(js::jit::ObjectHasGetterSetterPureRaw)                                     \
+   _(js::jit::ObjectIsCallable)                                                 \
+   _(js::jit::ObjectIsConstructor)                                              \
+   _(js::jit::PostGlobalWriteBarrier)                                           \
+@@ -180,11 +182,13 @@ namespace jit {
+   _(js::jit::PreserveWrapper)                                                  \
+   _(js::jit::Printf0)                                                          \
+   _(js::jit::Printf1)                                                          \
++  _(js::jit::ProxyGetPropertyRaw)                                              \
+   _(js::jit::StringFromCharCodeNoGC)                                           \
+   _(js::jit::StringTrimEndIndex)                                               \
+   _(js::jit::StringTrimStartIndex)                                             \
+   _(js::jit::TypeOfNameObject)                                                 \
+   _(js::jit::TypeOfEqObject)                                                   \
++  _(js::jit::TypeOfEqObjectRaw)                                                \
+   _(js::jit::WeakMapValueReadBarrier)                                          \
+   _(js::jit::WrapObjectPure)                                                   \
+   ABIFUNCTION_FUZZILLI_LIST(_)                                                 \
+diff -Nurp -p '--exclude=*.orig' '--exclude=*.rej' '--exclude=*.pyc' '--exclude=__pycache__' /srv/t2/tmp/ppc-jit-work/baseline/js/src/jit/ABIFunctions.h /srv/t2/src-firefox.ppc-desktop.260728.163810.1997595/firefox-153.0/js/src/jit/ABIFunctions.h
+--- a/js/src/jit/ABIFunctions.h	2026-07-15 22:09:44.000000000 +0200
++++ b/js/src/jit/ABIFunctions.h	2026-07-29 08:09:14.699632331 +0200
+@@ -5,8 +5,15 @@
+ #ifndef jit_ABIFunctions_h
+ #define jit_ABIFunctions_h
+ 
++#include <type_traits>
++
+ #include "jstypes.h"  // JS_FUNC_TO_DATA_PTR
+ 
++#ifdef JS_CODEGEN_PPC
++// JSJitGetterOp, JSJitSetterOp, JSJitMethodOp
++#  include "js/experimental/JitInfo.h"
++#endif
++
+ struct JS_PUBLIC_API JSContext;
+ 
+ namespace JS {
+@@ -16,6 +23,40 @@ class JS_PUBLIC_API Value;
+ namespace js {
+ namespace jit {
+ 
++#ifdef JS_CODEGEN_PPC
++// The 32-bit PowerPC SysV ABI passes class, struct and union arguments by
++// invisible reference: the callee dereferences the argument register. JIT code
++// has no caller copy to point at, so such a signature cannot be called with
++// callWithABI(). Reject it at build time rather than crashing in the callee.
++template <typename Sig>
++struct ABIArgsAreScalar : std::false_type {};
++
++template <typename R, typename... Args>
++struct ABIArgsAreScalar<R (*)(Args...)>
++    : std::bool_constant<(... &&
++                          !(std::is_class_v<Args> || std::is_union_v<Args>))> {};
++
++// Opt-out for the few signatures whose aggregate arguments the caller
++// materializes on the stack and passes by explicit reference itself. The DOM
++// accessor and method ops are handled that way in
++// CodeGenerator::visitGetDOMProperty(), visitSetDOMProperty() and
++// visitCallDOMNative().
++template <typename Sig>
++struct ABIArgsPassedByExplicitReference : std::false_type {};
++
++template <>
++struct ABIArgsPassedByExplicitReference<JSJitGetterOp> : std::true_type {};
++template <>
++struct ABIArgsPassedByExplicitReference<JSJitSetterOp> : std::true_type {};
++template <>
++struct ABIArgsPassedByExplicitReference<JSJitMethodOp> : std::true_type {};
++
++template <typename Sig>
++struct ABIArgsAreCallable
++    : std::bool_constant<ABIArgsAreScalar<Sig>::value ||
++                         ABIArgsPassedByExplicitReference<Sig>::value> {};
++#endif
++
+ // This class is used to ensure that all known targets of callWithABI are
+ // registered here. Otherwise, this would raise a static assertion at compile
+ // time.
+@@ -28,6 +69,12 @@ template <typename Sig, Sig fun>
+ struct ABIFunction {
+   void* address() const { return JS_FUNC_TO_DATA_PTR(void*, fun); }
+ 
++#ifdef JS_CODEGEN_PPC
++  static_assert(ABIArgsAreScalar<Sig>::value,
++                "ppc32 SysV passes aggregates by invisible reference, so "
++                "callWithABI() cannot hand this callee one by value.");
++#endif
++
+   // If this assertion fails, you are likely in the context of a
+   // `callWithABI<Sig, fn>()` call. This error indicates that ABIFunction has
+   // not been specialized for `<Sig, fn>` by the time of this call.
+@@ -49,6 +96,12 @@ template <typename Sig>
+ struct ABIFunctionSignature {
+   void* address(Sig fun) const { return JS_FUNC_TO_DATA_PTR(void*, fun); }
+ 
++#ifdef JS_CODEGEN_PPC
++  static_assert(ABIArgsAreCallable<Sig>::value,
++                "ppc32 SysV passes aggregates by invisible reference, so "
++                "callWithABI() cannot hand this callee one by value.");
++#endif
++
+   // If this assertion fails, you are likely in the context of a
+   // `DynamicFunction<Sig>(fn)` call. This error indicates that
+   // ABIFunctionSignature has not been specialized for `Sig` by the time of this
 diff -Nurp -p '--exclude=*.orig' '--exclude=*.rej' '--exclude=*.pyc' '--exclude=__pycache__' /srv/t2/tmp/ppc-jit-work/baseline/js/src/jit/Assembler.h /srv/t2/src-firefox.ppc-desktop.260728.163810.1997595/firefox-153.0/js/src/jit/Assembler.h
 --- a/js/src/jit/Assembler.h	2026-07-28 16:38:22.631630827 +0200
 +++ b/js/src/jit/Assembler.h	2026-07-28 16:52:29.010991302 +0200
@@ -243,9 +386,46 @@ diff -Nurp -p '--exclude=*.orig' '--exclude=*.rej' '--exclude=*.pyc' '--exclude=
    regs.take(ICTailCallReg);
  #endif
    regs.take(ICStubReg);
+diff -Nurp -p '--exclude=*.orig' '--exclude=*.rej' '--exclude=*.pyc' '--exclude=__pycache__' /srv/t2/tmp/ppc-jit-work/baseline/js/src/jit/CacheIR.cpp /srv/t2/src-firefox.ppc-desktop.260728.163810.1997595/firefox-153.0/js/src/jit/CacheIR.cpp
+--- a/js/src/jit/CacheIR.cpp	2026-07-28 16:38:22.653354936 +0200
++++ b/js/src/jit/CacheIR.cpp	2026-07-29 07:42:12.185622952 +0200
+@@ -20,6 +20,7 @@
+ #include "builtin/WeakMapObject.h"
+ #include "builtin/WeakSetObject.h"
+ #include "gc/GC.h"
++#include "jit/AtomicOperations.h"
+ #include "jit/BaselineIC.h"
+ #include "jit/CacheIRCloner.h"
+ #include "jit/CacheIRCompiler.h"
+@@ -9613,8 +9614,16 @@ static bool AtomicsMeetsPreconditions(Ty
+     case Scalar::Uint16:
+     case Scalar::Int32:
+     case Scalar::Uint32:
++      break;
++
+     case Scalar::BigInt64:
+     case Scalar::BigUint64:
++      // Inlined 64-bit atomics are only compatible with the C++ ones if the
++      // latter are lock-free; otherwise every 8-byte access has to take the
++      // same lock, so leave these to the VM.
++      if (!AtomicOperations::isLockfree8()) {
++        return false;
++      }
+       break;
+ 
+     case Scalar::Float16:
 diff -Nurp -p '--exclude=*.orig' '--exclude=*.rej' '--exclude=*.pyc' '--exclude=__pycache__' /srv/t2/tmp/ppc-jit-work/baseline/js/src/jit/CacheIRCompiler.cpp /srv/t2/src-firefox.ppc-desktop.260728.163810.1997595/firefox-153.0/js/src/jit/CacheIRCompiler.cpp
 --- a/js/src/jit/CacheIRCompiler.cpp	2026-07-28 16:38:22.654109450 +0200
-+++ b/js/src/jit/CacheIRCompiler.cpp	2026-07-28 21:10:54.079752549 +0200
++++ b/js/src/jit/CacheIRCompiler.cpp	2026-07-29 08:06:01.766253136 +0200
+@@ -4562,7 +4562,7 @@ bool CacheIRCompiler::emitGuardBoundFunc
+     return false;
+   }
+ 
+-  Address flagsSlot(obj, BoundFunctionObject::offsetOfFlagsSlot());
++  Address flagsSlot(obj, BoundFunctionObject::offsetOfFlagsSlotForJit32());
+   masm.branchTest32(Assembler::Zero, flagsSlot,
+                     Imm32(BoundFunctionObject::IsConstructorFlag),
+                     failure->label());
 @@ -7674,7 +7674,7 @@ bool CacheIRCompiler::emitStoreTypedArra
                              handleOOB ? &done : failure->label());
  
@@ -282,7 +462,29 @@ diff -Nurp -p '--exclude=*.orig' '--exclude=*.rej' '--exclude=*.pyc' '--exclude=
    BaseIndex dest(scratch1, offset, TimesOne);
  
    if (byteSize == 1) {
-@@ -9633,10 +9633,12 @@ void CacheIRCompiler::emitLoadStubField(
+@@ -8515,12 +8515,21 @@ bool CacheIRCompiler::emitLoadTypeOfEqOb
+     save.takeUnchecked(scratch);
+     masm.PushRegsInMask(save);
+ 
++#ifdef JS_CODEGEN_PPC
++    // ppc32 SysV passes aggregates by invisible reference; see VMFunctions.h.
++    using Fn = bool (*)(JSObject* obj, uint32_t operand);
++#else
+     using Fn = bool (*)(JSObject* obj, TypeofEqOperand operand);
++#endif
+     masm.setupUnalignedABICall(scratch);
+     masm.passABIArg(obj);
+     masm.move32(Imm32(TypeofEqOperand(type, compareOp).rawValue()), scratch);
+     masm.passABIArg(scratch);
++#ifdef JS_CODEGEN_PPC
++    masm.callWithABI<Fn, TypeOfEqObjectRaw>();
++#else
+     masm.callWithABI<Fn, TypeOfEqObject>();
++#endif
+     masm.storeCallBoolResult(scratch);
+ 
+     masm.PopRegsInMask(save);
+@@ -9633,10 +9642,12 @@ void CacheIRCompiler::emitLoadStubField(
          break;
        case StubField::Type::RawInt32:
          // A RawInt32 occupies the low 32 bits of a uintptr_t-sized stub-data
@@ -298,7 +500,60 @@ diff -Nurp -p '--exclude=*.orig' '--exclude=*.rej' '--exclude=*.pyc' '--exclude=
  #else
          masm.load32(load, dest);
  #endif
-@@ -10321,8 +10323,8 @@ bool CacheIRCompiler::emitConcatStringsR
+@@ -9767,8 +9778,6 @@ bool CacheIRCompiler::emitMegamorphicLoa
+   volatileRegs.takeUnchecked(idReg);
+   masm.PushRegsInMask(volatileRegs);
+ 
+-  using Fn = bool (*)(JSContext* cx, JSObject* obj, PropertyKey id,
+-                      MegamorphicCache::Entry* cacheEntry, Value* vp);
+   masm.setupUnalignedABICall(scratch1);
+   masm.loadJSContext(scratch1);
+   masm.passABIArg(scratch1);
+@@ -9779,8 +9788,17 @@ bool CacheIRCompiler::emitMegamorphicLoa
+   masm.passABIArg(idReg);
+ 
+ #ifdef JS_CODEGEN_X86
++  using Fn = bool (*)(JSContext* cx, JSObject* obj, PropertyKey id,
++                      MegamorphicCache::Entry* cacheEntry, Value* vp);
+   masm.callWithABI<Fn, GetNativeDataPropertyPureWithCacheLookup>();
++#elif defined(JS_CODEGEN_PPC)
++  // ppc32 SysV passes a PropertyKey by invisible reference; pass the raw bits.
++  using Fn = bool (*)(JSContext* cx, JSObject* obj, uintptr_t idBits,
++                      MegamorphicCache::Entry* cacheEntry, Value* vp);
++  masm.callWithABI<Fn, GetNativeDataPropertyPureRaw>();
+ #else
++  using Fn = bool (*)(JSContext* cx, JSObject* obj, PropertyKey id,
++                      MegamorphicCache::Entry* cacheEntry, Value* vp);
+   masm.callWithABI<Fn, GetNativeDataPropertyPure>();
+ #endif
+ 
+@@ -9927,8 +9945,6 @@ bool CacheIRCompiler::emitGuardHasGetter
+   masm.unboxNonDouble(scratch3.get(), scratch3.get().scratchReg(),
+                       JSVAL_TYPE_PRIVATE_GCTHING);
+ 
+-  using Fn = bool (*)(JSContext* cx, JSObject* obj, jsid id,
+-                      GetterSetter* getterSetter);
+   masm.setupUnalignedABICall(scratch1);
+   masm.loadJSContext(scratch1);
+   masm.passABIArg(scratch1);
+@@ -9936,7 +9952,16 @@ bool CacheIRCompiler::emitGuardHasGetter
+   emitLoadStubField(id, scratch2);
+   masm.passABIArg(scratch2);
+   masm.passABIArg(scratch3.get().scratchReg());
++#ifdef JS_CODEGEN_PPC
++  // ppc32 SysV passes a jsid by invisible reference; pass the raw bits.
++  using Fn = bool (*)(JSContext* cx, JSObject* obj, uintptr_t idBits,
++                      GetterSetter* getterSetter);
++  masm.callWithABI<Fn, ObjectHasGetterSetterPureRaw>();
++#else
++  using Fn = bool (*)(JSContext* cx, JSObject* obj, jsid id,
++                      GetterSetter* getterSetter);
+   masm.callWithABI<Fn, ObjectHasGetterSetterPure>();
++#endif
+   masm.storeCallPointerResult(scratch1);
+   masm.PopRegsInMask(volatileRegs);
+ 
+@@ -10321,8 +10346,8 @@ bool CacheIRCompiler::emitConcatStringsR
  #endif
      liveRegs.takeUnchecked(output.valueReg());
  
@@ -309,7 +564,7 @@ diff -Nurp -p '--exclude=*.orig' '--exclude=*.rej' '--exclude=*.pyc' '--exclude=
      // GPR that does not shadow LR. The inner bctrl will clobber LR, so
      // save/restore it explicitly.
      masm.xs_mflr(r0);
-@@ -10348,7 +10350,7 @@ bool CacheIRCompiler::emitConcatStringsR
+@@ -10348,7 +10373,7 @@ bool CacheIRCompiler::emitConcatStringsR
      masm.branchTestPtr(Assembler::Zero, CallTempReg5, CallTempReg5, &vmCall);
      masm.tagValue(JSVAL_TYPE_STRING, CallTempReg5, output.valueReg());
      masm.PopRegsInMask(liveRegs);
@@ -318,7 +573,7 @@ diff -Nurp -p '--exclude=*.orig' '--exclude=*.rej' '--exclude=*.pyc' '--exclude=
      masm.pop(r0);
      masm.xs_mtlr(r0);
  #endif
-@@ -10357,7 +10359,7 @@ bool CacheIRCompiler::emitConcatStringsR
+@@ -10357,7 +10382,7 @@ bool CacheIRCompiler::emitConcatStringsR
      masm.bind(&vmCall);
      masm.setFramePushed(framePushed);
      masm.PopRegsInMask(liveRegs);
@@ -327,7 +582,7 @@ diff -Nurp -p '--exclude=*.orig' '--exclude=*.rej' '--exclude=*.pyc' '--exclude=
      masm.pop(r0);
      masm.xs_mtlr(r0);
  #endif
-@@ -10974,7 +10976,7 @@ bool CacheIRCompiler::emitAtomicsLoadRes
+@@ -10974,7 +10999,7 @@ bool CacheIRCompiler::emitAtomicsLoadRes
    }
  
    // Load the elements vector.
@@ -336,7 +591,7 @@ diff -Nurp -p '--exclude=*.orig' '--exclude=*.rej' '--exclude=*.pyc' '--exclude=
  
    // Load the value.
    BaseIndex source(scratch, index, ScaleFromScalarType(elementType));
-@@ -11031,7 +11033,7 @@ bool CacheIRCompiler::emitAtomicsStoreRe
+@@ -11031,7 +11056,7 @@ bool CacheIRCompiler::emitAtomicsStoreRe
  
    if (!Scalar::isBigIntType(elementType)) {
      // Load the elements vector.
@@ -345,7 +600,7 @@ diff -Nurp -p '--exclude=*.orig' '--exclude=*.rej' '--exclude=*.pyc' '--exclude=
  
      // Store the value.
      BaseIndex dest(scratch, index, ScaleFromScalarType(elementType));
-@@ -12005,7 +12007,7 @@ bool CacheIRCompiler::emitAssertProperty
+@@ -12005,7 +12030,7 @@ bool CacheIRCompiler::emitAssertProperty
    masm.passABIArg(obj);
    masm.passABIArg(id);
    masm.passABIArg(slot);
@@ -356,7 +611,7 @@ diff -Nurp -p '--exclude=*.orig' '--exclude=*.rej' '--exclude=*.pyc' '--exclude=
  
 diff -Nurp -p '--exclude=*.orig' '--exclude=*.rej' '--exclude=*.pyc' '--exclude=__pycache__' /srv/t2/tmp/ppc-jit-work/baseline/js/src/jit/CodeGenerator.cpp /srv/t2/src-firefox.ppc-desktop.260728.163810.1997595/firefox-153.0/js/src/jit/CodeGenerator.cpp
 --- a/js/src/jit/CodeGenerator.cpp	2026-07-28 16:38:22.655308025 +0200
-+++ b/js/src/jit/CodeGenerator.cpp	2026-07-28 21:10:54.081157961 +0200
++++ b/js/src/jit/CodeGenerator.cpp	2026-07-29 08:06:56.819932043 +0200
 @@ -2521,14 +2521,14 @@ static bool PrepareAndExecuteRegExp(Macr
    masm.computeEffectiveAddress(Address(FramePointer, ioOffset), temp2);
    masm.PushRegsInMask(volatileRegs);
@@ -374,7 +629,57 @@ diff -Nurp -p '--exclude=*.orig' '--exclude=*.rej' '--exclude=*.pyc' '--exclude=
    // The regexp code pointer is a raw JIT entry, not an ELFv1 function
    // descriptor, so it must not be called through the descriptor path.
    masm.callWithABIJitCode(codePointer);
-@@ -6351,10 +6351,12 @@ void CodeGenerator::visitCallDOMNative(L
+@@ -2964,8 +2964,9 @@ static JitCode* GenerateRegExpMatchStubS
+                  ImmWord(0), &oolEntry);
+ 
+   // Similarly, if the |hasIndices| flag is set, fall back to the OOL stub.
+-  masm.branchTest32(Assembler::NonZero,
+-                    Address(shared, RegExpShared::offsetOfFlags()),
++  // RegExpShared::flags is a single byte, so it must be loaded as such.
++  masm.load8ZeroExtend(Address(shared, RegExpShared::offsetOfFlags()), temp3);
++  masm.branchTest32(Assembler::NonZero, temp3,
+                     Imm32(int32_t(JS::RegExpFlag::HasIndices)), &oolEntry);
+ 
+   Address pairCountAddress = RegExpPairCountAddress();
+@@ -4866,8 +4867,14 @@ void CodeGenerator::visitMegamorphicLoad
+   masm.Push(UndefinedValue());
+   masm.moveStackPtrTo(temp3);
+ 
++#ifdef JS_CODEGEN_PPC
++  // ppc32 SysV passes a PropertyKey by invisible reference; pass the raw bits.
++  using Fn = bool (*)(JSContext* cx, JSObject* obj, uintptr_t idBits,
++                      MegamorphicCache::Entry* cacheEntry, Value* vp);
++#else
+   using Fn = bool (*)(JSContext* cx, JSObject* obj, PropertyKey id,
+                       MegamorphicCache::Entry* cacheEntry, Value* vp);
++#endif
+   masm.setupAlignedABICall();
+   masm.loadJSContext(temp0);
+   masm.passABIArg(temp0);
+@@ -4877,7 +4884,11 @@ void CodeGenerator::visitMegamorphicLoad
+   masm.passABIArg(temp2);
+   masm.passABIArg(temp3);
+ 
++#ifdef JS_CODEGEN_PPC
++  masm.callWithABI<Fn, GetNativeDataPropertyPureRaw>();
++#else
+   masm.callWithABI<Fn, GetNativeDataPropertyPure>();
++#endif
+ 
+   MOZ_ASSERT(!output.aliases(ReturnReg));
+   masm.Pop(output);
+@@ -5700,7 +5711,9 @@ void CodeGenerator::visitGuardFunctionKi
+ void CodeGenerator::visitGuardFunctionScript(LGuardFunctionScript* lir) {
+   Register function = ToRegister(lir->function());
+ 
+-  Address scriptAddr(function, JSFunction::offsetOfJitInfoOrScript());
++  // The slot holds a PrivateValue, so read the payload half.
++  Address scriptAddr(function, JSFunction::offsetOfJitInfoOrScript() +
++                                   PrivateValuePayloadOffset);
+   bailoutCmpPtr(Assembler::NotEqual, scriptAddr,
+                 ImmGCPtr(lir->mir()->expected()), lir->snapshot());
+ }
+@@ -6351,10 +6364,12 @@ void CodeGenerator::visitCallDOMNative(L
    // Push argc from the call instruction into what will become the IonExitFrame.
    // This word is read both as a uintptr_t (IonDOMMethodExitFrameLayout::argc(),
    // for GC tracing) and as a uint32 (JSJitMethodCallArgs::argc_, by the native).
@@ -390,7 +695,35 @@ diff -Nurp -p '--exclude=*.orig' '--exclude=*.rej' '--exclude=*.pyc' '--exclude=
  #else
    masm.Push(Imm32(call->numActualArgs()));
  #endif
-@@ -6904,7 +6906,8 @@ void JitRuntime::generateIonGenericCallF
+@@ -6392,6 +6407,16 @@ void CodeGenerator::visitCallDOMNative(L
+ 
+   markSafepointAt(safepointOffset, call);
+ 
++#ifdef JS_CODEGEN_PPC
++  // ppc32 SysV passes Handle<JSObject*> by invisible reference: the callee
++  // expects a pointer to the Handle, not the Handle's contents. Spill a
++  // scratch copy below the exit frame so the sp-relative result addresses
++  // stay unchanged.
++  masm.reserveStack(ABIStackAlignment);
++  masm.storePtr(argObj, Address(masm.getStackPointer(), 0));
++  masm.moveStackPtrTo(argObj);
++#endif
++
+   // Construct and execute call.
+   masm.setupAlignedABICall();
+   masm.loadJSContext(argJSContext);
+@@ -6404,6 +6429,10 @@ void CodeGenerator::visitCallDOMNative(L
+                    ABIType::General,
+                    CheckUnsafeCallWithABI::DontCheckHasExitFrame);
+ 
++#ifdef JS_CODEGEN_PPC
++  masm.freeStack(ABIStackAlignment);
++#endif
++
+   if (target->jitInfo()->isInfallible) {
+     masm.loadValue(Address(masm.getStackPointer(),
+                            IonDOMMethodExitFrameLayout::offsetOfResult()),
+@@ -6904,7 +6933,8 @@ void JitRuntime::generateIonGenericCallF
  
    Label notFunCall;
    masm.branchPtr(Assembler::NotEqual,
@@ -400,7 +733,26 @@ diff -Nurp -p '--exclude=*.orig' '--exclude=*.rej' '--exclude=*.pyc' '--exclude=
                   ImmPtr(js::fun_call), &notFunCall);
  
    // In general, we can implement fun_call by replacing calleeReg with
-@@ -10843,8 +10846,8 @@ void CodeGenerator::visitWasmLoadSlot(LW
+@@ -6965,7 +6995,8 @@ void JitRuntime::generateIonGenericCallB
+                           vmCall);
+ 
+   Address targetSlot(calleeReg, BoundFunctionObject::offsetOfTargetSlot());
+-  Address flagsSlot(calleeReg, BoundFunctionObject::offsetOfFlagsSlot());
++  Address flagsSlot(calleeReg,
++                    BoundFunctionObject::offsetOfFlagsSlotForJit32());
+   Address thisSlot(calleeReg, BoundFunctionObject::offsetOfBoundThisSlot());
+   Address firstInlineArgSlot(
+       calleeReg, BoundFunctionObject::offsetOfFirstInlineBoundArg());
+@@ -9902,7 +9933,7 @@ void CodeGenerator::visitGuardBoundFunct
+   Register obj = ToRegister(lir->object());
+ 
+   Label bail;
+-  Address flagsSlot(obj, BoundFunctionObject::offsetOfFlagsSlot());
++  Address flagsSlot(obj, BoundFunctionObject::offsetOfFlagsSlotForJit32());
+   masm.branchTest32(Assembler::Zero, flagsSlot,
+                     Imm32(BoundFunctionObject::IsConstructorFlag), &bail);
+   bailoutFrom(&bail, lir->snapshot());
+@@ -10843,8 +10874,8 @@ void CodeGenerator::visitWasmLoadSlot(LW
    if (type == MIRType::Simd128) {
      MOZ_ASSERT(wideningOp == MWideningOp::None);
      FaultingCodeOffset fco = masm.loadUnalignedSimd128(addr, dst.fpu());
@@ -411,7 +763,7 @@ diff -Nurp -p '--exclude=*.orig' '--exclude=*.rej' '--exclude=*.pyc' '--exclude=
      // A wasm global cell holds the little-endian image; byte-reverse to the
      // canonical SIMD register order.
      masm.byteReverseSimd128(dst.fpu(), dst.fpu());
-@@ -10892,8 +10895,8 @@ void CodeGenerator::visitWasmStoreSlot(L
+@@ -10892,8 +10923,8 @@ void CodeGenerator::visitWasmStoreSlot(L
  #ifdef ENABLE_WASM_SIMD
    if (type == MIRType::Simd128) {
      FloatRegister v = src.fpu();
@@ -422,7 +774,7 @@ diff -Nurp -p '--exclude=*.orig' '--exclude=*.rej' '--exclude=*.pyc' '--exclude=
      // A wasm global cell holds the little-endian image; byte-reverse the
      // canonical register into a scratch (the input may be live) before storing.
      ScratchSimd128Scope scratch(masm);
-@@ -11265,7 +11268,7 @@ void CodeGenerator::visitArrayBufferView
+@@ -11265,7 +11296,7 @@ void CodeGenerator::visitArrayBufferView
      LArrayBufferViewElements* lir) {
    Register obj = ToRegister(lir->object());
    Register out = ToRegister(lir->output());
@@ -431,6 +783,92 @@ diff -Nurp -p '--exclude=*.orig' '--exclude=*.rej' '--exclude=*.pyc' '--exclude=
  }
  
  void CodeGenerator::visitTypedArrayElementSize(LTypedArrayElementSize* lir) {
+@@ -19987,6 +20018,19 @@ void CodeGenerator::visitGetDOMProperty(
+ 
+   markSafepointAt(safepointOffset, ins);
+ 
++#ifdef JS_CODEGEN_PPC
++  // ppc32 SysV passes Handle<JSObject*> and JSJitGetterCallArgs by invisible
++  // reference: the callee expects pointers to them, not their contents. Spill
++  // scratch copies below the exit frame so the sp-relative result address
++  // stays unchanged.
++  masm.reserveStack(ABIStackAlignment);
++  masm.storePtr(ObjectReg, Address(masm.getStackPointer(), 0));
++  masm.storePtr(ValueReg, Address(masm.getStackPointer(), sizeof(uintptr_t)));
++  masm.moveStackPtrTo(ObjectReg);
++  masm.computeEffectiveAddress(
++      Address(masm.getStackPointer(), sizeof(uintptr_t)), ValueReg);
++#endif
++
+   masm.setupAlignedABICall();
+   masm.loadJSContext(JSContextReg);
+   masm.passABIArg(JSContextReg);
+@@ -19998,6 +20042,10 @@ void CodeGenerator::visitGetDOMProperty(
+                    ABIType::General,
+                    CheckUnsafeCallWithABI::DontCheckHasExitFrame);
+ 
++#ifdef JS_CODEGEN_PPC
++  masm.freeStack(ABIStackAlignment);
++#endif
++
+   if (ins->mir()->isInfallible()) {
+     masm.loadValue(Address(masm.getStackPointer(),
+                            IonDOMExitFrameLayout::offsetOfResult()),
+@@ -20108,6 +20156,17 @@ void CodeGenerator::visitSetDOMProperty(
+ 
+   markSafepointAt(safepointOffset, ins);
+ 
++#ifdef JS_CODEGEN_PPC
++  // ppc32 SysV passes Handle<JSObject*> and JSJitSetterCallArgs by invisible
++  // reference: the callee expects pointers to them, not their contents.
++  masm.reserveStack(ABIStackAlignment);
++  masm.storePtr(ObjectReg, Address(masm.getStackPointer(), 0));
++  masm.storePtr(ValueReg, Address(masm.getStackPointer(), sizeof(uintptr_t)));
++  masm.moveStackPtrTo(ObjectReg);
++  masm.computeEffectiveAddress(
++      Address(masm.getStackPointer(), sizeof(uintptr_t)), ValueReg);
++#endif
++
+   masm.setupAlignedABICall();
+   masm.loadJSContext(JSContextReg);
+   masm.passABIArg(JSContextReg);
+@@ -20119,6 +20178,10 @@ void CodeGenerator::visitSetDOMProperty(
+                    ABIType::General,
+                    CheckUnsafeCallWithABI::DontCheckHasExitFrame);
+ 
++#ifdef JS_CODEGEN_PPC
++  masm.freeStack(ABIStackAlignment);
++#endif
++
+   masm.branchIfFalseBool(ReturnReg, masm.exceptionLabel());
+ 
+   // Switch back to the current realm if needed. Note: if the setter threw an
+@@ -21975,15 +22038,25 @@ void CodeGenerator::visitGuardHasGetterS
+     masm.unboxNonDouble(valueAddr, temp2, JSVAL_TYPE_PRIVATE_GCTHING);
+   }
+ 
++#ifdef JS_CODEGEN_PPC
++  // ppc32 SysV passes a jsid by invisible reference; pass the raw bits.
++  using Fn = bool (*)(JSContext* cx, JSObject* obj, uintptr_t idBits,
++                      GetterSetter* getterSetter);
++#else
+   using Fn = bool (*)(JSContext* cx, JSObject* obj, jsid id,
+                       GetterSetter* getterSetter);
++#endif
+   masm.setupAlignedABICall();
+   masm.loadJSContext(temp0);
+   masm.passABIArg(temp0);
+   masm.passABIArg(object);
+   masm.passABIArg(temp1);
+   masm.passABIArg(temp2);
++#ifdef JS_CODEGEN_PPC
++  masm.callWithABI<Fn, ObjectHasGetterSetterPureRaw>();
++#else
+   masm.callWithABI<Fn, ObjectHasGetterSetterPure>();
++#endif
+ 
+   bailoutIfFalseBool(ReturnReg, lir->snapshot());
+ }
 diff -Nurp -p '--exclude=*.orig' '--exclude=*.rej' '--exclude=*.pyc' '--exclude=__pycache__' /srv/t2/tmp/ppc-jit-work/baseline/js/src/jit/CodeGenerator.h /srv/t2/src-firefox.ppc-desktop.260728.163810.1997595/firefox-153.0/js/src/jit/CodeGenerator.h
 --- a/js/src/jit/CodeGenerator.h	2026-07-28 16:38:22.634385682 +0200
 +++ b/js/src/jit/CodeGenerator.h	2026-07-28 16:52:29.011063556 +0200
@@ -458,7 +896,7 @@ diff -Nurp -p '--exclude=*.orig' '--exclude=*.rej' '--exclude=*.pyc' '--exclude=
    return true;
 diff -Nurp -p '--exclude=*.orig' '--exclude=*.rej' '--exclude=*.pyc' '--exclude=__pycache__' /srv/t2/tmp/ppc-jit-work/baseline/js/src/jit/ExecutableAllocator.cpp /srv/t2/src-firefox.ppc-desktop.260728.163810.1997595/firefox-153.0/js/src/jit/ExecutableAllocator.cpp
 --- a/js/src/jit/ExecutableAllocator.cpp	2026-07-28 16:38:22.634561130 +0200
-+++ b/js/src/jit/ExecutableAllocator.cpp	2026-07-28 16:57:40.908043342 +0200
++++ b/js/src/jit/ExecutableAllocator.cpp	2026-07-29 14:21:23.704309968 +0200
 @@ -307,12 +307,12 @@ void ExecutableAllocator::poisonCode(JSR
    }
  
@@ -511,6 +949,37 @@ diff -Nurp -p '--exclude=*.orig' '--exclude=*.rej' '--exclude=*.pyc' '--exclude=
  // core before executing newly JIT'ed code. This will remove any stale data from
  // the pipeline that may have referenced invalidated instructions.
  //
+diff -Nurp -p '--exclude=*.orig' '--exclude=*.rej' '--exclude=*.pyc' '--exclude=__pycache__' /srv/t2/tmp/ppc-jit-work/baseline/js/src/jit/IonCacheIRCompiler.cpp /srv/t2/src-firefox.ppc-desktop.260728.163810.1997595/firefox-153.0/js/src/jit/IonCacheIRCompiler.cpp
+--- a/js/src/jit/IonCacheIRCompiler.cpp	2026-07-15 22:44:59.000000000 +0200
++++ b/js/src/jit/IonCacheIRCompiler.cpp	2026-07-28 23:53:42.475262962 +0200
+@@ -1339,15 +1339,27 @@ bool IonCacheIRCompiler::emitProxyGetRes
+   masm.enterFakeExitFrame(argJSContext, scratch, ExitFrameType::IonOOLProxy);
+ 
+   // Make the call.
++#ifdef JS_CODEGEN_PPC
++  // ppc32 SysV passes a Handle (a class) by invisible reference, adding a
++  // second level of indirection on top of the Handle's own. Pass the rooted
++  // slot addresses and rebuild the Handles in the shim.
++  using Fn = bool (*)(JSContext* cx, JSObject** proxy, jsid* id, Value* vp);
++#else
+   using Fn = bool (*)(JSContext* cx, HandleObject proxy, HandleId id,
+                       MutableHandleValue vp);
++#endif
+   masm.setupUnalignedABICall(scratch);
+   masm.passABIArg(argJSContext);
+   masm.passABIArg(argProxy);
+   masm.passABIArg(argId);
+   masm.passABIArg(argVp);
++#ifdef JS_CODEGEN_PPC
++  masm.callWithABI<Fn, ProxyGetPropertyRaw>(
++      ABIType::General, CheckUnsafeCallWithABI::DontCheckHasExitFrame);
++#else
+   masm.callWithABI<Fn, ProxyGetProperty>(
+       ABIType::General, CheckUnsafeCallWithABI::DontCheckHasExitFrame);
++#endif
+ 
+   // Test for failure.
+   masm.branchIfFalseBool(ReturnReg, masm.exceptionLabel());
 diff -Nurp -p '--exclude=*.orig' '--exclude=*.rej' '--exclude=*.pyc' '--exclude=__pycache__' /srv/t2/tmp/ppc-jit-work/baseline/js/src/jit/JitContext.cpp /srv/t2/src-firefox.ppc-desktop.260728.163810.1997595/firefox-153.0/js/src/jit/JitContext.cpp
 --- a/js/src/jit/JitContext.cpp	2026-07-28 16:38:22.634765880 +0200
 +++ b/js/src/jit/JitContext.cpp	2026-07-28 16:57:40.908239081 +0200
@@ -838,8 +1307,25 @@ diff -Nurp -p '--exclude=*.orig' '--exclude=*.rej' '--exclude=*.pyc' '--exclude=
  #elif defined(JS_CODEGEN_WASM32)
 diff -Nurp -p '--exclude=*.orig' '--exclude=*.rej' '--exclude=*.pyc' '--exclude=__pycache__' /srv/t2/tmp/ppc-jit-work/baseline/js/src/jit/MacroAssembler.cpp /srv/t2/src-firefox.ppc-desktop.260728.163810.1997595/firefox-153.0/js/src/jit/MacroAssembler.cpp
 --- a/js/src/jit/MacroAssembler.cpp	2026-07-28 16:38:22.656758390 +0200
-+++ b/js/src/jit/MacroAssembler.cpp	2026-07-28 21:09:52.381383206 +0200
-@@ -2799,9 +2799,10 @@ void MacroAssembler::setIsCrossRealmArra
++++ b/js/src/jit/MacroAssembler.cpp	2026-07-29 10:21:26.126630946 +0200
+@@ -2290,7 +2290,16 @@ void MacroAssembler::initializeBigInt64(
+                 "BigInt inline storage can store at least two digits");
+ #endif
+ 
++#if !defined(JS_PUNBOX64) && defined(__BYTE_ORDER__) && \
++    __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
++  // The digits are a uintptr_t array, so digit 0 is at offset 0 whatever the
++  // endianness, but store64 places the high word first on a big-endian target.
++  store32(val.low, Address(bigInt, js::BigInt::offsetOfInlineDigits()));
++  store32(val.high, Address(bigInt, js::BigInt::offsetOfInlineDigits() +
++                                        int32_t(sizeof(BigInt::Digit))));
++#else
+   store64(val, Address(bigInt, js::BigInt::offsetOfInlineDigits()));
++#endif
+ 
+   bind(&done);
+ }
+@@ -2799,9 +2808,10 @@ void MacroAssembler::setIsCrossRealmArra
    branchTestObjIsFunction(Assembler::NotEqual, obj, output, obj, &isFalse);
  
    // The function must be the ArrayConstructor native.
@@ -853,7 +1339,7 @@ diff -Nurp -p '--exclude=*.orig' '--exclude=*.rej' '--exclude=*.pyc' '--exclude=
  
    move32(Imm32(1), output);
    jump(&done);
-@@ -2829,7 +2830,7 @@ void MacroAssembler::setIsDefinitelyType
+@@ -2829,7 +2839,7 @@ void MacroAssembler::setIsDefinitelyType
    branchTestObjIsFunction(Assembler::NotEqual, obj, output, obj, &isFalse);
  
    // Load the native into |output|.
@@ -862,7 +1348,18 @@ diff -Nurp -p '--exclude=*.orig' '--exclude=*.rej' '--exclude=*.pyc' '--exclude=
  
    auto branchIsTypedArrayCtor = [&](Scalar::Type type) {
      // The function must be a TypedArrayConstructor native (from any realm).
-@@ -6163,7 +6164,8 @@ static void MoveDataBlock(MacroAssembler
+@@ -3261,7 +3271,9 @@ void MacroAssembler::extractCurrentIndex
+   Label iterActive;
+   branchTest32(Assembler::NonZero,
+                Address(outIndex, NativeIterator::offsetOfFlags()),
+-               Imm32(NativeIterator::Flags::Active), &iterActive);
++               Imm32(NativeIterator::flagForJit32(
++                   NativeIterator::Flags::Active)),
++               &iterActive);
+   assumeUnreachable("iterator-index fast path on an inactive iterator");
+   bind(&iterActive);
+ #endif
+@@ -6163,7 +6175,8 @@ static void MoveDataBlock(MacroAssembler
    static constexpr Register scratch = ABINonArgReg0;
    masm.push(scratch);
  #elif defined(JS_CODEGEN_MIPS64) || defined(JS_CODEGEN_LOONG64) || \
@@ -872,7 +1369,7 @@ diff -Nurp -p '--exclude=*.orig' '--exclude=*.rej' '--exclude=*.pyc' '--exclude=
    UseScratchRegisterScope temps(masm);
    Register scratch = temps.Acquire();
  #elif !defined(JS_CODEGEN_NONE)
-@@ -6349,9 +6351,9 @@ static void CollapseWasmFrameFast(MacroA
+@@ -6349,9 +6362,9 @@ static void CollapseWasmFrameFast(MacroA
  
  #ifdef JS_USE_LINK_REGISTER
    // RA is already in its place, just move stack.
@@ -885,7 +1382,7 @@ diff -Nurp -p '--exclude=*.orig' '--exclude=*.rej' '--exclude=*.pyc' '--exclude=
    // (pushReturnAddress) saves the correct return address.
    masm.xs_mtlr(tempForRA);
  #  endif
-@@ -6503,9 +6505,9 @@ static void CollapseWasmFrameSlow(MacroA
+@@ -6503,9 +6516,9 @@ static void CollapseWasmFrameSlow(MacroA
  #ifdef JS_USE_LINK_REGISTER
    masm.freeStack(reserved);
    // RA is already in its place, just move stack.
@@ -898,9 +1395,77 @@ diff -Nurp -p '--exclude=*.orig' '--exclude=*.rej' '--exclude=*.pyc' '--exclude=
    // callee returns to the trampoline.
    masm.xs_mtlr(tempForRA);
  #  endif
+@@ -7007,8 +7020,9 @@ void MacroAssembler::wasmCallRef(const w
+   size_t instanceSlotOffset = FunctionExtended::offsetOfExtendedSlot(
+       FunctionExtended::WASM_INSTANCE_SLOT);
+   static_assert(FunctionExtended::WASM_INSTANCE_SLOT < wasm::NullPtrGuardSize);
+-  FaultingCodeOffset fco =
+-      loadPtr(Address(calleeFnObj, instanceSlotOffset), newInstanceTemp);
++  FaultingCodeOffset fco = loadPtr(
++      Address(calleeFnObj, instanceSlotOffset + PrivateValuePayloadOffset),
++      newInstanceTemp);
+   append(wasm::Trap::NullPointerDereference, wasm::TrapMachineInsnForLoadWord(),
+          fco.get(), desc.toTrapSiteDesc());
+   branchPtr(Assembler::Equal, InstanceReg, newInstanceTemp, &fastCall);
+@@ -7027,7 +7041,9 @@ void MacroAssembler::wasmCallRef(const w
+   // WASM_FUNC_UNCHECKED_ENTRY_SLOT extended slot.
+   size_t uncheckedEntrySlotOffset = FunctionExtended::offsetOfExtendedSlot(
+       FunctionExtended::WASM_FUNC_UNCHECKED_ENTRY_SLOT);
+-  loadPtr(Address(calleeFnObj, uncheckedEntrySlotOffset), calleeScratch);
++  loadPtr(Address(calleeFnObj,
++                  uncheckedEntrySlotOffset + PrivateValuePayloadOffset),
++          calleeScratch);
+ 
+   *slowCallOffset = wasmMarkedSlowCall(desc, calleeScratch);
+ 
+@@ -7043,7 +7059,9 @@ void MacroAssembler::wasmCallRef(const w
+ 
+   bind(&fastCall);
+ 
+-  loadPtr(Address(calleeFnObj, uncheckedEntrySlotOffset), calleeScratch);
++  loadPtr(Address(calleeFnObj,
++                  uncheckedEntrySlotOffset + PrivateValuePayloadOffset),
++          calleeScratch);
+ 
+   // We use a different type of call site for the fast call since the instance
+   // slots in the frame do not have valid values.
+@@ -7072,8 +7090,9 @@ void MacroAssembler::wasmReturnCallRef(
+   size_t instanceSlotOffset = FunctionExtended::offsetOfExtendedSlot(
+       FunctionExtended::WASM_INSTANCE_SLOT);
+   static_assert(FunctionExtended::WASM_INSTANCE_SLOT < wasm::NullPtrGuardSize);
+-  FaultingCodeOffset fco =
+-      loadPtr(Address(calleeFnObj, instanceSlotOffset), newInstanceTemp);
++  FaultingCodeOffset fco = loadPtr(
++      Address(calleeFnObj, instanceSlotOffset + PrivateValuePayloadOffset),
++      newInstanceTemp);
+   append(wasm::Trap::NullPointerDereference, wasm::TrapMachineInsnForLoadWord(),
+          fco.get(), desc.toTrapSiteDesc());
+   branchPtr(Assembler::Equal, InstanceReg, newInstanceTemp, &fastCall);
+@@ -7092,7 +7111,9 @@ void MacroAssembler::wasmReturnCallRef(
+   // WASM_FUNC_UNCHECKED_ENTRY_SLOT extended slot.
+   size_t uncheckedEntrySlotOffset = FunctionExtended::offsetOfExtendedSlot(
+       FunctionExtended::WASM_FUNC_UNCHECKED_ENTRY_SLOT);
+-  loadPtr(Address(calleeFnObj, uncheckedEntrySlotOffset), calleeScratch);
++  loadPtr(Address(calleeFnObj,
++                  uncheckedEntrySlotOffset + PrivateValuePayloadOffset),
++          calleeScratch);
+ 
+   wasm::CallSiteDesc stubDesc(desc.lineOrBytecode(),
+                               wasm::CallSiteKind::ReturnStub);
+@@ -7105,7 +7126,9 @@ void MacroAssembler::wasmReturnCallRef(
+ 
+   bind(&fastCall);
+ 
+-  loadPtr(Address(calleeFnObj, uncheckedEntrySlotOffset), calleeScratch);
++  loadPtr(Address(calleeFnObj,
++                  uncheckedEntrySlotOffset + PrivateValuePayloadOffset),
++          calleeScratch);
+ 
+   wasmCollapseFrameFast(retCallInfo);
+   jump(calleeScratch);
 diff -Nurp -p '--exclude=*.orig' '--exclude=*.rej' '--exclude=*.pyc' '--exclude=__pycache__' /srv/t2/tmp/ppc-jit-work/baseline/js/src/jit/MacroAssembler.h /srv/t2/src-firefox.ppc-desktop.260728.163810.1997595/firefox-153.0/js/src/jit/MacroAssembler.h
 --- a/js/src/jit/MacroAssembler.h	2026-07-28 16:38:22.657203940 +0200
-+++ b/js/src/jit/MacroAssembler.h	2026-07-28 21:09:39.842310107 +0200
++++ b/js/src/jit/MacroAssembler.h	2026-07-28 23:39:28.834568273 +0200
 @@ -23,6 +23,8 @@
  #  include "jit/loong64/MacroAssembler-loong64.h"
  #elif defined(JS_CODEGEN_RISCV64)
@@ -3033,7 +3598,21 @@ diff -Nurp -p '--exclude=*.orig' '--exclude=*.rej' '--exclude=*.pyc' '--exclude=
  
    void atomicIsLockFreeJS(Register value, Register output);
  
-@@ -5953,7 +6028,7 @@ class MacroAssembler : public MacroAssem
+@@ -5663,7 +5738,13 @@ class MacroAssembler : public MacroAssem
+     branchTestDouble(Assembler::Equal, source, &isDouble);
+     branchTestInt32(Assembler::NotEqual, source, failure);
+ 
++#ifdef JS_CODEGEN_PPC
++    // Big-endian nunbox32 keeps the payload in the second word, so the Value's
++    // own address is the tag, not the int32.
++    convertInt32ToDouble(ToPayload(source), dest);
++#else
+     convertInt32ToDouble(source, dest);
++#endif
+     jump(&done);
+ 
+     bind(&isDouble);
+@@ -5953,7 +6034,7 @@ class MacroAssembler : public MacroAssem
    inline void addStackPtrTo(T t);
  
    void subFromStackPtr(Imm32 imm32)
@@ -3056,8 +3635,20 @@ diff -Nurp -p '--exclude=*.orig' '--exclude=*.rej' '--exclude=*.pyc' '--exclude=
  #elif defined(JS_CODEGEN_WASM32)
 diff -Nurp -p '--exclude=*.orig' '--exclude=*.rej' '--exclude=*.pyc' '--exclude=__pycache__' /srv/t2/tmp/ppc-jit-work/baseline/js/src/jit/MoveResolver.cpp /srv/t2/src-firefox.ppc-desktop.260728.163810.1997595/firefox-153.0/js/src/jit/MoveResolver.cpp
 --- a/js/src/jit/MoveResolver.cpp	2026-07-28 16:38:22.637425520 +0200
-+++ b/js/src/jit/MoveResolver.cpp	2026-07-28 17:02:08.871756577 +0200
-@@ -57,8 +57,8 @@ bool MoveResolver::addMove(const MoveOpe
++++ b/js/src/jit/MoveResolver.cpp	2026-07-29 09:57:01.973763367 +0200
+@@ -21,9 +21,8 @@ MoveOperand::MoveOperand(MacroAssembler&
+ #ifdef JS_CODEGEN_REGISTER_PAIR
+     case ABIArg::GPR_PAIR:
+       kind_ = Kind::RegPair;
+-      code_ = arg.evenGpr().code();
+-      MOZ_ASSERT(code_ % 2 == 0);
+-      MOZ_ASSERT(code_ + 1 == arg.oddGpr().code());
++      // Store the lower-numbered code of the pair; see ABIArg::evenGpr().
++      code_ = std::min(arg.evenGpr().code(), arg.oddGpr().code());
+       break;
+ #endif
+     case ABIArg::FPU:
+@@ -57,8 +56,8 @@ bool MoveResolver::addMove(const MoveOpe
                             MoveOp::Type type) {
    // Assert that we're not doing no-op moves.
    MOZ_ASSERT(!(from == to));
@@ -3068,6 +3659,66 @@ diff -Nurp -p '--exclude=*.orig' '--exclude=*.rej' '--exclude=*.pyc' '--exclude=
    // values but share one physical register. The register allocator can emit a
    // move between two such kind-views of the same FPR (e.g. f2-Double to
    // f2-Single); these are no-ops on the hardware, are not caught by the
+diff -Nurp -p '--exclude=*.orig' '--exclude=*.rej' '--exclude=*.pyc' '--exclude=__pycache__' /srv/t2/tmp/ppc-jit-work/baseline/js/src/jit/MoveResolver.h /srv/t2/src-firefox.ppc-desktop.260728.163810.1997595/firefox-153.0/js/src/jit/MoveResolver.h
+--- a/js/src/jit/MoveResolver.h	2026-07-15 22:09:45.000000000 +0200
++++ b/js/src/jit/MoveResolver.h	2026-07-29 09:56:52.476716422 +0200
+@@ -86,11 +86,11 @@ class MoveOperand {
+   }
+   Register evenReg() const {
+     MOZ_ASSERT(isGeneralRegPair());
+-    return Register::FromCode(code_);
++    return Register::FromCode(code_ % 2 == 0 ? code_ : code_ + 1);
+   }
+   Register oddReg() const {
+     MOZ_ASSERT(isGeneralRegPair());
+-    return Register::FromCode(code_ + 1);
++    return Register::FromCode(code_ % 2 == 0 ? code_ + 1 : code_);
+   }
+   FloatRegister floatReg() const {
+     MOZ_ASSERT(isFloatReg());
+@@ -119,15 +119,9 @@ class MoveOperand {
+     // have to check any other register, or register pair.
+     if (isGeneralRegPair() || other.isGeneralRegPair()) {
+       if (isGeneralRegPair() && other.isGeneralRegPair()) {
+-        // Assume that register pairs are aligned on even registers.
+-        MOZ_ASSERT(!evenReg().aliases(other.oddReg()));
+-        MOZ_ASSERT(!oddReg().aliases(other.evenReg()));
+-        // Pair of registers are composed of consecutive registers, thus
+-        // if the first registers are aliased, then the second registers
+-        // are aliased too.
+-        MOZ_ASSERT(evenReg().aliases(other.evenReg()) ==
+-                   oddReg().aliases(other.oddReg()));
+-        return evenReg().aliases(other.evenReg());
++        // Pairs are two consecutive registers drawn from one aligned family,
++        // so two pairs either coincide entirely or are disjoint.
++        return code_ == other.code_;
+       } else if (other.isGeneralReg()) {
+         MOZ_ASSERT(isGeneralRegPair());
+         return evenReg().aliases(other.reg()) || oddReg().aliases(other.reg());
+diff -Nurp -p '--exclude=*.orig' '--exclude=*.rej' '--exclude=*.pyc' '--exclude=__pycache__' /srv/t2/tmp/ppc-jit-work/baseline/js/src/jit/ProcessExecutableMemory.cpp /srv/t2/src-firefox.ppc-desktop.260728.163810.1997595/firefox-153.0/js/src/jit/ProcessExecutableMemory.cpp
+--- a/js/src/jit/ProcessExecutableMemory.cpp	2026-07-15 22:09:44.000000000 +0200
++++ b/js/src/jit/ProcessExecutableMemory.cpp	2026-07-29 14:21:23.704052206 +0200
+@@ -788,8 +788,18 @@ void* ProcessExecutableMemory::allocate(
+ 
+     MOZ_ASSERT(bytes <= MaxCodeBytesPerProcess);
+ 
+-    // Maybe skip a page to make allocations less predictable.
+-    size_t page = cursor_ + (rng_.ref().next() % 2);
++    // Maybe skip a page to make allocations less predictable. The skipped page
++    // is stranded until the cursor wraps, and it can then only be reused by a
++    // single-page allocation. On a 32-bit target the arena is only
++    // MaxCodeBytesPerProcess = 140MB, so the arena fills before any code is
++    // reclaimed and what is left is a sea of isolated one-page holes: every
++    // allocation larger than ExecutableCodePageSize then fails even though
++    // tens of MB are free. Only randomize where the arena is large enough for
++    // the stranding to be irrelevant.
++    size_t page = cursor_;
++    if (JS_BITS_PER_WORD == 64) {
++      page += rng_.ref().next() % 2;
++    }
+ 
+     for (size_t i = 0; i < MaxCodePages; i++) {
+       // Make sure page + numPages - 1 is a valid index.
 diff -Nurp -p '--exclude=*.orig' '--exclude=*.rej' '--exclude=*.pyc' '--exclude=__pycache__' /srv/t2/tmp/ppc-jit-work/baseline/js/src/jit/RegisterAllocator.h /srv/t2/src-firefox.ppc-desktop.260728.163810.1997595/firefox-153.0/js/src/jit/RegisterAllocator.h
 --- a/js/src/jit/RegisterAllocator.h	2026-07-28 16:38:22.637467312 +0200
 +++ b/js/src/jit/RegisterAllocator.h	2026-07-28 17:02:08.871865291 +0200
@@ -3080,6 +3731,41 @@ diff -Nurp -p '--exclude=*.orig' '--exclude=*.rej' '--exclude=*.pyc' '--exclude=
      regs.take(HeapReg);
  #endif
      MOZ_ASSERT(!regs.has(FramePointer));
+diff -Nurp -p '--exclude=*.orig' '--exclude=*.rej' '--exclude=*.pyc' '--exclude=__pycache__' /srv/t2/tmp/ppc-jit-work/baseline/js/src/jit/RegisterSets.h /srv/t2/src-firefox.ppc-desktop.260728.163810.1997595/firefox-153.0/js/src/jit/RegisterSets.h
+--- a/js/src/jit/RegisterSets.h	2026-07-15 22:44:59.000000000 +0200
++++ b/js/src/jit/RegisterSets.h	2026-07-29 09:56:39.151652574 +0200
+@@ -1309,9 +1309,14 @@ class ABIArg {
+ #else
+     MOZ_CRASH("Unsupported type of ABI argument.");
+ #endif
+-    u.gpr_ = gprLow.code();
+-    MOZ_ASSERT(u.gpr_ % 2 == 0);
+-    MOZ_ASSERT(u.gpr_ + 1 == gprHigh.code());
++    // A pair is two consecutive registers. Store the lower-numbered code;
++    // which half holds the low word is platform-specific (ARM softfp pairs
++    // start on an even register and hold the low word there, SysV ppc32 pairs
++    // start on an odd register and hold the high word there).
++    Register::Code lo = gprLow.code();
++    Register::Code hi = gprHigh.code();
++    u.gpr_ = lo < hi ? lo : hi;
++    MOZ_ASSERT(uint32_t(lo < hi ? hi : lo) == uint32_t(u.gpr_) + 1);
+   }
+   explicit ABIArg(FloatRegister fpu) : kind_(FPU) { u.fpu_ = fpu.code(); }
+   explicit ABIArg(uint32_t offset) : kind_(Stack) { u.offset_ = offset; }
+@@ -1339,11 +1344,11 @@ class ABIArg {
+   }
+   Register evenGpr() const {
+     MOZ_ASSERT(isGeneralRegPair());
+-    return Register::FromCode(u.gpr_);
++    return Register::FromCode(u.gpr_ % 2 == 0 ? u.gpr_ : u.gpr_ + 1);
+   }
+   Register oddGpr() const {
+     MOZ_ASSERT(isGeneralRegPair());
+-    return Register::FromCode(u.gpr_ + 1);
++    return Register::FromCode(u.gpr_ % 2 == 0 ? u.gpr_ + 1 : u.gpr_);
+   }
+   FloatRegister fpu() const {
+     MOZ_ASSERT(kind() == FPU);
 diff -Nurp -p '--exclude=*.orig' '--exclude=*.rej' '--exclude=*.pyc' '--exclude=__pycache__' /srv/t2/tmp/ppc-jit-work/baseline/js/src/jit/Registers.h /srv/t2/src-firefox.ppc-desktop.260728.163810.1997595/firefox-153.0/js/src/jit/Registers.h
 --- a/js/src/jit/Registers.h	2026-07-28 16:38:22.637503184 +0200
 +++ b/js/src/jit/Registers.h	2026-07-28 19:40:41.352733395 +0200
@@ -3180,7 +3866,7 @@ diff -Nurp -p '--exclude=*.orig' '--exclude=*.rej' '--exclude=*.pyc' '--exclude=
  #elif defined(JS_SIMULATOR)
 diff -Nurp -p '--exclude=*.orig' '--exclude=*.rej' '--exclude=*.pyc' '--exclude=__pycache__' /srv/t2/tmp/ppc-jit-work/baseline/js/src/jit/VMFunctions.cpp /srv/t2/src-firefox.ppc-desktop.260728.163810.1997595/firefox-153.0/js/src/jit/VMFunctions.cpp
 --- a/js/src/jit/VMFunctions.cpp	2026-07-15 22:44:59.000000000 +0200
-+++ b/js/src/jit/VMFunctions.cpp	2026-07-28 20:39:04.746604450 +0200
++++ b/js/src/jit/VMFunctions.cpp	2026-07-28 23:51:39.127167051 +0200
 @@ -6,6 +6,8 @@
  
  #include "mozilla/FloatingPoint.h"
@@ -3190,7 +3876,15 @@ diff -Nurp -p '--exclude=*.orig' '--exclude=*.rej' '--exclude=*.pyc' '--exclude=
  #include "builtin/Date.h"
  #include "builtin/MapObject.h"
  #include "builtin/String.h"
-@@ -131,6 +133,16 @@ struct TypeToArgProperties<Handle<T>> {
+@@ -24,6 +26,7 @@
+ #include "js/friend/WindowProxy.h"    // js::IsWindow
+ #include "js/Printf.h"
+ #include "js/TraceKind.h"
++#include "proxy/Proxy.h"  // js::ProxyGetProperty
+ #include "proxy/ScriptedProxyHandler.h"
+ #include "util/Unicode.h"
+ #include "vm/ArrayObject.h"
+@@ -131,6 +134,16 @@ struct TypeToArgProperties<Handle<T>> {
    // Fail for Handle types that aren't specialized above.
  };
  
@@ -3207,7 +3901,7 @@ diff -Nurp -p '--exclude=*.orig' '--exclude=*.rej' '--exclude=*.pyc' '--exclude=
  // Convert argument type to whether or not it should be passed in a float
  // register on platforms that have them, like x64.
  template <class T>
-@@ -339,20 +351,24 @@ struct VMFunctionDataHelper<R (*)(JSCont
+@@ -339,20 +352,24 @@ struct VMFunctionDataHelper<R (*)(JSCont
    static constexpr uint32_t argumentPassedInFloatRegs() {
      return BitMask<TypeToPassInFloatReg, uint32_t, 2, Args...>::result;
    }
@@ -3237,7 +3931,7 @@ diff -Nurp -p '--exclude=*.orig' '--exclude=*.rej' '--exclude=*.pyc' '--exclude=
  };
  
  // GCC warns when the signature does not have matching attributes (for example
-@@ -3432,10 +3448,11 @@ void AssertMapObjectHash(JSContext* cx,
+@@ -3432,10 +3449,11 @@ void AssertMapObjectHash(JSContext* cx,
    MOZ_ASSERT(actualHash == HashValue(cx, obj, value));
  }
  
@@ -3251,9 +3945,43 @@ diff -Nurp -p '--exclude=*.orig' '--exclude=*.rej' '--exclude=*.pyc' '--exclude=
    MOZ_ASSERT(prop.isSome());
    MOZ_ASSERT(prop->slot() == slot);
  #else
+@@ -3443,6 +3461,33 @@ void AssertPropertyLookup(NativeObject*
+ #endif
+ }
+ 
++// callWithABI shims for callees taking an aggregate by value; see the comment
++// in VMFunctions.h. The wrapped callee keeps its own AutoUnsafeCallWithABI, so
++// these add none of their own.
++bool GetNativeDataPropertyPureRaw(JSContext* cx, JSObject* obj,
++                                  uintptr_t idBits, MegamorphicCacheEntry* entry,
++                                  Value* vp) {
++  return GetNativeDataPropertyPure(cx, obj, PropertyKey::fromRawBits(idBits),
++                                   entry, vp);
++}
++
++bool ObjectHasGetterSetterPureRaw(JSContext* cx, JSObject* objArg,
++                                  uintptr_t idBits,
++                                  GetterSetter* getterSetter) {
++  return ObjectHasGetterSetterPure(cx, objArg, PropertyKey::fromRawBits(idBits),
++                                   getterSetter);
++}
++
++bool TypeOfEqObjectRaw(JSObject* obj, uint32_t operand) {
++  return TypeOfEqObject(obj, TypeofEqOperand::fromRawValue(uint8_t(operand)));
++}
++
++bool ProxyGetPropertyRaw(JSContext* cx, JSObject** proxy, jsid* id, Value* vp) {
++  return js::ProxyGetProperty(cx, HandleObject::fromMarkedLocation(proxy),
++                              HandleId::fromMarkedLocation(id),
++                              MutableHandleValue::fromMarkedLocation(vp));
++}
++
+ // This is a specialized version of WeakMap::valueReadBarrier.
+ 
+ void WeakMapValueReadBarrier(js::gc::TenuredCell* cell, Zone* mapZone) {
 diff -Nurp -p '--exclude=*.orig' '--exclude=*.rej' '--exclude=*.pyc' '--exclude=__pycache__' /srv/t2/tmp/ppc-jit-work/baseline/js/src/jit/VMFunctions.h /srv/t2/src-firefox.ppc-desktop.260728.163810.1997595/firefox-153.0/js/src/jit/VMFunctions.h
 --- a/js/src/jit/VMFunctions.h	2026-07-15 22:44:59.000000000 +0200
-+++ b/js/src/jit/VMFunctions.h	2026-07-28 20:39:04.746180202 +0200
++++ b/js/src/jit/VMFunctions.h	2026-07-28 23:50:43.045696849 +0200
 @@ -185,6 +185,12 @@ struct VMFunctionData {
    // have them.
    uint32_t argumentPassedInFloatRegs;
@@ -3300,7 +4028,7 @@ diff -Nurp -p '--exclude=*.orig' '--exclude=*.rej' '--exclude=*.pyc' '--exclude=
          explicitArgs(explicitArgs),
          outParamRootType(outParamRootType),
          outParam(outParam),
-@@ -739,7 +751,10 @@ void AssertSetObjectHash(JSContext* cx,
+@@ -739,10 +751,29 @@ void AssertSetObjectHash(JSContext* cx,
  void AssertMapObjectHash(JSContext* cx, MapObject* obj, const Value* value,
                           mozilla::HashNumber actualHash);
  
@@ -3312,6 +4040,25 @@ diff -Nurp -p '--exclude=*.orig' '--exclude=*.rej' '--exclude=*.pyc' '--exclude=
  
  void WeakMapValueReadBarrier(gc::TenuredCell* cell, Zone* mapZone);
  
++// callWithABI shims for callees that take an aggregate (class/union) by value.
++// The 32-bit PowerPC SysV ABI passes those by invisible reference, which
++// callWithABI cannot express: ABIType has no aggregate category, so class-ness
++// is already erased by the time passABIArg sees the argument. These wrappers
++// take the raw scalar payload (or, for Handles, the address of the rooted slot)
++// and rebuild the aggregate on the C++ side. Only JS_CODEGEN_PPC calls them,
++// but they are defined unconditionally because ABIFUNCTION_LIST cannot contain
++// preprocessor conditionals.
++bool GetNativeDataPropertyPureRaw(JSContext* cx, JSObject* obj,
++                                  uintptr_t idBits, MegamorphicCacheEntry* entry,
++                                  Value* vp);
++bool ObjectHasGetterSetterPureRaw(JSContext* cx, JSObject* objArg,
++                                  uintptr_t idBits, GetterSetter* getterSetter);
++bool TypeOfEqObjectRaw(JSObject* obj, uint32_t operand);
++bool ProxyGetPropertyRaw(JSContext* cx, JSObject** proxy, jsid* id, Value* vp);
++
+ // Functions used when JS_MASM_VERBOSE is enabled.
+ void AssumeUnreachable(const char* output);
+ void Printf0(const char* output);
 diff -Nurp -p '--exclude=*.orig' '--exclude=*.rej' '--exclude=*.pyc' '--exclude=__pycache__' /srv/t2/tmp/ppc-jit-work/baseline/js/src/jit/moz.build /srv/t2/src-firefox.ppc-desktop.260728.163810.1997595/firefox-153.0/js/src/jit/moz.build
 --- a/js/src/jit/moz.build	2026-07-28 16:38:22.637693673 +0200
 +++ b/js/src/jit/moz.build	2026-07-28 16:52:01.399059969 +0200
@@ -3533,8 +4280,8 @@ diff -Nurp -p '--exclude=*.orig' '--exclude=*.rej' '--exclude=*.pyc' '--exclude=
 +}  // namespace js
 diff -Nurp -p '--exclude=*.orig' '--exclude=*.rej' '--exclude=*.pyc' '--exclude=__pycache__' /srv/t2/tmp/ppc-jit-work/baseline/js/src/jit/ppc/Architecture-ppc.h /srv/t2/src-firefox.ppc-desktop.260728.163810.1997595/firefox-153.0/js/src/jit/ppc/Architecture-ppc.h
 --- a/js/src/jit/ppc/Architecture-ppc.h	1970-01-01 01:00:00.000000000 +0100
-+++ b/js/src/jit/ppc/Architecture-ppc.h	2026-07-28 21:17:04.928802883 +0200
-@@ -0,0 +1,709 @@
++++ b/js/src/jit/ppc/Architecture-ppc.h	2026-07-29 09:57:20.396857769 +0200
+@@ -0,0 +1,714 @@
 +/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
 + * vim: set ts=8 sts=2 et sw=2 tw=80:
 + * This Source Code Form is subject to the terms of the Mozilla Public
@@ -3986,7 +4733,8 @@ diff -Nurp -p '--exclude=*.orig' '--exclude=*.rej' '--exclude=*.pyc' '--exclude=
 +// Callers reserve this much before a call. It is only ever used as a whole
 +// reservation (wasm's stubs rely on it not breaking stack alignment), so it is
 +// the linkage area rounded up to ABIStackAlignment, not the offset of the first
-+// stack argument -- see ABIArgGenerator, which uses LinkageAreaSize.
++// stack argument -- see ABIArgGenerator, which uses LinkageAreaSize for the
++// system ABI and this for the wasm ABI.
 +static constexpr uint32_t ShadowStackSpace = 16;
 +static const uint32_t SizeOfReturnAddressAfterCall = 0;
 +
@@ -4240,14 +4988,18 @@ diff -Nurp -p '--exclude=*.orig' '--exclude=*.rej' '--exclude=*.pyc' '--exclude=
 +inline bool HasPOWER10() { return false; }
 +inline bool HasVSX() { return false; }
 +
++// SysV ppc32 passes a 64-bit integer argument in an odd/even GPR pair, so
++// ABIArg must be able to express a pair of general purpose registers.
++#define JS_CODEGEN_REGISTER_PAIR 1
++
 +}  // namespace jit
 +}  // namespace js
 +
 +#endif /* jit_ppc_Architecture_ppc_h */
 diff -Nurp -p '--exclude=*.orig' '--exclude=*.rej' '--exclude=*.pyc' '--exclude=__pycache__' /srv/t2/tmp/ppc-jit-work/baseline/js/src/jit/ppc/Assembler-ppc.cpp /srv/t2/src-firefox.ppc-desktop.260728.163810.1997595/firefox-153.0/js/src/jit/ppc/Assembler-ppc.cpp
 --- a/js/src/jit/ppc/Assembler-ppc.cpp	1970-01-01 01:00:00.000000000 +0100
-+++ b/js/src/jit/ppc/Assembler-ppc.cpp	2026-07-28 20:23:29.493263186 +0200
-@@ -0,0 +1,2476 @@
++++ b/js/src/jit/ppc/Assembler-ppc.cpp	2026-07-29 10:42:30.265668026 +0200
+@@ -0,0 +1,2484 @@
 +/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
 + * vim: set ts=8 sts=2 et sw=2 tw=80:
 + * This Source Code Form is subject to the terms of the Mozilla Public
@@ -4289,11 +5041,19 @@ diff -Nurp -p '--exclude=*.orig' '--exclude=*.rej' '--exclude=*.pyc' '--exclude=
 +      break;
 +    }
 +    case MIRType::Int64: {
-+      // SysV would place this in an odd/even GPR pair (r3:r4, r5:r6, ...)
-+      // with the high word in the lower-numbered register. jit::ABIArg's
-+      // GPR_PAIR form cannot express that — it hardcodes low-word-in-even
-+      // with high = even + 1 — so 64-bit arguments go on the stack until
-+      // that representation is extended. See the note in PORT-SPEC.md.
++      // SysV places this in an odd/even GPR pair (r3:r4, r5:r6, ...) with the
++      // high word in the lower-numbered register. The Wasm ABI follows suit:
++      // wasm::GenerateBuiltinThunk requires both ABIs to place arguments
++      // identically.
++      intRegIndex_ += intRegIndex_ & 1;  // pairs start at r3, r5, r7, r9
++      if (intRegIndex_ + 1 < NumIntArgRegs) {
++        Register high = Register::FromCode(Registers::r3 + intRegIndex_);
++        Register low = Register::FromCode(Registers::r3 + intRegIndex_ + 1);
++        current_ = ABIArg(low, high);
++        intRegIndex_ += 2;
++        break;
++      }
++      intRegIndex_ = NumIntArgRegs;
 +      stackOffset_ = AlignBytes(stackOffset_, sizeof(uint64_t));
 +      current_ = ABIArg(stackOffset_);
 +      stackOffset_ += sizeof(uint64_t);
@@ -6726,8 +7486,8 @@ diff -Nurp -p '--exclude=*.orig' '--exclude=*.rej' '--exclude=*.pyc' '--exclude=
 +}
 diff -Nurp -p '--exclude=*.orig' '--exclude=*.rej' '--exclude=*.pyc' '--exclude=__pycache__' /srv/t2/tmp/ppc-jit-work/baseline/js/src/jit/ppc/Assembler-ppc.h /srv/t2/src-firefox.ppc-desktop.260728.163810.1997595/firefox-153.0/js/src/jit/ppc/Assembler-ppc.h
 --- a/js/src/jit/ppc/Assembler-ppc.h	1970-01-01 01:00:00.000000000 +0100
-+++ b/js/src/jit/ppc/Assembler-ppc.h	2026-07-28 21:17:24.946001679 +0200
-@@ -0,0 +1,2087 @@
++++ b/js/src/jit/ppc/Assembler-ppc.h	2026-07-29 07:53:30.252985538 +0200
+@@ -0,0 +1,2088 @@
 +/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
 + * vim: set ts=8 sts=2 et sw=2 tw=80:
 + * This Source Code Form is subject to the terms of the Mozilla Public
@@ -7041,13 +7801,14 @@ diff -Nurp -p '--exclude=*.orig' '--exclude=*.rej' '--exclude=*.pyc' '--exclude=
 +        intRegIndex_(0),
 +        floatRegIndex_(0),
 +        current_() {
-+    // SysV ppc32 puts the first stack argument directly above the linkage area
-+    // (back chain at 0(sp), callee-written LR save at 4(sp)), i.e. at 8(sp).
-+    // Verified against GCC: a callee taking ten int arguments reads the ninth
-+    // and tenth with `lwz 3,8(1)` / `lwz 9,12(1)`. Deliberately not
-+    // ShadowStackSpace, which is rounded up to the stack alignment because it
-+    // is used as a whole-area reservation.
-+    stackOffset_ += LinkageAreaSize;
++    // System ABI: SysV ppc32 puts the first stack argument directly above the
++    // linkage area (back chain at 0(sp), callee-written LR save at 4(sp)),
++    // i.e. at 8(sp). Verified against GCC: a callee taking ten int arguments
++    // reads the ninth and tenth with `lwz 3,8(1)` / `lwz 9,12(1)`.
++    // The Wasm ABI instead places arguments above the whole FrameWithInstances
++    // shadow area, so that stack arguments do not overlap the caller/callee
++    // instance slots.
++    stackOffset_ += (kind == ABIKind::Wasm) ? ShadowStackSpace : LinkageAreaSize;
 +  }
 +
 +  ABIArg next(MIRType argType);
@@ -8817,8 +9578,8 @@ diff -Nurp -p '--exclude=*.orig' '--exclude=*.rej' '--exclude=*.pyc' '--exclude=
 +#endif /* jit_ppc_Assembler_ppc_h */
 diff -Nurp -p '--exclude=*.orig' '--exclude=*.rej' '--exclude=*.pyc' '--exclude=__pycache__' /srv/t2/tmp/ppc-jit-work/baseline/js/src/jit/ppc/CodeGenerator-ppc.cpp /srv/t2/src-firefox.ppc-desktop.260728.163810.1997595/firefox-153.0/js/src/jit/ppc/CodeGenerator-ppc.cpp
 --- a/js/src/jit/ppc/CodeGenerator-ppc.cpp	1970-01-01 01:00:00.000000000 +0100
-+++ b/js/src/jit/ppc/CodeGenerator-ppc.cpp	2026-07-28 19:32:45.239375395 +0200
-@@ -0,0 +1,3502 @@
++++ b/js/src/jit/ppc/CodeGenerator-ppc.cpp	2026-07-29 08:23:47.131824696 +0200
+@@ -0,0 +1,3506 @@
 +/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
 + * vim: set ts=8 sts=2 et sw=2 tw=80:
 + * This Source Code Form is subject to the terms of the Mozilla Public
@@ -9205,12 +9966,16 @@ diff -Nurp -p '--exclude=*.orig' '--exclude=*.rej' '--exclude=*.pyc' '--exclude=
 +  if (ins->snapshot()) {
 +    Label overflow;
 +    if (dest == rhsReg) {
-+      // Subtraction does not commute, so stage the result in a scratch.
++      // as_subf reads both operands before writing, so check overflow inline
++      // rather than staging through a scratch: branchSub32 needs both itself.
 +      UseScratchRegisterScope temps(masm);
-+      Register scratch = temps.Acquire();
-+      masm.move32(lhsReg, scratch);
-+      masm.branchSub32(Assembler::Overflow, rhsReg, scratch, &overflow);
-+      masm.move32(scratch, dest);
++      Register t0 = temps.Acquire();
++      Register t1 = temps.Acquire();
++      masm.as_xor_(t0, lhsReg, rhsReg);
++      masm.as_subf(dest, rhsReg, lhsReg);
++      masm.as_xor_(t1, lhsReg, dest);
++      masm.as_and__rc(t0, t0, t1);
++      masm.ma_b(Assembler::LessThan, &overflow);
 +    } else {
 +      masm.move32(lhsReg, dest);
 +      masm.branchSub32(Assembler::Overflow, rhsReg, dest, &overflow);
@@ -14122,8 +14887,8 @@ diff -Nurp -p '--exclude=*.orig' '--exclude=*.rej' '--exclude=*.pyc' '--exclude=
 +#endif /* jit_ppc_Lowering_ppc_h */
 diff -Nurp -p '--exclude=*.orig' '--exclude=*.rej' '--exclude=*.pyc' '--exclude=__pycache__' /srv/t2/tmp/ppc-jit-work/baseline/js/src/jit/ppc/MacroAssembler-ppc-inl.h /srv/t2/src-firefox.ppc-desktop.260728.163810.1997595/firefox-153.0/js/src/jit/ppc/MacroAssembler-ppc-inl.h
 --- a/js/src/jit/ppc/MacroAssembler-ppc-inl.h	1970-01-01 01:00:00.000000000 +0100
-+++ b/js/src/jit/ppc/MacroAssembler-ppc-inl.h	2026-07-28 23:06:27.256227449 +0200
-@@ -0,0 +1,5938 @@
++++ b/js/src/jit/ppc/MacroAssembler-ppc-inl.h	2026-07-29 08:24:05.944062544 +0200
+@@ -0,0 +1,5943 @@
 +/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
 + * vim: set ts=8 sts=2 et sw=2 tw=80:
 + * This Source Code Form is subject to the terms of the Mozilla Public
@@ -16103,11 +16868,13 @@ diff -Nurp -p '--exclude=*.orig' '--exclude=*.rej' '--exclude=*.pyc' '--exclude=
 +      Register scratch = temps.Acquire();
 +      move32(dest, scratch);  // scratch = old dest
 +      add32(src, dest);
++      // Second temp from the scope: SecondScratchReg may already be held.
++      Register scratch2 = temps.Acquire();
 +      // Signed overflow iff (old ^ result) & (rhs ^ result) has bit 31 set.
-+      as_xor_(SecondScratchReg, dest, scratch);
++      as_xor_(scratch2, dest, scratch);
 +      as_subf(scratch, scratch, dest);  // scratch = rhs value
 +      as_xor_(scratch, scratch, dest);
-+      as_and__rc(scratch, scratch, SecondScratchReg);
++      as_and__rc(scratch, scratch, scratch2);
 +      ma_b(LessThan, overflow);
 +      break;
 +    }
@@ -16148,11 +16915,13 @@ diff -Nurp -p '--exclude=*.orig' '--exclude=*.rej' '--exclude=*.pyc' '--exclude=
 +      Register scratch = temps.Acquire();
 +      move32(dest, scratch);  // scratch = old dest
 +      sub32(src, dest);
++      // Second temp from the scope: SecondScratchReg may already be held.
++      Register scratch2 = temps.Acquire();
 +      // Signed overflow iff (old ^ rhs) & (old ^ result) has bit 31 set.
-+      as_subf(SecondScratchReg, dest, scratch);  // SecondScratch = rhs value
-+      as_xor_(SecondScratchReg, scratch, SecondScratchReg);
++      as_subf(scratch2, dest, scratch);  // scratch2 = rhs value
++      as_xor_(scratch2, scratch, scratch2);
 +      as_xor_(scratch, scratch, dest);
-+      as_and__rc(scratch, scratch, SecondScratchReg);
++      as_and__rc(scratch, scratch, scratch2);
 +      ma_b(LessThan, overflow);
 +      break;
 +    }
@@ -16183,16 +16952,17 @@ diff -Nurp -p '--exclude=*.orig' '--exclude=*.rej' '--exclude=*.pyc' '--exclude=
 +  UseScratchRegisterScope temps(asMasm());
 +  Register scratch = temps.Acquire();
 +  move32(src, scratch);
-+  as_mulhwu(SecondScratchReg, dest, scratch);
++  Register scratch2 = temps.Acquire();
++  as_mulhwu(scratch2, dest, scratch);
 +  as_srawi(r0, dest, 31);
 +  as_and_(r0, r0, scratch);
-+  as_subf(SecondScratchReg, r0, SecondScratchReg);
++  as_subf(scratch2, r0, scratch2);
 +  as_srawi(r0, scratch, 31);
 +  as_and_(r0, r0, dest);
-+  as_subf(SecondScratchReg, r0, SecondScratchReg);
++  as_subf(scratch2, r0, scratch2);
 +  as_mullw(dest, dest, scratch);
 +  as_srawi(r0, dest, 31);
-+  as_cmpw(SecondScratchReg, r0);
++  as_cmpw(scratch2, r0);
 +  ma_b(NotEqual, overflow);
 +}
 +
@@ -20064,8 +20834,8 @@ diff -Nurp -p '--exclude=*.orig' '--exclude=*.rej' '--exclude=*.pyc' '--exclude=
 +#endif /* jit_ppc_MacroAssembler_ppc_inl_h */
 diff -Nurp -p '--exclude=*.orig' '--exclude=*.rej' '--exclude=*.pyc' '--exclude=__pycache__' /srv/t2/tmp/ppc-jit-work/baseline/js/src/jit/ppc/MacroAssembler-ppc.cpp /srv/t2/src-firefox.ppc-desktop.260728.163810.1997595/firefox-153.0/js/src/jit/ppc/MacroAssembler-ppc.cpp
 --- a/js/src/jit/ppc/MacroAssembler-ppc.cpp	1970-01-01 01:00:00.000000000 +0100
-+++ b/js/src/jit/ppc/MacroAssembler-ppc.cpp	2026-07-28 23:12:40.239361483 +0200
-@@ -0,0 +1,3568 @@
++++ b/js/src/jit/ppc/MacroAssembler-ppc.cpp	2026-07-29 11:31:52.754859409 +0200
+@@ -0,0 +1,3618 @@
 +/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
 + * vim: set ts=8 sts=2 et sw=2 tw=80:
 + * This Source Code Form is subject to the terms of the Mozilla Public
@@ -21807,8 +22577,8 @@ diff -Nurp -p '--exclude=*.orig' '--exclude=*.rej' '--exclude=*.pyc' '--exclude=
 +void MacroAssembler::wasmBoundsCheck32(Condition cond, Register index,
 +                                       Register boundsCheckLimit,
 +                                       Label* label) {
-+  ma_cmp(index, boundsCheckLimit, cond);
-+  ma_b(cond, label);
++  Condition c = ma_cmp(index, boundsCheckLimit, cond);
++  ma_b(c, label);
 +}
 +
 +void MacroAssembler::wasmBoundsCheck32(Condition cond, Register index,
@@ -21816,47 +22586,31 @@ diff -Nurp -p '--exclude=*.orig' '--exclude=*.rej' '--exclude=*.pyc' '--exclude=
 +  UseScratchRegisterScope temps(asMasm());
 +  Register scratch = temps.Acquire();
 +  load32(boundsCheckLimit, scratch);
-+  ma_cmp(index, scratch, cond);
-+  ma_b(cond, label);
++  Condition c = ma_cmp(index, scratch, cond);
++  ma_b(c, label);
 +}
 +
 +void MacroAssembler::wasmBoundsCheck64(Condition cond, Register64 index,
 +                                       Register64 boundsCheckLimit,
 +                                       Label* label) {
 +  MOZ_ASSERT(cond == Assembler::Below || cond == Assembler::AboveOrEqual);
-+  Label done;
-+  as_cmplw(index.high, boundsCheckLimit.high);
-+  if (cond == Assembler::Below) {
-+    ma_b(Assembler::Below, label);
-+    ma_b(Assembler::Above, &done);
-+  } else {
-+    ma_b(Assembler::Above, label);
-+    ma_b(Assembler::Below, &done);
-+  }
-+  as_cmplw(index.low, boundsCheckLimit.low);
-+  ma_b(cond, label);
-+  bind(&done);
++  // The limit is a uintptr_t, i.e. 32 bits here, so a non-zero high word is
++  // always out of bounds.
++  Label rejoin;
++  Label* failLabel = cond == Assembler::AboveOrEqual ? label : &rejoin;
++  branch32(Assembler::NotEqual, index.high, Imm32(0), failLabel);
++  wasmBoundsCheck32(cond, index.low, boundsCheckLimit.low, label);
++  bind(&rejoin);
 +}
 +
 +void MacroAssembler::wasmBoundsCheck64(Condition cond, Register64 index,
 +                                       Address boundsCheckLimit, Label* label) {
 +  MOZ_ASSERT(cond == Assembler::Below || cond == Assembler::AboveOrEqual);
-+  UseScratchRegisterScope temps(asMasm());
-+  Register scratch = temps.Acquire();
-+  Label done;
-+  load32(Address(boundsCheckLimit.base, boundsCheckLimit.offset), scratch);
-+  as_cmplw(index.high, scratch);
-+  if (cond == Assembler::Below) {
-+    ma_b(Assembler::Below, label);
-+    ma_b(Assembler::Above, &done);
-+  } else {
-+    ma_b(Assembler::Above, label);
-+    ma_b(Assembler::Below, &done);
-+  }
-+  load32(Address(boundsCheckLimit.base, boundsCheckLimit.offset + 4), scratch);
-+  as_cmplw(index.low, scratch);
-+  ma_b(cond, label);
-+  bind(&done);
++  Label rejoin;
++  Label* failLabel = cond == Assembler::AboveOrEqual ? label : &rejoin;
++  branch32(Assembler::NotEqual, index.high, Imm32(0), failLabel);
++  wasmBoundsCheck32(cond, index.low, boundsCheckLimit, label);
++  bind(&rejoin);
 +}
 +
 +CodeOffset MacroAssembler::move32WithPatch(Register dest) {
@@ -21992,9 +22746,10 @@ diff -Nurp -p '--exclude=*.orig' '--exclude=*.rej' '--exclude=*.pyc' '--exclude=
 +      asMasm().bind(&notNegOrNaN);
 +      asMasm().move32(Imm32(UINT32_MAX), output);
 +    } else {
-+      // Signed: NaN -> 0, negative overflow -> INT32_MIN, positive overflow
-+      // already saturated to INT32_MAX.
-+      Label notNaN;
++      // Signed: NaN -> 0, negative overflow -> INT32_MIN, positive overflow ->
++      // INT32_MAX. The inline path branches here on the fctiwz exception
++      // before it stores anything, so every arm must write output.
++      Label notNaN, negative;
 +      if (fromType == MIRType::Double) {
 +        asMasm().branchDouble(Assembler::DoubleOrdered, input, input, &notNaN);
 +      } else {
@@ -22005,12 +22760,16 @@ diff -Nurp -p '--exclude=*.orig' '--exclude=*.rej' '--exclude=*.pyc' '--exclude=
 +
 +      asMasm().bind(&notNaN);
 +      if (fromType == MIRType::Double) {
-+        asMasm().branchDouble(Assembler::DoubleGreaterThanOrEqual, input,
-+                              fpscratch, rejoin);
++        asMasm().branchDouble(Assembler::DoubleLessThan, input, fpscratch,
++                              &negative);
 +      } else {
-+        asMasm().branchFloat(Assembler::DoubleGreaterThanOrEqual, input,
-+                             fpscratch, rejoin);
++        asMasm().branchFloat(Assembler::DoubleLessThan, input, fpscratch,
++                             &negative);
 +      }
++      asMasm().move32(Imm32(INT32_MAX), output);
++      asMasm().jump(rejoin);
++
++      asMasm().bind(&negative);
 +      asMasm().move32(Imm32(INT32_MIN), output);
 +    }
 +
@@ -22063,7 +22822,9 @@ diff -Nurp -p '--exclude=*.orig' '--exclude=*.rej' '--exclude=*.pyc' '--exclude=
 +      asMasm().move32(Imm32(-1), output_.high);
 +      asMasm().move32(Imm32(-1), output_.low);
 +    } else {
-+      Label notNaN;
++      // NaN -> 0, negative overflow -> INT64_MIN, positive overflow ->
++      // INT64_MAX. Every arm must write output; nothing pre-saturates it.
++      Label notNaN, negative;
 +      if (fromType == MIRType::Double) {
 +        asMasm().branchDouble(Assembler::DoubleOrdered, input, input, &notNaN);
 +      } else {
@@ -22075,12 +22836,17 @@ diff -Nurp -p '--exclude=*.orig' '--exclude=*.rej' '--exclude=*.pyc' '--exclude=
 +
 +      asMasm().bind(&notNaN);
 +      if (fromType == MIRType::Double) {
-+        asMasm().branchDouble(Assembler::DoubleGreaterThanOrEqual, input,
-+                              fpscratch, rejoin);
++        asMasm().branchDouble(Assembler::DoubleLessThan, input, fpscratch,
++                              &negative);
 +      } else {
-+        asMasm().branchFloat(Assembler::DoubleGreaterThanOrEqual, input,
-+                             fpscratch, rejoin);
++        asMasm().branchFloat(Assembler::DoubleLessThan, input, fpscratch,
++                             &negative);
 +      }
++      asMasm().move32(Imm32(INT32_MAX), output_.high);
++      asMasm().move32(Imm32(-1), output_.low);
++      asMasm().jump(rejoin);
++
++      asMasm().bind(&negative);
 +      asMasm().move32(Imm32(INT32_MIN), output_.high);
 +      asMasm().move32(Imm32(0), output_.low);
 +    }
@@ -22090,6 +22856,10 @@ diff -Nurp -p '--exclude=*.orig' '--exclude=*.rej' '--exclude=*.pyc' '--exclude=
 +    return;
 +  }
 +
++  // There is no fctidz here, so the truncation is a builtin callout that
++  // returns 0x8000000000000000 both on overflow and for a legitimate INT64_MIN
++  // result. Re-test the input against the representable range and rejoin when
++  // the value was in fact in range.
 +  Label inputIsNaN;
 +  if (fromType == MIRType::Double) {
 +    asMasm().branchDouble(Assembler::DoubleUnordered, input, input,
@@ -22098,6 +22868,40 @@ diff -Nurp -p '--exclude=*.orig' '--exclude=*.rej' '--exclude=*.pyc' '--exclude=
 +    asMasm().branchFloat(Assembler::DoubleUnordered, input, input, &inputIsNaN);
 +  }
 +
++  double minValue, maxValue;
++  Assembler::DoubleCondition minCond = Assembler::DoubleLessThanOrEqual;
++  Assembler::DoubleCondition maxCond = Assembler::DoubleGreaterThanOrEqual;
++  if (isUnsigned) {
++    minValue = -1;
++    maxValue = double(UINT64_MAX) + 1.0;
++  } else {
++    // No float or double value exists between INT64_MIN and INT64_MIN - 1.0,
++    // so INT64_MIN itself is the exclusive lower bound.
++    minValue = double(INT64_MIN);
++    minCond = Assembler::DoubleLessThan;
++    maxValue = double(INT64_MAX) + 1.0;
++  }
++
++  Label fail;
++  {
++    ScratchDoubleScope fpscratch(asMasm());
++    if (fromType == MIRType::Double) {
++      asMasm().loadConstantDouble(minValue, fpscratch);
++      asMasm().branchDouble(minCond, input, fpscratch, &fail);
++      asMasm().loadConstantDouble(maxValue, fpscratch);
++      asMasm().branchDouble(maxCond, input, fpscratch, &fail);
++    } else {
++      asMasm().loadConstantFloat32(float(minValue), fpscratch);
++      asMasm().branchFloat(minCond, input, fpscratch, &fail);
++      asMasm().loadConstantFloat32(float(maxValue), fpscratch);
++      asMasm().branchFloat(maxCond, input, fpscratch, &fail);
++    }
++  }
++
++  // The input was in range, so the callout's result is the correct one.
++  asMasm().jump(rejoin);
++
++  asMasm().bind(&fail);
 +  asMasm().wasmTrap(wasm::Trap::IntegerOverflow, trapSiteDesc);
 +  asMasm().bind(&inputIsNaN);
 +  asMasm().wasmTrap(wasm::Trap::InvalidConversionToInteger, trapSiteDesc);
@@ -22821,8 +23625,9 @@ diff -Nurp -p '--exclude=*.orig' '--exclude=*.rej' '--exclude=*.pyc' '--exclude=
 +
 +// 64-bit atomics need a doubleword reservation (ldarx/stdcx.), which this
 +// target does not have; a two-word lwarx/stwcx. sequence would not be atomic.
-+// AtomicOperations::hasAtomic8() is false here, so the JS-visible BigInt64
-+// paths are unreachable and wasm i64 atomics are simply unsupported.
++// AtomicOperations::isLockfree8() is therefore false, which makes
++// AtomicsMeetsPreconditions() reject BigInt64 arrays -- those go to the VM and
++// libatomic instead -- and disables wasm threads, so these stay unreachable.
 +void MacroAssembler::compareExchange64(Synchronization sync, const Address& mem,
 +                                       Register64 expect, Register64 replace,
 +                                       Register64 output) {
@@ -23321,15 +24126,17 @@ diff -Nurp -p '--exclude=*.orig' '--exclude=*.rej' '--exclude=*.pyc' '--exclude=
 +      Register hi = temps.Acquire();
 +#if defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
 +      // wasm memory is little-endian: the first four bytes hold the low word.
++      // The access is two 32-bit loads, so record a 32-bit trap insn for the
++      // first half only; the explicit bounds check covers the whole access.
 +      m_buffer.flushPool();
-+      append(access, wasm::TrapMachineInsnForLoad(8),
++      append(access, wasm::TrapMachineInsnForLoad(4),
 +             FaultingCodeOffset(currentOffset()));
 +      as_lwbrx(lo, memoryBase, ptr);
 +      as_addi(hi, ptr, 4);
 +      as_lwbrx(hi, memoryBase, hi);
 +#else
 +      m_buffer.flushPool();
-+      append(access, wasm::TrapMachineInsnForLoad(8),
++      append(access, wasm::TrapMachineInsnForLoad(4),
 +             FaultingCodeOffset(currentOffset()));
 +      as_lwzx(hi, memoryBase, ptr);
 +      as_addi(lo, ptr, 4);
@@ -23418,8 +24225,10 @@ diff -Nurp -p '--exclude=*.orig' '--exclude=*.rej' '--exclude=*.pyc' '--exclude=
 +      Register lo = temps.Acquire();
 +      Register hi = temps.Acquire();
 +      moveDoubleToGPRPair(value.fpu(), hi, lo);
++      // Two 32-bit stores: record a 32-bit trap insn for the first half only,
++      // which the explicit bounds check already covers for the whole access.
 +      m_buffer.flushPool();
-+      append(access, wasm::TrapMachineInsnForStore(8),
++      append(access, wasm::TrapMachineInsnForStore(4),
 +             FaultingCodeOffset(currentOffset()));
 +#if defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
 +      as_stwbrx(lo, memoryBase, ptr);
@@ -23471,7 +24280,13 @@ diff -Nurp -p '--exclude=*.orig' '--exclude=*.rej' '--exclude=*.pyc' '--exclude=
 +
 +  asMasm().memoryBarrierBefore(access.sync());
 +  m_buffer.flushPool();  // see comment in wasmLoadImpl
-+  append(access, wasm::TrapMachineInsnForLoad(Scalar::byteSize(access.type())),
++  // An Int64 access is emitted as two 32-bit loads, so the recorded (first)
++  // instruction is a 32-bit one; the explicit bounds check covers the rest.
++  int loadBytes = int(Scalar::byteSize(access.type()));
++  if (loadBytes > 4) {
++    loadBytes = 4;
++  }
++  append(access, wasm::TrapMachineInsnForLoad(loadBytes),
 +         FaultingCodeOffset(currentOffset()));
 +
 +  switch (access.type()) {
@@ -23554,7 +24369,12 @@ diff -Nurp -p '--exclude=*.orig' '--exclude=*.rej' '--exclude=*.pyc' '--exclude=
 +
 +  asMasm().memoryBarrierBefore(access.sync());
 +  m_buffer.flushPool();  // see comment in wasmLoadImpl
-+  append(access, wasm::TrapMachineInsnForStore(Scalar::byteSize(access.type())),
++  // An Int64 access is emitted as two 32-bit stores; see wasmLoadI64Impl.
++  int storeBytes = int(Scalar::byteSize(access.type()));
++  if (storeBytes > 4) {
++    storeBytes = 4;
++  }
++  append(access, wasm::TrapMachineInsnForStore(storeBytes),
 +         FaultingCodeOffset(currentOffset()));
 +
 +  switch (access.type()) {
@@ -23636,8 +24456,8 @@ diff -Nurp -p '--exclude=*.orig' '--exclude=*.rej' '--exclude=*.pyc' '--exclude=
 +#endif
 diff -Nurp -p '--exclude=*.orig' '--exclude=*.rej' '--exclude=*.pyc' '--exclude=__pycache__' /srv/t2/tmp/ppc-jit-work/baseline/js/src/jit/ppc/MacroAssembler-ppc.h /srv/t2/src-firefox.ppc-desktop.260728.163810.1997595/firefox-153.0/js/src/jit/ppc/MacroAssembler-ppc.h
 --- a/js/src/jit/ppc/MacroAssembler-ppc.h	1970-01-01 01:00:00.000000000 +0100
-+++ b/js/src/jit/ppc/MacroAssembler-ppc.h	2026-07-28 23:13:31.587304890 +0200
-@@ -0,0 +1,1787 @@
++++ b/js/src/jit/ppc/MacroAssembler-ppc.h	2026-07-29 10:22:43.193502711 +0200
+@@ -0,0 +1,1788 @@
 +/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
 + * vim: set ts=8 sts=2 et sw=2 tw=80:
 + * This Source Code Form is subject to the terms of the Mozilla Public
@@ -24586,7 +25406,8 @@ diff -Nurp -p '--exclude=*.orig' '--exclude=*.rej' '--exclude=*.pyc' '--exclude=
 +  }
 +  void unboxWasmAnyRefGCThingForGCBarrier(const Address& src, Register dest) {
 +    static_assert(wasm::AnyRef::TagShift == 2);
-+    load32(ToPayload(src), dest);
++    // src is a raw wasm::AnyRef word, not a Value: no payload offset.
++    load32(src, dest);
 +    as_rlwinm(dest, dest, 0, 0, 31 - wasm::AnyRef::TagShift);
 +  }
 +  void getGCThingValueChunk(const Address& src, Register dest) {
@@ -25854,8 +26675,8 @@ diff -Nurp -p '--exclude=*.orig' '--exclude=*.rej' '--exclude=*.pyc' '--exclude=
 +#endif /* jit_ppc_MoveEmitter_ppc_h */
 diff -Nurp -p '--exclude=*.orig' '--exclude=*.rej' '--exclude=*.pyc' '--exclude=__pycache__' /srv/t2/tmp/ppc-jit-work/baseline/js/src/jit/ppc/PORT-SPEC.md /srv/t2/src-firefox.ppc-desktop.260728.163810.1997595/firefox-153.0/js/src/jit/ppc/PORT-SPEC.md
 --- a/js/src/jit/ppc/PORT-SPEC.md	1970-01-01 01:00:00.000000000 +0100
-+++ b/js/src/jit/ppc/PORT-SPEC.md	2026-07-28 20:01:19.892878701 +0200
-@@ -0,0 +1,239 @@
++++ b/js/src/jit/ppc/PORT-SPEC.md	2026-07-29 08:23:49.172372497 +0200
+@@ -0,0 +1,341 @@
 +# SpiderMonkey JIT backend for 32-bit big-endian PowerPC (`JS_CODEGEN_PPC`)
 +
 +`js/src/jit/ppc/` was seeded by copying `js/src/jit/ppc64/` (the 64-bit
@@ -26052,6 +26873,81 @@ diff -Nurp -p '--exclude=*.orig' '--exclude=*.rej' '--exclude=*.pyc' '--exclude=
 +wants. Scalars are unaffected. **Any new VM function taking an aggregate by
 +value depends on this.**
 +
++## Status
++
++The backend is healthy. jit-test `basic` is PASSED ALL (1491 tests, full
++jitflags); a wider sweep of ion/warp/cacheir/gc/arguments/collections/proxy/
++arrays (~2700) is down to a handful; Octane pdf.js scores 137.
++**WebAssembly is enabled and running** (baseline compiler only): traps are
++correct and `f32/f64.sqrt` are bit-exact against `Math.sqrt`.
++
++### Closed since this file was first written
++
++* Byte-swapping wasm linear memory is **fully implemented** (`lhbrx`/`lwbrx`/
++  `sthbrx`/`stwbrx`, i64/f64 split into two swapped halves, low word at the
++  lower address). The old note claiming ppc64 was the only big-endian target
++  with this is obsolete.
++* Sub-word atomics: done (`lwarx`/`stwcx.` round-down + shift + mask, with the
++  BE half-word reversal gated on wasm-vs-JS).
++* `byteReverseSimd128`: done in pure VMX (`lvsl` + `vnor` + `vperm`).
++* ppc32 wasm signal handling: done. Note the 32-bit glibc `ucontext_t` keeps
++  registers behind `uc_mcontext.uc_regs->gregs[]`, not inline as on ppc64;
++  `kWasmTrapSignal` must be `SIGTRAP` because `wasmTrap()` emits `tw 31,r0,r0`.
++* `f32/f64.sqrt` route through `SymbolicAddress::SqrtF/SqrtD`. They cannot use
++  `masm.sqrtDouble` directly: on the 603 that is a hidden libm call and
++  `setupUnalignedABICall` asserts `!IsCompilingWasm()`.
++
++### Deliberately deferred, with reasons
++
++* **wasm Ion** — baseline only. `IonPlatformSupport()` stays off.
++* **wasm SIMD** — `ENABLE_WASM_SIMD` is not set for ppc. VMX has no
++  double-precision vector arithmetic, and the lowering still uses ISA 2.07
++  (POWER8) VMX that a 7400/G4 lacks — and `SupportsWasmSimd()` is exactly
++  `HasVMX()`, which is true under `qemu -cpu G4`, so enabling it would emit
++  instructions the target cannot run.
++* **wasm threads / atomics** — the 603 has `lwarx`/`stwcx.` but no
++  `ldarx`/`stdcx.`, so lock-free 8-byte atomics are impossible. Rather than
++  fake it, the `isLockfree8()` requirement moved from
++  `wasm::HasPlatformSupport()` into `wasm::ThreadsAvailable()`. The validator
++  then rejects every `0xFE` opcode and all shared memories, making the ~20
++  `MOZ_CRASH` i64-atomic sites statically unreachable.
++* **memory64 / multi-memory `memory.copy`** — need real `int64_t` C arguments,
++  so they depend on the Int64 ABI gap below.
++
++### Still open
++
++1. **Int64 ABI arguments.** `ABIArg`'s `GPR_PAIR` stores one code, asserts it is
++   even, and derives the other at +1 — the little-endian convention. SysV ppc32
++   pairs are odd-first (`r3:r4`, `r5:r6`, ...) with the **high** word in the
++   lower-numbered register, so it fails on both parity and ordering.
++   `ABIArgGenerator` therefore puts Int64 on the stack. The only non-wasm
++   `passABIArg(Register64)` site in the tree is
++   `CodeGenerator::visitTypedArrayFill64`, which is consequently broken.
++   Note `MacroAssembler::passABIArg(Register64)` decomposes a pair into two
++   plain `MoveOp::GENERAL` moves, so `MoveEmitter` never sees a `RegPair` —
++   the work is in `jit/RegisterSets.h`, `jit/MoveResolver.*`,
++   `JS_CODEGEN_REGISTER_PAIR`, and `ABIArgGenerator::next`.
++2. **`wasmBoundsCheck32`** discards the `Condition` returned by `ma_cmp` and
++   branches on the original flagged one, so every wasm memory access traps
++   `OutOfBounds` — even index 0.
++
++## The ppc32 SysV aggregate-argument rule (important)
++
++**The 32-bit PowerPC SysV ABI passes aggregates by invisible reference.** Proven
++with the cross compiler: for `uint32_t f(void*, void*, SmallStruct)` GCC emits
++`lwz 3,0(5)` — it *dereferences* the third argument register. This holds even
++for a trivially-copyable 4-byte struct, and it is **not** what x86/ARM/x64 do,
++so it is invisible to every other backend.
++
++Consequence: SpiderMonkey's `TypeToArgProperties` in `js/src/jit/VMFunctions.cpp`
++classifies anything of word size or smaller as pass-by-value, which is wrong
++here for class/union types (`GCThingIndex`, `Value`, ...). Fixed by OR-ing in
++`VMFunctionData::ByRef` for `std::is_class_v` / `std::is_union_v` under
++`JS_CODEGEN_PPC`; the wrapper's ByRef path already passes the effective address
++of the exit-frame slot, which is exactly the pointer-to-caller's-copy the ABI
++wants. Scalars are unaffected. **Any new VM function taking an aggregate by
++value depends on this.**
++
 +## Where the bring-up currently stands (next thing to debug)
 +
 +`--blinterp-eager --no-baseline --no-ion -e 'print(42)'` — the simplest possible
@@ -26087,6 +26983,33 @@ diff -Nurp -p '--exclude=*.orig' '--exclude=*.rej' '--exclude=*.pyc' '--exclude=
 +  clobber would look like garbage appearing from nowhere.
 +* The wrapper's argument base is `ExitFrameLayout::Size()`, identical to ARM.
 +* AltiVec is not involved: the same failure occurs under `qemu-ppc -cpu G4`.
++
++## Test-suite status and failure classification
++
++**jit-test** (`js/src/jit-test/`, 9226 tests): `basic` (1491) PASSED ALL with full
++jitflags. A wider sweep of ion/warp/cacheir/gc/arguments/collections/proxy/arrays
++(~2700) leaves 12 failures + 1 timeout, dominated by a BigInt64/intptr cluster of 6.
++
++**jstests** (`js/src/tests/`, 59661 files). The harness needs a qemu wrapper
++*inside* the objdir — `jstests.py` finds `config/autoconf.mk` by walking up from
++the shell path — so use `$OBJDIR/dist/bin/js-qemu`, not the one in this workdir.
++`non262` gives 19 regressions, and **the JIT is responsible for only 4 of them**.
++Always re-run a suspected failure with `--args="--no-blinterp --no-baseline
++--no-ion"` before treating it as a codegen bug:
++
++* **14 are environment, not us** — 12 `Intl/DateTimeFormat`, `Temporal/Intl/
++  consistent-dates`, `Date/15.9.5.7`. All fail identically with the JIT fully
++  disabled. Cause is the system ICU (78.3, via `--with-system-icu`) and its
++  timezone data differing from what the tests pin. Do not "fix" these in the
++  backend.
++* **1 is a runtime gap, not codegen** — `TypedArray/sort_modifications_concurrent`
++  hits `MOZ_CRASH(No 64-bit atomics)` at
++  `jit/shared/AtomicOperations-feeling-lucky-gcc.h:168` with the JIT off. The
++  sysroot does ship `libatomic.so.1` and the shell already links it, so
++  `__atomic_*` builtins are a plausible route to real 8-byte atomics here, which
++  would also unblock wasm i64 atomics.
++* **4 are genuine JIT bugs** — `Math/pow-approx`, `Math/pow-approx-pow10`,
++  `Array/sort_basics`, `extensions/clone-errors`.
 +
 +## Build / test harness
 +
@@ -34909,6 +35832,26 @@ diff -Nurp -p '--exclude=*.orig' '--exclude=*.rej' '--exclude=*.pyc' '--exclude=
  
  namespace js {
  namespace jit {
+diff -Nurp -p '--exclude=*.orig' '--exclude=*.rej' '--exclude=*.pyc' '--exclude=__pycache__' /srv/t2/tmp/ppc-jit-work/baseline/js/src/jit/shared/AtomicOperations-feeling-lucky-gcc.h /srv/t2/src-firefox.ppc-desktop.260728.163810.1997595/firefox-153.0/js/src/jit/shared/AtomicOperations-feeling-lucky-gcc.h
+--- a/js/src/jit/shared/AtomicOperations-feeling-lucky-gcc.h	2026-07-28 16:38:22.641712976 +0200
++++ b/js/src/jit/shared/AtomicOperations-feeling-lucky-gcc.h	2026-07-29 07:41:44.636283150 +0200
+@@ -65,6 +65,16 @@
+ #  define HAS_64BIT_LOCKFREE
+ #endif
+ 
++// 32-bit PowerPC has lwarx/stwcx. but no ldarx/stdcx., so an 8-byte atomic
++// cannot be lock-free.  GCC routes the 8-byte __atomic builtins to libatomic,
++// whose lock-based implementation is correct as long as every 8-byte atomic
++// access in the process goes through it.  AtomicsMeetsPreconditions() in
++// jit/CacheIR.cpp keeps the JIT from inlining 64-bit atomics when
++// isLockfree8() is false, which is what guarantees that.
++#if defined(JS_CODEGEN_PPC)
++#  define HAS_64BIT_ATOMICS
++#endif
++
+ #if defined(__riscv) && __riscv_xlen == 64
+ #  define HAS_64BIT_ATOMICS
+ #  define HAS_64BIT_LOCKFREE
 diff -Nurp -p '--exclude=*.orig' '--exclude=*.rej' '--exclude=*.pyc' '--exclude=__pycache__' /srv/t2/tmp/ppc-jit-work/baseline/js/src/jit/shared/CodeGenerator-shared.cpp /srv/t2/src-firefox.ppc-desktop.260728.163810.1997595/firefox-153.0/js/src/jit/shared/CodeGenerator-shared.cpp
 --- a/js/src/jit/shared/CodeGenerator-shared.cpp	2026-07-28 16:38:22.641784399 +0200
 +++ b/js/src/jit/shared/CodeGenerator-shared.cpp	2026-07-28 18:52:47.194405397 +0200
@@ -34951,38 +35894,665 @@ diff -Nurp -p '--exclude=*.orig' '--exclude=*.rej' '--exclude=*.pyc' '--exclude=
  LAllocation LIRGeneratorShared::useAnyOrConstant(MDefinition* mir) {
    return useRegisterOrConstant(mir);
  }
-Binary files /srv/t2/tmp/ppc-jit-work/baseline/js/src/jit-test/tests/qemu_js_20260728-231048_2149895.core and /srv/t2/src-firefox.ppc-desktop.260728.163810.1997595/firefox-153.0/js/src/jit-test/tests/qemu_js_20260728-231048_2149895.core differ
-Binary files /srv/t2/tmp/ppc-jit-work/baseline/js/src/qemu_js_20260728-124445_2113724.core and /srv/t2/src-firefox.ppc-desktop.260728.163810.1997595/firefox-153.0/js/src/qemu_js_20260728-124445_2113724.core differ
-Binary files /srv/t2/tmp/ppc-jit-work/baseline/js/src/qemu_js_20260728-124445_2113761.core and /srv/t2/src-firefox.ppc-desktop.260728.163810.1997595/firefox-153.0/js/src/qemu_js_20260728-124445_2113761.core differ
-Binary files /srv/t2/tmp/ppc-jit-work/baseline/js/src/qemu_js_20260728-124449_2115087.core and /srv/t2/src-firefox.ppc-desktop.260728.163810.1997595/firefox-153.0/js/src/qemu_js_20260728-124449_2115087.core differ
-Binary files /srv/t2/tmp/ppc-jit-work/baseline/js/src/qemu_js_20260728-124506_2118870.core and /srv/t2/src-firefox.ppc-desktop.260728.163810.1997595/firefox-153.0/js/src/qemu_js_20260728-124506_2118870.core differ
-Binary files /srv/t2/tmp/ppc-jit-work/baseline/js/src/qemu_js_20260728-124516_2120811.core and /srv/t2/src-firefox.ppc-desktop.260728.163810.1997595/firefox-153.0/js/src/qemu_js_20260728-124516_2120811.core differ
-Binary files /srv/t2/tmp/ppc-jit-work/baseline/js/src/qemu_js_20260728-124539_2123227.core and /srv/t2/src-firefox.ppc-desktop.260728.163810.1997595/firefox-153.0/js/src/qemu_js_20260728-124539_2123227.core differ
-Binary files /srv/t2/tmp/ppc-jit-work/baseline/js/src/qemu_js_20260728-124542_2123389.core and /srv/t2/src-firefox.ppc-desktop.260728.163810.1997595/firefox-153.0/js/src/qemu_js_20260728-124542_2123389.core differ
-Binary files /srv/t2/tmp/ppc-jit-work/baseline/js/src/qemu_js_20260728-140842_2129415.core and /srv/t2/src-firefox.ppc-desktop.260728.163810.1997595/firefox-153.0/js/src/qemu_js_20260728-140842_2129415.core differ
-Binary files /srv/t2/tmp/ppc-jit-work/baseline/js/src/qemu_js_20260728-140842_2129452.core and /srv/t2/src-firefox.ppc-desktop.260728.163810.1997595/firefox-153.0/js/src/qemu_js_20260728-140842_2129452.core differ
-Binary files /srv/t2/tmp/ppc-jit-work/baseline/js/src/qemu_js_20260728-140845_2130727.core and /srv/t2/src-firefox.ppc-desktop.260728.163810.1997595/firefox-153.0/js/src/qemu_js_20260728-140845_2130727.core differ
-Binary files /srv/t2/tmp/ppc-jit-work/baseline/js/src/qemu_js_20260728-140852_2132330.core and /srv/t2/src-firefox.ppc-desktop.260728.163810.1997595/firefox-153.0/js/src/qemu_js_20260728-140852_2132330.core differ
-Binary files /srv/t2/tmp/ppc-jit-work/baseline/js/src/qemu_js_20260728-140900_2134553.core and /srv/t2/src-firefox.ppc-desktop.260728.163810.1997595/firefox-153.0/js/src/qemu_js_20260728-140900_2134553.core differ
-Binary files /srv/t2/tmp/ppc-jit-work/baseline/js/src/qemu_js_20260728-140906_2136485.core and /srv/t2/src-firefox.ppc-desktop.260728.163810.1997595/firefox-153.0/js/src/qemu_js_20260728-140906_2136485.core differ
-Binary files /srv/t2/tmp/ppc-jit-work/baseline/js/src/qemu_js_20260728-140916_2138904.core and /srv/t2/src-firefox.ppc-desktop.260728.163810.1997595/firefox-153.0/js/src/qemu_js_20260728-140916_2138904.core differ
-Binary files /srv/t2/tmp/ppc-jit-work/baseline/js/src/qemu_js_20260728-140916_2139060.core and /srv/t2/src-firefox.ppc-desktop.260728.163810.1997595/firefox-153.0/js/src/qemu_js_20260728-140916_2139060.core differ
-Binary files /srv/t2/tmp/ppc-jit-work/baseline/js/src/qemu_js_20260728-140920_2139861.core and /srv/t2/src-firefox.ppc-desktop.260728.163810.1997595/firefox-153.0/js/src/qemu_js_20260728-140920_2139861.core differ
-Binary files /srv/t2/tmp/ppc-jit-work/baseline/js/src/qemu_js_20260728-140921_2140321.core and /srv/t2/src-firefox.ppc-desktop.260728.163810.1997595/firefox-153.0/js/src/qemu_js_20260728-140921_2140321.core differ
-Binary files /srv/t2/tmp/ppc-jit-work/baseline/js/src/qemu_js_20260728-140922_2140233.core and /srv/t2/src-firefox.ppc-desktop.260728.163810.1997595/firefox-153.0/js/src/qemu_js_20260728-140922_2140233.core differ
-Binary files /srv/t2/tmp/ppc-jit-work/baseline/js/src/qemu_js_20260728-140932_2143364.core and /srv/t2/src-firefox.ppc-desktop.260728.163810.1997595/firefox-153.0/js/src/qemu_js_20260728-140932_2143364.core differ
-Binary files /srv/t2/tmp/ppc-jit-work/baseline/js/src/qemu_js_20260728-140932_2143368.core and /srv/t2/src-firefox.ppc-desktop.260728.163810.1997595/firefox-153.0/js/src/qemu_js_20260728-140932_2143368.core differ
-Binary files /srv/t2/tmp/ppc-jit-work/baseline/js/src/qemu_js_20260728-140940_2145011.core and /srv/t2/src-firefox.ppc-desktop.260728.163810.1997595/firefox-153.0/js/src/qemu_js_20260728-140940_2145011.core differ
-Binary files /srv/t2/tmp/ppc-jit-work/baseline/js/src/qemu_js_20260728-140945_2146345.core and /srv/t2/src-firefox.ppc-desktop.260728.163810.1997595/firefox-153.0/js/src/qemu_js_20260728-140945_2146345.core differ
-Binary files /srv/t2/tmp/ppc-jit-work/baseline/js/src/qemu_js_20260728-140945_2146375.core and /srv/t2/src-firefox.ppc-desktop.260728.163810.1997595/firefox-153.0/js/src/qemu_js_20260728-140945_2146375.core differ
-Binary files /srv/t2/tmp/ppc-jit-work/baseline/js/src/qemu_js_20260728-140946_2146938.core and /srv/t2/src-firefox.ppc-desktop.260728.163810.1997595/firefox-153.0/js/src/qemu_js_20260728-140946_2146938.core differ
-Binary files /srv/t2/tmp/ppc-jit-work/baseline/js/src/qemu_js_20260728-140948_2147254.core and /srv/t2/src-firefox.ppc-desktop.260728.163810.1997595/firefox-153.0/js/src/qemu_js_20260728-140948_2147254.core differ
-Binary files /srv/t2/tmp/ppc-jit-work/baseline/js/src/qemu_js_20260728-140951_2148179.core and /srv/t2/src-firefox.ppc-desktop.260728.163810.1997595/firefox-153.0/js/src/qemu_js_20260728-140951_2148179.core differ
-Binary files /srv/t2/tmp/ppc-jit-work/baseline/js/src/qemu_js_20260728-140953_2148710.core and /srv/t2/src-firefox.ppc-desktop.260728.163810.1997595/firefox-153.0/js/src/qemu_js_20260728-140953_2148710.core differ
-Binary files /srv/t2/tmp/ppc-jit-work/baseline/js/src/qemu_js_20260728-140953_2148845.core and /srv/t2/src-firefox.ppc-desktop.260728.163810.1997595/firefox-153.0/js/src/qemu_js_20260728-140953_2148845.core differ
-Binary files /srv/t2/tmp/ppc-jit-work/baseline/js/src/qemu_js_20260728-140954_2149193.core and /srv/t2/src-firefox.ppc-desktop.260728.163810.1997595/firefox-153.0/js/src/qemu_js_20260728-140954_2149193.core differ
-Binary files /srv/t2/tmp/ppc-jit-work/baseline/js/src/qemu_js_20260728-140956_2149454.core and /srv/t2/src-firefox.ppc-desktop.260728.163810.1997595/firefox-153.0/js/src/qemu_js_20260728-140956_2149454.core differ
-Binary files /srv/t2/tmp/ppc-jit-work/baseline/js/src/qemu_js_20260728-140959_2149183.core and /srv/t2/src-firefox.ppc-desktop.260728.163810.1997595/firefox-153.0/js/src/qemu_js_20260728-140959_2149183.core differ
+diff -Nurp -p '--exclude=*.orig' '--exclude=*.rej' '--exclude=*.pyc' '--exclude=__pycache__' /srv/t2/tmp/ppc-jit-work/baseline/js/src/jit-test/tests/debug/Object-createSource-forceEnableAsmJS.js /srv/t2/src-firefox.ppc-desktop.260728.163810.1997595/firefox-153.0/js/src/jit-test/tests/debug/Object-createSource-forceEnableAsmJS.js
+--- a/js/src/jit-test/tests/debug/Object-createSource-forceEnableAsmJS.js	2026-07-15 22:44:59.000000000 +0200
++++ b/js/src/jit-test/tests/debug/Object-createSource-forceEnableAsmJS.js	2026-07-29 11:29:53.946982027 +0200
+@@ -1,4 +1,4 @@
+-// |jit-test| --asmjs; skip-if: !wasmDebuggingEnabled()
++// |jit-test| --asmjs; skip-if: !wasmDebuggingEnabled() || !isAsmJSCompilationAvailable()
+ 
+ gczeal(0);
+ 
+diff -Nurp -p '--exclude=*.orig' '--exclude=*.rej' '--exclude=*.pyc' '--exclude=__pycache__' /srv/t2/tmp/ppc-jit-work/baseline/js/src/jit-test/tests/ion/mod-constant-pow2-minus-one.js /srv/t2/src-firefox.ppc-desktop.260728.163810.1997595/firefox-153.0/js/src/jit-test/tests/ion/mod-constant-pow2-minus-one.js
+--- a/js/src/jit-test/tests/ion/mod-constant-pow2-minus-one.js	2026-07-28 16:38:22.630661042 +0200
++++ b/js/src/jit-test/tests/ion/mod-constant-pow2-minus-one.js	2026-07-29 15:05:46.519117671 +0200
+@@ -45,8 +45,10 @@ for (let i = 0; i < 64; i++) {
+ inputs.push(0, 1, -1, 65534, 65535, 65536, 0x7fffffff, -0x80000000);
+ 
+ // Warm up through the tiers, then assert each constant-divisor result
+-// matches the divide-based reference.
+-for (let iter = 0; iter < 2000; iter++) {
++// matches the divide-based reference. 200 iterations is ~53k calls per
++// constant-divisor function, far past the Ion warm-up threshold; more only
++// costs emulator time.
++for (let iter = 0; iter < 200; iter++) {
+   for (const [fn, d] of cases) {
+     for (const x of inputs) {
+       assertEq(fn(x), refmod(x, d));
+@@ -71,7 +73,7 @@ const buf = new Int32Array(64);
+ for (let i = 0; i < buf.length; i++) {
+   buf[i] = Math.imul(i, 2654435761) | 0;
+ }
+-for (let iter = 0; iter < 5000; iter++) {
++for (let iter = 0; iter < 500; iter++) {
+   for (let i = 0; i < 64; i++) {
+     assertEq(pressure(buf, i), refmod(buf[i & 63], 65535));
+   }
+diff -Nurp -p '--exclude=*.orig' '--exclude=*.rej' '--exclude=*.pyc' '--exclude=__pycache__' /srv/t2/tmp/ppc-jit-work/baseline/js/src/jit-test/tests/wasm/bug2008301.js /srv/t2/src-firefox.ppc-desktop.260728.163810.1997595/firefox-153.0/js/src/jit-test/tests/wasm/bug2008301.js
+--- a/js/src/jit-test/tests/wasm/bug2008301.js	2026-07-15 22:09:45.000000000 +0200
++++ b/js/src/jit-test/tests/wasm/bug2008301.js	2026-07-29 11:29:39.982760213 +0200
+@@ -1,4 +1,4 @@
+-// |jit-test| --fast-warmup
++// |jit-test| --fast-warmup; skip-if: !wasmThreadsEnabled()
+ 
+ let v0 = new WebAssembly.Memory({ initial: 7, maximum: 10449, shared: true, address: 'i32' });
+ // WasmModule Code:
+diff -Nurp -p '--exclude=*.orig' '--exclude=*.rej' '--exclude=*.pyc' '--exclude=__pycache__' /srv/t2/tmp/ppc-jit-work/baseline/js/src/jit-test/tests/wasm/bug2018381.js /srv/t2/src-firefox.ppc-desktop.260728.163810.1997595/firefox-153.0/js/src/jit-test/tests/wasm/bug2018381.js
+--- a/js/src/jit-test/tests/wasm/bug2018381.js	2026-07-15 22:09:45.000000000 +0200
++++ b/js/src/jit-test/tests/wasm/bug2018381.js	2026-07-29 11:29:42.017792555 +0200
+@@ -1,4 +1,4 @@
+-// |jit-test| --no-threads
++// |jit-test| --no-threads; skip-if: !wasmThreadsEnabled()
+ 
+ const code = `
+ (module
+diff -Nurp -p '--exclude=*.orig' '--exclude=*.rej' '--exclude=*.pyc' '--exclude=__pycache__' /srv/t2/tmp/ppc-jit-work/baseline/js/src/jit-test/tests/wasm/bug2032943.js /srv/t2/src-firefox.ppc-desktop.260728.163810.1997595/firefox-153.0/js/src/jit-test/tests/wasm/bug2032943.js
+--- a/js/src/jit-test/tests/wasm/bug2032943.js	2026-07-15 22:09:45.000000000 +0200
++++ b/js/src/jit-test/tests/wasm/bug2032943.js	2026-07-29 11:29:44.320829149 +0200
+@@ -1,4 +1,4 @@
+-// |jit-test| --fast-warmup
++// |jit-test| --fast-warmup; skip-if: !wasmThreadsEnabled()
+ 
+ const code = `
+ (module
+diff -Nurp -p '--exclude=*.orig' '--exclude=*.rej' '--exclude=*.pyc' '--exclude=__pycache__' /srv/t2/tmp/ppc-jit-work/baseline/js/src/jit-test/tests/wasm/directiveless/features.js /srv/t2/src-firefox.ppc-desktop.260728.163810.1997595/firefox-153.0/js/src/jit-test/tests/wasm/directiveless/features.js
+--- a/js/src/jit-test/tests/wasm/directiveless/features.js	2026-07-15 22:09:45.000000000 +0200
++++ b/js/src/jit-test/tests/wasm/directiveless/features.js	2026-07-29 11:36:15.218958177 +0200
+@@ -1,6 +1,12 @@
+-// |jit-test| include:wasm.js;
++// |jit-test| include:wasm.js; skip-if: !wasmCompilersPresent().includes("ion") || !wasmThreadsEnabled()
+ // Do not manually change the default features with a jit-test directive. The
+ // logic below relies on this.
++//
++// The skip-if above is not a feature change: it only opts out targets that
++// cannot satisfy the test's two hardcoded platform assumptions, namely that
++// the optimizing compiler is built in ("baseline+ion" below) and that the
++// 'threads' feature, which getWasmSupportedFeatures() reports unconditionally,
++// is actually usable.
+ 
+ // Test that all features are either:
+ //   1. 'disabled' - not enabled by the default flags.
+diff -Nurp -p '--exclude=*.orig' '--exclude=*.rej' '--exclude=*.pyc' '--exclude=__pycache__' /srv/t2/tmp/ppc-jit-work/baseline/js/src/jit-test/tests/wasm/limits.js /srv/t2/src-firefox.ppc-desktop.260728.163810.1997595/firefox-153.0/js/src/jit-test/tests/wasm/limits.js
+--- a/js/src/jit-test/tests/wasm/limits.js	2026-07-15 22:09:44.000000000 +0200
++++ b/js/src/jit-test/tests/wasm/limits.js	2026-07-29 11:31:16.644914673 +0200
+@@ -4,11 +4,14 @@ const PageSize = PageSizeInBytes;
+ const MemoryMaxValid = 65536;
+ const MemoryMaxRuntime = MaxPagesIn32BitMemory;
+ 
++const SharedMemoryInModule = wasmThreadsEnabled();
++
+ const TableMaxValid = 0xffff_ffff;
+ const TableMaxRuntime = 10_000_000;
+ 
+ // Test that a memory type is valid within a module
+ function testMemoryValidate(initial, maximum, shared) {
++  if (shared && !SharedMemoryInModule) return;
+   wasmValidateText(`(module
+     (memory ${initial} ${maximum || ''} ${shared ? 'shared' : ''})
+   )`);
+@@ -26,6 +29,7 @@ testMemoryValidate(MemoryMaxValid, Memor
+ 
+ // Test that a memory type is not valid within a module
+ function testMemoryFailValidate(initial, maximum, shared, pattern) {
++  if (shared && !SharedMemoryInModule) return;
+   wasmFailValidateText(`(module
+     (memory ${initial} ${maximum || ''} ${shared ? 'shared' : ''})
+   )`, pattern);
+@@ -57,12 +61,14 @@ testMemoryFailConstruct(0, MemoryMaxVali
+ // with a WebAssembly.Memory
+ function testMemoryCreate(initial, maximum, shared) {
+   // May OOM, but must not fail to validate
+-  try {
+-      wasmEvalText(`(module
+-        (memory ${initial} ${maximum || ''} ${shared ? 'shared' : ''})
+-      )`);
+-  } catch (e) {
+-      assertEq(String(e).indexOf("out of memory") !== -1, true, `${e}`);
++  if (!shared || SharedMemoryInModule) {
++    try {
++        wasmEvalText(`(module
++          (memory ${initial} ${maximum || ''} ${shared ? 'shared' : ''})
++        )`);
++    } catch (e) {
++        assertEq(String(e).indexOf("out of memory") !== -1, true, `${e}`);
++    }
+   }
+   try {
+     new WebAssembly.Memory({initial, maximum, shared});
+@@ -86,6 +92,7 @@ testMemoryCreate(MemoryMaxRuntime, Memor
+ 
+ if (MemoryMaxRuntime < 65536) {
+     let testMemoryFailCreate = function(initial, maximum, shared) {
++        if (shared && !SharedMemoryInModule) return;
+         assertErrorMessage(() => wasmEvalText(`(module
+     (memory ${initial} ${maximum || ''} ${shared ? 'shared' : ''})
+   )`), WebAssembly.RuntimeError, /too many memory pages/);
+@@ -101,6 +108,7 @@ if (MemoryMaxRuntime < 65536) {
+     testMemoryFailCreate(MemoryMaxRuntime + 1, MemoryMaxValid, true);
+ } else {
+     let testMemoryFailCreate = function(initial, maximum, shared, jsError, jsMsg) {
++        if (shared && !SharedMemoryInModule) return;
+         assertErrorMessage(() => wasmEvalText(`(module
+     (memory ${initial} ${maximum || ''} ${shared ? 'shared' : ''})
+   )`), WebAssembly.CompileError, /(initial memory size too big)|(memory size minimum must not be greater than maximum)/);
+@@ -120,6 +128,7 @@ if (MemoryMaxRuntime < 65536) {
+ // Test that a memory type cannot be grown from initial to a target due to an
+ // implementation limit
+ function testMemoryFailGrow(initial, maximum, target, shared) {
++  if (shared && !SharedMemoryInModule) return;
+   let {run} = wasmEvalText(`(module
+     (memory ${initial} ${maximum || ''} ${shared ? 'shared' : ''})
+     (func (export "run") (result i32)
+diff -Nurp -p '--exclude=*.orig' '--exclude=*.rej' '--exclude=*.pyc' '--exclude=__pycache__' /srv/t2/tmp/ppc-jit-work/baseline/js/src/jit-test/tests/wasm/memory64/basic.js /srv/t2/src-firefox.ppc-desktop.260728.163810.1997595/firefox-153.0/js/src/jit-test/tests/wasm/memory64/basic.js
+--- a/js/src/jit-test/tests/wasm/memory64/basic.js	2026-07-28 16:38:22.650839731 +0200
++++ b/js/src/jit-test/tests/wasm/memory64/basic.js	2026-07-29 11:33:30.948957670 +0200
+@@ -17,18 +17,24 @@ function memoryTypeDescriptor(shared, in
+   };
+ }
+ function validAndInstantiableMemoryType(shared, initial, max) {
+-  wasmValidateText(memoryTypeModuleText(shared, initial, max));
+-  wasmEvalText(memoryTypeModuleText(shared, initial, max));
++  if (!shared || wasmThreadsEnabled()) {
++    wasmValidateText(memoryTypeModuleText(shared, initial, max));
++    wasmEvalText(memoryTypeModuleText(shared, initial, max));
++  }
+   new WebAssembly.Memory(memoryTypeDescriptor(shared, initial, max));
+ }
+ function validButNotInstantiableMemoryType(shared, initial, max, errorMessage) {
+-  wasmValidateText(memoryTypeModuleText(shared, initial, max));
+-  assertErrorMessage(() => wasmEvalText(memoryTypeModuleText(shared, initial, max)), WebAssembly.RuntimeError, errorMessage);
++  if (!shared || wasmThreadsEnabled()) {
++    wasmValidateText(memoryTypeModuleText(shared, initial, max));
++    assertErrorMessage(() => wasmEvalText(memoryTypeModuleText(shared, initial, max)), WebAssembly.RuntimeError, errorMessage);
++  }
+   assertErrorMessage(() => new WebAssembly.Memory(memoryTypeDescriptor(shared, initial, max)), WebAssembly.RuntimeError, errorMessage);
+ }
+ function invalidMemoryType(shared, initial, max, compileMessage, jsMessage) {
+-  wasmFailValidateText(memoryTypeModuleText(shared, initial, max), compileMessage);
+-  assertErrorMessage(() => wasmEvalText(memoryTypeModuleText(shared, initial, max)), WebAssembly.CompileError, compileMessage);
++  if (!shared || wasmThreadsEnabled()) {
++    wasmFailValidateText(memoryTypeModuleText(shared, initial, max), compileMessage);
++    assertErrorMessage(() => wasmEvalText(memoryTypeModuleText(shared, initial, max)), WebAssembly.CompileError, compileMessage);
++  }
+   assertErrorMessage(() => new WebAssembly.Memory(memoryTypeDescriptor(shared, initial, max)), Error, jsMessage);
+ }
+ 
+@@ -537,142 +543,8 @@ function makeTest(LOC, INITIAL, MAXIMUM,
+     (v128.store32_lane offset=${SMALL} 2 (local.get $p) (call $unstash)))
+ `;
+ 
+-    const ins = wasmEvalText(`
+-(module
+-  (memory (export "mem") i64 ${INITIAL} ${MAXIMUM} ${SHARED})
+-
+-  ;; About the test cases: there are various optimizations in the engine
+-  ;; for different shapes of a pointer+offset.  Constant pointers are
+-  ;; resolved early; large offsets are folded early using explicit code
+-  ;; with an overflow check (but "large" depends on 32-bit vs 64-bit);
+-  ;; wait/notify fold offsets early regardless; zero offsets lead to
+-  ;; tighter code with variable pointers; and don't get me started on
+-  ;; alignment checks.  These test cases are not exhaustive but aim
+-  ;; to test at least some things.
+-
+-  ;; TODO: more sizes for all operations, though this is not critical
+-  ;; TODO: sign extending loads, again not critical
+-
+-  ${wasmSimdEnabled() ? v128Prefix : ""}
+-
+-  ;; Read i32
+-  (func (export "readi32@0") (param $p i64) (result i32)
+-    (i32.load (local.get $p)))
+-
+-  (func (export "readi32@small") (param $p i64) (result i32)
+-    (i32.load offset=${SMALL} (local.get $p)))
+-
+-  (func (export "readi32@big") (param $p i64) (result i32)
+-    (i32.load offset=${BIG} (local.get $p)))
+-
+-  (func (export "readi32@huge") (param $p i64) (result i32)
+-    (i32.load offset=${HUGE} (local.get $p)))
+-
+-  (func (export "readi32@vast") (param $p i64) (result i32)
+-    (i32.load offset=${VAST} (local.get $p)))
+-
+-  (func (export "readi32/const@0") (result i32)
+-    (i32.load (i64.const ${LOC})))
+-
+-  (func (export "readi32/const@small") (result i32)
+-    (i32.load offset=${SMALL} (i64.const ${LOC})))
+-
+-  (func (export "readi32/const@big") (result i32)
+-    (i32.load offset=${BIG} (i64.const ${LOC})))
+-
+-  (func (export "readi32/const@vast") (result i32)
+-    (i32.load offset=${VAST} (i64.const ${LOC})))
+-
+-  ;; Read i64
+-  (func (export "readi64@0") (param $p i64) (result i64)
+-    (i64.load (local.get $p)))
+-
+-  (func (export "readi64@small") (param $p i64) (result i64)
+-    (i64.load offset=${SMALL} (local.get $p)))
+-
+-  (func (export "readi64@big") (param $p i64) (result i64)
+-    (i64.load offset=${BIG} (local.get $p)))
+-
+-  (func (export "readi64@huge") (param $p i64) (result i64)
+-    (i64.load offset=${HUGE} (local.get $p)))
+-
+-  (func (export "readi64@vast") (param $p i64) (result i64)
+-    (i64.load offset=${VAST} (local.get $p)))
+-
+-  (func (export "readi64/const@0") (result i64)
+-    (i64.load (i64.const ${LOC})))
+-
+-  (func (export "readi64/const@small") (result i64)
+-    (i64.load offset=${SMALL} (i64.const ${LOC})))
+-
+-  (func (export "readi64/const@big") (result i64)
+-    (i64.load offset=${BIG} (i64.const ${LOC})))
+-
+-  (func (export "readi64/const@vast") (result i64)
+-    (i64.load offset=${VAST} (i64.const ${LOC})))
+-
+-  ;; Read v128
+-  ${wasmSimdEnabled() ? readV128Code : ""}
+-
+-  ;; write i32
+-  (func (export "writei32@0") (param $p i64) (param $v i32)
+-    (i32.store (local.get $p) (local.get $v)))
+-
+-  (func (export "writei32@small") (param $p i64) (param $v i32)
+-    (i32.store offset=${SMALL} (local.get $p) (local.get $v)))
+-
+-  (func (export "writei32@big") (param $p i64) (param $v i32)
+-    (i32.store offset=${BIG} (local.get $p) (local.get $v)))
+-
+-  (func (export "writei32@huge") (param $p i64) (param $v i32)
+-    (i32.store offset=${HUGE} (local.get $p) (local.get $v)))
+-
+-  (func (export "writei32@vast") (param $p i64) (param $v i32)
+-    (i32.store offset=${VAST} (local.get $p) (local.get $v)))
+-
+-  (func (export "writei32/const@0") (param $v i32)
+-    (i32.store (i64.const ${LOC}) (local.get $v)))
+-
+-  (func (export "writei32/const@small") (param $v i32)
+-    (i32.store offset=${SMALL} (i64.const ${LOC}) (local.get $v)))
+-
+-  (func (export "writei32/const@big") (param $v i32)
+-    (i32.store offset=${BIG} (i64.const ${LOC}) (local.get $v)))
+-
+-  (func (export "writei32/const@vast") (param $v i32)
+-    (i32.store offset=${VAST} (i64.const ${LOC}) (local.get $v)))
+-
+-  ;; write i64
+-  (func (export "writei64@0") (param $p i64) (param $v i64)
+-    (i64.store (local.get $p) (local.get $v)))
+-
+-  (func (export "writei64@small") (param $p i64) (param $v i64)
+-    (i64.store offset=${SMALL} (local.get $p) (local.get $v)))
+-
+-  (func (export "writei64@big") (param $p i64) (param $v i64)
+-    (i64.store offset=${BIG} (local.get $p) (local.get $v)))
+-
+-  (func (export "writei64@huge") (param $p i64) (param $v i64)
+-    (i64.store offset=${HUGE} (local.get $p) (local.get $v)))
+-
+-  (func (export "writei64@vast") (param $p i64) (param $v i64)
+-    (i64.store offset=${VAST} (local.get $p) (local.get $v)))
+-
+-  (func (export "writei64/const@0") (param $v i64)
+-    (i64.store (i64.const ${LOC}) (local.get $v)))
+-
+-  (func (export "writei64/const@small") (param $v i64)
+-    (i64.store offset=${SMALL} (i64.const ${LOC}) (local.get $v)))
+-
+-  (func (export "writei64/const@big") (param $v i64)
+-    (i64.store offset=${BIG} (i64.const ${LOC}) (local.get $v)))
+-
+-  (func (export "writei64/const@vast") (param $v i64)
+-    (i64.store offset=${VAST} (i64.const ${LOC}) (local.get $v)))
+-
+-  ;; Read v128
+-  ${wasmSimdEnabled() ? writeV128Code : ""}
+-
++    // Atomic accesses require wasm threads, which not every target supports.
++    const atomicCode = `
+   ;; Atomic read i32
+ 
+   (func (export "areadi32@0") (param $p i64) (result i32)
+@@ -1138,6 +1010,145 @@ function makeTest(LOC, INITIAL, MAXIMUM,
+ 
+   (func (export "wake@huge") (param $p i64) (result i32)
+     (memory.atomic.notify offset=${HUGE} (local.get $p) (i32.const 1)))
++`;
++
++    const ins = wasmEvalText(`
++(module
++  (memory (export "mem") i64 ${INITIAL} ${MAXIMUM} ${SHARED})
++
++  ;; About the test cases: there are various optimizations in the engine
++  ;; for different shapes of a pointer+offset.  Constant pointers are
++  ;; resolved early; large offsets are folded early using explicit code
++  ;; with an overflow check (but "large" depends on 32-bit vs 64-bit);
++  ;; wait/notify fold offsets early regardless; zero offsets lead to
++  ;; tighter code with variable pointers; and don't get me started on
++  ;; alignment checks.  These test cases are not exhaustive but aim
++  ;; to test at least some things.
++
++  ;; TODO: more sizes for all operations, though this is not critical
++  ;; TODO: sign extending loads, again not critical
++
++  ${wasmSimdEnabled() ? v128Prefix : ""}
++
++  ;; Read i32
++  (func (export "readi32@0") (param $p i64) (result i32)
++    (i32.load (local.get $p)))
++
++  (func (export "readi32@small") (param $p i64) (result i32)
++    (i32.load offset=${SMALL} (local.get $p)))
++
++  (func (export "readi32@big") (param $p i64) (result i32)
++    (i32.load offset=${BIG} (local.get $p)))
++
++  (func (export "readi32@huge") (param $p i64) (result i32)
++    (i32.load offset=${HUGE} (local.get $p)))
++
++  (func (export "readi32@vast") (param $p i64) (result i32)
++    (i32.load offset=${VAST} (local.get $p)))
++
++  (func (export "readi32/const@0") (result i32)
++    (i32.load (i64.const ${LOC})))
++
++  (func (export "readi32/const@small") (result i32)
++    (i32.load offset=${SMALL} (i64.const ${LOC})))
++
++  (func (export "readi32/const@big") (result i32)
++    (i32.load offset=${BIG} (i64.const ${LOC})))
++
++  (func (export "readi32/const@vast") (result i32)
++    (i32.load offset=${VAST} (i64.const ${LOC})))
++
++  ;; Read i64
++  (func (export "readi64@0") (param $p i64) (result i64)
++    (i64.load (local.get $p)))
++
++  (func (export "readi64@small") (param $p i64) (result i64)
++    (i64.load offset=${SMALL} (local.get $p)))
++
++  (func (export "readi64@big") (param $p i64) (result i64)
++    (i64.load offset=${BIG} (local.get $p)))
++
++  (func (export "readi64@huge") (param $p i64) (result i64)
++    (i64.load offset=${HUGE} (local.get $p)))
++
++  (func (export "readi64@vast") (param $p i64) (result i64)
++    (i64.load offset=${VAST} (local.get $p)))
++
++  (func (export "readi64/const@0") (result i64)
++    (i64.load (i64.const ${LOC})))
++
++  (func (export "readi64/const@small") (result i64)
++    (i64.load offset=${SMALL} (i64.const ${LOC})))
++
++  (func (export "readi64/const@big") (result i64)
++    (i64.load offset=${BIG} (i64.const ${LOC})))
++
++  (func (export "readi64/const@vast") (result i64)
++    (i64.load offset=${VAST} (i64.const ${LOC})))
++
++  ;; Read v128
++  ${wasmSimdEnabled() ? readV128Code : ""}
++
++  ;; write i32
++  (func (export "writei32@0") (param $p i64) (param $v i32)
++    (i32.store (local.get $p) (local.get $v)))
++
++  (func (export "writei32@small") (param $p i64) (param $v i32)
++    (i32.store offset=${SMALL} (local.get $p) (local.get $v)))
++
++  (func (export "writei32@big") (param $p i64) (param $v i32)
++    (i32.store offset=${BIG} (local.get $p) (local.get $v)))
++
++  (func (export "writei32@huge") (param $p i64) (param $v i32)
++    (i32.store offset=${HUGE} (local.get $p) (local.get $v)))
++
++  (func (export "writei32@vast") (param $p i64) (param $v i32)
++    (i32.store offset=${VAST} (local.get $p) (local.get $v)))
++
++  (func (export "writei32/const@0") (param $v i32)
++    (i32.store (i64.const ${LOC}) (local.get $v)))
++
++  (func (export "writei32/const@small") (param $v i32)
++    (i32.store offset=${SMALL} (i64.const ${LOC}) (local.get $v)))
++
++  (func (export "writei32/const@big") (param $v i32)
++    (i32.store offset=${BIG} (i64.const ${LOC}) (local.get $v)))
++
++  (func (export "writei32/const@vast") (param $v i32)
++    (i32.store offset=${VAST} (i64.const ${LOC}) (local.get $v)))
++
++  ;; write i64
++  (func (export "writei64@0") (param $p i64) (param $v i64)
++    (i64.store (local.get $p) (local.get $v)))
++
++  (func (export "writei64@small") (param $p i64) (param $v i64)
++    (i64.store offset=${SMALL} (local.get $p) (local.get $v)))
++
++  (func (export "writei64@big") (param $p i64) (param $v i64)
++    (i64.store offset=${BIG} (local.get $p) (local.get $v)))
++
++  (func (export "writei64@huge") (param $p i64) (param $v i64)
++    (i64.store offset=${HUGE} (local.get $p) (local.get $v)))
++
++  (func (export "writei64@vast") (param $p i64) (param $v i64)
++    (i64.store offset=${VAST} (local.get $p) (local.get $v)))
++
++  (func (export "writei64/const@0") (param $v i64)
++    (i64.store (i64.const ${LOC}) (local.get $v)))
++
++  (func (export "writei64/const@small") (param $v i64)
++    (i64.store offset=${SMALL} (i64.const ${LOC}) (local.get $v)))
++
++  (func (export "writei64/const@big") (param $v i64)
++    (i64.store offset=${BIG} (i64.const ${LOC}) (local.get $v)))
++
++  (func (export "writei64/const@vast") (param $v i64)
++    (i64.store offset=${VAST} (i64.const ${LOC}) (local.get $v)))
++
++  ;; Read v128
++  ${wasmSimdEnabled() ? writeV128Code : ""}
++
++  ${wasmThreadsEnabled() ? atomicCode : ""}
+ )
+ `);
+     return ins;
+@@ -1593,7 +1604,7 @@ if (getBuildConfiguration("pointer-byte-
+ 
+ for ( let shared of ['','shared'] ) {
+     for (let [LOC, start, max] of configs) {
+-        if (shared != '' && max == '') {
++        if (shared != '' && (max == '' || !wasmThreadsEnabled())) {
+             continue;
+         }
+         const ins = makeTest(LOC, start, max, shared);
+@@ -1613,16 +1624,18 @@ for ( let shared of ['','shared'] ) {
+         for ( let m of [mem32, mem64] ) {
+             testRead(ins, m, LOC, "");
+             testWrite(ins, m, LOC, "");
+-            testRead(ins, m, LOC, "a");
+-            testWrite(ins, m, LOC, "a");
+-            testAtomicRMW(ins, m, LOC, "add", (r,s) => r+s);
+-            testAtomicRMW(ins, m, LOC, "sub", (r,s) => r-s);
+-            testAtomicRMW(ins, m, LOC, "and", (r,s) => r&s);
+-            testAtomicRMW(ins, m, LOC, "or", (r,s) => r|s);
+-            testAtomicRMW(ins, m, LOC, "xor", (r,s) => r^s);
+-            testAtomicRMW(ins, m, LOC, "xchg", (r,s) => s);
+-            testAtomicCmpxchg(ins, m, LOC);
+-            testAtomicWake(ins, m, LOC);
++            if (wasmThreadsEnabled()) {
++                testRead(ins, m, LOC, "a");
++                testWrite(ins, m, LOC, "a");
++                testAtomicRMW(ins, m, LOC, "add", (r,s) => r+s);
++                testAtomicRMW(ins, m, LOC, "sub", (r,s) => r-s);
++                testAtomicRMW(ins, m, LOC, "and", (r,s) => r&s);
++                testAtomicRMW(ins, m, LOC, "or", (r,s) => r|s);
++                testAtomicRMW(ins, m, LOC, "xor", (r,s) => r^s);
++                testAtomicRMW(ins, m, LOC, "xchg", (r,s) => s);
++                testAtomicCmpxchg(ins, m, LOC);
++                testAtomicWake(ins, m, LOC);
++            }
+         }
+ 
+         if (wasmSimdEnabled()) {
+@@ -1659,6 +1672,7 @@ function makeModule(initial, maximum, sh
+ }
+ 
+ for ( let shared of ['','shared'] ) {
++    if (shared != '' && !wasmThreadsEnabled()) continue;
+     let ins = wasmEvalText(makeModule(1, 3, shared));
+ 
+     assertEq(ins.exports.size(), 1n);
+@@ -1698,6 +1712,7 @@ for ( let shared of ['','shared'] ) {
+ 
+ if (getBuildConfiguration("pointer-byte-size") == 8) {
+     for ( let shared of ['','shared'] ) {
++        if (shared != '' && !wasmThreadsEnabled()) continue;
+         let limit = wasmMaxMemoryPages('i64');
+         let initial = 65537;
+         let maximum = limit + 1;
+diff -Nurp -p '--exclude=*.orig' '--exclude=*.rej' '--exclude=*.pyc' '--exclude=__pycache__' /srv/t2/tmp/ppc-jit-work/baseline/js/src/jit-test/tests/wasm/memory64/bug1912695.js /srv/t2/src-firefox.ppc-desktop.260728.163810.1997595/firefox-153.0/js/src/jit-test/tests/wasm/memory64/bug1912695.js
+--- a/js/src/jit-test/tests/wasm/memory64/bug1912695.js	2026-07-15 22:09:44.000000000 +0200
++++ b/js/src/jit-test/tests/wasm/memory64/bug1912695.js	2026-07-29 11:29:49.247654839 +0200
+@@ -1,3 +1,5 @@
++// |jit-test| skip-if: !wasmThreadsEnabled()
++
+ const m = new WebAssembly.Module(wasmTextToBinary(`(module
+   (memory i64 1 100 shared)
+   (func (param i64)
+diff -Nurp -p '--exclude=*.orig' '--exclude=*.rej' '--exclude=*.pyc' '--exclude=__pycache__' /srv/t2/tmp/ppc-jit-work/baseline/js/src/jit-test/tests/wasm/passive-segs-partial-mem.js /srv/t2/src-firefox.ppc-desktop.260728.163810.1997595/firefox-153.0/js/src/jit-test/tests/wasm/passive-segs-partial-mem.js
+--- a/js/src/jit-test/tests/wasm/passive-segs-partial-mem.js	2026-07-15 22:09:44.000000000 +0200
++++ b/js/src/jit-test/tests/wasm/passive-segs-partial-mem.js	2026-07-29 11:30:13.447687385 +0200
+@@ -16,7 +16,8 @@ const PAGESIZE = 65536;
+ // should still fill up to the limit.
+ 
+ function mem_fill(min, max, shared, backup, write=backup*2) {
+-    if (shared == "shared" && !sharedMemoryEnabled())
++    // Shared memory needs wasm threads, which some targets cannot provide.
++    if (shared == "shared" && !wasmThreadsEnabled())
+         return;
+     let ins = wasmEvalText(
+         `(module
+@@ -55,7 +56,8 @@ mem_fill(2, 4, "shared", 257, 0xFFFFFFFF
+ const mem_init_len = 16;
+ 
+ function mem_init(min, max, shared, backup, write) {
+-    if (shared == "shared" && !sharedMemoryEnabled())
++    // Shared memory needs wasm threads, which some targets cannot provide.
++    if (shared == "shared" && !wasmThreadsEnabled())
+         return;
+     let ins = wasmEvalText(
+         `(module
+@@ -112,7 +114,8 @@ mem_init(1, "", "", PAGESIZE, 0xFFFFFFFC
+ // - both oob
+ 
+ function mem_copy(min, max, shared, srcOffs, targetOffs, len) {
+-    if (shared == "shared" && !sharedMemoryEnabled())
++    // Shared memory needs wasm threads, which some targets cannot provide.
++    if (shared == "shared" && !wasmThreadsEnabled())
+         return;
+     let ins = wasmEvalText(
+         `(module
+diff -Nurp -p '--exclude=*.orig' '--exclude=*.rej' '--exclude=*.pyc' '--exclude=__pycache__' /srv/t2/tmp/ppc-jit-work/baseline/js/src/jit-test/tests/wasm/regress/bug1684861.js /srv/t2/src-firefox.ppc-desktop.260728.163810.1997595/firefox-153.0/js/src/jit-test/tests/wasm/regress/bug1684861.js
+--- a/js/src/jit-test/tests/wasm/regress/bug1684861.js	2026-07-15 22:09:45.000000000 +0200
++++ b/js/src/jit-test/tests/wasm/regress/bug1684861.js	2026-07-29 11:29:51.985950893 +0200
+@@ -1,3 +1,5 @@
++// |jit-test| skip-if: !wasmThreadsEnabled()
++
+ const oob = /index out of bounds/;
+ const unaligned = /unaligned memory access/;
+ const RuntimeError = WebAssembly.RuntimeError;
+diff -Nurp -p '--exclude=*.orig' '--exclude=*.rej' '--exclude=*.pyc' '--exclude=__pycache__' /srv/t2/tmp/ppc-jit-work/baseline/js/src/jit-test/tests/wasm/wasm-resizablearraybuffer-shared.js /srv/t2/src-firefox.ppc-desktop.260728.163810.1997595/firefox-153.0/js/src/jit-test/tests/wasm/wasm-resizablearraybuffer-shared.js
+--- a/js/src/jit-test/tests/wasm/wasm-resizablearraybuffer-shared.js	2026-07-28 16:38:22.651918300 +0200
++++ b/js/src/jit-test/tests/wasm/wasm-resizablearraybuffer-shared.js	2026-07-29 11:29:46.252859843 +0200
+@@ -1,4 +1,4 @@
+-// |jit-test| skip-if: !('toResizableBuffer' in WebAssembly.Memory.prototype)
++// |jit-test| skip-if: !wasmThreadsEnabled() || !('toResizableBuffer' in WebAssembly.Memory.prototype)
+ 
+ let mem = new WebAssembly.Memory({initial: 20, maximum: 50, shared: true});
+ 
+diff -Nurp -p '--exclude=*.orig' '--exclude=*.rej' '--exclude=*.pyc' '--exclude=__pycache__' /srv/t2/tmp/ppc-jit-work/baseline/js/src/jsapi-tests/testAtomicOperations.cpp /srv/t2/src-firefox.ppc-desktop.260728.163810.1997595/firefox-153.0/js/src/jsapi-tests/testAtomicOperations.cpp
+--- a/js/src/jsapi-tests/testAtomicOperations.cpp	2026-07-15 22:09:45.000000000 +0200
++++ b/js/src/jsapi-tests/testAtomicOperations.cpp	2026-07-29 07:53:18.252837549 +0200
+@@ -33,9 +33,9 @@ BEGIN_REUSABLE_TEST(testAtomicLockFree8)
+         jit::AtomicOperations::hasAtomic8());
+ 
+   // We must have lock-free 8-byte atomics on every platform where we support
+-  // wasm, but we don't care otherwise.
++  // wasm threads, but we don't care otherwise.
+ 
+-  CHECK(!wasm::HasSupport(cx) || jit::AtomicOperations::isLockfree8());
++  CHECK(!wasm::ThreadsAvailable(cx) || jit::AtomicOperations::isLockfree8());
+   return true;
+ }
+ END_TEST(testAtomicLockFree8)
+diff -Nurp -p '--exclude=*.orig' '--exclude=*.rej' '--exclude=*.pyc' '--exclude=__pycache__' /srv/t2/tmp/ppc-jit-work/baseline/js/src/main_raw.log /srv/t2/src-firefox.ppc-desktop.260728.163810.1997595/firefox-153.0/js/src/main_raw.log
+--- a/js/src/main_raw.log	1970-01-01 01:00:00.000000000 +0100
++++ b/js/src/main_raw.log	2026-07-29 11:39:32.168003501 +0200
+@@ -0,0 +1,52 @@
++{"action": "suite_start", "pid": 201646, "source": "jittests", "tests": [], "thread": "main", "time": 1785317957.7538614}
++{"action": "test_start", "jitflags": "--fast-warmup", "pid": 201722, "source": "jittests", "test": "wasm/bug2032943.js", "thread": "main", "time": 1785317957.7567387}
++{"action": "test_end", "extra": {"jitflags": "--fast-warmup", "pid": 201722}, "jitflags": "--fast-warmup", "message": "Success", "pid": 201722, "source": "jittests", "status": "PASS", "test": "wasm/bug2032943.js", "thread": "main", "time": 1785317959.9325056}
++{"action": "test_start", "jitflags": "--fast-warmup --wasm-compiler=optimizing", "pid": 202295, "source": "jittests", "test": "wasm/bug2032943.js", "thread": "main", "time": 1785317959.9376569}
++{"action": "test_end", "extra": {"jitflags": "--fast-warmup --wasm-compiler=optimizing", "pid": 202295}, "jitflags": "--fast-warmup --wasm-compiler=optimizing", "message": "Success", "pid": 202295, "source": "jittests", "status": "PASS", "test": "wasm/bug2032943.js", "thread": "main", "time": 1785317961.337936}
++{"action": "test_start", "jitflags": "--fast-warmup -P wasm_lazy_tiering --setpref=wasm_lazy_tiering_synchronous", "pid": 202300, "source": "jittests", "test": "wasm/bug2032943.js", "thread": "main", "time": 1785317959.9446719}
++{"action": "test_end", "extra": {"jitflags": "--fast-warmup -P wasm_lazy_tiering --setpref=wasm_lazy_tiering_synchronous", "pid": 202300}, "jitflags": "--fast-warmup -P wasm_lazy_tiering --setpref=wasm_lazy_tiering_synchronous", "message": "Success", "pid": 202300, "source": "jittests", "status": "PASS", "test": "wasm/bug2032943.js", "thread": "main", "time": 1785317961.338003}
++{"action": "test_start", "jitflags": "--fast-warmup --test-wasm-await-tier2", "pid": 202299, "source": "jittests", "test": "wasm/bug2032943.js", "thread": "main", "time": 1785317959.9417992}
++{"action": "test_end", "extra": {"jitflags": "--fast-warmup --test-wasm-await-tier2", "pid": 202299}, "jitflags": "--fast-warmup --test-wasm-await-tier2", "message": "Success", "pid": 202299, "source": "jittests", "status": "PASS", "test": "wasm/bug2032943.js", "thread": "main", "time": 1785317961.4066923}
++{"action": "test_start", "jitflags": "--fast-warmup --wasm-compiler=baseline", "pid": 202297, "source": "jittests", "test": "wasm/bug2032943.js", "thread": "main", "time": 1785317959.9407432}
++{"action": "test_end", "extra": {"jitflags": "--fast-warmup --wasm-compiler=baseline", "pid": 202297}, "jitflags": "--fast-warmup --wasm-compiler=baseline", "message": "Success", "pid": 202297, "source": "jittests", "status": "PASS", "test": "wasm/bug2032943.js", "thread": "main", "time": 1785317961.6655931}
++{"action": "test_start", "jitflags": "--fast-warmup --setpref=wasm_test_serialization=true", "pid": 202544, "source": "jittests", "test": "wasm/bug2032943.js", "thread": "main", "time": 1785317961.3416142}
++{"action": "test_end", "extra": {"jitflags": "--fast-warmup --setpref=wasm_test_serialization=true", "pid": 202544}, "jitflags": "--fast-warmup --setpref=wasm_test_serialization=true", "message": "Success", "pid": 202544, "source": "jittests", "status": "PASS", "test": "wasm/bug2032943.js", "thread": "main", "time": 1785317962.7366843}
++{"action": "test_start", "jitflags": "--fast-warmup --wasm-compiler=optimizing --no-avx", "pid": 202556, "source": "jittests", "test": "wasm/bug2032943.js", "thread": "main", "time": 1785317961.409646}
++{"action": "test_end", "extra": {"jitflags": "--fast-warmup --wasm-compiler=optimizing --no-avx", "pid": 202556}, "jitflags": "--fast-warmup --wasm-compiler=optimizing --no-avx", "message": "Success", "pid": 202556, "source": "jittests", "status": "PASS", "test": "wasm/bug2032943.js", "thread": "main", "time": 1785317962.799645}
++{"action": "test_start", "jitflags": "--fast-warmup --disable-wasm-huge-memory", "pid": 202540, "source": "jittests", "test": "wasm/bug2032943.js", "thread": "main", "time": 1785317961.340644}
++{"action": "test_end", "extra": {"jitflags": "--fast-warmup --disable-wasm-huge-memory", "pid": 202540}, "jitflags": "--fast-warmup --disable-wasm-huge-memory", "message": "Success", "pid": 202540, "source": "jittests", "status": "PASS", "test": "wasm/bug2032943.js", "thread": "main", "time": 1785317963.387579}
++{"action": "test_start", "jitflags": "", "pid": 202631, "source": "jittests", "test": "wasm/limits-br-table.js", "thread": "main", "time": 1785317961.6676326}
++{"action": "test_end", "extra": {"jitflags": "", "pid": 202631}, "jitflags": "", "message": "Success", "pid": 202631, "source": "jittests", "status": "PASS", "test": "wasm/limits-br-table.js", "thread": "main", "time": 1785317963.5815876}
++{"action": "test_start", "jitflags": "--wasm-compiler=optimizing", "pid": 202751, "source": "jittests", "test": "wasm/limits-br-table.js", "thread": "main", "time": 1785317962.7406578}
++{"action": "test_end", "extra": {"jitflags": "--wasm-compiler=optimizing", "pid": 202751}, "jitflags": "--wasm-compiler=optimizing", "message": "Success", "pid": 202751, "source": "jittests", "status": "PASS", "test": "wasm/limits-br-table.js", "thread": "main", "time": 1785317963.7965968}
++{"action": "test_start", "jitflags": "--wasm-compiler=baseline", "pid": 202756, "source": "jittests", "test": "wasm/limits-br-table.js", "thread": "main", "time": 1785317962.8018367}
++{"action": "test_end", "extra": {"jitflags": "--wasm-compiler=baseline", "pid": 202756}, "jitflags": "--wasm-compiler=baseline", "message": "Success", "pid": 202756, "source": "jittests", "status": "PASS", "test": "wasm/limits-br-table.js", "thread": "main", "time": 1785317965.0946798}
++{"action": "test_start", "jitflags": "--disable-wasm-huge-memory", "pid": 202963, "source": "jittests", "test": "wasm/limits-br-table.js", "thread": "main", "time": 1785317963.7996442}
++{"action": "test_end", "extra": {"jitflags": "--disable-wasm-huge-memory", "pid": 202963}, "jitflags": "--disable-wasm-huge-memory", "message": "Success", "pid": 202963, "source": "jittests", "status": "PASS", "test": "wasm/limits-br-table.js", "thread": "main", "time": 1785317965.1116722}
++{"action": "test_start", "jitflags": "--test-wasm-await-tier2", "pid": 202860, "source": "jittests", "test": "wasm/limits-br-table.js", "thread": "main", "time": 1785317963.3906202}
++{"action": "test_end", "extra": {"jitflags": "--test-wasm-await-tier2", "pid": 202860}, "jitflags": "--test-wasm-await-tier2", "message": "Success", "pid": 202860, "source": "jittests", "status": "PASS", "test": "wasm/limits-br-table.js", "thread": "main", "time": 1785317965.4375713}
++{"action": "test_start", "jitflags": "-P wasm_lazy_tiering --setpref=wasm_lazy_tiering_synchronous", "pid": 202899, "source": "jittests", "test": "wasm/limits-br-table.js", "thread": "main", "time": 1785317963.5827408}
++{"action": "test_end", "extra": {"jitflags": "-P wasm_lazy_tiering --setpref=wasm_lazy_tiering_synchronous", "pid": 202899}, "jitflags": "-P wasm_lazy_tiering --setpref=wasm_lazy_tiering_synchronous", "message": "Success", "pid": 202899, "source": "jittests", "status": "PASS", "test": "wasm/limits-br-table.js", "thread": "main", "time": 1785317966.2036378}
++{"action": "test_start", "jitflags": "--setpref=wasm_test_serialization=true", "pid": 203125, "source": "jittests", "test": "wasm/limits-br-table.js", "thread": "main", "time": 1785317965.0976276}
++{"action": "test_end", "extra": {"jitflags": "--setpref=wasm_test_serialization=true", "pid": 203125}, "jitflags": "--setpref=wasm_test_serialization=true", "message": "Success", "pid": 203125, "source": "jittests", "status": "PASS", "test": "wasm/limits-br-table.js", "thread": "main", "time": 1785317966.4346447}
++{"action": "test_start", "jitflags": "--wasm-compiler=optimizing --no-avx", "pid": 203128, "source": "jittests", "test": "wasm/limits-br-table.js", "thread": "main", "time": 1785317965.1146016}
++{"action": "test_end", "extra": {"jitflags": "--wasm-compiler=optimizing --no-avx", "pid": 203128}, "jitflags": "--wasm-compiler=optimizing --no-avx", "message": "Success", "pid": 203128, "source": "jittests", "status": "PASS", "test": "wasm/limits-br-table.js", "thread": "main", "time": 1785317966.4906256}
++{"action": "test_start", "jitflags": "--wasm-compiler=optimizing", "pid": 203329, "source": "jittests", "test": "wasm/limits.js", "thread": "main", "time": 1785317966.206476}
++{"action": "test_end", "extra": {"jitflags": "--wasm-compiler=optimizing", "pid": 203329}, "jitflags": "--wasm-compiler=optimizing", "message": "Success", "pid": 203329, "source": "jittests", "status": "PASS", "test": "wasm/limits.js", "thread": "main", "time": 1785317967.186612}
++{"action": "test_start", "jitflags": "", "pid": 203228, "source": "jittests", "test": "wasm/limits.js", "thread": "main", "time": 1785317965.4405935}
++{"action": "test_end", "extra": {"jitflags": "", "pid": 203228}, "jitflags": "", "message": "Success", "pid": 203228, "source": "jittests", "status": "PASS", "test": "wasm/limits.js", "thread": "main", "time": 1785317969.1199415}
++{"action": "test_start", "jitflags": "--test-wasm-await-tier2", "pid": 203409, "source": "jittests", "test": "wasm/limits.js", "thread": "main", "time": 1785317966.4936047}
++{"action": "test_end", "extra": {"jitflags": "--test-wasm-await-tier2", "pid": 203409}, "jitflags": "--test-wasm-await-tier2", "message": "Success", "pid": 203409, "source": "jittests", "status": "PASS", "test": "wasm/limits.js", "thread": "main", "time": 1785317969.9896448}
++{"action": "test_start", "jitflags": "--wasm-compiler=baseline", "pid": 203390, "source": "jittests", "test": "wasm/limits.js", "thread": "main", "time": 1785317966.4366024}
++{"action": "test_end", "extra": {"jitflags": "--wasm-compiler=baseline", "pid": 203390}, "jitflags": "--wasm-compiler=baseline", "message": "Success", "pid": 203390, "source": "jittests", "status": "PASS", "test": "wasm/limits.js", "thread": "main", "time": 1785317970.1996124}
++{"action": "test_start", "jitflags": "--disable-wasm-huge-memory", "pid": 203884, "source": "jittests", "test": "wasm/limits.js", "thread": "main", "time": 1785317969.1239529}
++{"action": "test_end", "extra": {"jitflags": "--disable-wasm-huge-memory", "pid": 203884}, "jitflags": "--disable-wasm-huge-memory", "message": "Success", "pid": 203884, "source": "jittests", "status": "PASS", "test": "wasm/limits.js", "thread": "main", "time": 1785317970.8997338}
++{"action": "test_start", "jitflags": "-P wasm_lazy_tiering --setpref=wasm_lazy_tiering_synchronous", "pid": 203541, "source": "jittests", "test": "wasm/limits.js", "thread": "main", "time": 1785317967.1886024}
++{"action": "test_end", "extra": {"jitflags": "-P wasm_lazy_tiering --setpref=wasm_lazy_tiering_synchronous", "pid": 203541}, "jitflags": "-P wasm_lazy_tiering --setpref=wasm_lazy_tiering_synchronous", "message": "Success", "pid": 203541, "source": "jittests", "status": "PASS", "test": "wasm/limits.js", "thread": "main", "time": 1785317971.2156293}
++{"action": "test_start", "jitflags": "--setpref=wasm_test_serialization=true", "pid": 204018, "source": "jittests", "test": "wasm/limits.js", "thread": "main", "time": 1785317969.994602}
++{"action": "test_end", "extra": {"jitflags": "--setpref=wasm_test_serialization=true", "pid": 204018}, "jitflags": "--setpref=wasm_test_serialization=true", "message": "Success", "pid": 204018, "source": "jittests", "status": "PASS", "test": "wasm/limits.js", "thread": "main", "time": 1785317971.270587}
++{"action": "test_start", "jitflags": "--wasm-compiler=optimizing --no-avx", "pid": 204078, "source": "jittests", "test": "wasm/limits.js", "thread": "main", "time": 1785317970.2016447}
++{"action": "test_end", "extra": {"jitflags": "--wasm-compiler=optimizing --no-avx", "pid": 204078}, "jitflags": "--wasm-compiler=optimizing --no-avx", "message": "Success", "pid": 204078, "source": "jittests", "status": "PASS", "test": "wasm/limits.js", "thread": "main", "time": 1785317971.3085976}
++{"action": "test_start", "jitflags": "", "pid": 204212, "source": "jittests", "test": "wasm/directiveless/features.js", "thread": "main", "time": 1785317970.9025993}
++{"action": "test_end", "extra": {"jitflags": "", "pid": 204212}, "jitflags": "", "message": "Success", "pid": 204212, "source": "jittests", "status": "PASS", "test": "wasm/directiveless/features.js", "thread": "main", "time": 1785317972.1686172}
++{"action": "suite_end", "pid": 201646, "source": "jittests", "thread": "main", "time": 1785317972.1688974}
 diff -Nurp -p '--exclude=*.orig' '--exclude=*.rej' '--exclude=*.pyc' '--exclude=__pycache__' /srv/t2/tmp/ppc-jit-work/baseline/js/src/util/Poison.h /srv/t2/src-firefox.ppc-desktop.260728.163810.1997595/firefox-153.0/js/src/util/Poison.h
 --- a/js/src/util/Poison.h	2026-07-28 16:38:22.643014135 +0200
 +++ b/js/src/util/Poison.h	2026-07-28 18:50:20.568593042 +0200
@@ -34995,6 +36565,27 @@ diff -Nurp -p '--exclude=*.orig' '--exclude=*.rej' '--exclude=*.pyc' '--exclude=
  #  define JS_SWEPT_CODE_PATTERN 0x00  // illegal instruction (all zeros)
  #else
  #  error "JS_SWEPT_CODE_PATTERN not defined for this platform"
+diff -Nurp -p '--exclude=*.orig' '--exclude=*.rej' '--exclude=*.pyc' '--exclude=__pycache__' /srv/t2/tmp/ppc-jit-work/baseline/js/src/vm/BoundFunctionObject.h /srv/t2/src-firefox.ppc-desktop.260728.163810.1997595/firefox-153.0/js/src/vm/BoundFunctionObject.h
+--- a/js/src/vm/BoundFunctionObject.h	2026-07-15 22:09:47.000000000 +0200
++++ b/js/src/vm/BoundFunctionObject.h	2026-07-29 08:05:38.001960082 +0200
+@@ -148,6 +148,17 @@ class BoundFunctionObject : public Nativ
+   static constexpr size_t offsetOfFlagsSlot() {
+     return getFixedSlotOffset(FlagsSlot);
+   }
++
++  // The flags are a boxed Int32Value; JIT code that reads them with a 32-bit
++  // load must address the payload word, which is at +sizeof(int32_t) within
++  // the 8-byte slot on big-endian and at +0 on little-endian.
++  static constexpr size_t offsetOfFlagsSlotForJit32() {
++#if defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
++    return offsetOfFlagsSlot() + sizeof(int32_t);
++#else
++    return offsetOfFlagsSlot();
++#endif
++  }
+   static constexpr size_t offsetOfBoundThisSlot() {
+     return getFixedSlotOffset(BoundThisSlot);
+   }
 diff -Nurp -p '--exclude=*.orig' '--exclude=*.rej' '--exclude=*.pyc' '--exclude=__pycache__' /srv/t2/tmp/ppc-jit-work/baseline/js/src/wasm/WasmBCDefs.h /srv/t2/src-firefox.ppc-desktop.260728.163810.1997595/firefox-153.0/js/src/wasm/WasmBCDefs.h
 --- a/js/src/wasm/WasmBCDefs.h	2026-07-28 16:38:22.643088348 +0200
 +++ b/js/src/wasm/WasmBCDefs.h	2026-07-28 18:49:07.588607168 +0200
@@ -35013,10 +36604,50 @@ diff -Nurp -p '--exclude=*.orig' '--exclude=*.rej' '--exclude=*.pyc' '--exclude=
  #ifdef JS_CODEGEN_PPC64
  #  define RABALDR_PIN_INSTANCE
  #endif
+diff -Nurp -p '--exclude=*.orig' '--exclude=*.rej' '--exclude=*.pyc' '--exclude=__pycache__' /srv/t2/tmp/ppc-jit-work/baseline/js/src/wasm/WasmBCFrame.h /srv/t2/src-firefox.ppc-desktop.260728.163810.1997595/firefox-153.0/js/src/wasm/WasmBCFrame.h
+--- a/js/src/wasm/WasmBCFrame.h	2026-07-28 16:38:22.660200498 +0200
++++ b/js/src/wasm/WasmBCFrame.h	2026-07-29 08:27:28.915621045 +0200
+@@ -879,15 +879,16 @@ class BaseStackFrame final : public Base
+   }
+ 
+   void loadStackI32(int32_t offset, RegI32 dest) {
+-    // An i32 is spilled into a pointer-sized (8-byte) stack slot by pushGPR, so
+-    // on big-endian its value occupies the high-address low word at +4. Reading
+-    // at +0 would pick up the always-zero high word.
++    // An i32 is spilled into a pointer-sized stack slot by pushGPR. On a
++    // big-endian target whose pointers are wider than 32 bits the value is in
++    // the high-address low word; where a pointer is one word the slot is the
++    // value itself and no adjustment applies.
+ #if defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
+-    masm.load32(Address(sp_, stackOffset(offset) + int32_t(sizeof(int32_t))),
+-                dest);
++    constexpr int32_t lowWord = int32_t(StackSizeOfPtr - sizeof(int32_t));
+ #else
+-    masm.load32(Address(sp_, stackOffset(offset)), dest);
++    constexpr int32_t lowWord = 0;
+ #endif
++    masm.load32(Address(sp_, stackOffset(offset) + lowWord), dest);
+   }
+ 
+   void loadStackI64(int32_t offset, RegI64 dest) {
 diff -Nurp -p '--exclude=*.orig' '--exclude=*.rej' '--exclude=*.pyc' '--exclude=__pycache__' /srv/t2/tmp/ppc-jit-work/baseline/js/src/wasm/WasmBCMemory.cpp /srv/t2/src-firefox.ppc-desktop.260728.163810.1997595/firefox-153.0/js/src/wasm/WasmBCMemory.cpp
 --- a/js/src/wasm/WasmBCMemory.cpp	2026-07-28 16:38:22.660340853 +0200
-+++ b/js/src/wasm/WasmBCMemory.cpp	2026-07-28 19:10:09.027405259 +0200
-@@ -648,7 +648,7 @@ void BaseCompiler::executeLoad(MemoryAcc
++++ b/js/src/wasm/WasmBCMemory.cpp	2026-07-29 10:21:27.159642603 +0200
+@@ -345,9 +345,10 @@ void BaseCompiler::boundsCheckBelow4GBAc
+   // we can use a 32-bit check and avoid extension and wrapping.
+   uint32_t offset = instanceOffsetOfBoundsCheckLimit(memoryIndex, byteSize);
+ #if defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
+-  // The bounds check limit is a pointer-sized field; the 32-bit check must
+-  // read its low word.
+-  offset += sizeof(uint32_t);
++  // The bounds check limit is a pointer-sized field; on a big-endian host with
++  // pointers wider than the 32-bit load, its low word is at the far end. On a
++  // 32-bit host the field is exactly one word, so this adjustment is zero.
++  offset += sizeof(uintptr_t) - sizeof(uint32_t);
+ #endif
+   masm.wasmBoundsCheck32(Assembler::Below, ptr, Address(instance, offset), ok);
+ }
+@@ -648,7 +649,7 @@ void BaseCompiler::executeLoad(MemoryAcc
    } else {
      masm.wasmLoad(*access, memoryBase, ptr, dest.any());
    }
@@ -35025,16 +36656,25 @@ diff -Nurp -p '--exclude=*.orig' '--exclude=*.rej' '--exclude=*.pyc' '--exclude=
    MOZ_ASSERT(temp.isInvalid());
    if (dest.tag == AnyReg::I64) {
      masm.wasmLoadI64(*access, memoryBase, ptr, ptr, dest.i64());
-@@ -799,7 +799,7 @@ void BaseCompiler::executeStore(MemoryAc
+@@ -806,6 +807,17 @@ void BaseCompiler::executeStore(MemoryAc
    } else {
-     masm.wasmStore(*access, src.any(), memoryBase, ptr);
+     masm.wasmStore(*access, src.any(), memoryBase, ptr, ptr);
    }
--#elif defined(JS_CODEGEN_PPC64)
-+#elif defined(JS_CODEGEN_PPC64) || defined(JS_CODEGEN_PPC)
-   MOZ_ASSERT(temp.isInvalid());
-   if (access->type() == Scalar::Int64) {
-     masm.wasmStoreI64(*access, src.i64(), memoryBase, ptr, ptr);
-@@ -1118,6 +1118,14 @@ static void Deallocate(BaseCompiler* bc,
++#elif defined(JS_CODEGEN_PPC)
++  MOZ_ASSERT(temp.isInvalid());
++  if (access->type() == Scalar::Int64) {
++    masm.wasmStoreI64(*access, src.i64(), memoryBase, ptr, ptr);
++  } else if (src.tag == AnyReg::I64) {
++    // i64.store8/16/32 narrows an I64 pair; the low half holds the stored bits
++    // on big endian too.
++    masm.wasmStore(*access, AnyRegister(src.i64().low), memoryBase, ptr, ptr);
++  } else {
++    masm.wasmStore(*access, src.any(), memoryBase, ptr, ptr);
++  }
+ #else
+   MOZ_CRASH("BaseCompiler platform hook: store");
+ #endif
+@@ -1118,6 +1130,14 @@ static void Deallocate(BaseCompiler* bc,
    bc->freeI32(bc->specific_.ecx);
  }
  
@@ -35049,7 +36689,7 @@ diff -Nurp -p '--exclude=*.orig' '--exclude=*.rej' '--exclude=*.pyc' '--exclude=
  #elif defined(__wasi__) || (defined(JS_CODEGEN_NONE) && !defined(JS_64BIT))
  
  static void Allocate(BaseCompiler*, RegI64*, RegI64*) {}
-@@ -1350,7 +1358,7 @@ static void Deallocate(BaseCompiler* bc,
+@@ -1350,7 +1370,7 @@ static void Deallocate(BaseCompiler* bc,
    bc->maybeFree(temps.t2);
  }
  
@@ -35058,7 +36698,7 @@ diff -Nurp -p '--exclude=*.orig' '--exclude=*.rej' '--exclude=*.pyc' '--exclude=
  
  struct Temps {
    RegI32 t0, t1, t2;
-@@ -1523,7 +1531,8 @@ static void Deallocate(BaseCompiler* bc,
+@@ -1523,7 +1543,8 @@ static void Deallocate(BaseCompiler* bc,
  }
  
  #elif defined(JS_CODEGEN_ARM64) || defined(JS_CODEGEN_MIPS64) || \
@@ -35068,7 +36708,7 @@ diff -Nurp -p '--exclude=*.orig' '--exclude=*.rej' '--exclude=*.pyc' '--exclude=
  
  static void PopAndAllocate(BaseCompiler* bc, AtomicOp op, RegI64* rd,
                             RegI64* rv, RegI64* temp) {
-@@ -1733,7 +1742,7 @@ static void Deallocate(BaseCompiler* bc,
+@@ -1733,7 +1754,7 @@ static void Deallocate(BaseCompiler* bc,
    bc->maybeFree(temps.t2);
  }
  
@@ -35077,7 +36717,7 @@ diff -Nurp -p '--exclude=*.orig' '--exclude=*.rej' '--exclude=*.pyc' '--exclude=
  
  struct Temps {
    RegI32 t0, t1, t2;
-@@ -1864,7 +1873,8 @@ static void Deallocate(BaseCompiler* bc,
+@@ -1864,7 +1885,8 @@ static void Deallocate(BaseCompiler* bc,
  }
  
  #elif defined(JS_CODEGEN_ARM64) || defined(JS_CODEGEN_MIPS64) || \
@@ -35087,7 +36727,7 @@ diff -Nurp -p '--exclude=*.orig' '--exclude=*.rej' '--exclude=*.pyc' '--exclude=
  
  static void PopAndAllocate(BaseCompiler* bc, RegI64* rd, RegI64* rv) {
    *rv = bc->popI64();
-@@ -2080,7 +2090,7 @@ static void Deallocate(BaseCompiler* bc,
+@@ -2080,7 +2102,7 @@ static void Deallocate(BaseCompiler* bc,
    bc->maybeFree(temps.t2);
  }
  
@@ -35096,7 +36736,7 @@ diff -Nurp -p '--exclude=*.orig' '--exclude=*.rej' '--exclude=*.pyc' '--exclude=
  
  struct Temps {
    RegI32 t0, t1, t2;
-@@ -2308,7 +2318,8 @@ static void Deallocate(BaseCompiler* bc,
+@@ -2308,7 +2330,8 @@ static void Deallocate(BaseCompiler* bc,
  }
  
  #elif defined(JS_CODEGEN_ARM64) || defined(JS_CODEGEN_MIPS64) || \
@@ -35127,9 +36767,49 @@ diff -Nurp -p '--exclude=*.orig' '--exclude=*.rej' '--exclude=*.pyc' '--exclude=
  struct SpecificRegs {
    RegI64 abiReturnRegI64;
  
+diff -Nurp -p '--exclude=*.orig' '--exclude=*.rej' '--exclude=*.pyc' '--exclude=__pycache__' /srv/t2/tmp/ppc-jit-work/baseline/js/src/wasm/WasmBCStkMgmt-inl.h /srv/t2/src-firefox.ppc-desktop.260728.163810.1997595/firefox-153.0/js/src/wasm/WasmBCStkMgmt-inl.h
+--- a/js/src/wasm/WasmBCStkMgmt-inl.h	2026-07-15 22:09:48.000000000 +0200
++++ b/js/src/wasm/WasmBCStkMgmt-inl.h	2026-07-29 10:20:31.686017752 +0200
+@@ -379,6 +379,14 @@ void BaseCompiler::sync() {
+ #ifdef JS_PUNBOX64
+         loadI64(v, fromI32(scratch));
+         uint32_t offs = fr.pushGPR(scratch);
++#elif defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
++        // The stack grows down, so pushing the low half first leaves the high
++        // half at the lower address, which is what the readers of MemI64
++        // assume on big endian (INT64HIGH_OFFSET == 0).
++        fr.loadLocalI64Low(localFromSlot(v.slot(), MIRType::Int64), scratch);
++        fr.pushGPR(scratch);
++        fr.loadLocalI64High(localFromSlot(v.slot(), MIRType::Int64), scratch);
++        uint32_t offs = fr.pushGPR(scratch);
+ #else
+         fr.loadLocalI64High(localFromSlot(v.slot(), MIRType::Int64), scratch);
+         fr.pushGPR(scratch);
+@@ -392,6 +400,10 @@ void BaseCompiler::sync() {
+ #ifdef JS_PUNBOX64
+         uint32_t offs = fr.pushGPR(v.i64reg().reg);
+         freeI64(v.i64reg());
++#elif defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
++        fr.pushGPR(v.i64reg().low);
++        uint32_t offs = fr.pushGPR(v.i64reg().high);
++        freeI64(v.i64reg());
+ #else
+         fr.pushGPR(v.i64reg().high);
+         uint32_t offs = fr.pushGPR(v.i64reg().low);
+@@ -847,6 +859,10 @@ void BaseCompiler::popI64(const Stk& v,
+     case Stk::MemI64:
+ #ifdef JS_PUNBOX64
+       fr.popGPR(dest.reg);
++#elif defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
++      // Matches the low-then-high push order used by sync().
++      fr.popGPR(dest.high);
++      fr.popGPR(dest.low);
+ #else
+       fr.popGPR(dest.low);
+       fr.popGPR(dest.high);
 diff -Nurp -p '--exclude=*.orig' '--exclude=*.rej' '--exclude=*.pyc' '--exclude=__pycache__' /srv/t2/tmp/ppc-jit-work/baseline/js/src/wasm/WasmBaselineCompile.cpp /srv/t2/src-firefox.ppc-desktop.260728.163810.1997595/firefox-153.0/js/src/wasm/WasmBaselineCompile.cpp
 --- a/js/src/wasm/WasmBaselineCompile.cpp	2026-07-28 16:38:22.660787824 +0200
-+++ b/js/src/wasm/WasmBaselineCompile.cpp	2026-07-28 19:10:09.028317141 +0200
++++ b/js/src/wasm/WasmBaselineCompile.cpp	2026-07-29 10:20:56.012711172 +0200
 @@ -377,11 +377,12 @@ void BaseCompiler::tableSwitch(Label* th
    masm.ma_ldr(DTRAddr(scratch, DtrRegImmShift(switchValue, LSL, 2)), pc, Offset,
                Assembler::Always);
@@ -35165,7 +36845,18 @@ diff -Nurp -p '--exclude=*.orig' '--exclude=*.rej' '--exclude=*.pyc' '--exclude=
    {
      ScratchPtr scratch(*this);
  
-@@ -2396,7 +2399,7 @@ RegI32 BaseCompiler::needRotate64Temp()
+@@ -2200,7 +2203,9 @@ bool BaseCompiler::updateCallRefMetrics(
+   // if (target->instance != thisInstance) goto Out-Of-Line
+   const size_t instanceSlotOffset = FunctionExtended::offsetOfExtendedSlot(
+       FunctionExtended::WASM_INSTANCE_SLOT);
+-  masm.loadPtr(Address(regFuncRef, instanceSlotOffset), regScratch);
++  masm.loadPtr(
++      Address(regFuncRef, instanceSlotOffset + jit::PrivateValuePayloadOffset),
++      regScratch);
+   masm.branchPtr(Assembler::NotEqual, InstanceReg, regScratch, ool->entry());
+ 
+   // At this point, regFuncRef = the FuncExtended*, regMetrics = the
+@@ -2396,7 +2401,7 @@ RegI32 BaseCompiler::needRotate64Temp()
  #elif defined(JS_CODEGEN_X64) || defined(JS_CODEGEN_ARM) ||       \
      defined(JS_CODEGEN_ARM64) || defined(JS_CODEGEN_MIPS64) ||    \
      defined(JS_CODEGEN_LOONG64) || defined(JS_CODEGEN_RISCV64) || \
@@ -35174,7 +36865,7 @@ diff -Nurp -p '--exclude=*.orig' '--exclude=*.rej' '--exclude=*.pyc' '--exclude=
    return RegI32::Invalid();
  #else
    MOZ_CRASH("BaseCompiler platform hook: needRotate64Temp");
-@@ -2446,7 +2449,7 @@ void BaseCompiler::popAndAllocateForMulI
+@@ -2446,7 +2451,7 @@ void BaseCompiler::popAndAllocateForMulI
    *temp = needI32();
  #elif defined(JS_CODEGEN_MIPS64)
    pop2xI64(r0, r1);
@@ -35183,7 +36874,7 @@ diff -Nurp -p '--exclude=*.orig' '--exclude=*.rej' '--exclude=*.pyc' '--exclude=
    pop2xI64(r0, r1);
    *temp = needI32();
  #elif defined(JS_CODEGEN_ARM64)
-@@ -2888,7 +2891,8 @@ static RegI32 PopcntTemp(BaseCompiler& b
+@@ -2888,7 +2893,8 @@ static RegI32 PopcntTemp(BaseCompiler& b
    return AssemblerX86Shared::HasPOPCNT() ? RegI32::Invalid() : bc.needI32();
  #elif defined(JS_CODEGEN_ARM) || defined(JS_CODEGEN_ARM64) ||    \
      defined(JS_CODEGEN_MIPS64) || defined(JS_CODEGEN_LOONG64) || \
@@ -35193,7 +36884,62 @@ diff -Nurp -p '--exclude=*.orig' '--exclude=*.rej' '--exclude=*.pyc' '--exclude=
    return bc.needI32();
  #elif defined(JS_CODEGEN_PPC64)
    // PPC64 has native popcntd/popcntw; no temp register needed.
-@@ -6188,8 +6192,8 @@ bool BaseCompiler::emitGetGlobal() {
+@@ -3094,9 +3100,11 @@ static void NegateF64(MacroAssembler& ma
+   masm.negateDouble(rsd);
+ }
+ 
++#ifndef JS_CODEGEN_PPC
+ static void SqrtF64(MacroAssembler& masm, RegF64 rsd) {
+   masm.sqrtDouble(rsd, rsd);
+ }
++#endif
+ 
+ static void AddF32(MacroAssembler& masm, RegF32 rs, RegF32 rsd) {
+   masm.addFloat32(rs, rsd);
+@@ -3161,9 +3169,11 @@ static void NegateF32(MacroAssembler& ma
+   masm.negateFloat(rsd);
+ }
+ 
++#ifndef JS_CODEGEN_PPC
+ static void SqrtF32(MacroAssembler& masm, RegF32 rsd) {
+   masm.sqrtFloat32(rsd, rsd);
+ }
++#endif
+ 
+ #ifndef RABALDR_I64_TO_FLOAT_CALLOUT
+ static void ConvertI64ToF32(MacroAssembler& masm, RegI64 rs, RegF32 rd) {
+@@ -4715,7 +4725,8 @@ bool BaseCompiler::emitTryTable() {
+     RegPtr data = needPtr();
+ 
+     // Unpack the tag and jump to the block
+-    masm.loadPtr(Address(exn, (int32_t)WasmExceptionObject::offsetOfData()),
++    masm.loadPtr(Address(exn, (int32_t)WasmExceptionObject::offsetOfData() +
++                                  jit::PrivateValuePayloadOffset),
+                  data);
+     // This method can increase stk_.length() by an unbounded amount, so we need
+     // to perform an allocation here to accomodate the variable number of
+@@ -4927,7 +4938,8 @@ bool BaseCompiler::emitCatch() {
+   RegRef exn = popRef();
+   RegPtr data = needPtr();
+ 
+-  masm.loadPtr(Address(exn, (int32_t)WasmExceptionObject::offsetOfData()),
++  masm.loadPtr(Address(exn, (int32_t)WasmExceptionObject::offsetOfData() +
++                                jit::PrivateValuePayloadOffset),
+                data);
+ 
+   // This method can increase stk_.length() by an unbounded amount, so we need
+@@ -5237,7 +5249,9 @@ bool BaseCompiler::emitThrow() {
+   RegPtr data = needPtr();
+   freePtr(RegPtr(PreBarrierReg));
+ 
+-  masm.loadPtr(Address(exn, WasmExceptionObject::offsetOfData()), data);
++  masm.loadPtr(Address(exn, (int32_t)WasmExceptionObject::offsetOfData() +
++                                jit::PrivateValuePayloadOffset),
++               data);
+ 
+   for (int32_t i = params.length() - 1; i >= 0; i--) {
+     uint32_t offset = offsets[i];
+@@ -6188,8 +6202,8 @@ bool BaseCompiler::emitGetGlobal() {
        RegV128 rv = needV128();
        ScratchPtr tmp(*this);
        masm.loadUnalignedSimd128(addressOfGlobalVar(global, tmp), rv);
@@ -35204,7 +36950,7 @@ diff -Nurp -p '--exclude=*.orig' '--exclude=*.rej' '--exclude=*.pyc' '--exclude=
        // The global cell holds the little-endian image; byte-reverse to the
        // canonical SIMD register order.
        masm.byteReverseSimd128(rv, rv);
-@@ -6268,8 +6272,8 @@ bool BaseCompiler::emitSetGlobal() {
+@@ -6268,8 +6282,8 @@ bool BaseCompiler::emitSetGlobal() {
      case ValType::V128: {
        RegV128 rv = popV128();
        ScratchPtr tmp(*this);
@@ -35215,7 +36961,7 @@ diff -Nurp -p '--exclude=*.orig' '--exclude=*.rej' '--exclude=*.pyc' '--exclude=
        // The global cell holds the little-endian image; byte-reverse the
        // canonical SIMD register before storing. rv is dead after the store.
        masm.byteReverseSimd128(rv, rv);
-@@ -9398,7 +9402,7 @@ static void MulI64x2(MacroAssembler& mas
+@@ -9398,7 +9412,7 @@ static void MulI64x2(MacroAssembler& mas
                       RegV128 temp1, RegV128 temp2) {
    masm.mulInt64x2(rsd, rs, rsd, temp1, temp2);
  }
@@ -35224,7 +36970,7 @@ diff -Nurp -p '--exclude=*.orig' '--exclude=*.rej' '--exclude=*.pyc' '--exclude=
  static void MulI64x2(MacroAssembler& masm, RegV128 rs, RegV128 rsd,
                       RegV128 temp1, RegV128 temp2) {
    masm.mulInt64x2(rsd, rs, rsd, temp1, temp2);
-@@ -9418,7 +9422,7 @@ static void DivF64x2(MacroAssembler& mas
+@@ -9418,7 +9432,7 @@ static void DivF64x2(MacroAssembler& mas
  }
  
  #  if defined(JS_CODEGEN_X86) || defined(JS_CODEGEN_X64) || \
@@ -35233,7 +36979,7 @@ diff -Nurp -p '--exclude=*.orig' '--exclude=*.rej' '--exclude=*.pyc' '--exclude=
  static void MinF32x4(MacroAssembler& masm, RegV128 rs, RegV128 rsd,
                       RegV128 temp1, RegV128 temp2) {
    masm.minFloat32x4(rsd, rs, rsd, temp1, temp2);
-@@ -9439,8 +9443,8 @@ static void MaxF64x2(MacroAssembler& mas
+@@ -9439,8 +9453,8 @@ static void MaxF64x2(MacroAssembler& mas
    masm.maxFloat64x2(rsd, rs, rsd, temp1, temp2);
  }
  
@@ -35244,7 +36990,7 @@ diff -Nurp -p '--exclude=*.orig' '--exclude=*.rej' '--exclude=*.pyc' '--exclude=
  // matching the pseudoMin/Max function signature.
  static void PMinF32x4(MacroAssembler& masm, RegV128 rs, RegV128 rsd) {
    masm.pseudoMinFloat32x4(rs, rsd);
-@@ -9870,8 +9874,8 @@ static void ShiftRightUI64x2(MacroAssemb
+@@ -9870,8 +9884,8 @@ static void ShiftRightUI64x2(MacroAssemb
    ShiftOpMask(masm, SimdOp::I64x2ShrU, rs, temp);
    masm.unsignedRightShiftInt64x2(rsd, temp, rsd);
  }
@@ -35255,7 +37001,7 @@ diff -Nurp -p '--exclude=*.orig' '--exclude=*.rej' '--exclude=*.pyc' '--exclude=
  static void ShiftLeftI8x16(MacroAssembler& masm, RegI32 rs, RegV128 rsd,
                             RegI32 temp) {
    ShiftOpMask(masm, SimdOp::I8x16Shl, rs, temp);
-@@ -10232,7 +10236,7 @@ static void BitmaskI64x2(MacroAssembler&
+@@ -10232,7 +10246,7 @@ static void BitmaskI64x2(MacroAssembler&
                           RegV128 temp) {
    masm.bitmaskInt64x2(rs, rd, temp);
  }
@@ -35264,7 +37010,7 @@ diff -Nurp -p '--exclude=*.orig' '--exclude=*.rej' '--exclude=*.pyc' '--exclude=
  static void BitmaskI8x16(MacroAssembler& masm, RegV128 rs, RegI32 rd,
                           RegV128 temp) {
    masm.bitmaskInt8x16(rs, rd, temp);
-@@ -10320,7 +10324,7 @@ static void BitselectV128(MacroAssembler
+@@ -10320,7 +10334,7 @@ static void BitselectV128(MacroAssembler
    masm.bitwiseSelectSimd128(lhsDest, rhs, temp);
    masm.moveSimd128(temp, lhsDest);
  }
@@ -35273,7 +37019,7 @@ diff -Nurp -p '--exclude=*.orig' '--exclude=*.rej' '--exclude=*.pyc' '--exclude=
  static void BitselectV128(MacroAssembler& masm, RegV128 rhs, RegV128 control,
                            RegV128 lhsDest, RegV128 temp) {
    masm.moveSimd128(control, temp);
-@@ -10402,7 +10406,8 @@ void BaseCompiler::emitDotI8x16I7x16AddS
+@@ -10402,7 +10416,8 @@ void BaseCompiler::emitDotI8x16I7x16AddS
    RegV128 rsd = popV128();
    RegV128 rs0, rs1;
    pop2xV128(&rs0, &rs1);
@@ -35283,7 +37029,7 @@ diff -Nurp -p '--exclude=*.orig' '--exclude=*.rej' '--exclude=*.pyc' '--exclude=
    RegV128 temp = needV128();
    masm.dotInt8x16Int7x16ThenAdd(rs0, rs1, rsd, temp);
    freeV128(temp);
-@@ -10608,7 +10613,8 @@ bool BaseCompiler::emitVectorLaneSelect(
+@@ -10608,7 +10623,8 @@ bool BaseCompiler::emitVectorLaneSelect(
    freeV128(lhs);
    freeV128(mask);
    pushV128(rhsDest);
@@ -35293,7 +37039,35 @@ diff -Nurp -p '--exclude=*.orig' '--exclude=*.rej' '--exclude=*.pyc' '--exclude=
    RegV128 maskDest = popV128();
    RegV128 rhs = popV128();
    RegV128 lhs = popV128();
-@@ -12773,7 +12779,8 @@ bool js::wasm::BaselinePlatformSupport()
+@@ -11202,7 +11218,14 @@ bool BaseCompiler::emitBody() {
+       case uint16_t(Op::F32Abs):
+         CHECK_NEXT(dispatchUnary1(AbsF32, ValType::F32));
+       case uint16_t(Op::F32Sqrt):
++#ifdef JS_CODEGEN_PPC
++        // No fsqrt/fsqrts on the 603, so masm.sqrtFloat32 is an unaligned ABI
++        // call, which is illegal inside a wasm frame.
++        CHECK_NEXT(
++            emitUnaryMathBuiltinCall(SymbolicAddress::SqrtF, ValType::F32));
++#else
+         CHECK_NEXT(dispatchUnary1(SqrtF32, ValType::F32));
++#endif
+       case uint16_t(Op::F32Ceil):
+         CHECK_NEXT(
+             emitUnaryMathBuiltinCall(SymbolicAddress::CeilF, ValType::F32));
+@@ -11278,7 +11301,12 @@ bool BaseCompiler::emitBody() {
+       case uint16_t(Op::F64Abs):
+         CHECK_NEXT(dispatchUnary1(AbsF64, ValType::F64));
+       case uint16_t(Op::F64Sqrt):
++#ifdef JS_CODEGEN_PPC
++        CHECK_NEXT(
++            emitUnaryMathBuiltinCall(SymbolicAddress::SqrtD, ValType::F64));
++#else
+         CHECK_NEXT(dispatchUnary1(SqrtF64, ValType::F64));
++#endif
+       case uint16_t(Op::F64Ceil):
+         CHECK_NEXT(
+             emitUnaryMathBuiltinCall(SymbolicAddress::CeilD, ValType::F64));
+@@ -12773,7 +12801,8 @@ bool js::wasm::BaselinePlatformSupport()
  #if defined(JS_CODEGEN_X64) || defined(JS_CODEGEN_X86) ||        \
      defined(JS_CODEGEN_ARM) || defined(JS_CODEGEN_ARM64) ||      \
      defined(JS_CODEGEN_MIPS64) || defined(JS_CODEGEN_LOONG64) || \
@@ -35303,6 +37077,95 @@ diff -Nurp -p '--exclude=*.orig' '--exclude=*.rej' '--exclude=*.pyc' '--exclude=
    return true;
  #else
    return false;
+diff -Nurp -p '--exclude=*.orig' '--exclude=*.rej' '--exclude=*.pyc' '--exclude=__pycache__' /srv/t2/tmp/ppc-jit-work/baseline/js/src/wasm/WasmBuiltins.cpp /srv/t2/src-firefox.ppc-desktop.260728.163810.1997595/firefox-153.0/js/src/wasm/WasmBuiltins.cpp
+--- a/js/src/wasm/WasmBuiltins.cpp	2026-07-15 22:44:59.000000000 +0200
++++ b/js/src/wasm/WasmBuiltins.cpp	2026-07-29 07:57:59.996312038 +0200
+@@ -120,6 +120,12 @@ constexpr SymbolicAddressSignature SASig
+     SymbolicAddress::FloorD, _F64, _Infallible, _NoTrap, 1, {_F64, _END}};
+ constexpr SymbolicAddressSignature SASigFloorF = {
+     SymbolicAddress::FloorF, _F32, _Infallible, _NoTrap, 1, {_F32, _END}};
++#if defined(JS_CODEGEN_PPC)
++constexpr SymbolicAddressSignature SASigSqrtD = {
++    SymbolicAddress::SqrtD, _F64, _Infallible, _NoTrap, 1, {_F64, _END}};
++constexpr SymbolicAddressSignature SASigSqrtF = {
++    SymbolicAddress::SqrtF, _F32, _Infallible, _NoTrap, 1, {_F32, _END}};
++#endif
+ constexpr SymbolicAddressSignature SASigTruncD = {
+     SymbolicAddress::TruncD, _F64, _Infallible, _NoTrap, 1, {_F64, _END}};
+ constexpr SymbolicAddressSignature SASigTruncF = {
+@@ -1363,6 +1369,18 @@ static T Floor(T value) {
+   return std::floor(value);
+ }
+ 
++#if defined(JS_CODEGEN_PPC)
++template <typename T>
++static T Sqrt(T value) {
++  // Perform addition to ensure quiet NaNs are returned. Also try to keep the
++  // NaN payload intact, so don't directly return a specific quiet NaN value.
++  if (std::isnan(value)) {
++    return value + value;
++  }
++  return std::sqrt(value);
++}
++#endif
++
+ template <typename T>
+ static T Trunc(T value) {
+   // Perform addition to ensure quiet NaNs are returned. Also try to keep the
+@@ -1583,6 +1601,14 @@ void* wasm::AddressOf(SymbolicAddress im
+     case SymbolicAddress::FloorF:
+       *abiType = Args_Float32_Float32;
+       return FuncCast<float(float)>(Floor, *abiType);
++#if defined(JS_CODEGEN_PPC)
++    case SymbolicAddress::SqrtD:
++      *abiType = Args_Double_Double;
++      return FuncCast<double(double)>(Sqrt, *abiType);
++    case SymbolicAddress::SqrtF:
++      *abiType = Args_Float32_Float32;
++      return FuncCast<float(float)>(Sqrt, *abiType);
++#endif
+     case SymbolicAddress::TruncD:
+       *abiType = Args_Double_Double;
+       return FuncCast<double(double)>(Trunc, *abiType);
+@@ -1975,6 +2001,10 @@ bool wasm::NeedsBuiltinThunk(SymbolicAdd
+     case SymbolicAddress::CeilF:
+     case SymbolicAddress::FloorD:
+     case SymbolicAddress::FloorF:
++#if defined(JS_CODEGEN_PPC)
++    case SymbolicAddress::SqrtD:
++    case SymbolicAddress::SqrtF:
++#endif
+     case SymbolicAddress::TruncD:
+     case SymbolicAddress::TruncF:
+     case SymbolicAddress::NearbyIntD:
+diff -Nurp -p '--exclude=*.orig' '--exclude=*.rej' '--exclude=*.pyc' '--exclude=__pycache__' /srv/t2/tmp/ppc-jit-work/baseline/js/src/wasm/WasmBuiltins.h /srv/t2/src-firefox.ppc-desktop.260728.163810.1997595/firefox-153.0/js/src/wasm/WasmBuiltins.h
+--- a/js/src/wasm/WasmBuiltins.h	2026-07-15 22:44:59.000000000 +0200
++++ b/js/src/wasm/WasmBuiltins.h	2026-07-29 07:57:01.561591422 +0200
+@@ -61,6 +61,13 @@ enum class SymbolicAddress {
+   CeilF,
+   FloorD,
+   FloorF,
++#if defined(JS_CODEGEN_PPC)
++  // The 603 has no fsqrt/fsqrts, so wasm f32.sqrt/f64.sqrt must go through a
++  // builtin call rather than MacroAssembler::sqrt{Float32,Double}, which are
++  // themselves unaligned ABI calls and illegal inside a wasm frame.
++  SqrtD,
++  SqrtF,
++#endif
+   TruncD,
+   TruncF,
+   NearbyIntD,
+@@ -238,6 +245,10 @@ extern const SymbolicAddressSignature SA
+ extern const SymbolicAddressSignature SASigCeilF;
+ extern const SymbolicAddressSignature SASigFloorD;
+ extern const SymbolicAddressSignature SASigFloorF;
++#if defined(JS_CODEGEN_PPC)
++extern const SymbolicAddressSignature SASigSqrtD;
++extern const SymbolicAddressSignature SASigSqrtF;
++#endif
+ extern const SymbolicAddressSignature SASigTruncD;
+ extern const SymbolicAddressSignature SASigTruncF;
+ extern const SymbolicAddressSignature SASigNearbyIntD;
 diff -Nurp -p '--exclude=*.orig' '--exclude=*.rej' '--exclude=*.pyc' '--exclude=__pycache__' /srv/t2/tmp/ppc-jit-work/baseline/js/src/wasm/WasmCodegenConstants.h /srv/t2/src-firefox.ppc-desktop.260728.163810.1997595/firefox-153.0/js/src/wasm/WasmCodegenConstants.h
 --- a/js/src/wasm/WasmCodegenConstants.h	2026-07-28 16:38:22.644036122 +0200
 +++ b/js/src/wasm/WasmCodegenConstants.h	2026-07-28 18:52:47.194745222 +0200
@@ -35372,9 +37235,48 @@ diff -Nurp -p '--exclude=*.orig' '--exclude=*.rej' '--exclude=*.pyc' '--exclude=
    // alignment.
    uint32_t padding_;
  #endif
+diff -Nurp -p '--exclude=*.orig' '--exclude=*.rej' '--exclude=*.pyc' '--exclude=__pycache__' /srv/t2/tmp/ppc-jit-work/baseline/js/src/wasm/WasmFeatures.cpp /srv/t2/src-firefox.ppc-desktop.260728.163810.1997595/firefox-153.0/js/src/wasm/WasmFeatures.cpp
+--- a/js/src/wasm/WasmFeatures.cpp	2026-07-28 16:38:22.661156651 +0200
++++ b/js/src/wasm/WasmFeatures.cpp	2026-07-29 07:52:57.698584069 +0200
+@@ -240,14 +240,16 @@ bool wasm::SimdAvailable(JSContext* cx)
+ }
+ 
+ bool wasm::ThreadsAvailable(JSContext* cx) {
+-  return WasmThreadsFlag(cx) && AnyCompilerAvailable(cx);
++  // Wasm threads require 8-byte lock-free atomics.
++  return WasmThreadsFlag(cx) && jit::AtomicOperations::isLockfree8() &&
++         AnyCompilerAvailable(cx);
+ }
+ 
+ bool wasm::HasPlatformSupport() {
+-#ifndef JS_CODEGEN_PPC64
+-  // PPC64 is the only big-endian target with the byte-swapping linear-memory
+-  // support needed for wasm's little-endian memory model; other big-endian
+-  // targets are unsupported.
++#if !defined(JS_CODEGEN_PPC64) && !defined(JS_CODEGEN_PPC)
++  // PPC64 and PPC are the only big-endian targets with the byte-swapping
++  // linear-memory support needed for wasm's little-endian memory model; other
++  // big-endian targets are unsupported.
+   if constexpr (std::endian::native != std::endian::little) {
+     return false;
+   }
+@@ -269,10 +271,9 @@ bool wasm::HasPlatformSupport() {
+     return false;
+   }
+ 
+-  // Wasm threads require 8-byte lock-free atomics.
+-  if (!jit::AtomicOperations::isLockfree8()) {
+-    return false;
+-  }
++  // Note: 8-byte lock-free atomics are required for wasm threads only, and are
++  // checked in ThreadsAvailable() rather than here. Without them shared
++  // memories and every ThreadPrefix opcode are rejected during validation.
+ 
+   // Test only whether the compilers are supported on the hardware, not whether
+   // they are enabled.
 diff -Nurp -p '--exclude=*.orig' '--exclude=*.rej' '--exclude=*.pyc' '--exclude=__pycache__' /srv/t2/tmp/ppc-jit-work/baseline/js/src/wasm/WasmFrameIter.cpp /srv/t2/src-firefox.ppc-desktop.260728.163810.1997595/firefox-153.0/js/src/wasm/WasmFrameIter.cpp
 --- a/js/src/wasm/WasmFrameIter.cpp	2026-07-28 16:38:22.644262132 +0200
-+++ b/js/src/wasm/WasmFrameIter.cpp	2026-07-28 18:54:04.425627768 +0200
++++ b/js/src/wasm/WasmFrameIter.cpp	2026-07-29 07:58:09.271426418 +0200
 @@ -622,7 +622,7 @@ static const unsigned PushedFP = 16;
  static const unsigned SetFP = 20;
  static const unsigned PoppedFP = 4;
@@ -35438,6 +37340,19 @@ diff -Nurp -p '--exclude=*.orig' '--exclude=*.rej' '--exclude=*.pyc' '--exclude=
        } else if (offsetInCode >= codeRange->ret() - PoppedFP &&
                   offsetInCode < codeRange->ret()) {
          // PPC64 epilogue (RA loaded into r0, FP restored, RA not yet
+@@ -2488,6 +2488,12 @@ const char* wasm::ThunkedNativeToDescrip
+       return "call to native f64.floor (in wasm)";
+     case SymbolicAddress::FloorF:
+       return "call to native f32.floor (in wasm)";
++#if defined(JS_CODEGEN_PPC)
++    case SymbolicAddress::SqrtD:
++      return "call to native f64.sqrt (in wasm)";
++    case SymbolicAddress::SqrtF:
++      return "call to native f32.sqrt (in wasm)";
++#endif
+     case SymbolicAddress::TruncD:
+       return "call to native f64.trunc (in wasm)";
+     case SymbolicAddress::TruncF:
 diff -Nurp -p '--exclude=*.orig' '--exclude=*.rej' '--exclude=*.pyc' '--exclude=__pycache__' /srv/t2/tmp/ppc-jit-work/baseline/js/src/wasm/WasmGC.cpp /srv/t2/src-firefox.ppc-desktop.260728.163810.1997595/firefox-153.0/js/src/wasm/WasmGC.cpp
 --- a/js/src/wasm/WasmGC.cpp	2026-07-28 16:38:22.644375437 +0200
 +++ b/js/src/wasm/WasmGC.cpp	2026-07-28 18:52:47.194906249 +0200
@@ -35465,6 +37380,41 @@ diff -Nurp -p '--exclude=*.orig' '--exclude=*.rej' '--exclude=*.pyc' '--exclude=
    for (const jit::CodeLabel& codeLabel : masm_->codeLabels()) {
      LinkData::InternalLink link;
      link.patchAtOffset = codeLabel.patchAt().offset();
+diff -Nurp -p '--exclude=*.orig' '--exclude=*.rej' '--exclude=*.pyc' '--exclude=__pycache__' /srv/t2/tmp/ppc-jit-work/baseline/js/src/wasm/WasmInstance.cpp /srv/t2/src-firefox.ppc-desktop.260728.163810.1997595/firefox-153.0/js/src/wasm/WasmInstance.cpp
+--- a/js/src/wasm/WasmInstance.cpp	2026-07-28 16:38:22.661315698 +0200
++++ b/js/src/wasm/WasmInstance.cpp	2026-07-29 10:24:35.098775192 +0200
+@@ -238,11 +238,12 @@ static bool UnpackResults(JSContext* cx,
+     bool mustWrite64 = result_size == 8;
+ #if defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
+     // The wasm caller reads an i32 stack result from the low word of its
+-    // pointer-sized slot, at byte offset +4. ToWebAssemblyValue's mustWrite64
+-    // widening assumes little-endian layout, so write the 32-bit value
+-    // directly at the right offset instead.
++    // pointer-sized slot, which on big endian is at the far end of the slot.
++    // The shift is zero where a pointer is 4 bytes and the slot is exactly the
++    // i32. ToWebAssemblyValue's mustWrite64 widening assumes little-endian
++    // layout, so write the 32-bit value directly at the right offset instead.
+     if (result.type().kind() == ValType::I32) {
+-      loc += sizeof(int32_t);
++      loc += ABIResult::StackSizeOfInt32 - sizeof(int32_t);
+       mustWrite64 = false;
+     }
+ #endif
+@@ -3619,10 +3620,11 @@ bool wasm::ResultsToJSValue(JSContext* c
+     if (result.onStack()) {
+       char* loc = stackResultsLoc.value() + result.stackOffset();
+ #if defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
+-      // An i32 stack result occupies a pointer-sized slot and is written as a
+-      // 64-bit store, so its value is the low word at byte offset +4.
++      // An i32 stack result occupies a pointer-sized slot; on big endian its
++      // low word is at the far end of the slot. Zero where a pointer is 4
++      // bytes.
+       if (result.type().kind() == ValType::I32) {
+-        loc += sizeof(int32_t);
++        loc += ABIResult::StackSizeOfInt32 - sizeof(int32_t);
+       }
+ #endif
+       if (!ToJSValue<DebugCodegenVal>(cx, loc, result.type(), &tmp, level)) {
 diff -Nurp -p '--exclude=*.orig' '--exclude=*.rej' '--exclude=*.pyc' '--exclude=__pycache__' /srv/t2/tmp/ppc-jit-work/baseline/js/src/wasm/WasmIonCompile.cpp /srv/t2/src-firefox.ppc-desktop.260728.163810.1997595/firefox-153.0/js/src/wasm/WasmIonCompile.cpp
 --- a/js/src/wasm/WasmIonCompile.cpp	2026-07-28 16:38:22.661791270 +0200
 +++ b/js/src/wasm/WasmIonCompile.cpp	2026-07-28 18:49:07.590360959 +0200
@@ -35494,9 +37444,69 @@ diff -Nurp -p '--exclude=*.orig' '--exclude=*.rej' '--exclude=*.pyc' '--exclude=
      if (type == MIRType::Int64) {
        auto* ins = MWasmBuiltinModI64::New(alloc(), lhs, rhs, instancePointer_,
                                            unsignd, trapOnError, trapSiteDesc());
+diff -Nurp -p '--exclude=*.orig' '--exclude=*.rej' '--exclude=*.pyc' '--exclude=__pycache__' /srv/t2/tmp/ppc-jit-work/baseline/js/src/wasm/WasmSignalHandlers.cpp /srv/t2/src-firefox.ppc-desktop.260728.163810.1997595/firefox-153.0/js/src/wasm/WasmSignalHandlers.cpp
+--- a/js/src/wasm/WasmSignalHandlers.cpp	2026-07-28 16:38:22.645146032 +0200
++++ b/js/src/wasm/WasmSignalHandlers.cpp	2026-07-29 07:54:31.891745681 +0200
+@@ -163,6 +163,15 @@ using namespace js::wasm;
+ #      define R32_sig(p) ((p)->uc_mcontext.gp_regs[32])
+ #      define R36_sig(p) ((p)->uc_mcontext.gp_regs[36])
+ #    endif
++#    if defined(__linux__) && defined(__powerpc__) && !defined(__powerpc64__)
++// On 32-bit PowerPC glibc the registers are not stored inline in ucontext_t:
++// uc_mcontext is a union of pointers into uc_reg_space. The gregs[] index
++// layout matches the 64-bit gp_regs[] one (nip == 32, link == 36).
++#      define R01_sig(p) ((p)->uc_mcontext.uc_regs->gregs[1])
++#      define R31_sig(p) ((p)->uc_mcontext.uc_regs->gregs[31])
++#      define R32_sig(p) ((p)->uc_mcontext.uc_regs->gregs[32])
++#      define R36_sig(p) ((p)->uc_mcontext.uc_regs->gregs[36])
++#    endif
+ #    if defined(__linux__) && defined(__loongarch__)
+ #      define EPC_sig(p) ((p)->uc_mcontext.__pc)
+ #      define RRA_sig(p) ((p)->uc_mcontext.__gregs[1])
+@@ -417,7 +426,7 @@ struct macos_aarch64_context {
+ #    define SP_sig(p) RSP_sig(p)
+ #    define LR_sig(p) R31_sig(p)
+ #  elif defined(__ppc64__) || defined(__PPC64__) || defined(__ppc64le__) || \
+-      defined(__PPC64LE__)
++      defined(__PPC64LE__) || defined(__powerpc__) || defined(__PPC__)
+ #    define PC_sig(p) R32_sig(p)
+ #    define SP_sig(p) R01_sig(p)
+ #    define FP_sig(p) R31_sig(p)
+@@ -468,7 +477,8 @@ static uint8_t* ContextToSP(CONTEXT* con
+ 
+ #  if defined(__arm__) || defined(__aarch64__) || defined(__mips__) || \
+       defined(__loongarch__) || defined(__riscv) || \
+-      defined(__ppc64__) || defined(__PPC64__)
++      defined(__ppc64__) || defined(__PPC64__) || defined(__powerpc__) || \
++      defined(__PPC__)
+ static uint8_t* ContextToLR(CONTEXT* context) {
+ #    ifdef LR_sig
+   return mozilla::BitwiseCast<uint8_t*>(LR_sig(context));
+@@ -486,7 +496,8 @@ static JS::ProfilingFrameIterator::Regis
+   state.sp = ContextToSP(context);
+ #  if defined(__arm__) || defined(__aarch64__) || defined(__mips__) || \
+       defined(__loongarch__) || defined(__riscv) || \
+-      defined(__ppc64__) || defined(__PPC64__)
++      defined(__ppc64__) || defined(__PPC64__) || defined(__powerpc__) || \
++      defined(__PPC__)
+   state.lr = ContextToLR(context);
+ #  else
+   state.lr = (void*)UINTPTR_MAX;
+@@ -787,8 +798,9 @@ static void MachExceptionHandlerThread()
+ 
+ #    if defined(__mips__) || defined(__loongarch__)
+ static const uint32_t kWasmTrapSignal = SIGFPE;
+-#    elif defined(__ppc64__) || defined(__PPC64__) || \ 
+-          defined(__ppc64le__) || defined(__PPC64LE__)
++#    elif defined(__ppc64__) || defined(__PPC64__) ||                  \
++        defined(__ppc64le__) || defined(__PPC64LE__) ||                \
++        defined(__powerpc__) || defined(__PPC__)
+ static const uint32_t kWasmTrapSignal = SIGTRAP;
+ #    else
+ static const uint32_t kWasmTrapSignal = SIGILL;
 diff -Nurp -p '--exclude=*.orig' '--exclude=*.rej' '--exclude=*.pyc' '--exclude=__pycache__' /srv/t2/tmp/ppc-jit-work/baseline/js/src/wasm/WasmStubs.cpp /srv/t2/src-firefox.ppc-desktop.260728.163810.1997595/firefox-153.0/js/src/wasm/WasmStubs.cpp
 --- a/js/src/wasm/WasmStubs.cpp	2026-07-28 16:38:22.662128835 +0200
-+++ b/js/src/wasm/WasmStubs.cpp	2026-07-28 19:08:36.358645655 +0200
++++ b/js/src/wasm/WasmStubs.cpp	2026-07-29 10:21:06.142336802 +0200
 @@ -414,8 +414,8 @@ static void SetupABIArguments(MacroAssem
              // wasmLosslessInvoke, and is guarded against in normal JS-API
              // call paths.
@@ -35577,6 +37587,17 @@ diff -Nurp -p '--exclude=*.orig' '--exclude=*.rej' '--exclude=*.pyc' '--exclude=
      // doubles live in the FPRs (VSR0-31) while wasm v128 values live in the
      // VRs (VSR32-63) -- two disjoint physical pools, so both must be
      // preserved. Saving only the doubles loses the entire live v128 state: a
+@@ -3328,7 +3341,9 @@ static bool GenerateUpdateCallRefMetrics
+   Label after2;
+   const size_t offsetOfInstanceSlot = FunctionExtended::offsetOfExtendedSlot(
+       FunctionExtended::WASM_INSTANCE_SLOT);
+-  masm.loadPtr(Address(regFuncRef, offsetOfInstanceSlot), regScratch);
++  masm.loadPtr(Address(regFuncRef,
++                       offsetOfInstanceSlot + jit::PrivateValuePayloadOffset),
++               regScratch);
+   masm.branchPtr(Assembler::Equal, InstanceReg, regScratch, &after2);
+   //
+   const size_t offsetOfCountOther = CallRefMetrics::offsetOfCountOther();
 diff -Nurp -p '--exclude=*.orig' '--exclude=*.rej' '--exclude=*.pyc' '--exclude=__pycache__' /srv/t2/tmp/ppc-jit-work/baseline/js/src/wasm/WasmSummarizeInsn.cpp /srv/t2/src-firefox.ppc-desktop.260728.163810.1997595/firefox-153.0/js/src/wasm/WasmSummarizeInsn.cpp
 --- a/js/src/wasm/WasmSummarizeInsn.cpp	2026-07-28 16:38:22.662304434 +0200
 +++ b/js/src/wasm/WasmSummarizeInsn.cpp	2026-07-28 18:52:47.195159511 +0200
