@@ -1,0 +1,45 @@
+# --- T2-COPYRIGHT-BEGIN ---
+# t2/package/*/gcc/hotfix-ia64-sibcall-prologue.patch
+# Copyright (C) 2026 The T2 SDE Project
+# SPDX-License-Identifier: GPL-2.0 or patched project license
+# --- T2-COPYRIGHT-END ---
+
+ia64: close the unwind prologue region opened for a sibcall alloc
+
+The alloc in front of a sibling call gets a ".prologue" directive so the
+old frame info is dropped.  That region is closed by the ".body" the next
+basic block emits on behalf of need_copy_state.  When the frame teardown
+and the alloc end up in different basic blocks, the block boundary in
+between already consumes need_copy_state, so the region stays open for the
+rest of the function.  A second sibling call then trips the assembler:
+
+  {standard input}:11931: Warning: .label_state outside of body region
+  {standard input}:11932: Warning: .restore outside of body region
+  {standard input}:11937: Error: .prologue within prologue
+
+Seen on x11/cairo, util/cairo-trace/trace.c, _emit_glyphs() tail calling
+the variadic _trace_printf() from several branches.
+
+Request the ".body" again after emitting the sibcall ".prologue".  Only
+unwind directives change, the generated code is untouched.
+
+Signed-off-by: René Rebe <rene@exactco.de>
+
+--- gcc-16.1.0/gcc/config/ia64/ia64.cc.vanilla	2026-07-31 18:10:07.927489815 +0200
++++ gcc-16.1.0/gcc/config/ia64/ia64.cc	2026-07-31 18:09:54.274156613 +0200
+@@ -10402,6 +10402,15 @@ ia64_asm_unwind_emit (FILE *out_file, rt
+ 	    process_epilogue (out_file, insn, unwind, frame);
+ 	  if (unwind)
+ 	    fprintf (out_file, "\t.prologue\n");
++
++	  /* The prologue region just opened has to be closed by a .body
++	     again.  process_epilogue () normally arranges for that, but its
++	     .copy_state may already have been consumed by a block boundary
++	     between the frame teardown and this alloc, leaving the region
++	     open across the following blocks.  Ask for the .body once more;
++	     re-using the state label is harmless if it is still pending.  */
++	  if (!last_block && cfun->machine->state_num > 0)
++	    need_copy_state = true;
+ 	}
+       return;
+     }
