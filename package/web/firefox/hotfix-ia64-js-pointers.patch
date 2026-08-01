@@ -166,17 +166,27 @@
    RecGroup& operator=(RecGroup&&) = delete;
 --- firefox-152.0.5/js/src/wasm/WasmTypeDef.cpp.vanilla
 +++ firefox-152.0.5/js/src/wasm/WasmTypeDef.cpp
-@@ -38,6 +38,64 @@
+@@ -38,6 +38,124 @@ using mozilla::CheckedInt32;
  using mozilla::CheckedUint32;
  using mozilla::MallocSizeOf;
-
+ 
 +#ifdef __ia64__
 +// ia64 userspace addresses always carry a nonzero region number in bits
 +// 61-63, but RecGroup::allocate's TypeDef pointers are packed into a 48-bit
 +// PackedTypeCode field (WasmValType.h) that asserts the top 16 bits are
-+// zero. Force RecGroup allocations below 2^47 via an mmap hint in region 0.
++// zero, so RecGroup memory must live below 2^47.
++//
++// An mmap hint cannot deliver that: the kernel is free to ignore it, and under
++// qemu-ia64 every hinted mmap returns address 0, so consecutive allocations all
++// alias the same page. The first FreeLowVA then unmaps memory still owned by
++// every other live RecGroup, and the next canonical-type lookup dereferences
++// freed memory. Instead reserve one low region up front and suballocate from
++// it, which guarantees distinct addresses and only depends on a single mmap
++// landing low.
 +#  include <sys/mman.h>
 +#  include <unistd.h>
++
++#  include <mutex>
 +
 +namespace js {
 +namespace wasm {
@@ -184,44 +194,94 @@
 +static const uint64_t LowVAHintBase = 0x0000070000000000ULL;
 +static const uint64_t LowVARegionMask = 0xffff800000000000ULL;
 +
-+void* MallocLowVA(size_t bytes) {
++// Reserve 256 MiB; RecGroups are small and comparatively few.
++static const size_t LowVAReserveSize = size_t(256) << 20;
++
++namespace {
++struct LowVABlock {
++  size_t size;         // usable bytes after this header
++  LowVABlock* next;    // next free block, when on the free list
++};
++}  // namespace
++
++static std::mutex sLowVALock;
++static uint8_t* sLowVABase = nullptr;
++static size_t sLowVAOffset = 0;
++static size_t sLowVASize = 0;
++static LowVABlock* sLowVAFree = nullptr;
++
++static bool EnsureLowVARegionLocked() {
++  if (sLowVABase) {
++    return true;
++  }
 +  size_t pageSize = size_t(sysconf(_SC_PAGESIZE));
-+  size_t headerSize = std::max(pageSize, size_t(16));
-+  size_t mapLen = headerSize + bytes;
-+  mapLen = (mapLen + pageSize - 1) & ~(pageSize - 1);
++  size_t len = (LowVAReserveSize + pageSize - 1) & ~(pageSize - 1);
 +
 +  uint64_t hint = LowVAHintBase;
 +  const uint64_t hintStep = uint64_t(1) << 32;
-+  const int maxTries = 4096;
-+  for (int i = 0; i < maxTries; i++) {
-+    void* region = mmap(reinterpret_cast<void*>(uintptr_t(hint)), mapLen,
-+                         PROT_READ | PROT_WRITE,
-+                         MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
++  for (int i = 0; i < 4096; i++) {
++    void* region = mmap(reinterpret_cast<void*>(uintptr_t(hint)), len,
++                        PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS,
++                        -1, 0);
 +    if (region == MAP_FAILED) {
 +      hint += hintStep;
 +      continue;
 +    }
 +    uint64_t addr = uint64_t(uintptr_t(region));
-+    if (((addr + mapLen - 1) & LowVARegionMask) != 0) {
-+      munmap(region, mapLen);
++    // Reject a mapping at 0: handing out near-null pointers would turn null
++    // dereferences into silent corruption.
++    if (addr == 0 || ((addr + len - 1) & LowVARegionMask) != 0) {
++      munmap(region, len);
 +      hint += hintStep;
 +      continue;
 +    }
-+    *reinterpret_cast<size_t*>(region) = mapLen;
-+    return reinterpret_cast<uint8_t*>(region) + headerSize;
++    sLowVABase = reinterpret_cast<uint8_t*>(region);
++    sLowVASize = len;
++    sLowVAOffset = 0;
++    return true;
 +  }
-+  return nullptr;
++  return false;
++}
++
++void* MallocLowVA(size_t bytes) {
++  std::lock_guard<std::mutex> guard(sLowVALock);
++  if (!EnsureLowVARegionLocked()) {
++    return nullptr;
++  }
++
++  size_t need = (bytes + 15) & ~size_t(15);
++
++  // First fit over previously freed blocks.
++  LowVABlock** link = &sLowVAFree;
++  while (*link) {
++    if ((*link)->size >= need) {
++      LowVABlock* block = *link;
++      *link = block->next;
++      return reinterpret_cast<uint8_t*>(block) + sizeof(LowVABlock);
++    }
++    link = &(*link)->next;
++  }
++
++  size_t total = sizeof(LowVABlock) + need;
++  if (sLowVAOffset + total > sLowVASize) {
++    return nullptr;
++  }
++  LowVABlock* block = reinterpret_cast<LowVABlock*>(sLowVABase + sLowVAOffset);
++  sLowVAOffset += total;
++  block->size = need;
++  block->next = nullptr;
++  return reinterpret_cast<uint8_t*>(block) + sizeof(LowVABlock);
 +}
 +
 +void FreeLowVA(void* p) {
 +  if (!p) {
 +    return;
 +  }
-+  size_t pageSize = size_t(sysconf(_SC_PAGESIZE));
-+  size_t headerSize = std::max(pageSize, size_t(16));
-+  uint8_t* region = reinterpret_cast<uint8_t*>(p) - headerSize;
-+  size_t mapLen = *reinterpret_cast<size_t*>(region);
-+  munmap(region, mapLen);
++  std::lock_guard<std::mutex> guard(sLowVALock);
++  LowVABlock* block = reinterpret_cast<LowVABlock*>(
++      reinterpret_cast<uint8_t*>(p) - sizeof(LowVABlock));
++  block->next = sLowVAFree;
++  sLowVAFree = block;
 +}
 +
 +}  // namespace wasm
