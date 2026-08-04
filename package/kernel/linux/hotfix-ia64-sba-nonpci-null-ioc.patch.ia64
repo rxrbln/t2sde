@@ -1,0 +1,111 @@
+ia64/sba_iommu: do not dereference a NULL ioc for non-PCI devices
+
+GET_IOC() returns NULL for anything that is not a PCI device:
+
+  #define GET_IOC(dev)	((dev_is_pci(dev))						\
+			 ? ((struct ioc *) PCI_CONTROLLER(to_pci_dev(dev))->iommu) : NULL)
+
+but every dma_ops entry point only does ASSERT(ioc), which compiles to
+nothing unless ASSERT_PDIR_SANITY is defined, and then dereferences it.
+The SBA installs its dma_ops for *all* devices, so any non-PCI device that
+goes through the DMA API takes the machine down.
+
+udmabuf does exactly that - begin_cpu_udmabuf() maps the sg table with
+ubuf->device->this_device, which is the udmabuf misc device.  A Wayland
+compositor using udmabuf therefore panics the box:
+
+  kwin_wayland[74091]: NaT consumption 2216203124768 [1]
+  ip is at sba_map_phys+0x91/0x220
+    sys_ioctl -> dma_buf_ioctl -> dma_buf_begin_cpu_access
+    -> begin_cpu_udmabuf -> get_sg_table -> dma_map_sgtable
+    -> __dma_map_sg_attrs -> sba_map_sg_attrs -> sba_map_phys
+
+The faulting instruction is the "ld8 r16=[r11]" of prefetch(ioc->res_hint),
+with r11 = 40 because the preceding "adds r11=40,r36" got r36 = 0 from the
+"(p08) mov r36=r0" arm of GET_IOC() - pr=0x9999 has p8 set, i.e. dev is not
+a PCI device.
+
+Nothing needs translating for a device that is not behind the SBA, so hand
+back the physical address and let the caller treat it as an identity
+mapping.  The check has to come before the ALLOW_IOV_BYPASS block, which
+would otherwise read to_pci_dev(dev)->dma_mask off a device that is not
+embedded in a struct pci_dev.
+
+sba_alloc_coherent() cannot fall back this way because the rest of it needs
+an ioc, so it just fails the allocation instead of oopsing.  A non-PCI
+device wanting coherent memory on ia64 still needs a real fix - arguably
+those devices should get dma_direct_ops rather than the SBA ops in the
+first place.
+
+Signed-off-by: René Rebe <rene@exactco.de>
+
+--- linux-7.1/arch/ia64/hp/common/sba_iommu.c
++++ linux-7.1/arch/ia64/hp/common/sba_iommu.c
+@@ -929,6 +929,17 @@ static dma_addr_t sba_map_phys(struct device *dev, phys_addr_t phys,
+ 	unsigned long flags;
+ #endif
+
++	ioc = GET_IOC(dev);
++	if (!ioc)
++		/*
++		** Not behind the SBA at all.  The SBA installs its dma_ops
++		** for every device, so non-PCI devices - the udmabuf misc
++		** device for one - end up here with nothing to translate.
++		** Has to be tested before the bypass check below, which
++		** dereferences to_pci_dev(dev).
++		*/
++		return phys;
++
+ #ifdef ALLOW_IOV_BYPASS
+ 	ASSERT(to_pci_dev(dev)->dma_mask);
+ 	/*
+@@ -945,8 +956,6 @@ static dma_addr_t sba_map_phys(struct device *dev, phys_addr_t phys,
+ 		return phys;
+ 	}
+ #endif
+-	ioc = GET_IOC(dev);
+-	ASSERT(ioc);
+
+ 	prefetch(ioc->res_hint);
+
+@@ -1043,7 +1052,9 @@ static void sba_unmap_phys(struct device *dev, dma_addr_t iova, size_t size,
+ 	dma_addr_t offset;
+
+ 	ioc = GET_IOC(dev);
+-	ASSERT(ioc);
++	if (!ioc)
++		/* Never translated it - see sba_map_phys(). */
++		return;
+
+ #ifdef ALLOW_IOV_BYPASS
+ 	if (likely((iova & ioc->imask) != ioc->ibase)) {
+@@ -1119,7 +1130,9 @@ sba_alloc_coherent(struct device *dev, size_t size, dma_addr_t *dma_handle,
+ 	void *addr;
+
+ 	ioc = GET_IOC(dev);
+-	ASSERT(ioc);
++	if (!ioc)
++		/* Everything below needs an ioc - see sba_map_phys(). */
++		return NULL;
+ #ifdef CONFIG_NUMA
+ 	node = ioc->node;
+ #endif
+@@ -1444,7 +1457,17 @@ static int sba_map_sg_attrs(struct device *dev, struct scatterlist *sglist,
+
+ 	DBG_RUN_SG("%s() START %d entries\n", __func__, nents);
+ 	ioc = GET_IOC(dev);
+-	ASSERT(ioc);
++	if (!ioc) {
++		/* Not behind the SBA - see sba_map_phys(). */
++		struct scatterlist *s;
++		int i;
++
++		for_each_sg(sglist, s, nents, i) {
++			s->dma_length = s->length;
++			s->dma_address = sg_phys(s);
++		}
++		return nents;
++	}
+
+ #ifdef ALLOW_IOV_BYPASS_SG
+ 	ASSERT(to_pci_dev(dev)->dma_mask);
