@@ -166544,3 +166544,63 @@ index c28658e24e9..2edc3a38e53 100644
  }
  ;;
  
+
+ia64: close the instruction group after strncmp's alloc
+
+The rewritten ia64 strncmp() returns straight out of the entry group when
+n == 0:
+
+	alloc	r2 = ar.pfs, 3, 0, 0, 0
+	adds	tmp = 1, sx1
+	mov	one = 1
+	mov	ret0 = r0
+	cmp.eq	p7, p0 = n, r0
+  (p7)	br.ret.spnt.many b0
+	;;
+
+There is no stop bit between the alloc and the br.ret, so both land in one
+instruction group.  alloc writes CFM and the RSE, br.ret writes CFM from
+ar.pfs and reads the RSE, which is a dependency violation - "as -xexplicit"
+reports all three:
+
+  Warning: Use of 'br.ret.spnt.many' may violate WAW dependency 'CFM'
+  Warning: Use of 'br.ret.spnt.many' may violate RAW dependency 'RSE'
+  Warning: Use of 'br.ret.spnt.many' may violate WAW dependency 'RSE'
+
+The register frame the caller gets back is then undefined.  In practice the
+caller's frame is truncated to strncmp's own three registers, so its high
+locals - where gcc likes to park the saved gp - read back as garbage.  A
+caller that restores gp with "mov r1=rNN" after the call then continues with
+a bogus gp and dies on the next gp relative access or PLT call; a caller that
+touches a high local first takes an Illegal Operation fault instead, because
+the register is now outside the frame.
+
+This bites everything that calls strncmp with n == 0 from a function with a
+large frame.  GNU make dies parsing "$(patsubst %/,%,...)", where the suffix
+compare is strneq(..., pattern_postpercent_len - 1) with a one character
+suffix; gcc dies with SIGILL the same way.  The old loop based strncmp exited
+through a separate label and never hit this.
+
+strncmp is the only place in libc.so where an alloc shares its instruction
+group with a CFM writing branch - compiler generated code never does it.
+
+Signed-off-by: René Rebe <rene@exactco.de>
+
+--- glibc-2.44/sysdeps/ia64/strncmp.S
++++ glibc-2.44/sysdeps/ia64/strncmp.S
+@@ -2,6 +2,7 @@
+    This file is part of the GNU C Library.
+    Copyright (C) 2000-2024 Free Software Foundation, Inc.
+    Copyright (C) 2024-2026 EPIC Linux project
++   Copyright (C) 2026 René Rebe <rene@exactco.de>
+ 
+    The GNU C Library is free software; you can redistribute it and/or
+    modify it under the terms of the GNU Lesser General Public
+@@ -48,6 +49,7 @@
+ 
+ ENTRY(strncmp)
+ 	alloc	r2 = ar.pfs, 3, 0, 0, 0
++	;;				// alloc must not share its instruction group with the br.ret below
+ 	adds	tmp = 1, sx1		// pre-compute sx1 + 1 for both sentinel (sx1 + n + 1) and sy1 (sx1 + 1)
+ 	mov	one = 1
+ 	mov	ret0 = r0
