@@ -1,3 +1,9 @@
+# --- T2-COPYRIGHT-BEGIN ---
+# t2/package/*/firefox/up-next-jit-0030-ia64.patch.ia64
+# Copyright (C) 2026 The T2 SDE Project
+# SPDX-License-Identifier: GPL-2.0 or patched project license
+# --- T2-COPYRIGHT-END ---
+
 diff -aurpN -x '*.orig' -x '*.rej' -x __pycache__ -x '*.pyc' -x .deps /tmp/claude-0/-srv-t2-src-firefox-ia64-desktop-260731-192730-583159/2ec03345-b130-4ed1-a35a-8809b1a7caca/scratchpad/refjit/firefox-153.0.1/js/moz.configure /srv/t2/src-firefox.ia64-desktop.260731.192730.583159/firefox-153.0.1/js/moz.configure
 --- firefox-153.0.1/js/moz.configure.vanilla
 +++ firefox-153.0.1/js/moz.configure
@@ -319,23 +325,43 @@ diff -aurpN -x '*.orig' -x '*.rej' -x __pycache__ -x '*.pyc' -x .deps /tmp/claud
 diff -aurpN -x '*.orig' -x '*.rej' -x __pycache__ -x '*.pyc' -x .deps /tmp/claude-0/-srv-t2-src-firefox-ia64-desktop-260731-192730-583159/2ec03345-b130-4ed1-a35a-8809b1a7caca/scratchpad/refjit/firefox-153.0.1/js/src/jit/FlushICache.h /srv/t2/src-firefox.ia64-desktop.260731.192730.583159/firefox-153.0.1/js/src/jit/FlushICache.h
 --- firefox-153.0.1/js/src/jit/FlushICache.h.vanilla
 +++ firefox-153.0.1/js/src/jit/FlushICache.h
-@@ -29,6 +29,15 @@ inline void FlushICache(void* code, size
+@@ -29,6 +29,35 @@ inline void FlushICache(void* code, size
  // `FlushExecutionContext` below.
  extern void FlushICache(void* code, size_t size);
  
 +#elif defined(JS_CODEGEN_IA64)
 +
-+// IA-64 caches are not coherent with the instruction stream; the builtin emits
-+// the architected fc.i / sync.i / srlz.i sequence over the range.
++// IA-64 caches are not coherent with the instruction stream, and newly written
++// instructions are not visible to the fetch engine until the line is flushed
++// and the fetch stream serialised.
++//
++// Do NOT use __builtin___clear_cache here: on ia64 GCC expands it to nothing at
++// all (verified: the function body is just nop.m/nop.i/br.ret), so it silently
++// leaves stale lines in the instruction cache. That is invisible under qemu,
++// which invalidates its translation blocks whenever a page holding translated
++// code is written, but on real hardware it faults with an Illegal Operation on
++// whatever stale bytes the fetch engine still holds.
++//
++// The architected sequence is: flush each line of the range, then sync.i to
++// make the flushes visible to the fetch engine, then srlz.i to serialise it.
++// 32 bytes is the smallest instruction-cache line on any Itanium, so stepping
++// by 32 is always safe (at worst it flushes a line more than once).
 +inline void FlushICache(void* code, size_t size) {
-+  __builtin___clear_cache(reinterpret_cast<char*>(code),
-+                          reinterpret_cast<char*>(code) + size);
++  if (size == 0) {
++    return;
++  }
++  uintptr_t start = reinterpret_cast<uintptr_t>(code) & ~uintptr_t(31);
++  uintptr_t end = reinterpret_cast<uintptr_t>(code) + size;
++  for (uintptr_t addr = start; addr < end; addr += 32) {
++    asm volatile("fc %0" ::"r"(addr) : "memory");
++  }
++  asm volatile(";;\n\tsync.i\n\t;;\n\tsrlz.i\n\t;;" ::: "memory");
 +}
 +
  #elif defined(JS_CODEGEN_NONE) || defined(JS_CODEGEN_WASM32)
  
  inline void FlushICache(void* code, size_t size) { MOZ_CRASH(); }
-@@ -80,6 +89,14 @@ extern bool CanFlushExecutionContextForA
+@@ -80,6 +109,14 @@ extern bool CanFlushExecutionContextForA
  // else this will crash.
  extern void FlushExecutionContextForAllThreads();
  
@@ -539,7 +565,36 @@ diff -aurpN -x '*.orig' -x '*.rej' -x __pycache__ -x '*.pyc' -x .deps /tmp/claud
 diff -aurpN -x '*.orig' -x '*.rej' -x __pycache__ -x '*.pyc' -x .deps /tmp/claude-0/-srv-t2-src-firefox-ia64-desktop-260731-192730-583159/2ec03345-b130-4ed1-a35a-8809b1a7caca/scratchpad/refjit/firefox-153.0.1/js/src/jit/MacroAssembler.cpp /srv/t2/src-firefox.ia64-desktop.260731.192730.583159/firefox-153.0.1/js/src/jit/MacroAssembler.cpp
 --- firefox-153.0.1/js/src/jit/MacroAssembler.cpp.vanilla
 +++ firefox-153.0.1/js/src/jit/MacroAssembler.cpp
-@@ -5253,6 +5253,11 @@ void MacroAssembler::callWithABINoProfil
+@@ -1222,8 +1222,19 @@ void MacroAssembler::branchIfNotStringCh
+                             : sizeof(char16_t);
+   size_t byteLength = StringCharsByteLength(str);
+ 
++  // Targets that trap on unaligned access cannot use the multi-character
++  // strides: string characters are only guaranteed to be aligned to their own
++  // size, and the overlapping trailing comparison below deliberately reads at
++  // an unaligned offset (e.g. "exam" then "mple" for "example"). Restrict the
++  // stride to the character size there; the strings handled here are at most
++  // ByteLengthCompareCutoff bytes, so the cost is bounded.
++  size_t maxStride = SupportsUnalignedAccesses() ? 8 : encodingSize;
++
+   size_t pos = 0;
+   for (size_t stride : {8, 4, 2, 1}) {
++    if (stride > maxStride) {
++      continue;
++    }
+     while (byteLength >= stride) {
+       Address addr(stringChars, pos * encodingSize);
+       switch (stride) {
+@@ -1259,7 +1270,7 @@ void MacroAssembler::branchIfNotStringCh
+     // For example when comparing against the string "example", emit two
+     // four-byte comparisons against "exam" and "mple" instead of doing
+     // three comparisons against "exam", "pl", and finally "e".
+-    if (pos > 0 && byteLength > stride / 2) {
++    if (stride <= maxStride && pos > 0 && byteLength > stride / 2) {
+       MOZ_ASSERT(stride == 8 || stride == 4);
+ 
+       size_t prev = pos - (stride - byteLength) / encodingSize;
+@@ -5253,6 +5264,11 @@ void MacroAssembler::callWithABINoProfil
    // rather than jumping to the descriptor as code (which call(ImmPtr) would do).
    movePtr(ImmPtr(fun), SecondScratchReg);
    callABIDescriptorELFv1(SecondScratchReg);
@@ -551,6 +606,22 @@ diff -aurpN -x '*.orig' -x '*.rej' -x __pycache__ -x '*.pyc' -x .deps /tmp/claud
  #else
    call(ImmPtr(fun));
  #endif
+@@ -9946,10 +9962,13 @@ void MacroAssembler::iteratorMore(Regist
+   loadPtr(propAddr, temp);
+ 
+   // Increase the cursor.
+-#if defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
++#if (defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__) || \
++    defined(JS_CODEGEN_IA64)
+   // propertyCursor_ is a uint32_t. A pointer-sized increment would target the
+   // high word of the 64-bit access on big-endian (i.e. the adjacent field),
+-  // leaving the cursor unchanged so the iterator never advances.
++  // leaving the cursor unchanged so the iterator never advances. On IA-64 the
++  // field is only 4-byte aligned, so the 64-bit access traps and has to be
++  // emulated by the kernel.
+   add32(Imm32(1), cursorAddr);
+ #else
+   addPtr(Imm32(1), cursorAddr);
 diff -aurpN -x '*.orig' -x '*.rej' -x __pycache__ -x '*.pyc' -x .deps /tmp/claude-0/-srv-t2-src-firefox-ia64-desktop-260731-192730-583159/2ec03345-b130-4ed1-a35a-8809b1a7caca/scratchpad/refjit/firefox-153.0.1/js/src/jit/MacroAssembler.h /srv/t2/src-firefox.ia64-desktop.260731.192730.583159/firefox-153.0.1/js/src/jit/MacroAssembler.h
 --- firefox-153.0.1/js/src/jit/MacroAssembler.h.vanilla
 +++ firefox-153.0.1/js/src/jit/MacroAssembler.h
@@ -3426,6 +3497,25 @@ diff -aurpN -x '*.orig' -x '*.rej' -x __pycache__ -x '*.pyc' -x .deps /tmp/claud
  #elif defined(JS_CODEGEN_PPC64)
  #  include "jit/ppc64/MoveEmitter-ppc64.h"
  #elif defined(JS_CODEGEN_WASM32)
+diff -aurpN -x '*.orig' -x '*.rej' -x __pycache__ -x '*.pyc' -x .deps /tmp/claude-0/-srv-t2-src-firefox-ia64-desktop-260731-192730-583159/2ec03345-b130-4ed1-a35a-8809b1a7caca/scratchpad/refjit/firefox-153.0.1/js/src/jit/ProcessExecutableMemory.cpp /srv/t2/src-firefox.ia64-desktop.260731.192730.583159/firefox-153.0.1/js/src/jit/ProcessExecutableMemory.cpp
+--- firefox-153.0.1/js/src/jit/ProcessExecutableMemory.cpp.vanilla
++++ firefox-153.0.1/js/src/jit/ProcessExecutableMemory.cpp
+@@ -516,6 +516,15 @@ static void* ReserveProcessExecutableMem
+   void* p = MozTaggedAnonymousMmap(randomAddr, bytes, protection, flags, -1, 0,
+                                    "js-executable-memory");
+   if (p == MAP_FAILED) {
++    // The comment above assumes an unavailable hint merely makes the kernel
++    // pick another address. That does not hold on ia64, where an address
++    // outside the implemented range of a region is rejected with EINVAL rather
++    // than relocated, so a randomly chosen hint fails outright. Retry without
++    // randomization, mirroring what the Windows path above already does.
++    p = MozTaggedAnonymousMmap(nullptr, bytes, protection, flags, -1, 0,
++                               "js-executable-memory");
++  }
++  if (p == MAP_FAILED) {
+     return nullptr;
+   }
+ #  if defined(XP_DARWIN)
 diff -aurpN -x '*.orig' -x '*.rej' -x __pycache__ -x '*.pyc' -x .deps /tmp/claude-0/-srv-t2-src-firefox-ia64-desktop-260731-192730-583159/2ec03345-b130-4ed1-a35a-8809b1a7caca/scratchpad/refjit/firefox-153.0.1/js/src/jit/Registers.h /srv/t2/src-firefox.ia64-desktop.260731.192730.583159/firefox-153.0.1/js/src/jit/Registers.h
 --- firefox-153.0.1/js/src/jit/Registers.h.vanilla
 +++ firefox-153.0.1/js/src/jit/Registers.h
@@ -3989,7 +4079,7 @@ diff -aurpN -x '*.orig' -x '*.rej' -x __pycache__ -x '*.pyc' -x .deps /tmp/claud
 diff -aurpN -x '*.orig' -x '*.rej' -x __pycache__ -x '*.pyc' -x .deps /tmp/claude-0/-srv-t2-src-firefox-ia64-desktop-260731-192730-583159/2ec03345-b130-4ed1-a35a-8809b1a7caca/scratchpad/refjit/firefox-153.0.1/js/src/jit/ia64/Assembler-ia64.h /srv/t2/src-firefox.ia64-desktop.260731.192730.583159/firefox-153.0.1/js/src/jit/ia64/Assembler-ia64.h
 --- firefox-153.0.1/js/src/jit/ia64/Assembler-ia64.h.vanilla
 +++ firefox-153.0.1/js/src/jit/ia64/Assembler-ia64.h
-@@ -0,0 +1,608 @@
+@@ -0,0 +1,615 @@
 +/* This Source Code Form is subject to the terms of the Mozilla Public
 + * License, v. 2.0. If a copy of the MPL was not distributed with this
 + * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -4003,6 +4093,7 @@ diff -aurpN -x '*.orig' -x '*.rej' -x __pycache__ -x '*.pyc' -x .deps /tmp/claud
 +
 +#include <stdint.h>
 +
++#include "jit/FlushICache.h"
 +#include "jit/ia64/Architecture-ia64.h"
 +#include "jit/ia64/AssemblerCore-ia64.h"
 +#include "jit/Registers.h"
@@ -4459,6 +4550,7 @@ diff -aurpN -x '*.orig' -x '*.rej' -x __pycache__ -x '*.pyc' -x .deps /tmp/claud
 +    uint8_t* bundle = label.raw();
 +    MOZ_ASSERT(ReadMovlImm(bundle) == uint64_t(expected.value));
 +    WriteMovlImm(bundle, uint64_t(newValue.value));
++    FlushICache(bundle, sizeof(ia64::Bundle));
 +  }
 +  // The only user is the Ion invalidation record, and JSJitFrameIter reads the
 +  // value straight back with a memcpy from label.raw() - 4. Store it as raw
@@ -4467,6 +4559,7 @@ diff -aurpN -x '*.orig' -x '*.rej' -x __pycache__ -x '*.pyc' -x .deps /tmp/claud
 +  static void PatchWrite_Imm32(CodeLocationLabel label, Imm32 imm) {
 +    int32_t value = imm.value;
 +    memcpy(label.raw() - sizeof(int32_t), &value, sizeof(int32_t));
++    FlushICache(label.raw() - sizeof(ia64::Bundle), sizeof(ia64::Bundle));
 +  }
 +
 +  // movl r3 = retaddr ; push r3 (2 bundles) ; movl r3 = target ; mov b6 = r3 ;
@@ -4486,6 +4579,7 @@ diff -aurpN -x '*.orig' -x '*.rej' -x __pycache__ -x '*.pyc' -x .deps /tmp/claud
 +        (toCall.raw() - start.raw()) / ptrdiff_t(sizeof(ia64::Bundle));
 +    MOZ_RELEASE_ASSERT(ia64::BranchDispInRange(int32_t(disp)));
 +    *b = ia64::BundleB(ia64::BrCallRel(0, int32_t(disp)));
++    FlushICache(b, sizeof(ia64::Bundle));
 +  }
 +  static uint32_t PatchWrite_NearCallSize() { return sizeof(ia64::Bundle); }
 +
@@ -4499,6 +4593,7 @@ diff -aurpN -x '*.orig' -x '*.rej' -x __pycache__ -x '*.pyc' -x .deps /tmp/claud
 +                     (uint32_t((slot2 >> 36) & 0x1) << 20);
 +    int32_t disp = int32_t(imm21 << 11) >> 11;
 +    *b = ia64::BundleB(ia64::BrCondRel(disp));
++    FlushICache(b, sizeof(ia64::Bundle));
 +  }
 +  static void ToggleToCmp(CodeLocationLabel inst) {
 +    ia64::Bundle* b = reinterpret_cast<ia64::Bundle*>(inst.raw());
@@ -4506,6 +4601,7 @@ diff -aurpN -x '*.orig' -x '*.rej' -x __pycache__ -x '*.pyc' -x .deps /tmp/claud
 +    uint32_t imm20 = uint32_t((slot2 >> 13) & 0xfffff);
 +    uint32_t sign = uint32_t((slot2 >> 36) & 0x1);
 +    *b = ia64::BundleB(ia64::NopB(imm20 | (sign << 20)));
++    FlushICache(b, sizeof(ia64::Bundle));
 +  }
 +  static void ToggleCall(CodeLocationLabel inst, bool enabled) {
 +    ia64::Bundle* b = reinterpret_cast<ia64::Bundle*>(inst.raw());
@@ -4514,6 +4610,7 @@ diff -aurpN -x '*.orig' -x '*.rej' -x __pycache__ -x '*.pyc' -x .deps /tmp/claud
 +                : ia64::BundleM(ia64::Adds(Registers::r12,
 +                                           int64_t(sizeof(uintptr_t)),
 +                                           Registers::r12));
++    FlushICache(&b[kToggledCallBundles - 1], sizeof(ia64::Bundle));
 +  }
 +
 +  static void Bind(uint8_t* rawCode, const CodeLabel& label);
@@ -9187,7 +9284,7 @@ diff -aurpN -x '*.orig' -x '*.rej' -x __pycache__ -x '*.pyc' -x .deps /tmp/claud
 diff -aurpN -x '*.orig' -x '*.rej' -x __pycache__ -x '*.pyc' -x .deps /tmp/claude-0/-srv-t2-src-firefox-ia64-desktop-260731-192730-583159/2ec03345-b130-4ed1-a35a-8809b1a7caca/scratchpad/refjit/firefox-153.0.1/js/src/jit/ia64/MacroAssembler-ia64-inl.h /srv/t2/src-firefox.ia64-desktop.260731.192730.583159/firefox-153.0.1/js/src/jit/ia64/MacroAssembler-ia64-inl.h
 --- firefox-153.0.1/js/src/jit/ia64/MacroAssembler-ia64-inl.h.vanilla
 +++ firefox-153.0.1/js/src/jit/ia64/MacroAssembler-ia64-inl.h
-@@ -0,0 +1,1823 @@
+@@ -0,0 +1,1825 @@
 +/* This Source Code Form is subject to the terms of the Mozilla Public
 + * License, v. 2.0. If a copy of the MPL was not distributed with this
 + * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -9813,14 +9910,16 @@ diff -aurpN -x '*.orig' -x '*.rej' -x __pycache__ -x '*.pyc' -x .deps /tmp/claud
 +
 +template <typename T1, typename T2>
 +void MacroAssembler::cmp32Set(Condition cond, T1 lhs, T2 rhs, Register dest) {
-+  uint32_t p = emitCompare(cond, lhs, rhs);
++  uint32_t p = emitCompareWidth(cond, lhs, rhs, 32);
 +  emitM(ia64::MovReg(dest.encoding(), Registers::zero));
 +  emitM(ia64::Adds(dest.encoding(), 1, Registers::zero, p));
 +}
 +
 +template <typename T1, typename T2>
 +void MacroAssembler::cmpPtrSet(Condition cond, T1 lhs, T2 rhs, Register dest) {
-+  cmp32Set(cond, lhs, rhs, dest);
++  uint32_t p = emitCompareWidth(cond, lhs, rhs, 64);
++  emitM(ia64::MovReg(dest.encoding(), Registers::zero));
++  emitM(ia64::Adds(dest.encoding(), 1, Registers::zero, p));
 +}
 +
 +void MacroAssembler::cmp64Set(Condition cond, Register64 lhs, Register64 rhs,
@@ -11014,7 +11113,7 @@ diff -aurpN -x '*.orig' -x '*.rej' -x __pycache__ -x '*.pyc' -x .deps /tmp/claud
 diff -aurpN -x '*.orig' -x '*.rej' -x __pycache__ -x '*.pyc' -x .deps /tmp/claude-0/-srv-t2-src-firefox-ia64-desktop-260731-192730-583159/2ec03345-b130-4ed1-a35a-8809b1a7caca/scratchpad/refjit/firefox-153.0.1/js/src/jit/ia64/MacroAssembler-ia64.cpp /srv/t2/src-firefox.ia64-desktop.260731.192730.583159/firefox-153.0.1/js/src/jit/ia64/MacroAssembler-ia64.cpp
 --- firefox-153.0.1/js/src/jit/ia64/MacroAssembler-ia64.cpp.vanilla
 +++ firefox-153.0.1/js/src/jit/ia64/MacroAssembler-ia64.cpp
-@@ -0,0 +1,2843 @@
+@@ -0,0 +1,2848 @@
 +/* This Source Code Form is subject to the terms of the Mozilla Public
 + * License, v. 2.0. If a copy of the MPL was not distributed with this
 + * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -11029,6 +11128,7 @@ diff -aurpN -x '*.orig' -x '*.rej' -x __pycache__ -x '*.pyc' -x .deps /tmp/claud
 +#include "jit/AutoWritableJitCode.h"
 +#include "jit/BaselineFrame.h"
 +#include "jit/ExecutableAllocator.h"
++#include "jit/FlushICache.h"
 +#include "jit/JitFrames.h"
 +#include "jit/JitRuntime.h"
 +#include "jit/MoveEmitter.h"
@@ -13146,6 +13246,7 @@ diff -aurpN -x '*.orig' -x '*.rej' -x __pycache__ -x '*.pyc' -x .deps /tmp/claud
 +// static
 +void MacroAssembler::patchFarJump(uint8_t* farJump, uint8_t* target) {
 +  WriteMovlImm(farJump, uint64_t(uintptr_t(target)));
++  FlushICache(farJump, sizeof(ia64::Bundle));
 +}
 +
 +// A patchable call site: enough bundles for
@@ -13169,6 +13270,7 @@ diff -aurpN -x '*.orig' -x '*.rej' -x __pycache__ -x '*.pyc' -x .deps /tmp/claud
 +  b[3] = ia64::BundleM(ia64::St8(Registers::sp, Registers::r3));
 +  b[4] = ia64::BundleI(ia64::MovToBr(6, Registers::r2));
 +  b[5] = ia64::BundleB(ia64::BrCall(0, 6));
++  FlushICache(b, kPatchableCallBundles * sizeof(ia64::Bundle));
 +}
 +
 +void MacroAssembler::patchCallToNop(uint8_t* callsite) {
@@ -13177,6 +13279,7 @@ diff -aurpN -x '*.orig' -x '*.rej' -x __pycache__ -x '*.pyc' -x .deps /tmp/claud
 +  for (uint32_t i = 0; i < kPatchableCallBundles; i++) {
 +    b[i] = ia64::BundleM(ia64::NopM());
 +  }
++  FlushICache(b, kPatchableCallBundles * sizeof(ia64::Bundle));
 +}
 +
 +CodeOffset MacroAssembler::moveNearAddressWithPatch(Register dest) {
@@ -13188,6 +13291,7 @@ diff -aurpN -x '*.orig' -x '*.rej' -x __pycache__ -x '*.pyc' -x .deps /tmp/claud
 +void MacroAssembler::patchNearAddressMove(CodeLocationLabel loc,
 +                                          CodeLocationLabel target) {
 +  WriteMovlImm(loc.raw(), uint64_t(uintptr_t(target.raw())));
++  FlushICache(loc.raw(), sizeof(ia64::Bundle));
 +}
 +
 +// ===========================================================================
@@ -13861,7 +13965,7 @@ diff -aurpN -x '*.orig' -x '*.rej' -x __pycache__ -x '*.pyc' -x .deps /tmp/claud
 diff -aurpN -x '*.orig' -x '*.rej' -x __pycache__ -x '*.pyc' -x .deps /tmp/claude-0/-srv-t2-src-firefox-ia64-desktop-260731-192730-583159/2ec03345-b130-4ed1-a35a-8809b1a7caca/scratchpad/refjit/firefox-153.0.1/js/src/jit/ia64/MacroAssembler-ia64.h /srv/t2/src-firefox.ia64-desktop.260731.192730.583159/firefox-153.0.1/js/src/jit/ia64/MacroAssembler-ia64.h
 --- firefox-153.0.1/js/src/jit/ia64/MacroAssembler-ia64.h.vanilla
 +++ firefox-153.0.1/js/src/jit/ia64/MacroAssembler-ia64.h
-@@ -0,0 +1,1166 @@
+@@ -0,0 +1,1177 @@
 +/* This Source Code Form is subject to the terms of the Mozilla Public
 + * License, v. 2.0. If a copy of the MPL was not distributed with this
 + * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -13977,16 +14081,27 @@ diff -aurpN -x '*.orig' -x '*.rej' -x __pycache__ -x '*.pyc' -x .deps /tmp/claud
 +    movePtr(rhs, ScratchReg);
 +    return emitCompare(cond, lhs, ScratchReg);
 +  }
-+  // Address operands for the cmp32Set()/cmpPtrSet() templates: the width of the
-+  // load follows the type of the right-hand side.
-+  uint32_t emitCompare(Assembler::Condition cond, const Address& lhs,
-+                       Imm32 rhs) {
-+    load32(lhs, SecondScratchReg);
-+    return emitCompare(cond, SecondScratchReg, rhs);
++  // Address operands for the cmp32Set()/cmpPtrSet() templates. The load width
++  // must follow the width of the COMPARISON, not the type of the right-hand
++  // side: with a Register rhs the two are indistinguishable, and guessing
++  // pointer width loads 8 bytes from what may be a 4-byte Int32 stack slot.
++  // Those slots are only 4-byte aligned, so on ia64 that traps; the kernel
++  // fixes it up transparently at roughly a thousand times the cost of an
++  // aligned load, which is invisible in test results but ruinous for
++  // performance. |width| is the comparison width in bits.
++  template <typename T>
++  uint32_t emitCompareWidth(Assembler::Condition cond, Register lhs, T rhs,
++                            unsigned width) {
++    return emitCompare(cond, lhs, rhs);
 +  }
 +  template <typename T>
-+  uint32_t emitCompare(Assembler::Condition cond, const Address& lhs, T rhs) {
-+    loadPtr(lhs, SecondScratchReg);
++  uint32_t emitCompareWidth(Assembler::Condition cond, const Address& lhs,
++                            T rhs, unsigned width) {
++    if (width <= 32) {
++      load32(lhs, SecondScratchReg);
++    } else {
++      loadPtr(lhs, SecondScratchReg);
++    }
 +    return emitCompare(cond, SecondScratchReg, rhs);
 +  }
 +
