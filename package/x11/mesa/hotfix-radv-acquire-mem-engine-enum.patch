@@ -1,0 +1,48 @@
+radv: pass the ACQUIRE_MEM engine enum, not the WRITE_DATA one
+
+radv_create_flush_postamble() hands ac_emit_cp_acquire_mem() the constant
+V_581A_PREFETCH_PARSER, but that belongs to a different packet's engine
+field.  ac_emit_cp_acquire_mem() wants the ACQUIRE_MEM engine selector and
+says so:
+
+  assert(ip_type != AMD_IP_GFX || (engine == V_581B_CP_PFP || engine == V_581B_CP_ME));
+
+so an assertions-enabled build aborts:
+
+  vkcube: ../src/amd/common/ac_cmdbuf_cp.c:406: ac_emit_cp_acquire_mem:
+  Assertion `ip_type != AMD_IP_GFX || (engine == V_581B_CP_PFP ||
+  engine == V_581B_CP_ME)' failed.
+
+V_581A_PREFETCH_PARSER and V_581B_CP_PFP name the same thing - the prefetch
+parser - they are just the enums of two different packets, so use the one
+this function is documented to take.  Every other caller in radv_cs.c
+already passes V_581B_CP_PFP.
+
+This is only reachable on GFX6/GFX7:
+
+  if (pdev->info.gfx_level <= GFX7 &&
+      (queue->state.qf == RADV_QUEUE_GENERAL || queue->state.qf == RADV_QUEUE_COMPUTE))
+	  result = radv_create_flush_postamble(queue);
+
+and on those chips ac_emit_cp_acquire_mem() takes the pre-GFX9 branch, which
+emits PKT3_SURFACE_SYNC and never looks at the engine argument at all.  So
+no packet changes on this hardware - only the bogus assertion goes away.
+From GFX10 on the argument does select the engine, and there the value would
+have been wrong, but no chip that new reaches this code.
+
+Found on an HP rx2660 (ia64) with an Oland; nothing here is ia64 specific,
+it just needs old hardware and a Mesa built with assertions.
+
+Signed-off-by: René Rebe <rene@exactco.de>
+
+--- mesa-26.1.6/src/amd/vulkan/radv_queue.c
++++ mesa-26.1.6/src/amd/vulkan/radv_queue.c
+@@ -1369,7 +1369,7 @@ radv_create_flush_postamble(struct radv_
+          S_0085F0_DB_ACTION_ENA(1) |
+          S_0085F0_DB_DEST_BASE_ENA(1);
+ 
+-   ac_emit_cp_acquire_mem(cs->b, pdev->info.gfx_level, cs->hw_ip, V_581A_PREFETCH_PARSER, cp_coher_cntl);
++   ac_emit_cp_acquire_mem(cs->b, pdev->info.gfx_level, cs->hw_ip, V_581B_CP_PFP, cp_coher_cntl);
+ 
+    result = radv_finalize_cmd_stream(device, cs);
+    if (result != VK_SUCCESS) {
