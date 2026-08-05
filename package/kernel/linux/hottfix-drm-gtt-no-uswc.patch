@@ -1,0 +1,92 @@
+amdgpu: keep GTT cached on ia64 instead of write-combining
+
+ttm_pool_apply_caching() has its entire body inside #ifdef CONFIG_X86:
+
+  static int ttm_pool_apply_caching(struct ttm_pool_alloc_state *alloc)
+  {
+  #ifdef CONFIG_X86
+	...
+	case ttm_write_combined:
+		return set_pages_array_wc(alloc->caching_divide, num_pages);
+	case ttm_uncached:
+		return set_pages_array_uc(alloc->caching_divide, num_pages);
+  #endif
+	alloc->caching_divide = alloc->pages;
+	return 0;
+  }
+
+so on ia64 the kernel's linear mapping of a GTT page keeps its write-back
+attribute, while ttm_io_prot() still hands userspace a write-combining
+mapping of the very same page whenever the BO was created with
+AMDGPU_GEM_CREATE_CPU_GTT_USWC. Mesa asks for that routinely - the flag is
+all over /sys/kernel/debug/dri/0/amdgpu_gem_info on a running KDE session.
+
+Two mappings of one physical page with different memory attributes is
+attribute aliasing. IA-64 does not permit it: a dirty line sitting in the
+cached alias can be written back on top of data that went out through the
+write-combining alias, which shows up as corruption at cache line
+granularity rather than as whole bad scanlines.
+
+ia64 has cache coherent DMA (the SBA IOMMU), so a cached GTT mapping is
+correct and needs no explicit flushing - note that drm_clflush_pages() and
+friends are equally x86/ppc-only and would be silent no-ops here. The cost
+of this change is CPU write bandwidth into GTT, not correctness.
+
+radeon_ttm.c chooses its caching the same way and wants the same treatment;
+it is left alone here because amdgpu is what drives SI on this machine.
+
+Signed-off-by: René Rebe <rene@exactco.de>
+
+--- linux-7.1/drivers/gpu/drm/amd/amdgpu/amdgpu_ttm.c
++++ linux-7.1/drivers/gpu/drm/amd/amdgpu/amdgpu_ttm.c
+@@ -1180,7 +1180,8 @@ static struct ttm_tt *amdgpu_ttm_tt_crea
+ 	else
+ 		gtt->pool_id = abo->xcp_id;
+ 
+-	if (abo->flags & AMDGPU_GEM_CREATE_CPU_GTT_USWC)
++	if ((abo->flags & AMDGPU_GEM_CREATE_CPU_GTT_USWC) &&
++	    !IS_ENABLED(CONFIG_IA64))
+ 		caching = ttm_write_combined;
+ 	else
+ 		caching = ttm_cached;
+radeon: keep GTT cached on ia64 instead of write-combining or uncached
+
+Same defect as amdgpu, see hotfix-ia64-amdgpu-gtt-no-uswc.patch.ia64.
+ttm_pool_apply_caching() has its whole body inside #ifdef CONFIG_X86, so on
+ia64 the kernel's linear mapping of a GTT page keeps its write-back
+attribute while ttm_io_prot() still hands userspace whatever caching
+radeon_ttm_tt_create() asked for. Two mappings of one physical page with
+different memory attributes is attribute aliasing, which IA-64 does not
+permit - a dirty line in the cached alias can be written back over what went
+out through the other mapping, corrupting a cache line at a time.
+
+radeon has one case more than amdgpu: RADEON_GEM_GTT_UC selects
+ttm_uncached, and set_pages_array_uc() sits behind the same x86 guard as
+set_pages_array_wc(), so the uncached request is just as unsafe here. Force
+both to ttm_cached.
+
+Only the system memory pages are affected. radeon_ttm_io_mem_reserve()
+sets mem->bus.caching = ttm_write_combined for the VRAM and AGP apertures,
+but those are iomem and never appear in the kernel linear map, so there is
+nothing to alias with and they are left alone.
+
+DMA is coherent on ia64, so cached GTT is correct; the cost is CPU write
+bandwidth into GTT. Note drm_clflush_pages() and friends are x86/ppc-only
+too and would be silent no-ops here, so there is no flushing to fall back
+on.
+
+Signed-off-by: René Rebe <rene@exactco.de>
+
+--- linux-7.1/drivers/gpu/drm/radeon/radeon_ttm.c
++++ linux-7.1/drivers/gpu/drm/radeon/radeon_ttm.c
+@@ -497,7 +497,9 @@ static struct ttm_tt *radeon_ttm_tt_crea
+ 		return NULL;
+ 	}
+ 
+-	if (rbo->flags & RADEON_GEM_GTT_UC)
++	if (IS_ENABLED(CONFIG_IA64))
++		caching = ttm_cached;
++	else if (rbo->flags & RADEON_GEM_GTT_UC)
+ 		caching = ttm_uncached;
+ 	else if (rbo->flags & RADEON_GEM_GTT_WC)
+ 		caching = ttm_write_combined;
