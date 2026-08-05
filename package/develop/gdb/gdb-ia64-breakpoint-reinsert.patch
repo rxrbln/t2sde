@@ -1,0 +1,39 @@
+Do not abort when an ia64 breakpoint slot already holds a break.
+
+ia64_memory_insert_breakpoint() aborts the whole GDB session with an
+internal error when the target slot already contains IA64_BREAKPOINT.
+This triggers on perfectly ordinary sessions against gdbserver, where a
+location can be handed to the insert path twice, and it kills the
+session before the user gets any output. SHADOW_CONTENTS is filled from
+the breakpoint-hidden read earlier in the function, so it still holds
+the original bits and removal restores them; just treat the second
+insertion as a no-op.
+
+Signed-off-by: René Rebe <rene@exactco.de>
+
+--- gdb-17.2/gdb/ia64-tdep.c
++++ gdb-17.2/gdb/ia64-tdep.c
+@@ -1,6 +1,7 @@
+ /* Target-dependent code for the IA-64 for GDB, the GNU debugger.
+ 
+    Copyright (C) 1999-2025 Free Software Foundation, Inc.
++   Copyright (C) 2026 René Rebe <rene@exactco.de>
+ 
+    This file is part of GDB.
+ 
+@@ -716,8 +717,13 @@ ia64_memory_insert_breakpoint (struct gd
+      a single instance by update_global_location_list.  */
+   instr_breakpoint = slotN_contents (bundle, slotnum);
+   if (instr_breakpoint == IA64_BREAKPOINT)
+-    internal_error (_("Address %s already contains a breakpoint."),
+-		    paddress (gdbarch, bp_tgt->placed_address));
++    {
++      /* The slot already holds a break.  SHADOW_CONTENTS was filled from the
++	 breakpoint-hidden read above, so it still has the original bits and
++	 removal will restore them.  Treat the insertion as a no-op rather
++	 than aborting the whole session.  */
++      return 0;
++    }
+   replace_slotN_contents (bundle, IA64_BREAKPOINT, slotnum);
+ 
+   val = target_write_memory (addr + shadow_slotnum, bundle + shadow_slotnum,

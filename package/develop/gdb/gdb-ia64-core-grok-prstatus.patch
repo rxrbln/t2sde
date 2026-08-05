@@ -1,0 +1,102 @@
+Add Linux/ia64 core file note support to BFD.
+
+The generic elfcore_grok_prstatus() in bfd/elf.c only recognises a
+NT_PRSTATUS note whose size matches the *host* prstatus_t. On any host
+other than ia64 the 1144 byte Linux/ia64 note is therefore skipped, no
+.reg pseudo section is created and GDB fails with
+
+  warning: Couldn't find general-purpose registers in core file.
+
+which makes ia64 core files unreadable with a cross GDB. Provide the
+ia64 elf_backend_grok_prstatus / elf_backend_grok_psinfo hooks with the
+Linux/ia64 offsets so cross debugging works.
+
+Signed-off-by: René Rebe <rene@exactco.de>
+
+--- gdb-17.2/bfd/elfnn-ia64.c
++++ gdb-17.2/bfd/elfnn-ia64.c
+@@ -1,5 +1,6 @@
+ /* IA-64 support for 64-bit ELF
+    Copyright (C) 1998-2025 Free Software Foundation, Inc.
++   Copyright (C) 2026 René Rebe <rene@exactco.de>
+    Contributed by David Mosberger-Tang <davidm@hpl.hp.com>
+ 
+    This file is part of BFD, the Binary File Descriptor library.
+@@ -4984,6 +4985,68 @@ static void
+ ignore_errors (const char *fmt ATTRIBUTE_UNUSED, ...)
+ {
+ }
++
++/* Linux/ia64 core file support.  Without these the generic code in elf.c
++   only groks a NT_PRSTATUS whose size matches the *host* prstatus_t, so
++   no .reg section is created when an ia64 core is read on any other host
++   and the register state is unavailable.  */
++
++static bool
++elfNN_ia64_grok_prstatus (bfd *abfd, Elf_Internal_Note *note)
++{
++  int offset;
++  size_t size;
++
++  switch (note->descsz)
++    {
++    default:
++      return false;
++
++    case 1144:			/* Linux/ia64 */
++      /* pr_cursig */
++      elf_tdata (abfd)->core->signal = bfd_get_16 (abfd, note->descdata + 12);
++
++      /* pr_pid */
++      elf_tdata (abfd)->core->lwpid = bfd_get_32 (abfd, note->descdata + 32);
++
++      /* pr_reg */
++      offset = 112;
++      size = 1024;		/* ELF_NGREG * sizeof (elf_greg_t) */
++      break;
++    }
++
++  return _bfd_elfcore_make_pseudosection (abfd, ".reg", size,
++					  note->descpos + offset);
++}
++
++static bool
++elfNN_ia64_grok_psinfo (bfd *abfd, Elf_Internal_Note *note)
++{
++  char *command;
++  int n;
++
++  switch (note->descsz)
++    {
++    default:
++      return false;
++
++    case 136:			/* Linux/ia64 elf_prpsinfo */
++      elf_tdata (abfd)->core->pid = bfd_get_32 (abfd, note->descdata + 24);
++      elf_tdata (abfd)->core->program
++	= _bfd_elfcore_strndup (abfd, note->descdata + 40, 16);
++      elf_tdata (abfd)->core->command
++	= _bfd_elfcore_strndup (abfd, note->descdata + 56, 80);
++      break;
++    }
++
++  /* Strip the spurious trailing space some implementations append.  */
++  command = elf_tdata (abfd)->core->command;
++  n = strlen (command);
++  if (n > 0 && command[n - 1] == ' ')
++    command[n - 1] = '\0';
++
++  return true;
++}
+ 
+ #define TARGET_LITTLE_SYM		ia64_elfNN_le_vec
+ #define TARGET_LITTLE_NAME		"elfNN-ia64-little"
+@@ -5075,6 +5138,8 @@ ignore_errors (const char *fmt ATTRIBUTE
+ #define elf_backend_dtrel_excludes_plt	1
+ #define elf_backend_special_sections	elfNN_ia64_special_sections
+ #define elf_backend_default_execstack	0
++#define elf_backend_grok_prstatus	elfNN_ia64_grok_prstatus
++#define elf_backend_grok_psinfo		elfNN_ia64_grok_psinfo
+ 
+ /* FIXME: PR 290: The Intel C compiler generates SHT_IA_64_UNWIND with
+    SHF_LINK_ORDER. But it doesn't set the sh_link or sh_info fields.
