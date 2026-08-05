@@ -1,0 +1,162 @@
+# --- T2-COPYRIGHT-BEGIN ---
+# t2/package/*/firefox/up-next-jit-0031-js-blinterp-unaligned-read.patch
+# Copyright (C) 2026 The T2 SDE Project
+# SPDX-License-Identifier: GPL-2.0 or patched project license
+# --- T2-COPYRIGHT-END ---
+
+Make the JIT's unaligned memory accesses safe on targets that trap on them.
+
+These are generic problems on any target that cannot do arbitrary unaligned
+loads and stores; none of them is IA-64 specific (SPARC is affected the same
+way). Measured on Itanium 2, an access faults only when it crosses an 8-byte
+boundary, and the kernel's fixup handler costs thousands of cycles.
+
+1. BaselineCodeGen.cpp -- the Baseline Interpreter's operand helpers read a
+   2- or 4-byte operand at pc + sizeof(jsbytecode), which is by construction at
+   an arbitrary alignment, so a 4-byte operand read trapped 3 times in 8. They
+   now go through load32Unaligned() / load16UnalignedZeroExtend(), which
+   already exist on every backend and are the same instruction on targets that
+   do not care.
+
+2. MacroAssembler.cpp -- iteratorMore() incremented NativeIterator's
+   propertyCursor_, a uint32_t, with addPtr(). On little-endian that happens to
+   yield the right value while also rewriting the adjacent word, and it needed
+   a big-endian carve-out to be correct at all. It is simply a 32-bit field, so
+   add32() is correct on either endianness and properly aligned. The old form
+   straddled an 8-byte boundary on every for-in iteration.
+
+3. MacroAssembler.cpp -- branchIfNotStringCharsEquals() compares a string
+   against a constant in decreasing strides, and finishes an odd-length tail
+   with one *overlapping* wider load ("exam" + "mple" rather than "exam" +
+   "pl" + "e"), which starts mid-word by construction. Gate that on
+   SupportsUnalignedAccesses(); without it the loop just carries on with the
+   narrower strides, whose offsets are always naturally aligned.
+
+4. CodeGenerator.cpp -- CopyStringChars() copies a pointer-sized block at a
+   time when the source and destination encodings match, but |from| and |to|
+   advance at character granularity, so those loads and stores land at
+   arbitrary alignment. Gate the wide path on SupportsUnalignedAccesses(); the
+   per-character fallback copies at the character width, which is always
+   naturally aligned.
+
+diff -aurpN -x '*.orig' -x '*.rej' -x __pycache__ -x '*.pyc' -x .deps a/js/src/jit/BaselineCodeGen.cpp b/js/src/jit/BaselineCodeGen.cpp
+--- firefox-153.0.1/js/src/jit/BaselineCodeGen.cpp.vanilla
++++ firefox-153.0.1/js/src/jit/BaselineCodeGen.cpp
+@@ -495,7 +495,7 @@ static void LoadUint8Operand(MacroAssemb
+ 
+ static void LoadUint16Operand(MacroAssembler& masm, Register dest) {
+   Register pc = LoadBytecodePC(masm, dest);
+-  masm.load16ZeroExtend(Address(pc, sizeof(jsbytecode)), dest);
++  masm.load16UnalignedZeroExtend(Address(pc, sizeof(jsbytecode)), dest);
+   SwapBytecodeOperandToNative16(masm, dest);
+ }
+ 
+@@ -514,7 +514,7 @@ static void LoadConstantCompareOperand(M
+ 
+ static void LoadInt32Operand(MacroAssembler& masm, Register dest) {
+   Register pc = LoadBytecodePC(masm, dest);
+-  masm.load32(Address(pc, sizeof(jsbytecode)), dest);
++  masm.load32Unaligned(Address(pc, sizeof(jsbytecode)), dest);
+   SwapBytecodeOperandToNative32(masm, dest);
+ }
+ 
+@@ -523,10 +523,11 @@ static void LoadInt32OperandSignExtendTo
+ #if defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
+   // The operand is little-endian; byteSwap32 byte-reverses and sign-extends the
+   // low word to 64 bits, i.e. exactly the sign-extend-to-ptr we want.
+-  masm.load32(Address(pc, sizeof(jsbytecode)), dest);
++  masm.load32Unaligned(Address(pc, sizeof(jsbytecode)), dest);
+   masm.byteSwap32(dest);
+ #else
+-  masm.load32SignExtendToPtr(Address(pc, sizeof(jsbytecode)), dest);
++  masm.load32Unaligned(Address(pc, sizeof(jsbytecode)), dest);
++  masm.move32SignExtendToPtr(dest, dest);
+ #endif
+ }
+ 
+@@ -534,7 +535,7 @@ static void LoadUint24Operand(MacroAssem
+                               Register dest) {
+   // Load the opcode and operand, then left shift to discard the opcode.
+   Register pc = LoadBytecodePC(masm, dest);
+-  masm.load32(Address(pc, offset), dest);
++  masm.load32Unaligned(Address(pc, offset), dest);
+   // Swap to native first so the opcode byte ends up in the low 8 bits, then
+   // shift it out, leaving the 24-bit operand.
+   SwapBytecodeOperandToNative32(masm, dest);
+@@ -5828,15 +5829,15 @@ void BaselineInterpreterCodeGen::emitGet
+   // Jump to default if val > high. The low/high operands are little-endian in
+   // the bytecode, so byte-swap to native on big-endian before comparing.
+ #if defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
+-  masm.load32(highAddr, scratch2);
++  masm.load32Unaligned(highAddr, scratch2);
+   masm.byteSwap32(scratch2);
+-  masm.branch32(Assembler::LessThan, scratch2, dest, &jumpToDefault);
+ #else
+-  masm.branch32(Assembler::LessThan, highAddr, dest, &jumpToDefault);
++  masm.load32Unaligned(highAddr, scratch2);
+ #endif
++  masm.branch32(Assembler::LessThan, scratch2, dest, &jumpToDefault);
+ 
+   // Jump to default if val < low.
+-  masm.load32(lowAddr, scratch2);
++  masm.load32Unaligned(lowAddr, scratch2);
+   SwapBytecodeOperandToNative32(masm, scratch2);
+   masm.branch32(Assembler::GreaterThan, scratch2, dest, &jumpToDefault);
+ 
+diff -aurpN -x '*.orig' -x '*.rej' -x __pycache__ -x '*.pyc' -x .deps a/js/src/jit/MacroAssembler.cpp b/js/src/jit/MacroAssembler.cpp
+--- firefox-153.0.1/js/src/jit/MacroAssembler.cpp.vanilla
++++ firefox-153.0.1/js/src/jit/MacroAssembler.cpp
+@@ -1259,7 +1259,13 @@
+     // For example when comparing against the string "example", emit two
+     // four-byte comparisons against "exam" and "mple" instead of doing
+     // three comparisons against "exam", "pl", and finally "e".
+-    if (pos > 0 && byteLength > stride / 2) {
++    //
++    // The overlapping load starts mid-word by construction, so it is only
++    // available where the hardware allows unaligned accesses. Without it the
++    // loop simply carries on with the narrower strides, whose offsets are
++    // always naturally aligned.
++    if (pos > 0 && byteLength > stride / 2 &&
++        MacroAssembler::SupportsUnalignedAccesses()) {
+       MOZ_ASSERT(stride == 8 || stride == 4);
+ 
+       size_t prev = pos - (stride - byteLength) / encodingSize;
+@@ -9952,15 +9958,13 @@
+                      NativeIterator::offsetOfFirstProperty());
+   loadPtr(propAddr, temp);
+ 
+-  // Increase the cursor.
+-#if defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
+-  // propertyCursor_ is a uint32_t. A pointer-sized increment would target the
+-  // high word of the 64-bit access on big-endian (i.e. the adjacent field),
+-  // leaving the cursor unchanged so the iterator never advances.
++  // Increase the cursor. propertyCursor_ is a uint32_t, so this has to be a
++  // 32-bit increment: a pointer-sized one targets the high word of the 64-bit
++  // access on big-endian (i.e. the adjacent field), leaving the cursor
++  // unchanged so the iterator never advances, and on IA-64 the field is only
++  // 4-byte aligned, so a 64-bit access straddles an 8-byte boundary and traps
++  // into the kernel's unaligned-fixup handler on every single iteration.
+   add32(Imm32(1), cursorAddr);
+-#else
+-  addPtr(Imm32(1), cursorAddr);
+-#endif
+ 
+   // Check if the property has been deleted while iterating. Skip it if so.
+   branchTestPtr(Assembler::NonZero, temp,
+diff -aurpN -x '*.orig' -x '*.rej' -x __pycache__ -x '*.pyc' -x .deps a/js/src/jit/CodeGenerator.cpp b/js/src/jit/CodeGenerator.cpp
+--- firefox-153.0.1/js/src/jit/CodeGenerator.cpp.vanilla
++++ firefox-153.0.1/js/src/jit/CodeGenerator.cpp
+@@ -13587,7 +13587,12 @@ static void CopyStringChars(MacroAssembl
+       toEncoding == CharEncoding::Latin1 ? sizeof(char) : sizeof(char16_t);
+ 
+   // Try to copy multiple characters at once when both encoding are equal.
+-  if (fromEncoding == toEncoding) {
++  // |from| and |to| advance at character granularity, so the wide loads and
++  // stores below land at arbitrary alignment; only do this where the hardware
++  // allows it. The per-character fallback loop copies at the character width,
++  // which is always naturally aligned.
++  if (fromEncoding == toEncoding &&
++      MacroAssembler::SupportsUnalignedAccesses()) {
+     constexpr size_t ptrWidth = sizeof(uintptr_t);
+ 
+     // Copy |width| bytes and then adjust |from| and |to|.
