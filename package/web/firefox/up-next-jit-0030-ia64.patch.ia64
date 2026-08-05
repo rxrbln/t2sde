@@ -1,9 +1,3 @@
-# --- T2-COPYRIGHT-BEGIN ---
-# t2/package/*/firefox/up-next-jit-0030-ia64.patch.ia64
-# Copyright (C) 2026 The T2 SDE Project
-# SPDX-License-Identifier: GPL-2.0 or patched project license
-# --- T2-COPYRIGHT-END ---
-
 diff -aurpN -x '*.orig' -x '*.rej' -x __pycache__ -x '*.pyc' -x .deps /tmp/claude-0/-srv-t2-src-firefox-ia64-desktop-260731-192730-583159/2ec03345-b130-4ed1-a35a-8809b1a7caca/scratchpad/refjit/firefox-153.0.1/js/moz.configure /srv/t2/src-firefox.ia64-desktop.260731.192730.583159/firefox-153.0.1/js/moz.configure
 --- firefox-153.0.1/js/moz.configure.vanilla
 +++ firefox-153.0.1/js/moz.configure
@@ -40,17 +34,6 @@ diff -aurpN -x '*.orig' -x '*.rej' -x __pycache__ -x '*.pyc' -x .deps /tmp/claud
  set_define("JS_CODEGEN_X86", jit_codegen.x86)
  set_define("JS_CODEGEN_X64", jit_codegen.x64)
  set_define("JS_CODEGEN_WASM32", jit_codegen.wasm32)
-@@ -1393,8 +1398,8 @@ set_config(
- 
- @depends("--enable-simulator", target)
- def wasm_has_heapreg(simulator, target):
--    #if target.cpu != "x86":
--    return True
-+    if target.cpu != "x86":
-+        return True
- 
-     if simulator and simulator[0] == "arm":
-         return True
 diff -aurpN -x '*.orig' -x '*.rej' -x __pycache__ -x '*.pyc' -x .deps /tmp/claude-0/-srv-t2-src-firefox-ia64-desktop-260731-192730-583159/2ec03345-b130-4ed1-a35a-8809b1a7caca/scratchpad/refjit/firefox-153.0.1/js/src/irregexp/RegExpNativeMacroAssembler.cpp /srv/t2/src-firefox.ia64-desktop.260731.192730.583159/firefox-153.0.1/js/src/irregexp/RegExpNativeMacroAssembler.cpp
 --- firefox-153.0.1/js/src/irregexp/RegExpNativeMacroAssembler.cpp.vanilla
 +++ firefox-153.0.1/js/src/irregexp/RegExpNativeMacroAssembler.cpp
@@ -16717,6 +16700,96 @@ diff -aurpN -x '*.orig' -x '*.rej' -x __pycache__ -x '*.pyc' -x .deps /tmp/claud
  #elif defined(JS_CODEGEN_NONE) || defined(JS_CODEGEN_WASM32)
  // Synthetic values to satisfy asserts and avoid compiler warnings.
  static const unsigned PushedRetAddr = 0;
+diff -aurpN -x '*.orig' -x '*.rej' -x __pycache__ -x '*.pyc' -x .deps /tmp/claude-0/-srv-t2-src-firefox-ia64-desktop-260731-192730-583159/2ec03345-b130-4ed1-a35a-8809b1a7caca/scratchpad/refjit/firefox-153.0.1/js/src/wasm/WasmSummarizeInsn.cpp /srv/t2/src-firefox.ia64-desktop.260731.192730.583159/firefox-153.0.1/js/src/wasm/WasmSummarizeInsn.cpp
+--- firefox-153.0.1/js/src/wasm/WasmSummarizeInsn.cpp.vanilla
++++ firefox-153.0.1/js/src/wasm/WasmSummarizeInsn.cpp
+@@ -1898,6 +1898,86 @@ Maybe<TrapMachineInsn> SummarizeTrapInst
+   return Nothing();
+ }
+ 
++// ================================================================== ia64 ====
++
++#  elif defined(JS_CODEGEN_IA64)
++
++Maybe<TrapMachineInsn> SummarizeTrapInstruction(const uint8_t* insnAddr) {
++  // The backend emits one instruction per 16-byte bundle, with any M-unit
++  // memory access in slot 0, so only slot 0 has to be decoded here.
++  MOZ_ASSERT(0 == (uintptr_t(insnAddr) & 15));
++
++  uint64_t lo;
++  memcpy(&lo, insnAddr, sizeof(lo));
++  const uint64_t slot0 = (lo >> 5) & ((uint64_t(1) << 41) - 1);
++
++  const uint32_t majorOp = uint32_t((slot0 >> 37) & 0xf);
++  const uint32_t x = uint32_t((slot0 >> 27) & 0x1);
++  const uint32_t x6a = uint32_t((slot0 >> 30) & 0x3f);
++
++  // An all-zero slot 0 is "break.m 0", which is what JS_SWEPT_CODE_PATTERN
++  // fills freed code with and what the trap sites use.
++  if (slot0 == 0) {
++    return Some(TrapMachineInsn::OfficialUD);
++  }
++
++  // Major op 4 is the integer load/store group, major op 6 the floating-point
++  // one; in both, x6a selects the access and 0x3x is the store half. With
++  // x == 1 the op-4 group is instead the semaphore group (cmpxchg, xchg,
++  // fetchadd), all of which are read-modify-write.
++  if (majorOp == 4 && x == 1) {
++    return Some(TrapMachineInsn::Atomic);
++  }
++
++  if (majorOp == 4 && x == 0) {
++    switch (x6a) {
++      case 0x00:  // ld1
++        return Some(TrapMachineInsn::Load8);
++      case 0x01:  // ld2
++        return Some(TrapMachineInsn::Load16);
++      case 0x02:  // ld4
++      case 0x16:  // ld4.acq
++        return Some(TrapMachineInsn::Load32);
++      case 0x03:  // ld8
++      case 0x17:  // ld8.acq
++        return Some(TrapMachineInsn::Load64);
++      case 0x30:  // st1
++        return Some(TrapMachineInsn::Store8);
++      case 0x31:  // st2
++        return Some(TrapMachineInsn::Store16);
++      case 0x32:  // st4
++      case 0x36:  // st4.rel
++        return Some(TrapMachineInsn::Store32);
++      case 0x33:  // st8
++      case 0x37:  // st8.rel
++        return Some(TrapMachineInsn::Store64);
++      default:
++        break;
++    }
++    return Nothing();
++  }
++
++  if (majorOp == 6 && x == 0) {
++    switch (x6a) {
++      case 0x02:  // ldfs
++        return Some(TrapMachineInsn::Load32);
++      case 0x01:  // ldf8
++      case 0x03:  // ldfd
++        return Some(TrapMachineInsn::Load64);
++      case 0x32:  // stfs
++        return Some(TrapMachineInsn::Store32);
++      case 0x31:  // stf8
++      case 0x33:  // stfd
++        return Some(TrapMachineInsn::Store64);
++      default:
++        break;
++    }
++    return Nothing();
++  }
++
++  return Nothing();
++}
++
+ // ================================================================== none ====
+ 
+ #  elif defined(JS_CODEGEN_NONE)
 diff -aurpN -x '*.orig' -x '*.rej' -x __pycache__ -x '*.pyc' -x .deps /tmp/claude-0/-srv-t2-src-firefox-ia64-desktop-260731-192730-583159/2ec03345-b130-4ed1-a35a-8809b1a7caca/scratchpad/refjit/firefox-153.0.1/js/src/wasm/WasmTypeDef.cpp /srv/t2/src-firefox.ia64-desktop.260731.192730.583159/firefox-153.0.1/js/src/wasm/WasmTypeDef.cpp
 --- firefox-153.0.1/js/src/wasm/WasmTypeDef.cpp.vanilla
 +++ firefox-153.0.1/js/src/wasm/WasmTypeDef.cpp
@@ -16734,6 +16807,24 @@ diff -aurpN -x '*.orig' -x '*.rej' -x __pycache__ -x '*.pyc' -x .deps /tmp/claud
  namespace js {
  namespace wasm {
  
+diff -aurpN -x '*.orig' -x '*.rej' -x __pycache__ -x '*.pyc' -x .deps /tmp/claude-0/-srv-t2-src-firefox-ia64-desktop-260731-192730-583159/2ec03345-b130-4ed1-a35a-8809b1a7caca/scratchpad/refjit/firefox-153.0.1/js/xpconnect/src/XPCJSContext.cpp /srv/t2/src-firefox.ia64-desktop.260731.192730.583159/firefox-153.0.1/js/xpconnect/src/XPCJSContext.cpp
+--- firefox-153.0.1/js/xpconnect/src/XPCJSContext.cpp.vanilla
++++ firefox-153.0.1/js/xpconnect/src/XPCJSContext.cpp
+@@ -957,8 +957,13 @@ static void LoadStartupJSPrefs(XPCJSCont
+       StaticPrefs::javascript_options_jit_full_debug_checks_DoNotUseDirectly());
+ #endif
+ 
++// ia64 joins the backends that cannot implement the Spectre mitigations: they
++// need a condition to survive across intervening code, and IA-64 predicates do
++// not behave like sticky condition flags. Leaving these prefs to reach the JIT
++// makes it hit MOZ_CRASH("ia64: spectre index masking is not supported") during
++// startup, which is what crashed the browser on real hardware.
+ #if !defined(JS_CODEGEN_MIPS64) && !defined(JS_CODEGEN_RISCV64) && \
+-    !defined(JS_CODEGEN_LOONG64)
++    !defined(JS_CODEGEN_LOONG64) && !defined(JS_CODEGEN_IA64)
+   JS_SetGlobalJitCompilerOption(
+       cx, JSJITCOMPILER_SPECTRE_INDEX_MASKING,
+       StaticPrefs::javascript_options_spectre_index_masking_DoNotUseDirectly());
 --- firefox-153.0.1/config/check_macroassembler_style.py.vanilla
 +++ firefox-153.0.1/config/check_macroassembler_style.py
 @@ -25,7 +25,7 @@ import re
@@ -16745,3 +16836,368 @@ diff -aurpN -x '*.orig' -x '*.rej' -x __pycache__ -x '*.pyc' -x .deps /tmp/claud
  all_architecture_names = set([
      "x86",
      "x64",
+
+
+# mfbt/Assertions.h had no ia64 case, so MOZ_CrashSequence() fell through to the
+# generic C store and the build emitted "Unsupported architecture" for every
+# translation unit. Worse for debugging: the generic path stores the line number
+# through a volatile C pointer, which on ia64 came out as a plain store of zero,
+# so a MOZ_CRASH was indistinguishable from a genuine null dereference - telling
+# them apart meant decoding the ia64 ISR by hand out of the core dump.
+#
+# Store the line number with st8, matching the other 64-bit targets. The crash
+# is still a store to MOZ_CRASH_WRITE_ADDR, so the signal stays SIGSEGV and the
+# line number stays recoverable from sc_gr[] in the core.
+#
+# Inserted ahead of the __loongarch64 case on purpose: up-next-jit-0004-ppc64le
+# anchors its own hunk on the loongarch block through to the #else, and hotfix-*
+# patches are applied before up-next-*, so appending after powerpc64 would break
+# that patch's context.
+#
+# Signed-off-by: René Rebe <rene@exactco.de>
+
+--- firefox-153.0.1/mfbt/Assertions.h.vanilla	2026-07-12 01:20:00.000000000 +0200
++++ firefox-153.0.1/mfbt/Assertions.h	2026-08-05 14:15:10.940383268 +0200
+@@ -277,6 +277,11 @@ static inline void MOZ_CrashSequence(voi
+       "stx %1,[%0];\n"  // Write the line number to the crashing address
+       :                 // no output registers
+       : "r"(aAddress), "r"(aLine));
++#  elif defined(__ia64__)
++  asm volatile(
++      "st8 [%0]=%1;\n"  // Write the line number to the crashing address
++      :                 // no output registers
++      : "r"(aAddress), "r"(aLine));
+ #  elif defined(__loongarch64)
+   asm volatile(
+       "st.d %1,%0,0;\n"  // Write the line number to the crashing address
+# On ia64 none of PC_sig/FP_sig/SP_sig were defined, so ContextToPC(),
+# ContextToFP(), ContextToSP() and SetContextPC() all compiled down to a bare
+# MOZ_CRASH(). HandleTrap() calls ContextToPC() as its very first statement,
+# and WasmTrapHandler is installed as the SIGSEGV/SIGBUS/SIGILL handler for
+# every JSContext, so *any* fault in *any* Firefox process died a second death
+# inside the signal handler instead of being forwarded to the previous handler.
+# That both turned recoverable faults into hard crashes and destroyed the crash
+# report for genuine ones - the backtrace only ever showed WasmTrapHandler.
+#
+# ia64's ucontext_t has no gregs[]; uc_mcontext is a struct sigcontext, so read
+# the instruction pointer from sc_ip and the registers from sc_gr[]. r4 is the
+# ia64 JIT's FramePointer (js/src/jit/ia64/Assembler-ia64.h) and r12 is the
+# ABI stack pointer. No LR_sig: ia64 keeps the return address in b0 and
+# ToRegisterState() only consults LR_sig on the architectures listed there.
+#
+# Signed-off-by: René Rebe <rene@exactco.de>
+
+--- firefox-153.0.1/js/src/wasm/WasmSignalHandlers.cpp.vanilla	2026-07-12 01:20:00.000000000 +0200
++++ firefox-153.0.1/js/src/wasm/WasmSignalHandlers.cpp	2026-08-05 11:03:10.219391357 +0200
+@@ -175,6 +175,13 @@ using namespace js::wasm;
+ #      define RFP_sig(p) ((p)->uc_mcontext.__gregs[REG_S0])
+ #      define R02_sig(p) ((p)->uc_mcontext.__gregs[REG_SP])
+ #    endif
++#    if defined(__linux__) && defined(__ia64__)
++// ia64 has no gregs[]; uc_mcontext is a struct sigcontext. sc_ip carries the
++// slot number in its low two bits. r4 is the JIT's FramePointer, r12 the sp.
++#      define IP_sig(p) ((p)->uc_mcontext.sc_ip)
++#      define R04_sig(p) ((p)->uc_mcontext.sc_gr[4])
++#      define R12_sig(p) ((p)->uc_mcontext.sc_gr[12])
++#    endif
+ #    if defined(__sun__) && defined(__sparc__)
+ #      define PC_sig(p) ((p)->uc_mcontext.gregs[REG_PC])
+ #      define FP_sig(p) ((p)->uc_mcontext.gregs[REG_FPRS])
+@@ -432,6 +439,10 @@ struct macos_aarch64_context {
+ #    define FP_sig(p) RFP_sig(p)
+ #    define SP_sig(p) R02_sig(p)
+ #    define LR_sig(p) RRA_sig(p)
++#  elif defined(__ia64__)
++#    define PC_sig(p) IP_sig(p)
++#    define FP_sig(p) R04_sig(p)
++#    define SP_sig(p) R12_sig(p)
+ #  endif
+ 
+ static void SetContextPC(CONTEXT* context, uint8_t* pc) {
+# The ia64 JIT backend still has 44 unimplemented methods that call a bare
+# MOZ_CRASH() with no message. Those all annotate the crash reason as the
+# literal string "MOZ_CRASH()", so when one is hit there is nothing in the
+# core dump or crash report that says which method was missing - and since
+# these are inline/template members they carry no symbol of their own either.
+# Give every one of them the method name, matching the style already used by
+# the messaged MOZ_CRASH()es in MacroAssembler-ia64-inl.h.
+#
+# Signed-off-by: René Rebe <rene@exactco.de>
+
+--- firefox-153.0.1/js/src/jit/ia64/MacroAssembler-ia64.h.vanilla	2026-07-12 01:20:00.000000000 +0200
++++ firefox-153.0.1/js/src/jit/ia64/MacroAssembler-ia64.h	2026-08-05 11:13:55.121363737 +0200
+@@ -305,8 +305,8 @@ class MacroAssemblerIa64 : public Assemb
+   CodeLabel codeLabel(size_t i) { return codeLabels_[i]; }
+ 
+   bool reserve(size_t size) { return !oom(); }
+-  bool appendRawCode(const uint8_t* code, size_t numBytes) { MOZ_CRASH(); }
+-  bool swapBuffer(wasm::Bytes& bytes) { MOZ_CRASH(); }
++  bool appendRawCode(const uint8_t* code, size_t numBytes) { MOZ_CRASH("ia64: appendRawCode NYI"); }
++  bool swapBuffer(wasm::Bytes& bytes) { MOZ_CRASH("ia64: swapBuffer NYI"); }
+ 
+   void assertNoGCThings() const {
+     MOZ_ASSERT(dataRelocations_.length() == 0);
+@@ -351,7 +351,7 @@ class MacroAssemblerIa64 : public Assemb
+   }
+   template <typename T>
+   void j(Condition, T) {
+-    MOZ_CRASH();
++    MOZ_CRASH("ia64: j NYI");
+   }
+ 
+   void jump(Label* label);
+@@ -415,11 +415,11 @@ class MacroAssemblerIa64 : public Assemb
+ 
+   template <typename T, typename S>
+   void moveValue(T, S) {
+-    MOZ_CRASH();
++    MOZ_CRASH("ia64: moveValue(T,S) NYI");
+   }
+   template <typename T, typename S, typename U>
+   void moveValue(T, S, U) {
+-    MOZ_CRASH();
++    MOZ_CRASH("ia64: moveValue(T,S,U) NYI");
+   }
+ 
+   void storeValue(ValueOperand val, const Address& dest);
+@@ -455,7 +455,7 @@ class MacroAssemblerIa64 : public Assemb
+   }
+   template <typename T, typename S>
+   void storePrivateValue(const T&, const S&) {
+-    MOZ_CRASH();
++    MOZ_CRASH("ia64: storePrivateValue NYI");
+   }
+ 
+   void loadValue(const Address& src, ValueOperand val);
+@@ -477,7 +477,7 @@ class MacroAssemblerIa64 : public Assemb
+   }
+   template <typename T, typename S>
+   void loadUnalignedValue(T, S) {
+-    MOZ_CRASH();
++    MOZ_CRASH("ia64: loadUnalignedValue NYI");
+   }
+ 
+   void pushValue(ValueOperand val);
+@@ -497,7 +497,7 @@ class MacroAssemblerIa64 : public Assemb
+   }
+   template <typename T, typename S>
+   void pushValue(T, S) {
+-    MOZ_CRASH();
++    MOZ_CRASH("ia64: pushValue NYI");
+   }
+   void popValue(ValueOperand val);
+   void tagValue(JSValueType type, Register payload, ValueOperand dest);
+@@ -519,7 +519,7 @@ class MacroAssemblerIa64 : public Assemb
+   void push(FloatRegister reg);
+   template <typename T>
+   void push(const T&) {
+-    MOZ_CRASH();
++    MOZ_CRASH("ia64: push NYI");
+   }
+ 
+   void pop(Register reg);
+@@ -527,16 +527,16 @@ class MacroAssemblerIa64 : public Assemb
+   void pop(FloatRegister reg);
+   template <typename T>
+   void pop(T) {
+-    MOZ_CRASH();
++    MOZ_CRASH("ia64: pop NYI");
+   }
+ 
+   template <typename T>
+   void Push(T) {
+-    MOZ_CRASH();
++    MOZ_CRASH("ia64: Push NYI");
+   }
+   template <typename T>
+   void Pop(T) {
+-    MOZ_CRASH();
++    MOZ_CRASH("ia64: Pop NYI");
+   }
+   // The returned offset is that of the movl bundle, which is what
+   // PatchDataWithValueCheck() rewrites.
+@@ -551,7 +551,7 @@ class MacroAssemblerIa64 : public Assemb
+   }
+   template <typename T>
+   CodeOffset pushWithPatch(T) {
+-    MOZ_CRASH();
++    MOZ_CRASH("ia64: pushWithPatch NYI");
+   }
+ 
+   void testNullSet(Condition, ValueOperand, Register);
+@@ -560,15 +560,15 @@ class MacroAssemblerIa64 : public Assemb
+ 
+   template <typename T, typename S>
+   void cmpPtrSet(Condition, T, S, Register) {
+-    MOZ_CRASH();
++    MOZ_CRASH("ia64: cmpPtrSet NYI");
+   }
+-  void cmp8Set(Condition, Address, Imm32, Register) { MOZ_CRASH(); }
+-  void cmp16Set(Condition, Address, Imm32, Register) { MOZ_CRASH(); }
++  void cmp8Set(Condition, Address, Imm32, Register) { MOZ_CRASH("ia64: cmp8Set NYI"); }
++  void cmp16Set(Condition, Address, Imm32, Register) { MOZ_CRASH("ia64: cmp16Set NYI"); }
+   template <typename T, typename S>
+   void cmp32Set(Condition, T, S, Register) {
+-    MOZ_CRASH();
++    MOZ_CRASH("ia64: cmp32Set NYI");
+   }
+-  void cmp64Set(Condition, Address, Imm64, Register) { MOZ_CRASH(); }
++  void cmp64Set(Condition, Address, Imm64, Register) { MOZ_CRASH("ia64: cmp64Set NYI"); }
+ 
+   // Register-to-register moves are "adds dest = 0, src"; immediates go through
+   // movl, which carries a full 64-bit value in one MLX bundle.
+@@ -583,7 +583,7 @@ class MacroAssemblerIa64 : public Assemb
+   void movePtr(ImmPtr imm, Register dest) {
+     movePtr(ImmWord(uintptr_t(imm.value)), dest);
+   }
+-  void movePtr(wasm::SymbolicAddress, Register) { MOZ_CRASH(); }
++  void movePtr(wasm::SymbolicAddress, Register) { MOZ_CRASH("ia64: movePtr NYI"); }
+   // int32 values live sign-extended in a 64-bit register, and move32's callers
+   // include storeCallInt32Result(), whose source is a C return value that the
+   // compiler is free to leave zero-extended. Canonicalise here, as the other
+@@ -604,19 +604,19 @@ class MacroAssemblerIa64 : public Assemb
+ 
+   template <typename T>
+   void movePtr(T, Register) {
+-    MOZ_CRASH();
++    MOZ_CRASH("ia64: movePtr NYI");
+   }
+   template <typename T>
+   void move32(const T&, Register) {
+-    MOZ_CRASH();
++    MOZ_CRASH("ia64: move32 NYI");
+   }
+   template <typename T>
+   void mov(T, Register) {
+-    MOZ_CRASH();
++    MOZ_CRASH("ia64: mov NYI");
+   }
+   template <typename T, typename S>
+   void movq(T, S) {
+-    MOZ_CRASH();
++    MOZ_CRASH("ia64: movq NYI");
+   }
+   // A double and a single are the same architectural register, and fmerge.s
+   // with both source operands equal copies it bit for bit.
+@@ -630,7 +630,7 @@ class MacroAssemblerIa64 : public Assemb
+   }
+   template <typename T, typename S>
+   void move64(T, S) {
+-    MOZ_CRASH();
++    MOZ_CRASH("ia64: move64 NYI");
+   }
+   CodeOffset movWithPatch(ImmWord imm, Register dest) {
+     CodeOffset offset(currentOffset());
+@@ -642,7 +642,7 @@ class MacroAssemblerIa64 : public Assemb
+   }
+   template <typename T>
+   CodeOffset movWithPatch(T, Register) {
+-    MOZ_CRASH();
++    MOZ_CRASH("ia64: movWithPatch NYI");
+   }
+ 
+   // ---- Loads and stores --------------------------------------------------
+@@ -677,7 +677,7 @@ class MacroAssemblerIa64 : public Assemb
+   }
+   template <typename T>
+   FaultingCodeOffset loadFloat16(T, FloatRegister, Register) {
+-    MOZ_CRASH();
++    MOZ_CRASH("ia64: loadFloat16 NYI");
+   }
+   FaultingCodeOffset loadFloat32(const Address& addr, FloatRegister dest);
+   FaultingCodeOffset loadFloat32(const BaseIndex& addr, FloatRegister dest);
+@@ -795,11 +795,11 @@ class MacroAssemblerIa64 : public Assemb
+   }
+   template <typename T, typename S>
+   void storeFloat32(T, S) {
+-    MOZ_CRASH();
++    MOZ_CRASH("ia64: storeFloat32 NYI");
+   }
+   template <typename T, typename S>
+   void storeDouble(T, S) {
+-    MOZ_CRASH();
++    MOZ_CRASH("ia64: storeDouble NYI");
+   }
+ 
+   FaultingCodeOffset store8(Register src, const Address& dest);
+@@ -1086,14 +1086,14 @@ class MacroAssemblerIa64 : public Assemb
+   }
+   template <typename T>
+   void convertInt32ToDouble(T, FloatRegister) {
+-    MOZ_CRASH();
++    MOZ_CRASH("ia64: convertInt32ToDouble NYI");
+   }
+ 
+-  void convertDoubleToFloat16(FloatRegister, FloatRegister) { MOZ_CRASH(); }
+-  void convertFloat16ToDouble(FloatRegister, FloatRegister) { MOZ_CRASH(); }
+-  void convertFloat32ToFloat16(FloatRegister, FloatRegister) { MOZ_CRASH(); }
+-  void convertFloat16ToFloat32(FloatRegister, FloatRegister) { MOZ_CRASH(); }
+-  void convertInt32ToFloat16(Register, FloatRegister) { MOZ_CRASH(); }
++  void convertDoubleToFloat16(FloatRegister, FloatRegister) { MOZ_CRASH("ia64: convertDoubleToFloat16 NYI"); }
++  void convertFloat16ToDouble(FloatRegister, FloatRegister) { MOZ_CRASH("ia64: convertFloat16ToDouble NYI"); }
++  void convertFloat32ToFloat16(FloatRegister, FloatRegister) { MOZ_CRASH("ia64: convertFloat32ToFloat16 NYI"); }
++  void convertFloat16ToFloat32(FloatRegister, FloatRegister) { MOZ_CRASH("ia64: convertFloat16ToFloat32 NYI"); }
++  void convertInt32ToFloat16(Register, FloatRegister) { MOZ_CRASH("ia64: convertInt32ToFloat16 NYI"); }
+ 
+   void loadConstantDouble(double d, FloatRegister dest) {
+     uint64_t bits;
+@@ -1119,11 +1119,11 @@ class MacroAssemblerIa64 : public Assemb
+   }
+   template <typename T>
+   void loadUnboxedValue(T, MIRType, AnyRegister) {
+-    MOZ_CRASH();
++    MOZ_CRASH("ia64: loadUnboxedValue NYI");
+   }
+   template <typename T>
+   void storeUnboxedValue(const ConstantOrRegister&, MIRType, T) {
+-    MOZ_CRASH();
++    MOZ_CRASH("ia64: storeUnboxedValue NYI");
+   }
+ 
+   void convertUInt32ToDouble(Register src, FloatRegister dest) {
+@@ -1139,7 +1139,7 @@ class MacroAssemblerIa64 : public Assemb
+   bool buildOOLFakeExitFrame(void* fakeReturnAddr);
+ 
+   void setPrinter(Sprinter*) {}
+-  Operand ToPayload(Operand base) { MOZ_CRASH(); }
++  Operand ToPayload(Operand base) { MOZ_CRASH("ia64: ToPayload NYI"); }
+   Address ToPayload(Address addr) { return addr; }
+ 
+   Register getStackPointer() const { return StackPointer; }
+@@ -1149,7 +1149,7 @@ class MacroAssemblerIa64 : public Assemb
+   void profilerExitFrame();
+ 
+ #ifdef JS_NUNBOX32
+-  Address ToType(Address) { MOZ_CRASH(); }
++  Address ToType(Address) { MOZ_CRASH("ia64: ToType NYI"); }
+ #endif
+ 
+  protected:
+--- firefox-153.0.1/js/src/jit/ia64/Assembler-ia64.h.vanilla	2026-07-12 01:20:00.000000000 +0200
++++ firefox-153.0.1/js/src/jit/ia64/Assembler-ia64.h	2026-08-05 11:13:55.121128063 +0200
+@@ -541,7 +541,7 @@ class Assembler : public AssemblerShared
+ 
+   void verifyHeapAccessDisassembly(uint32_t begin, uint32_t end,
+                                    const Disassembler::HeapAccess& heapAccess) {
+-    MOZ_CRASH();
++    MOZ_CRASH("ia64: verifyHeapAccessDisassembly NYI");
+   }
+ 
+   void setUnlimitedBuffer() { m_buffer.setUnlimited(); }
+@@ -549,11 +549,11 @@ class Assembler : public AssemblerShared
+ 
+ class Operand {
+  public:
+-  explicit Operand(const Address&) { MOZ_CRASH(); }
+-  explicit Operand(const Register) { MOZ_CRASH(); }
+-  explicit Operand(const FloatRegister) { MOZ_CRASH(); }
+-  explicit Operand(Register, Imm32) { MOZ_CRASH(); }
+-  explicit Operand(Register, int32_t) { MOZ_CRASH(); }
++  explicit Operand(const Address&) { MOZ_CRASH("ia64: Operand(Address) NYI"); }
++  explicit Operand(const Register) { MOZ_CRASH("ia64: Operand(Register) NYI"); }
++  explicit Operand(const FloatRegister) { MOZ_CRASH("ia64: Operand(FloatRegister) NYI"); }
++  explicit Operand(Register, Imm32) { MOZ_CRASH("ia64: Operand(Register,Imm32) NYI"); }
++  explicit Operand(Register, int32_t) { MOZ_CRASH("ia64: Operand(Register,int32_t) NYI"); }
+ };
+ 
+ // The IA-64 psABI numbers argument *slots*, not registers: slot i is out_i for
