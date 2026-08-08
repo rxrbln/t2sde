@@ -1,0 +1,4362 @@
+From: Rene Rebe <rene@exactco.de>
+Subject: [PATCH] media: add open Epiphan FX3 frame grabber driver
+
+Open driver for the Cypress FX3 based Epiphan frame grabbers - DVI2USB 3.0,
+SDI2USB 3.0 and their Edition/R3 variants - reverse engineered from the
+vendor's binary-only vga2usb 3.33.0.17 module.
+
+Provides V4L2 video capture over bulk EP 0x82, ALSA capture for the embedded
+HDMI audio over bulk EP 0x83, and a /dev/vga2usbX character device
+implementing 29 of the vendor SDK's 42 ioctls so existing SDK userspace keeps
+working. The FPGA bitstream and FX3 boot image are loaded through
+request_firmware() from /lib/firmware/epiphan rather than being embedded.
+
+Verified on DVI2USB 3.0 hardware: digital capture at eight resolutions,
+analogue VGA capture, input auto-detection, 48 kHz stereo ALSA capture, and
+mid-stream source changes reported as V4L2_EVENT_SOURCE_CHANGE.
+
+Note that vendor request 0xC2, which the SDK documents as "stop capture",
+in fact drops the device off the USB bus - its handler calls the firmware's
+CyU3PConnectState(connect=0). It is therefore never issued to end a capture;
+ceasing to issue grabs is what stops one.
+
+Signed-off-by: Rene Rebe <rene@exactco.de>
+---
+diff -urpN a/drivers/media/usb/Kconfig b/drivers/media/usb/Kconfig
+--- a/drivers/media/usb/Kconfig	2026-08-08 13:11:01.997878324 +0000
++++ b/drivers/media/usb/Kconfig	2026-08-08 13:11:17.535200698 +0000
+@@ -13,6 +13,7 @@ if MEDIA_USB_SUPPORT
+ if MEDIA_CAMERA_SUPPORT
+ 	comment "Webcam devices"
+ 
++source "drivers/media/usb/epiphan-fx3/Kconfig"
+ source "drivers/media/usb/gspca/Kconfig"
+ source "drivers/media/usb/pwc/Kconfig"
+ source "drivers/media/usb/s2255/Kconfig"
+diff -urpN a/drivers/media/usb/Makefile b/drivers/media/usb/Makefile
+--- a/drivers/media/usb/Makefile	2026-08-08 13:11:01.997894895 +0000
++++ b/drivers/media/usb/Makefile	2026-08-08 13:11:17.535222259 +0000
+@@ -25,6 +25,7 @@ obj-$(CONFIG_USB_VIDEO_CLASS) += uvc/
+ obj-$(CONFIG_VIDEO_AU0828) += au0828/
+ obj-$(CONFIG_VIDEO_CX231XX) += cx231xx/
+ obj-$(CONFIG_VIDEO_EM28XX) += em28xx/
++obj-$(CONFIG_VIDEO_EPIPHAN_FX3) += epiphan-fx3/
+ obj-$(CONFIG_VIDEO_GO7007) += go7007/
+ obj-$(CONFIG_VIDEO_HDPVR) += hdpvr/
+ obj-$(CONFIG_VIDEO_PVRUSB2) += pvrusb2/
+diff -urpN a/drivers/media/usb/epiphan-fx3/Kconfig b/drivers/media/usb/epiphan-fx3/Kconfig
+--- a/drivers/media/usb/epiphan-fx3/Kconfig	1970-01-01 00:00:00.000000000 +0000
++++ b/drivers/media/usb/epiphan-fx3/Kconfig	2026-08-08 13:11:17.526430652 +0000
+@@ -0,0 +1,17 @@
++# SPDX-License-Identifier: GPL-2.0-only
++config VIDEO_EPIPHAN_FX3
++	tristate "Epiphan DVI2USB 3.0 / SDI2USB 3.0 frame grabber"
++	depends on VIDEO_DEV && USB && SND
++	select VIDEOBUF2_VMALLOC
++	select SND_PCM
++	help
++	  This is an open driver for the Cypress FX3 based Epiphan frame
++	  grabbers: DVI2USB 3.0, SDI2USB 3.0 and their Edition/R3 variants.
++
++	  It provides V4L2 video capture, ALSA capture for the embedded HDMI
++	  audio, and a /dev/vga2usbX character device implementing the vendor
++	  SDK ioctl ABI. The FPGA bitstream and FX3 boot image are loaded from
++	  /lib/firmware/epiphan via request_firmware().
++
++	  To compile this driver as a module, choose M here: the
++	  module will be called epiphan-fx3.
+diff -urpN a/drivers/media/usb/epiphan-fx3/Makefile b/drivers/media/usb/epiphan-fx3/Makefile
+--- a/drivers/media/usb/epiphan-fx3/Makefile	1970-01-01 00:00:00.000000000 +0000
++++ b/drivers/media/usb/epiphan-fx3/Makefile	2026-08-08 13:11:17.528063480 +0000
+@@ -0,0 +1,5 @@
++# SPDX-License-Identifier: GPL-2.0
++epiphan-fx3-objs := epiphan-fx3-main.o epiphan-fx3-usb.o epiphan-fx3-stream.o \
++		    epiphan-fx3-chardev.o epiphan-fx3-audio.o
++
++obj-$(CONFIG_VIDEO_EPIPHAN_FX3) += epiphan-fx3.o
+diff -urpN a/drivers/media/usb/epiphan-fx3/epiphan-fx3-audio.c b/drivers/media/usb/epiphan-fx3/epiphan-fx3-audio.c
+--- a/drivers/media/usb/epiphan-fx3/epiphan-fx3-audio.c	1970-01-01 00:00:00.000000000 +0000
++++ b/drivers/media/usb/epiphan-fx3/epiphan-fx3-audio.c	2026-08-08 13:11:02.004534060 +0000
+@@ -0,0 +1,380 @@
++// SPDX-License-Identifier: GPL-2.0
++/*
++ * Epiphan FX3 frame grabber - ALSA PCM capture on bulk EP 0x83.
++ *
++ * EP 0x83 carries raw interleaved PCM in fixed 4096-byte transfers: no header,
++ * no padding, and any other transfer length is a protocol error.
++ *
++ * The cold-start order is the vendor's (agrabber_set_active, .text+0x13010):
++ * input select, unmute each channel, start, arm the reads, then set the format
++ * last. The 0x21-before-0x20 order only appears on the re-format-while-running
++ * path and is not a cold start.
++ *
++ * Copyright (C) 2026 Rene Rebe <rene@exactco.de>
++ */
++
++#include <linux/slab.h>
++#include <linux/unaligned.h>
++#include <sound/core.h>
++#include <sound/initval.h>
++#include <sound/pcm.h>
++
++#include "epiphan-fx3.h"
++
++#define FX3_AUDIO_PKT		4096
++#define FX3_AUDIO_URBS		2
++
++/* Constraints from the stock driver's snd_pcm_hardware (ops at .data+0x20). */
++static const struct snd_pcm_hardware fx3_pcm_hw = {
++	.info			= SNDRV_PCM_INFO_INTERLEAVED |
++				  SNDRV_PCM_INFO_BLOCK_TRANSFER,
++	.formats		= SNDRV_PCM_FMTBIT_S16_LE,
++	.rates			= SNDRV_PCM_RATE_48000,
++	.rate_min		= 48000,
++	.rate_max		= 48000,
++	.channels_min		= 2,
++	.channels_max		= 2,
++	.buffer_bytes_max	= 2 * 1024 * 1024,
++	.period_bytes_min	= 8192,
++	.period_bytes_max	= 1024 * 1024,
++	.periods_min		= 2,
++	.periods_max		= 256,
++};
++
++static void fx3_audio_free_urbs(struct fx3_dev *dev)
++{
++	unsigned int i;
++
++	for (i = 0; i < FX3_AUDIO_URBS; i++) {
++		struct fx3_urb *u = &dev->aurbs[i];
++
++		if (u->urb) {
++			usb_free_coherent(dev->udev, FX3_AUDIO_PKT, u->buf,
++					  u->urb->transfer_dma);
++			usb_free_urb(u->urb);
++			u->urb = NULL;
++		}
++	}
++}
++
++static void fx3_audio_complete(struct urb *urb)
++{
++	struct fx3_urb *u = urb->context;
++	struct fx3_dev *dev = u->dev;
++	struct snd_pcm_substream *ss = dev->pcm_ss;
++	struct snd_pcm_runtime *rt;
++	unsigned int stride, wpos, period;
++	unsigned long flags;
++
++	if (dev->audio_dbg < 6) {
++		dev->audio_dbg++;
++		dev_dbg(&dev->intf->dev, "audio urb: status=%d actual=%d\n",
++			urb->status, urb->actual_length);
++	}
++
++	if (urb->status || !ss || !READ_ONCE(dev->audio_running))
++		return;
++
++	/*
++	 * Anything but a whole packet is a protocol error. Do not resubmit: a
++	 * device that keeps completing short would turn this into an interrupt
++	 * storm.
++	 */
++	if (urb->actual_length != FX3_AUDIO_PKT)
++		return;
++
++	rt = ss->runtime;
++	stride = frames_to_bytes(rt, 1);
++	if (!stride)
++		return;
++
++	if (!READ_ONCE(dev->audio_capturing))
++		goto resubmit;
++
++	spin_lock_irqsave(&dev->audio_lock, flags);
++	wpos = dev->audio_pos;
++	if (wpos + FX3_AUDIO_PKT <= rt->dma_bytes) {
++		memcpy(rt->dma_area + wpos, u->buf, FX3_AUDIO_PKT);
++	} else {
++		unsigned int first = rt->dma_bytes - wpos;
++
++		memcpy(rt->dma_area + wpos, u->buf, first);
++		memcpy(rt->dma_area, u->buf + first, FX3_AUDIO_PKT - first);
++	}
++	dev->audio_pos = (wpos + FX3_AUDIO_PKT) % rt->dma_bytes;
++	dev->audio_filled += FX3_AUDIO_PKT;
++	period = frames_to_bytes(rt, rt->period_size);
++	if (dev->audio_filled >= period) {
++		dev->audio_filled -= period;
++		spin_unlock_irqrestore(&dev->audio_lock, flags);
++		snd_pcm_period_elapsed(ss);
++	} else {
++		spin_unlock_irqrestore(&dev->audio_lock, flags);
++	}
++
++resubmit:
++	if (READ_ONCE(dev->audio_running))
++		usb_submit_urb(urb, GFP_ATOMIC);
++}
++
++static int fx3_audio_alloc_urbs(struct fx3_dev *dev)
++{
++	unsigned int i;
++
++	for (i = 0; i < FX3_AUDIO_URBS; i++) {
++		struct fx3_urb *u = &dev->aurbs[i];
++		dma_addr_t dma;
++
++		u->urb = usb_alloc_urb(0, GFP_KERNEL);
++		if (!u->urb)
++			goto err;
++
++		u->buf = usb_alloc_coherent(dev->udev, FX3_AUDIO_PKT,
++					    GFP_KERNEL, &dma);
++		if (!u->buf) {
++			usb_free_urb(u->urb);
++			u->urb = NULL;
++			goto err;
++		}
++
++		u->dev = dev;
++		u->len = FX3_AUDIO_PKT;
++		usb_fill_bulk_urb(u->urb, dev->udev,
++				  usb_rcvbulkpipe(dev->udev,
++						  dev->ep_audio &
++						  USB_ENDPOINT_NUMBER_MASK),
++				  u->buf, FX3_AUDIO_PKT, fx3_audio_complete, u);
++		u->urb->transfer_dma = dma;
++		u->urb->transfer_flags = URB_NO_TRANSFER_DMA_MAP |
++					 URB_SHORT_NOT_OK;
++	}
++	return 0;
++err:
++	fx3_audio_free_urbs(dev);
++	return -ENOMEM;
++}
++
++/* 6 bytes on the wire: {u8 channels, u8 format, u32 rate_le}. */
++static int fx3_audio_set_format(struct fx3_dev *dev, struct snd_pcm_runtime *rt)
++{
++	u8 wire[6];
++
++	wire[0] = rt->channels;
++	wire[1] = SNDRV_PCM_FORMAT_S16_LE + 1;
++	put_unaligned_le32(rt->rate, wire + 2);
++
++	return fx3_ctrl(dev, USB_DIR_OUT, V2U_REQ_ACODEC_SET_FMT, 0, 0,
++			wire, sizeof(wire), FX3_CTRL_TIMEOUT);
++}
++
++static int fx3_pcm_open(struct snd_pcm_substream *ss)
++{
++	struct fx3_dev *dev = snd_pcm_substream_chip(ss);
++	struct snd_pcm_runtime *rt = ss->runtime;
++	int ret;
++
++	rt->hw = fx3_pcm_hw;
++	dev->pcm_ss = ss;
++
++	ret = snd_pcm_hw_constraint_step(rt, 0,
++					 SNDRV_PCM_HW_PARAM_PERIOD_BYTES, 8192);
++	if (ret < 0)
++		return ret;
++	return snd_pcm_hw_constraint_step(rt, 0,
++					  SNDRV_PCM_HW_PARAM_BUFFER_BYTES, 8192);
++}
++
++static int fx3_pcm_close(struct snd_pcm_substream *ss)
++{
++	struct fx3_dev *dev = snd_pcm_substream_chip(ss);
++
++	dev->pcm_ss = NULL;
++	return 0;
++}
++
++/*
++ * Everything that can sleep happens here: snd_pcm_ops->trigger runs in atomic
++ * context under the PCM stream lock, so USB control transfers and GFP_KERNEL
++ * allocations must not be issued from there.
++ */
++static int fx3_pcm_prepare(struct snd_pcm_substream *ss)
++{
++	struct fx3_dev *dev = snd_pcm_substream_chip(ss);
++	__le32 input = cpu_to_le32(0);
++	u8 zero[6] = { 0 };
++	unsigned int i;
++	int ret;
++
++	dev->audio_pos = 0;
++	dev->audio_filled = 0;
++	dev->audio_dbg = 0;
++
++	if (!dev->aurbs[0].urb) {
++		ret = fx3_audio_alloc_urbs(dev);
++		if (ret)
++			return ret;
++	}
++
++	ret = fx3_ctrl(dev, USB_DIR_OUT, V2U_REQ_ACODEC_INPUT, 0, 0,
++		       &input, sizeof(input), FX3_CTRL_TIMEOUT);
++	if (ret < 0)
++		dev_dbg(&dev->intf->dev, "audio input select: %d\n", ret);
++
++	for (i = 0; i < FX3_AUDIO_CHANNELS; i++) {
++		__le32 mute[2] = { cpu_to_le32(i), cpu_to_le32(0) };
++
++		fx3_ctrl(dev, USB_DIR_OUT, V2U_REQ_ACODEC_MUTE, 0, 0,
++			 mute, sizeof(mute), FX3_CTRL_TIMEOUT);
++	}
++
++	/*
++	 * Setting the format is edge-triggered: the firmware memcmps the new
++	 * descriptor against its cached one and, if they match, returns success
++	 * having done nothing at all. Since it is only this handler that arms
++	 * the codec, re-sending the format the device already holds leaves
++	 * audio permanently stopped while every request still ACKs.
++	 *
++	 * Push an all-zero descriptor first to clear the cache, so the real one
++	 * always takes effect.
++	 */
++	fx3_ctrl(dev, USB_DIR_OUT, V2U_REQ_ACODEC_SET_FMT, 0, 0,
++		 zero, sizeof(zero), FX3_CTRL_TIMEOUT);
++
++	ret = fx3_audio_set_format(dev, ss->runtime);
++	if (ret < 0)
++		goto err;
++
++	/*
++	 * Start ignores its wValue: it stops the codec, resets the EP 0x83 DMA
++	 * channel and only restarts if the format above armed it. Because it
++	 * resets the endpoint, the reads must be armed after it, not before.
++	 */
++	ret = fx3_ctrl(dev, USB_DIR_OUT, V2U_REQ_AUDIO, 1, 0, NULL, 0,
++		       FX3_CTRL_TIMEOUT);
++	if (ret < 0)
++		goto err;
++
++	WRITE_ONCE(dev->audio_running, true);
++	for (i = 0; i < FX3_AUDIO_URBS; i++) {
++		ret = usb_submit_urb(dev->aurbs[i].urb, GFP_KERNEL);
++		if (ret) {
++			WRITE_ONCE(dev->audio_running, false);
++			goto err;
++		}
++	}
++
++	return 0;
++err:
++	WRITE_ONCE(dev->audio_running, false);
++	for (i = 0; i < FX3_AUDIO_URBS; i++)
++		if (dev->aurbs[i].urb)
++			usb_kill_urb(dev->aurbs[i].urb);
++	fx3_ctrl(dev, USB_DIR_OUT, V2U_REQ_AUDIO, 0, 0, NULL, 0,
++		 FX3_CTRL_TIMEOUT);
++	fx3_audio_free_urbs(dev);
++	return ret;
++}
++
++static int fx3_pcm_hw_free(struct snd_pcm_substream *ss)
++{
++	struct fx3_dev *dev = snd_pcm_substream_chip(ss);
++	unsigned int i;
++
++	WRITE_ONCE(dev->audio_capturing, false);
++	WRITE_ONCE(dev->audio_running, false);
++	for (i = 0; i < FX3_AUDIO_URBS; i++)
++		if (dev->aurbs[i].urb)
++			usb_kill_urb(dev->aurbs[i].urb);
++
++	fx3_ctrl(dev, USB_DIR_OUT, V2U_REQ_AUDIO, 0, 0, NULL, 0,
++		 FX3_CTRL_TIMEOUT);
++	fx3_audio_free_urbs(dev);
++	return 0;
++}
++
++/* Atomic context: no sleeping, no allocation, no control transfers. */
++static int fx3_pcm_trigger(struct snd_pcm_substream *ss, int cmd)
++{
++	struct fx3_dev *dev = snd_pcm_substream_chip(ss);
++
++	switch (cmd) {
++	case SNDRV_PCM_TRIGGER_START:
++		WRITE_ONCE(dev->audio_capturing, true);
++		return 0;
++	case SNDRV_PCM_TRIGGER_STOP:
++		WRITE_ONCE(dev->audio_capturing, false);
++		return 0;
++	default:
++		return -EINVAL;
++	}
++}
++
++static snd_pcm_uframes_t fx3_pcm_pointer(struct snd_pcm_substream *ss)
++{
++	struct fx3_dev *dev = snd_pcm_substream_chip(ss);
++	unsigned long flags;
++	unsigned int pos;
++
++	spin_lock_irqsave(&dev->audio_lock, flags);
++	pos = dev->audio_pos;
++	spin_unlock_irqrestore(&dev->audio_lock, flags);
++
++	return bytes_to_frames(ss->runtime, pos);
++}
++
++static const struct snd_pcm_ops fx3_pcm_ops = {
++	.open		= fx3_pcm_open,
++	.close		= fx3_pcm_close,
++	.prepare	= fx3_pcm_prepare,
++	.hw_free	= fx3_pcm_hw_free,
++	.trigger	= fx3_pcm_trigger,
++	.pointer	= fx3_pcm_pointer,
++};
++
++int fx3_audio_register(struct fx3_dev *dev)
++{
++	struct snd_card *card;
++	struct snd_pcm *pcm;
++	int ret;
++
++	if (!dev->ep_audio)
++		return 0;	/* board has no audio pipe */
++
++	ret = snd_card_new(&dev->intf->dev, SNDRV_DEFAULT_IDX1, "epiphan",
++			   THIS_MODULE, 0, &card);
++	if (ret < 0)
++		return ret;
++
++	strscpy(card->driver, "epiphan-fx3", sizeof(card->driver));
++	strscpy(card->shortname, dev->board->name, sizeof(card->shortname));
++	strscpy(card->longname, dev->board->name, sizeof(card->longname));
++
++	ret = snd_pcm_new(card, "Epiphan capture", 0, 0, 1, &pcm);
++	if (ret < 0)
++		goto err;
++
++	pcm->private_data = dev;
++	strscpy(pcm->name, dev->board->name, sizeof(pcm->name));
++	snd_pcm_set_ops(pcm, SNDRV_PCM_STREAM_CAPTURE, &fx3_pcm_ops);
++	snd_pcm_set_managed_buffer_all(pcm, SNDRV_DMA_TYPE_VMALLOC, NULL,
++				       256 * 1024, 2 * 1024 * 1024);
++
++	ret = snd_card_register(card);
++	if (ret < 0)
++		goto err;
++
++	dev->card = card;
++	return 0;
++err:
++	snd_card_free(card);
++	return ret;
++}
++
++void fx3_audio_unregister(struct fx3_dev *dev)
++{
++	if (dev->card) {
++		WRITE_ONCE(dev->audio_running, false);
++		snd_card_free(dev->card);
++		dev->card = NULL;
++	}
++}
+diff -urpN a/drivers/media/usb/epiphan-fx3/epiphan-fx3-chardev.c b/drivers/media/usb/epiphan-fx3/epiphan-fx3-chardev.c
+--- a/drivers/media/usb/epiphan-fx3/epiphan-fx3-chardev.c	1970-01-01 00:00:00.000000000 +0000
++++ b/drivers/media/usb/epiphan-fx3/epiphan-fx3-chardev.c	2026-08-08 13:11:02.003521860 +0000
+@@ -0,0 +1,577 @@
++// SPDX-License-Identifier: GPL-2.0
++/*
++ * Epiphan FX3 frame grabber - /dev/vga2usbN, the proprietary SDK interface.
++ *
++ * The ioctl numbers and structures are those of Epiphan's own driver, recovered
++ * in v2u_ioctl.h so the stock userspace SDK keeps working. Only the commands
++ * this driver can honour are implemented; everything else returns -ENOTTY
++ * rather than a plausible-looking lie.
++ *
++ * Note the stock driver has no 32-bit compat layer at all: it duplicates the
++ * ioctl number instead, so a 64-bit caller may legally issue the _32 variants.
++ * Both forms are therefore accepted unconditionally.
++ *
++ * Copyright (C) 2026 Rene Rebe <rene@exactco.de>
++ */
++
++#include <linux/fs.h>
++#include <linux/sizes.h>
++#include <linux/vmalloc.h>
++#include <linux/miscdevice.h>
++#include <linux/slab.h>
++#include <linux/uaccess.h>
++
++#include "epiphan-fx3.h"
++#include "v2u_ioctl.h"
++
++static int fx3_ioc_i2c(struct fx3_dev *dev, void __user *arg)
++{
++	struct v2u_i2c_xfer x;
++	int ret;
++
++	if (copy_from_user(&x, arg, sizeof(x)))
++		return -EFAULT;
++	if (x.len > sizeof(x.data))
++		return -EINVAL;
++
++	ret = fx3_i2c_xfer(dev, x.addr, x.reg, x.data, x.len, x.read != 0);
++	if (ret)
++		return ret;
++
++	return copy_to_user(arg, &x, sizeof(x)) ? -EFAULT : 0;
++}
++
++static int fx3_ioc_dev_mem(struct fx3_dev *dev, void __user *arg)
++{
++	struct v2u_dev_mem m;
++	void *buf;
++	int ret;
++
++	if (copy_from_user(&m, arg, sizeof(m)))
++		return -EFAULT;
++	if (!m.len || m.len > SZ_64K)
++		return -EINVAL;
++
++	/* zeroed: never hand back kernel memory the transfer did not fill */
++	buf = kzalloc(m.len, GFP_KERNEL);
++	if (!buf)
++		return -ENOMEM;
++
++	if (m.dir) {
++		if (copy_from_user(buf, m.buf, m.len)) {
++			ret = -EFAULT;
++			goto out;
++		}
++	}
++
++	/*
++	 * The address is field b (+0x04), not a. The vendor handler at
++	 * .text+0x95d passes it as arg3 and usb_io_dev_mem_access uses arg3
++	 * (.text+0x4ae9, mov %edx,%r15d); field a goes in as arg2 and is never
++	 * read.
++	 */
++	ret = fx3_mem_xfer(dev, m.b, buf, m.len, !m.dir);
++	if (!ret && !m.dir && copy_to_user(m.buf, buf, m.len))
++		ret = -EFAULT;
++out:
++	kfree(buf);
++	return ret;
++}
++
++/*
++ * The stock driver fills board+0x10 from usb_string(iSerialNumber) in probe and
++ * hands that back here, so the reported serial is the USB string descriptor --
++ * not the signed EEPROM serial and not the FPGA unique ID, which are two
++ * further, different identifiers.
++ */
++static int fx3_ioc_get_sn(struct fx3_dev *dev, void __user *arg)
++{
++	char sn[32] = "";
++
++	usb_string(dev->udev, dev->udev->descriptor.iSerialNumber, sn,
++		   sizeof(sn));
++
++	return copy_to_user(arg, sn, sizeof(sn)) ? -EFAULT : 0;
++}
++
++static int fx3_ioc_eeprom(struct fx3_dev *dev, void __user *arg)
++{
++	struct v2u_eeprom_access e;
++	int ret;
++
++	if (copy_from_user(&e, arg, sizeof(e)))
++		return -EFAULT;
++	if (!e.len || e.len > sizeof(e.data))
++		return -EINVAL;
++
++	/*
++	 * op 0 = read, 1 = write. The insert (2) and delete (3) ops shuffle the
++	 * whole tail of the EEPROM and are not implemented: getting them wrong
++	 * corrupts the signed identity block irrecoverably.
++	 */
++	switch (e.op) {
++	case 0:
++		ret = fx3_eeprom_xfer(dev, e.offset, e.data, e.len, true);
++		break;
++	case 1:
++		ret = fx3_eeprom_xfer(dev, e.offset, e.data, e.len, false);
++		break;
++	case 2:
++	case 3:
++		return -EOPNOTSUPP;
++	default:
++		return -EINVAL;
++	}
++	if (ret)
++		return ret;
++
++	return copy_to_user(arg, &e, sizeof(e)) ? -EFAULT : 0;
++}
++
++/*
++ * nr 0x10 REGBLOCK_WRITE: vendor request 0xBB, wValue = val, wIndex = 0.
++ * The vendor treats len == 0 as a silent no-op (.text+0x194f2).
++ */
++static int fx3_ioc_regblock(struct fx3_dev *dev, void __user *arg)
++{
++	struct v2u_regblock rb;
++	int ret;
++
++	if (copy_from_user(&rb, arg, sizeof(rb)))
++		return -EFAULT;
++	if ((u16)rb.len > sizeof(rb.data))
++		return -EINVAL;
++	if (!rb.len)
++		return 0;
++
++	ret = fx3_ctrl(dev, USB_DIR_OUT, V2U_REQ_REGBLOCK, rb.val, 0,
++		       rb.data, rb.len, FX3_CTRL_TIMEOUT);
++	return ret < 0 ? ret : 0;
++}
++
++/* nr 0x0c / 0x0d: raw byte access to the identity EEPROM. */
++static int fx3_ioc_serial(struct fx3_dev *dev, void __user *arg, bool read)
++{
++	struct v2u_serial_xfer x;
++	void *p;
++	int ret;
++
++	if (copy_from_user(&x, arg, sizeof(x)))
++		return -EFAULT;
++	if (x.len <= 0)
++		return -EINVAL;
++
++	p = kmalloc(x.len, GFP_KERNEL);
++	if (!p)
++		return -ENOMEM;
++
++	if (read) {
++		/* The vendor pre-fills with 0xFF so a short read is visible. */
++		memset(p, 0xff, x.len);
++		ret = fx3_eeprom_xfer(dev, x.offset, p, x.len, true);
++		if (!ret && copy_to_user(x.buf, p, x.len))
++			ret = -EFAULT;
++	} else if (copy_from_user(p, x.buf, x.len)) {
++		ret = -EFAULT;
++	} else {
++		ret = fx3_eeprom_xfer(dev, x.offset, p, x.len, false);
++	}
++
++	kfree(p);
++	return ret;
++}
++
++/*
++ * nr 0x24 GET_PROTO_INFO: the capture-protocol class block. Both protocols
++ * this driver implements report the same values (.rodata+0x1a3e00 for FAST,
++ * +0x1a3c80 for DVI2USB).
++ */
++static int fx3_ioc_proto_info(struct fx3_dev *dev, void __user *arg)
++{
++	struct v2u_proto_info pi = { .val0 = 0, .val1 = 1, .val2 = 0x00,
++				     .val3 = 0xff };
++
++	return copy_to_user(arg, &pi, sizeof(pi)) ? -EFAULT : 0;
++}
++
++/* nr 0x26..0x29: list A is the video grabbers, list B the audio grabbers. */
++static int fx3_ioc_list_name(struct fx3_dev *dev, void __user *arg, bool audio)
++{
++	char name[32] = "";
++	u32 index;
++
++	if (copy_from_user(&index, arg, sizeof(index)))
++		return -EFAULT;
++	if (index)
++		return -EINVAL;
++	if (audio && !dev->ep_audio)
++		return -EINVAL;
++
++	scnprintf(name, sizeof(name), "%s%s", dev->board->name,
++		  audio ? " audio" : "");
++
++	return copy_to_user(arg, name, sizeof(name)) ? -EFAULT : 0;
++}
++
++static int fx3_ioc_list_count(struct fx3_dev *dev, void __user *arg, bool audio)
++{
++	u32 n = audio ? (dev->ep_audio ? 1 : 0) : 1;
++
++	return copy_to_user(arg, &n, sizeof(n)) ? -EFAULT : 0;
++}
++
++static int fx3_ioc_board_flags(struct fx3_dev *dev, void __user *arg)
++{
++	u32 flags = 0;
++
++	if (!dev->fpga_loaded)
++		flags |= V2U_BOARD_FLAG_EEPROM_INVALID;
++
++	return copy_to_user(arg, &flags, sizeof(flags)) ? -EFAULT : 0;
++}
++
++/* nr 0x0a GRABFRAME: the older, smaller form of the same operation. */
++static int fx3_ioc_grabframe(struct fx3_dev *dev, void __user *arg)
++{
++	struct v2u_grabframe gf;
++	const struct fx3_fmt *fmt;
++	void *buf;
++	int ret;
++
++	if (copy_from_user(&gf, arg, sizeof(gf)))
++		return -EFAULT;
++	if (!gf.pixbuflen || gf.pixbuflen > SZ_64M)
++		return -EINVAL;
++
++	fmt = fx3_fmt_by_v2u(dev, gf.palette & 0xffff);
++	if (!fmt)
++		return -EINVAL;
++	dev->fmt = fmt;
++
++	buf = vzalloc(gf.pixbuflen);
++	if (!buf)
++		return -ENOMEM;
++
++	ret = fx3_capture_single(dev, buf, gf.pixbuflen);
++	if (ret >= 0 && copy_to_user(gf.pixbuf, buf, ret)) {
++		vfree(buf);
++		return -EFAULT;
++	}
++	vfree(buf);
++	if (ret < 0)
++		return ret;
++
++	gf.width = dev->mode.width;
++	gf.height = dev->mode.height;
++	return copy_to_user(arg, &gf, sizeof(gf)) ? -EFAULT : 0;
++}
++
++/* nr 0x14 GRABFRAME2: one-shot capture straight into the caller's buffer. */
++static int fx3_ioc_grabframe2(struct fx3_dev *dev, void __user *arg)
++{
++	struct v2u_grabframe2 gf;
++	const struct fx3_fmt *fmt;
++	void *buf;
++	int ret;
++
++	if (copy_from_user(&gf, arg, sizeof(gf)))
++		return -EFAULT;
++	if (!gf.pixbuflen || gf.pixbuflen > SZ_64M)
++		return -EINVAL;
++
++	fmt = fx3_fmt_by_v2u(dev, gf.palette & 0xffff);
++	if (!fmt)
++		return -EINVAL;
++	dev->fmt = fmt;
++
++	buf = vzalloc(gf.pixbuflen);
++	if (!buf)
++		return -ENOMEM;
++
++	ret = fx3_capture_single(dev, buf, gf.pixbuflen);
++	if (ret < 0) {
++		gf.status = (ret == -ENOMEDIUM) ? 1 : 2;
++		gf.retlen = 0;
++	} else {
++		gf.status = 0;
++		gf.retlen = ret;
++		if (copy_to_user(gf.pixbuf, buf, ret)) {
++			vfree(buf);
++			return -EFAULT;
++		}
++	}
++
++	gf.mode_width = dev->mode.width;
++	gf.mode_height = dev->mode.height;
++	gf.mode_vfreq = dev->mode.vfreq * 100;
++
++	vfree(buf);
++	return copy_to_user(arg, &gf, sizeof(gf)) ? -EFAULT : 0;
++}
++
++/*
++ * nr 0x12 GET_PROPERTY. Board-scope keys only; the grabber-scope keys live on
++ * a separate fd in the vendor design and are not exposed here.
++ * Keys and their sources are from PROTOCOL-ioctl-impl.md §3.
++ */
++static int fx3_ioc_get_property(struct fx3_dev *dev, void __user *arg)
++{
++	struct v2u_property *p;
++	int ret = 0;
++
++	p = kzalloc(sizeof(*p), GFP_KERNEL);
++	if (!p)
++		return -ENOMEM;
++
++	if (copy_from_user(&p->key, arg, sizeof(p->key))) {
++		ret = -EFAULT;
++		goto out;
++	}
++
++	switch (p->key) {
++	case V2U_PROP_PRODUCT_ID:		/* 0x00 */
++		p->value.u16 = dev->product;
++		break;
++	case V2U_PROP_PRODUCT_TYPE:		/* 0x01 */
++		p->value.u32 = fx3_product_type(dev->product);
++		break;
++	case V2U_PROP_PRODUCT_NAME:		/* 0x12 */
++		strscpy(p->value.str, dev->board->name, sizeof(p->value.str));
++		break;
++	case V2U_PROP_SERIAL_STR:		/* 0x15 */
++		usb_string(dev->udev, dev->udev->descriptor.iSerialNumber,
++			   p->value.str, sizeof(p->value.str));
++		break;
++	case V2U_PROP_DEVICE_NAME:		/* 0x28 */
++		scnprintf(p->value.str, sizeof(p->value.str), "epiphanboard%u",
++			  dev->index);
++		break;
++	case V2U_PROP_USB_GEN:			/* 0x25 */
++		p->value.u32 = dev->udev->speed >= USB_SPEED_SUPER ? 3 :
++			       dev->udev->speed >= USB_SPEED_HIGH  ? 2 : 1;
++		break;
++	case V2U_PROP_SERIAL_MEM:		/* 0x14: serial memory at 0x24 */
++		ret = fx3_eeprom_xfer(dev, 0x24, p->value.blob, 8, true);
++		break;
++	case V2U_PROP_BYTE_REG:			/* 0x2e: vendor request 0xC7 */
++		ret = fx3_ctrl(dev, USB_DIR_IN, V2U_REQ_BYTE, 0, 0,
++			       p->value.blob, 1, FX3_CTRL_TIMEOUT);
++		ret = ret == 1 ? 0 : (ret < 0 ? ret : -EIO);
++		break;
++	case V2U_PROP_UNIQUE_ID:		/* 0x2714: FPGA register 0xCF */
++		ret = fx3_read_unique_id(dev, p->value.blob, 0);
++		break;
++	default:
++		ret = -EINVAL;
++		break;
++	}
++
++	if (!ret && copy_to_user(arg, p, sizeof(*p)))
++		ret = -EFAULT;
++out:
++	kfree(p);
++	return ret;
++}
++
++/*
++ * nr 0x13 SET_PROPERTY. Every board-scope key this driver can serve is
++ * read-only, so anything reaching here is rejected rather than silently
++ * ignored.
++ */
++static int fx3_ioc_set_property(struct fx3_dev *dev, void __user *arg)
++{
++	u32 key;
++
++	if (copy_from_user(&key, arg, sizeof(key)))
++		return -EFAULT;
++	return -EINVAL;
++}
++
++static long fx3_chardev_ioctl(struct file *file, unsigned int cmd,
++			      unsigned long a)
++{
++	struct fx3_dev *dev = file->private_data;
++	void __user *arg = (void __user *)a;
++	long ret;
++
++	if (mutex_lock_interruptible(&dev->lock))
++		return -ERESTARTSYS;
++
++	switch (cmd) {
++	case V2U_IOC_RECONNECT:
++		ret = fx3_reconnect(dev);
++		break;
++	case V2U_IOC_I2C:
++		ret = fx3_ioc_i2c(dev, arg);
++		break;
++	case V2U_IOC_DEV_MEM_ACCESS:
++		ret = fx3_ioc_dev_mem(dev, arg);
++		break;
++	case V2U_IOC_GET_SN:
++		ret = fx3_ioc_get_sn(dev, arg);
++		break;
++	case V2U_IOC_EEPROM_ACCESS:
++		ret = fx3_ioc_eeprom(dev, arg);
++		break;
++	case V2U_IOC_DETECT_VIDEOMODE: {
++		struct v2u_videomode vm = {};
++
++		if (!fx3_detect_mode(dev, &dev->mode)) {
++			vm.width = dev->mode.width;
++			vm.height = dev->mode.height;
++			vm.vfreq = dev->mode.vfreq * 100;  /* 0.1 Hz -> mHz */
++		}
++		ret = copy_to_user(arg, &vm, sizeof(vm)) ? -EFAULT : 0;
++		break;
++	}
++	case V2U_IOC_GET_GRABPARAMS:
++		ret = copy_to_user(arg, &dev->gp, sizeof(dev->gp)) ? -EFAULT : 0;
++		break;
++	case V2U_IOC_SET_GRABPARAMS:
++		ret = copy_from_user(&dev->gp, arg, sizeof(dev->gp)) ? -EFAULT : 0;
++		break;
++	case V2U_IOC_GET_ADCPARAMS:
++		/* Returns the driver's cached block, never the device's. */
++		ret = copy_to_user(arg, &dev->adc, sizeof(dev->adc)) ? -EFAULT : 0;
++		break;
++	case V2U_IOC_SET_ADCPARAMS: {
++		struct v2u_adcparams gp;
++
++		if (copy_from_user(&gp, arg, sizeof(gp))) {
++			ret = -EFAULT;
++			break;
++		}
++		/*
++		 * Like the vendor, do not fold this into the cache: a SET
++		 * followed by a GET returns driver state, not what was written.
++		 * The device is reprogrammed, the cached copy is not.
++		 */
++		ret = fx3_push_adcparams(dev, &gp);
++		break;
++	}
++	case V2U_IOC_GET_ADC_STATE: {
++		struct v2u_rgb_calib c;
++
++		fx3_read_rgb_calib(dev, &c);
++		ret = copy_to_user(arg, &c, sizeof(c)) ? -EFAULT : 0;
++		break;
++	}
++	case V2U_IOC_WRITE_RGB_CALIB: {
++		struct v2u_rgb_calib c;
++
++		if (copy_from_user(&c, arg, sizeof(c))) {
++			ret = -EFAULT;
++			break;
++		}
++		ret = fx3_write_rgb_calib(dev, &c);
++		/* The calibration only takes effect after a re-detect. */
++		if (!ret)
++			dev->have_signal = false;
++		break;
++	}
++	case V2U_IOC_GET_PROPERTY:
++		ret = fx3_ioc_get_property(dev, arg);
++		break;
++	case V2U_IOC_SET_PROPERTY:
++		ret = fx3_ioc_set_property(dev, arg);
++		break;
++	case V2U_IOC_REGBLOCK_WRITE:
++		ret = fx3_ioc_regblock(dev, arg);
++		break;
++	case V2U_IOC_SERIAL_READ:
++	case V2U_IOC_SERIAL_READ_32:
++		ret = fx3_ioc_serial(dev, arg, true);
++		break;
++	case V2U_IOC_SERIAL_WRITE:
++	case V2U_IOC_SERIAL_WRITE_32:
++		ret = fx3_ioc_serial(dev, arg, false);
++		break;
++	case V2U_IOC_GET_PROTO_INFO:
++		ret = fx3_ioc_proto_info(dev, arg);
++		break;
++	case V2U_IOC_GET_LISTA_NAME:
++		ret = fx3_ioc_list_name(dev, arg, false);
++		break;
++	case V2U_IOC_GET_LISTB_NAME:
++		ret = fx3_ioc_list_name(dev, arg, true);
++		break;
++	case V2U_IOC_GET_LISTA_COUNT:
++		ret = fx3_ioc_list_count(dev, arg, false);
++		break;
++	case V2U_IOC_GET_LISTB_COUNT:
++		ret = fx3_ioc_list_count(dev, arg, true);
++		break;
++	case V2U_IOC_GET_BOARD_FLAGS:
++		ret = fx3_ioc_board_flags(dev, arg);
++		break;
++	case V2U_IOC_GRABFRAME:
++	case V2U_IOC_GRABFRAME_32:
++		ret = fx3_ioc_grabframe(dev, arg);
++		break;
++	case V2U_IOC_GRABFRAME2:
++	case V2U_IOC_GRABFRAME2_32:
++		ret = fx3_ioc_grabframe2(dev, arg);
++		break;
++	/*
++	 * The vendor's upgrade commands are dead code: their backing fields
++	 * board->[0xd0]/[0xd8] are never populated in a zero-allocated struct,
++	 * so both always fail. Match that rather than inventing an upgrade path.
++	 */
++	case VGA2USB_IOC_UPGRADE_START:
++	case VGA2USB_IOC_UPGRADE_PROGRESS:
++		ret = -EINVAL;
++		break;
++	default:
++		ret = -ENOTTY;
++		break;
++	}
++
++	mutex_unlock(&dev->lock);
++	return ret;
++}
++
++static int fx3_chardev_open(struct inode *inode, struct file *file)
++{
++	struct fx3_dev *dev = container_of(file->private_data,
++					   struct fx3_dev, miscdev);
++
++	file->private_data = dev;
++	return 0;
++}
++
++static const struct file_operations fx3_chardev_fops = {
++	.owner		= THIS_MODULE,
++	.open		= fx3_chardev_open,
++	.unlocked_ioctl	= fx3_chardev_ioctl,
++	.compat_ioctl	= fx3_chardev_ioctl,
++};
++
++int fx3_chardev_register(struct fx3_dev *dev)
++{
++	int ret;
++
++	dev->miscname = kasprintf(GFP_KERNEL, "vga2usb%u", dev->index);
++	if (!dev->miscname)
++		return -ENOMEM;
++
++	dev->miscdev.minor = MISC_DYNAMIC_MINOR;
++	dev->miscdev.name = dev->miscname;
++	dev->miscdev.fops = &fx3_chardev_fops;
++	dev->miscdev.parent = &dev->intf->dev;
++
++	ret = misc_register(&dev->miscdev);
++	if (ret) {
++		kfree(dev->miscname);
++		dev->miscname = NULL;
++	}
++	return ret;
++}
++
++void fx3_chardev_unregister(struct fx3_dev *dev)
++{
++	if (dev->miscname) {
++		misc_deregister(&dev->miscdev);
++		kfree(dev->miscname);
++		dev->miscname = NULL;
++	}
++}
+diff -urpN a/drivers/media/usb/epiphan-fx3/epiphan-fx3-main.c b/drivers/media/usb/epiphan-fx3/epiphan-fx3-main.c
+--- a/drivers/media/usb/epiphan-fx3/epiphan-fx3-main.c	1970-01-01 00:00:00.000000000 +0000
++++ b/drivers/media/usb/epiphan-fx3/epiphan-fx3-main.c	2026-08-08 13:11:02.000569799 +0000
+@@ -0,0 +1,613 @@
++// SPDX-License-Identifier: GPL-2.0
++/*
++ * Epiphan DVI2USB 3.0 / SDI2USB 3.0 (Cypress FX3) frame grabber
++ *
++ * Copyright (C) 2026 Rene Rebe <rene@exactco.de>
++ */
++
++#include <linux/module.h>
++#include <linux/slab.h>
++#include <media/v4l2-ioctl.h>
++#include <media/v4l2-event.h>
++#include <media/videobuf2-vmalloc.h>
++
++#include "epiphan-fx3.h"
++
++static const struct usb_device_id fx3_table[] = {
++	{ USB_DEVICE_AND_INTERFACE_INFO(EPIPHAN_VID, PID_DVI2USB3,
++					USB_CLASS_VENDOR_SPEC, 0, 0) },
++	{ USB_DEVICE_AND_INTERFACE_INFO(EPIPHAN_VID, PID_DVI2USB3_R3,
++					USB_CLASS_VENDOR_SPEC, 0, 0) },
++	{ USB_DEVICE_AND_INTERFACE_INFO(EPIPHAN_VID, PID_DVI2USB3_ET,
++					USB_CLASS_VENDOR_SPEC, 0, 0) },
++	{ USB_DEVICE_AND_INTERFACE_INFO(EPIPHAN_VID, PID_DVI2USB3_ET_R3,
++					USB_CLASS_VENDOR_SPEC, 0, 0) },
++	{ USB_DEVICE_AND_INTERFACE_INFO(EPIPHAN_VID, PID_SDI2USB3,
++					USB_CLASS_VENDOR_SPEC, 0, 0) },
++	{ USB_DEVICE_AND_INTERFACE_INFO(EPIPHAN_VID, PID_SDI2USB3_R3,
++					USB_CLASS_VENDOR_SPEC, 0, 0) },
++	{ USB_DEVICE(EPIPHAN_VID, PID_SDI2USB3_GEN) },
++	{ USB_DEVICE(EPIPHAN_VID, PID_SDI2USB3_GEN_R3) },
++	{ USB_DEVICE(EPIPHAN_VID, PID_DVI2USB3_4K) },
++	{ USB_DEVICE(EPIPHAN_VID, PID_DVI2USB3_UNINIT) },
++	{ USB_DEVICE(EPIPHAN_VID, PID_SDI2USB3_UNINIT) },
++	{ USB_DEVICE(EPIPHAN_VID, PID_DVI2USB) },
++	{ }
++};
++MODULE_DEVICE_TABLE(usb, fx3_table);
++
++static void fx3_fill_pix(struct fx3_dev *dev, struct v4l2_pix_format *pix)
++{
++	pix->width = dev->width;
++	pix->height = dev->height;
++	pix->pixelformat = dev->fmt->fourcc;
++	pix->field = V4L2_FIELD_NONE;
++	pix->bytesperline = dev->width * dev->fmt->bpp / 8;
++	pix->sizeimage = pix->bytesperline * dev->height;
++	pix->colorspace = V4L2_COLORSPACE_SRGB;
++}
++
++static int fx3_querycap(struct file *file, void *priv,
++			struct v4l2_capability *cap)
++{
++	struct fx3_dev *dev = video_drvdata(file);
++
++	strscpy(cap->driver, "epiphan-fx3", sizeof(cap->driver));
++	strscpy(cap->card, dev->board->name, sizeof(cap->card));
++	usb_make_path(dev->udev, cap->bus_info, sizeof(cap->bus_info));
++	return 0;
++}
++
++static int fx3_enum_fmt(struct file *file, void *priv,
++			struct v4l2_fmtdesc *f)
++{
++	struct fx3_dev *dev = video_drvdata(file);
++	const struct fx3_fmt *fmt = fx3_fmt_by_index(dev, f->index);
++
++	if (!fmt)
++		return -EINVAL;
++	f->pixelformat = fmt->fourcc;
++	return 0;
++}
++
++static int fx3_g_fmt(struct file *file, void *priv, struct v4l2_format *f)
++{
++	struct fx3_dev *dev = video_drvdata(file);
++
++	fx3_fill_pix(dev, &f->fmt.pix);
++	return 0;
++}
++
++static int fx3_try_fmt(struct file *file, void *priv, struct v4l2_format *f)
++{
++	struct fx3_dev *dev = video_drvdata(file);
++	struct v4l2_pix_format *pix = &f->fmt.pix;
++	const struct fx3_fmt *fmt = fx3_fmt_by_fourcc(dev, pix->pixelformat);
++
++	if (!fmt)
++		fmt = fx3_fmt_by_index(dev, 0);
++
++	/*
++	 * The FPGA scaler is not populated on this hardware, so the capture
++	 * geometry is whatever the source drives. Report that rather than
++	 * accepting a size the device cannot produce.
++	 */
++	if (dev->have_signal) {
++		pix->width = dev->mode.width;
++		pix->height = dev->mode.height;
++	} else {
++		pix->width = clamp_t(u32, pix->width, 16,
++				     dev->board->max_width) & ~3;
++		pix->height = clamp_t(u32, pix->height, 16,
++				      dev->board->max_height) & ~1;
++	}
++	pix->pixelformat = fmt->fourcc;
++	pix->field = V4L2_FIELD_NONE;
++	pix->bytesperline = pix->width * fmt->bpp / 8;
++	pix->sizeimage = pix->bytesperline * pix->height;
++	pix->colorspace = V4L2_COLORSPACE_SRGB;
++	return 0;
++}
++
++static int fx3_s_fmt(struct file *file, void *priv, struct v4l2_format *f)
++{
++	struct fx3_dev *dev = video_drvdata(file);
++	int ret;
++
++	if (vb2_is_busy(&dev->queue))
++		return -EBUSY;
++
++	ret = fx3_try_fmt(file, priv, f);
++	if (ret)
++		return ret;
++
++	dev->fmt = fx3_fmt_by_fourcc(dev, f->fmt.pix.pixelformat);
++	dev->width = f->fmt.pix.width;
++	dev->height = f->fmt.pix.height;
++	return 0;
++}
++
++/*
++ * The grabber will scale to any even geometry up to the board maximum, so
++ * report a continuous range rather than a mode list.
++ */
++static int fx3_enum_framesizes(struct file *file, void *priv,
++			       struct v4l2_frmsizeenum *fsize)
++{
++	struct fx3_dev *dev = video_drvdata(file);
++
++	if (fsize->index)
++		return -EINVAL;
++	if (!fx3_fmt_by_fourcc(dev, fsize->pixel_format))
++		return -EINVAL;
++
++	fsize->type = V4L2_FRMSIZE_TYPE_STEPWISE;
++	fsize->stepwise.min_width = 16;
++	fsize->stepwise.max_width = dev->board->max_width;
++	fsize->stepwise.step_width = 4;
++	fsize->stepwise.min_height = 16;
++	fsize->stepwise.max_height = dev->board->max_height;
++	fsize->stepwise.step_height = 2;
++	return 0;
++}
++
++static int fx3_enum_input(struct file *file, void *priv,
++			  struct v4l2_input *inp)
++{
++	struct fx3_dev *dev = video_drvdata(file);
++	struct fx3_mode m;
++
++	if (inp->index > 1)
++		return -EINVAL;
++	inp->type = V4L2_INPUT_TYPE_CAMERA;
++	inp->capabilities = V4L2_IN_CAP_DV_TIMINGS;
++	strscpy(inp->name, fx3_input_name(inp->index), sizeof(inp->name));
++
++	if (fx3_detect_mode(dev, &m))
++		inp->status = V4L2_IN_ST_NO_SIGNAL;
++	return 0;
++}
++
++/* Report the source timing the front end currently measures. */
++static int fx3_query_dv_timings(struct file *file, void *priv,
++				struct v4l2_dv_timings *timings)
++{
++	struct fx3_dev *dev = video_drvdata(file);
++	struct fx3_mode m;
++	int ret = fx3_detect_mode(dev, &m);
++
++	if (ret) {
++		dev->have_signal = false;
++		return ret;
++	}
++
++	/*
++	 * Cache what we just measured so a source that has changed mode is
++	 * reflected in G_FMT and in the buffer sizing, not just here.
++	 */
++	if (!vb2_is_busy(&dev->queue)) {
++		dev->mode = m;
++		dev->have_signal = true;
++		dev->width = m.width;
++		dev->height = m.height;
++	}
++
++	memset(timings, 0, sizeof(*timings));
++	timings->type = V4L2_DV_BT_656_1120;
++	timings->bt.width = m.width;
++	timings->bt.height = m.height;
++	timings->bt.interlaced = m.interlaced ? V4L2_DV_INTERLACED
++					      : V4L2_DV_PROGRESSIVE;
++	/* vfreq is in 0.1 Hz; pixelclock = htotal * vtotal * vfreq / 10 */
++	timings->bt.pixelclock = div_u64((u64)m.htotal * m.vtotal * m.vfreq, 10);
++	return 0;
++}
++
++static int fx3_g_input(struct file *file, void *priv, unsigned int *i)
++{
++	struct fx3_dev *dev = video_drvdata(file);
++
++	*i = dev->input;
++	return 0;
++}
++
++static int fx3_s_input(struct file *file, void *priv, unsigned int i)
++{
++	struct fx3_dev *dev = video_drvdata(file);
++
++	if (i > 1)
++		return -EINVAL;
++	dev->input = i;
++	return fx3_select_adc(dev, i);
++}
++
++static int fx3_subscribe_event(struct v4l2_fh *fh,
++			       const struct v4l2_event_subscription *sub)
++{
++	if (sub->type == V4L2_EVENT_SOURCE_CHANGE)
++		return v4l2_src_change_event_subscribe(fh, sub);
++	return -EINVAL;
++}
++
++static const struct v4l2_ioctl_ops fx3_ioctl_ops = {
++	.vidioc_querycap		= fx3_querycap,
++	.vidioc_enum_fmt_vid_cap	= fx3_enum_fmt,
++	.vidioc_enum_framesizes		= fx3_enum_framesizes,
++	.vidioc_g_fmt_vid_cap		= fx3_g_fmt,
++	.vidioc_try_fmt_vid_cap		= fx3_try_fmt,
++	.vidioc_s_fmt_vid_cap		= fx3_s_fmt,
++	.vidioc_enum_input		= fx3_enum_input,
++	.vidioc_g_input			= fx3_g_input,
++	.vidioc_s_input			= fx3_s_input,
++	.vidioc_query_dv_timings	= fx3_query_dv_timings,
++	.vidioc_reqbufs			= vb2_ioctl_reqbufs,
++	.vidioc_querybuf		= vb2_ioctl_querybuf,
++	.vidioc_qbuf			= vb2_ioctl_qbuf,
++	.vidioc_dqbuf			= vb2_ioctl_dqbuf,
++	.vidioc_streamon		= vb2_ioctl_streamon,
++	.vidioc_streamoff		= vb2_ioctl_streamoff,
++	.vidioc_subscribe_event		= fx3_subscribe_event,
++	.vidioc_unsubscribe_event	= v4l2_event_unsubscribe,
++};
++
++static const struct v4l2_file_operations fx3_fops = {
++	.owner		= THIS_MODULE,
++	.open		= v4l2_fh_open,
++	.release	= vb2_fop_release,
++	.read		= vb2_fop_read,
++	.poll		= vb2_fop_poll,
++	.mmap		= vb2_fop_mmap,
++	.unlocked_ioctl	= video_ioctl2,
++};
++
++static int fx3_queue_setup(struct vb2_queue *q, unsigned int *nbuffers,
++			   unsigned int *nplanes, unsigned int sizes[],
++			   struct device *alloc_devs[])
++{
++	struct fx3_dev *dev = vb2_get_drv_priv(q);
++	unsigned int size = fx3_frame_size(dev->fmt, dev->width, dev->height);
++
++	if (*nbuffers < 2)
++		*nbuffers = 2;
++	if (*nplanes)
++		return sizes[0] < size ? -EINVAL : 0;
++	*nplanes = 1;
++	sizes[0] = size;
++	return 0;
++}
++
++static int fx3_buf_prepare(struct vb2_buffer *vb)
++{
++	struct fx3_dev *dev = vb2_get_drv_priv(vb->vb2_queue);
++	unsigned int size = fx3_frame_size(dev->fmt, dev->width, dev->height);
++
++	if (vb2_plane_size(vb, 0) < size)
++		return -EINVAL;
++	return 0;
++}
++
++static void fx3_buf_queue(struct vb2_buffer *vb)
++{
++	struct fx3_dev *dev = vb2_get_drv_priv(vb->vb2_queue);
++	struct vb2_v4l2_buffer *vbuf = to_vb2_v4l2_buffer(vb);
++	struct fx3_buffer *buf = container_of(vbuf, struct fx3_buffer, vb);
++	unsigned long flags;
++
++	spin_lock_irqsave(&dev->qlock, flags);
++	list_add_tail(&buf->list, &dev->bufs);
++	spin_unlock_irqrestore(&dev->qlock, flags);
++}
++
++static void fx3_return_buffers(struct fx3_dev *dev, enum vb2_buffer_state state)
++{
++	unsigned long flags;
++
++	spin_lock_irqsave(&dev->qlock, flags);
++	while (!list_empty(&dev->bufs)) {
++		struct fx3_buffer *buf = list_first_entry(&dev->bufs,
++							  struct fx3_buffer,
++							  list);
++		list_del(&buf->list);
++		spin_unlock_irqrestore(&dev->qlock, flags);
++		vb2_buffer_done(&buf->vb.vb2_buf, state);
++		spin_lock_irqsave(&dev->qlock, flags);
++	}
++	spin_unlock_irqrestore(&dev->qlock, flags);
++}
++
++static int fx3_start_streaming(struct vb2_queue *q, unsigned int count)
++{
++	struct fx3_dev *dev = vb2_get_drv_priv(q);
++	int ret = fx3_stream_start(dev);
++
++	if (ret)
++		fx3_return_buffers(dev, VB2_BUF_STATE_QUEUED);
++	return ret;
++}
++
++static void fx3_stop_streaming(struct vb2_queue *q)
++{
++	struct fx3_dev *dev = vb2_get_drv_priv(q);
++
++	fx3_stream_stop(dev);
++	fx3_return_buffers(dev, VB2_BUF_STATE_ERROR);
++}
++
++static const struct vb2_ops fx3_vb2_ops = {
++	.queue_setup		= fx3_queue_setup,
++	.buf_prepare		= fx3_buf_prepare,
++	.buf_queue		= fx3_buf_queue,
++	.start_streaming	= fx3_start_streaming,
++	.stop_streaming		= fx3_stop_streaming,
++};
++
++/*
++ * The recovered board descriptor names bulk IN 0x82 for video and 0x83 for
++ * audio, but confirm they are really present before relying on them.
++ */
++static int fx3_find_endpoints(struct usb_interface *intf, struct fx3_dev *dev)
++{
++	struct usb_host_interface *alt = intf->cur_altsetting;
++	unsigned int i;
++
++	dev->ep_video = 0;
++	dev->ep_audio = 0;
++
++	for (i = 0; i < alt->desc.bNumEndpoints; i++) {
++		struct usb_endpoint_descriptor *ep = &alt->endpoint[i].desc;
++
++		if (!usb_endpoint_is_bulk_in(ep))
++			continue;
++		if (ep->bEndpointAddress == FX3_EP_VIDEO)
++			dev->ep_video = ep->bEndpointAddress;
++		else if (ep->bEndpointAddress == FX3_EP_AUDIO)
++			dev->ep_audio = ep->bEndpointAddress;
++	}
++
++	return dev->ep_video ? 0 : -ENODEV;
++}
++
++static int fx3_probe(struct usb_interface *intf,
++		     const struct usb_device_id *id)
++{
++	struct usb_device *udev = interface_to_usbdev(intf);
++	struct fx3_dev *dev;
++	int ret;
++
++	dev = kzalloc(sizeof(*dev), GFP_KERNEL);
++	if (!dev)
++		return -ENOMEM;
++
++	dev->ctrl_buf = kzalloc(FX3_CTRL_CHUNK, GFP_KERNEL);
++	if (!dev->ctrl_buf) {
++		ret = -ENOMEM;
++		goto err_free;
++	}
++
++	dev->udev = usb_get_dev(udev);
++	dev->intf = intf;
++	dev->product = le16_to_cpu(udev->descriptor.idProduct);
++	dev->bcd = le16_to_cpu(udev->descriptor.bcdDevice);
++	dev->board = fx3_board_by_pid(dev->product);
++	if (!dev->board) {
++		dev_err(&intf->dev, "unsupported product 0x%04x\n", dev->product);
++		ret = -ENODEV;
++		goto err_put;
++	}
++	dev->fmt = fx3_fmt_by_index(dev, 0);
++	dev->input = V2U_ADC_DIGITAL;
++	dev->hsync_threshold = 0;
++	dev->vsync_threshold = 0;
++	dev->noise_filter = 0;
++	dev->width = 1920;
++	dev->height = 1080;
++	mutex_init(&dev->lock);
++	spin_lock_init(&dev->qlock);
++	spin_lock_init(&dev->audio_lock);
++	INIT_LIST_HEAD(&dev->bufs);
++	init_completion(&dev->frame_done);
++	usb_set_intfdata(intf, dev);
++
++	/*
++	 * Still in the boot ROM: push the firmware and let it re-enumerate.
++	 * There are no endpoints to find yet, so this has to come first.
++	 */
++	if (fx3_needs_boot(dev)) {
++		dev_info(&intf->dev,
++			 "device in bootloader (iMfg %u, iProduct %u), loading firmware\n",
++			 udev->descriptor.iManufacturer,
++			 udev->descriptor.iProduct);
++		ret = fx3_load_boot(dev);
++		goto err_put;
++	}
++
++	ret = fx3_find_endpoints(intf, dev);
++	if (ret) {
++		dev_err(&intf->dev, "no bulk IN endpoint 0x%02x\n", FX3_EP_VIDEO);
++		goto err_put;
++	}
++
++	ret = fx3_load_fpga(dev);
++	if (ret)
++		dev_warn(&intf->dev,
++			 "FPGA not programmed (%d), capture will not work\n",
++			 ret);
++
++	/*
++	 * Only now is the device "started" and willing to accept anything
++	 * beyond 0xB5/0xB9/0xC2/0xC6, so the wake has to come after the
++	 * bitstream, not before it.
++	 */
++	if (dev->fpga_loaded) {
++		ret = fx3_wake(dev);
++		if (ret < 0)
++			dev_dbg(&intf->dev, "wake not accepted: %d\n", ret);
++	}
++
++	/* Start from whatever the source is actually driving, if anything. */
++	if (dev->fpga_loaded) {
++		struct fx3_mode m;
++
++		if (!fx3_apply_mode(dev)) {
++			m = dev->mode;
++			dev_info(&intf->dev, "source %ux%u%s @ %u.%u Hz\n",
++				 m.width, m.height, m.interlaced ? "i" : "p",
++				 m.vfreq / 10, m.vfreq % 10);
++		}
++	}
++
++	ret = v4l2_device_register(&intf->dev, &dev->v4l2_dev);
++	if (ret)
++		goto err_put;
++
++	dev->queue.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
++	dev->queue.io_modes = VB2_MMAP | VB2_READ | VB2_USERPTR;
++	dev->queue.drv_priv = dev;
++	dev->queue.buf_struct_size = sizeof(struct fx3_buffer);
++	dev->queue.ops = &fx3_vb2_ops;
++	dev->queue.mem_ops = &vb2_vmalloc_memops;
++	dev->queue.timestamp_flags = V4L2_BUF_FLAG_TIMESTAMP_MONOTONIC;
++	dev->queue.lock = &dev->lock;
++	ret = vb2_queue_init(&dev->queue);
++	if (ret)
++		goto err_v4l2;
++
++	strscpy(dev->vdev.name, "epiphan-fx3", sizeof(dev->vdev.name));
++	dev->vdev.v4l2_dev = &dev->v4l2_dev;
++	dev->vdev.fops = &fx3_fops;
++	dev->vdev.ioctl_ops = &fx3_ioctl_ops;
++	dev->vdev.release = video_device_release_empty;
++	dev->vdev.queue = &dev->queue;
++	dev->vdev.lock = &dev->lock;
++	dev->vdev.device_caps = V4L2_CAP_VIDEO_CAPTURE | V4L2_CAP_STREAMING |
++				V4L2_CAP_READWRITE;
++	video_set_drvdata(&dev->vdev, dev);
++
++	ret = video_register_device(&dev->vdev, VFL_TYPE_VIDEO, -1);
++	if (ret)
++		goto err_v4l2;
++
++	ret = fx3_audio_register(dev);
++	if (ret)
++		dev_warn(&intf->dev, "no ALSA device: %d\n", ret);
++
++	dev->index = dev->vdev.num;
++	ret = fx3_chardev_register(dev);
++	if (ret)
++		dev_warn(&intf->dev, "no SDK character device: %d\n", ret);
++
++	dev_info(&intf->dev, "Epiphan %04x registered as %s%s%s\n",
++		 dev->product, video_device_node_name(&dev->vdev),
++		 dev->miscname ? " and /dev/" : "",
++		 dev->miscname ? dev->miscname : "");
++	return 0;
++
++err_v4l2:
++	v4l2_device_unregister(&dev->v4l2_dev);
++err_put:
++	usb_set_intfdata(intf, NULL);
++	usb_put_dev(dev->udev);
++	kfree(dev->ctrl_buf);
++err_free:
++	kfree(dev);
++	return ret;
++}
++
++static void fx3_disconnect(struct usb_interface *intf)
++{
++	struct fx3_dev *dev = usb_get_intfdata(intf);
++
++	if (!dev)
++		return;
++
++	fx3_chardev_unregister(dev);
++	fx3_audio_unregister(dev);
++
++	/* Unblock any waiter and tear the queue down before the node goes. */
++	mutex_lock(&dev->lock);
++	vb2_queue_error(&dev->queue);
++	mutex_unlock(&dev->lock);
++
++	video_unregister_device(&dev->vdev);
++	v4l2_device_unregister(&dev->v4l2_dev);
++	usb_set_intfdata(intf, NULL);
++	usb_put_dev(dev->udev);
++	kfree(dev->ctrl_buf);
++	kfree(dev);
++}
++
++/*
++ * The device keeps its FPGA configuration across a bus suspend, so resume only
++ * has to wake it. A reset_resume does lose it, hence the reload there.
++ */
++static int fx3_suspend(struct usb_interface *intf, pm_message_t message)
++{
++	struct fx3_dev *dev = usb_get_intfdata(intf);
++
++	if (!dev)
++		return 0;
++
++	mutex_lock(&dev->lock);
++	if (vb2_is_streaming(&dev->queue))
++		fx3_stream_stop(dev);
++	fx3_standby(dev, 0, 0);
++	mutex_unlock(&dev->lock);
++	return 0;
++}
++
++static int fx3_resume(struct usb_interface *intf)
++{
++	struct fx3_dev *dev = usb_get_intfdata(intf);
++
++	if (!dev)
++		return 0;
++
++	mutex_lock(&dev->lock);
++	fx3_wake(dev);
++	mutex_unlock(&dev->lock);
++	return 0;
++}
++
++static int fx3_reset_resume(struct usb_interface *intf)
++{
++	struct fx3_dev *dev = usb_get_intfdata(intf);
++	int ret;
++
++	if (!dev)
++		return 0;
++
++	mutex_lock(&dev->lock);
++	fx3_wake(dev);
++	dev->fpga_loaded = false;
++	ret = fx3_load_fpga(dev);
++	if (ret)
++		dev_warn(&intf->dev, "FPGA reload after reset failed: %d\n", ret);
++	mutex_unlock(&dev->lock);
++	return 0;
++}
++
++static struct usb_driver fx3_driver = {
++	.name		= "epiphan-fx3",
++	.id_table	= fx3_table,
++	.probe		= fx3_probe,
++	.disconnect	= fx3_disconnect,
++	.suspend	= fx3_suspend,
++	.resume		= fx3_resume,
++	.reset_resume	= fx3_reset_resume,
++	.supports_autosuspend = 0,
++};
++
++module_usb_driver(fx3_driver);
++
++bool fx3_autodetect = true;
++module_param_named(autodetect, fx3_autodetect, bool, 0644);
++MODULE_PARM_DESC(autodetect,
++		 "fall back to the other input when the selected one has no signal (default on)");
++
++MODULE_AUTHOR("Rene Rebe <rene@exactco.de>");
++MODULE_DESCRIPTION("Epiphan DVI2USB 3.0 / SDI2USB 3.0 frame grabber");
++MODULE_LICENSE("GPL");
++MODULE_FIRMWARE("epiphan/dvi2usb3.fpga");
++MODULE_FIRMWARE("epiphan/sdi2usb3.fpga");
++MODULE_FIRMWARE("epiphan/dvi2usb3.fx3");
++MODULE_FIRMWARE("epiphan/sdi2usb3.fx3");
+diff -urpN a/drivers/media/usb/epiphan-fx3/epiphan-fx3-stream.c b/drivers/media/usb/epiphan-fx3/epiphan-fx3-stream.c
+--- a/drivers/media/usb/epiphan-fx3/epiphan-fx3-stream.c	1970-01-01 00:00:00.000000000 +0000
++++ b/drivers/media/usb/epiphan-fx3/epiphan-fx3-stream.c	2026-08-08 13:11:02.002498716 +0000
+@@ -0,0 +1,448 @@
++// SPDX-License-Identifier: GPL-2.0
++/*
++ * Epiphan FX3 frame grabber - bulk video streaming on EP 0x82.
++ *
++ * The bulk stream carries raw pixel data with no in-band framing at all: no
++ * magic word, no per-line header, no length field. A frame is delimited by
++ * three things, all out of band (see PROTOCOL-frames.md):
++ *
++ *   1. the host knows the exact frame length and queues transfers summing to it,
++ *   2. vendor request 0xB8 starts the frame, issued after the first transfer is
++ *      already armed but before the rest,
++ *   3. a short packet terminates it early.
++ *
++ * Copyright (C) 2026 Rene Rebe <rene@exactco.de>
++ */
++
++#include <linux/delay.h>
++#include <linux/kthread.h>
++#include <linux/slab.h>
++#include <media/v4l2-event.h>
++
++#include "epiphan-fx3.h"
++
++/*
++ * Re-probe the source while streaming and report changes to userspace.
++ *
++ * Detection is a control transfer on EP0, independent of the bulk video
++ * endpoint, and the device keeps its timing registers current while the
++ * grabber runs - verified on hardware by switching the source mid-capture.
++ *
++ * The format is deliberately left alone: the buffers are already sized for
++ * the old mode, so V4L2 requires the application to stop, re-query and
++ * restart. Only once streaming has ended does query_dv_timings adopt the
++ * new geometry.
++ */
++static bool fx3_mode_eq(const struct fx3_mode *a, const struct fx3_mode *b)
++{
++	return a->width == b->width && a->height == b->height &&
++	       a->interlaced == b->interlaced;
++}
++
++static void fx3_check_source(struct fx3_dev *dev)
++{
++	static const struct v4l2_event ev = {
++		.type = V4L2_EVENT_SOURCE_CHANGE,
++		.u.src_change.changes = V4L2_EVENT_SRC_CH_RESOLUTION,
++	};
++	struct fx3_mode m;
++	bool signal;
++
++	if (time_before(jiffies, dev->next_detect))
++		return;
++	dev->next_detect = jiffies + msecs_to_jiffies(FX3_DETECT_POLL_MS);
++
++	signal = !fx3_detect_mode(dev, &m) && m.width && m.height;
++
++	/*
++	 * A source part way through its own mode set drops sync and briefly
++	 * re-asserts the previous timing, so act only on a reading seen twice
++	 * in a row. Without this every switch reports two or three changes and
++	 * an application restarts capture for each one.
++	 */
++	if (signal != dev->cand_signal || !fx3_mode_eq(&m, &dev->cand)) {
++		dev->cand = m;
++		dev->cand_signal = signal;
++		return;
++	}
++
++	if (signal == dev->have_signal &&
++	    (!signal || fx3_mode_eq(&m, &dev->det)))
++		return;
++
++	dev->have_signal = signal;
++	dev->det = m;
++	v4l2_event_queue(&dev->vdev, &ev);
++
++	if (signal)
++		dev_info(&dev->intf->dev, "source changed to %ux%u%s\n",
++			 m.width, m.height, m.interlaced ? "i" : "p");
++	else
++		dev_info(&dev->intf->dev, "source signal lost\n");
++}
++
++unsigned int fx3_frame_size(const struct fx3_fmt *f, u32 w, u32 h)
++{
++	return ((f->bpp * w + 7) / 8) * h;
++}
++
++static void fx3_free_urbs(struct fx3_dev *dev)
++{
++	unsigned int i;
++
++	for (i = 0; i < dev->n_urbs; i++) {
++		struct fx3_urb *u = &dev->urbs[i];
++
++		if (u->urb) {
++			usb_free_coherent(dev->udev, u->len, u->buf,
++					  u->urb->transfer_dma);
++			usb_free_urb(u->urb);
++			u->urb = NULL;
++			u->buf = NULL;
++		}
++	}
++	dev->n_urbs = 0;
++}
++
++static void fx3_urb_complete(struct urb *urb)
++{
++	struct fx3_urb *u = urb->context;
++	struct fx3_dev *dev = u->dev;
++
++	u->actual = urb->status ? urb->status : urb->actual_length;
++
++	if (atomic_dec_and_test(&dev->pending))
++		complete(&dev->frame_done);
++}
++
++/*
++ * Queue geometry mirrors line_size()/lines_per_frame(): a working set of
++ * round_up(frame, 64K) + 64K split into transfers of at most 128K, then the
++ * tail transfer trimmed so the queued total equals the frame length exactly.
++ */
++static int fx3_alloc_urbs(struct fx3_dev *dev)
++{
++	unsigned int frame = dev->frame_size;
++	unsigned int cap;
++	unsigned int xfer;
++
++	/*
++	 * FX3 sizes its working set to round_up(frame, 64K) + 64K, i.e. one
++	 * spare block; DVI2USB uses the frame length itself (.text+0x1c1e0).
++	 */
++	if (dev->board->family == FX3_FAM_DVI2USB)
++		cap = frame;
++	else
++		cap = round_up(frame, FX3_BLOCK) + FX3_BLOCK;
++	xfer = min_t(unsigned int, cap, FX3_MAX_XFER);
++	unsigned int off = 0;
++	unsigned int i, n;
++
++	if (!frame || !xfer)
++		return -EINVAL;
++
++	/*
++	 * Queue exactly one frame. Sizing to the larger working set the vendor
++	 * uses (round_up(frame,64K)+64K) was tried on hardware and truncates
++	 * each frame by the tail URB's worth, so the queued total is kept equal
++	 * to the frame length.
++	 */
++	n = DIV_ROUND_UP(frame, xfer);
++	if (n > FX3_MAX_URBS)
++		return -ENOMEM;
++
++	for (i = 0; i < n; i++) {
++		struct fx3_urb *u = &dev->urbs[i];
++		unsigned int len = min(xfer, frame - off);
++		dma_addr_t dma;
++
++		u->urb = usb_alloc_urb(0, GFP_KERNEL);
++		if (!u->urb)
++			goto err;
++
++		u->buf = usb_alloc_coherent(dev->udev, len, GFP_KERNEL, &dma);
++		if (!u->buf) {
++			usb_free_urb(u->urb);
++			u->urb = NULL;
++			goto err;
++		}
++
++		u->dev = dev;
++		u->len = len;
++		u->off = off;
++		off += len;
++
++		usb_fill_bulk_urb(u->urb, dev->udev,
++				  usb_rcvbulkpipe(dev->udev,
++						  dev->ep_video & USB_ENDPOINT_NUMBER_MASK),
++				  u->buf, len, fx3_urb_complete, u);
++		u->urb->transfer_dma = dma;
++		u->urb->transfer_flags = URB_NO_TRANSFER_DMA_MAP;
++
++		dev->n_urbs = i + 1;
++	}
++
++	return 0;
++err:
++	fx3_free_urbs(dev);
++	return -ENOMEM;
++}
++
++static void fx3_kill_urbs(struct fx3_dev *dev)
++{
++	unsigned int i;
++
++	for (i = 0; i < dev->n_urbs; i++)
++		if (dev->urbs[i].urb)
++			usb_kill_urb(dev->urbs[i].urb);
++}
++
++/*
++ * One frame. Returns the number of payload bytes assembled, or a negative
++ * errno. -ENOMEDIUM means the device reports no input signal.
++ */
++int fx3_capture_frame(struct fx3_dev *dev, void *dst)
++{
++	unsigned int i, copied = 0;
++	unsigned long timeout;
++	int ret;
++
++	for (i = 0; i < dev->n_urbs; i++)
++		dev->urbs[i].actual = -EINPROGRESS;
++
++	reinit_completion(&dev->frame_done);
++	atomic_set(&dev->pending, dev->n_urbs);
++
++	/* The first transfer must already be armed when the grab is issued. */
++	ret = usb_submit_urb(dev->urbs[0].urb, GFP_KERNEL);
++	if (ret) {
++		atomic_set(&dev->pending, 0);
++		return ret;
++	}
++
++	ret = fx3_grab(dev, dev->fmt->v2u);
++	if (ret) {
++		usb_kill_urb(dev->urbs[0].urb);
++		atomic_set(&dev->pending, 0);
++		return ret;
++	}
++
++	for (i = 1; i < dev->n_urbs; i++) {
++		ret = usb_submit_urb(dev->urbs[i].urb, GFP_KERNEL);
++		if (ret) {
++			/*
++			 * These will never complete, so drop them from the
++			 * count — and signal here if that was the last one,
++			 * since no completion handler will run to do it.
++			 */
++			if (atomic_sub_and_test(dev->n_urbs - i, &dev->pending))
++				complete(&dev->frame_done);
++			break;
++		}
++	}
++
++	timeout = msecs_to_jiffies(FX3_FRAME_TIMEOUT);
++	if (!wait_for_completion_timeout(&dev->frame_done, timeout)) {
++		fx3_kill_urbs(dev);
++		wait_for_completion_timeout(&dev->frame_done,
++					    msecs_to_jiffies(200));
++	}
++
++	for (i = 0; i < dev->n_urbs; i++) {
++		struct fx3_urb *u = &dev->urbs[i];
++
++		if (u->actual < 0)
++			break;
++		memcpy(dst + u->off, u->buf, u->actual);
++		copied += u->actual;
++		if ((unsigned int)u->actual < u->len)
++			break;		/* short packet ends the frame */
++	}
++
++	return copied ? (int)copied : -ETIMEDOUT;
++}
++
++static struct fx3_buffer *fx3_next_buffer(struct fx3_dev *dev)
++{
++	struct fx3_buffer *buf = NULL;
++	unsigned long flags;
++
++	spin_lock_irqsave(&dev->qlock, flags);
++	if (!list_empty(&dev->bufs)) {
++		buf = list_first_entry(&dev->bufs, struct fx3_buffer, list);
++		list_del(&buf->list);
++	}
++	spin_unlock_irqrestore(&dev->qlock, flags);
++	return buf;
++}
++
++static int fx3_thread(void *data)
++{
++	struct fx3_dev *dev = data;
++
++	/*
++	 * Loop on kthread_should_stop() alone. Returning early - for instance
++	 * on dev->stopping - lets the kthread exit and free its task_struct
++	 * before fx3_stream_stop() calls kthread_stop() on it, which faults.
++	 * dev->stopping only suppresses new work.
++	 */
++	while (!kthread_should_stop()) {
++		struct fx3_buffer *buf;
++		void *dst;
++		int ret;
++
++		if (READ_ONCE(dev->stopping)) {
++			msleep(5);
++			continue;
++		}
++
++		fx3_check_source(dev);
++
++		buf = fx3_next_buffer(dev);
++		if (!buf) {
++			msleep(5);
++			continue;
++		}
++
++		dst = vb2_plane_vaddr(&buf->vb.vb2_buf, 0);
++		ret = fx3_capture_frame(dev, dst);
++
++		if (ret == -ENOMEDIUM || ret == -EAGAIN) {
++			/* No signal or device busy: requeue and back off. */
++			unsigned long flags;
++
++			spin_lock_irqsave(&dev->qlock, flags);
++			list_add(&buf->list, &dev->bufs);
++			spin_unlock_irqrestore(&dev->qlock, flags);
++			msleep(50);
++			continue;
++		}
++
++		if (ret < 0) {
++			vb2_buffer_done(&buf->vb.vb2_buf, VB2_BUF_STATE_ERROR);
++			continue;
++		}
++
++		buf->vb.vb2_buf.timestamp = ktime_get_ns();
++		buf->vb.sequence = dev->sequence++;
++		buf->vb.field = V4L2_FIELD_NONE;
++		vb2_set_plane_payload(&buf->vb.vb2_buf, 0, ret);
++		vb2_buffer_done(&buf->vb.vb2_buf, VB2_BUF_STATE_DONE);
++	}
++
++	return 0;
++}
++
++/*
++ * One-shot capture for the SDK chardev. Refuses while the V4L2 queue is
++ * streaming: both paths drive the same endpoint and the same URB array.
++ */
++int fx3_capture_single(struct fx3_dev *dev, void *dst, unsigned int len)
++{
++	int ret, i;
++
++	if (dev->thread)
++		return -EBUSY;
++
++	ret = fx3_apply_mode(dev);
++	if (ret)
++		return ret;
++
++	dev->frame_size = fx3_frame_size(dev->fmt, dev->width, dev->height);
++	if (dev->frame_size > len)
++		return -ENOSPC;
++
++	ret = fx3_alloc_urbs(dev);
++	if (ret)
++		return ret;
++
++	/* The first grab after a mode push often reports busy; retry as the
++	 * streaming thread does rather than failing the ioctl. */
++	for (i = 0; i < 20; i++) {
++		ret = fx3_capture_frame(dev, dst);
++		if (ret != -EAGAIN && ret != -ETIMEDOUT)
++			break;
++		msleep(20);
++	}
++
++	/* No 0xC2 here either - see fx3_stream_stop(). */
++	fx3_kill_urbs(dev);
++	fx3_free_urbs(dev);
++	return ret;
++}
++
++int fx3_stream_start(struct fx3_dev *dev)
++{
++	int ret;
++
++	if (!dev->fpga_loaded) {
++		dev_err(&dev->intf->dev,
++			"cannot stream: FPGA bitstream was not loaded\n");
++		return -ENODEV;
++	}
++
++	/*
++	 * Tell the device the capture geometry before the first grab; without
++	 * the 0xB0 push it keeps whatever was configured last.
++	 */
++	ret = fx3_apply_mode(dev);
++	if (ret && ret != -ENOMEDIUM) {
++		dev_err(&dev->intf->dev, "cannot set capture mode: %d\n", ret);
++		return ret;
++	}
++
++	dev->frame_size = fx3_frame_size(dev->fmt, dev->width, dev->height);
++	dev->sequence = 0;
++	dev->det = dev->mode;
++	dev->cand = dev->mode;
++	dev->cand_signal = dev->have_signal;
++	dev->next_detect = jiffies + msecs_to_jiffies(FX3_DETECT_POLL_MS);
++	WRITE_ONCE(dev->stopping, false);
++
++	ret = fx3_alloc_urbs(dev);
++	if (ret)
++		return ret;
++
++	dev->thread = kthread_run(fx3_thread, dev, "epiphan-fx3");
++	if (IS_ERR(dev->thread)) {
++		ret = PTR_ERR(dev->thread);
++		dev->thread = NULL;
++		fx3_free_urbs(dev);
++		return ret;
++	}
++
++	return 0;
++}
++
++void fx3_stream_stop(struct fx3_dev *dev)
++{
++	/*
++	 * Do not send request 0xC2 here. Despite being named "stop capture" it
++	 * drops the device off the bus: its handler calls the firmware's
++	 * CyU3PConnectState(connect=0, ss=1) at 0x4000ab70, the same routine
++	 * the reconnect path calls with connect=1. Verified over usbfs on an
++	 * idle device with no driver bound - the control transfer never even
++	 * completes, it fails with -ESHUTDOWN as the device disappears. That
++	 * single request was the entire cause of the re-enumeration seen after
++	 * every capture.
++	 *
++	 * Nothing has to replace it. A frame is produced only in response to a
++	 * grab, so ceasing to issue grabs is what stops the capture; the device
++	 * simply goes idle.
++	 *
++	 * Retire the thread first so no frame is in flight: it stops starting
++	 * frames once dev->stopping is set and finishes the one it is on, and
++	 * its wait is a wait_for_completion_timeout that kills the transfers
++	 * itself if the frame never lands, so kthread_stop() stays bounded.
++	 */
++	WRITE_ONCE(dev->stopping, true);
++
++	if (dev->thread) {
++		kthread_stop(dev->thread);
++		dev->thread = NULL;
++	}
++
++	fx3_kill_urbs(dev);
++	fx3_free_urbs(dev);
++	WRITE_ONCE(dev->stopping, false);
++}
+diff -urpN a/drivers/media/usb/epiphan-fx3/epiphan-fx3-usb.c b/drivers/media/usb/epiphan-fx3/epiphan-fx3-usb.c
+--- a/drivers/media/usb/epiphan-fx3/epiphan-fx3-usb.c	1970-01-01 00:00:00.000000000 +0000
++++ b/drivers/media/usb/epiphan-fx3/epiphan-fx3-usb.c	2026-08-08 13:11:02.001523752 +0000
+@@ -0,0 +1,1100 @@
++// SPDX-License-Identifier: GPL-2.0
++/*
++ * Epiphan FX3 frame grabber - vendor command layer and FPGA bring-up.
++ *
++ * Copyright (C) 2026 Rene Rebe <rene@exactco.de>
++ */
++
++#include <linux/unaligned.h>
++#include <linux/delay.h>
++#include <linux/firmware.h>
++#include <linux/slab.h>
++#include <linux/zlib.h>
++
++#include "epiphan-fx3.h"
++
++/*
++ * FX3 wire formats. hw is the code placed in wValue of V2U_REQ_GRAB
++ * (.text+0x3bf0); fourcc is what the stock driver exports for it
++ * (table at .rodata+0x1a3080).
++ */
++static const struct fx3_fmt fx3_formats[] = {
++	{ V4L2_PIX_FMT_RGB24,  V2U_FMT_RGB24,  0x00, 24 },
++	{ V4L2_PIX_FMT_RGB565, V2U_FMT_RGB16,  0x01, 16 },
++	{ V4L2_PIX_FMT_BGR24,  V2U_FMT_BGR24,  0x02, 24 },
++	{ V4L2_PIX_FMT_UYVY,   V2U_FMT_2VUY,   0x06, 16 },
++	{ V4L2_PIX_FMT_YUYV,   V2U_FMT_YUY2,   0x07, 16 },
++	{ V4L2_PIX_FMT_GREY,   V2U_FMT_Y8,     0x08,  8 },
++	{ V4L2_PIX_FMT_YUV420, V2U_FMT_I420,   0x09, 12 },
++	{ V4L2_PIX_FMT_YVU420, V2U_FMT_YV12,   0x0a, 12 },
++	{ V4L2_PIX_FMT_RGB32,  V2U_FMT_ARGB32, 0x0b, 32 },
++	{ V4L2_PIX_FMT_NV12,   V2U_FMT_NV12,   0x0c, 12 },
++};
++
++/*
++ * DVI2USB byte-order codes are not the FX3 ones (.text+0x3330). Only the
++ * formats the hardware emits directly are listed: the stock driver reaches
++ * YV12/I420/ARGB32 by repacking in software, which this driver does not do.
++ */
++static const struct fx3_fmt dvi2usb_formats[] = {
++	{ V4L2_PIX_FMT_BGR24,  V2U_FMT_BGR24,  0x00, 24 },
++	{ V4L2_PIX_FMT_RGB565, V2U_FMT_RGB16,  0x01, 16 },
++	{ V4L2_PIX_FMT_RGB24,  V2U_FMT_RGB24,  0x02, 24 },
++	{ V4L2_PIX_FMT_YUYV,   V2U_FMT_YUY2,   0x06, 16 },
++	{ V4L2_PIX_FMT_UYVY,   V2U_FMT_2VUY,   0x07, 16 },
++	{ V4L2_PIX_FMT_GREY,   V2U_FMT_Y8,     0x08,  8 },
++};
++
++static const struct fx3_board fx3_boards[] = {
++	{ PID_DVI2USB3,       "DVI2USB 3.0",    FX3_FAM_FX3,
++	  "epiphan/dvi2usb3.fpga", NULL, 2048, 2048 },
++	{ PID_DVI2USB3_R3,    "DVI2USB 3.0",    FX3_FAM_FX3,
++	  "epiphan/dvi2usb3.fpga", NULL, 2048, 2048 },
++	{ PID_DVI2USB3_ET,    "DVI2USB 3.0 ET", FX3_FAM_FX3,
++	  "epiphan/dvi2usb3.fpga", NULL, 2048, 2048 },
++	{ PID_DVI2USB3_ET_R3, "DVI2USB 3.0 ET", FX3_FAM_FX3,
++	  "epiphan/dvi2usb3.fpga", NULL, 2048, 2048 },
++	{ PID_SDI2USB3,       "SDI2USB 3.0",    FX3_FAM_FX3,
++	  "epiphan/sdi2usb3.fpga", NULL, 2048, 2048 },
++	{ PID_SDI2USB3_R3,    "SDI2USB 3.0",    FX3_FAM_FX3,
++	  "epiphan/sdi2usb3.fpga", NULL, 2048, 2048 },
++	/*
++	 * DVI2USB also exists with an r1 bitstream, chosen when the EEPROM
++	 * serial falls in 20000..20099 (.text+0x125d). This driver does not
++	 * read the EEPROM yet and always uses r2.
++	 */
++	{ PID_DVI2USB,        "DVI2USB",        FX3_FAM_DVI2USB,
++	  "epiphan/dvi2usb-r2.fpga", "epiphan/dvi2usb.fx2", 1600, 1200 },
++};
++
++/* Epiphan's V2UProduct* enum, from the table in PROTOCOL-ioctl-impl.md §3. */
++u32 fx3_product_type(u16 pid)
++{
++	switch (pid) {
++	case 0x1110: return 0x01;
++	case 0x1120: return 0x02;
++	case 0x2222: return 0x03;
++	case 0x3332: return 0x0b;
++	case 0x3333: return 0x04;
++	case 0x3337: return 0x08;
++	case 0x3340: return 0x05;
++	case 0x3344: return 0x09;
++	case 0x3380: return 0x0a;
++	case 0x3382: return 0x0c;
++	case 0x3383: return 0x16;
++	case 0x3392: return 0x0d;
++	case 0x33a2: return 0x0e;
++	case 0x3411: return 0x06;
++	case 0x3422: return 0x07;
++	default:     return 0;
++	}
++}
++
++const struct fx3_board *fx3_board_by_pid(u16 pid)
++{
++	unsigned int i;
++
++	for (i = 0; i < ARRAY_SIZE(fx3_boards); i++)
++		if (fx3_boards[i].pid == pid)
++			return &fx3_boards[i];
++	return NULL;
++}
++
++static const struct fx3_fmt *fx3_fmt_table(struct fx3_dev *dev, unsigned int *n)
++{
++	if (dev->board && dev->board->family == FX3_FAM_DVI2USB) {
++		*n = ARRAY_SIZE(dvi2usb_formats);
++		return dvi2usb_formats;
++	}
++	*n = ARRAY_SIZE(fx3_formats);
++	return fx3_formats;
++}
++
++const struct fx3_fmt *fx3_fmt_by_fourcc(struct fx3_dev *dev, u32 fourcc)
++{
++	unsigned int i, n;
++	const struct fx3_fmt *t = fx3_fmt_table(dev, &n);
++
++	for (i = 0; i < n; i++)
++		if (t[i].fourcc == fourcc)
++			return &t[i];
++	return NULL;
++}
++
++const struct fx3_fmt *fx3_fmt_by_v2u(struct fx3_dev *dev, u16 v2u)
++{
++	unsigned int i, n;
++	const struct fx3_fmt *t = fx3_fmt_table(dev, &n);
++
++	for (i = 0; i < n; i++)
++		if (t[i].v2u == v2u)
++			return &t[i];
++	return NULL;
++}
++
++const struct fx3_fmt *fx3_fmt_by_index(struct fx3_dev *dev, unsigned int i)
++{
++	unsigned int n;
++	const struct fx3_fmt *t = fx3_fmt_table(dev, &n);
++
++	return i < n ? &t[i] : NULL;
++}
++
++/*
++ * All vendor traffic funnels through here. Control transfers need a DMA-capable
++ * buffer, so callers may pass stack data and it is staged through dev->ctrl_buf.
++ */
++int fx3_ctrl(struct fx3_dev *dev, u8 dir, u8 req, u16 val, u16 idx,
++	     void *buf, u16 len, int timeout_ms)
++{
++	unsigned int pipe;
++	int ret;
++
++	if (len > FX3_CTRL_CHUNK)
++		return -EINVAL;
++
++	if (dir & USB_DIR_IN)
++		pipe = usb_rcvctrlpipe(dev->udev, 0);
++	else
++		pipe = usb_sndctrlpipe(dev->udev, 0);
++
++	if (len && !(dir & USB_DIR_IN))
++		memcpy(dev->ctrl_buf, buf, len);
++
++	ret = usb_control_msg(dev->udev, pipe, req,
++			      dir | USB_TYPE_VENDOR | USB_RECIP_DEVICE,
++			      val, idx, len ? dev->ctrl_buf : NULL, len,
++			      timeout_ms);
++
++	if (ret > 0 && (dir & USB_DIR_IN) && len)
++		memcpy(buf, dev->ctrl_buf, min_t(int, ret, len));
++
++	return ret;
++}
++
++int fx3_wake(struct fx3_dev *dev)
++{
++	return fx3_ctrl(dev, USB_DIR_OUT, V2U_REQ_WAKE, 1, 0, NULL, 0,
++			FX3_CTRL_TIMEOUT);
++}
++
++/*
++ * Standby. The FX3 boards take two parameters here (.text+0x34b0); the legacy
++ * boards use request 0xB6 with a timeout in seconds instead, which this driver
++ * does not drive.
++ */
++int fx3_standby(struct fx3_dev *dev, u16 arg1, u16 arg2)
++{
++	int ret = fx3_ctrl(dev, USB_DIR_OUT, V2U_REQ_STANDBY, arg2, arg1,
++			   NULL, 0, FX3_CTRL_TIMEOUT);
++
++	return ret < 0 ? ret : 0;
++}
++
++int fx3_stop(struct fx3_dev *dev)
++{
++	return fx3_ctrl(dev, USB_DIR_OUT, V2U_REQ_STOP, 0, 0, NULL, 0,
++			FX3_CTRL_TIMEOUT);
++}
++
++int fx3_reconnect(struct fx3_dev *dev)
++{
++	int ret = fx3_ctrl(dev, USB_DIR_OUT, V2U_REQ_RECONNECT, 0, 0, NULL, 0,
++			   FX3_CTRL_TIMEOUT);
++
++	return ret > 0 ? 0 : ret;
++}
++
++int fx3_select_adc(struct fx3_dev *dev, u16 which)
++{
++	int ret = fx3_ctrl(dev, USB_DIR_OUT, V2U_REQ_SELECT_ADC, 0, which,
++			   NULL, 0, FX3_CTRL_TIMEOUT);
++
++	return ret > 0 ? 0 : ret;
++}
++
++int fx3_read_info(struct fx3_dev *dev, u16 which, void *buf)
++{
++	return fx3_ctrl(dev, USB_DIR_IN, V2U_REQ_INFO, which, 0, buf,
++			V2U_INFO_LEN,
++			which == V2U_INFO_READ_B ? FX3_FW_TIMEOUT
++						 : FX3_CTRL_TIMEOUT);
++}
++
++/*
++ * Asks the device to latch a frame in the given format and reports whether one
++ * is ready.
++ *
++ * FX3 (.text+0x3bf0) reads a status byte back; DVI2USB (.text+0x3330) is an OUT
++ * with no reply, so a successful transfer is all the confirmation there is.
++ */
++int fx3_grab(struct fx3_dev *dev, u32 format)
++{
++	const struct fx3_fmt *f = NULL;
++	unsigned int i, n;
++	const struct fx3_fmt *t = fx3_fmt_table(dev, &n);
++	u8 status = 0xff;
++	u16 val;
++	int ret;
++
++	for (i = 0; i < n; i++)
++		if (t[i].v2u == (format & 0xffff))
++			f = &t[i];
++	if (!f)
++		return -EINVAL;
++
++	if (dev->board && dev->board->family == FX3_FAM_DVI2USB) {
++		val = 0x30 | f->hw | (format & V2U_FMT_FLAG_ALT ? 0x80 : 0x00);
++		ret = fx3_ctrl(dev, USB_DIR_OUT, V2U_REQ_GRAB, val, 0, NULL, 0,
++			       FX3_CTRL_TIMEOUT);
++		return ret < 0 ? ret : 0;
++	}
++
++	val = f->hw | (format & V2U_FMT_FLAG_ALT ? 0x50 : 0x00);
++
++	ret = fx3_ctrl(dev, USB_DIR_IN, V2U_REQ_GRAB, val, 0, &status, 1,
++		       FX3_CTRL_TIMEOUT);
++	if (ret != 1)
++		return ret < 0 ? ret : -EIO;
++
++	switch (status) {
++	case V2U_GRAB_OK:
++		return 0;
++	case V2U_GRAB_NO_SIGNAL:
++		return -ENOMEDIUM;
++	case V2U_GRAB_BUSY:
++		msleep(50);
++		return -EAGAIN;
++	default:
++		dev_dbg(&dev->intf->dev, "unexpected grab response 0x%02x\n",
++			status);
++		return -EPROTO;
++	}
++}
++
++/*
++ * Read the front end's measured timings and derive the source mode.
++ *
++ * Vendor request 0xB1 IN, wValue 0, wIndex 0 returns 22 bytes
++ * (adc_get_dvi_timings .text+0xed90). Every u16 in it is 12-bit, masked by
++ * adc_convert_dvi_timings (.text+0xed60). The arithmetic below is
++ * adc_compute_dvi_parameters (.text+0xedf0).
++ *
++ * mult = 2 (the FPGA data path carries two pixels per clock, from
++ * grabber_desc+0x18) and refclk = 33.6 MHz (usb_board_dvi2usb3_usb3+0x14),
++ * so pixel_clock = refclk * 1024 / clkdiv.
++ */
++/*
++ * Analog VGA modes keyed by total line count. The analog front end cannot
++ * report an active area - there is no DE signal - so the vendor fits its
++ * measurement to the VESA table (AD9887A_compute_DVI_parameters,
++ * .text+0x116c0). This is the same idea reduced to the common modes; vtotal
++ * alone separates all of them.
++ */
++static const struct {
++	u16 vtotal, width, height;
++} fx3_vga_modes[] = {
++	{  525,  640,  480 },
++	{  628,  800,  600 },
++	{  666, 1024,  768 },	/* 70 Hz */
++	{  806, 1024,  768 },
++	{  771, 1280,  720 },
++	{ 1066, 1280, 1024 },
++	{  795, 1280,  800 },
++	{ 1089, 1680, 1050 },
++	{ 1125, 1920, 1080 },
++};
++
++/*
++ * The analog path answers request 0xB1 with 12 bytes, not 22. Only the line
++ * count is used here: the FPGA also exposes it at register 0x02, and both
++ * agree with the source. Everything else in the block is left alone because
++ * PROTOCOL-video.md §3.4 states the counter semantics were never verified.
++ */
++static int fx3_detect_mode_analog(struct fx3_dev *dev, struct fx3_mode *m)
++{
++	unsigned int i, best = 0, bestdiff = ~0U;
++	int lo, hi, vtotal;
++
++	lo = fx3_fpga_readb(dev, 0x02);
++	if (lo < 0)
++		return lo;
++	hi = fx3_fpga_readb(dev, 0x03);
++	if (hi < 0)
++		return hi;
++
++	vtotal = (hi << 8 | lo) & 0xfff;
++	if (!vtotal)
++		return -ENOMEDIUM;
++
++	for (i = 0; i < ARRAY_SIZE(fx3_vga_modes); i++) {
++		unsigned int d = abs(fx3_vga_modes[i].vtotal - vtotal);
++
++		if (d < bestdiff) {
++			bestdiff = d;
++			best = i;
++		}
++	}
++	if (bestdiff > 19)		/* vendor's fit tolerance */
++		return -ENOMEDIUM;
++
++	m->width = fx3_vga_modes[best].width;
++	m->height = fx3_vga_modes[best].height;
++	m->ilace = 1;
++	m->interlaced = false;
++	m->vtotal = vtotal;
++	m->htotal = m->width + m->width / 4;	/* nominal 5:4 blanking */
++	m->vfreq = 600;
++	return 0;
++}
++
++int fx3_detect_mode(struct fx3_dev *dev, struct fx3_mode *m)
++{
++	struct dvi_timings {
++		__le16 clkdiv, htotal, vtotal, hoffset, voffset;
++		__le16 hactive, vactive, vsync_a, vsync_b, reserved;
++		u8 kind, flags;
++	} t;
++	u32 mult = FX3_PIXELS_PER_CLK, refclk = FX3_REFCLK_HZ;
++	u32 clkdiv, htotal, vtotal, hact, vact;
++	u32 line_hz, dbl, ilace, d;
++	int ret;
++
++	memset(m, 0, sizeof(*m));
++
++	if (dev->input == V2U_ADC_ANALOG)
++		return fx3_detect_mode_analog(dev, m);
++
++	ret = fx3_ctrl(dev, USB_DIR_IN, V2U_REQ_I2C_LEGACY_RD, 0, 0,
++		       &t, sizeof(t), FX3_CTRL_TIMEOUT);
++	if (ret < 0)
++		return ret;
++	if (ret != sizeof(t))
++		return -EIO;
++
++	clkdiv  = le16_to_cpu(t.clkdiv)   & 0xfff;
++	htotal  = le16_to_cpu(t.htotal)   & 0xfff;
++	vtotal  = le16_to_cpu(t.vtotal)   & 0xfff;
++	hact    = le16_to_cpu(t.hactive)  & 0xfff;
++	vact    = le16_to_cpu(t.vactive)  & 0xfff;
++
++	/* No timing at all, or a degenerate one, means no source is attached. */
++	if (!t.kind || !hact || !vact || !clkdiv || !htotal || !vtotal)
++		return -ENOMEDIUM;
++
++	dbl = (t.flags & 0x10) ? 2 : 1;
++
++	/* Interlaced when the two vsync edges sit half a line apart. */
++	d = abs((int)(le16_to_cpu(t.vsync_a) % htotal) -
++		(int)(le16_to_cpu(t.vsync_b) % htotal));
++	ilace = 1 + ((((htotal / 10) + d) % htotal) > (htotal / 5));
++
++	line_hz = ((refclk / clkdiv) << 10) / (htotal * mult);
++	if (t.flags & 0x08)
++		line_hz *= 2;
++	if (t.kind == 3)
++		line_hz *= 2;
++
++	m->width = (hact * mult * dbl) & ~3u;
++	m->height = vact * ilace;
++	m->vfreq = (line_hz * 10) / vtotal;	/* units of 0.1 Hz */
++	m->interlaced = ilace > 1;
++	m->ilace = ilace;
++	m->htotal = htotal * mult;
++	m->vtotal = vtotal;
++	m->hoffset = (le16_to_cpu(t.hoffset) & 0xfff) * mult * dbl;
++	m->voffset = max_t(u32, (le16_to_cpu(t.voffset) & 0xfff), 2) - 1;
++
++	if (!m->width || m->height < 100 || !m->vfreq)
++		return -ENOMEDIUM;
++
++	return 0;
++}
++
++/*
++ * Push the grab-parameter block. This is what actually tells the device the
++ * capture geometry; without it a grab uses whatever was configured last.
++ *
++ * Vendor request 0xB0 OUT, wValue 0, wIndex 0, 43 bytes
++ * (usb_adc_io_set_ioparams, .text+0x670). Every u16 in the block goes out
++ * big-endian while the host struct is little-endian.
++ *
++ * The analog fields (PLL range, phase, gains, offsets) are left zero: they are
++ * only meaningful on the ISL98002 path, and valid_mask = 0 says so.
++ */
++/*
++ * Flatten the 199-byte capture-state block into the 43-byte request 0xB0
++ * payload (usb_adc_io_setparameters, .text+0x670). The header is
++ * 0x0e + N + 8 = 0x2b bytes with N = grabber_desc[0x14] = 21 on this hardware;
++ * every u16 goes out big-endian while the host block is little-endian.
++ */
++static void fx3_gp_to_wire(const struct v2u_adcparams *gp, u8 *w)
++{
++	memset(w, 0, FX3_GP_WIRE_LEN);
++
++	put_unaligned_be16(gp->htotal, w + 0x00);
++	put_unaligned_le16(gp->unknown_02, w + 0x02);	/* passes through as-is */
++	w[0x04] = gp->pll_vco;
++	w[0x05] = gp->pll_current;
++	w[0x06] = gp->phase;
++	w[0x07] = gp->gain_r;
++	w[0x08] = gp->gain_g;
++	w[0x09] = gp->gain_b;
++	w[0x0a] = gp->offset_r;
++	w[0x0b] = gp->offset_g;
++	w[0x0c] = gp->offset_b;
++	w[0x0d] = gp->valid_mask;
++
++	put_unaligned_be16(gp->width, w + 0x0e);
++	put_unaligned_be16(gp->height, w + 0x10);
++	put_unaligned_be16(gp->ilace, w + 0x12);
++	put_unaligned_be16(gp->lines_per_field, w + 0x14);
++	put_unaligned_be16(gp->hoffset, w + 0x16);
++	w[0x18] = gp->voffset;
++	w[0x19] = gp->ilace_b;
++	w[0x1a] = gp->scale_div;
++	w[0x1b] = gp->hsync_threshold;
++	w[0x1c] = gp->vsync_threshold;
++	w[0x1d] = gp->noise_filter;
++	w[0x1e] = gp->csflags;
++	put_unaligned_be16(gp->raw_hactive, w + 0x1f);
++	put_unaligned_be16(gp->raw_vactive, w + 0x21);
++
++	put_unaligned_be16(gp->crop_x, w + 0x23);
++	put_unaligned_be16(gp->crop_y, w + 0x25);
++	put_unaligned_be16(gp->crop_width, w + 0x27);
++	put_unaligned_be16(gp->crop_height, w + 0x29);
++}
++
++/* Program the front end and the FPGA capture window from a full block. */
++int fx3_push_adcparams(struct fx3_dev *dev, const struct v2u_adcparams *gp)
++{
++	u8 w[FX3_GP_WIRE_LEN];
++	int ret;
++
++	/*
++	 * adc_setparameters range-checks nothing in the block, so a bad width
++	 * or crop reaches the FPGA verbatim. Validate the geometry the device
++	 * actually acts on before forwarding.
++	 */
++	if (!gp->width || !gp->height || !gp->ilace ||
++	    gp->width > FX3_MAX_WIDTH || gp->height > FX3_MAX_HEIGHT ||
++	    gp->phase > 31 || gp->offset_r > 0x3f || gp->offset_g > 0x3f ||
++	    gp->offset_b > 0x3f)
++		return -EINVAL;
++	if (gp->crop_x < 0 || gp->crop_y < 0 ||
++	    gp->crop_width < 0 || gp->crop_height < 0 ||
++	    gp->crop_x + gp->crop_width > gp->width ||
++	    gp->crop_y + gp->crop_height > gp->height)
++		return -EINVAL;
++
++	fx3_gp_to_wire(gp, w);
++	ret = fx3_ctrl(dev, USB_DIR_OUT, V2U_REQ_SET_PARAMS, 0, 0,
++		       w, sizeof(w), FX3_CTRL_TIMEOUT);
++	return ret < 0 ? ret : 0;
++}
++
++/*
++ * Push the grab-parameter block. This is what actually tells the device the
++ * capture geometry; without it a grab uses whatever was configured last.
++ */
++int fx3_set_mode(struct fx3_dev *dev, const struct fx3_mode *m)
++{
++	struct v2u_adcparams *gp = &dev->adc;
++
++	if (!m->width || !m->height || !m->ilace)
++		return -EINVAL;
++
++	memset(gp, 0, sizeof(*gp));
++
++	gp->htotal = m->htotal;
++	gp->width = m->width;
++	gp->height = m->height;
++	gp->ilace = m->ilace;
++	gp->lines_per_field = m->height / m->ilace;
++	gp->hoffset = m->hoffset;
++	gp->voffset = min_t(u32, m->voffset, 255);
++	gp->ilace_b = m->ilace;
++	gp->scale_div = 1;
++	/*
++	 * Analog level calibration. The EEPROM word at 0x18 is
++	 * {valid, R, G, B} - adc_init (.text+0xf366) reads four bytes from
++	 * there and keeps them only when byte 0 is set.
++	 *
++	 * The vendor treats those three as multipliers on the gains at
++	 * gp+0x07..0x09, whose default is 0x80 (.text+0x25a5e), and since
++	 * 0x80 * c >> 7 == c that is the same byte value this writes. On this
++	 * hardware they only produce a picture through the *offset* fields:
++	 * fed as gains the frame stays near black whatever the value, while as
++	 * offsets the channel means go from ~3 to ~95/59/79. Left as offsets
++	 * because that is what was measured; the gains and the sampling phase
++	 * are now reachable through V2U_IOC_SET_ADCPARAMS for tuning.
++	 */
++	if (dev->input == V2U_ADC_ANALOG && dev->rgb_calib[0]) {
++		gp->offset_r = dev->rgb_calib[1] & 0x3f;
++		gp->offset_g = dev->rgb_calib[2] & 0x3f;
++		gp->offset_b = dev->rgb_calib[3] & 0x3f;
++		gp->valid_mask = V2U_GP_VALID_OFFSETS;
++	}
++
++	gp->hsync_threshold = dev->hsync_threshold;
++	gp->vsync_threshold = dev->vsync_threshold;
++	gp->noise_filter = dev->noise_filter;
++	gp->raw_hactive = m->width;
++	gp->raw_vactive = m->height;
++
++	/* Full-frame crop: the FPGA scaler is not populated on this hardware. */
++	gp->crop_width = m->width;
++	gp->crop_height = m->height;
++
++	/* Mirror the fields the SDK block reports back. */
++	gp->palette = 0x18;			/* RGB24 */
++	gp->meas_vrefresh = m->vfreq * 100;	/* 0.1 Hz -> mHz */
++	if (dev->input == V2U_ADC_DIGITAL)
++		gp->meas_flags = V2U_GP_MEAS_DIGITAL;
++	gp->m_hactive = m->width;
++	gp->m_vactive = m->height;
++	gp->out_width = m->width;
++	gp->out_height = m->height;
++	gp->grab_width = m->width;
++	gp->grab_height = m->height;
++
++	return fx3_push_adcparams(dev, gp);
++}
++
++/*
++ * RGB calibration word, nr 0x1d / nr 0x1e. adc_write_rgb_calib (.text+0xf270)
++ * writes four bytes into the board's serial memory and updates the cached copy
++ * the read side returns. Note the vendor's path bypasses board_common_ioctl and
++ * so is *not* gated on the EEPROM write-protect bit that V2U_IOC_SERIAL_WRITE
++ * honours (.text+0x15da0); this one keeps the range check instead.
++ */
++int fx3_read_rgb_calib(struct fx3_dev *dev, struct v2u_rgb_calib *c)
++{
++	c->valid = dev->rgb_calib[0];
++	c->cal_r = dev->rgb_calib[1];
++	c->cal_g = dev->rgb_calib[2];
++	c->cal_b = dev->rgb_calib[3];
++	return 0;
++}
++
++int fx3_write_rgb_calib(struct fx3_dev *dev, const struct v2u_rgb_calib *c)
++{
++	u8 v[4] = { c->valid, c->cal_r, c->cal_g, c->cal_b };
++	int ret;
++
++	/* adc_setparameters ignores anything outside 0x41..0xbf (.text+0xec83). */
++	if (c->valid != 1 ||
++	    (u8)(c->cal_r - 0x41) > 0x7e || (u8)(c->cal_g - 0x41) > 0x7e ||
++	    (u8)(c->cal_b - 0x41) > 0x7e)
++		return -EINVAL;
++
++	ret = fx3_eeprom_xfer(dev, V2U_EEPROM_RGB_CALIB, v, sizeof(v), false);
++	if (ret)
++		return ret;
++
++	memcpy(dev->rgb_calib, v, sizeof(v));
++	return 0;
++}
++
++const char *fx3_input_name(u16 input)
++{
++	return input == V2U_ADC_ANALOG ? "VGA" : "DVI/HDMI";
++}
++
++/*
++ * Select one input and wait for it to lock. The firmware ignores a select for
++ * the index it already holds and its cached index survives an FPGA reload, so
++ * the other input is selected first to force the front-end mux write.
++ */
++static int fx3_probe_input(struct fx3_dev *dev, u16 input, struct fx3_mode *m)
++{
++	u16 saved = dev->input;
++	int ret, i;
++
++	fx3_select_adc(dev, input == V2U_ADC_DIGITAL ? V2U_ADC_ANALOG
++						     : V2U_ADC_DIGITAL);
++	ret = fx3_select_adc(dev, input);
++	if (ret) {
++		dev_dbg(&dev->intf->dev, "select %s failed: %d\n",
++			fx3_input_name(input), ret);
++		return ret;
++	}
++
++	/* fx3_detect_mode picks its readout from dev->input */
++	dev->input = input;
++	for (i = 0; i < FX3_LOCK_TRIES; i++) {
++		ret = fx3_detect_mode(dev, m);
++		if (ret != -ENOMEDIUM)
++			break;
++		msleep(FX3_LOCK_POLL_MS);
++	}
++	dev->input = saved;
++
++	return ret;
++}
++
++/* Detect the source and configure the device for it. */
++int fx3_apply_mode(struct fx3_dev *dev)
++{
++	struct fx3_mode m;
++	int ret;
++
++	/* Cache the analog calibration once; it lives in the EEPROM. */
++	if (!dev->rgb_calib[0])
++		fx3_eeprom_xfer(dev, V2U_EEPROM_RGB_CALIB, dev->rgb_calib,
++				sizeof(dev->rgb_calib), true);
++
++	/*
++	 * Probe the inputs. Only search when nothing is locked yet: re-selecting
++	 * restarts the receiver and costs another lock delay.
++	 */
++	if (dev->have_signal) {
++		ret = fx3_detect_mode(dev, &m);
++	} else {
++		ret = fx3_probe_input(dev, dev->input, &m);
++
++		if (ret == -ENOMEDIUM && fx3_autodetect) {
++			u16 other = dev->input == V2U_ADC_DIGITAL ?
++				    V2U_ADC_ANALOG : V2U_ADC_DIGITAL;
++
++			ret = fx3_probe_input(dev, other, &m);
++			if (!ret) {
++				dev_info(&dev->intf->dev,
++					 "no signal on %s, switched to %s\n",
++					 fx3_input_name(dev->input),
++					 fx3_input_name(other));
++				dev->input = other;
++			} else {
++				/* leave the mux where the caller asked */
++				fx3_select_adc(dev, dev->input);
++			}
++		}
++	}
++	if (ret) {
++		dev->have_signal = false;
++		return ret;
++	}
++
++	ret = fx3_set_mode(dev, &m);
++	if (ret)
++		return ret;
++
++	/*
++	 * Reset the frame keep-pattern. 0xCC is the pattern length minus one
++	 * and 0xCD shifts in one keep bit, so 0/1 means "1-bit pattern, keep
++	 * every frame". The vendor issues this unconditionally at the end of
++	 * every parameter push (fpga_rate_control_reset, .text+0x18e90); left
++	 * at its power-on 0/0 the fabric keeps nothing.
++	 */
++	fx3_fpga_writeb(dev, V2U_FPGA_REG_RATE_LEN, 0);
++	fx3_fpga_writeb(dev, V2U_FPGA_REG_RATE_BITS, 1);
++
++	dev->mode = m;
++	dev->have_signal = true;
++	dev->width = m.width;
++	dev->height = m.height;
++	return 0;
++}
++
++/*
++ * FPGA register access is a one-byte I2C transfer to slave 0x60
++ * (PROTOCOL-video.md §4.1); fpga_readb/fpga_writeb are the len == 1 case.
++ */
++int fx3_fpga_readb(struct fx3_dev *dev, u8 reg)
++{
++	u8 v;
++	int ret = fx3_i2c_xfer(dev, V2U_I2C_ADDR_FPGA, reg, &v, 1, true);
++
++	return ret ? ret : v;
++}
++
++int fx3_fpga_writeb(struct fx3_dev *dev, u8 reg, u8 val)
++{
++	return fx3_i2c_xfer(dev, V2U_I2C_ADDR_FPGA, reg, &val, 1, false);
++}
++
++/*
++ * The 64-bit die identifier, clocked out of FPGA register 0xCF one bit at a
++ * time (board_read_unique_id, .text+0x154f0). Two writes select the bank and
++ * strobe, then each read yields the next bit in bit 0, MSB first.
++ *
++ * This costs 66 control transfers, so it is only ever done on demand.
++ */
++int fx3_read_unique_id(struct fx3_dev *dev, u8 out[8], unsigned int bank)
++{
++	unsigned int i;
++	u8 acc = 0;
++	int ret;
++
++	memset(out, 0, 8);
++
++	ret = fx3_fpga_writeb(dev, V2U_FPGA_REG_UNIQUE_ID, bank ? 3 : 1);
++	if (ret)
++		return ret;
++	ret = fx3_fpga_writeb(dev, V2U_FPGA_REG_UNIQUE_ID, bank ? 2 : 0);
++	if (ret)
++		return ret;
++
++	for (i = 0; i < 64; i++) {
++		ret = fx3_fpga_readb(dev, V2U_FPGA_REG_UNIQUE_ID);
++		if (ret < 0)
++			return ret;
++
++		acc = (acc << 1) | (ret & 1);
++		if ((i & 7) == 7) {
++			out[i >> 3] = acc;
++			acc = 0;
++		}
++	}
++
++	return 0;
++}
++
++/*
++ * Identity EEPROM access. Vendor request 0xB2 (or 0xC5 for the secondary
++ * space): wValue is a plain byte address, wIndex is 0, and the firmware owns
++ * the I2C addressing, page arithmetic and busy polling (.text+0x3070).
++ */
++int fx3_eeprom_xfer(struct fx3_dev *dev, u16 addr, void *buf, int len,
++		    bool read)
++{
++	u8 dir = read ? USB_DIR_IN : USB_DIR_OUT;
++	u8 *p = buf;
++	int off = 0;
++
++	while (off < len) {
++		int chunk = min(len - off, FX3_CTRL_CHUNK);
++		int ret;
++
++		ret = fx3_ctrl(dev, dir, V2U_REQ_EEPROM, addr + off, 0,
++			       p + off, chunk, FX3_CTRL_TIMEOUT);
++		if (ret != chunk)
++			return ret < 0 ? ret : -EIO;
++		off += chunk;
++	}
++	return 0;
++}
++
++int fx3_i2c_xfer(struct fx3_dev *dev, u8 addr, u8 reg, void *buf, int len,
++		 bool read)
++{
++	u8 dir = read ? USB_DIR_IN : USB_DIR_OUT;
++	u8 *p = buf;
++	int off = 0;
++
++	while (off < len) {
++		int chunk = min(len - off, FX3_CTRL_CHUNK);
++		int ret;
++
++		ret = fx3_ctrl(dev, dir, V2U_REQ_I2C, addr,
++			       ((reg + off) & 0xff) | (chunk << 8),
++			       p + off, chunk, FX3_CTRL_TIMEOUT);
++		if (ret != chunk)
++			return ret < 0 ? ret : -EIO;
++		off += chunk;
++	}
++	return 0;
++}
++
++int fx3_mem_xfer(struct fx3_dev *dev, u32 addr, void *buf, int len, bool read)
++{
++	u8 dir = read ? USB_DIR_IN : USB_DIR_OUT;
++	u8 *p = buf;
++	int off = 0;
++
++	while (off < len) {
++		int chunk = min(len - off, FX3_CTRL_CHUNK);
++		u32 a = addr + off;
++		int ret;
++
++		ret = fx3_ctrl(dev, dir, V2U_REQ_MEM, a >> 16, a & 0xffff,
++			       p + off, chunk, FX3_CTRL_TIMEOUT);
++		if (ret != chunk)
++			return ret < 0 ? ret : -EIO;
++		off += chunk;
++	}
++	return 0;
++}
++
++/*
++ * Cypress RW_INTERNAL (request 0xA0): the address is split low/high across
++ * wValue/wIndex and the payload goes out in 64-byte chunks. Both the FX2 8051
++ * and the FX3 boot loader use this (usb_board_download_firmware .text+0x1e30,
++ * ezusb_write .text+0x35e0).
++ */
++static int fx3_ezusb_write(struct fx3_dev *dev, u32 addr, const void *data,
++			   u32 len)
++{
++	u32 done = 0;
++
++	while (done < len) {
++		u32 n = min_t(u32, len - done, FX3_CTRL_CHUNK);
++		int ret;
++
++		memcpy(dev->ctrl_buf, data + done, n);
++		ret = usb_control_msg(dev->udev, usb_sndctrlpipe(dev->udev, 0),
++				      V2U_REQ_EZUSB_FW,
++				      USB_DIR_OUT | USB_TYPE_VENDOR |
++				      USB_RECIP_DEVICE,
++				      (addr + done) & 0xffff,
++				      (addr + done) >> 16,
++				      dev->ctrl_buf, n, 3000);
++		if (ret < 0)
++			return ret;
++		if (ret != (int)n)
++			return -EIO;
++		done += n;
++	}
++	return 0;
++}
++
++/* Jump to addr; a zero-length record is how an FX3 image hands over control. */
++static int fx3_ezusb_start(struct fx3_dev *dev, u32 addr)
++{
++	return usb_control_msg(dev->udev, usb_sndctrlpipe(dev->udev, 0),
++			       V2U_REQ_EZUSB_FW,
++			       USB_DIR_OUT | USB_TYPE_VENDOR | USB_RECIP_DEVICE,
++			       addr & 0xffff, addr >> 16, NULL, 0, 3000);
++}
++
++/*
++ * Standard Cypress FX3 boot image: "CY" magic, then {u32 words, u32 addr,
++ * data[words*4]} sections, terminated by a zero-length record carrying the
++ * entry point.
++ */
++static int fx3_load_boot_image(struct fx3_dev *dev, const struct firmware *fw)
++{
++	size_t pos = 4;
++
++	if (fw->size < 12 || fw->data[0] != 'C' || fw->data[1] != 'Y') {
++		dev_err(&dev->intf->dev, "not a Cypress FX3 boot image\n");
++		return -EINVAL;
++	}
++
++	while (pos + 8 <= fw->size) {
++		u32 words = get_unaligned_le32(fw->data + pos);
++		u32 addr = get_unaligned_le32(fw->data + pos + 4);
++		int ret;
++
++		pos += 8;
++
++		if (!words)
++			return fx3_ezusb_start(dev, addr);
++
++		if (pos + (size_t)words * 4 > fw->size) {
++			dev_err(&dev->intf->dev, "truncated FX3 image\n");
++			return -EINVAL;
++		}
++
++		ret = fx3_ezusb_write(dev, addr, fw->data + pos, words * 4);
++		if (ret)
++			return ret;
++		pos += (size_t)words * 4;
++	}
++
++	dev_err(&dev->intf->dev, "FX3 image has no entry record\n");
++	return -EINVAL;
++}
++
++/*
++ * True while the part is still running the Cypress boot ROM.
++ *
++ * Observed on real hardware: an un-booted DVI2USB 3.0 keeps its normal product
++ * id 0x3500 and reports iManufacturer/iProduct 1/2 with the strings
++ * "Cypress"/"WestBridge" and no endpoints beyond EP0. Epiphan's own firmware
++ * reports 3/1, which is exactly the test v2u_id.h spells out as
++ * VGA2USB_IS_DVI2USB3 and which usb_board_autofirmware_fpga also gates on
++ * (.text+0x12f7). So the descriptor indices, not the product id, are what
++ * distinguish the two states.
++ */
++bool fx3_needs_boot(struct fx3_dev *dev)
++{
++	return dev->udev->descriptor.iManufacturer != 3 ||
++	       dev->udev->descriptor.iProduct != 1;
++}
++
++/*
++ * The un-booted FX3 parts have no firmware at all and must be given a boot
++ * image before they reappear as a capture device.
++ */
++int fx3_load_boot(struct fx3_dev *dev)
++{
++	const struct firmware *fw;
++	const char *name;
++	int ret;
++
++	switch (dev->product) {
++	case PID_DVI2USB3:
++	case PID_DVI2USB3_R3:
++	case PID_DVI2USB3_ET:
++	case PID_DVI2USB3_ET_R3:
++	case PID_DVI2USB3_4K:
++	case PID_DVI2USB3_UNINIT:
++		name = "epiphan/dvi2usb3.fx3";
++		break;
++	case PID_SDI2USB3:
++	case PID_SDI2USB3_R3:
++	case PID_SDI2USB3_GEN:
++	case PID_SDI2USB3_GEN_R3:
++	case PID_SDI2USB3_UNINIT:
++		name = "epiphan/sdi2usb3.fx3";
++		break;
++	default:
++		return -ENODEV;
++	}
++
++	ret = request_firmware(&fw, name, &dev->intf->dev);
++	if (ret) {
++		dev_err(&dev->intf->dev, "cannot load %s: %d\n", name, ret);
++		return ret;
++	}
++
++	ret = fx3_load_boot_image(dev, fw);
++	release_firmware(fw);
++
++	if (!ret)
++		dev_info(&dev->intf->dev,
++			 "%s booted, device will re-enumerate\n", name);
++	return ret;
++}
++
++/*
++ * DVI2USB ships with two bitstreams. The r1 image is used when the signed
++ * EEPROM serial - a big-endian u32 at offset 8 - falls in 20000..20099
++ * (.text+0x125d). The stock driver keeps r2 on any transfer error, so do the
++ * same rather than failing the probe.
++ */
++static const char *dvi2usb_fpga_name(struct fx3_dev *dev)
++{
++	__be32 raw;
++	u32 sn;
++
++	if (fx3_eeprom_xfer(dev, 8, &raw, sizeof(raw), true))
++		return "epiphan/dvi2usb-r2.fpga";
++
++	sn = be32_to_cpu(raw);
++	if (sn - 20000 <= 99)
++		return "epiphan/dvi2usb-r1.fpga";
++	return "epiphan/dvi2usb-r2.fpga";
++}
++
++static const char *fx3_fw_name(struct fx3_dev *dev)
++{
++	if (dev->board && dev->board->family == FX3_FAM_DVI2USB)
++		return dvi2usb_fpga_name(dev);
++
++	switch (dev->product) {
++	case PID_DVI2USB3:
++	case PID_DVI2USB3_R3:
++	case PID_DVI2USB3_ET:
++	case PID_DVI2USB3_ET_R3:
++	case PID_DVI2USB3_UNINIT:
++		return "epiphan/dvi2usb3.fpga";
++	case PID_SDI2USB3:
++	case PID_SDI2USB3_R3:
++	case PID_SDI2USB3_GEN:
++	case PID_SDI2USB3_GEN_R3:
++	case PID_SDI2USB3_UNINIT:
++		return "epiphan/sdi2usb3.fpga";
++	default:
++		return NULL;
++	}
++}
++
++/*
++ * The bitstream is pushed 64 bytes at a time through V2U_REQ_INFO/V2U_INFO_FPGA_DATA
++ * with wIndex carrying the bit count of the chunk, then the device is polled
++ * with V2U_REQ_STATUS until the fabric answers.
++ */
++int fx3_load_fpga(struct fx3_dev *dev)
++{
++	const struct firmware *fw;
++	const char *name = fx3_fw_name(dev);
++	u8 info[V2U_INFO_LEN];
++	size_t off;
++	int i, ret;
++
++	if (!name)
++		return -ENODEV;
++
++	/*
++	 * usb_board_autofirmware_fpga (.text+0x12f7) gates programming on the
++	 * u16 at dev+0xfe, which is {iManufacturer, iProduct} == {3, 1} — the
++	 * same test v2u_id.h spells out as VGA2USB_IS_DVI2USB3.
++	 */
++	if (dev->udev->descriptor.iManufacturer != 3 ||
++	    dev->udev->descriptor.iProduct != 1) {
++		dev_err(&dev->intf->dev,
++			"unexpected descriptor indices (iMfg %u, iProduct %u), refusing to program\n",
++			dev->udev->descriptor.iManufacturer,
++			dev->udev->descriptor.iProduct);
++		return -ENODEV;
++	}
++
++	ret = request_firmware(&fw, name, &dev->intf->dev);
++	if (ret) {
++		dev_err(&dev->intf->dev, "cannot load %s: %d\n", name, ret);
++		return ret;
++	}
++
++	ret = fx3_read_info(dev, V2U_INFO_READ_A, info);
++	if (ret < 0)
++		goto out;
++
++	for (off = 0; off < fw->size; off += FX3_CTRL_CHUNK) {
++		int chunk = min_t(size_t, fw->size - off, FX3_CTRL_CHUNK);
++
++		memcpy(dev->ctrl_buf, fw->data + off, chunk);
++		ret = usb_control_msg(dev->udev, usb_sndctrlpipe(dev->udev, 0),
++				      V2U_REQ_INFO,
++				      USB_DIR_OUT | USB_TYPE_VENDOR |
++				      USB_RECIP_DEVICE,
++				      V2U_INFO_FPGA_DATA, chunk * 8,
++				      dev->ctrl_buf, chunk, FX3_FW_TIMEOUT);
++		if (ret != chunk) {
++			dev_err(&dev->intf->dev,
++				"bitstream write failed at %zu: %d\n", off, ret);
++			ret = ret < 0 ? ret : -EIO;
++			goto out;
++		}
++	}
++
++	/*
++	 * Finalise. Without this the FX3 never marks the device "started" and
++	 * its command dispatcher accepts only 0xB5/0xB9/0xC2/0xC6 — every I2C,
++	 * EEPROM and register request stalls. Verified on hardware: issuing
++	 * this makes all of them work immediately.
++	 */
++	ret = fx3_ctrl(dev, USB_DIR_IN, V2U_INFO_FPGA_END_REQ, V2U_INFO_FPGA_END,
++		       0, info, V2U_INFO_LEN, FX3_FW_TIMEOUT);
++	if (ret < 0) {
++		dev_err(&dev->intf->dev, "FPGA finalise failed: %d\n", ret);
++		goto out;
++	}
++
++	msleep(100);
++
++	/*
++	 * Confirm the fabric really answers. A 0xC6 read is no use here: it
++	 * returns a static identity block whether or not the FPGA came up.
++	 * An I2C read of the FPGA's own register file is a real test.
++	 */
++	for (i = 0; i < 500; i++) {
++		ret = fx3_fpga_readb(dev, V2U_FPGA_REG_UNIQUE_ID);
++		if (ret >= 0)
++			break;
++		msleep(1);
++	}
++	if (ret < 0) {
++		dev_err(&dev->intf->dev, "FPGA did not come up: %d\n", ret);
++		goto out;
++	}
++
++	dev->fpga_loaded = true;
++	dev_info(&dev->intf->dev, "loaded %s (%zu bytes)\n", name, fw->size);
++	ret = 0;
++out:
++	release_firmware(fw);
++	return ret;
++}
+diff -urpN a/drivers/media/usb/epiphan-fx3/epiphan-fx3.h b/drivers/media/usb/epiphan-fx3/epiphan-fx3.h
+--- a/drivers/media/usb/epiphan-fx3/epiphan-fx3.h	1970-01-01 00:00:00.000000000 +0000
++++ b/drivers/media/usb/epiphan-fx3/epiphan-fx3.h	2026-08-08 13:11:01.999625435 +0000
+@@ -0,0 +1,341 @@
++/* SPDX-License-Identifier: GPL-2.0 */
++/*
++ * Epiphan DVI2USB 3.0 / SDI2USB 3.0 (Cypress FX3) frame grabber
++ *
++ * Protocol constants recovered from Epiphan's proprietary vga2usb_bins.o,
++ * see PROTOCOL.md at the top of this tree.
++ *
++ * Copyright (C) 2026 Rene Rebe <rene@exactco.de>
++ */
++
++#ifndef _EPIPHAN_FX3_H
++#define _EPIPHAN_FX3_H
++
++#include <linux/completion.h>
++#include <linux/kernel.h>
++#include <linux/list.h>
++#include <linux/miscdevice.h>
++#include <linux/mutex.h>
++#include <linux/sched.h>
++#include <linux/spinlock.h>
++#include <linux/usb.h>
++#include <sound/core.h>
++#include <sound/pcm.h>
++#include <media/v4l2-device.h>
++#include <media/videobuf2-v4l2.h>
++
++#include "v2u_ioctl.h"
++
++#define EPIPHAN_VID			0x5555
++#define EPIPHAN_VID2			0x2b77
++
++#define PID_DVI2USB			0x2222
++#define PID_DVI2USB3			0x3500
++#define PID_DVI2USB3_R3			0x3501
++#define PID_DVI2USB3_ET			0x3510
++#define PID_DVI2USB3_ET_R3		0x3511
++#define PID_SDI2USB3			0x3520
++#define PID_SDI2USB3_R3			0x3521
++#define PID_SDI2USB3_GEN		0x3530
++#define PID_SDI2USB3_GEN_R3		0x3531
++#define PID_DVI2USB3_4K			0x3541
++#define PID_DVI2USB3_UNINIT		0x3550
++#define PID_SDI2USB3_UNINIT		0x3551
++
++#define FX3_EP_VIDEO			0x82
++#define FX3_EP_AUDIO			0x83
++#define FX3_CTRL_CHUNK			64
++
++/*
++ * Video URB geometry, from grab_protocol_fast's line_size()/lines_per_frame()
++ * (.text+0x1ec00 / .text+0x1eb90). The queue is sized to
++ * round_up(frame, 64K) + 64K, split into transfers of at most
++ * os_bususb_max_transfer_size(), which is a constant 128K in the stock driver.
++ */
++#define FX3_MAX_XFER			131072
++#define FX3_BLOCK			(64 * 1024)
++#define FX3_MAX_URBS			256
++
++/* Front-end constants: two pixels per FPGA clock (grabber_desc+0x18) and the
++ * 33.6 MHz reference clock (usb_board_dvi2usb3_usb3+0x14). */
++#define FX3_PIXELS_PER_CLK		2
++#define FX3_REFCLK_HZ			33600000
++
++/* Vendor requests. Direction is carried in bmRequestType, not the code. */
++#define V2U_REQ_EZUSB_FW		0xa0	/* Cypress RAM download */
++#define V2U_REQ_AUDIO			0x20	/* wValue 1 = start, 0 = stop */
++#define V2U_REQ_ACODEC_SET_FMT		0x21	/* 6-byte encoded format */
++#define V2U_REQ_ACODEC_INPUT		0x22	/* u32 input index */
++#define V2U_REQ_ACODEC_VOLUME		0x23	/* {u32 chan, u32 val} */
++#define V2U_REQ_ACODEC_MUTE		0x24	/* {u32 chan, u32 val} */
++#define FX3_AUDIO_CHANNELS		2
++#define V2U_REQ_SET_PARAMS		0xb0	/* FX3: the grab-parameter block */
++#define V2U_REQ_I2C_LEGACY_WR		0xb0
++#define V2U_REQ_I2C_LEGACY_RD		0xb1
++#define V2U_REQ_RECONNECT		0xb5
++#define V2U_REQ_SLEEP_LEGACY		0xb6
++#define V2U_REQ_EEPROM			0xb2	/* identity EEPROM, wValue = byte address */
++#define V2U_REQ_EEPROM2			0xc5	/* secondary EEPROM space */
++#define V2U_REQ_I2C			0xb7
++#define V2U_REQ_GRAB			0xb8
++#define V2U_REQ_INFO			0xb9
++#define V2U_REQ_REGBLOCK		0xbb
++#define V2U_REQ_MEM			0xbc
++#define V2U_REQ_SELECT_ADC		0xc0
++#define V2U_REQ_WAKE			0xc1
++#define V2U_REQ_STOP			0xc2
++#define V2U_REQ_STANDBY			0xc3
++#define V2U_REQ_STATUS			0xc6
++#define V2U_REQ_BYTE			0xc7
++
++/* wValue selectors for V2U_REQ_INFO */
++#define V2U_INFO_READ_A			0x21
++#define V2U_INFO_READ_B			0x22
++#define V2U_INFO_FPGA_DATA		0x23	/* FPGA configuration data */
++#define V2U_INFO_FPGA_END		0x22	/* finalise; also marks the device started */
++#define V2U_INFO_FPGA_END_REQ		V2U_REQ_INFO
++
++#define V2U_INFO_LEN			64
++
++/* ADC selector indices for V2U_REQ_SELECT_ADC (wIndex) */
++#define V2U_ADC_DIGITAL			0	/* ADV7611, I2C 0x4c */
++#define V2U_ADC_ANALOG			1	/* ISL98002, I2C 0x4d */
++
++#define V2U_I2C_ADDR_ADV7611		0x4c
++#define V2U_I2C_ADDR_ISL98002		0x4d
++#define V2U_I2C_ADDR_FPGA		0x60	/* the FPGA's own I2C address */
++
++/* FPGA register file, reachable as len == 1 I2C transfers to 0x60 */
++#define V2U_EEPROM_RGB_CALIB		0x18
++
++/* valid_mask bits in the 0xB0 grab-parameter block */
++#define V2U_GP_VALID_GAINS		0x01
++#define V2U_GP_VALID_OFFSETS		0x02
++/* meas_flags bit 1: digital link. adc_setparameters skips the analog gain
++ * calibration entirely when it is set (.text+0xec56). */
++#define V2U_GP_MEAS_DIGITAL		0x02
++#define FX3_GAIN_UNITY			0x80
++#define FX3_PHASE_DEFAULT		0x10
++#define V2U_FPGA_REG_RATE_LEN		0xcc	/* keep-pattern length - 1 */
++#define V2U_FPGA_REG_RATE_BITS		0xcd	/* keep-pattern serial input */
++#define V2U_FPGA_REG_UNIQUE_ID		0xcf
++
++/* Board-scope property keys (PROTOCOL-ioctl-impl.md §3) */
++#define V2U_PROP_PRODUCT_ID		0x00
++#define V2U_PROP_PRODUCT_TYPE		0x01
++#define V2U_PROP_PRODUCT_NAME		0x12
++#define V2U_PROP_SERIAL_MEM		0x14
++#define V2U_PROP_SERIAL_STR		0x15
++#define V2U_PROP_USB_GEN		0x25
++#define V2U_PROP_DEVICE_NAME		0x28
++#define V2U_PROP_BYTE_REG		0x2e
++#define V2U_PROP_UNIQUE_ID		0x2714
++
++/* board flag word bits (board+0x70) */
++#define V2U_BOARD_FLAG_EEPROM_INVALID	0x01
++#define V2U_BOARD_FLAG_GONE		0x02
++#define V2U_BOARD_FLAG_STANDBY		0x40
++
++/* Status byte returned by the grab request */
++#define V2U_GRAB_OK			0
++#define V2U_GRAB_NO_SIGNAL		1
++#define V2U_GRAB_BUSY			2
++
++/* Epiphan pixel format codes, as passed in wValue of V2U_REQ_GRAB */
++#define V2U_FMT_RGB8			0x0008
++#define V2U_FMT_RGB16			0x0010
++#define V2U_FMT_RGB24			0x0018
++#define V2U_FMT_YUY2			0x0100
++#define V2U_FMT_YV12			0x0200
++#define V2U_FMT_2VUY			0x0300
++#define V2U_FMT_BGR16			0x0400
++#define V2U_FMT_Y8			0x0500
++#define V2U_FMT_BGR24			0x0800
++#define V2U_FMT_I420			0x0a00
++#define V2U_FMT_ARGB32			0x0b00
++#define V2U_FMT_NV12			0x0c00
++
++/* Set in the caller's format word to request the alternate scan order. */
++#define V2U_FMT_FLAG_ALT		0x40000000
++
++#define FX3_CTRL_TIMEOUT		500
++#define FX3_FW_TIMEOUT			1000
++/* Frame wait: the stock driver uses ~3 frame periods with a 500 ms floor. */
++#define FX3_FRAME_TIMEOUT		500
++#define FX3_DETECT_POLL_MS		500
++/* Receiver lock after an ADC start: ~1 s observed, allow 3 */
++#define FX3_LOCK_TRIES			30
++#define FX3_LOCK_POLL_MS		100
++#define FX3_MAX_WIDTH			2048
++#define FX3_MAX_HEIGHT			2048
++
++/*
++ * Protocol families. Every family shares the same bulk transport
++ * (ops[0x50] is literally the same read_image_lines for all of them); they
++ * differ in the grab command and the URB capacity formula.
++ */
++enum fx3_family {
++	FX3_FAM_FX3,		/* DVI2USB 3.0 / SDI2USB 3.0, request 0xB8 IN */
++	FX3_FAM_DVI2USB,	/* DVI2USB 0x2222, request 0xB8 OUT, no status */
++};
++
++struct fx3_fmt {
++	u32 fourcc;
++	u16 v2u;
++	u8 hw;			/* code placed in wValue of V2U_REQ_GRAB */
++	u8 bpp;			/* bits per pixel on the wire */
++};
++
++struct fx3_board {
++	u16 pid;
++	const char *name;
++	enum fx3_family family;
++	const char *fpga_fw;
++	const char *ezusb_fw;
++	u16 max_width;
++	u16 max_height;
++};
++
++struct fx3_mode {
++	u32 width;
++	u32 height;
++	u32 vfreq;		/* units of 0.1 Hz */
++	u32 htotal;
++	u32 vtotal;
++	u32 hoffset;
++	u32 voffset;
++	u32 ilace;		/* 1 progressive, 2 interlaced */
++	bool interlaced;
++};
++
++/* Size of the grab-parameter block on the wire (request 0xB0). */
++#define FX3_GP_WIRE_LEN			0x2b
++
++struct fx3_dev;
++
++struct fx3_urb {
++	struct urb *urb;
++	struct fx3_dev *dev;
++	void *buf;
++	unsigned int len;	/* transfer length */
++	unsigned int off;	/* destination offset within the frame */
++	int actual;		/* bytes received, or negative status */
++};
++
++struct fx3_dev {
++	struct usb_device *udev;
++	struct usb_interface *intf;
++
++	struct v4l2_device v4l2_dev;
++	struct video_device vdev;
++	struct vb2_queue queue;
++	struct mutex lock;	/* serialises control traffic and ioctls */
++
++	u16 product;
++	u16 bcd;
++	const struct fx3_board *board;
++	u8 ep_video;
++	u8 ep_audio;
++	bool fpga_loaded;
++
++	const struct fx3_fmt *fmt;
++	u32 width;
++	u32 height;
++	struct fx3_mode mode;
++	bool have_signal;
++	struct fx3_mode det;		/* last detection, for source-change events */
++	struct fx3_mode cand;		/* reading awaiting confirmation */
++	bool cand_signal;
++	unsigned long next_detect;	/* jiffies of the next mid-stream probe */
++	u16 input;		/* V2U_ADC_DIGITAL or V2U_ADC_ANALOG */
++	u8 rgb_calib[4];	/* EEPROM 0x18: {valid_mask, gain R, G, B} */
++	struct v2u_adcparams adc;	/* cached capture-state block, nr 0x1b */
++	u8 hsync_threshold;
++	u8 vsync_threshold;
++	u8 noise_filter;
++
++	void *ctrl_buf;		/* DMA-safe scratch for control transfers */
++
++	/* streaming */
++	struct fx3_urb urbs[FX3_MAX_URBS];
++	unsigned int n_urbs;
++	unsigned int frame_size;
++	struct completion frame_done;
++	atomic_t pending;
++	struct list_head bufs;
++	spinlock_t qlock;	/* protects bufs */
++	struct task_struct *thread;
++	bool stopping;
++	unsigned int sequence;
++
++	/* SDK character device */
++	struct miscdevice miscdev;
++	char *miscname;
++	unsigned int index;
++	struct v2u_grab_parameters gp;
++
++	/* ALSA capture */
++	struct snd_card *card;
++	struct snd_pcm_substream *pcm_ss;
++	struct fx3_urb aurbs[2];
++	spinlock_t audio_lock;	/* protects audio_pos / audio_filled */
++	unsigned int audio_pos;
++	unsigned int audio_filled;
++	bool audio_running;
++	bool audio_capturing;
++	unsigned int audio_dbg;
++};
++
++struct fx3_buffer {
++	struct vb2_v4l2_buffer vb;
++	struct list_head list;
++};
++
++unsigned int fx3_frame_size(const struct fx3_fmt *f, u32 w, u32 h);
++int fx3_capture_frame(struct fx3_dev *dev, void *dst);
++int fx3_capture_single(struct fx3_dev *dev, void *dst, unsigned int len);
++int fx3_stream_start(struct fx3_dev *dev);
++void fx3_stream_stop(struct fx3_dev *dev);
++
++const struct fx3_board *fx3_board_by_pid(u16 pid);
++const struct fx3_fmt *fx3_fmt_by_fourcc(struct fx3_dev *dev, u32 fourcc);
++const struct fx3_fmt *fx3_fmt_by_v2u(struct fx3_dev *dev, u16 v2u);
++u32 fx3_product_type(u16 pid);
++const struct fx3_fmt *fx3_fmt_by_index(struct fx3_dev *dev, unsigned int i);
++
++int fx3_ctrl(struct fx3_dev *dev, u8 dir, u8 req, u16 val, u16 idx,
++	     void *buf, u16 len, int timeout_ms);
++int fx3_wake(struct fx3_dev *dev);
++int fx3_stop(struct fx3_dev *dev);
++int fx3_standby(struct fx3_dev *dev, u16 arg1, u16 arg2);
++int fx3_reconnect(struct fx3_dev *dev);
++int fx3_select_adc(struct fx3_dev *dev, u16 which);
++int fx3_read_info(struct fx3_dev *dev, u16 which, void *buf);
++int fx3_grab(struct fx3_dev *dev, u32 format);
++int fx3_i2c_xfer(struct fx3_dev *dev, u8 addr, u8 reg, void *buf, int len,
++		 bool read);
++int fx3_mem_xfer(struct fx3_dev *dev, u32 addr, void *buf, int len, bool read);
++int fx3_eeprom_xfer(struct fx3_dev *dev, u16 addr, void *buf, int len, bool read);
++int fx3_fpga_readb(struct fx3_dev *dev, u8 reg);
++int fx3_fpga_writeb(struct fx3_dev *dev, u8 reg, u8 val);
++int fx3_read_unique_id(struct fx3_dev *dev, u8 out[8], unsigned int bank);
++int fx3_detect_mode(struct fx3_dev *dev, struct fx3_mode *m);
++int fx3_set_mode(struct fx3_dev *dev, const struct fx3_mode *m);
++int fx3_push_adcparams(struct fx3_dev *dev, const struct v2u_adcparams *gp);
++int fx3_read_rgb_calib(struct fx3_dev *dev, struct v2u_rgb_calib *c);
++int fx3_write_rgb_calib(struct fx3_dev *dev, const struct v2u_rgb_calib *c);
++int fx3_apply_mode(struct fx3_dev *dev);
++const char *fx3_input_name(u16 input);
++extern bool fx3_autodetect;
++
++int fx3_load_fpga(struct fx3_dev *dev);
++bool fx3_needs_boot(struct fx3_dev *dev);
++int fx3_load_boot(struct fx3_dev *dev);
++
++int fx3_audio_register(struct fx3_dev *dev);
++void fx3_audio_unregister(struct fx3_dev *dev);
++
++int fx3_chardev_register(struct fx3_dev *dev);
++void fx3_chardev_unregister(struct fx3_dev *dev);
++
++#endif /* _EPIPHAN_FX3_H */
+diff -urpN a/drivers/media/usb/epiphan-fx3/v2u_ioctl.h b/drivers/media/usb/epiphan-fx3/v2u_ioctl.h
+--- a/drivers/media/usb/epiphan-fx3/v2u_ioctl.h	1970-01-01 00:00:00.000000000 +0000
++++ b/drivers/media/usb/epiphan-fx3/v2u_ioctl.h	2026-08-08 13:11:02.004869954 +0000
+@@ -0,0 +1,799 @@
++/* SPDX-License-Identifier: GPL-2.0 */
++/*
++ * v2u_ioctl.h - character device ABI of the Epiphan vga2usb driver
++ *
++ * Copyright (C) 2026 Rene Rebe <rene@exactco.de>
++ *
++ * Reconstructed by static analysis of the proprietary object
++ *   usr/src/vga2usb-3.33.0.17/vga2usb_bins.o_shipped
++ * (x86-64 ELF relocatable, not stripped).  Every declaration below carries the
++ * .text/.rodata address of the code it was derived from.
++ *
++ * Only two symbolic names survive in the binary as strings:
++ * VGA2USB_IOC_UPGRADE_START and VGA2USB_IOC_UPGRADE_PROGRESS.  All other
++ * identifiers here are invented; only the *numbers* and *layouts* are
++ * recovered facts.  Anything that could not be proven is marked UNVERIFIED -
++ * do not rely on those without further analysis.
++ */
++
++#ifndef _V2U_IOCTL_H
++#define _V2U_IOCTL_H
++
++#include <linux/types.h>
++#include <linux/ioctl.h>
++
++#ifndef __KERNEL__
++#ifndef __user
++#define __user
++#endif
++#endif
++
++/*
++ * ===========================================================================
++ * 1. Command encoding
++ * ===========================================================================
++ *
++ * The generic dispatcher at .text+0x8b80 decodes the command exactly like
++ * Linux' own _IOC():
++ *
++ *   nr         = cmd & 0xff         (handlers compare the whole 32-bit word)
++ *   type       = (cmd >> 8) & 0xff  always 'V' == 0x56
++ *   size       = (cmd >> 16) & 0x3fff       .text+0x8ba1, mask .text+0x8bbe
++ *   _IOC_WRITE = cmd & 0x40000000   copy_from_user before the handler
++ *                                   (.text+0x8bd1 -> .text+0x8c41)
++ *   _IOC_READ  = cmd & 0x80000000   copy_to_user after the handler
++ *                                   (.text+0x8c0b -> .text+0x8c70)
++ *
++ * so plain _IO/_IOR/_IOW/_IOWR with magic 'V' produce identical numbers.
++ *
++ * The dispatcher stages the argument in a 52-byte on-stack buffer and falls
++ * back to wrp_vmalloc() when size > 0x34 (.text+0x8bc7, .text+0x8c91).  The
++ * handler therefore always sees a *kernel* copy:
++ *
++ *   grabber fd: g->[0xa0](g, cmd, kbuf, size)          .text+0x8bf3
++ *   board   fd: b->[0xb0](b, 1, cmd, kbuf, size)       .text+0x8cca
++ *
++ * The trailing "1" is a from-userspace flag.  grabber_common_ioctl passes 0
++ * when it forwards to the board (.text+0x1953f); that is what gates the
++ * privileged commands below.
++ *
++ * Unhandled commands return -ENOIOCTLCMD (-515, .text+0x163a6, .text+0x19589).
++ */
++#define V2U_IOC_MAGIC		'V'	/* 0x56 - proven by _IO('V',0x21) at
++					 * .text+0x146c8, where size and dir are
++					 * both zero, leaving only the magic */
++
++/*
++ * ===========================================================================
++ * 2. 32-bit compat
++ * ===========================================================================
++ *
++ * linux_fops_compat_ioctl (.text+0x8750) and linux_fops_ioctl (.text+0x8790)
++ * are byte-for-byte identical: both load slot +0x18 of the same operations
++ * table.  There is NO structure translation layer and no is_compat_task()
++ * test anywhere.
++ *
++ * Compat is instead handled by giving every structure that contains a pointer
++ * two ioctl numbers differing only in the size field, each decoded with its
++ * own field offsets.  A 32-bit userspace naturally emits the smaller command
++ * because its sizeof() is smaller.  The pairs are:
++ *
++ *   nr 0x0a  20 / 24   V2U_GrabFrame
++ *   nr 0x0c   8 / 12   struct v2u_serial_xfer
++ *   nr 0x0d   8 / 12   struct v2u_serial_xfer
++ *   nr 0x14  48 / 52   V2U_GrabFrame2
++ *   nr 0x1a 220 / 223  struct v2u_retrieve_frame
++ *   nr 0x30  12 / 16   struct v2u_eeprop_read
++ *   nr 0x31   8 / 12   struct v2u_eeprop_write
++ *
++ * A re-implementation must accept the 32-bit variants from 64-bit tasks too,
++ * since the driver never checks who is calling.
++ *
++ * Three commands have NO 32-bit variant and read a bare 64-bit pointer, so
++ * they cannot be used from a 32-bit process against this build:
++ *   nr 0x19 V2U_IOC_GRABFRAME_EXT   (.text+0x29ed1)
++ *   nr 0x2d V2U_IOC_DEV_MEM_ACCESS  (.text+0xc2a)
++ *   nr 0x2f V2U_IOC_FW_UPGRADE      (.text+0xafc)
++ */
++
++/* Every structure below is byte-packed: the code performs unaligned 8-byte
++ * accesses that would be impossible with natural alignment - see for example
++ * .text+0x2a76d (qword at +0x00 followed by a dword at +0x08), .text+0x29f46
++ * (qword at offset 4 mod 8) and .text+0x160d5. */
++#define __v2u_packed	__attribute__((packed))
++
++/*
++ * ===========================================================================
++ * 3. Data structures
++ * ===========================================================================
++ */
++
++/* .text+0x2946c .. .text+0x2948b (fill), .text+0x2944e (12-byte zero on
++ * failure).  width/height are widened from unsigned 16-bit device registers
++ * (dev+0xfe, dev+0x100) with movzwl, so 0..65535.
++ * UNVERIFIED: signedness and scaling of vfreq - no sign-sensitive instruction
++ * anywhere touches it.  Epiphan documents it as milli-Hz; not observable. */
++struct v2u_videomode {
++	__u32	width;		/* +0x00  .text+0x29475 */
++	__u32	height;		/* +0x04  .text+0x29480 */
++	__u32	vfreq;		/* +0x08  .text+0x2948b */
++} __v2u_packed;			/* 12 bytes, proven by nr 0x09 size and
++				 * .text+0x2a4fd cmp $0xb */
++
++/* Capture adjustment parameters.  32 bytes, proven by the nr 0x06 / nr 0x08
++ * sizes and .text+0x2a33c cmp $0x1f.
++ * flags selects which fields are consumed on set (.text+0x288b6) and is
++ * rebuilt on get at .text+0x29940..0x29958. */
++#define V2U_GRAB_FLAG_HSHIFT	0x01	/* .text+0x288ff / .text+0x29910 */
++#define V2U_GRAB_FLAG_PHASE	0x02	/* .text+0x2895f / .text+0x298df */
++#define V2U_GRAB_FLAG_GAINOFF	0x04	/* .text+0x289d2 / .text+0x2988a */
++#define V2U_GRAB_FLAG_VSHIFT	0x08	/* .text+0x28926 / .text+0x29928 */
++#define V2U_GRAB_FLAG_PLLSHIFT	0x10	/* .text+0x28999 / .text+0x298f8 */
++#define V2U_GRAB_FLAG_GRABFLAGS	0x20	/* .text+0x28a33, always set on get */
++
++struct v2u_grab_parameters {
++	__u32	flags;		/* +0x00  .text+0x288b6 r / .text+0x29958 w  */
++	__s32	hshift;		/* +0x04  -> dev+0x18b -> h position dev+0x106
++				 *        .text+0x28ac0, .text+0xd6b5; signed,
++				 *        proven by cmovs at .text+0xd6a0      */
++	__u8	phase;		/* +0x08  0..31 checked .text+0x288c4        */
++	__u8	gain_r;		/* +0x09  .text+0x28a0f -> dev+0xf7          */
++	__u8	gain_g;		/* +0x0a  .text+0x28a19 -> dev+0xf8          */
++	__u8	gain_b;		/* +0x0b  .text+0x28a23 -> dev+0xf9          */
++	__u8	offset_r;	/* +0x0c  0..63 checked .text+0x288d3        */
++	__u8	offset_g;	/* +0x0d  0..63 checked .text+0x288dd        */
++	__u8	offset_b;	/* +0x0e  0..63 checked .text+0x288e7        */
++	__u8	__pad;		/* +0x0f  INFERRED hole - no instruction ever
++				 * reads or writes it.  Note that the stock get
++				 * path leaves it uninitialised, leaking a byte
++				 * of kernel stack/vmalloc to userspace.      */
++	__s32	vshift;		/* +0x10  -> dev+0x18f -> v position dev+0x108
++				 *        .text+0x2892f, .text+0xd634          */
++	__s32	pllshift;	/* +0x14  -> dev+0x193 -> h total dev+0xf0
++				 *        .text+0x289a2, .text+0xd74a          */
++	__u32	grab_flags;	/* +0x18  .text+0x28a3e / .text+0x29967      */
++	__u32	grab_flags_mask;/* +0x1c  .text+0x28a43; get writes 0xf0000
++				 *        .text+0x29946                       */
++} __v2u_packed;			/* 32 bytes */
++/* UNVERIFIED: which physical channel each gain / offset byte drives.  Proven
++ * only that +0x09..0x0b is the unchecked 0..255 triple landing at dev+0xf7..f9
++ * and +0x0c..0x0e the 0..63-clamped triple landing at dev+0xfa..fc. */
++
++/* V2U_GrabFrame.  Two on-wire forms; the 32-bit one just has a 4-byte pixbuf
++ * and everything after it shifted down by 4.  Both are unpacked into the same
++ * kernel descriptor by the common worker .text+0x29d50.
++ * width/height are INPUT when (palette & 0xf0000) != 0 and OUTPUT (the
++ * detected mode geometry) otherwise - .text+0x2a75a / .text+0x2a79f.
++ * On failure the pair is zeroed: .text+0x2a991 (LP64) / .text+0x2a983. */
++struct v2u_grabframe {
++	void __user *pixbuf;	/* +0x00  8B .text+0x2a76d, 4B .text+0x2a6e0 */
++	__u32	pixbuflen;	/* +0x08  .text+0x2a77d                      */
++	__s32	width;		/* +0x0c  .text+0x2a764 in / .text+0x2a7b3 out */
++	__s32	height;		/* +0x10  same qword as width                */
++	__u32	palette;	/* +0x14  .text+0x2a75a                      */
++} __v2u_packed;			/* 24 bytes LP64, 20 bytes ILP32 */
++
++/* V2U_GrabFrame2.  Byte-identical to the kernel-internal grab descriptor, so
++ * every offset is proven from two independent code paths (the ioctl unpack at
++ * .text+0x2a904..0x2a979 and the capture core around .text+0x265af). */
++struct v2u_grabframe2 {
++	void __user *pixbuf;	/* +0x00  8B .text+0x2a93a, 4B .text+0x2a618 */
++	__u32	pixbuflen;	/* +0x08  unsigned, clamp .text+0x2699b/0x269a2 */
++	__u32	palette;	/* +0x0c  low 5 bits = bpp (.text+0x265d8),
++				 * bits 16..19 and 0x300000 are grab flags   */
++	__s32	crop_x;		/* +0x10  .text+0x2676b in / .text+0x268be out */
++	__s32	crop_y;		/* +0x14  same qword as crop_x               */
++	__s32	crop_width;	/* +0x18  .text+0x2666f, signed jle .text+0x26695 */
++	__s32	crop_height;	/* +0x1c  .text+0x26673, signed jle .text+0x266ab */
++	__u32	mode_width;	/* +0x20  OUT .text+0x269c6 (from dev+0xfe)  */
++	__u32	mode_height;	/* +0x24  OUT .text+0x269d2 (from dev+0x100) */
++	__u32	mode_vfreq;	/* +0x28  OUT .text+0x269dd (from dev+0x127) */
++	__u32	retlen;		/* +0x2c  OUT .text+0x26a0e, w*h*bpp/8 clamped
++				 *        to pixbuflen                        */
++	__u32	status;		/* +0x30  OUT 0 = ok .text+0x26f2a; 1..7 are
++				 * error codes (.text+0x26f79, 0x2716e,
++				 * 0x26f62, 0x2707c, 0x26a37, 0x26c58,
++				 * 0x26d9e)                                   */
++} __v2u_packed;			/* 52 bytes LP64, 48 bytes ILP32 */
++/* UNVERIFIED: whether retlen/status are two SDK fields or one 64-bit field.
++ * They are copied back as one qword (.text+0x2a96f) but every individual
++ * access is a dword, which is why they are split here. */
++
++/* Argument of ioctl nr 0x19 -> v2ucom_grab_frame_user_ext (.text+0x19e50) via
++ * the thunk at .text+0x29ec0.  84 bytes, proven by .text+0x2a587 cmp $0x53.
++ * The rect field order (x, y, w, h) is proven at .text+0x1a096, which checks
++ * width(+0x0c) >= grab_x(+0x28) + grab_width(+0x30). */
++struct v2u_grabframe_ext {
++	void __user *pixbuf;	/* +0x00  always 8B, .text+0x29ed1           */
++	__u32	pixbuflen;	/* +0x08  unsigned, .text+0x1a566, clamp
++				 *        .text+0x1a5f4/0x1a5ff              */
++	__s32	width;		/* +0x0c  in .text+0x19f3d / out .text+0x1a5fb */
++	__s32	height;		/* +0x10  in .text+0x19f5f / out .text+0x1a5ec */
++	__u32	palette;	/* +0x14  low 5 bits = bpp .text+0x1a5d9     */
++	__s32	crop_x;		/* +0x18  .text+0x19f88 / .text+0x1a694      */
++	__s32	crop_y;		/* +0x1c  same qword as crop_x               */
++	__s32	crop_width;	/* +0x20  .text+0x19f41 / .text+0x1a698      */
++	__s32	crop_height;	/* +0x24  same qword as crop_width           */
++	__s32	grab_x;		/* +0x28  .text+0x19f70 / .text+0x1a7a2      */
++	__s32	grab_y;		/* +0x2c  .text+0x19f57 / .text+0x1a7aa      */
++	__s32	grab_width;	/* +0x30  .text+0x19f78 / .text+0x1a7b2      */
++	__s32	grab_height;	/* +0x34  .text+0x19f80 / .text+0x1a7ba      */
++	__u32	mode_width;	/* +0x38  OUT .text+0x1a747                  */
++	__u32	mode_height;	/* +0x3c  OUT .text+0x1a754                  */
++	__u32	mode_vfreq;	/* +0x40  OUT .text+0x1a760                  */
++	__u64	timestamp;	/* +0x44  OUT .text+0x1a7c3 from
++				 * grab_io_get_timestamp; preset to -1 by the
++				 * thunk at .text+0x29f46.  Deliberately at
++				 * offset 4 mod 8 - the struct is packed.     */
++	__u32	retlen;		/* +0x4c  OUT .text+0x1a79a, w*h*bpp/8 rounded
++				 *        up (.text+0x1a764..0x1a784)         */
++	__u32	status;		/* +0x50  OUT 0 = ok .text+0x1a78f           */
++} __v2u_packed;			/* 84 bytes */
++/* Fields +0x00 and +0x08 are never copied back (.text+0x29f58..0x29fa3). */
++
++/* Argument of ioctl nr 0x1a.  The first 199 bytes are the same opaque block
++ * that nr 0x1b / nr 0x1c read and write; it is handed straight to
++ * grab_protocol_retrieve_frame_user() (.text+0x2a2a6).  Note the two forms
++ * differ in *alignment* as well as pointer width: the 64-bit form packs the
++ * trailer immediately after the 199-byte block, the 32-bit form aligns it
++ * to 4 (.text+0x29fd0 vs .text+0x2a150). */
++struct v2u_retrieve_frame {
++	__u8	state[199];	/* +0x000 copied verbatim, .text+0x2a00a     */
++	__u32	buflen;		/* +0x0c7 .text+0x2a04a                      */
++	__u32	retrieved;	/* +0x0cb OUT .text+0x2a082                  */
++	__s32	status;		/* +0x0cf OUT .text+0x2a06a                  */
++	__u32	__pad;		/* +0x0d3 INFERRED - never accessed          */
++	void __user *buf;	/* +0x0d7 .text+0x2a03a                      */
++} __v2u_packed;			/* 223 bytes */
++
++struct v2u_retrieve_frame32 {
++	__u8	state[199];	/* +0x000 .text+0x2a1b5                      */
++	__u8	__pad0;		/* +0x0c7 INFERRED alignment byte            */
++	__u32	buflen;		/* +0x0c8 .text+0x2a1e2                      */
++	__u32	retrieved;	/* +0x0cc OUT .text+0x2a233 (qword with status) */
++	__s32	status;		/* +0x0d0 OUT                                */
++	__u32	__pad1;		/* +0x0d4 INFERRED - never accessed          */
++	__u32	buf;		/* +0x0d8 user pointer, read as u32
++				 *        .text+0x2a1eb                      */
++} __v2u_packed;			/* 220 bytes */
++
++/* 199-byte capture-state block, embedded at vgrabber+0xf0.
++ * nr 0x1b copies it out of grabber+0xf0 (.text+0x2a84e); nr 0x1c feeds it to
++ * adc_setparameters(g->[0x1c8], blk) (.text+0x2a2c6).
++ * Layout decoded in PROTOCOL-ioctl-impl.md §7; 14+21+16+52+24+4+4+4+16+20+24. */
++struct v2u_adcparams {
++	/* A: ADC / PLL header, pushed verbatim in request 0xB0 */
++	__u16	htotal;			/* +0x00 big-endian on the wire      */
++	__u16	unknown_02;		/* +0x02 never touched by the host   */
++	__u8	pll_vco;		/* +0x04 8 or 0x38                   */
++	__u8	pll_current;		/* +0x05 clamped 8..0x14 / 0x10..0x20*/
++	__u8	phase;			/* +0x06 0..31, default 0x10         */
++	__u8	gain_r, gain_g, gain_b;		/* +0x07 default 0x80 unity  */
++	__u8	offset_r, offset_g, offset_b;	/* +0x0a default 0, max 0x3f */
++	__u8	valid_mask;		/* +0x0d bit0 gains, bit1 offsets    */
++	/* B: capture window, 21 bytes = grabber_desc[0x14] */
++	__u16	width;			/* +0x0e BE */
++	__u16	height;			/* +0x10 BE */
++	__u16	ilace;			/* +0x12 BE, 1 or 2 */
++	__u16	lines_per_field;	/* +0x14 BE */
++	__u16	hoffset;		/* +0x16 BE */
++	__u8	voffset;		/* +0x18 */
++	__u8	ilace_b;		/* +0x19 */
++	__u8	scale_div;		/* +0x1a */
++	__u8	hsync_threshold;	/* +0x1b */
++	__u8	vsync_threshold;	/* +0x1c */
++	__u8	noise_filter;		/* +0x1d 0..5 */
++	__u8	csflags;		/* +0x1e */
++	__u16	raw_hactive;		/* +0x1f BE */
++	__u16	raw_vactive;		/* +0x21 BE */
++	/* C: effective crop rectangle */
++	__s32	crop_x;			/* +0x23 */
++	__s32	crop_y;			/* +0x27 */
++	__s32	crop_width;		/* +0x2b */
++	__s32	crop_height;		/* +0x2f */
++	/* D: measurement block */
++	__u32	meas_flags;		/* +0x33 bit1 = digital link */
++	__u32	meas_vrefresh;		/* +0x37 milli-Hz */
++	__u64	meas_time;		/* +0x3b */
++	__u16	log_len;		/* +0x43 */
++	__u8	log[0x22];		/* +0x45 */
++	/* E: struct vesa_mode */
++	__u16	m_hactive;		/* +0x67 */
++	__u16	m_hfrontporch;		/* +0x69 */
++	__u16	m_hsync;		/* +0x6b */
++	__u16	m_hbackporch;		/* +0x6d */
++	__u16	m_vactive;		/* +0x6f */
++	__u16	m_vfrontporch;		/* +0x71 */
++	__u16	m_vsync;		/* +0x73 */
++	__u16	m_vbackporch;		/* +0x75 */
++	__u16	m_flags;		/* +0x77 */
++	__u8	m_rest[6];		/* +0x79 .. 0x7e */
++	/* F/G/H */
++	__u32	change_mask;		/* +0x7f dirty bits */
++	__u32	uflags;			/* +0x83 user-override mask */
++	__u32	palette;		/* +0x87 preset 0x18 = RGB24 */
++	/* I: requested crop rectangle */
++	__s32	req_crop_x;		/* +0x8b */
++	__s32	req_crop_y;		/* +0x8f */
++	__s32	req_crop_width;		/* +0x93 */
++	__s32	req_crop_height;	/* +0x97 */
++	/* J: user adjustment values */
++	__s32	hshift;			/* +0x9b */
++	__s32	vshift;			/* +0x9f */
++	__s32	pllshift;		/* +0xa3 */
++	__u8	u_phase;		/* +0xa7 <= 0x1f */
++	__u8	u_gain_r, u_gain_g, u_gain_b;		/* +0xa8 */
++	__u8	u_offset_r, u_offset_g, u_offset_b;	/* +0xab each <= 0x3f */
++	__u8	hole_ae;		/* +0xae never referenced */
++	/* K: output / grab geometry */
++	__s32	out_width;		/* +0xaf */
++	__s32	out_height;		/* +0xb3 */
++	__s32	grab_x;			/* +0xb7 */
++	__s32	grab_y;			/* +0xbb */
++	__s32	grab_width;		/* +0xbf */
++	__s32	grab_height;		/* +0xc3 */
++} __v2u_packed;			/* 199 bytes */
++
++/* The u32 of nr 0x1d and nr 0x1e. adc_setparameters multiplies each gain by
++ * the matching byte and shifts right 7, so 0x80 is unity (.text+0xecf1). */
++struct v2u_rgb_calib {
++	__u8	valid;		/* must be 1 or the calibration is ignored */
++	__u8	cal_r;		/* 0x41..0xbf, 0x80 == unity               */
++	__u8	cal_g;
++	__u8	cal_b;
++} __v2u_packed;
++
++/* nr 0x11 - raw I2C.  Decoded at .text+0x193a2..0x193c3:
++ *   read ? i2c_read(board, addr, reg, data, len)
++ *        : i2c_write(board, addr, reg, data, len)
++ * len is bounds-checked <= 0x40 at .text+0x1949e. */
++struct v2u_i2c_xfer {
++	__u8	read;		/* +0x00  0 = write, else read, .text+0x193a2 */
++	__u8	addr;		/* +0x01  .text+0x1939e                      */
++	__u8	reg;		/* +0x02  .text+0x193ae                      */
++	__u8	len;		/* +0x03  .text+0x193a5, <= 0x40             */
++	__u8	data[64];	/* +0x04  .text+0x193aa                      */
++} __v2u_packed;			/* 68 bytes */
++
++/* nr 0x10 - FPGA register block write, forwarded to io->ops[0xa0]
++ * (.text+0x1930a), i.e. vendor request 0xBB of PROTOCOL.md section 3, whose
++ * payload is documented there as { s16 val; s16 len; u8 data[] }.
++ * len is bounds-checked <= 0x40 at .text+0x194e5. */
++struct v2u_regblock {
++	__s16	val;		/* +0x00 */
++	__s16	len;		/* +0x02  .text+0x194e5, <= 0x40             */
++	__u8	data[64];	/* +0x04 */
++} __v2u_packed;			/* 68 bytes */
++
++/* nr 0x12 / nr 0x13.  260 bytes, proven by the ioctl size and by the size
++ * checks at .text+0x1940b / .text+0x16264 (cmp $0x103).  The value union
++ * starts at +0x04: vgrabber_get_property stores a u32 result there
++ * (.text+0x2b25e) and every string case does
++ * strncpy(prop+4, src, 0x100); ((char *)prop)[0x103] = 0  (.text+0x164f0). */
++struct v2u_property {
++	__u32	key;		/* +0x00 */
++	union {
++		__u8	blob[256];
++		char	str[256];
++		__u32	u32;
++		__u16	u16;
++		__u8	u8;
++		__s32	s32;
++	} value;		/* +0x04 */
++} __v2u_packed;			/* 260 bytes */
++
++/* nr 0x0c / nr 0x0d - serial (EEPROM/I2C) memory window.
++ * Read  path .text+0x15cf0: vmalloc(len), memset 0xff,
++ *            io->ops[0x70](dev, off, 0, tmp, len, 1), os_copyout(tmp, buf, len)
++ * Write path .text+0x15d90: os_copyin(buf, tmp, len),
++ *            io->ops[0x70](dev, off, 0, tmp, len, 0);
++ *            refuses with -ENXIO when board flag bit 0 is set (.text+0x15da0) */
++struct v2u_serial_xfer {
++	__s16	offset;		/* +0x00  .text+0x15ddf movswl               */
++	__s16	len;		/* +0x02  .text+0x15da9 movswq               */
++	void __user *buf;	/* +0x04  .text+0x15dc3 (8B) / .text+0x1608c
++				 *        (4B in the 8-byte form)             */
++} __v2u_packed;			/* 12 bytes LP64, 8 bytes ILP32 */
++
++/* nr 0x17 - raw EEPROM access.  .text+0x158a0.
++ * offset and len are clamped against the board's EEPROM size at board+0x04
++ * (.text+0x158c2..0x158ea) and the clamped values are written back
++ * (.text+0x159b1).  len is additionally capped at 0x100.
++ * op selects the access mode; the default case logs
++ * "Invalid EEPROM op %d" (.rodata.str1.1+0x571, .text+0x15a43) and fails.
++ * board_common_ioctl refuses op != 0 when board flag bit 0 is set, returning
++ * -ENXIO (.text+0x1602d..0x16038). */
++struct v2u_eeprom_access {
++	__u32	offset;		/* +0x000 in/out */
++	__u32	len;		/* +0x004 in/out */
++	__u32	op;		/* +0x008 0..3, .text+0x158ee               */
++	__u8	data[256];	/* +0x00c .text+0x15916                     */
++} __v2u_packed;			/* 268 bytes */
++
++/* nr 0x30 - eeprop_read (.text+0x15e80).  len is always filled in with the
++ * true blob size, even when bufsize is too small (.text+0x15ec9, copied back
++ * to arg+4 by board_common_ioctl at .text+0x16100). */
++struct v2u_eeprop_read {
++	__u32	bufsize;	/* +0x00 .text+0x15ec4 */
++	__u32	len;		/* +0x04 OUT .text+0x15ec9 */
++	void __user *buf;	/* +0x08 .text+0x15efb */
++} __v2u_packed;			/* 16 bytes LP64, 12 bytes ILP32 */
++
++/* nr 0x31 - eeprop_write (.text+0x15f20).  len must not exceed
++ * eeprop_size(board) (.text+0x15f41). */
++struct v2u_eeprop_write {
++	__u32	len;		/* +0x00 .text+0x15f3f */
++	void __user *buf;	/* +0x04 .text+0x15f54 */
++} __v2u_packed;			/* 12 bytes LP64, 8 bytes ILP32 */
++
++/* nr 0x2d - raw device memory access, board_perform_io(.text+0x950) ->
++ * usb_io_dev_mem_access(board, a, b, buf, len, is_read).  This is vendor
++ * request 0xBC of PROTOCOL.md section 3, whose address is split as
++ * wValue = addr >> 16, wIndex = addr & 0xffff - which is consistent with the
++ * two 32-bit words below, though the exact split is UNVERIFIED. */
++struct v2u_dev_mem {
++	__u32	a;		/* +0x00 .text+0x966 */
++	__u32	b;		/* +0x04 .text+0x95d */
++	void __user *buf;	/* +0x08 .text+0x959, always 8 bytes */
++	__u32	len;		/* +0x10 .text+0x962 */
++	__u32	dir;		/* +0x14 0 = read, 1 = write (.text+0x956,
++				 * .text+0xc43); the copy-in for dir == 1 is at
++				 * .text+0x c48 */
++} __v2u_packed;			/* 24 bytes, LP64 only */
++
++/* nr 0x2f - firmware image pushed by the upgrade tool.  The ioctl argument is
++ * a *pointer* to this; the driver copies 40 bytes with os_copyin at
++ * .text+0xb0a and then each segment descriptor with os_copyin at .text+0xb98.
++ * UNVERIFIED: the meaning of every field; only sizes and offsets are proven. */
++struct v2u_fw_segment {
++	__u32	type;		/* +0x00 .text+0xba1 */
++	__u32	len;		/* +0x04 .text+0xbac; 0 means "no payload" */
++	__u32	__pad;		/* +0x08 INFERRED - not read */
++	__u32	__pad2;		/* +0x0c INFERRED - not read */
++	void __user *data;	/* +0x10 .text+0xbcc, len bytes copied in */
++} __v2u_packed;			/* 24 bytes, stride proven by .text+0xb8d */
++
++struct v2u_fw_image {
++	__u16	version;	/* +0x00 .text+0xb25 movzwl */
++	__u16	__pad;		/* +0x02 INFERRED */
++	__u64	a;		/* +0x04 .text+0xb17 */
++	__u64	b;		/* +0x0c .text+0xb1c */
++	__u32	__pad2;		/* +0x14 INFERRED - not read */
++	__u32	nsegments;	/* +0x18 .text+0xb33 */
++	__u32	__pad3;		/* +0x1c INFERRED */
++	struct v2u_fw_segment __user *segments;	/* +0x20 .text+0xb7e */
++} __v2u_packed;			/* 40 bytes, LP64 only */
++
++/* nr 0x2c - upgrade progress, produced by board->[0xd8](board, arg)
++ * (.text+0x163e7).  12 bytes; the driver only forwards the buffer, so the
++ * field layout is UNVERIFIED. */
++struct v2u_upgrade_progress {
++	__u32	word[3];
++} __v2u_packed;
++
++/* nr 0x20 - audio capture start, agrabber_start(ag, arg, owner, 0)
++ * (.text+0x14849).  12 bytes; layout is decided inside agrabber_start and was
++ * NOT decoded - UNVERIFIED. */
++struct v2u_audio_start {
++	__u32	word[3];
++} __v2u_packed;
++
++/* nr 0x25 - pending audio page descriptors (.text+0x14725).
++ * count is clamped to 16 at .text+0x1477b and count * 12 bytes are copied
++ * (.text+0x14798: lea (%rdx,%rdx,2) then *4).  On error count is set to 0
++ * (.text+0x148a6). */
++struct v2u_audio_page {
++	__u32	word[3];	/* 12 bytes; field meanings UNVERIFIED */
++} __v2u_packed;
++
++struct v2u_audio_pages {
++	__u32	count;		/* +0x00 .text+0x1478c */
++	struct v2u_audio_page page[16];	/* +0x04 .text+0x1479c */
++} __v2u_packed;			/* 196 bytes */
++
++/* nr 0x23 - detailed timing of the currently detected mode, read out of
++ * *(void **)(grabber + 0x1c8) at .text+0x2a3f5..0x2a48c.
++ * The shape (one u32 then 14 u16) is proven instruction by instruction; the
++ * *meaning* of each word is UNVERIFIED.  Note this is NOT the property-based
++ * V2U_AdjustmentRange, which is vgrabber property key 0x09 (.text+0x2b342). */
++struct v2u_timing {
++	__u32	val0;		/* +0x00 from obj+0x08, .text+0x2a3ff */
++	__u16	val[14];	/* +0x04 from obj+0x50 .. obj+0x6a in order,
++				 * .text+0x2a406 .. .text+0x2a48c */
++} __v2u_packed;			/* 32 bytes */
++
++/* nr 0x24 - capture protocol state, read out of *(void **)(grabber + 0x1c0)
++ * at .text+0x2a8b1..0x2a8d7.  Field meanings UNVERIFIED. */
++struct v2u_proto_info {
++	__u32	val0;		/* +0x00 from obj+0x08, .text+0x2a8bb */
++	__u32	val1;		/* +0x04 from obj+0x10, .text+0x2a8c2 */
++	__u8	val2;		/* +0x08 from obj+0x0c, .text+0x2a8ca */
++	__u8	val3;		/* +0x09 from obj+0x0d, .text+0x2a8d3 */
++} __v2u_packed;			/* 10 bytes */
++
++/*
++ * ===========================================================================
++ * 4. Video grabber commands - vgrabber_ioctl, .text+0x2a380
++ *    (/dev/vga2usbX; anything not matched falls through to
++ *     grabber_common_ioctl at .text+0x2a802)
++ * ===========================================================================
++ */
++
++/* 0x80205606  .text+0x2a3cb -> ioctl_getparams (.text+0x2a330)
++ *                           -> vgrabber_get_grabparams(g, p, 1) */
++#define V2U_IOC_GET_GRABPARAMS	_IOR(V2U_IOC_MAGIC, 0x06, struct v2u_grab_parameters)
++
++/* 0x80205607  .text+0x161cb: strncpy(arg, board + 0x10, 32).
++ * board+0x10 is the serial number, proven by grabber_format_name
++ * (.text+0x19226) formatting "%s #%s.%s" from product name, board+0x10 and
++ * the grabber name.  Handled by board_common_ioctl, so it is reachable from
++ * both node types. */
++#define V2U_IOC_GET_SN		_IOR(V2U_IOC_MAGIC, 0x07, char[32])
++
++/* 0x40205608  .text+0x2a66d -> vgrabber_set_grabparams(g, p) */
++#define V2U_IOC_SET_GRABPARAMS	_IOW(V2U_IOC_MAGIC, 0x08, struct v2u_grab_parameters)
++
++/* 0x800c5609  .text+0x2a4f1 -> vgrabber_detect_vm(g, vm) */
++#define V2U_IOC_DETECT_VIDEOMODE _IOR(V2U_IOC_MAGIC, 0x09, struct v2u_videomode)
++
++/* 0xc018560a / 0xc014560a  .text+0x2a5c1 / .text+0x2a6a6 */
++#define V2U_IOC_GRABFRAME	_IOWR(V2U_IOC_MAGIC, 0x0a, struct v2u_grabframe)
++#define V2U_IOC_GRABFRAME_32	_IOC(_IOC_READ|_IOC_WRITE, V2U_IOC_MAGIC, 0x0a, 20)
++
++/* 0x0000560f  .text+0xaa0 -> board_perform_io(.text+0x930)
++ *                         -> usb_io_reconnect(board), vendor request 0xB5 */
++#define V2U_IOC_RECONNECT	_IO(V2U_IOC_MAGIC, 0x0f)
++
++/* 0x40445610  .text+0x194db -> io->ops[0xa0](io, arg), vendor request 0xBB */
++#define V2U_IOC_REGBLOCK_WRITE	_IOW(V2U_IOC_MAGIC, 0x10, struct v2u_regblock)
++
++/* 0xc0445611  .text+0x19495 -> .text+0x19370: grabber_select() then
++ * i2c_read()/i2c_write() */
++#define V2U_IOC_I2C		_IOWR(V2U_IOC_MAGIC, 0x11, struct v2u_i2c_xfer)
++
++/* 0xc1045612  grabber .text+0x1944a -> g->[0xa8]  (thunk .text+0x19330)
++ *             board   .text+0x16264 -> b->[0xb8]  (thunk .text+0x15800)
++ * usb_board_init stores board->[0xb8] = usb_board_get_property at
++ * .text+0x15a6, which is what proves this slot is the property getter. */
++#define V2U_IOC_GET_PROPERTY	_IOWR(V2U_IOC_MAGIC, 0x12, struct v2u_property)
++
++/* 0x41045613  grabber .text+0x193ff -> g->[0xb0]  (thunk .text+0x19350)
++ *             board   .text+0x16113 -> b->[0xc0]  (thunk .text+0x15820) */
++#define V2U_IOC_SET_PROPERTY	_IOW(V2U_IOC_MAGIC, 0x13, struct v2u_property)
++
++/* 0xc0345614 / 0xc0305614  .text+0x2a49f / .text+0x2a5cd */
++#define V2U_IOC_GRABFRAME2	_IOWR(V2U_IOC_MAGIC, 0x14, struct v2u_grabframe2)
++#define V2U_IOC_GRABFRAME2_32	_IOC(_IOC_READ|_IOC_WRITE, V2U_IOC_MAGIC, 0x14, 48)
++
++/* 0xc10c5617  .text+0x16020 -> board_perform_io(.text+0x158a0) */
++#define V2U_IOC_EEPROM_ACCESS	_IOWR(V2U_IOC_MAGIC, 0x17, struct v2u_eeprom_access)
++
++/* 0xc0545619  .text+0x2a57b -> vgrabber_perform_io(.text+0x29ec0)
++ *                           -> v2ucom_grab_frame_user_ext() */
++#define V2U_IOC_GRABFRAME_EXT	_IOWR(V2U_IOC_MAGIC, 0x19, struct v2u_grabframe_ext)
++
++/* 0xc0df561a / 0xc0dc561a  .text+0x2a4bd / .text+0x2a4b1
++ * The 64-bit worker (.text+0x29fd0) retries for up to 250 ms while the
++ * protocol returns -EAGAIN (.text+0x2a0b3 .. .text+0x2a138). */
++#define V2U_IOC_RETRIEVE_FRAME	  _IOC(_IOC_READ|_IOC_WRITE, V2U_IOC_MAGIC, 0x1a, 223)
++#define V2U_IOC_RETRIEVE_FRAME_32 _IOC(_IOC_READ|_IOC_WRITE, V2U_IOC_MAGIC, 0x1a, 220)
++
++/* 0x80c7561b  .text+0x2a3a7: memcpy(arg, grabber + 0xf0, 199) */
++#define V2U_IOC_GET_ADCPARAMS	_IOR(V2U_IOC_MAGIC, 0x1b, struct v2u_adcparams)
++
++/* 0x40c7561c  .text+0x2a52d -> vgrabber_perform_io(.text+0x2a2c0)
++ *                           -> adc_setparameters(g->[0x1c8], arg) */
++#define V2U_IOC_SET_ADCPARAMS	_IOW(V2U_IOC_MAGIC, 0x1c, struct v2u_adcparams)
++
++/* 0x8004561d  .text+0x2a53f: *(u32 *)arg = *(u32 *)(g->[0x1c8] + 0x20).
++ * UNVERIFIED: which ADC field this is. */
++#define V2U_IOC_GET_ADC_STATE	_IOR(V2U_IOC_MAGIC, 0x1d, __u32)
++
++/* 0x4004561e  .text+0x2a661 -> vgrabber_perform_io(.text+0x2a2e0)
++ *                           -> adc_write_rgb_calib(g->[0x1c8], arg);
++ * also sets g->[0x20c] = 1 (.text+0x2a7e5). */
++#define V2U_IOC_WRITE_RGB_CALIB	_IOW(V2U_IOC_MAGIC, 0x1e, __u32)
++
++/* 0x400c5620  .text+0x146ba -> agrabber_start() */
++#define V2U_IOC_AUDIO_START	_IOW(V2U_IOC_MAGIC, 0x20, struct v2u_audio_start)
++
++/* 0x00005621  .text+0x146c8 -> agrabber_stop() */
++#define V2U_IOC_AUDIO_STOP	_IO(V2U_IOC_MAGIC, 0x21)
++
++/* 0x00005622  .text+0x146d4 -> grab_io_audio_reset(ag, ag->[0x114]);
++ * returns -1 unless the caller already owns the grabber lock
++ * (.text+0x146fc, .text+0x148b2). */
++#define V2U_IOC_AUDIO_RESET	_IO(V2U_IOC_MAGIC, 0x22)
++
++/* 0x80205623  .text+0x2a3d7 */
++#define V2U_IOC_GET_TIMING	_IOR(V2U_IOC_MAGIC, 0x23, struct v2u_timing)
++
++/* 0x800a5624  .text+0x2a3b9 */
++#define V2U_IOC_GET_PROTO_INFO	_IOR(V2U_IOC_MAGIC, 0x24, struct v2u_proto_info)
++
++/* 0x80c45625  .text+0x14725 -> ag->[0x100]->[0x20](obj, &pages) */
++#define V2U_IOC_AUDIO_PAGES	_IOR(V2U_IOC_MAGIC, 0x25, struct v2u_audio_pages)
++
++/*
++ * ===========================================================================
++ * 5. Board commands - board_common_ioctl, .text+0x15fc0
++ * ===========================================================================
++ * Reachable from the board node, and via grabber_common_ioctl's default
++ * branch (.text+0x19526) from /dev/vga2usbX as well.  The commands marked
++ * PRIVILEGED are rejected when the from-userspace flag is 0, i.e. they work
++ * only through the board character device and never through a grabber fd
++ * (.text+0x162fc, .text+0x16299, .text+0x1639e).
++ */
++
++/* 0xc00c560c / 0xc008560c  .text+0x16179 / .text+0x1608c -> .text+0x15cf0 */
++#define V2U_IOC_SERIAL_READ	_IOWR(V2U_IOC_MAGIC, 0x0c, struct v2u_serial_xfer)
++#define V2U_IOC_SERIAL_READ_32	_IOC(_IOC_READ|_IOC_WRITE, V2U_IOC_MAGIC, 0x0c, 8)
++
++/* 0xc00c560d / 0xc008560d  .text+0x1635a / .text+0x1620e -> .text+0x15d90 */
++#define V2U_IOC_SERIAL_WRITE	_IOWR(V2U_IOC_MAGIC, 0x0d, struct v2u_serial_xfer)
++#define V2U_IOC_SERIAL_WRITE_32	_IOC(_IOC_READ|_IOC_WRITE, V2U_IOC_MAGIC, 0x0d, 8)
++
++/* 0xc0205626  PRIVILEGED, .text+0x16381 -> .text+0x15e30 with the lookup at
++ * .text+0x15870: obj = board->[0x98][*(u32 *)arg], bounded by board->[0x90];
++ * then strncpy(arg, obj + 0x40, 32) and arg[31] = 0. */
++#define V2U_IOC_GET_LISTB_NAME	_IOWR(V2U_IOC_MAGIC, 0x26, char[32])
++
++/* 0xc0205627  PRIVILEGED, .text+0x1630c -> .text+0x15e30 with the lookup at
++ * .text+0x15840: obj = board->[0x80][*(u32 *)arg], bounded by board->[0x7c]. */
++#define V2U_IOC_GET_LISTA_NAME	_IOWR(V2U_IOC_MAGIC, 0x27, char[32])
++
++/* 0x80045628  PRIVILEGED, .text+0x1633d: *(u32 *)arg = board->[0x90] */
++#define V2U_IOC_GET_LISTB_COUNT	_IOR(V2U_IOC_MAGIC, 0x28, __u32)
++
++/* 0x80045629  PRIVILEGED, .text+0x163b1: *(u32 *)arg = board->[0x7c] */
++#define V2U_IOC_GET_LISTA_COUNT	_IOR(V2U_IOC_MAGIC, 0x29, __u32)
++
++/* 0x8004562a  NOT privileged, .text+0x1636e: *(u32 *)arg = board->[0x70].
++ * Bit 1 of that word makes linux_ioctl and linux_board_ioctl return -ENODEV
++ * (.text+0x8d18, .text+0x8d4f), so it is the "device gone" bit.  Bit 0
++ * write-protects the EEPROM (.text+0x16034, .text+0x15da0). */
++#define V2U_BOARD_FLAG_EEPROM_WP	0x01
++#define V2U_BOARD_FLAG_GONE		0x02
++#define V2U_IOC_GET_BOARD_FLAGS	_IOR(V2U_IOC_MAGIC, 0x2a, __u32)
++
++/* 0x8004562b  PRIVILEGED, .text+0x162c3 -> board->[0xd0](board);
++ * on success *(u32 *)arg = the return value.
++ * NAME PROVEN: the failure path logs .rodata+0x1a3b80 =
++ * "VGA2USB_IOC_UPGRADE_START" (.text+0x16414). */
++#define VGA2USB_IOC_UPGRADE_START	_IOR(V2U_IOC_MAGIC, 0x2b, __u32)
++
++/* 0x800c562c  PRIVILEGED, .text+0x163d2 -> board->[0xd8](board, arg).
++ * NAME PROVEN: the failure path logs .rodata+0x1a3b60 =
++ * "VGA2USB_IOC_UPGRADE_PROGRESS" (.text+0x1644a). */
++#define VGA2USB_IOC_UPGRADE_PROGRESS \
++	_IOR(V2U_IOC_MAGIC, 0x2c, struct v2u_upgrade_progress)
++
++/* 0xc018562d  .text+0xc0c -> board_perform_io(.text+0x950)
++ *                         -> usb_io_dev_mem_access(), vendor request 0xBC.
++ * LP64 only. */
++#define V2U_IOC_DEV_MEM_ACCESS	_IOWR(V2U_IOC_MAGIC, 0x2d, struct v2u_dev_mem)
++
++/* 0x4008562f  .text+0xada.  The argument is a pointer to a struct
++ * v2u_fw_image in user memory.  LP64 only. */
++#define V2U_IOC_FW_UPGRADE	_IOW(V2U_IOC_MAGIC, 0x2f, struct v2u_fw_image *)
++
++/* 0xc0105630 / 0xc00c5630  .text+0x1623f / .text+0x160cb -> .text+0x15e80 */
++#define V2U_IOC_EEPROP_READ	_IOWR(V2U_IOC_MAGIC, 0x30, struct v2u_eeprop_read)
++#define V2U_IOC_EEPROP_READ_32	_IOC(_IOC_READ|_IOC_WRITE, V2U_IOC_MAGIC, 0x30, 12)
++
++/* 0x400c5631 / 0x40085631  .text+0x161ee / .text+0x16191 -> .text+0x15f20 */
++#define V2U_IOC_EEPROP_WRITE	_IOW(V2U_IOC_MAGIC, 0x31, struct v2u_eeprop_write)
++#define V2U_IOC_EEPROP_WRITE_32	_IOC(_IOC_WRITE, V2U_IOC_MAGIC, 0x31, 8)
++
++/*
++ * ===========================================================================
++ * 6. Property keys - V2U_IOC_GET_PROPERTY / V2U_IOC_SET_PROPERTY
++ * ===========================================================================
++ * Every *_property handler is a gcc binary-search compare tree, not a jump
++ * table.  Keys 0x00..0x2e are the "standard" space covered by the type table
++ * at .rodata+0x1d5160; keys >= 0x2710 are extended vendor keys that
++ * v2ucom_prop_property_type() (.text+0x33100) rejects and which therefore
++ * cannot be persisted to the EEPROM.
++ *
++ * Only one key name survives in the binary: key 0x2714, proven by the log
++ * string .rodata.str1.1+0x599 = "  V2UKey_UniqueId ERROR %d\n", referenced
++ * only from .text+0x16627.  All other names below are invented.
++ */
++
++/* --- board scope: board_common_get_property .text+0x16490,
++ *                  board_common_set_property .text+0x16ab0 --- */
++#define V2U_KEY_PRODUCT_ID	0x00	/* RO u16,  .text+0x16981 (*(u16 *)board) */
++#define V2U_KEY_PRODUCT_TYPE	0x01	/* RO u32,  .text+0x1657d, product-ID
++					 * -> V2UProductType mapping tree      */
++#define V2U_KEY_DRIVER_VERSION	0x0a	/* RO 4 x u32, .text+0x16922, literal
++					 * {3, 0x21, 0, 0x11} = 3.33.0.17      */
++#define V2U_KEY_PRODUCT_NAME	0x12	/* RO string, .text+0x16522,
++					 * board_get_product_name()            */
++#define V2U_KEY_EEPROM_BLOB	0x14	/* RW 8 bytes, .text+0x16787 /
++					 * .text+0x16b59, io->[0x70] at addr
++					 * 0x24                                */
++#define V2U_KEY_SERIAL		0x15	/* RO string, .text+0x164e8, board+0x10 */
++#define V2U_KEY_IO_ID		0x1d	/* RO u32,  .text+0x168e9              */
++#define V2U_KEY_LOG_LEVEL	0x23	/* RW u32,  .text+0x164ca / .text+0x16b42,
++					 * the global v2ucom_log_level         */
++#define V2U_KEY_BUILD_DATE	0x26	/* RO string, .text+0x16656,
++					 * .rodata+0x1a3bb0 "Dec 22 2021"      */
++#define V2U_KEY_BUILD_TIME	0x27	/* RO string, .text+0x168fe,
++					 * .rodata+0x1a3ba0 "02:32:35"         */
++#define V2U_KEY_DEVICE_NAME	0x28	/* RO string, .text+0x1664d, board+0x30,
++					 * set to "epiphanboard%d" by
++					 * linux_board_register .text+0x81a3    */
++#define V2U_KEY_BYTE_REG	0x2e	/* RW u8,  .text+0x16946 / .text+0x16b87,
++					 * io->[0xe0], vendor request 0xC7     */
++#define V2U_KEY_UNIQUE_ID	0x2714	/* RO blob, .text+0x165e5 - NAME PROVEN */
++#define V2U_KEY_EEPROM_SIZE_A	0x271a	/* RO u32, .text+0x16973 (board+0x04)   */
++#define V2U_KEY_EEPROM_SIZE_B	0x271c	/* RO u32, .text+0x16549, eeprop_size() */
++#define V2U_KEY_STANDBY		0x2710	/* WO u32, .text+0x16bad, io->[0xa8]    */
++#define V2U_KEY_STANDBY2	0x2715	/* WO 2 x u16, .text+0x16ae7, io->[0xa8] */
++
++/* --- usb board override: usb_board_get_property .text+0x8f0 --- */
++#define V2U_KEY_USB_STATE	0x25	/* RO u32, .text+0x8fa (board+0x10c)   */
++
++/* --- generic grabber: grabber_common_get_property .text+0x195e0.
++ * caps = *(u32 *)(grabber + 0x60) | *(u32 *)(board + 0x74).
++ * grabber_common_set_property (.text+0x19700) has no cases of its own; it is
++ * a pure forwarder to the board. --- */
++#define V2U_KEY_CAP_BIT3	0x0d	/* RO bool, .text+0x196b8, (caps>>3)&1 */
++#define V2U_KEY_CAP_BIT4	0x11	/* RO bool, .text+0x19632, (caps>>4)&1 */
++#define V2U_KEY_CAPS		0x1b	/* RO u32,  .text+0x1969a, full word;
++					 * caps |= 0x40 when caps & 0x3000     */
++#define V2U_KEY_GRABBER_NAME	0x1e	/* RO string(32), .text+0x19659,
++					 * grabber+0x00                        */
++#define V2U_KEY_GRABBER_NAME2	0x2a	/* RO string(32), .text+0x19605,
++					 * grabber+0x20                        */
++
++/* --- video grabber: vgrabber_get_property .text+0x2b110,
++ *                    vgrabber_set_property .text+0x2b910 --- */
++#define V2U_KEY_SIGNATURE	0x05	/* RO blob, .text+0x2b5ef              */
++#define V2U_KEY_DEV_CMD		0x06	/* WO u32,  .text+0x2ba44              */
++#define V2U_KEY_SIGNAL_PRESENT	0x08	/* RO bool, .text+0x2b319              */
++#define V2U_KEY_ADJ_RANGE	0x09	/* RO 32-byte struct, .text+0x2b342.
++					 * This is the V2U_AdjustmentRange
++					 * equivalent; exact field layout
++					 * UNVERIFIED                          */
++#define V2U_KEY_EDID		0x0b	/* RW 128 bytes, .text+0x2b2a1 /
++					 * .text+0x2bad7                       */
++#define V2U_KEY_VGAMODE		0x0e	/* RW u32 index in, 24 bytes out,
++					 * .text+0x2b7f4 / .text+0x2ba02       */
++#define V2U_KEY_SCALE_MODE	0x10	/* RW u32,  .text+0x2b27a (g+0x204)    */
++#define V2U_KEY_GRAB_FLAGS	0x13	/* RW u32,  .text+0x2b83a (g+0x1fc)    */
++#define V2U_KEY_MODE_FLAGS	0x16	/* RO u32,  .text+0x2b173 (g+0x123)    */
++#define V2U_KEY_DVI_MODE	0x17	/* RW u32,  .text+0x2b6fe /
++					 * vgrabber_set_dvi_mode_selection      */
++#define V2U_KEY_NOISE_FILTER	0x18	/* RW u32,  .text+0x2b5b1 /
++					 * vgrabber_set_noise_filter           */
++#define V2U_KEY_HSYNC_THRESHOLD	0x19	/* RW u8,   .text+0x2b2c8, get gated on
++					 * caps & 0x1000                       */
++#define V2U_KEY_VSYNC_THRESHOLD	0x1a	/* RW u8,   .text+0x2b78e, get gated on
++					 * caps & 0x2000                       */
++#define V2U_KEY_VIDEO_FORMAT	0x1f	/* RW u32,  .text+0x2b240 /
++					 * .text+0x2bac7; only 0 and 1 accepted
++					 * (.text+0x28f7c)                     */
++#define V2U_KEY_EDID_EXT	0x22	/* RW 256 bytes, .text+0x2b886 /
++					 * .text+0x2ba90                       */
++#define V2U_KEY_STREAM_CFG	0x2b	/* RW 44 out / 36 in, .text+0x2b1e3 /
++					 * .text+0x2bb1f - asymmetric!          */
++#define V2U_KEY_STREAM_ENABLE	0x2c	/* RW bool, .text+0x2b750, gated on
++					 * caps & 0x40000 both ways            */
++#define V2U_KEY_RATE_CONTROL	0x2d	/* RW struct, .text+0x2b1cd /
++					 * .text+0x2ba33; size UNVERIFIED      */
++
++/* --- audio grabber: agrabber_get_property .text+0x148d0,
++ *                    agrabber_set_property .text+0x14950 --- */
++#define V2U_KEY_AUDIO_FORMAT	0x2716	/* RO 12 bytes, .text+0x14920          */
++#define V2U_KEY_AUDIO_VOLUME	0x2717	/* RW u32 channel + value,
++					 * .text+0x148f2 / .text+0x1498a       */
++#define V2U_KEY_AUDIO_MUTE	0x2718	/* RW u32 channel + value,
++					 * .text+0x14912 / .text+0x149d4       */
++#define V2U_KEY_AUDIO_MODE	0x2719	/* RO, .text+0x14900,
++					 * agrabber_detect_mode()              */
++
++/* Keys 0x02, 0x03, 0x04, 0x07, 0x0c, 0x0f, 0x20, 0x21 and 0x29 appear in the
++ * type table but have no handler in this object and return -EINVAL. */
++
++#endif /* _V2U_IOCTL_H */
