@@ -14,16 +14,17 @@
 [M] René Rebe <rene@exactco.de>
 
 [C] extra/office
-[F] CUSTOM-LTO
+[F] CROSS CUSTOM-LTO
+[R] + arm64 riscv64 x86-64
 
 [E] add lld nodejs rust-bindgen
 
 [L] BSD
-[V] 150.0.7871.114
+[V] 151.0.7922.108
 
 [CV-URL] https://chromium.googlesource.com/chromium/src/+refs
-[D] 21584d050e5e32ba46a7b9798878f16d3c5ed78118c01bbef02a10b1 chromium-150.0.7871.114-linux.tar.xz https://github.com/chromium-linux-tarballs/chromium-tarballs/releases/download/150.0.7871.114/
-[D] 83a061a5ae0d44590b9bd2c67729bba316b9810a098dd1c89a449362 copium-150.0.tar.gz !https://codeberg.org/selfisekai/copium/archive/150.0.tar.gz
+[D] ef59a99b9237c62f444699b7d9fde647cadf1655b47fbbfaf7cd358e chromium-151.0.7922.108-linux.tar.xz https://github.com/chromium-linux-tarballs/chromium-tarballs/releases/download/151.0.7922.108/
+[D] 0d20a48771cfd41e3138b0172ea6eb4bbcf98db0842f3a7d0bb57f6a copium-151.0.tar.gz !https://codeberg.org/selfisekai/copium/archive/151.0.tar.gz
 [D] 688fcf4e2919ddf7d4e94c416fca658a2b3018a7952a8f72d13028dc wasm-node-4.22.4.tgz https://registry.npmjs.org/@rollup/wasm-node/-/
 
 runmake=0
@@ -33,9 +34,8 @@ var_append copium_patches ' ' cr138-node-version-check.patch
 var_append copium_patches ' ' cr148-rust-1.95-bytemuck.patch
 var_append copium_patches ' ' cr148-v8-no-san-trap.patch
 var_append copium_patches ' ' cr149-rust-toolchain-var.patch
-var_append copium_patches ' ' cr150-empty-ar.patch
 var_append copium_patches ' ' cr150-ffmpeg-no-agtm.patch
-var_append copium_patches ' ' cr150-no-sysroot-modules.patch
+var_append copium_patches ' ' cr151-metrics-metadata-histograms.patch
 
 copium_patches() {
 	tar $taropt `match_source_file -p copium` -C ./..
@@ -45,24 +45,37 @@ copium_patches() {
 }
 hook_add prepatch 5 copium_patches
 
-[ "$SDECFG_DEFAULT_CC" = "gcc" ] && CC=${CC/gcc/clang}
-[ "$SDECFG_DEFAULT_CXX" = "gcc" ] && CXX=${CXX/g++/clang++}
-CLANG_VERSION=$($CC --version | sed -n 's/.*version \([0-9]\+\)\..*/\1/p')
-CLANG_INCLUDE_PATH="-I$(pkgprefix libdir clang)/clang/${CLANG_VERSION}/include"
-
-var_append GCC_WRAPPER_APPEND ' ' -I$(pkgprefix includedir libx11)
-
-[ "$arch" = arm64 ] && var_remove GCC_WRAPPER_REMOVE ' ' "-march*"
-
 export RUSTC_BOOTSTRAP=1
 
+[ "$SDECFG_DEFAULT_CC" = "gcc" ] && CC=${CC/gcc/clang}
+[ "$SDECFG_DEFAULT_CXX" = "gcc" ] && CXX=${CXX/g++/clang++}
+
+[ "$arch" = arm64 ] || [ "$arch" = riscv64 ] && var_remove GCC_WRAPPER_REMOVE ' ' "-march*"
+
+if atstage cross; then
+	export BUILD_CC=/usr/bin/clang
+	export BUILD_CXX=/usr/bin/clang++
+	export BUILD_AR=ar
+	export BUILD_NM=nm
+
+	t2_rust_sysroot="$root/TOOLCHAIN/cross"
+	t2_host_toolchain="//build/toolchain/linux/unbundle:host"
+else
+	t2_rust_sysroot="$root/$(pkgprefix rustc)"
+	t2_host_toolchain="//build/toolchain/linux/unbundle:default"
+fi
+
+T2_CLANG_VERSION=$($CC --version | sed -n 's/.*version \([0-9]\+\)\..*/\1/p')
+
 chromium_flags="
+	allow_avx512=false
 	blink_enable_generated_code_formatting=false
+	target_cpu=\"$(case $arch in arm64) echo arm64 ;; riscv64) echo riscv64 ;; *) echo x64 ;; esac)\"
 	build_dawn_tests=false
 	chrome_pgo_phase=0
-	clang_base_path=\"/$(pkgprefix clang)\"
+	clang_base_path=\"$root/$(pkgprefix clang)\"
 	clang_use_chrome_plugins=false
-	clang_version=\"${CLANG_VERSION}\"
+	clang_version=\"${T2_CLANG_VERSION}\"
 	custom_toolchain=\"//build/toolchain/linux/unbundle:default\"
 	disable_fieldtrial_testing_config=true
 	enable_freetype=true
@@ -74,7 +87,7 @@ chromium_flags="
 	enable_vr=false
 	enable_widevine=false
 	ffmpeg_branding=\"Chrome\"
-	host_toolchain=\"//build/toolchain/linux/unbundle:default\"
+	host_toolchain=\"$t2_host_toolchain\"
 	icu_use_data_file=false
 	is_asan=false
 	is_component_build=false
@@ -86,6 +99,8 @@ chromium_flags="
 	media_use_libvpx=true
 	media_use_openh264=true
 	node_version_check=false
+	ozone_platform=\"wayland\"
+	ozone_platform_x11=false
 	proprietary_codecs=true
 	rtc_build_json=false
 	rtc_build_libsrtp=true
@@ -95,14 +110,21 @@ chromium_flags="
 	rtc_link_pipewire=false
 	rtc_use_h264=false
 	rtc_use_pipewire=false
-	rust_bindgen_root=\"/$(pkgprefix rust-bindgen)\"
-	rust_sysroot_absolute=\"/$(pkgprefix rustc)\"
+	rust_bindgen_root=\"/usr\"
+	rust_sysroot_absolute=\"$t2_rust_sysroot\"
 	rustc_version=\"T2\"
 	safe_browsing_use_unrar=false
 	symbol_level=0
+	t2_bindgen_sysroot=\"$root\"
+	t2_build_clang_base_path=\"/usr\"
+	t2_clang_resource_dir=\"$root$(pkgprefix libdir clang)/clang/$T2_CLANG_VERSION\"
+	t2_libclang_path=\"$(dirname "$(find /usr/lib* -name 'libclang.so*' -print -quit)")\"
+	t2_pre_clang23=true
+	t2_rust_abi_target=\"$arch_target\"
 	treat_warnings_as_errors=false
 	use_clang_modules=false
 	use_custom_libcxx=true
+	use_kerberos=false
 	use_lld=true
 	use_official_google_api_keys=false
 	use_pulseaudio=true
@@ -114,10 +136,44 @@ chromium_flags="
 	use_vaapi=true
 "
 
-pkginstalled qt6base && var_append chromium_flags ' ' "use_qt6=true"
-pkginstalled qt6base && var_append chromium_flags ' ' "moc_qt6_path=\"$root/$(pkgprefix qt6base)/libexec/qt6\""
+if pkginstalled qt6base; then
+	var_append chromium_flags ' ' "use_qt6=true"
 
-[ "$SDECFG_LTO" = 1 ] && var_append chromium_flags ' ' "use_thin_lto=true thin_lto_enable_optimizations=true"
+	if atstage cross; then
+		var_append chromium_flags ' ' "moc_qt6_path=\"$root/TOOLCHAIN/cross/qt/libexec/qt6\""
+	else
+		var_append chromium_flags ' ' "moc_qt6_path=\"/$(pkgprefix qt6base)/libexec/qt6\""
+	fi
+fi
+
+if atstage cross; then
+	HOST_PKG_CONFIG_WRAPPER="$builddir/host-pkg-config"
+	cat > "$HOST_PKG_CONFIG_WRAPPER" <<-EOT
+		#!/bin/sh
+		unset PKG_CONFIG_LIBDIR
+		unset PKG_CONFIG_SYSROOT_DIR
+		export PKG_CONFIG_PATH="\$SYSPKG_CONFIG_PATH"
+		exec /usr/bin/pkg-config "\$@"
+	EOT
+	chmod +x "$HOST_PKG_CONFIG_WRAPPER"
+
+	TARGET_PKG_CONFIG_WRAPPER="$builddir/target-pkg-config"
+	cat > "$TARGET_PKG_CONFIG_WRAPPER" <<-EOT
+		#!/bin/sh
+		export PKG_CONFIG_SYSROOT_DIR="$root"
+		exec pkg-config "\$@"
+	EOT
+	chmod +x "$TARGET_PKG_CONFIG_WRAPPER"
+
+	var_append chromium_flags ' ' "host_pkg_config=\"$HOST_PKG_CONFIG_WRAPPER\""
+	var_append chromium_flags ' ' "pkg_config=\"$TARGET_PKG_CONFIG_WRAPPER\""
+fi
+
+[ "$SDECFG_LTO" = 1 ] &&
+	var_append chromium_flags ' ' "use_thin_lto=true thin_lto_enable_optimizations=true"
+
+[ "$arch_machine" != "$HOSTTYPE" ] &&
+	var_append chromium_flags ' ' "use_v8_context_snapshot=false"
 
 system_libs=""
 pkginstalled brotli && var_append system_libs ' ' brotli
@@ -159,7 +215,7 @@ chromium_premake() {
 	var_remove system_libs ' ' unrar
 	build/linux/unbundle/replace_gn_files.py --system-libraries $system_libs
 
-	# use system nodejs
+	#system nodejs
 	mkdir -p third_party/node/linux/node-linux-x64/bin
 	ln -sf /usr/bin/node third_party/node/linux/node-linux-x64/bin/
 
@@ -170,28 +226,31 @@ chromium_premake() {
 
 	# system esbuild
 	rm -vf third_party/devtools-frontend/src/third_party/esbuild/esbuild
-	ln -sv $(pkgprefix bindir esbuild)/esbuild third_party/devtools-frontend/src/third_party/esbuild/esbuild
+	ln -sv /usr/bin/esbuild third_party/devtools-frontend/src/third_party/esbuild/esbuild
 	rm -rv third_party/devtools-frontend/src/node_modules/esbuild
-	ln -sv $(pkgprefix libdir esbuild)/node_modules/esbuild third_party/devtools-frontend/src/node_modules/esbuild
+	ln -sv /usr/lib*/node_modules/esbuild third_party/devtools-frontend/src/node_modules/esbuild
 
 	# system gperf
 	rm -rv third_party/gperf/cipd/bin/gperf
-	ln -sv $(pkgprefix bindir gperf)/gperf third_party/gperf/cipd/bin
-	
+	ln -sv /usr/bin/gperf third_party/gperf/cipd/bin
+
 	# system go
-	local goarch=$arch; [ $goarch = x86-64 ] && goarch=amd64
-	mkdir -p third_party/dawn/tools/golang/linux-$goarch/bin
-	ln -sv $(pkgprefix bindir go)/go third_party/dawn/tools/golang/linux-$goarch/bin/
+	case $HOSTTYPE in
+		x86_64|amd64) goarch=amd64 ;;
+		aarch64|arm64|arm*) goarch=arm64 ;;
+		riscv64) goarch=riscv64 ;;
+	esac
+	mkdir -p "third_party/dawn/tools/golang/linux-$goarch/bin"
+	ln -sv /usr/bin/go "third_party/dawn/tools/golang/linux-$goarch/bin/"
 
 	# allow system libs in official build
 	sed -i 's/OFFICIAL_BUILD/GOOGLE_CHROME_BUILD/' tools/generate_shim_headers/generate_shim_headers.py
-
-	sed -i "s|T2_CLANG_INCLUDE_PATH|$CLANG_INCLUDE_PATH|" build/config/compiler/BUILD.gn
 
 	# hack to force using the shim header files of tensorflow-text
 	rm -Rf ./third_party/tflite/src/tensorflow/core/lib/core
 
 	echo $arch_target >> build/rust/known-target-triples.txt
+	echo ${HOSTTYPE}-t2-linux-gnu >> build/rust/known-target-triples.txt
 
 	gn gen out/bld --args="$(echo $chromium_flags)"
 }
@@ -209,7 +268,8 @@ chromium_postmake() {
 	
 	install chrome -t $root/$prefix/lib
 	install chrome_crashpad_handler -t $root/$prefix/lib
-	install v8_context_snapshot.bin -t $root/$prefix/lib
+	[ -f v8_context_snapshot.bin ] && install v8_context_snapshot.bin -t $root/$prefix/lib
+	[ -f snapshot_blob.bin ] && install snapshot_blob.bin -t $root/$prefix/lib
 	install libvulkan.so.1 -t $root/$prefix/lib
 	install libEGL.so -t $root/$prefix/lib
 	install libGLESv2.so -t $root/$prefix/lib
