@@ -3759,7 +3759,7 @@ diff -aurpN -x '*.orig' -x '*.rej' -x __pycache__ -x '*.pyc' -x .deps a/js/src/j
 diff -aurpN -x '*.orig' -x '*.rej' -x __pycache__ -x '*.pyc' -x .deps a/js/src/jit/ia64/Assembler-ia64.h b/js/src/jit/ia64/Assembler-ia64.h
 --- firefox-153.0.1/js/src/jit/ia64/Assembler-ia64.h.vanilla
 +++ firefox-153.0.1/js/src/jit/ia64/Assembler-ia64.h
-@@ -0,0 +1,591 @@
+@@ -0,0 +1,613 @@
 +/* This Source Code Form is subject to the terms of the Mozilla Public
 + * License, v. 2.0. If a copy of the MPL was not distributed with this
 + * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -4030,9 +4030,14 @@ diff -aurpN -x '*.orig' -x '*.rej' -x __pycache__ -x '*.pyc' -x .deps a/js/src/j
 +  // offset of the previous branch that targets the same label, forming a chain
 +  // whose head is Label::offset(). bind() walks that chain and rewrites each
 +  // displacement to point at the bind site. This is the standard SpiderMonkey
-+  // scheme; on ia64 the "displacement field" is the TGT25c immediate that
++  // scheme; on ia64 the "displacement field" is the branch immediate that
 +  // PatchBranchDisp() rewrites, and every offset is bundle-aligned so the
 +  // chain link is stored as a bundle index.
++  //
++  // Branches to a Label are brl (long) form, whose 60-bit immediate holds any
++  // bundle index this buffer can produce. The short 21-bit form overflowed once
++  // a compilation passed 16 MiB of code, turning a chain link into a negative
++  // offset and hanging bind() -- see AssemblerCore-ia64.h's long-branch note.
 +
 + public:
 +  // Writable pointer to an already-emitted bundle. The patchable-immediate
@@ -4044,36 +4049,55 @@ diff -aurpN -x '*.orig' -x '*.rej' -x __pycache__ -x '*.pyc' -x .deps a/js/src/j
 +
 + private:
 +
-+  // Read back the raw TGT25c field, which for an unbound branch is the chain
-+  // link rather than a real displacement.
-+  int32_t readChainLink(BufferOffset off) {
-+    ia64::Bundle* b = bundleAt(off);
-+    uint64_t slot2 = (b->hi >> 23) & ((uint64_t(1) << 41) - 1);
-+    uint32_t imm20 = uint32_t((slot2 >> 13) & 0xfffff);
-+    uint32_t sign = uint32_t((slot2 >> 36) & 0x1);
-+    int32_t v = int32_t(imm20 | (sign << 20));
-+    // sign-extend from 21 bits
-+    if (v & (1 << 20)) {
-+      v |= ~((1 << 21) - 1);
-+    }
-+    return v;
++  // Read back the raw branch immediate, which for an unbound branch is the
++  // chain link rather than a real displacement.
++  int64_t readChainLink(BufferOffset off) {
++    return ia64::ReadBranchDisp(bundleAt(off));
++  }
++
++  // Offset of a chain link, which is a bundle index and so always fits an int.
++  static BufferOffset chainSite(int64_t link) {
++    return BufferOffset(int32_t(link) * int32_t(sizeof(ia64::Bundle)));
 +  }
 +
 + public:
-+  // Emit a branch bundle that targets |label|, returning its offset.
-+  BufferOffset emitBranchToLabel(ia64::Insn (*make)(int32_t, uint32_t),
++  // Emit a long-branch bundle that targets |label|, returning its offset.
++  BufferOffset emitBranchToLabel(ia64::Bundle (*make)(int64_t, uint32_t),
 +                                 uint32_t qp, Label* label) {
++    if (label->bound()) {
++      BufferOffset here = m_buffer.nextOffset();
++      int64_t disp = int64_t(BundleIndex(BufferOffset(label->offset()))) -
++                     BundleIndex(here);
++      MOZ_ASSERT(ia64::LongBranchDispInRange(disp));
++      return emitBundle(make(disp, qp));
++    }
++    // Unbound: link into the chain, storing the previous head as the raw field.
++    int64_t prev = label->used() ? BundleIndex(BufferOffset(label->offset()))
++                                 : kEndOfChain;
++    BufferOffset off = emitBundle(make(prev, qp));
++    label->use(off.getOffset());
++    return off;
++  }
++
++  // toggledJump()'s branch has to stay a B-unit br.cond in an MIB bundle:
++  // ToggleToJmp()/ToggleToCmp() switch it on and off by flipping just the 4-bit
++  // major opcode, and the X unit has no nop that would preserve a brl's
++  // displacement bits across the round trip. As on every other backend,
++  // toggledJump() is only ever used for short forward jumps whose label carries
++  // no other branch, so the link it stores is always kEndOfChain;
++  // PatchShortBranchDisp() asserts that rather than trusting it.
++  BufferOffset emitShortBranchToLabel(uint32_t qp, Label* label) {
 +    if (label->bound()) {
 +      BufferOffset here = m_buffer.nextOffset();
 +      int32_t disp = BundleIndex(BufferOffset(label->offset())) -
 +                     BundleIndex(here);
-+      MOZ_ASSERT(ia64::BranchDispInRange(disp));
-+      return emitBundle(ia64::BundleB(make(disp, qp)));
++      MOZ_RELEASE_ASSERT(ia64::BranchDispInRange(disp));
++      return emitBundle(ia64::BundleB(ia64::BrCondRel(disp, qp)));
 +    }
-+    // Unbound: link into the chain, storing the previous head as the raw field.
 +    int32_t prev = label->used() ? BundleIndex(BufferOffset(label->offset()))
 +                                 : kEndOfChain;
-+    BufferOffset off = emitBundle(ia64::BundleB(make(prev, qp)));
++    MOZ_RELEASE_ASSERT(ia64::BranchDispInRange(prev));
++    BufferOffset off = emitBundle(ia64::BundleB(ia64::BrCondRel(prev, qp)));
 +    label->use(off.getOffset());
 +    return off;
 +  }
@@ -4089,14 +4113,13 @@ diff -aurpN -x '*.orig' -x '*.rej' -x __pycache__ -x '*.pyc' -x .deps a/js/src/j
 +    if (label->used()) {
 +      BufferOffset site(label->offset());
 +      for (;;) {
-+        int32_t link = readChainLink(site);
-+        int32_t disp = BundleIndex(here) - BundleIndex(site);
-+        MOZ_ASSERT(ia64::BranchDispInRange(disp));
++        int64_t link = readChainLink(site);
++        int64_t disp = int64_t(BundleIndex(here)) - BundleIndex(site);
 +        ia64::PatchBranchDisp(bundleAt(site), disp);
 +        if (link == kEndOfChain) {
 +          break;
 +        }
-+        site = BufferOffset(link * int32_t(sizeof(ia64::Bundle)));
++        site = chainSite(link);
 +      }
 +    }
 +    label->bind(here.getOffset());
@@ -4113,27 +4136,26 @@ diff -aurpN -x '*.orig' -x '*.rej' -x __pycache__ -x '*.pyc' -x .deps a/js/src/j
 +    if (target->bound()) {
 +      BufferOffset dest(target->offset());
 +      for (;;) {
-+        int32_t link = readChainLink(site);
-+        int32_t disp = BundleIndex(dest) - BundleIndex(site);
-+        MOZ_ASSERT(ia64::BranchDispInRange(disp));
++        int64_t link = readChainLink(site);
++        int64_t disp = int64_t(BundleIndex(dest)) - BundleIndex(site);
 +        ia64::PatchBranchDisp(bundleAt(site), disp);
 +        if (link == kEndOfChain) {
 +          break;
 +        }
-+        site = BufferOffset(link * int32_t(sizeof(ia64::Bundle)));
++        site = chainSite(link);
 +      }
 +      label->reset();
 +      return;
 +    }
 +
 +    for (;;) {
-+      int32_t link = readChainLink(site);
++      int64_t link = readChainLink(site);
 +      if (link == kEndOfChain) {
 +        break;
 +      }
-+      site = BufferOffset(link * int32_t(sizeof(ia64::Bundle)));
++      site = chainSite(link);
 +    }
-+    int32_t head = target->used()
++    int64_t head = target->used()
 +                       ? BundleIndex(BufferOffset(target->offset()))
 +                       : kEndOfChain;
 +    ia64::PatchBranchDisp(bundleAt(site), head);
@@ -4354,7 +4376,7 @@ diff -aurpN -x '*.orig' -x '*.rej' -x __pycache__ -x '*.pyc' -x .deps a/js/src/j
 diff -aurpN -x '*.orig' -x '*.rej' -x __pycache__ -x '*.pyc' -x .deps a/js/src/jit/ia64/AssemblerCore-ia64.h b/js/src/jit/ia64/AssemblerCore-ia64.h
 --- firefox-153.0.1/js/src/jit/ia64/AssemblerCore-ia64.h.vanilla
 +++ firefox-153.0.1/js/src/jit/ia64/AssemblerCore-ia64.h
-@@ -0,0 +1,1069 @@
+@@ -0,0 +1,1202 @@
 +/* This Source Code Form is subject to the terms of the Mozilla Public
 + * License, v. 2.0. If a copy of the MPL was not distributed with this
 + * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -4862,6 +4884,10 @@ diff -aurpN -x '*.orig' -x '*.rej' -x __pycache__ -x '*.pyc' -x .deps a/js/src/j
 +// encoded as a signed 21-bit value: imm20 in bits 32:13 and the sign in bit 36.
 +// That gives +/-2^20 bundles, i.e. +/-16 MiB. Layout confirmed against GNU as by
 +// assembling branches over varying distances in both directions.
++//
++// Only toggledJump() still emits this short form; everything that branches to a
++// Label uses the long form (BrlCondRel/BrlCallRel below), whose 60-bit
++// displacement cannot overflow. See the long-branch section for why.
 +static const int32_t MaxBranchBundleDisp = (1 << 20) - 1;
 +static const int32_t MinBranchBundleDisp = -(1 << 20);
 +
@@ -4893,10 +4919,18 @@ diff -aurpN -x '*.orig' -x '*.rej' -x __pycache__ -x '*.pyc' -x .deps a/js/src/j
 +         (Insn((imm21 >> 20) & 1) << 36) | fQp(qp);
 +}
 +
-+// Rewrite the IP-relative displacement of a branch already emitted into slot 2
-+// of |b|, leaving every other field alone. This is what label binding uses to
-+// resolve forward branches.
-+inline void PatchBranchDisp(Bundle* b, int32_t bundleDisp) {
++// Rewrite the IP-relative displacement of a short branch already emitted into
++// slot 2 of |b|, leaving every other field alone. PatchBranchDisp() below
++// dispatches here for B-unit bundles.
++inline void PatchShortBranchDisp(Bundle* b, int64_t disp) {
++  // A displacement -- or, for a still-unbound branch, a chain link -- too wide
++  // for the 21-bit field would be silently truncated and read back as a bogus
++  // negative offset, which is exactly what sends bind() walking off the end of
++  // the buffer. Only toggledJump() reaches this path and its jumps are short,
++  // so make a violation a crash rather than a hang. Checked before narrowing,
++  // so an out-of-range value cannot slip through the cast.
++  MOZ_RELEASE_ASSERT(disp >= MinBranchBundleDisp && disp <= MaxBranchBundleDisp);
++  int32_t bundleDisp = int32_t(disp);
 +  const uint64_t kSlotMask = (uint64_t(1) << 41) - 1;
 +  // slot 2 occupies bundle bits 127:87, i.e. hi bits 63:23.
 +  Insn slot2 = (b->hi >> 23) & kSlotMask;
@@ -5364,6 +5398,127 @@ diff -aurpN -x '*.orig' -x '*.rej' -x __pycache__ -x '*.pyc' -x .deps a/js/src/j
 +inline Insn NopB(uint32_t imm21 = 0) {
 +  return fOp(2) | (Insn(imm21 & 0xfffff) << 6) |
 +         (Insn((imm21 >> 20) & 1) << 36);
++}
++
++// ---------------------------------------------------------------------------
++// Long branches (brl). A brl is an X-unit instruction: it occupies the L and X
++// slots of an MLX bundle and carries a signed 60-bit bundle displacement, so it
++// reaches the entire address space instead of the +/-16 MiB a B-unit branch
++// manages. Because this backend emits one instruction per bundle anyway, a brl
++// costs exactly what a br.cond did -- a single bundle -- so every branch to a
++// Label uses this form and the assembler never has to reason about range.
++//
++// That also fixes label binding. An unbound forward branch stores the chain
++// link to the previous branch in its own displacement field; when that field
++// was 21 bits, a code buffer past 2^20 bundles (16 MiB) made a legitimate
++// bundle index set bit 20, which read back sign-extended as a large negative
++// number. bind() then walked outside the buffer and never found kEndOfChain --
++// an infinite loop compiling large scripts. 60 bits cannot overflow.
++//
++// Field layout, SDM Volume 3 formats X3 (brl.cond) and X4 (brl.call), verified
++// byte-for-byte against GNU as:
++//
++//   X slot: op 40:37 (0xc brl.cond, 0xd brl.call)   i (imm60 sign) 36
++//           d 35   wh 34:33   imm20b 32:13   p 12
++//           btype 8:6 (brl.cond, always 0) / b1 8:6 (brl.call)   qp 5:0
++//   L slot: imm39 40:2, bits 1:0 ignored
++//
++//   imm60 = (i << 59) | (imm39 << 20) | imm20b, and target = IP + (imm60 << 4)
++//
++// The X-slot immediate fields sit in exactly the positions fTgt25c() uses, so
++// the two forms differ only by the L slot. brl must be followed by a stop or
++// its behaviour is undefined (SDM 3:30), hence tMLX_ rather than tMLX.
++//
++// brl is not implemented on first-generation Itanium (Merced), which faults and
++// leaves the kernel to emulate it. Every target this backend builds for is
++// Itanium 2 or later, where CPUID advertises it as the "branchlong" feature.
++// ---------------------------------------------------------------------------
++
++static const int64_t MaxLongBranchBundleDisp = (int64_t(1) << 59) - 1;
++static const int64_t MinLongBranchBundleDisp = -(int64_t(1) << 59);
++
++inline bool LongBranchDispInRange(int64_t bundleDisp) {
++  return bundleDisp >= MinLongBranchBundleDisp &&
++         bundleDisp <= MaxLongBranchBundleDisp;
++}
++
++// The X-slot half of imm60: low 20 bits and the sign.
++inline Insn fTgt64x(int64_t bundleDisp) {
++  uint64_t u = uint64_t(bundleDisp);
++  return (Insn(u & 0xfffff) << 13) | (Insn((u >> 59) & 0x1) << 36);
++}
++
++// The L-slot half: imm39, shifted past the two ignored low bits.
++inline Insn fTgt64l(int64_t bundleDisp) {
++  uint64_t u = uint64_t(bundleDisp);
++  return Insn((u >> 20) & 0x7fffffffffULL) << 2;
++}
++
++// X3: (qp) brl.cond.sptk.few <ip-relative target>
++inline Bundle BrlCondRel(int64_t bundleDisp, uint32_t qp = 0) {
++  Insn x = fOp(0xc) | fBtype(0) | fPa(0) | fWha(0) | fD(0) |
++           fTgt64x(bundleDisp) | fQp(qp);
++  return MakeBundle(tMLX_, NopM(), fTgt64l(bundleDisp), x);
++}
++
++// X4: (qp) brl.call.sptk.many b1 = <ip-relative target>
++inline Bundle BrlCallRel(uint32_t b1, int64_t bundleDisp, uint32_t qp = 0) {
++  Insn x = fOp(0xd) | fPa(1) | fWha(0) | fD(0) | fB1(b1) |
++           fTgt64x(bundleDisp) | fQp(qp);
++  return MakeBundle(tMLX_, NopM(), fTgt64l(bundleDisp), x);
++}
++
++inline bool IsLongBranchBundle(const Bundle* b) {
++  uint8_t tmpl = uint8_t(b->lo & 0x1f);
++  return tmpl == tMLX || tmpl == tMLX_;
++}
++
++// Read back a branch's displacement, which for a still-unbound forward branch
++// is the chain link rather than a real target. Handles either branch form, so
++// a label chain may mix them (toggledJump's short br.cond and ordinary brls).
++inline int64_t ReadBranchDisp(const Bundle* b) {
++  const uint64_t kSlotMask = (uint64_t(1) << 41) - 1;
++  Insn x = (b->hi >> 23) & kSlotMask;
++  uint32_t imm20 = uint32_t((x >> 13) & 0xfffff);
++  uint32_t sign = uint32_t((x >> 36) & 0x1);
++
++  if (!IsLongBranchBundle(b)) {
++    int32_t v = int32_t(imm20 | (sign << 20));
++    if (v & (1 << 20)) {
++      v |= ~((1 << 21) - 1);
++    }
++    return v;
++  }
++
++  Insn l = ((b->lo >> 46) | ((b->hi & 0x7fffff) << 18)) & kSlotMask;
++  uint64_t v = uint64_t(imm20) | (((l >> 2) & 0x7fffffffffULL) << 20) |
++               (uint64_t(sign) << 59);
++  if (v & (uint64_t(1) << 59)) {
++    v |= ~((uint64_t(1) << 60) - 1);
++  }
++  return int64_t(v);
++}
++
++// Rewrite a brl's displacement in place. The L slot straddles both halves of
++// the bundle (18 bits at lo 63:46, 23 bits at hi 22:0), so both are rebuilt.
++inline void PatchLongBranchDisp(Bundle* b, int64_t bundleDisp) {
++  MOZ_RELEASE_ASSERT(LongBranchDispInRange(bundleDisp));
++  const uint64_t kSlotMask = (uint64_t(1) << 41) - 1;
++  Insn x = (b->hi >> 23) & kSlotMask;
++  Insn clearMask = (Insn(0xfffff) << 13) | (Insn(1) << 36);
++  x = (x & ~clearMask) | fTgt64x(bundleDisp);
++  Insn l = fTgt64l(bundleDisp);
++  b->lo = (b->lo & ((uint64_t(1) << 46) - 1)) | (l << 46);
++  b->hi = (l >> 18) | (x << 23);
++}
++
++// Resolve a forward branch of either form. This is what label binding uses.
++inline void PatchBranchDisp(Bundle* b, int64_t bundleDisp) {
++  if (IsLongBranchBundle(b)) {
++    PatchLongBranchDisp(b, bundleDisp);
++  } else {
++    PatchShortBranchDisp(b, bundleDisp);
++  }
 +}
 +
 +// ---------------------------------------------------------------------------
@@ -8940,7 +9095,7 @@ diff -aurpN -x '*.orig' -x '*.rej' -x __pycache__ -x '*.pyc' -x .deps /tmp/claud
 diff -aurpN -x '*.orig' -x '*.rej' -x __pycache__ -x '*.pyc' -x .deps a/js/src/jit/ia64/MacroAssembler-ia64-inl.h b/js/src/jit/ia64/MacroAssembler-ia64-inl.h
 --- firefox-153.0.1/js/src/jit/ia64/MacroAssembler-ia64-inl.h.vanilla
 +++ firefox-153.0.1/js/src/jit/ia64/MacroAssembler-ia64-inl.h
-@@ -0,0 +1,1916 @@
+@@ -0,0 +1,1927 @@
 +/* This Source Code Form is subject to the terms of the Mozilla Public
 + * License, v. 2.0. If a copy of the MPL was not distributed with this
 + * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -9729,7 +9884,7 @@ diff -aurpN -x '*.orig' -x '*.rej' -x __pycache__ -x '*.pyc' -x .deps a/js/src/j
 +void MacroAssembler::branch32(Condition cond, Register lhs, Register rhs,
 +                              Label* label) {
 +  uint32_t pred = emitCompare(cond, lhs, rhs);
-+  emitBranchToLabel(&ia64::BrCondRel, pred, label);
++  emitBranchToLabel(&ia64::BrlCondRel, pred, label);
 +}
 +
 +void MacroAssembler::branchPtr(Condition cond, Register lhs, Register rhs,
@@ -9740,7 +9895,7 @@ diff -aurpN -x '*.orig' -x '*.rej' -x __pycache__ -x '*.pyc' -x .deps a/js/src/j
 +void MacroAssembler::branch32(Condition cond, Register lhs, Imm32 rhs,
 +                              Label* label) {
 +  uint32_t pred = emitCompare(cond, lhs, rhs);
-+  emitBranchToLabel(&ia64::BrCondRel, pred, label);
++  emitBranchToLabel(&ia64::BrlCondRel, pred, label);
 +}
 +
 +void MacroAssembler::branchPtr(Condition cond, Register lhs, Imm32 rhs,
@@ -9838,7 +9993,7 @@ diff -aurpN -x '*.orig' -x '*.rej' -x __pycache__ -x '*.pyc' -x .deps a/js/src/j
 +void MacroAssembler::branchPtr(Condition cond, Register lhs, ImmWord rhs,
 +                               Label* label) {
 +  uint32_t pred = emitCompare(cond, lhs, rhs);
-+  emitBranchToLabel(&ia64::BrCondRel, pred, label);
++  emitBranchToLabel(&ia64::BrlCondRel, pred, label);
 +}
 +
 +void MacroAssembler::branchPtr(Condition cond, Register lhs, ImmPtr rhs,
@@ -9925,13 +10080,13 @@ diff -aurpN -x '*.orig' -x '*.rej' -x __pycache__ -x '*.pyc' -x .deps a/js/src/j
 +void MacroAssembler::branchTest32(Condition cond, Register lhs, Register rhs,
 +                                  Label* label) {
 +  uint32_t pred = emitTest(cond, lhs, rhs, 32);
-+  emitBranchToLabel(&ia64::BrCondRel, pred, label);
++  emitBranchToLabel(&ia64::BrlCondRel, pred, label);
 +}
 +
 +void MacroAssembler::branchTest32(Condition cond, Register lhs, Imm32 rhs,
 +                                  Label* label) {
 +  uint32_t pred = emitTest(cond, lhs, rhs, 32);
-+  emitBranchToLabel(&ia64::BrCondRel, pred, label);
++  emitBranchToLabel(&ia64::BrlCondRel, pred, label);
 +}
 +
 +void MacroAssembler::branchTest32(Condition cond, const Address& lhs, Imm32 rhs,
@@ -9949,27 +10104,27 @@ diff -aurpN -x '*.orig' -x '*.rej' -x __pycache__ -x '*.pyc' -x .deps a/js/src/j
 +void MacroAssembler::branchTestPtr(Condition cond, Register lhs, Register rhs,
 +                                   Label* label) {
 +  uint32_t pred = emitTest(cond, lhs, rhs, 64);
-+  emitBranchToLabel(&ia64::BrCondRel, pred, label);
++  emitBranchToLabel(&ia64::BrlCondRel, pred, label);
 +}
 +
 +void MacroAssembler::branchTestPtr(Condition cond, Register lhs, Imm32 rhs,
 +                                   Label* label) {
 +  uint32_t pred = emitTest(cond, lhs, rhs, 64);
-+  emitBranchToLabel(&ia64::BrCondRel, pred, label);
++  emitBranchToLabel(&ia64::BrlCondRel, pred, label);
 +}
 +
 +void MacroAssembler::branchTestPtr(Condition cond, Register lhs, ImmWord rhs,
 +                                   Label* label) {
 +  emitMovl(ScratchReg.encoding(), rhs.value);
 +  uint32_t pred = emitTest(cond, lhs, ScratchReg, 64);
-+  emitBranchToLabel(&ia64::BrCondRel, pred, label);
++  emitBranchToLabel(&ia64::BrlCondRel, pred, label);
 +}
 +
 +void MacroAssembler::branchTestPtr(Condition cond, const Address& lhs,
 +                                   Imm32 rhs, Label* label) {
 +  loadPtr(lhs, SecondScratchReg);
 +  uint32_t pred = emitTest(cond, SecondScratchReg, rhs, 64);
-+  emitBranchToLabel(&ia64::BrCondRel, pred, label);
++  emitBranchToLabel(&ia64::BrlCondRel, pred, label);
 +}
 +
 +void MacroAssembler::branchTest64(Condition cond, Register64 lhs,
@@ -10028,7 +10183,7 @@ diff -aurpN -x '*.orig' -x '*.rej' -x __pycache__ -x '*.pyc' -x .deps a/js/src/j
 +    emitI(ia64::ShrUImm(ScratchReg.encoding(), SecondScratchReg.encoding(), 32));
 +    ma_zxt(dest, SecondScratchReg, 4);
 +    uint32_t p = emitCompare(Assembler::NotEqual, ScratchReg, Imm32(0));
-+    emitBranchToLabel(&ia64::BrCondRel, p, label);
++    emitBranchToLabel(&ia64::BrlCondRel, p, label);
 +    return;
 +  }
 +  emitM(ia64::Add(dest.encoding(), dest.encoding(), s.encoding()));
@@ -10036,7 +10191,7 @@ diff -aurpN -x '*.orig' -x '*.rej' -x __pycache__ -x '*.pyc' -x .deps a/js/src/j
 +  ma_sxt(ScratchReg, dest, 4);
 +  uint32_t p = emitCompare(Assembler::NotEqual, ScratchReg, dest);
 +  ma_sxt(dest, dest, 4);
-+  emitBranchToLabel(&ia64::BrCondRel, p, label);
++  emitBranchToLabel(&ia64::BrlCondRel, p, label);
 +}
 +
 +template <typename T>
@@ -10048,7 +10203,7 @@ diff -aurpN -x '*.orig' -x '*.rej' -x __pycache__ -x '*.pyc' -x .deps a/js/src/j
 +    ma_sxt(ScratchReg, dest, 4);
 +    uint32_t p = emitCompare(Assembler::NotEqual, ScratchReg, dest);
 +    ma_sxt(dest, dest, 4);
-+    emitBranchToLabel(&ia64::BrCondRel, p, label);
++    emitBranchToLabel(&ia64::BrlCondRel, p, label);
 +    return;
 +  }
 +  ma_sxt(dest, dest, 4);
@@ -10066,7 +10221,7 @@ diff -aurpN -x '*.orig' -x '*.rej' -x __pycache__ -x '*.pyc' -x .deps a/js/src/j
 +  ma_sxt(ScratchReg, dest, 4);
 +  uint32_t p = emitCompare(Assembler::NotEqual, ScratchReg, dest);
 +  ma_sxt(dest, dest, 4);
-+  emitBranchToLabel(&ia64::BrCondRel, p, label);
++  emitBranchToLabel(&ia64::BrlCondRel, p, label);
 +}
 +
 +template <typename T>
@@ -10100,7 +10255,7 @@ diff -aurpN -x '*.orig' -x '*.rej' -x __pycache__ -x '*.pyc' -x .deps a/js/src/j
 +  emitM(ia64::Adds(SecondScratchReg.encoding(), -1, Registers::zero, pNeg));
 +  uint32_t p =
 +      emitCompare(Assembler::NotEqual, ScratchReg, SecondScratchReg);
-+  emitBranchToLabel(&ia64::BrCondRel, p, label);
++  emitBranchToLabel(&ia64::BrlCondRel, p, label);
 +}
 +
 +// ---------------------------------------------------------------------------
@@ -10116,8 +10271,19 @@ diff -aurpN -x '*.orig' -x '*.rej' -x __pycache__ -x '*.pyc' -x .deps a/js/src/j
 +    emitM(ia64::Adds(out.encoding(), addr.offset, addr.base.encoding()));
 +    return;
 +  }
-+  emitMovl(out.encoding(), uint64_t(int64_t(addr.offset)));
-+  emitM(ia64::Add(out.encoding(), out.encoding(), addr.base.encoding()));
++  // An offset too wide for adds has to be materialised first, and |out| ==
++  // base is legitimate (computeEffectiveAddress folding an offset into the
++  // pointer it came from), so materialising into |out| would destroy base
++  // before the add reads it and yield offset+offset. Borrow one of the two
++  // reserved scratches: the register allocator knows they may be clobbered by
++  // a masm helper, whereas ScratchReg/SecondScratchReg can be holding a value
++  // the caller still needs (see computeAddress(BaseIndex)).
++  Register tmp = ThirdScratchReg;
++  if (tmp == out || tmp == addr.base) {
++    tmp = FourthScratchReg;
++  }
++  emitMovl(tmp.encoding(), uint64_t(int64_t(addr.offset)));
++  emitM(ia64::Add(out.encoding(), tmp.encoding(), addr.base.encoding()));
 +}
 +
 +inline void MacroAssemblerIa64::computeAddress(const AbsoluteAddress& addr,
@@ -10158,7 +10324,7 @@ diff -aurpN -x '*.orig' -x '*.rej' -x __pycache__ -x '*.pyc' -x .deps a/js/src/j
 +  void MacroAssembler::branchTest##Name(Condition cond, Register tag,        \
 +                                        Label* label) {                      \
 +    uint32_t p = testTagEqual(cond, tag, TagBits);                           \
-+    emitBranchToLabel(&ia64::BrCondRel, p, label);                           \
++    emitBranchToLabel(&ia64::BrlCondRel, p, label);                          \
 +  }                                                                          \
 +  void MacroAssembler::branchTest##Name(Condition cond,                      \
 +                                        const ValueOperand& value,           \
@@ -10200,7 +10366,7 @@ diff -aurpN -x '*.orig' -x '*.rej' -x __pycache__ -x '*.pyc' -x .deps a/js/src/j
 +    MOZ_ASSERT(cond == Equal || cond == NotEqual);                           \
 +    uint32_t p =                                                             \
 +        emitCompare(cond == Equal ? CondEq : CondNe, tag, ImmWord(Bound));   \
-+    emitBranchToLabel(&ia64::BrCondRel, p, label);                           \
++    emitBranchToLabel(&ia64::BrlCondRel, p, label);                          \
 +  }                                                                          \
 +  void MacroAssembler::branchTest##Name(                                     \
 +      Condition cond, const ValueOperand& value, Label* label) {             \
@@ -10226,7 +10392,7 @@ diff -aurpN -x '*.orig' -x '*.rej' -x __pycache__ -x '*.pyc' -x .deps a/js/src/j
 +  uint32_t p = emitCompare(cond == Equal ? AboveOrEqual : Below,
 +                           SecondScratchReg,
 +                           ImmWord(JSVAL_SHIFTED_TAG_STRING));
-+  emitBranchToLabel(&ia64::BrCondRel, p, label);
++  emitBranchToLabel(&ia64::BrlCondRel, p, label);
 +}
 +
 +void MacroAssembler::branchTestGCThing(Condition cond, const Address& address,
@@ -10332,7 +10498,7 @@ diff -aurpN -x '*.orig' -x '*.rej' -x __pycache__ -x '*.pyc' -x .deps a/js/src/j
 +  emitF(ia64::Fclass(p1, p2, reg.encoding(),
 +                     ia64::FclassZero | ia64::FclassSignBoth | ia64::FclassNaN,
 +                     0));
-+  emitBranchToLabel(&ia64::BrCondRel, truthy ? p2 : p1, label);
++  emitBranchToLabel(&ia64::BrlCondRel, truthy ? p2 : p1, label);
 +}
 +
 +void MacroAssembler::branchToComputedAddress(const BaseIndex& address) {
@@ -10347,7 +10513,7 @@ diff -aurpN -x '*.orig' -x '*.rej' -x __pycache__ -x '*.pyc' -x .deps a/js/src/j
 +  emitTagOf(src, SecondScratchReg);
 +  uint32_t p = emitCompare(NotEqual, SecondScratchReg,
 +                           ImmWord(JSVAL_TYPE_TO_SHIFTED_TAG(type)));
-+  emitBranchToLabel(&ia64::BrCondRel, p, fail);
++  emitBranchToLabel(&ia64::BrlCondRel, p, fail);
 +  unboxNonDouble(src, dest, type);
 +}
 +
@@ -10426,12 +10592,12 @@ diff -aurpN -x '*.orig' -x '*.rej' -x __pycache__ -x '*.pyc' -x .deps a/js/src/j
 +void MacroAssembler::branchDouble(DoubleCondition cond, FloatRegister lhs,
 +                                  FloatRegister rhs, Label* label) {
 +  uint32_t p = emitCompareDouble(cond, lhs, rhs);
-+  emitBranchToLabel(&ia64::BrCondRel, p, label);
++  emitBranchToLabel(&ia64::BrlCondRel, p, label);
 +}
 +void MacroAssembler::branchFloat(DoubleCondition cond, FloatRegister lhs,
 +                                 FloatRegister rhs, Label* label) {
 +  uint32_t p = emitCompareDouble(cond, lhs, rhs);
-+  emitBranchToLabel(&ia64::BrCondRel, p, label);
++  emitBranchToLabel(&ia64::BrlCondRel, p, label);
 +}
 +void MacroAssembler::branchTruncateDoubleMaybeModUint32(FloatRegister src,
 +                                                        Register dest,
@@ -10452,7 +10618,7 @@ diff -aurpN -x '*.orig' -x '*.rej' -x __pycache__ -x '*.pyc' -x .deps a/js/src/j
 +  emitMovl(ScratchReg.encoding(), uint64_t(INT64_MIN));
 +  uint32_t p = emitCompare(Assembler::Equal, dest, ScratchReg);
 +  ma_sxt(dest, dest, 4);
-+  emitBranchToLabel(&ia64::BrCondRel, p, fail);
++  emitBranchToLabel(&ia64::BrlCondRel, p, fail);
 +}
 +void MacroAssembler::moveFloat16ToGPR(FloatRegister, Register) {
 +  MOZ_CRASH("ia64: no floating point yet");
@@ -10580,7 +10746,7 @@ diff -aurpN -x '*.orig' -x '*.rej' -x __pycache__ -x '*.pyc' -x .deps a/js/src/j
 +                    SecondScratchReg.encoding()));
 +    uint32_t p = emitCompare(Assembler::LessThan, ScratchReg,
 +                             Register{Registers::zero});
-+    emitBranchToLabel(&ia64::BrCondRel, p, label);
++    emitBranchToLabel(&ia64::BrlCondRel, p, label);
 +    return;
 +  }
 +  MOZ_ASSERT(cond == Assembler::Signed || cond == Assembler::NotSigned);
@@ -10687,7 +10853,7 @@ diff -aurpN -x '*.orig' -x '*.rej' -x __pycache__ -x '*.pyc' -x .deps a/js/src/j
 +  // predicate number gives the inverse condition.
 +  uint32_t p = emitCompare(cond, lhs, rhs);
 +  Label skip;
-+  emitBranchToLabel(&ia64::BrCondRel, p ^ 1, &skip);
++  emitBranchToLabel(&ia64::BrlCondRel, p ^ 1, &skip);
 +  load32(src, dest);
 +  bind(&skip);
 +}
@@ -10732,7 +10898,7 @@ diff -aurpN -x '*.orig' -x '*.rej' -x __pycache__ -x '*.pyc' -x .deps a/js/src/j
 +                    SecondScratchReg.encoding()));
 +    uint32_t p = emitCompare(Assembler::LessThan, ScratchReg,
 +                             Register{Registers::zero});
-+    emitBranchToLabel(&ia64::BrCondRel, p, label);
++    emitBranchToLabel(&ia64::BrlCondRel, p, label);
 +    return;
 +  }
 +  MOZ_ASSERT(cond == Assembler::Signed || cond == Assembler::NotSigned);
@@ -10744,14 +10910,14 @@ diff -aurpN -x '*.orig' -x '*.rej' -x __pycache__ -x '*.pyc' -x .deps a/js/src/j
 +  MOZ_ASSERT(cond == Assembler::Overflow);
 +  uint32_t p = emitCompare(Assembler::Equal, reg, Imm32(INT32_MIN));
 +  neg32(reg);
-+  emitBranchToLabel(&ia64::BrCondRel, p, label);
++  emitBranchToLabel(&ia64::BrlCondRel, p, label);
 +}
 +void MacroAssembler::branchNegPtr(Condition cond, Register reg, Label* label) {
 +  MOZ_ASSERT(cond == Assembler::Overflow);
 +  emitMovl(ScratchReg.encoding(), uint64_t(INT64_MIN));
 +  uint32_t p = emitCompare(Assembler::Equal, reg, ScratchReg);
 +  negPtr(reg);
-+  emitBranchToLabel(&ia64::BrCondRel, p, label);
++  emitBranchToLabel(&ia64::BrlCondRel, p, label);
 +}
 +// mux1 @rev reverses all 8 bytes of the register; a 16/32-bit swap of the
 +// low bytes then falls out of the high end of that result, so a logical
@@ -10860,7 +11026,7 @@ diff -aurpN -x '*.orig' -x '*.rej' -x __pycache__ -x '*.pyc' -x .deps a/js/src/j
 diff -aurpN -x '*.orig' -x '*.rej' -x __pycache__ -x '*.pyc' -x .deps a/firefox-153.0.1/js/src/jit/ia64/MacroAssembler-ia64.cpp b/firefox-153.0.1/js/src/jit/ia64/MacroAssembler-ia64.cpp
 --- firefox-153.0.1/js/src/jit/ia64/MacroAssembler-ia64.cpp.vanilla
 +++ firefox-153.0.1/js/src/jit/ia64/MacroAssembler-ia64.cpp
-@@ -0,0 +1,3213 @@
+@@ -0,0 +1,3214 @@
 +/* This Source Code Form is subject to the terms of the Mozilla Public
 + * License, v. 2.0. If a copy of the MPL was not distributed with this
 + * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -11254,7 +11420,7 @@ diff -aurpN -x '*.orig' -x '*.rej' -x __pycache__ -x '*.pyc' -x .deps a/firefox-
 +
 +  emitF(ia64::Fclass(p8, p9, a, ia64::FclassAnySignZero, 0));
 +  emitF(ia64::FmergeS(d, a, a, p8));  // sqrt(+-0) == that same +-0
-+  emitBranchToLabel(&ia64::BrCondRel, p8, &done);
++  emitBranchToLabel(&ia64::BrlCondRel, p8, &done);
 +
 +  // Newton-Raphson on f(y) = 1/y^2 - a converges as y += y*e/2, where
 +  // e = 1 - a*y^2. The halving is not optional: with the full e the error
@@ -11363,17 +11529,17 @@ diff -aurpN -x '*.orig' -x '*.rej' -x __pycache__ -x '*.pyc' -x .deps a/firefox-
 +    // valid int32 representation either.
 +    uint32_t pFail = masm.emitCompareDouble(
 +        Assembler::DoubleNotEqualOrUnordered, src, roundTripped);
-+    masm.emitBranchToLabel(&ia64::BrCondRel, pFail, fail);
++    masm.emitBranchToLabel(&ia64::BrlCondRel, pFail, fail);
 +  }
 +
 +  if (negativeZeroCheck) {
 +    Label notZero;
 +    uint32_t pNonzero = masm.emitCompare(Assembler::NotEqual, dest, Imm32(0));
-+    masm.emitBranchToLabel(&ia64::BrCondRel, pNonzero, &notZero);
++    masm.emitBranchToLabel(&ia64::BrlCondRel, pNonzero, &notZero);
 +    masm.emitM(ia64::GetfD(ScratchReg.encoding(), src.encoding()));
 +    uint32_t pNeg = masm.emitCompare(Assembler::LessThan, ScratchReg,
 +                                     Register{Registers::zero});
-+    masm.emitBranchToLabel(&ia64::BrCondRel, pNeg, fail);
++    masm.emitBranchToLabel(&ia64::BrlCondRel, pNeg, fail);
 +    masm.bind(&notZero);
 +  }
 +}
@@ -11404,7 +11570,7 @@ diff -aurpN -x '*.orig' -x '*.rej' -x __pycache__ -x '*.pyc' -x .deps a/firefox-
 +  ma_sxt(ScratchReg, dest, 4);
 +  uint32_t p = emitCompare(Assembler::NotEqual, ScratchReg, dest);
 +  ma_sxt(dest, dest, 4);
-+  emitBranchToLabel(&ia64::BrCondRel, p, fail);
++  emitBranchToLabel(&ia64::BrlCondRel, p, fail);
 +}
 +
 +// ===========================================================================
@@ -11748,7 +11914,7 @@ diff -aurpN -x '*.orig' -x '*.rej' -x __pycache__ -x '*.pyc' -x .deps a/firefox-
 +
 +void MacroAssemblerIa64::jump(Label* label) {
 +  // p0 is hardwired true, so an unpredicated br.cond is an unconditional jump.
-+  emitBranchToLabel(&ia64::BrCondRel, 0, label);
++  emitBranchToLabel(&ia64::BrlCondRel, 0, label);
 +}
 +
 +void MacroAssemblerIa64::jump(Register reg) {
@@ -12890,12 +13056,12 @@ diff -aurpN -x '*.orig' -x '*.rej' -x __pycache__ -x '*.pyc' -x .deps a/firefox-
 +  return CodeOffset(currentOffset());
 +}
 +
-+static ia64::Insn BrCallRelB0(int32_t bundleDisp, uint32_t qp) {
-+  return ia64::BrCallRel(0, bundleDisp, qp);
++static ia64::Bundle BrlCallRelB0(int64_t bundleDisp, uint32_t qp) {
++  return ia64::BrlCallRel(0, bundleDisp, qp);
 +}
 +
 +CodeOffset MacroAssembler::call(Label* label) {
-+  emitBranchToLabel(&BrCallRelB0, 0, label);
++  emitBranchToLabel(&BrlCallRelB0, 0, label);
 +  return CodeOffset(currentOffset());
 +}
 +
@@ -12922,15 +13088,16 @@ diff -aurpN -x '*.orig' -x '*.rej' -x __pycache__ -x '*.pyc' -x .deps a/firefox-
 +}
 +
 +CodeOffset MacroAssembler::callWithPatch() {
-+  emitB(BrCallRelB0(0, 0));
++  emitBundle(BrlCallRelB0(0, 0));
 +  return CodeOffset(currentOffset());
 +}
 +
 +void MacroAssembler::patchCall(uint32_t callerOffset, uint32_t calleeOffset) {
-+  // callerOffset is the return address, i.e. just past the br.call bundle.
++  // callerOffset is the return address, i.e. just past the brl.call bundle.
 +  BufferOffset site(callerOffset - sizeof(ia64::Bundle));
-+  int32_t disp = BundleIndex(BufferOffset(calleeOffset)) - BundleIndex(site);
-+  MOZ_RELEASE_ASSERT(ia64::BranchDispInRange(disp));
++  int64_t disp = int64_t(BundleIndex(BufferOffset(calleeOffset))) -
++                 BundleIndex(site);
++  MOZ_RELEASE_ASSERT(ia64::LongBranchDispInRange(disp));
 +  ia64::PatchBranchDisp(bundleAt(site), disp);
 +}
 +
@@ -13269,7 +13436,7 @@ diff -aurpN -x '*.orig' -x '*.rej' -x __pycache__ -x '*.pyc' -x .deps a/firefox-
 +  emitM(ia64::St4(SecondScratchReg.encoding(), ScratchReg.encoding()));
 +  emitI(ia64::Sxt4(ScratchReg.encoding(), ScratchReg.encoding()));
 +  emitI(ia64::CmpLt(kP, kQ, ScratchReg.encoding(), Registers::zero));
-+  emitBranchToLabel(&ia64::BrCondRel, kP, label);
++  emitBranchToLabel(&ia64::BrlCondRel, kP, label);
 +  return patchPoint;
 +}
 +
@@ -13536,7 +13703,7 @@ diff -aurpN -x '*.orig' -x '*.rej' -x __pycache__ -x '*.pyc' -x .deps a/firefox-
 +  uint32_t p =
 +      masm.emitCompare(Assembler::NotEqual, ScratchReg, output.reg);
 +  masm.emitM(ia64::MovReg(output.reg.encoding(), ScratchReg.encoding()));
-+  masm.emitBranchToLabel(&ia64::BrCondRel, p, &retry);
++  masm.emitBranchToLabel(&ia64::BrlCondRel, p, &retry);
 +}
 +
 +void MacroAssembler::atomicFetchOp64(Synchronization sync, AtomicOp op, Register64 value, const Address& mem, Register64 temp, Register64 output) {
@@ -13809,7 +13976,7 @@ diff -aurpN -x '*.orig' -x '*.rej' -x __pycache__ -x '*.pyc' -x .deps a/firefox-
 +                temp1.encoding());
 +  uint32_t p = masm.emitCompare(Assembler::NotEqual, temp2, ScratchReg);
 +  masm.emitM(ia64::MovReg(current.encoding(), temp2.encoding()));
-+  masm.emitBranchToLabel(&ia64::BrCondRel, p, &retry);
++  masm.emitBranchToLabel(&ia64::BrlCondRel, p, &retry);
 +  if (wantResult) {
 +    FinishNarrowAtomic(masm, arrayType, current, output);
 +  }
@@ -13884,7 +14051,7 @@ diff -aurpN -x '*.orig' -x '*.rej' -x __pycache__ -x '*.pyc' -x .deps a/firefox-
 +  unboxDouble(val, scratch);
 +  uint32_t p8 = 8, p9 = 9;
 +  emitF(ia64::Fclass(p8, p9, scratch.encoding(), ia64::FclassNaN, 0));
-+  emitBranchToLabel(&ia64::BrCondRel, cond == Assembler::Equal ? p8 : p9,
++  emitBranchToLabel(&ia64::BrlCondRel, cond == Assembler::Equal ? p8 : p9,
 +                    label);
 +}
 +
@@ -13896,11 +14063,11 @@ diff -aurpN -x '*.orig' -x '*.rej' -x __pycache__ -x '*.pyc' -x .deps a/firefox-
 +                                     Register dest, Label* fail) {
 +  Label notZero;
 +  uint32_t pNonzero = masm.emitCompare(Assembler::NotEqual, dest, Imm32(0));
-+  masm.emitBranchToLabel(&ia64::BrCondRel, pNonzero, &notZero);
++  masm.emitBranchToLabel(&ia64::BrlCondRel, pNonzero, &notZero);
 +  masm.emitM(ia64::GetfD(ScratchReg.encoding(), src.encoding()));
 +  uint32_t pNeg = masm.emitCompare(Assembler::LessThan, ScratchReg,
 +                                   Register{Registers::zero});
-+  masm.emitBranchToLabel(&ia64::BrCondRel, pNeg, fail);
++  masm.emitBranchToLabel(&ia64::BrlCondRel, pNeg, fail);
 +  masm.bind(&notZero);
 +}
 +
@@ -13930,7 +14097,7 @@ diff -aurpN -x '*.orig' -x '*.rej' -x __pycache__ -x '*.pyc' -x .deps a/firefox-
 +  masm.emitM(ia64::GetfSig(dest.encoding(), scratch.encoding()));
 +  masm.ma_sxt(ScratchReg, dest, 4);
 +  uint32_t pOverflow = masm.emitCompare(Assembler::NotEqual, ScratchReg, dest);
-+  masm.emitBranchToLabel(&ia64::BrCondRel, pOverflow, fail);
++  masm.emitBranchToLabel(&ia64::BrlCondRel, pOverflow, fail);
 +  masm.ma_sxt(dest, dest, 4);
 +
 +  SecondScratchDoubleScope roundTripped(masm);
@@ -13938,7 +14105,7 @@ diff -aurpN -x '*.orig' -x '*.rej' -x __pycache__ -x '*.pyc' -x .deps a/firefox-
 +  uint32_t pExact = masm.emitCompareDouble(Assembler::DoubleEqual, src,
 +                                           roundTripped);
 +  Label done;
-+  masm.emitBranchToLabel(&ia64::BrCondRel, pExact, &done);
++  masm.emitBranchToLabel(&ia64::BrlCondRel, pExact, &done);
 +  // Had a fraction: step toward +inf (ceil, when src > truncated) or -inf
 +  // (floor, when src < truncated).
 +  uint32_t p = masm.emitCompareDouble(
@@ -14002,7 +14169,7 @@ diff -aurpN -x '*.orig' -x '*.rej' -x __pycache__ -x '*.pyc' -x .deps a/firefox-
 +  {
 +    uint32_t pNeg = masm.emitCompare(Assembler::LessThan, ScratchReg,
 +                                     Register{Registers::zero});
-+    masm.emitBranchToLabel(&ia64::BrCondRel, pNeg, fail);
++    masm.emitBranchToLabel(&ia64::BrlCondRel, pNeg, fail);
 +  }
 +  masm.move32(Imm32(0), dest);
 +  masm.jump(&end);
@@ -14077,7 +14244,7 @@ diff -aurpN -x '*.orig' -x '*.rej' -x __pycache__ -x '*.pyc' -x .deps a/firefox-
 diff -aurpN -x '*.orig' -x '*.rej' -x __pycache__ -x '*.pyc' -x .deps a/js/src/jit/ia64/MacroAssembler-ia64.h b/js/src/jit/ia64/MacroAssembler-ia64.h
 --- firefox-153.0.1/js/src/jit/ia64/MacroAssembler-ia64.h.vanilla
 +++ firefox-153.0.1/js/src/jit/ia64/MacroAssembler-ia64.h
-@@ -0,0 +1,1150 @@
+@@ -0,0 +1,1153 @@
 +/* This Source Code Form is subject to the terms of the Mozilla Public
 + * License, v. 2.0. If a copy of the MPL was not distributed with this
 + * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -14458,9 +14625,12 @@ diff -aurpN -x '*.orig' -x '*.rej' -x __pycache__ -x '*.pyc' -x .deps a/js/src/j
 +  }
 +
 +  // A branch (or, once toggled off, an inert nop.b carrying the same target
-+  // bits -- see ia64::ToggleSlot2Op) to a same-buffer label.
++  // bits -- see ia64::ToggleSlot2Op) to a same-buffer label. Deliberately the
++  // short B-unit form rather than a brl: the toggle works by flipping the major
++  // opcode in place, which no X-unit encoding survives with its displacement
++  // intact. See Assembler::emitShortBranchToLabel().
 +  CodeOffset toggledJump(Label* label) {
-+    emitBranchToLabel(&ia64::BrCondRel, 0, label);
++    emitShortBranchToLabel(0, label);
 +    return CodeOffset(currentOffset());
 +  }
 +  // A fixed 3-bundle movl/MovToBr/BrCall sequence, matching call(Register)
