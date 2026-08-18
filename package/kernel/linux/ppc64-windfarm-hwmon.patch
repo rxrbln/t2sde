@@ -1,0 +1,457 @@
+# --- T2-COPYRIGHT-BEGIN ---
+# t2/package/*/linux/ppc64-windfarm-hwmon.patch
+# Copyright (C) 2026 The T2 SDE Project
+# SPDX-License-Identifier: GPL-2.0 or patched project license
+# --- T2-COPYRIGHT-END ---
+
+Export the windfarm sensors and controls as a standard hwmon device, so
+lm_sensors and other userland tools can read PowerMac temperatures, fan
+and pump speeds, voltages, currents and power without knowing about the
+windfarm specific sysfs attributes.
+
+Sensors and controls are registered by their individual drivers as those
+load, so the channel table is (re-)built from a delayed work and the
+hwmon device re-registered once the registrations settled.
+
+Signed-off-by: René Rebe <rene@exactco.de>
+
+--- a/drivers/macintosh/windfarm_core.c	2026-08-18 16:28:04.265249891 +0200
++++ b/drivers/macintosh/windfarm_core.c	2026-08-18 16:31:47.096259496 +0200
+@@ -4,6 +4,8 @@
+  *
+  * (c) Copyright 2005 Benjamin Herrenschmidt, IBM Corp.
+  *                    <benh@kernel.crashing.org>
++ * (c) Copyright 2026 Rene Rebe, ExactCODE GmbH
++ *                    <rene@exactco.de>
+  *
+  * This core code tracks the list of sensors & controls, register
+  * clients, and holds the kernel thread used for control.
+@@ -34,6 +36,8 @@
+ #include <linux/platform_device.h>
+ #include <linux/mutex.h>
+ #include <linux/freezer.h>
++#include <linux/hwmon.h>
++#include <linux/workqueue.h>
+ 
+ #include "windfarm.h"
+ 
+@@ -141,6 +145,374 @@ static void wf_stop_thread(void)
+ }
+ 
+ /*
++ * hwmon interface
++ *
++ * Sensors and controls are exported a second time as a standard hwmon
++ * device so that userland tools like lm_sensors can read temperatures,
++ * fan speeds, voltages, currents and power without knowing about the
++ * windfarm specific attributes.
++ */
++
++#if IS_REACHABLE(CONFIG_HWMON)
++
++/* Channel classes we export, in sysfs numbering order per class */
++enum {
++	WF_HWMON_TEMP,
++	WF_HWMON_FAN,
++	WF_HWMON_PWM,
++	WF_HWMON_IN,
++	WF_HWMON_CURR,
++	WF_HWMON_POWER,
++	WF_HWMON_NSLOTS
++};
++
++static const enum hwmon_sensor_types wf_hwmon_type[WF_HWMON_NSLOTS] = {
++	[WF_HWMON_TEMP]		= hwmon_temp,
++	[WF_HWMON_FAN]		= hwmon_fan,
++	[WF_HWMON_PWM]		= hwmon_pwm,
++	[WF_HWMON_IN]		= hwmon_in,
++	[WF_HWMON_CURR]		= hwmon_curr,
++	[WF_HWMON_POWER]	= hwmon_power,
++};
++
++static const u32 wf_hwmon_config[WF_HWMON_NSLOTS] = {
++	[WF_HWMON_TEMP]		= HWMON_T_INPUT | HWMON_T_LABEL,
++	[WF_HWMON_FAN]		= HWMON_F_INPUT | HWMON_F_LABEL,
++	[WF_HWMON_PWM]		= HWMON_PWM_INPUT,
++	[WF_HWMON_IN]		= HWMON_I_INPUT | HWMON_I_LABEL,
++	[WF_HWMON_CURR]		= HWMON_C_INPUT | HWMON_C_LABEL,
++	[WF_HWMON_POWER]	= HWMON_P_INPUT | HWMON_P_LABEL,
++};
++
++struct wf_hwmon_chan {
++	void			*obj;	/* sensor/control, NULL once gone */
++	const char		*label;
++	bool			is_ctrl;
++};
++
++struct wf_hwmon_table {
++	struct mutex			lock;	/* protects chan[][].obj */
++	struct hwmon_chip_info		chip;
++	struct hwmon_channel_info	info[WF_HWMON_NSLOTS];
++	const struct hwmon_channel_info	*infop[WF_HWMON_NSLOTS + 1];
++	u32				*config[WF_HWMON_NSLOTS];
++	struct wf_hwmon_chan		*chan[WF_HWMON_NSLOTS];
++	int				count[WF_HWMON_NSLOTS];
++};
++
++static DEFINE_MUTEX(wf_hwmon_lock);
++static struct wf_hwmon_table *wf_hwmon_tbl;
++static struct device *wf_hwmon_dev;
++
++static void wf_hwmon_rebuild(struct work_struct *work);
++static DECLARE_DELAYED_WORK(wf_hwmon_work, wf_hwmon_rebuild);
++
++/* Sensors and controls trickle in as their drivers load, so coalesce */
++#define WF_HWMON_SETTLE	msecs_to_jiffies(1000)
++
++static void wf_hwmon_schedule(void)
++{
++	mod_delayed_work(system_wq, &wf_hwmon_work, WF_HWMON_SETTLE);
++}
++
++static int wf_hwmon_slot(enum hwmon_sensor_types type)
++{
++	int slot;
++
++	for (slot = 0; slot < WF_HWMON_NSLOTS; slot++)
++		if (wf_hwmon_type[slot] == type)
++			return slot;
++	return -1;
++}
++
++static int wf_hwmon_sensor_slot(const char *name)
++{
++	if (strstr(name, "temp"))
++		return WF_HWMON_TEMP;
++	if (strstr(name, "voltage"))
++		return WF_HWMON_IN;
++	if (strstr(name, "current"))
++		return WF_HWMON_CURR;
++	if (strstr(name, "power"))
++		return WF_HWMON_POWER;
++	return -1;
++}
++
++static int wf_hwmon_control_slot(struct wf_control *ct)
++{
++	switch (ct->type) {
++	case WF_CONTROL_RPM_FAN:
++		return WF_HWMON_FAN;
++	case WF_CONTROL_PWM_FAN:
++		return WF_HWMON_PWM;
++	}
++	return -1;
++}
++
++static umode_t wf_hwmon_is_visible(const void *data,
++				   enum hwmon_sensor_types type,
++				   u32 attr, int channel)
++{
++	/* read only, the control loop owns the fans */
++	return 0444;
++}
++
++static int wf_hwmon_get(struct wf_hwmon_table *tbl, int slot, int channel,
++			s32 *val)
++{
++	struct wf_hwmon_chan *chan;
++	int rc;
++
++	if (slot < 0 || channel >= tbl->count[slot])
++		return -EOPNOTSUPP;
++	chan = &tbl->chan[slot][channel];
++
++	mutex_lock(&tbl->lock);
++	if (!chan->obj)
++		rc = -ENODEV;
++	else if (chan->is_ctrl)
++		rc = wf_control_get(chan->obj, val);
++	else
++		rc = wf_sensor_get(chan->obj, val);
++	mutex_unlock(&tbl->lock);
++
++	return rc;
++}
++
++static int wf_hwmon_read(struct device *dev, enum hwmon_sensor_types type,
++			 u32 attr, int channel, long *val)
++{
++	struct wf_hwmon_table *tbl = dev_get_drvdata(dev);
++	int slot = wf_hwmon_slot(type);
++	s32 raw = 0;
++	int rc;
++
++	rc = wf_hwmon_get(tbl, slot, channel, &raw);
++	if (rc < 0)
++		return rc;
++
++	/* sensors are 16.16 fixed point in C, V, A and W */
++	switch (slot) {
++	case WF_HWMON_TEMP:
++	case WF_HWMON_IN:
++	case WF_HWMON_CURR:
++		*val = ((s64)raw * 1000) >> 16;
++		break;
++	case WF_HWMON_POWER:
++		*val = ((s64)raw * 1000000) >> 16;
++		break;
++	case WF_HWMON_FAN:
++		*val = raw;
++		break;
++	case WF_HWMON_PWM:
++		*val = clamp(raw, 0, 100) * 255 / 100;
++		break;
++	default:
++		return -EOPNOTSUPP;
++	}
++
++	return 0;
++}
++
++static int wf_hwmon_read_string(struct device *dev,
++				enum hwmon_sensor_types type,
++				u32 attr, int channel, const char **str)
++{
++	struct wf_hwmon_table *tbl = dev_get_drvdata(dev);
++	int slot = wf_hwmon_slot(type);
++	struct wf_hwmon_chan *chan;
++	int rc = 0;
++
++	if (slot < 0 || channel >= tbl->count[slot])
++		return -EOPNOTSUPP;
++	chan = &tbl->chan[slot][channel];
++
++	mutex_lock(&tbl->lock);
++	if (chan->obj)
++		*str = chan->label;
++	else
++		rc = -ENODEV;
++	mutex_unlock(&tbl->lock);
++
++	return rc;
++}
++
++static const struct hwmon_ops wf_hwmon_ops = {
++	.is_visible	= wf_hwmon_is_visible,
++	.read		= wf_hwmon_read,
++	.read_string	= wf_hwmon_read_string,
++};
++
++static void wf_hwmon_free(struct wf_hwmon_table *tbl)
++{
++	int slot;
++
++	if (!tbl)
++		return;
++	for (slot = 0; slot < WF_HWMON_NSLOTS; slot++) {
++		kfree(tbl->chan[slot]);
++		kfree(tbl->config[slot]);
++	}
++	mutex_destroy(&tbl->lock);
++	kfree(tbl);
++}
++
++static void wf_hwmon_add(struct wf_hwmon_table *tbl, int slot, void *obj,
++			 const char *label, bool is_ctrl)
++{
++	struct wf_hwmon_chan *chan = &tbl->chan[slot][tbl->count[slot]++];
++
++	chan->obj = obj;
++	chan->label = label;
++	chan->is_ctrl = is_ctrl;
++}
++
++/* Build a fresh channel table from the registered objects, wf_lock held */
++static struct wf_hwmon_table *wf_hwmon_build(void)
++{
++	struct wf_hwmon_table *tbl;
++	struct wf_control *ct;
++	struct wf_sensor *sr;
++	int slot, i, n, nchan = 0;
++	int size[WF_HWMON_NSLOTS] = { 0 };
++
++	list_for_each_entry(ct, &wf_controls, link) {
++		slot = wf_hwmon_control_slot(ct);
++		if (slot >= 0)
++			size[slot]++;
++	}
++	list_for_each_entry(sr, &wf_sensors, link) {
++		slot = wf_hwmon_sensor_slot(sr->name);
++		if (slot >= 0)
++			size[slot]++;
++	}
++
++	for (slot = 0; slot < WF_HWMON_NSLOTS; slot++)
++		nchan += size[slot];
++	if (!nchan)
++		return NULL;
++
++	tbl = kzalloc(sizeof(*tbl), GFP_KERNEL);
++	if (!tbl)
++		return NULL;
++	mutex_init(&tbl->lock);
++
++	for (slot = 0, n = 0; slot < WF_HWMON_NSLOTS; slot++) {
++		if (!size[slot])
++			continue;
++		tbl->chan[slot] = kcalloc(size[slot], sizeof(*tbl->chan[slot]),
++					  GFP_KERNEL);
++		tbl->config[slot] = kcalloc(size[slot] + 1,
++					    sizeof(*tbl->config[slot]),
++					    GFP_KERNEL);
++		if (!tbl->chan[slot] || !tbl->config[slot])
++			goto fail;
++		for (i = 0; i < size[slot]; i++)
++			tbl->config[slot][i] = wf_hwmon_config[slot];
++		tbl->info[slot].type = wf_hwmon_type[slot];
++		tbl->info[slot].config = tbl->config[slot];
++		tbl->infop[n++] = &tbl->info[slot];
++	}
++	tbl->chip.ops = &wf_hwmon_ops;
++	tbl->chip.info = tbl->infop;
++
++	list_for_each_entry(ct, &wf_controls, link) {
++		slot = wf_hwmon_control_slot(ct);
++		if (slot >= 0 && tbl->count[slot] < size[slot])
++			wf_hwmon_add(tbl, slot, ct, ct->name, true);
++	}
++	list_for_each_entry(sr, &wf_sensors, link) {
++		slot = wf_hwmon_sensor_slot(sr->name);
++		if (slot >= 0 && tbl->count[slot] < size[slot])
++			wf_hwmon_add(tbl, slot, sr, sr->name, false);
++	}
++
++	return tbl;
++
++ fail:
++	wf_hwmon_free(tbl);
++	return NULL;
++}
++
++static void wf_hwmon_rebuild(struct work_struct *work)
++{
++	struct wf_hwmon_table *tbl;
++	struct device *dev;
++
++	mutex_lock(&wf_hwmon_lock);
++
++	tbl = wf_hwmon_tbl;
++	dev = wf_hwmon_dev;
++	wf_hwmon_tbl = NULL;
++	wf_hwmon_dev = NULL;
++	if (dev)
++		hwmon_device_unregister(dev);
++	wf_hwmon_free(tbl);
++
++	mutex_lock(&wf_lock);
++	tbl = wf_hwmon_build();
++	mutex_unlock(&wf_lock);
++	if (!tbl)
++		goto out;
++
++	dev = hwmon_device_register_with_info(&wf_platform_device.dev,
++					      "windfarm", tbl, &tbl->chip, NULL);
++	if (IS_ERR(dev)) {
++		printk(KERN_WARNING "windfarm: hwmon registration failed,"
++		       " err %ld\n", PTR_ERR(dev));
++		wf_hwmon_free(tbl);
++		goto out;
++	}
++	wf_hwmon_tbl = tbl;
++	wf_hwmon_dev = dev;
++
++ out:
++	mutex_unlock(&wf_hwmon_lock);
++}
++
++/* Drop references to an object that is about to go away */
++static void wf_hwmon_invalidate(void *obj)
++{
++	struct wf_hwmon_table *tbl;
++	int slot, i;
++
++	mutex_lock(&wf_hwmon_lock);
++	tbl = wf_hwmon_tbl;
++	if (tbl) {
++		mutex_lock(&tbl->lock);
++		for (slot = 0; slot < WF_HWMON_NSLOTS; slot++)
++			for (i = 0; i < tbl->count[slot]; i++)
++				if (tbl->chan[slot][i].obj == obj)
++					tbl->chan[slot][i].obj = NULL;
++		mutex_unlock(&tbl->lock);
++	}
++	mutex_unlock(&wf_hwmon_lock);
++
++	wf_hwmon_schedule();
++}
++
++static void wf_hwmon_exit(void)
++{
++	cancel_delayed_work_sync(&wf_hwmon_work);
++
++	mutex_lock(&wf_hwmon_lock);
++	if (wf_hwmon_dev)
++		hwmon_device_unregister(wf_hwmon_dev);
++	wf_hwmon_free(wf_hwmon_tbl);
++	wf_hwmon_dev = NULL;
++	wf_hwmon_tbl = NULL;
++	mutex_unlock(&wf_hwmon_lock);
++}
++
++#else /* CONFIG_HWMON */
++
++static inline void wf_hwmon_schedule(void) { }
++static inline void wf_hwmon_invalidate(void *obj) { }
++static inline void wf_hwmon_exit(void) { }
++
++#endif /* CONFIG_HWMON */
++
++/*
+  * Controls
+  */
+ 
+@@ -235,6 +607,8 @@ int wf_register_control(struct wf_contro
+ 	wf_notify(WF_EVENT_NEW_CONTROL, new_ct);
+ 	mutex_unlock(&wf_lock);
+ 
++	wf_hwmon_schedule();
++
+ 	return 0;
+ }
+ EXPORT_SYMBOL_GPL(wf_register_control);
+@@ -247,6 +621,8 @@ void wf_unregister_control(struct wf_con
+ 
+ 	DBG("wf: Unregistered control %s\n", ct->name);
+ 
++	wf_hwmon_invalidate(ct);
++
+ 	kref_put(&ct->ref, wf_control_release);
+ }
+ EXPORT_SYMBOL_GPL(wf_unregister_control);
+@@ -330,6 +706,8 @@ int wf_register_sensor(struct wf_sensor
+ 	wf_notify(WF_EVENT_NEW_SENSOR, new_sr);
+ 	mutex_unlock(&wf_lock);
+ 
++	wf_hwmon_schedule();
++
+ 	return 0;
+ }
+ EXPORT_SYMBOL_GPL(wf_register_sensor);
+@@ -342,6 +720,8 @@ void wf_unregister_sensor(struct wf_sens
+ 
+ 	DBG("wf: Unregistered sensor %s\n", sr->name);
+ 
++	wf_hwmon_invalidate(sr);
++
+ 	wf_put_sensor(sr);
+ }
+ EXPORT_SYMBOL_GPL(wf_unregister_sensor);
+@@ -448,6 +828,8 @@ static void __exit windfarm_core_exit(vo
+ 
+ 	DBG("wf: core unloaded\n");
+ 
++	wf_hwmon_exit();
++
+ 	platform_device_unregister(&wf_platform_device);
+ }
+ 
