@@ -15,7 +15,7 @@ if [ ! "$hostname" ]; then
     for f in product_family product_name board_name; do
 	hostname=$(cat /sys/devices/virtual/dmi/id/$f 2>/dev/null)
 	case "$hostname" in
-	*"To Be Filled"*|*Default*|"N/A"|NULL)
+	*"To Be Filled"*|*Default*|"N/A"|NULL|ABC*XYZ)
 		hostname= ;;
 	esac
 	[ "${hostname// /}" ] && break
