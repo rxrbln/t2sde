@@ -66,7 +66,7 @@ done
 -e /udf -e overlayfs -e ntfs -e /fat -e /exfat -e /hfs -e floppy -e efivarfs -e watchdog
 -e pci/controller -e /ata/ -e /scsi/ -e /fusion/ -e nvme/host -e mmc/host -e mmc_block
 -e virtio.\(blk\|scsi\|net\|console\|input\|gpu\|pci\) -e ps3disk -e drivers/pcmcia
--e /nvme.ko -e pci-host-generic -e virtio_pci_.*_dev -e sunvdc
+-e /nvme.ko -e pci-host-generic -e virtio_pci_.*_dev -e sunvdc -e pci-stub
 -e dm-mod -e dm-raid -e md/raid -e dm/mirror -e dm/linear -e dm-crypt -e dm-cache
 -e /aes -e /sha -e /blake -e /cbc -e /ecb -e xts
 -e nls_cp437 -e nls_iso8859-1 -e nls_utf8
@@ -237,7 +237,7 @@ cp -ar $root/etc/{group,udev} $tmpdir/etc/
 
 [ -e $root/etc/os-release ] && cp -a $root/etc/os-release $tmpdir/etc/initrd-release
 [ -e $root/lib/udev/rules.d ] && cp -ar $root/lib/udev/rules.d $tmpdir/lib/udev/
-rm -rvf $tmpdir/lib/udev/rules.d/{60-fido-id,60-persistent-hidraw,70-memory}.rules # avoid
+rm -rvf $tmpdir/lib/udev/rules.d/{60-fido-id,60-persistent-hidraw,70-memory,99-systemd}.rules # avoid
 [ -e $root/etc/mdadm.conf ] && cp -ar $root/etc/mdadm.conf $tmpdir/etc/
 cp -ar $root/etc/modprobe.* $root/etc/ld-* $tmpdir/etc/ 2>/dev/null || true
 
@@ -348,7 +348,7 @@ done
 
 # static, tiny embutils and friends
 #
-cp $root/usr/embutils/{mount,umount,rm,mv,mkdir,ln,ls,switch_root,pivot_root,chroot,sleep,losetup,chmod,cat,sed,mknod} \
+cp $root/usr/embutils/{mount,umount,rm,mv,mkdir,ln,ls,switch_root,pivot_root,chroot,sleep,losetup,chmod,cat,sed,mknod,touch} \
    $tmpdir/bin/
 ln -s mv $tmpdir/bin/cp
 
