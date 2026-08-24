@@ -64,7 +64,7 @@ overlayfs() {
 	fs=$(detectfs /dev/loop$i)
 
 	mkdir /mnt/$i
-	if ! mount -t $fs -o ro /dev/loop$i /mnt/$i; then
+	if ! mount -t $fs /dev/loop$i /mnt/$i; then
 		echo "Failed to mount $o"
 		return 1
 	fi
@@ -72,9 +72,13 @@ overlayfs() {
     done
 
     # last not writeable? add tmpfs
-    if ! mount -o remount,rw -t $fs /dev/loop$i /mnt/$i; then
-	((++i))
-	mkdir /mnt/$i
+    if ! touch /mnt/$i 2>/dev/null; then
+	if touch $mnt 2>/dev/null; then
+	    i=mnt
+	else
+	    ((++i))
+	    mkdir /mnt/$i
+	fi
 	overlays="$overlays${overlays:+:}/mnt/$i"
     fi
 
@@ -130,6 +134,9 @@ for v in $cmdline; do
     rw)	mountopt="rw${mountopt#r[ow]}" ;;
     esac
 done
+
+# enable debug trace?
+[ "$(getopt "$cmdline" rd.trace=)" = 1 ] && set -x
 
 # diskless network root?
 addr="${root%:*}"
