@@ -1,0 +1,30 @@
+# --- T2-COPYRIGHT-BEGIN ---
+# t2/package/*/linux/hotfix-x86-coretemp.patch
+# Copyright (C) 2026 The T2 SDE Project
+# SPDX-License-Identifier: GPL-2.0 or patched project license
+# --- T2-COPYRIGHT-END ---
+
+hwmon/coretemp: fix temperature stuck at 0 for the first 5 minutes after boot
+
+temp_data is kzalloc'd, so last_updated starts at 0. show_temp() only
+re-reads IA32_THERM_STATUS when time_after(jiffies, last_updated + HZ),
+which stays false on 32-bit until jiffies wraps past INITIAL_JIFFIES
+(-300*HZ) - i.e. for the first 5 minutes of uptime. Until then
+temp*_input reports the kzalloc'd 0. Observed on an Intel Atom Z530
+(Nokia Booklet 3G): MSR readout valid at 35 C while sysfs returned 0,
+recovering at exactly uptime 300s. Backdate last_updated so the first
+read always updates.
+
+Signed-off-by: René Rebe <rene@exactco.de>
+
+--- linux-7.1/drivers/hwmon/coretemp.c.orig
++++ linux-7.1/drivers/hwmon/coretemp.c
+@@ -520,6 +520,7 @@ init_temp_data(struct platform_data *pda
+ 	tdata->cpu = cpu;
+ 	tdata->cpu_core_id = topology_core_id(cpu);
+ 	tdata->attr_size = MAX_CORE_ATTRS;
++	/* 0 would keep time_after() false until INITIAL_JIFFIES */
++	tdata->last_updated = jiffies - HZ - 1;
+ 	mutex_init(&tdata->update_lock);
+ 	return tdata;
+ }
