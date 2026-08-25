@@ -1,0 +1,58 @@
+# --- T2-COPYRIGHT-BEGIN ---
+# t2/package/*/mesa/allow-radeon-gtt-staging-bypass.patch
+# Copyright (C) 2026 The T2 SDE Project
+# SPDX-License-Identifier: GPL-2.0 or patched project license
+# --- T2-COPYRIGHT-END ---
+#
+# This feature is intended to be used with Radeon GPUs in PCI to PCIe adapters
+# on PCI-only systems, where GTT DMA's read bandwith is limited.
+
+diff -urN '--exclude=build-r300' mesa-26.2.1.orig/src/gallium/drivers/r300/r300_debug.c mesa-26.2.1/src/gallium/drivers/r300/r300_debug.c
+--- mesa-26.2.1.orig/src/gallium/drivers/r300/r300_debug.c	2026-08-20 10:57:40.000000000 +0200
++++ mesa-26.2.1/src/gallium/drivers/r300/r300_debug.c	2026-08-25 21:11:58.410945380 +0200
+@@ -37,6 +37,7 @@
+     { "ieeemath", DBG_IEEEMATH, "Force IEEE versions of VS math opcodes where applicable and also IEEE handling of multiply by zero (R5xx only)" },
+     { "ffmath", DBG_FFMATH, "Force FF versions of VS math opcodes where applicable and 0*anything=0 rules in FS" },
+     { "dummysh", DBG_DUMMYSH, "Never report errors when compilation fails, use dummy shaders instead." },
++    { "nogttstaging", DBG_NO_GTT_STAGING, "Never upload textures through a GTT staging buffer; wait for the GPU and write VRAM directly. Faster only where GTT->VRAM DMA is pathologically slow, e.g. behind a PCI-to-PCIe bridge." },
+ 
+     /* must be last */
+     DEBUG_NAMED_VALUE_END
+diff -urN '--exclude=build-r300' mesa-26.2.1.orig/src/gallium/drivers/r300/r300_screen.h mesa-26.2.1/src/gallium/drivers/r300/r300_screen.h
+--- mesa-26.2.1.orig/src/gallium/drivers/r300/r300_screen.h	2026-08-20 10:57:40.000000000 +0200
++++ mesa-26.2.1/src/gallium/drivers/r300/r300_screen.h	2026-08-25 21:11:58.409829338 +0200
+@@ -103,6 +103,7 @@
+ #define DBG_IEEEMATH    (1 << 26)
+ #define DBG_FFMATH      (1 << 27)
+ #define DBG_DUMMYSH     (1 << 28)
++#define DBG_NO_GTT_STAGING (1 << 29)
+ /*@}*/
+ static inline bool SCREEN_DBG_ON(struct r300_screen * screen, unsigned flags)
+ {
+diff -urN '--exclude=build-r300' mesa-26.2.1.orig/src/gallium/drivers/r300/r300_transfer.c mesa-26.2.1/src/gallium/drivers/r300/r300_transfer.c
+--- mesa-26.2.1.orig/src/gallium/drivers/r300/r300_transfer.c	2026-08-20 10:57:40.000000000 +0200
++++ mesa-26.2.1/src/gallium/drivers/r300/r300_transfer.c	2026-08-25 21:11:58.411643573 +0200
+@@ -177,9 +177,22 @@
+ 
+         /* If the texture is tiled, we must create a temporary detiled texture
+          * for this transfer.
+-         * Also make write transfers pipelined. */
++         * Also make write transfers pipelined, unless the staging buffer would
++         * cost more than the stall it avoids.
++         *
++         * The pipelined path writes a GTT staging texture and then blits it
++         * into VRAM, so it trades a CPU stall for a GPU DMA read out of system
++         * memory. That is a win wherever GTT reads run at bus speed. Where they
++         * do not -- an RV515 behind a PCI-to-PCIe bridge reads GTT at ~34 MB/s,
++         * against ~148 MB/s for a direct CPU write into VRAM -- it is a large
++         * loss: a 1080p YUV plane costs ~90 ms to blit but ~21 ms to write
++         * directly, and since the blit keeps the GPU busy past the next frame's
++         * upload, every subsequent upload takes the staging path too and the
++         * whole pipeline latches into that mode. Waiting for the GPU is then
++         * both faster and self-correcting. */
+         if (tex->tex.microtile || tex->tex.macrotile[level] ||
+             (referenced_hw && !(usage & PIPE_MAP_READ) &&
++             !SCREEN_DBG_ON(r300->screen, DBG_NO_GTT_STAGING) &&
+              r300_is_blit_supported(texture->format))) {
+             struct pipe_resource base;
+ 
