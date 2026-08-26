@@ -4,9 +4,9 @@
 # SPDX-License-Identifier: GPL-2.0 or patched project license
 # --- T2-COPYRIGHT-END ---
 
---- ./ggml/src/ggml-opencl/ggml-opencl.cpp.orig	2000-01-01 01:00:00.000000000 +0100
-+++ ./ggml/src/ggml-opencl/ggml-opencl.cpp	2026-01-27 12:51:16.500753849 +0100
-@@ -86,6 +86,7 @@
+--- llama.cpp.git/./ggml/src/ggml-opencl/ggml-opencl.cpp.orig	2000-01-01 01:00:00.000000000 +0100
++++ llama.cpp.git/./ggml/src/ggml-opencl/ggml-opencl.cpp	2026-08-26 14:59:48.054440319 +0200
+@@ -111,6 +111,7 @@
  
  enum GPU_FAMILY {
      ADRENO,
@@ -14,16 +14,34 @@
      INTEL,
      UNKNOWN,
  };
-@@ -2606,6 +2607,8 @@
-         backend_ctx->adreno_wave_size = 64;
+@@ -3221,7 +3222,7 @@
+     #endif
+ 
+         const int gdn_sizes[4] = { 16, 32, 64, 128 };
+-        const int sg_size = backend_ctx->gpu_family == GPU_FAMILY::ADRENO ? 64 : backend_ctx->gpu_family == GPU_FAMILY::INTEL ? 32 : -1;
++        const int sg_size = backend_ctx->gpu_family == GPU_FAMILY::ADRENO ? 64 : (backend_ctx->gpu_family == GPU_FAMILY::INTEL || backend_ctx->gpu_family == GPU_FAMILY::AMD) ? 32 : -1;
+         if (sg_size < 0) {
+             GGML_LOG_ERROR("Unsupported GPU Family: only Adreno and Intel are supported.\n");
+             exit(1);
+@@ -5222,7 +5223,7 @@
+                     cl_kernel k_c8 = clCreateKernel(prog_c8, "flash_attn_f32_f16_q1_vec_mq_split_c8", &err);
+                     if (err == CL_SUCCESS) {
+                         // WG = MQ_NSG(2) × Q1_WG_SIZE(=FA_SG): 128 Adreno (64), 64 Intel (32).
+-                        const size_t c8_ns2_wg = backend_ctx->gpu_family == INTEL ? 64 : 128;
++                        const size_t c8_ns2_wg = (backend_ctx->gpu_family == INTEL || backend_ctx->gpu_family == AMD) ? 64 : 128;
+                         if (ggml_opencl_fa_kernel_fits_wg(backend_ctx, k_c8, c8_ns2_wg,
+                                                           "flash_attn_f32_f16_q1_vec_mq_split_c8 (ns2)", dk, dv)) {
+                             backend_ctx->fa.f32_f16_q1_vec_mq_split_c8_ns2[{dk, dv}] = k_c8;
+@@ -5839,6 +5840,8 @@
+         }
      } else if (strstr(dev_ctx->device_name.c_str(), "Intel")) {
-         backend_ctx->gpu_family = GPU_FAMILY::INTEL;
+         dev_ctx->gpu_family = GPU_FAMILY::INTEL;
 +    } else if (strstr(dev_ctx->device_name.c_str(), "AMD")) {
-+        backend_ctx->gpu_family = GPU_FAMILY::AMD;
++        dev_ctx->gpu_family = GPU_FAMILY::AMD;
      } else {
-         GGML_LOG_ERROR("Unsupported GPU: %s\n", dev_ctx->device_name.c_str());
-         backend_ctx->gpu_family = GPU_FAMILY::UNKNOWN;
-@@ -6490,6 +6493,8 @@
+         GGML_LOG_WARN("ggml_opencl: unsupported GPU '%s'.\n", dev_ctx->device_name.c_str());
+         dev_ctx->gpu_family = GPU_FAMILY::UNKNOWN;
+@@ -13306,6 +13309,8 @@
      //    sizeof(size_t), &sgs, NULL));
      if (backend_ctx->gpu_family == ADRENO) {
          sgs = 64;
@@ -32,7 +50,7 @@
      } else if (backend_ctx->gpu_family == INTEL) {
          sgs = 32;
      } else {
-@@ -6577,6 +6582,8 @@
+@@ -13393,6 +13398,8 @@
      size_t sgs;
      if (backend_ctx->gpu_family == ADRENO) {
          sgs = 64;
@@ -41,7 +59,7 @@
      } else if (backend_ctx->gpu_family == INTEL) {
          sgs = 32;
      } else {
-@@ -6658,6 +6665,7 @@
+@@ -13474,6 +13481,7 @@
  
      size_t sgs;
      if (backend_ctx->gpu_family == ADRENO) sgs = 64;
@@ -49,7 +67,7 @@
      else if (backend_ctx->gpu_family == INTEL) sgs = 32;
      else GGML_ASSERT(false && "Unsupported GPU");
  
-@@ -6789,6 +6797,8 @@
+@@ -13605,6 +13613,8 @@
      size_t sgs = 64;
      if (backend_ctx->gpu_family == ADRENO) {
          sgs = 64;
@@ -58,7 +76,7 @@
      } else if (backend_ctx->gpu_family == INTEL) {
          sgs = 32;
      } else {
-@@ -8553,6 +8563,11 @@
+@@ -20106,6 +20116,11 @@
                      nth1 = 1;
  
                      kernel = backend_ctx->kernel_mul_mat_q4_0_f32_1d_16x_flat;
@@ -70,7 +88,7 @@
                  } else if (backend_ctx->gpu_family == ADRENO) {
                      nth0 = 64;
                      nth1 = 1;
-@@ -8592,6 +8607,11 @@
+@@ -20145,6 +20160,11 @@
                  global_work_size[0] = (size_t)(ne01 + 15)/16*nth0;
                  global_work_size[1] = (size_t)ne11*nth1;
                  global_work_size[2] = (size_t)ne12*ne13;
@@ -82,7 +100,7 @@
              }
  
              backend_ctx->enqueue_ndrange_kernel(kernel, 3, global_work_size, local_work_size, dst);
-@@ -8613,6 +8633,9 @@
+@@ -20166,6 +20186,9 @@
              if (backend_ctx->gpu_family == INTEL) {
                  nth0 = 32;
                  nth1 = 1;
@@ -92,7 +110,7 @@
              } else if (backend_ctx->gpu_family == ADRENO) {
                  nth0 = 64;
                  nth1 = 1;
-@@ -8650,6 +8673,9 @@
+@@ -20203,6 +20226,9 @@
              if (backend_ctx->gpu_family == INTEL) {
                  nth0 = 32;
                  nth1 = 1;
@@ -102,7 +120,7 @@
              } else if (backend_ctx->gpu_family == ADRENO) {
                  nth0 = 64;
                  nth1 = 1;
-@@ -8709,6 +8735,12 @@
+@@ -20395,6 +20421,12 @@
  
                  kernel = backend_ctx->kernel_mul_mat_q4_0_f32_8x_flat;
                  ndst = 8;
@@ -115,7 +133,7 @@
              } else if (backend_ctx->gpu_family == ADRENO) {
                  nth0 = 64;
                  nth1 = 1;
-@@ -8745,6 +8777,16 @@
+@@ -20431,6 +20463,16 @@
  
                  kernel = backend_ctx->kernel_mul_mat_q4_0_f32;
                  ndst = 4;
@@ -132,7 +150,7 @@
              } else if (backend_ctx->gpu_family == ADRENO) {
                  nth0 = 64;
                  nth1 = 1;
-@@ -8784,6 +8826,10 @@
+@@ -20665,6 +20707,10 @@
                  nth0 = 16;
                  nth1 = 2;
                  ndst = nth1*4;
@@ -143,7 +161,7 @@
              } else if (backend_ctx->gpu_family == ADRENO) {
                  nth0 = 64;
                  nth1 = 2;
-@@ -8821,6 +8867,10 @@
+@@ -20702,6 +20748,10 @@
                  nth0 = 16;
                  nth1 = 2;
                  ndst = nth1*4;
@@ -154,7 +172,7 @@
              } else if (backend_ctx->gpu_family == ADRENO) {
                  nth0 = 64;
                  nth1 = 2;
-@@ -8863,6 +8913,10 @@
+@@ -20955,6 +21005,10 @@
                  nth0 = 16;
                  nth1 = 2;
                  ndst = 4;
@@ -165,7 +183,7 @@
              } else if (backend_ctx->gpu_family == ADRENO) {
                  nth0 = 64;
                  nth1 = 2;
-@@ -8895,6 +8949,10 @@
+@@ -20993,6 +21047,10 @@
                  nth0 = 16;
                  nth1 = 2;
                  ndst = 1;
@@ -176,7 +194,7 @@
              } else if (backend_ctx->gpu_family == ADRENO) {
                  nth0 = 64;
                  nth1 = 2;
-@@ -8931,6 +8989,12 @@
+@@ -21029,6 +21087,12 @@
                  ndst = nth1*2;
  
                  q = extra0_mxfp4->q;
@@ -189,7 +207,7 @@
              } else if (backend_ctx->gpu_family == ADRENO) {
                  nth0 = 64;
                  nth1 = 2;
-@@ -8966,6 +9030,10 @@
+@@ -21064,6 +21128,10 @@
                  nth0 = 16;
                  nth1 = 2;
                  ndst = nth1*2;
@@ -200,7 +218,7 @@
              } else if (backend_ctx->gpu_family == ADRENO) {
                  nth0 = 64;
                  nth1 = 2;
-@@ -9119,6 +9187,10 @@
+@@ -21692,6 +21760,10 @@
                  sgs  = 16;
                  nsg  = 1;
                  ndst = 8;
@@ -211,7 +229,7 @@
              } else if (backend_ctx->gpu_family == ADRENO) {
                  sgs  = 64;
                  nsg  = 1;
-@@ -9163,6 +9235,10 @@
+@@ -22531,6 +22603,10 @@
                  sgs  = 16;
                  nsg  = 2;
                  ndst = 4;
@@ -222,7 +240,7 @@
              } else if (backend_ctx->gpu_family == ADRENO) {
                  sgs  = 64;
                  nsg  = 2;
-@@ -9199,6 +9275,10 @@
+@@ -22567,6 +22643,10 @@
                  sgs  = 16;
                  nsg  = 2;
                  ndst = 4;
@@ -233,7 +251,7 @@
              } else if (backend_ctx->gpu_family == ADRENO) {
                  sgs  = 64;
                  nsg  = 2;
-@@ -9341,6 +9421,12 @@
+@@ -23643,6 +23723,12 @@
                  ndst = 2;
  
                  q = extra0_mxfp4->q;
@@ -246,7 +264,7 @@
              } else if (backend_ctx->gpu_family == ADRENO) {
                  sgs  = 64;
                  nsg  = 1;
-@@ -9382,6 +9468,10 @@
+@@ -23684,6 +23770,10 @@
                  sgs  = 16;
                  nsg  = 2;
                  ndst = 2;
@@ -257,7 +275,7 @@
              } else if (backend_ctx->gpu_family == ADRENO) {
                  sgs  = 64;
                  nsg  = 2;
-@@ -9717,6 +9807,10 @@
+@@ -24162,6 +24252,10 @@
          // This is the same as the initial value.
          nth = MIN(32, ne00);
      }
