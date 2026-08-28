@@ -1,0 +1,59 @@
+# --- T2-COPYRIGHT-BEGIN ---
+# t2/package/*/perf/hotfix-rust-cross.patch
+# Copyright (C) 2026 The T2 SDE Project
+# SPDX-License-Identifier: GPL-2.0 or patched project license
+# --- T2-COPYRIGHT-END ---
+
+Make the perf Rust support cross-compile aware.
+
+The Rust test workload was compiled without a --target, producing host
+objects that break the final ld -r merge in cross builds. Derive the Rust
+target triple from $(CC) -dumpmachine and pass it via rust_flags, and turn
+the rustc feature check into a metadata-only compilation so a missing
+target standard library correctly disables the Rust test workloads.
+
+Signed-off-by: René Rebe <rene@exactco.de>
+
+--- a/tools/build/feature/Makefile	2026-02-23 17:31:55.000000000 +0100
++++ b/tools/build/feature/Makefile	2026-08-28 10:49:45.200977920 +0200
+@@ -390,13 +390,13 @@ $(OUTPUT)test-bpftool-skeletons.bin:
+ 	$(SYSTEM_BPFTOOL) version | grep '^features:.*skeletons' \
+ 		> $(@:.bin=.make.output) 2>&1
+ 
+-# Testing Rust is special: we don't compile anything, it's enough to check the
+-# compiler presence. Compiling a test code for this purposes is problematic,
+-# because Rust will emit a dependency file without any external references,
+-# meaning that if rustc will be removed the build process will still think it's
+-# there.
++# Testing Rust needs an actual compilation so a missing standard library for
++# the (possibly cross) target is detected. A metadata-only build verifies the
++# compiler and the target libraries without linking and without emitting a
++# dependency file.
+ $(OUTPUT)test-rust.bin:
+-	$(RUSTC) --version > /dev/null 2>&1
++	echo 'fn main() {}' | $(RUSTC) $(rust_flags) --crate-type lib \
++		--emit=metadata=$@ - > /dev/null 2>&1
+ 
+ ###############################
+ 
+--- a/tools/perf/Makefile.config	2026-02-23 17:31:55.000000000 +0100
++++ b/tools/perf/Makefile.config	2026-08-28 10:51:02.766202780 +0200
+@@ -1154,6 +1154,18 @@ ifneq ($(NO_LIBTRACEEVENT),1)
+ endif
+ 
+ ifndef NO_RUST
++  # For cross builds pass a matching --target to rustc, falling back to a
++  # vendor-neutral triple if rustc does not know the toolchain vendor.
++  CC_TARGET := $(shell $(CC) -dumpmachine 2>/dev/null)
++  RUSTC_HOST := $(shell $(RUSTC) -vV 2>/dev/null | sed -n 's/^host: //p')
++  ifneq ($(CC_TARGET),$(RUSTC_HOST))
++    RUST_TARGET ?= $(CC_TARGET)
++    ifeq ($(findstring $(RUST_TARGET),$(shell $(RUSTC) --print target-list 2>/dev/null)),)
++      RUST_TARGET := $(shell echo $(RUST_TARGET) | sed -E 's/^([^-]+)-[^-]+-(linux-.*)/\1-unknown-\2/')
++    endif
++    rust_flags += --target=$(RUST_TARGET)
++    export rust_flags
++  endif
+   $(call feature_check,rust)
+   ifneq ($(feature-rust), 1)
+     $(warning Rust is not found. Test workloads with rust are disabled.)
