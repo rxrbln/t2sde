@@ -160,10 +160,14 @@ diff -aurpN -x '*.orig' -x '*.rej' -x __pycache__ -x '*.pyc' -x .deps a/firefox-
    num_temps: 1
  #elif defined(JS_CODEGEN_MIPS64) || defined(JS_CODEGEN_LOONG64) || defined(JS_CODEGEN_RISCV64) || defined(JS_CODEGEN_PPC64)
    num_temps: 3
-@@ -4480,6 +4480,97 @@
- - name: UDiv
-   result_type: WordSized
-   operands:
+@@ -4622,6 +4622,97 @@
+     memoryBase: WordSized
+   mir_op: WasmAtomicExchangeHeap
+ #endif
++#ifdef JS_CODEGEN_IA64
++- name: UDiv
++  result_type: WordSized
++  operands:
 +    lhs: WordSized
 +    rhs: WordSized
 +  mir_op: Div
@@ -251,13 +255,10 @@ diff -aurpN -x '*.orig' -x '*.rej' -x __pycache__ -x '*.pyc' -x .deps a/firefox-
 +  mir_op: WasmAtomicExchangeHeap
 +#endif
 +
-+#ifdef JS_CODEGEN_IA64
-+- name: UDiv
-+  result_type: WordSized
-+  operands:
-     lhs: WordSized
-     rhs: WordSized
-   mir_op: Div
+ 
+ #ifdef JS_64BIT
+ - name: WasmAddSubI128HI64
+
 diff -aurpN -x '*.orig' -x '*.rej' -x __pycache__ -x '*.pyc' -x .deps /tmp/claude-0/-srv-t2-src-firefox-ia64-desktop-260731-192730-583159/2ec03345-b130-4ed1-a35a-8809b1a7caca/scratchpad/refjit/firefox-153.0.1/js/src/jit/Lowering.h /srv/t2/src-firefox.ia64-desktop.260731.192730.583159/firefox-153.0.1/js/src/jit/Lowering.h
 --- firefox-153.0.1/js/src/jit/Lowering.h.vanilla
 +++ firefox-153.0.1/js/src/jit/Lowering.h
@@ -294,6 +295,15 @@ diff -aurpN -x '*.orig' -x '*.rej' -x __pycache__ -x '*.pyc' -x .deps a/js/src/j
  #elif defined(JS_CODEGEN_PPC64)
  #  include "jit/ppc64/MacroAssembler-ppc64.h"
  #elif defined(JS_CODEGEN_WASM32)
+@@ -95,7 +97,7 @@
+ //   }
+ //   ////}}} check_macroassembler_style
+ 
+-#define ALL_ARCH mips64, arm, arm64, x86, x64, loong64, riscv64, ppc64, wasm32
++#define ALL_ARCH mips64, arm, arm64, x86, x64, loong64, riscv64, ia64, ppc64, wasm32
+ #define ALL_SHARED_ARCH \
+   arm, arm64, loong64, mips64, riscv64, ppc64, x86_shared, wasm32
+ 
 @@ -145,6 +147,7 @@
  #define DEFINED_ON_riscv64
  #define DEFINED_ON_ppc64
@@ -5582,7 +5592,7 @@ diff -aurpN -x '*.orig' -x '*.rej' -x __pycache__ -x '*.pyc' -x .deps a/js/src/j
 diff -aurpN -x '*.orig' -x '*.rej' -x __pycache__ -x '*.pyc' -x .deps a/firefox-153.0.1/js/src/jit/ia64/CodeGenerator-ia64.cpp b/firefox-153.0.1/js/src/jit/ia64/CodeGenerator-ia64.cpp
 --- firefox-153.0.1/js/src/jit/ia64/CodeGenerator-ia64.cpp.vanilla
 +++ firefox-153.0.1/js/src/jit/ia64/CodeGenerator-ia64.cpp
-@@ -0,0 +1,2373 @@
+@@ -0,0 +1,2242 @@
 +/* This Source Code Form is subject to the terms of the Mozilla Public
 + * License, v. 2.0. If a copy of the MPL was not distributed with this
 + * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -7347,137 +7357,6 @@ diff -aurpN -x '*.orig' -x '*.rej' -x __pycache__ -x '*.pyc' -x .deps a/firefox-
 +  masm.wasmStoreI64(mir->access(), ToRegister64(ins->value()), memoryBase, ptr);
 +}
 +
-+void CodeGenerator::visitAsmJSLoadHeap(LAsmJSLoadHeap* ins) {
-+  const MAsmJSLoadHeap* mir = ins->mir();
-+  const LAllocation* ptr = ins->ptr();
-+  const LDefinition* out = ins->output();
-+  const LAllocation* boundsCheckLimit = ins->boundsCheckLimit();
-+
-+  Scalar::Type accessType = mir->access().type();
-+  bool isFloat = Scalar::isFloatingType(accessType);
-+  int size = Scalar::byteSize(accessType) * 8;
-+
-+  auto load = [&](const auto& addr) {
-+    if (isFloat) {
-+      if (size == 32) {
-+        masm.loadFloat32(addr, ToFloatRegister(out));
-+      } else {
-+        masm.loadDouble(addr, ToFloatRegister(out));
-+      }
-+    } else {
-+      switch (size) {
-+        case 8:
-+          if (Scalar::isSignedIntType(accessType)) {
-+            masm.load8SignExtend(addr, ToRegister(out));
-+          } else {
-+            masm.load8ZeroExtend(addr, ToRegister(out));
-+          }
-+          break;
-+        case 16:
-+          if (Scalar::isSignedIntType(accessType)) {
-+            masm.load16SignExtend(addr, ToRegister(out));
-+          } else {
-+            masm.load16ZeroExtend(addr, ToRegister(out));
-+          }
-+          break;
-+        case 32:
-+          masm.load32(addr, ToRegister(out));
-+          break;
-+        default:
-+          MOZ_CRASH("unexpected access size");
-+      }
-+    }
-+  };
-+
-+  if (ptr->isConstant()) {
-+    MOZ_ASSERT(!mir->needsBoundsCheck());
-+    int32_t ptrImm = ptr->toConstant()->toInt32();
-+    MOZ_ASSERT(ptrImm >= 0);
-+    load(Address(HeapReg, ptrImm));
-+    return;
-+  }
-+
-+  Register ptrReg = ToRegister(ptr);
-+
-+  if (!mir->needsBoundsCheck()) {
-+    load(BaseIndex(HeapReg, ptrReg, TimesOne));
-+    return;
-+  }
-+
-+  Label done, outOfRange;
-+  masm.wasmBoundsCheck32(Assembler::AboveOrEqual, ptrReg,
-+                         ToRegister(boundsCheckLimit), &outOfRange);
-+  load(BaseIndex(HeapReg, ptrReg, TimesOne));
-+  masm.jump(&done);
-+  masm.bind(&outOfRange);
-+  if (isFloat) {
-+    if (size == 32) {
-+      masm.loadConstantFloat32(float(GenericNaN()), ToFloatRegister(out));
-+    } else {
-+      masm.loadConstantDouble(GenericNaN(), ToFloatRegister(out));
-+    }
-+  } else {
-+    masm.move32(Imm32(0), ToRegister(out));
-+  }
-+  masm.bind(&done);
-+}
-+
-+void CodeGenerator::visitAsmJSStoreHeap(LAsmJSStoreHeap* ins) {
-+  const MAsmJSStoreHeap* mir = ins->mir();
-+  const LAllocation* value = ins->value();
-+  const LAllocation* ptr = ins->ptr();
-+  const LAllocation* boundsCheckLimit = ins->boundsCheckLimit();
-+
-+  Scalar::Type accessType = mir->access().type();
-+  bool isFloat = Scalar::isFloatingType(accessType);
-+  int size = Scalar::byteSize(accessType) * 8;
-+
-+  auto store = [&](const auto& addr) {
-+    if (isFloat) {
-+      if (size == 32) {
-+        masm.storeFloat32(ToFloatRegister(value), addr);
-+      } else {
-+        masm.storeDouble(ToFloatRegister(value), addr);
-+      }
-+    } else {
-+      switch (size) {
-+        case 8:
-+          masm.store8(ToRegister(value), addr);
-+          break;
-+        case 16:
-+          masm.store16(ToRegister(value), addr);
-+          break;
-+        case 32:
-+          masm.store32(ToRegister(value), addr);
-+          break;
-+        default:
-+          MOZ_CRASH("unexpected access size");
-+      }
-+    }
-+  };
-+
-+  if (ptr->isConstant()) {
-+    MOZ_ASSERT(!mir->needsBoundsCheck());
-+    int32_t ptrImm = ptr->toConstant()->toInt32();
-+    MOZ_ASSERT(ptrImm >= 0);
-+    store(Address(HeapReg, ptrImm));
-+    return;
-+  }
-+
-+  Register ptrReg = ToRegister(ptr);
-+
-+  if (!mir->needsBoundsCheck()) {
-+    store(BaseIndex(HeapReg, ptrReg, TimesOne));
-+    return;
-+  }
-+
-+  Label outOfRange;
-+  masm.wasmBoundsCheck32(Assembler::AboveOrEqual, ptrReg,
-+                         ToRegister(boundsCheckLimit), &outOfRange);
-+  store(BaseIndex(HeapReg, ptrReg, TimesOne));
-+  masm.bind(&outOfRange);
-+}
-+
 +void CodeGenerator::visitWasmAddOffset(LWasmAddOffset* ins) {
 +  MWasmAddOffset* mir = ins->mir();
 +  Register base = ToRegister(ins->base());
@@ -7956,6 +7835,7 @@ diff -aurpN -x '*.orig' -x '*.rej' -x __pycache__ -x '*.pyc' -x .deps a/firefox-
 +void CodeGenerator::visitWasmStoreLaneSimd128(LWasmStoreLaneSimd128* ins) {
 +  MOZ_CRASH("No SIMD");
 +}
+
 diff -aurpN -x '*.orig' -x '*.rej' -x __pycache__ -x '*.pyc' -x .deps /tmp/claude-0/-srv-t2-src-firefox-ia64-desktop-260731-192730-583159/2ec03345-b130-4ed1-a35a-8809b1a7caca/scratchpad/refjit/firefox-153.0.1/js/src/jit/ia64/CodeGenerator-ia64.h /srv/t2/src-firefox.ia64-desktop.260731.192730.583159/firefox-153.0.1/js/src/jit/ia64/CodeGenerator-ia64.h
 --- firefox-153.0.1/js/src/jit/ia64/CodeGenerator-ia64.h.vanilla
 +++ firefox-153.0.1/js/src/jit/ia64/CodeGenerator-ia64.h
@@ -8110,7 +7990,7 @@ diff -aurpN -x '*.orig' -x '*.rej' -x __pycache__ -x '*.pyc' -x .deps /tmp/claud
 diff -aurpN -x '*.orig' -x '*.rej' -x __pycache__ -x '*.pyc' -x .deps a/firefox-153.0.1/js/src/jit/ia64/Lowering-ia64.cpp b/firefox-153.0.1/js/src/jit/ia64/Lowering-ia64.cpp
 --- firefox-153.0.1/js/src/jit/ia64/Lowering-ia64.cpp.vanilla
 +++ firefox-153.0.1/js/src/jit/ia64/Lowering-ia64.cpp
-@@ -0,0 +1,877 @@
+@@ -0,0 +1,837 @@
 +/* This Source Code Form is subject to the terms of the Mozilla Public
 + * License, v. 2.0. If a copy of the MPL was not distributed with this
 + * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -8762,46 +8642,6 @@ diff -aurpN -x '*.orig' -x '*.rej' -x __pycache__ -x '*.pyc' -x .deps a/firefox-
 +  add(ins);
 +}
 +
-+void LIRGenerator::visitAsmJSLoadHeap(MAsmJSLoadHeap* ins) {
-+  MDefinition* base = ins->base();
-+  MOZ_ASSERT(base->type() == MIRType::Int32);
-+
-+  MDefinition* boundsCheckLimit = ins->boundsCheckLimit();
-+  MOZ_ASSERT_IF(ins->needsBoundsCheck(),
-+                boundsCheckLimit->type() == MIRType::Int32);
-+
-+  LAllocation baseAlloc = useRegisterAtStart(base);
-+
-+  LAllocation limitAlloc = ins->needsBoundsCheck()
-+                               ? useRegisterAtStart(boundsCheckLimit)
-+                               : LAllocation();
-+
-+  MOZ_ASSERT(!ins->hasMemoryBase());
-+  auto* lir =
-+      new (alloc()) LAsmJSLoadHeap(baseAlloc, limitAlloc, LAllocation());
-+  define(lir, ins);
-+}
-+
-+void LIRGenerator::visitAsmJSStoreHeap(MAsmJSStoreHeap* ins) {
-+  MDefinition* base = ins->base();
-+  MOZ_ASSERT(base->type() == MIRType::Int32);
-+
-+  MDefinition* boundsCheckLimit = ins->boundsCheckLimit();
-+  MOZ_ASSERT_IF(ins->needsBoundsCheck(),
-+                boundsCheckLimit->type() == MIRType::Int32);
-+
-+  LAllocation baseAlloc = useRegisterAtStart(base);
-+
-+  LAllocation limitAlloc = ins->needsBoundsCheck()
-+                               ? useRegisterAtStart(boundsCheckLimit)
-+                               : LAllocation();
-+
-+  MOZ_ASSERT(!ins->hasMemoryBase());
-+  add(new (alloc()) LAsmJSStoreHeap(baseAlloc, useRegisterAtStart(ins->value()),
-+                                    limitAlloc, LAllocation()),
-+      ins);
-+}
-+
 +void LIRGenerator::visitWasmLoad(MWasmLoad* ins) {
 +  MDefinition* base = ins->base();
 +  MOZ_ASSERT(base->type() == MIRType::Int32 || base->type() == MIRType::Int64);
@@ -8988,6 +8828,7 @@ diff -aurpN -x '*.orig' -x '*.rej' -x __pycache__ -x '*.pyc' -x .deps a/firefox-
 +void LIRGenerator::visitWasmStoreLaneSimd128(MWasmStoreLaneSimd128* ins) {
 +  MOZ_CRASH("store-lane SIMD NYI");
 +}
+
 diff -aurpN -x '*.orig' -x '*.rej' -x __pycache__ -x '*.pyc' -x .deps /tmp/claude-0/-srv-t2-src-firefox-ia64-desktop-260731-192730-583159/2ec03345-b130-4ed1-a35a-8809b1a7caca/scratchpad/refjit/firefox-153.0.1/js/src/jit/ia64/Lowering-ia64.h /srv/t2/src-firefox.ia64-desktop.260731.192730.583159/firefox-153.0.1/js/src/jit/ia64/Lowering-ia64.h
 --- firefox-153.0.1/js/src/jit/ia64/Lowering-ia64.h.vanilla
 +++ firefox-153.0.1/js/src/jit/ia64/Lowering-ia64.h
@@ -17411,3 +17252,24 @@ diff -aurpN -x '*.orig' -x '*.rej' -x __pycache__ -x '*.pyc' -x .deps a/firefox-
        cx, JSJITCOMPILER_SPECTRE_INDEX_MASKING,
        StaticPrefs::javascript_options_spectre_index_masking_DoNotUseDirectly());
 
+diff -aurpN -x '*.orig' -x '*.rej' -x __pycache__ -x '*.pyc' -x .deps a/firefox-153.0.1/js/src/jit/ProcessExecutableMemory.cpp b/firefox-153.0.1/js/src/jit/ProcessExecutableMemory.cpp
+--- firefox-153.0.1/js/src/jit/ProcessExecutableMemory.cpp.vanilla
++++ firefox-153.0.1/js/src/jit/ProcessExecutableMemory.cpp
+@@ -440,7 +440,16 @@
+ #  else
+   uint64_t rand = js::GenerateRandomSeed();
+ 
+-#    ifdef HAVE_64BIT_BUILD
++#    if defined(__ia64__)
++  // ia64 splits the address space into eight regions selected by bits 63-61,
++  // and only the low RGN_MAP_LIMIT bytes of a region can ever be mapped. That
++  // limit is 2^(4*PAGE_SHIFT-12), which is as little as 2^36 with 4K pages,
++  // and unlike other kernels ia64's mmap() rejects an out-of-range hint with
++  // EINVAL rather than ignoring it and picking its own address. Right shift by
++  // 30 to leave 34 bits, so that the hint plus MaxCodeBytesPerProcess stays
++  // inside the region limit for every supported page size.
++  rand >>= 30;
++#    elif defined(HAVE_64BIT_BUILD)
+   // x64 CPUs have a 48-bit address space and on some platforms the OS will
+   // give us access to 47 bits, so to be safe we right shift by 18 to leave
+   // 46 bits.
