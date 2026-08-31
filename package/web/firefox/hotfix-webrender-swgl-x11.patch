@@ -1,0 +1,41 @@
+# --- T2-COPYRIGHT-BEGIN ---
+# t2/package/*/firefox/hotfix-webrender-swgl-x11.patch
+# Copyright (C) 2026 The T2 SDE Project
+# SPDX-License-Identifier: GPL-2.0 or patched project license
+# --- T2-COPYRIGHT-END ---
+
+# Firefox 154 dropped both guards from GtkCompositorWidget::GetNativeLayerRoot(),
+# which in 153 read:
+#
+#   if (!mNativeLayerRoot && gfx::gfxVars::UseWebRenderCompositor() &&
+#       WaylandDisplayGet()->GetFractionalScaleManager()) {
+#
+# The function builds a NativeLayerRootWayland out of the MozContainer's
+# wl_surface, so it only ever makes sense in a Wayland session. CompositorOGL's
+# constructor calls GetNativeLayerRoot() unconditionally, and that constructor is
+# reached on X11 too as soon as gfx.webrender.software.opengl is true
+# (RenderCompositor::Create -> RenderCompositorLayersSWGL::Create ->
+# RenderCompositorOGLSWGL::Create -> new CompositorOGL). On an X11 session there
+# is no wl_surface, and the parent process segfaults on the Renderer thread
+# before the first paint.
+#
+# Restore the UseWebRenderCompositor() guard: gfxPlatformGtk force-disables
+# Feature::WEBRENDER_COMPOSITOR when !IsWaylandDisplay(), so this is false on X11
+# and GetNativeLayerRoot() again returns nullptr there, as CompositorOGL expects.
+# The FractionalScaleManager() condition is deliberately not restored - that part
+# of the 153 guard belongs to the pre-WaylandSurface code.
+
+--- firefox-154.0.1/widget/gtk/GtkCompositorWidget.cpp.vanilla
++++ firefox-154.0.1/widget/gtk/GtkCompositorWidget.cpp
+@@ -144,7 +144,10 @@
+ 
+ #ifdef MOZ_WAYLAND
+ mozilla::layers::NativeLayerRoot* GtkCompositorWidget::GetNativeLayerRoot() {
+-  if (!mNativeLayerRoot) {
++  // The native layer root is a Wayland-only construct. WEBRENDER_COMPOSITOR is
++  // force-disabled when !IsWaylandDisplay(), so this also keeps X11 sessions
++  // out, where MOZ_WL_SURFACE() has nothing to hand us and we would crash.
++  if (!mNativeLayerRoot && gfx::gfxVars::UseWebRenderCompositor()) {
+     LOG("GtkCompositorWidget::GetNativeLayerRoot [%p] create",
+         (void*)mWidget.get());
+     MOZ_ASSERT(mWidget && mWidget->GetMozContainer());
