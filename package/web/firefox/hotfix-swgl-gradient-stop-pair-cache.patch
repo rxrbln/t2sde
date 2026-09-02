@@ -1,0 +1,229 @@
+# --- T2-COPYRIGHT-BEGIN ---
+# t2/package/*/firefox/hotfix-swgl-gradient-stop-pair-cache.patch
+# Copyright (C) 2026 The T2 SDE Project
+# SPDX-License-Identifier: GPL-2.0 or patched project license
+# --- T2-COPYRIGHT-END ---
+
+# commitLinearGradientFromStops() and commitRadialGradientFromStops() walk a
+# span one gradient stop segment at a time. Per segment they find the stop pair
+# covering the current offset, derive the pair's colors, and then emit the
+# pixels four at a time from an integer color accumulator. The four-pixels-at-a-
+# time inner loop is the fast path the whole routine is built around.
+#
+# When a gradient's stop segments are shorter than four pixels the inner loop
+# never runs, and the per-segment setup - the only other thing in the routine -
+# becomes the entire cost of the shader. That is not a corner case: on
+# lichess.org, ps_quad_gradient_frag::swgl_drawSpanRGBA8() was 25.4% of the
+# whole browser's user cycles (65.7 of 258.8 Gcycles over a 120 s benchmark on
+# an Itanium 2 9040), and a per-address profile put 83.8% of its samples in the
+# outer `for (; span > 0;)` loop body with *zero* samples in the chunk loop.
+# There is no hot inner loop at all: the smallest loop carrying samples is 77
+# bundles.
+#
+# Of that per-segment setup, the color parameters
+#
+#     minColorF   = stopColors[stopIndex].zyxw * colorScale
+#     colorRangeF = (maxColorF - minColorF) / (nextOffset - prevOffset)
+#
+# depend only on the stop index - not on the position along the span, and not on
+# the row. Within one call there is nothing to reuse, since offset advances
+# monotonically and each segment covers at most one stop pair. Across calls
+# there is: a gradient quad re-walks the identical stop pairs on every one of
+# its rows, redoing the swizzle, the scale, the subtract and the divide each
+# time. On ia64 that divide is frcpa plus a Newton-Raphson chain, and it sits at
+# the head of the dependency chain that produces the span's colors; the region
+# is latency-bound, running at 49-59% bundle slot occupancy with 69-76% of its
+# bundles ending in a stop bit.
+#
+# So memoize the pair parameters. Entries are indexed by the low bits of the
+# stop index and keyed on the exact inputs they were derived from - both raw
+# stop colors, the offset range and the scale - and are used only when all of
+# those compare identical to the live ones. That makes a stale hit impossible
+# even when the gpu buffer is rewritten between frames at the same address with
+# the same stop count, which a key on the gradient's address alone would not:
+# identical inputs give identical outputs by construction. Zero initialized
+# entries never match, as the scale is always non-zero. Gradients with more
+# stops than the table has entries still work; colliding pairs simply miss and
+# recompute, exactly as before.
+#
+# The key comparison must not be a memcmp. gcc does not expand a fixed size
+# memcmp inline on every target, and on ia64 it emitted a call: measured on the
+# benchmark above, that call was 4.07% of the whole browser's cycles - 10.7
+# Gcycles, more than the 8.8 Gcycles the memoization saved, turning a win into a
+# small net loss. Comparing with vector xor instead keeps it inline and costs
+# 235 static instructions across the eight instantiations gcc inlines this into.
+# The store back on a miss is likewise plain assignment, not memcpy, which gcc
+# also emitted out of line here.
+#
+# What the memoization itself is worth, measured with the memcmp version (which
+# only moved the cost, it did not change how often the divide runs): the shader
+# went from 65.71 to 56.87 Gcycles, -13.5%, while findGradientStopPair - byte
+# identical in both builds, and called once per gradient segment, so it counts
+# the gradient work directly - stayed flat at +0.1%. Other unchanged Renderer
+# functions moved between +0.8% and -8.5%, which is the run to run spread of the
+# workload mix in those draw types.
+#
+# The arithmetic is moved verbatim, including the difference between the two
+# callers - linear normalizes by reciprocal multiply, radial by divide - so the
+# two get separate code and separate tables and the output stays bit-exact for
+# both. The tables are file-scope statics, which matches how the rest of the
+# draw path already works: ctx, vertex_shader, fragment_shader and blend_key are
+# file-scope statics too, so shader drawing is single-threaded by construction.
+# The SwComposite worker threads only reach the Composite() blit entry points
+# and never run a fragment shader.
+#
+# Tested standalone on x86-64 with stand-ins for Float and I32: 180000
+# comparisons of the memoized result against the uncached function itself,
+# 120000 of them on a warm entry, over 200 rounds that rewrite the whole
+# gradient in place at the same address with the same stop count, and with 300
+# stops against a 128 entry table to exercise index aliasing. Zero mismatches.
+--- firefox-154.0.1/gfx/wr/swgl/src/swgl_ext.h.vanilla	2026-09-02 09:14:41.577100365 +0200
++++ firefox-154.0.1/gfx/wr/swgl/src/swgl_ext.h	2026-09-02 10:11:56.595626759 +0200
+@@ -1828,6 +1828,91 @@
+   return true;
+ }
+ 
++// The color parameters of a gradient stop pair - the pair's start color scaled
++// into the fixed point range the commit loops step in, and the pair's color
++// range normalized by its offset range - depend only on the stop index. The
++// gradient commit loops below recompute them for every stop segment of every
++// span, and a segment covers at most one stop pair, so nothing is reused within
++// a call; but a gradient quad re-walks the same stop pairs on every one of its
++// rows. When the segments are shorter than the four pixel chunk size, this
++// setup - which contains a divide, at the head of the dependency chain that
++// produces the span's colors - is the entire cost of the shader.
++//
++// Memoize the parameters per stop index. An entry is keyed on the exact inputs
++// it was derived from: the two raw stop colors, the offset range, and the
++// scale. It is used only if all of them compare identical to the live ones, so
++// a gpu buffer that is rewritten between frames, at the same address and with
++// the same stop count, can never produce a stale hit. Zero initialized
++// entries never match either, as the scale is always non-zero.
++struct GradientStopPairColors {
++  Float minColor;
++  Float colorRange;
++};
++
++struct GradientStopPairCacheEntry {
++  Float srcColors[2];
++  float srcOffsetRange;
++  float srcColorScale;
++  GradientStopPairColors colors;
++};
++
++// Entries are indexed by the low bits of the stop index, so a gradient with
++// more stops than this still works - colliding pairs just miss and recompute,
++// as they did before.
++#define SWGL_GRADIENT_STOP_PAIR_CACHE_SIZE 128
++
++struct GradientStopPairCache {
++  GradientStopPairCacheEntry entries[SWGL_GRADIENT_STOP_PAIR_CACHE_SIZE];
++};
++
++// The linear and radial commit loops normalize the color range differently -
++// by reciprocal multiply and by divide respectively - so they must not share
++// either the code or the cache.
++static GradientStopPairCache sLinearGradientStopPairCache;
++static GradientStopPairCache sRadialGradientStopPairCache;
++
++template <bool RECIPROCAL>
++static ALWAYS_INLINE GradientStopPairColors computeGradientStopPairColors(
++    const Float* stopPair, float offsetRange, float colorScale) {
++  GradientStopPairColors colors;
++  colors.minColor = stopPair[0].zyxw * colorScale;
++  Float maxColor = stopPair[1].zyxw * colorScale;
++  if (offsetRange == 0.0f) {
++    colors.colorRange = Float(0.0f);
++  } else if constexpr (RECIPROCAL) {
++    colors.colorRange = (maxColor - colors.minColor) * (1.0 / offsetRange);
++  } else {
++    colors.colorRange = (maxColor - colors.minColor) / offsetRange;
++  }
++  return colors;
++}
++
++template <bool RECIPROCAL>
++static ALWAYS_INLINE GradientStopPairColors getGradientStopPairColors(
++    GradientStopPairCache& cache, const Float* stopColors, int32_t stopIndex,
++    float offsetRange, float colorScale) {
++  const Float* stopPair = &stopColors[stopIndex];
++  GradientStopPairCacheEntry& entry =
++      cache.entries[uint32_t(stopIndex) &
++                    (SWGL_GRADIENT_STOP_PAIR_CACHE_SIZE - 1)];
++  // Compare the key with vector xor rather than memcmp: gcc does not expand a
++  // fixed size memcmp inline on every target, and an out of line call here -
++  // register frame and all - costs more than the divide it is meant to save.
++  I32 diff = (bit_cast<I32>(entry.srcColors[0]) ^ bit_cast<I32>(stopPair[0])) |
++             (bit_cast<I32>(entry.srcColors[1]) ^ bit_cast<I32>(stopPair[1]));
++  if (entry.srcColorScale == colorScale &&
++      entry.srcOffsetRange == offsetRange && test_none(diff != I32(0))) {
++    return entry.colors;
++  }
++  entry.colors = computeGradientStopPairColors<RECIPROCAL>(
++      stopPair, offsetRange, colorScale);
++  entry.srcColors[0] = stopPair[0];
++  entry.srcColors[1] = stopPair[1];
++  entry.srcOffsetRange = offsetRange;
++  entry.srcColorScale = colorScale;
++  return entry.colors;
++}
++
+ // Samples an entire span of a linear gradient.
+ template <bool BLEND, bool DITHER>
+ static bool commitLinearGradientFromStops(sampler2D sampler, int offsetsAddress,
+@@ -1918,13 +2003,15 @@
+     // it but this change requires careful consideration of its interactions
+     // with the dithering code.
+     auto colorScale = (DITHER ? float(0xFF00) : 255.0f) * 256.0f;
+-    auto minColorF = stopColors[stopIndex].zyxw * colorScale;
+-    auto maxColorF = stopColors[stopIndex + 1].zyxw * colorScale;
+     auto deltaOffset = nextOffset - prevOffset;
+-    // Get the color range of the merged gradient, normalized to its size.
+-    Float colorRangeF = deltaOffset == 0.0f
+-                            ? Float(0.0f)
+-                            : (maxColorF - minColorF) * (1.0 / deltaOffset);
++    // Get the start color of the pair and the color range of the merged
++    // gradient, normalized to its size. Both depend only on the stop pair, so
++    // they are memoized across the segments of every span of this gradient.
++    auto pairColors = getGradientStopPairColors<true>(
++        sLinearGradientStopPairCache, stopColors, stopIndex, deltaOffset,
++        colorScale);
++    Float minColorF = pairColors.minColor;
++    Float colorRangeF = pairColors.colorRange;
+ 
+     // Compute the actual starting color of the current start offset within
+     // the merged gradient. The value 0.5 is added to the low bits (0x80) so
+@@ -2483,22 +2570,19 @@
+     int inside = int(endT - t) & ~3;
+     // Convert start and end colors to BGRA and scale to 0..0xFF00 range
+     // (for dithered) and 0.255 range (for non-dithered).
+-    auto minColorF =
+-        stopColors[stopIndex].zyxw * (DITHER ? float(0xFF00) : 255.0f);
+-    auto maxColorF =
+-        stopColors[stopIndex + 1].zyxw * (DITHER ? float(0xFF00) : 255.0f);
+-
+     // Compute the change in color per change in gradient offset.
++    // Note: If deltaOffset is 0, we know that we are going to fill some pixels
++    // with a solid color (we are in or out of the range of gradient stops). We
++    // could leverage that to skip the offset calculation.
++    // Both the start color and the change in color depend only on the stop
++    // pair, so they are memoized across the segments of every span of this
++    // gradient.
+     auto deltaOffset = nextOffset - prevOffset;
+-    Float deltaColorF =
+-        deltaOffset == 0.0f
+-            ?
+-            // Note: If we take this branch, we know that we are going to fill
+-            // some pixels with a solid color (we are in or out of the range of
+-            // gradient stops). We could leverage that to skip the offset
+-            // calculation.
+-            Float(0.0f)
+-            : (maxColorF - minColorF) / deltaOffset;
++    auto pairColors = getGradientStopPairColors<false>(
++        sRadialGradientStopPairCache, stopColors, stopIndex, deltaOffset,
++        (DITHER ? float(0xFF00) : 255.0f));
++    Float minColorF = pairColors.minColor;
++    Float deltaColorF = pairColors.colorRange;
+     // Subtract off the color difference of the beginning of the current span
+     // from the beginning of the gradient.
+     Float colorF = minColorF - deltaColorF * (adjustedStartRadius + prevOffset);

@@ -1,0 +1,46 @@
+# --- T2-COPYRIGHT-BEGIN ---
+# t2/package/*/firefox/hotfix-swgl-linear-gradient-zero-delta.patch
+# Copyright (C) 2026 The T2 SDE Project
+# SPDX-License-Identifier: GPL-2.0 or patched project license
+# --- T2-COPYRIGHT-END ---
+
+# SWGL walks a vertical linear gradient one pixel at a time.
+#
+# commitLinearGradientFromStops() computes how many pixels the current gradient
+# stop pair covers by intersecting the span with the next stop offset:
+#
+#     offsetRange = delta > 0 ? nextOffset - offset.x : prevOffset - offset.x;
+#     subSpan = min(subSpan, offsetRange / delta);
+#
+# delta is the change in gradient offset per pixel, dot(dFdx(pos), scaleDir).
+# For a vertical gradient scaleDir has no x component, so along a horizontal
+# span delta is exactly 0 and the offset - and therefore the color - is
+# constant for the entire span.
+#
+# delta == 0 is not > 0, so the else branch is taken and offsetRange becomes
+# prevOffset - offset.x, which is negative. Dividing by a zero delta gives
+# -inf, and the following
+#
+#     subSpan = max(ceil(subSpan), 1.0f);
+#
+# pins subSpan to 1. The span is then emitted a single pixel at a time, paying
+# a stop-pair search, a reciprocal and a full color setup per pixel, and never
+# reaching the 4-pixel chunk loop - for a span that is one flat color.
+
+--- firefox-154.0.1/gfx/wr/swgl/src/swgl_ext.h.vanilla
++++ firefox-154.0.1/gfx/wr/swgl/src/swgl_ext.h
+@@ -1981,9 +1981,11 @@
+       stopIndex =
+           findGradientStopPair(offset.x, stopOffsets, stopCount,
+                                prevOffset, nextOffset);
+-      float offsetRange =
+-          delta > 0.0f ? nextOffset - offset.x : prevOffset - offset.x;
+-      subSpan = min(subSpan, offsetRange / delta);
++      if (delta != 0.0f) {
++        float offsetRange =
++            delta > 0.0f ? nextOffset - offset.x : prevOffset - offset.x;
++        subSpan = min(subSpan, offsetRange / delta);
++      }
+     }
+ 
+     // Ensure that we advance by at least a pixel.
