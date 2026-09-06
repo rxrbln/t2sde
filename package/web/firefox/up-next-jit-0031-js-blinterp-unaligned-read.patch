@@ -20,10 +20,11 @@ boundary, and the kernel's fixup handler costs thousands of cycles.
 
 2. MacroAssembler.cpp -- iteratorMore() incremented NativeIterator's
    propertyCursor_, a uint32_t, with addPtr(). On little-endian that happens to
-   yield the right value while also rewriting the adjacent word, and it needed
-   a big-endian carve-out to be correct at all. It is simply a 32-bit field, so
-   add32() is correct on either endianness and properly aligned. The old form
-   straddled an 8-byte boundary on every for-in iteration.
+   yield the right value while also rewriting the adjacent word; on big-endian
+   it targets the adjacent field instead, so the iterator never advances. It is
+   simply a 32-bit field, so add32() is correct on either endianness and
+   properly aligned. The old form straddled an 8-byte boundary on every for-in
+   iteration.
 
 3. MacroAssembler.cpp -- branchIfNotStringCharsEquals() compares a string
    against a constant in decreasing strides, and finishes an odd-length tail
@@ -39,74 +40,104 @@ boundary, and the kernel's fixup handler costs thousands of cycles.
    per-character fallback copies at the character width, which is always
    naturally aligned.
 
+5. MacroAssembler.cpp -- the same function's *main* loop has the same problem
+   in a less obvious form. Its offsets are multiples of the stride from
+   |stringChars|, so they look aligned, but |stringChars| itself is only
+   aligned to the character size: a Latin-1 string's chars are a plain byte
+   pointer, and a dependent string of either encoding points into the middle
+   of its base. Comparing two Latin-1 characters with one 2-byte load
+   therefore traps whenever the string starts at 7 mod 8. Cap the stride at
+   the character size unless the target supports unaligned accesses, and make
+   compareStringChars()'s single-instruction path (which reads up to 8 bytes
+   at offset 0) make the same distinction.
+
+   Found on Octane/Typescript, whose scanner compares source text against the
+   atom "///"; that is a 3-byte constant, so the loop emitted a 2-byte compare
+   at +0 and a 1-byte compare at +2.
+
 diff -aurpN -x '*.orig' -x '*.rej' -x __pycache__ -x '*.pyc' -x .deps a/js/src/jit/BaselineCodeGen.cpp b/js/src/jit/BaselineCodeGen.cpp
---- firefox-153.0.1/js/src/jit/BaselineCodeGen.cpp.vanilla
-+++ firefox-153.0.1/js/src/jit/BaselineCodeGen.cpp
-@@ -495,7 +495,7 @@ static void LoadUint8Operand(MacroAssemb
+--- firefox-155.0.1/js/src/jit/BaselineCodeGen.cpp.vanilla
++++ firefox-155.0.1/js/src/jit/BaselineCodeGen.cpp
+@@ -459,7 +459,7 @@ static void LoadUint8Operand(MacroAssemb
  
  static void LoadUint16Operand(MacroAssembler& masm, Register dest) {
    Register pc = LoadBytecodePC(masm, dest);
 -  masm.load16ZeroExtend(Address(pc, sizeof(jsbytecode)), dest);
 +  masm.load16UnalignedZeroExtend(Address(pc, sizeof(jsbytecode)), dest);
-   SwapBytecodeOperandToNative16(masm, dest);
  }
  
-@@ -514,7 +514,7 @@ static void LoadConstantCompareOperand(M
+ static void LoadConstantCompareOperand(MacroAssembler& masm,
+@@ -477,19 +477,20 @@ static void LoadConstantCompareOperand(M
  
  static void LoadInt32Operand(MacroAssembler& masm, Register dest) {
    Register pc = LoadBytecodePC(masm, dest);
 -  masm.load32(Address(pc, sizeof(jsbytecode)), dest);
 +  masm.load32Unaligned(Address(pc, sizeof(jsbytecode)), dest);
-   SwapBytecodeOperandToNative32(masm, dest);
  }
  
-@@ -523,10 +523,11 @@ static void LoadInt32OperandSignExtendTo
- #if defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
-   // The operand is little-endian; byteSwap32 byte-reverses and sign-extends the
-   // low word to 64 bits, i.e. exactly the sign-extend-to-ptr we want.
--  masm.load32(Address(pc, sizeof(jsbytecode)), dest);
-+  masm.load32Unaligned(Address(pc, sizeof(jsbytecode)), dest);
-   masm.byteSwap32(dest);
- #else
+ static void LoadInt32OperandSignExtendToPtr(MacroAssembler& masm, Register pc,
+                                             Register dest) {
 -  masm.load32SignExtendToPtr(Address(pc, sizeof(jsbytecode)), dest);
 +  masm.load32Unaligned(Address(pc, sizeof(jsbytecode)), dest);
 +  masm.move32SignExtendToPtr(dest, dest);
- #endif
  }
  
-@@ -534,7 +535,7 @@ static void LoadUint24Operand(MacroAssem
+ static void LoadUint24Operand(MacroAssembler& masm, size_t offset,
                                Register dest) {
    // Load the opcode and operand, then left shift to discard the opcode.
    Register pc = LoadBytecodePC(masm, dest);
 -  masm.load32(Address(pc, offset), dest);
 +  masm.load32Unaligned(Address(pc, offset), dest);
-   // Swap to native first so the opcode byte ends up in the low 8 bits, then
-   // shift it out, leaving the 24-bit operand.
-   SwapBytecodeOperandToNative32(masm, dest);
-@@ -5828,15 +5829,15 @@ void BaselineInterpreterCodeGen::emitGet
-   // Jump to default if val > high. The low/high operands are little-endian in
-   // the bytecode, so byte-swap to native on big-endian before comparing.
- #if defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
--  masm.load32(highAddr, scratch2);
-+  masm.load32Unaligned(highAddr, scratch2);
-   masm.byteSwap32(scratch2);
--  masm.branch32(Assembler::LessThan, scratch2, dest, &jumpToDefault);
- #else
+   masm.rshift32(Imm32(8), dest);
+ }
+ 
+@@ -5838,10 +5839,11 @@ void BaselineInterpreterCodeGen::emitGet
+   Address highAddr(pcReg, sizeof(jsbytecode) + TableSwitchOpHighOffset);
+ 
+   // Jump to default if val > high.
 -  masm.branch32(Assembler::LessThan, highAddr, dest, &jumpToDefault);
 +  masm.load32Unaligned(highAddr, scratch2);
- #endif
 +  masm.branch32(Assembler::LessThan, scratch2, dest, &jumpToDefault);
  
    // Jump to default if val < low.
 -  masm.load32(lowAddr, scratch2);
 +  masm.load32Unaligned(lowAddr, scratch2);
-   SwapBytecodeOperandToNative32(masm, scratch2);
    masm.branch32(Assembler::GreaterThan, scratch2, dest, &jumpToDefault);
  
+   // index := val - low.
+
 diff -aurpN -x '*.orig' -x '*.rej' -x __pycache__ -x '*.pyc' -x .deps a/js/src/jit/MacroAssembler.cpp b/js/src/jit/MacroAssembler.cpp
---- firefox-153.0.1/js/src/jit/MacroAssembler.cpp.vanilla
-+++ firefox-153.0.1/js/src/jit/MacroAssembler.cpp
-@@ -1259,7 +1259,13 @@
+--- firefox-155.0.1/js/src/jit/MacroAssembler.cpp.vanilla
++++ firefox-155.0.1/js/src/jit/MacroAssembler.cpp
+@@ -1223,8 +1223,27 @@ void MacroAssembler::branchIfNotStringCh
+                             : sizeof(char16_t);
+   size_t byteLength = StringCharsByteLength(str);
+ 
++  // Each comparison below reads |stride| bytes from |stringChars| + a multiple
++  // of |stride|, so the offsets are aligned relative to the base -- but the
++  // base itself is only aligned to the character size. A Latin-1 string's
++  // chars are a plain byte pointer, and a dependent string of either encoding
++  // points into the middle of its base. Reading more than one character at a
++  // time is therefore an unaligned access, and only available where the
++  // hardware allows one.
++  //
++  // Where it does not, the wider strides are skipped and the loop falls
++  // through to character-sized comparisons. Those are naturally aligned, and
++  // they still short-circuit on the first mismatching character, so the common
++  // case executes about as many of them as before -- it is the emitted code
++  // that grows, not the work done at run time.
++  const size_t maxStride =
++      MacroAssembler::SupportsUnalignedAccesses() ? 8 : encodingSize;
++
+   size_t pos = 0;
+   for (size_t stride : {8, 4, 2, 1}) {
++    if (stride > maxStride) {
++      continue;
++    }
+     while (byteLength >= stride) {
+       Address addr(stringChars, pos * encodingSize);
+       switch (stride) {
+@@ -1260,7 +1279,13 @@ void MacroAssembler::branchIfNotStringCh
      // For example when comparing against the string "example", emit two
      // four-byte comparisons against "exam" and "mple" instead of doing
      // three comparisons against "exam", "pl", and finally "e".
@@ -121,32 +152,53 @@ diff -aurpN -x '*.orig' -x '*.rej' -x __pycache__ -x '*.pyc' -x .deps a/js/src/j
        MOZ_ASSERT(stride == 8 || stride == 4);
  
        size_t prev = pos - (stride - byteLength) / encodingSize;
-@@ -9952,15 +9958,13 @@
+@@ -1335,9 +1360,22 @@ void MacroAssembler::compareStringChars(
+ 
+   size_t byteLength = StringCharsByteLength(str);
+ 
+-  // Prefer a single compare-and-set instruction if possible.
+-  if (byteLength == 1 || byteLength == 2 || byteLength == 4 ||
+-      byteLength == 8) {
++  CharEncoding encoding =
++      str->hasLatin1Chars() ? CharEncoding::Latin1 : CharEncoding::TwoByte;
++  size_t encodingSize = encoding == CharEncoding::Latin1
++                            ? sizeof(JS::Latin1Char)
++                            : sizeof(char16_t);
++
++  // Prefer a single compare-and-set instruction if possible. |stringChars| is
++  // only aligned to the character size, so anything wider than one character
++  // is an unaligned read -- see branchIfNotStringCharsEquals(), which the
++  // fallback below uses and which makes the same distinction.
++  const size_t maxWidth =
++      MacroAssembler::SupportsUnalignedAccesses() ? 8 : encodingSize;
++
++  if ((byteLength == 1 || byteLength == 2 || byteLength == 4 ||
++       byteLength == 8) &&
++      byteLength <= maxWidth) {
+     auto cond = JSOpToCondition(op, /* isSigned = */ false);
+ 
+     Address addr(stringChars, 0);
+@@ -9995,8 +10033,13 @@ void MacroAssembler::iteratorMore(Regist
                       NativeIterator::offsetOfFirstProperty());
    loadPtr(propAddr, temp);
  
 -  // Increase the cursor.
--#if defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
--  // propertyCursor_ is a uint32_t. A pointer-sized increment would target the
--  // high word of the 64-bit access on big-endian (i.e. the adjacent field),
--  // leaving the cursor unchanged so the iterator never advances.
+-  addPtr(Imm32(1), cursorAddr);
 +  // Increase the cursor. propertyCursor_ is a uint32_t, so this has to be a
 +  // 32-bit increment: a pointer-sized one targets the high word of the 64-bit
 +  // access on big-endian (i.e. the adjacent field), leaving the cursor
 +  // unchanged so the iterator never advances, and on IA-64 the field is only
 +  // 4-byte aligned, so a 64-bit access straddles an 8-byte boundary and traps
 +  // into the kernel's unaligned-fixup handler on every single iteration.
-   add32(Imm32(1), cursorAddr);
--#else
--  addPtr(Imm32(1), cursorAddr);
--#endif
++  add32(Imm32(1), cursorAddr);
  
    // Check if the property has been deleted while iterating. Skip it if so.
    branchTestPtr(Assembler::NonZero, temp,
+
 diff -aurpN -x '*.orig' -x '*.rej' -x __pycache__ -x '*.pyc' -x .deps a/js/src/jit/CodeGenerator.cpp b/js/src/jit/CodeGenerator.cpp
---- firefox-153.0.1/js/src/jit/CodeGenerator.cpp.vanilla
-+++ firefox-153.0.1/js/src/jit/CodeGenerator.cpp
-@@ -13587,7 +13587,12 @@ static void CopyStringChars(MacroAssembl
+--- firefox-155.0.1/js/src/jit/CodeGenerator.cpp.vanilla
++++ firefox-155.0.1/js/src/jit/CodeGenerator.cpp
+@@ -13685,7 +13685,12 @@ static void CopyStringChars(MacroAssembl
        toEncoding == CharEncoding::Latin1 ? sizeof(char) : sizeof(char16_t);
  
    // Try to copy multiple characters at once when both encoding are equal.
@@ -160,3 +212,4 @@ diff -aurpN -x '*.orig' -x '*.rej' -x __pycache__ -x '*.pyc' -x .deps a/js/src/j
      constexpr size_t ptrWidth = sizeof(uintptr_t);
  
      // Copy |width| bytes and then adjust |from| and |to|.
+
