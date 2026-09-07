@@ -62,11 +62,11 @@ while [ "$1" ]; do
 done
 
 # -e ps3vram
-[ -z "$minimal" ] && filter="$filter -e reiserfs -e btrfs -e /jfs -e /zfs -e jffs2
+[ -z "$minimal" ] && filter="$filter -e reiserfs -e btrfs -e /jfs -e /zfs -e jffs2 -e fs/9p
 -e /udf -e overlayfs -e ntfs -e /fat -e /exfat -e /hfs -e floppy -e efivarfs -e watchdog
 -e pci/controller -e /ata/ -e /scsi/ -e /fusion/ -e nvme/host -e mmc/host -e mmc_block
--e virtio.\(blk\|scsi\|net\|console\|input\|gpu\|pci\) -e ps3disk -e drivers/pcmcia
--e /nvme.ko -e pci-host-generic -e virtio_pci_.*_dev -e sunvdc -e pci-stub
+-e virtio.\(blk\|scsi\|net\|console\|input\|gpu\|pci\|ring\) -e ps3disk -e drivers/pcmcia
+-e /nvme.ko -e pci-host-generic -e virtio_pci_.*_dev -e sunvdc -e 9pnet_virtio -e pci-stub
 -e dm-mod -e dm-raid -e md/raid -e dm/mirror -e dm/linear -e dm-crypt -e dm-cache
 -e /aes -e /sha -e /blake -e /cbc -e /ecb -e xts
 -e nls_cp437 -e nls_iso8859-1 -e nls_utf8

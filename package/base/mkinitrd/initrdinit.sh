@@ -50,21 +50,30 @@ overlayfs() {
     for o in ${overlay//,/ }; do
 	((++i))
 
-	if [ ! -e $mnt/$o ]; then
+	# parse name:fs:opts
+	_IFS="$IFS" IFS=':'
+	set -- $o
+	IFS="$_IFS"
+	o=$1 fs=$2 fsopt="$3"
+	
+	if [ ! "$2" ]; then
+	    if [ ! -e $mnt/$o ]; then
 		echo "No $mnt/$o to overlay."
 		return 1
-	fi
+	    fi
 
 
-	if ! losetup /dev/loop$i $mnt/$o; then
+	    if ! losetup /dev/loop$i $mnt/$o; then
 		echo "Failed to setup /dev/loop$i"
 		return 1
+	    fi
+
+	    fs=$(detectfs /dev/loop$i)
+	    o=/dev/loop$i
 	fi
 
-	fs=$(detectfs /dev/loop$i)
-
 	mkdir /mnt/$i
-	if ! mount -t $fs /dev/loop$i /mnt/$i; then
+	if ! mount -t $fs ${fsopt:+-o $fsopt} $o /mnt/$i; then
 		echo "Failed to mount $o"
 		return 1
 	fi
