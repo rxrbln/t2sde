@@ -25,15 +25,93 @@
 
 [D] d18cfed3f9047b84615960e62b35ebc4dd68808b33b636c2f9a0a155 TypeScript-7.0.2.tar.gz https://github.com/microsoft/TypeScript/archive/v7.0.2/
 
-runmake=0
+rungo=0 runmake=0
+
+typescript_build() {
+	local tsgobin
+
+	( cd tsc
+	  CGO_ENABLED=0 go build -trimpath -tags noembed \
+		-ldflags "-s -w -X github.com/microsoft/typescript-go/internal/core.version=$ver" \
+		-o tsgo ./cmd/tsgo
+
+	  CGO_ENABLED=0 GOARCH= GOOS= go build -trimpath \
+		-o tsgo-build ./cmd/tsgo
+	  tsgobin="$PWD/tsgo-build"
+
+	  cd _packages/native-preview
+	  rm -f tsconfig.tsbuildinfo	# it is a composite project, do not skip
+	  "$tsgobin" -p tsconfig.json --noCheck --types '' \
+		--sourceMap false --declarationMap false )
+}
+hook_add premake 5 typescript_build
 
 typescript_install() {
-	local destdir="$(pkgprefix libdir nodejs)/node_modules/typescript"
+	local npmdir="tsc/_packages/native-preview"
+	local tsdir="$(pkgprefix libdir nodejs)/node_modules/typescript"
+	local destdir="$root$tsdir"
 
-	mkdir -p "$destdir"
-	cp -a ./. "$destdir"/
+	mkdir -p "$destdir/bin" "$destdir/lib"
+	cp -fv tsc/tsgo "$destdir/lib/tsc"
+	chmod 755 "$destdir/lib/tsc"
 
-	ln -sfv "$destdir/bin/tsc" "$root/$bindir/tsc"
-	ln -sfv "$destdir/bin/tsserver" "$root/$bindir/tsserver"
+	mkdir -p "$root$bindir"
+	ln -sfv "$tsdir/lib/tsc" "$root$bindir/tsc"
+	ln -sfv tsc "$root$bindir/tsgo"
+	cp -fv $npmdir/lib/tsgo.js "$destdir/lib/tsc.js"
+	cp -fv $npmdir/lib/version.cjs $npmdir/lib/version.d.cts \
+		$npmdir/lib/getExePath.d.ts "$destdir/lib/"
+	chmod 755 "$destdir/lib/tsc.js"
+	chmod 644 "$destdir/lib/version.cjs" "$destdir/lib/version.d.cts" \
+		"$destdir/lib/getExePath.d.ts"
+	sed 's,\.\./lib/tsgo\.js,../lib/tsc.js,' $npmdir/bin/tsgo > "$destdir/bin/tsc"
+	chmod 755 "$destdir/bin/tsc"
+
+	cat > "$destdir/lib/getExePath.js" <<-EOT
+		export default function getExePath() {
+		    return "$bindir/tsc";
+		}
+	EOT
+
+	cp -rv $npmdir/dist $npmdir/vendor "$destdir/"
+	cp -fv tsc/internal/bundled/libs/*.d.ts "$destdir/lib/"
+	chmod 644 "$destdir"/lib/lib.*.d.ts
+
+	cat > "$destdir/package.json" <<-EOT
+		{
+		    "name": "typescript",
+		    "version": "$ver",
+		    "license": "Apache-2.0",
+		    "author": "Microsoft Corp.",
+		    "homepage": "https://www.typescriptlang.org/",
+		    "description": "TypeScript is a language for application scale JavaScript development",
+		    "type": "module",
+		    "engines": { "node": ">=16.20.0" },
+		    "bin": { "tsc": "./bin/tsc" },
+		    "exports": {
+		        "./package.json": "./package.json",
+		        ".": "./lib/version.cjs",
+		        "./unstable/sync": "./dist/api/sync/api.js",
+		        "./unstable/async": "./dist/api/async/api.js",
+		        "./unstable/fs": "./dist/api/fs.js",
+		        "./unstable/proto": "./dist/api/proto.js",
+		        "./unstable/ast": "./dist/ast/index.js",
+		        "./unstable/ast/is": "./dist/ast/is.js",
+		        "./unstable/ast/factory": "./dist/ast/factory.generated.js",
+		        "./unstable/ast/utils": "./dist/ast/utils.js",
+		        "./unstable/ast/scanner": "./dist/ast/scanner.js",
+		        "./unstable/ast/visitor": "./dist/ast/visitor.js",
+		        "./unstable/ast/clone": "./dist/ast/clone.js"
+		    },
+		    "imports": {
+		        "#getExePath": "./lib/getExePath.js",
+		        "#enums/*": {
+		            "types": "./dist/enums/*.enum.d.ts",
+		            "default": "./dist/enums/*.js"
+		        },
+		        "#vscode-jsonrpc/node": "./vendor/vscode-jsonrpc/lib/node/main.js"
+		    }
+		}
+	EOT
 }
 hook_add postmake 5 typescript_install
