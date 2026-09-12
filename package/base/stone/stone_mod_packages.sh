@@ -107,7 +107,7 @@ main() {
 		[ "$dev" = RSYNC ] || read_ids
 
 		cmd="$cmd '' ''"
-		cmd="$cmd 'Start Package Manager' 'startgas=2'"
+		cmd="$cmd 'Start Installation' 'startgas=2'"
 		type -p gasgui > /dev/null &&
 			cmd="$cmd 'Start Package Manager (gasgui)' 'startgas=1'"
 
