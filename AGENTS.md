@@ -22,16 +22,16 @@ cross-compilation, not just look plausible. Never:
 
 ## `.desc` / `.cache` — the two most-repeated mistakes
 
-0. Do not simply disable features that do not build, correctly conditoinalize
+1. Do not simply disable features that do not build, correctly conditoinalize
    optional dependencies to pkginstalled $pkg || ...disable feature... or
    atstage cross && ... if a feature does not cross compile for reasons.
-1. **Adding `[E] add pkg` / `[E] opt pkg` to a `.desc` without also adding the
+2. **Adding `[E] add pkg` / `[E] opt pkg` to a `.desc` without also adding the
    matching `[DEP] pkg` / `[OPT] pkg` line to that package's `.cache`** (same
    directory, `<pkg>.cache`). The `.cache` file is what the build *scheduler*
    uses for dependency-graph/build-order decisions; a `.desc`-only edit does
    not mmediate take effect for a full/bulk target build until the `.cache`
    also has it (or a full successful build regenerates the cache itself).
-2. **The opposite mistake, just as common: adding `[E] add pkg` when `pkg` is
+3. **The opposite mistake, just as common: adding `[E] add pkg` when `pkg` is
    ALREADY listed in the `.cache`.** If it's already there, the dependency is
    already correctly tracked — adding a `.desc` line is a no-op that doesn't
    fix anything and just adds noise. **Before adding an `[E]` line, grep the
@@ -40,20 +40,20 @@ cross-compilation, not just look plausible. Never:
    package isn't actually built for this target yet, it's stale (version
    mismatch), or there's a real build-system bug (see the "Common root
    causes" section below) — go find that instead.
-3. `pkginstalled()` (in `scripts/functions.in`) takes multiple package names
+4. `pkginstalled()` (in `scripts/functions.in`) takes multiple package names
    for a dependency group in one call and returns true only if **all** are
    installed — use `pkginstalled pkgA pkgB || ...` for a combined AND-gate
    instead of two separate calls. It also auto-registers every argument as
    an `[E] opt` dependency (visible as `[OPT]` in the `.cache` after a build) —
    so a dynamic `pkginstalled` check in the script body does NOT also need a
    static `[E] opt` line; that would be redundant, same as point 2 above.
-4. If a package needs its `configure`/`Makefile` regenerated (tarball ships
+5. If a package needs its `configure`/`Makefile` regenerated (tarball ships
    only `configure.ac`/`Makefile.am`), set `autogen=1` (or `2`) in the
    `.desc` — do not hand-add a `hook_add preconf ... "autoreconf ..."` line.
    The generic build flow already has this path built in.
-5. Code belongs to the end of .desc, not in the middle between tags.
-6. Do not cause random white-space and new-line damage.
-7. Update `<pkg>.cache` files from successful builds with relevant depencency
+6. Code belongs to the end of .desc, not in the middle between tags.
+7. Do not cause random white-space and new-line damage.
+8. Update `<pkg>.cache` files from successful builds with relevant depencency
    changes.
 
 ## Comments and attribution
