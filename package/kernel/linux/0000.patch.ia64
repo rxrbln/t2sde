@@ -72095,3 +72095,304 @@ index e29a6b826734fb..99b01950096f9e 100644
  }
  #endif
  
+From 38c09f598f62ca7314f96e8ae12480e6b98a3b4f Mon Sep 17 00:00:00 2001
+From: Tomas Glozar <tglozar@gmail.com>
+Date: Thu, 3 Sep 2026 21:26:50 +0200
+Subject: [PATCH] ia64/sba_iommu: attach per device instead of globally
+
+sba_init() installs sba_dma_ops as the arch-wide dma_ops, so every device
+in the system is routed into sba_iommu, including devices it does not
+translate for. The driver assumes ioc is non-NULL. so sba_map_sg_attrs()
+goes on to dereference ioc->dma_mask and panics.
+
+Attach sba_dma_ops from pcibios_bus_add_device() for devices that have
+an IOC, and leave everything else with NULL dma_ops so it falls through
+to dma_direct.
+
+Note that sba_init() runs at subsys_initcall, which can be after PCI
+enumeration, so walk the devices that already exist once
+sba_connect_bus() has filled in PCI_CONTROLLER(bus)->iommu.
+
+With no caller left, drop the dma_ops global and let ia64 use the generic
+get_arch_dma_ops(), which returns NULL.
+
+Also drop the swiotlb_exit() call, because devices that now fall back to
+dma_direct have nothing to bounce through, and one with a mask narrower
+than the physical address width would get a mapping failure instead.
+
+The bounce buffer is tunable with swiotlb= on the command line for
+anyone who wants the memory back.
+
+Assisted-by: Claude:claude-opus-5
+Signed-off-by: Tomas Glozar <tglozar@gmail.com>
+---
+ arch/ia64/hp/common/sba_iommu.c     | 23 +++++++++++++++++++----
+ arch/ia64/include/asm/dma-mapping.h | 16 ----------------
+ arch/ia64/kernel/dma-mapping.c      |  4 ----
+ 3 files changed, 19 insertions(+), 24 deletions(-)
+ delete mode 100644 arch/ia64/include/asm/dma-mapping.h
+
+diff --git a/arch/ia64/hp/common/sba_iommu.c b/arch/ia64/hp/common/sba_iommu.c
+index 36049f9a0a0efb..5c8f921f7dc193 100644
+--- a/arch/ia64/hp/common/sba_iommu.c
++++ b/arch/ia64/hp/common/sba_iommu.c
+@@ -35,7 +35,6 @@
+ #include <linux/iommu-helper.h>
+ #include <linux/dma-map-ops.h>
+ #include <linux/prefetch.h>
+-#include <linux/swiotlb.h>
+ 
+ #include <asm/delay.h>		/* ia64_get_itc() */
+ #include <asm/io.h>
+@@ -2077,9 +2076,21 @@ static const struct dma_map_ops sba_dma_ops = {
+ 	.free_pages		= dma_common_free_pages,
+ };
+ 
++void pcibios_bus_add_device(struct pci_dev *pdev)
++{
++	if (!GET_IOC(&pdev->dev)) {
++		/* sba_iommu only translates for devices behind an ioc */
++		return;
++	}
++
++	set_dma_ops(&pdev->dev, &sba_dma_ops);
++}
++
+ static int __init
+ sba_init(void)
+ {
++	struct pci_dev *pdev = NULL;
++
+ 	/*
+ 	 * If we are booting a kdump kernel, the sba_iommu will cause devices
+ 	 * that were not shutdown properly to MCA as soon as they are turned
+@@ -2105,9 +2116,13 @@ sba_init(void)
+ 			sba_connect_bus(b);
+ 	}
+ 
+-	/* no need for swiotlb with the iommu */
+-	swiotlb_exit();
+-	dma_ops = &sba_dma_ops;
++	/*
++	 * Buses enumerated before we ran had no IOC attached yet, so their
++	 * devices missed pcibios_bus_add_device().  Hand out ops now that
++	 * sba_connect_bus() has filled in PCI_CONTROLLER(bus)->iommu.
++	 */
++	for_each_pci_dev(pdev)
++		pcibios_bus_add_device(pdev);
+ 
+ #ifdef CONFIG_PROC_FS
+ 	ioc_proc_init();
+diff --git a/arch/ia64/include/asm/dma-mapping.h b/arch/ia64/include/asm/dma-mapping.h
+deleted file mode 100644
+index af6fa8e1597c6e..00000000000000
+--- a/arch/ia64/include/asm/dma-mapping.h
++++ /dev/null
+@@ -1,16 +0,0 @@
+-/* SPDX-License-Identifier: GPL-2.0 */
+-#ifndef _ASM_IA64_DMA_MAPPING_H
+-#define _ASM_IA64_DMA_MAPPING_H
+-
+-/*
+- * Copyright (C) 2003-2004 Hewlett-Packard Co
+- *	David Mosberger-Tang <davidm@hpl.hp.com>
+- */
+-extern const struct dma_map_ops *dma_ops;
+-
+-static inline const struct dma_map_ops *get_arch_dma_ops(void)
+-{
+-	return dma_ops;
+-}
+-
+-#endif /* _ASM_IA64_DMA_MAPPING_H */
+diff --git a/arch/ia64/kernel/dma-mapping.c b/arch/ia64/kernel/dma-mapping.c
+index cd0c166bfbc23e..1168b1614e1f08 100644
+--- a/arch/ia64/kernel/dma-mapping.c
++++ b/arch/ia64/kernel/dma-mapping.c
+@@ -1,9 +1,5 @@
+ // SPDX-License-Identifier: GPL-2.0
+ #include <linux/dma-map-ops.h>
+-#include <linux/export.h>
+ 
+ /* Set this to 1 if there is a HW IOMMU in the system */
+ int iommu_detected __read_mostly;
+-
+-const struct dma_map_ops *dma_ops;
+-EXPORT_SYMBOL(dma_ops);
+From 618e86355c423b8d693479c23d933c6f69ff6f6d Mon Sep 17 00:00:00 2001
+From: Tomas Glozar <tglozar@gmail.com>
+Date: Fri, 11 Sep 2026 23:25:13 +0200
+Subject: [PATCH] ia64: implement flush_tlb_kernel_range() properly
+
+The current implementation of flush_tlb_kernel_range() does an
+unconditional flush_tlb_all(). This has multiple issues:
+
+- It is unnecessarily inefficient in cases where only a small portion of
+  kernel pages needs a TLB flush.
+
+- On at least the Montecito (Itanium 2 9000) with CGMT disabled in
+  firmware, translations were observed to survive thousands of global
+  flushes until an address-matching purge removed them.
+
+  This caused errors when loading modules, as module sections got
+  overwritten through stale TLB entries.
+
+- On SGI Altix systems, flushing all TLB entries on loading modules
+  interferes with concurrent PIO/MMIO traffic, breaking the loading
+  of GPU drivers.
+
+Implement flush_tlb_kernel_range() as a proper function that iterates
+only over the kernel range specified, over all CPUs to match the global
+mapping of the kernel memory region.
+
+Assisted-by: Claude:claude-fable-5.1
+Signed-off-by: Tomas Glozar <tglozar@gmail.com>
+---
+ arch/ia64/include/asm/tlbflush.h |  6 +---
+ arch/ia64/mm/tlb.c               | 56 ++++++++++++++++++++++++++++++++
+ 2 files changed, 57 insertions(+), 5 deletions(-)
+
+diff --git a/arch/ia64/include/asm/tlbflush.h b/arch/ia64/include/asm/tlbflush.h
+index ceac10c4d6e2f3..4ac0e3f7201610 100644
+--- a/arch/ia64/include/asm/tlbflush.h
++++ b/arch/ia64/include/asm/tlbflush.h
+@@ -119,10 +119,6 @@ void smp_local_flush_tlb(void);
+ #define smp_local_flush_tlb()
+ #endif
+ 
+-static inline void flush_tlb_kernel_range(unsigned long start,
+-					  unsigned long end)
+-{
+-	flush_tlb_all();	/* XXX fix me */
+-}
++extern void flush_tlb_kernel_range(unsigned long start, unsigned long end);
+ 
+ #endif /* _ASM_IA64_TLBFLUSH_H */
+diff --git a/arch/ia64/mm/tlb.c b/arch/ia64/mm/tlb.c
+index ca060e7a2a466f..3114dbff0677cd 100644
+--- a/arch/ia64/mm/tlb.c
++++ b/arch/ia64/mm/tlb.c
+@@ -366,6 +366,62 @@ void flush_tlb_range(struct vm_area_struct *vma,
+ }
+ EXPORT_SYMBOL(flush_tlb_range);
+ 
++/*
++ * Purge a kernel virtual address range from the TLBs of all CPUs.
++ *
++ * Kernel mappings (region 5, vmalloc/ioremap space) are shared by all CPUs,
++ * so every CPU runs the same ranged ptc.l loop.
++ */
++struct kernel_tlb_purge {
++	unsigned long start;
++	unsigned long end;
++	unsigned long nbits;
++};
++
++static void local_flush_tlb_kernel_range(void *arg)
++{
++	struct kernel_tlb_purge *p = arg;
++	unsigned long addr = p->start, flags;
++
++	local_irq_save(flags);
++	do {
++		ia64_ptcl(addr, p->nbits << 2);
++		addr += 1UL << p->nbits;
++	} while (addr < p->end);
++	local_irq_restore(flags);
++	ia64_srlz_i();			/* srlz.i implies srlz.d */
++}
++
++/* Above this many ptc.l per CPU, purge everything instead. */
++#define KERNEL_TLB_PURGE_MAX_ITER	1024
++
++void flush_tlb_kernel_range(unsigned long start, unsigned long end)
++{
++	struct kernel_tlb_purge p;
++	unsigned long size = end - start, nbits;
++
++	if (unlikely(start >= end))
++		return;
++
++	nbits = ia64_fls(size + PAGE_SIZE - 1);
++	while (unlikely(((1UL << nbits) & purge.mask) == 0) &&
++			(nbits < purge.max_bits))
++		++nbits;
++	if (nbits > purge.max_bits)
++		nbits = purge.max_bits;
++	p.start = start & ~((1UL << nbits) - 1);
++	p.end = end;
++	p.nbits = nbits;
++
++	if (unlikely(REGION_NUMBER(start) != REGION_NUMBER(end - 1) ||
++		     ((p.end - p.start) >> nbits) > KERNEL_TLB_PURGE_MAX_ITER)) {
++		flush_tlb_all();
++		return;
++	}
++
++	on_each_cpu(local_flush_tlb_kernel_range, &p, 1);
++}
++
+ void ia64_tlb_init(void)
+ {
+ 	ia64_ptce_info_t ptce_info;
+From 2a8f7c5a35f2326a8af0f279eae7e422eaa62ea8 Mon Sep 17 00:00:00 2001
+From: Tomas Glozar <tglozar@gmail.com>
+Date: Sun, 13 Sep 2026 14:57:15 +0200
+Subject: [PATCH] mm/vmalloc: optimize vm_reset_perms() with
+ !CONFIG_ARCH_HAS_SET_DIRECT_MAP
+
+On architectures without CONFIG_ARCH_HAS_SET_DIRECT_MAP, it is not
+necessary to merge direct map addresses for vm_unmap_aliases() in
+vm_reset_perms(), as set_direct_map_invalid_noflush() is a no-op.
+
+Remove the merging to prevent a global flush from being forced on some
+architectures (e.g. ia64, where the resulting range crosses memory
+regions).
+
+This also serves as a workaround on some ia64 systems, where a global
+flush_tlb_all() keeps some entries stale.
+
+Assisted-by: Claude:claude-opus-5
+Signed-off-by: Tomas Glozar <tglozar@gmail.com>
+---
+ mm/vmalloc.c | 24 ++++++++++++++++--------
+ 1 file changed, 16 insertions(+), 8 deletions(-)
+
+diff --git a/mm/vmalloc.c b/mm/vmalloc.c
+index bea9f76ed7e742..efbc0a72da98b1 100644
+--- a/mm/vmalloc.c
++++ b/mm/vmalloc.c
+@@ -3381,17 +3381,25 @@ static void vm_reset_perms(struct vm_struct *area)
+ 	/*
+ 	 * Find the start and end range of the direct mappings to make sure that
+ 	 * the vm_unmap_aliases() flush includes the direct map.
++	 *
++	 * Only needed where set_direct_map_invalid_noflush() below actually
++	 * invalidates the direct map.  Without CONFIG_ARCH_HAS_SET_DIRECT_MAP
++	 * it is a no-op stub, so nothing there needs flushing and merging the
++	 * direct map addresses would only widen the range passed to
++	 * flush_tlb_kernel_range().
+ 	 */
+-	for (i = 0; i < area->nr_pages; i += 1U << page_order) {
+-		unsigned long addr = (unsigned long)page_address(area->pages[i]);
++	if (IS_ENABLED(CONFIG_ARCH_HAS_SET_DIRECT_MAP)) {
++		for (i = 0; i < area->nr_pages; i += 1U << page_order) {
++			unsigned long addr = (unsigned long)page_address(area->pages[i]);
+ 
+-		if (addr) {
+-			unsigned long page_size;
++			if (addr) {
++				unsigned long page_size;
+ 
+-			page_size = PAGE_SIZE << page_order;
+-			start = min(addr, start);
+-			end = max(addr + page_size, end);
+-			flush_dmap = 1;
++				page_size = PAGE_SIZE << page_order;
++				start = min(addr, start);
++				end = max(addr + page_size, end);
++				flush_dmap = 1;
++			}
+ 		}
+ 	}
+ 
