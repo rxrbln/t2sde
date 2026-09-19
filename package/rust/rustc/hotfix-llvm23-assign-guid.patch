@@ -1,0 +1,62 @@
+# --- T2-COPYRIGHT-BEGIN ---
+# t2/package/*/rustc/hotfix-llvm23-assign-guid.patch
+# Copyright (C) 2026 The T2 SDE Project
+# SPDX-License-Identifier: GPL-2.0 or patched project license
+# --- T2-COPYRIGHT-END ---
+
+Subject: [PATCH] rustc_llvm: run AssignGUIDPass before writing ThinLTO bitcode on LLVM 23
+
+LLVM 23 stores each global's GUID as !unique_id metadata, assigned by
+the new AssignGUIDPass (llvm/Transforms/Utils/AssignGUID.h), and
+GlobalValue::getGUID() no longer computes it from the name for a
+definition. Upstream added the pass to addRequiredLTOPreLinkPasses(),
+but rustc duplicates that list by hand (CanonicalizeAliases +
+NameAnonGlobal) for the -Copt-level=0 / -Cembed-bitcode path, and
+LLVMRustModuleSerialize runs ThinLTOBitcodeWriterPass on its own.
+
+Without the pass, ModuleSummaryAnalysis records definitions under a
+garbage GUID while the bitcode writer looks them up with
+getGUIDOrFallback() (the name's MD5), so every crate built with
+embed-bitcode dies with
+
+  rustc-LLVM ERROR: expected function definition _RINv... to have an
+  associated value info.
+
+The optimised ThinLTO pre-link pipelines already get the pass from
+LLVM; it is idempotent, so running it again is harmless.
+
+---
+--- a/compiler/rustc_llvm/llvm-wrapper/PassWrapper.cpp	2026-09-19 17:10:43.533342019 +0200
++++ b/compiler/rustc_llvm/llvm-wrapper/PassWrapper.cpp	2026-09-19 17:10:43.555836853 +0200
+@@ -58,6 +58,9 @@
+ 
+ // Conditional includes prevent clang-format from fully sorting the list,
+ // so if any are needed, keep them separate down here.
++#if LLVM_VERSION_GE(23, 0)
++#include "llvm/Transforms/Utils/AssignGUID.h"
++#endif
+ 
+ using namespace llvm;
+ 
+@@ -925,6 +928,11 @@
+   if (NeedThinLTOBufferPasses) {
+     MPM.addPass(CanonicalizeAliasesPass());
+     MPM.addPass(NameAnonGlobalPass());
++#if LLVM_VERSION_GE(23, 0)
++    // LLVM 23 stores GUIDs as metadata and no longer computes them on the
++    // fly; the summary written by ThinLTOBitcodeWriterPass needs them.
++    MPM.addPass(AssignGUIDPass());
++#endif
+   }
+   // For `-Copt-level=0`, and the pre-link fat/thin LTO stages.
+   if (ThinLTOBufferRef && *ThinLTOBufferRef == nullptr) {
+@@ -1464,6 +1472,9 @@
+         PB.registerLoopAnalyses(LAM);
+         PB.crossRegisterProxies(LAM, FAM, CGAM, MAM);
+         ModulePassManager MPM;
++#if LLVM_VERSION_GE(23, 0)
++        MPM.addPass(AssignGUIDPass());
++#endif
+         MPM.addPass(ThinLTOBitcodeWriterPass(OS, nullptr));
+         MPM.run(*unwrap(M), MAM);
+       } else {
