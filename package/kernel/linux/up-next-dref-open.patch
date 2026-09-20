@@ -1,0 +1,158 @@
+From: Mateusz Guzik <mjguzik@gmail.com>
+Subject: [PATCH v5] fs: avoid spurious dentry ref/unref cycle on open
+Date: Mon,  3 Aug 2026 14:51:38 +0200
+Message-ID: <20260803125138.1937674-1-mjguzik@gmail.com>
+X-Mailer: git-send-email 2.43.0
+Precedence: bulk
+X-Mailing-List: linux-fsdevel@vger.kernel.org
+List-Id: <linux-fsdevel.vger.kernel.org>
+List-Subscribe: <mailto:linux-fsdevel+subscribe@vger.kernel.org>
+List-Unsubscribe: <mailto:linux-fsdevel+unsubscribe@vger.kernel.org>
+MIME-Version: 1.0
+Content-Transfer-Encoding: 8bit
+
+Opening a file grabs a reference on the terminal dentry in
+__legitimize_path(), then another one in do_dentry_open() and finally
+drops the initial reference in terminate_walk().
+
+That's 2 modifications which don't need to be there -- do_dentry_open()
+can consume the already held reference instead.
+
+When benchmarking on a 20-core vm using will-it-scale to open the same
+file read-only, the results are (ops/s):
+before:	4043375
+after:	5629378 (+39%)
+
+Signed-off-by: Mateusz Guzik <mjguzik@gmail.com>
+
+ fs/internal.h |  1 +
+ fs/namei.c    | 15 ++++++++++++---
+ fs/open.c     | 27 ++++++++++++++++++++++++++-
+ 3 files changed, 39 insertions(+), 4 deletions(-)
+
+diff --git a/fs/internal.h b/fs/internal.h
+index c658c8a5ebd5..9632239036ac 100644
+--- a/fs/internal.h
++++ b/fs/internal.h
+@@ -205,6 +205,7 @@ int do_fchownat(int dfd, const char __user *filename, uid_t user, gid_t group,
+ 		int flag);
+ int chown_common(const struct path *path, uid_t user, gid_t group);
+ extern int vfs_open(const struct path *, struct file *);
++int vfs_open_consume(struct path *, struct file *);
+ 
+ /*
+  * inode.c
+diff --git a/fs/namei.c b/fs/namei.c
+index 3f9bf103ba12..f71481b9bf8f 100644
+--- a/fs/namei.c
++++ b/fs/namei.c
+@@ -4789,6 +4789,7 @@ static const char *open_last_lookups(struct nameidata *nd,
+ static int do_open(struct nameidata *nd,
+ 		   struct file *file, const struct open_flags *op)
+ {
++	struct vfsmount *mnt;
+ 	struct mnt_idmap *idmap;
+ 	int open_flag = op->open_flag;
+ 	bool do_truncate;
+@@ -4830,11 +4831,17 @@ static int do_open(struct nameidata *nd,
+ 		error = mnt_want_write(nd->path.mnt);
+ 		if (error)
+ 			return error;
++		/*
++		 * A dedicated reference is needed because after the call to
++		 * vfs_open_consume() we no longer own the reference in nd->path.mnt
++		 * while we need to undo write acess below.
++		 */
++		mnt = mntget(nd->path.mnt);
+ 		do_truncate = true;
+ 	}
+ 	error = may_open(idmap, &nd->path, acc_mode, open_flag);
+ 	if (!error && !(file->f_mode & FMODE_OPENED))
+-		error = vfs_open(&nd->path, file);
++		error = vfs_open_consume(&nd->path, file);
+ 	if (!error)
+ 		error = security_file_post_open(file, op->acc_mode);
+ 	if (!error && do_truncate)
+@@ -4843,8 +4850,10 @@ static int do_open(struct nameidata *nd,
+ 		WARN_ON(1);
+ 		error = -EINVAL;
+ 	}
+-	if (do_truncate)
+-		mnt_drop_write(nd->path.mnt);
++	if (do_truncate) {
++		mnt_drop_write(mnt);
++		mntput(mnt);
++	}
+ 	return error;
+ }
+ 
+diff --git a/fs/open.c b/fs/open.c
+index 6b1c14e684a9..2a7697cee00b 100644
+--- a/fs/open.c
++++ b/fs/open.c
+@@ -931,6 +931,11 @@ static inline int file_get_write_access(struct file *f)
+ 	return error;
+ }
+ 
++/*
++ * Populate struct file
++ *
++ * NOTE: it assumes f_path is populated and consumes the caller's reference.
++ */
+ static int do_dentry_open(struct file *f,
+ 			  int (*open)(struct inode *, struct file *))
+ {
+@@ -938,7 +943,6 @@ static int do_dentry_open(struct file *f,
+ 	struct inode *inode = f->f_path.dentry->d_inode;
+ 	int error;
+ 
+-	path_get(&f->f_path);
+ 	f->f_inode = inode;
+ 	f->f_mapping = inode->i_mapping;
+ 	f->f_wb_err = filemap_sample_wb_err(f->f_mapping);
+@@ -1055,6 +1059,7 @@ int finish_open(struct file *file, struct dentry *dentry,
+ 	BUG_ON(file->f_mode & FMODE_OPENED); /* once it's opened, it's opened */
+ 
+ 	file->__f_path.dentry = dentry;
++	path_get(&file->f_path);
+ 	return do_dentry_open(file, open);
+ }
+ EXPORT_SYMBOL(finish_open);
+@@ -1098,6 +1103,7 @@ int vfs_open(const struct path *path, struct file *file)
+ 	int ret;
+ 
+ 	file->__f_path = *path;
++	path_get(&file->f_path);
+ 	ret = do_dentry_open(file, NULL);
+ 	if (!ret) {
+ 		/*
+@@ -1110,6 +1116,25 @@ int vfs_open(const struct path *path, struct file *file)
+ 	return ret;
+ }
+ 
++/**
++ * vfs_open_consume - open the file at the given path and consume the reference
++ * @path: path to open
++ * @file: newly allocated file with f_flag initialized
++ */
++int vfs_open_consume(struct path *path, struct file *file)
++{
++	int ret;
++
++	file->__f_path = *path;
++	path->mnt = NULL;
++	path->dentry = NULL;
++	ret = do_dentry_open(file, NULL);
++	if (!ret) {
++		fsnotify_open(file);
++	}
++	return ret;
++}
++
+ struct file *dentry_open(const struct path *path, int flags,
+ 			 const struct cred *cred)
+ {
+-- 
+2.53.0
+
+
