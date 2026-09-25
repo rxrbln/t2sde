@@ -1096,10 +1096,10 @@ index 000000000000..f77fa1704ed4
 +#endif // LLVM_LIB_TARGET_IA64_IA64FRAMELOWERING_H
 diff --git llvm/lib/Target/IA64/IA64ISelDAGToDAG.cpp llvm/lib/Target/IA64/IA64ISelDAGToDAG.cpp
 new file mode 100644
-index 000000000000..e8ae648b4975
+index 000000000000..5f8f890eef86
 --- /dev/null
 +++ llvm/lib/Target/IA64/IA64ISelDAGToDAG.cpp
-@@ -0,0 +1,500 @@
+@@ -0,0 +1,503 @@
 +//===---- IA64ISelDAGToDAG.cpp - IA64 pattern matching inst selector ------===//
 +//
 +// Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
@@ -1406,6 +1406,9 @@ index 000000000000..e8ae648b4975
 +
 +    // mov ar.ccv = cmp, glued to the cmpxchg so it stays immediately before it
 +    // (and the ar.ccv physreg def/use is not separated by another writer).
++    // The comparand is zero-extended to the full 64 bits by the type legalizer
++    // (see IA64TargetLowering::getExtendForAtomicCmpSwapArg), which is what the
++    // narrow cmpxchg forms require of ar.ccv.
 +    SDValue Ccv = SDValue(
 +        CurDAG->getMachineNode(IA64::MOV_TO_AR_CCV, dl, MVT::Glue, Cmp), 0);
 +
@@ -3093,10 +3096,10 @@ index 000000000000..ecbd4757bbda
 +}
 diff --git llvm/lib/Target/IA64/IA64ISelLowering.h llvm/lib/Target/IA64/IA64ISelLowering.h
 new file mode 100644
-index 000000000000..3c5c0b98f1fe
+index 000000000000..02da0ecde957
 --- /dev/null
 +++ llvm/lib/Target/IA64/IA64ISelLowering.h
-@@ -0,0 +1,129 @@
+@@ -0,0 +1,146 @@
 +//===-- IA64ISelLowering.h - IA64 DAG Lowering Interface --------*- C++ -*-===//
 +//
 +// Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
@@ -3184,6 +3187,23 @@ index 000000000000..3c5c0b98f1fe
 +  /// in LowerOperation).
 +  bool shouldInsertFencesForAtomic(const Instruction *I) const override {
 +    return true;
++  }
++
++  /// cmpxchg{1,2,4} read the memory word zero-extended into 64 bits and
++  /// compare it against the *full 64 bits* of ar.ccv, so the comparand must be
++  /// zero-extended into ar.ccv as well. Nothing otherwise guarantees the upper
++  /// bits of a narrow value in a GR are clear (a u32 argument, for instance,
++  /// may arrive sign-extended), and any garbage above the memory type's width
++  /// makes the hardware compare fail even when the memory word matches.
++  ///
++  /// That is worse than a missed swap: the success flag is computed by
++  /// comparing the returned old value (which the hardware always zero-extends,
++  /// hence the ZERO_EXTEND default of getExtendForAtomicOps) against the
++  /// comparand. Extend only one of the two and they disagree, so a cmpxchg the
++  /// hardware rejected -- and therefore did not store -- gets reported as
++  /// having succeeded.
++  ISD::NodeType getExtendForAtomicCmpSwapArg() const override {
++    return ISD::ZERO_EXTEND;
 +  }
 +
 +  /// The only atomic read-modify-write IA-64 has a single instruction for is
@@ -7006,10 +7026,10 @@ index 000000000000..a5afee7ac99a
 +}
 diff --git llvm/test/CodeGen/IA64/atomics.ll llvm/test/CodeGen/IA64/atomics.ll
 new file mode 100644
-index 000000000000..f28e7d71c50f
+index 000000000000..36be4f169267
 --- /dev/null
 +++ llvm/test/CodeGen/IA64/atomics.ll
-@@ -0,0 +1,74 @@
+@@ -0,0 +1,129 @@
 +; RUN: llc -mtriple=ia64 < %s | FileCheck %s
 +
 +; Atomic operations on IA-64.
@@ -7068,6 +7088,61 @@ index 000000000000..f28e7d71c50f
 +  %r = cmpxchg ptr %p, i64 %c, i64 %n acq_rel acquire
 +  %v = extractvalue { i64, i1 } %r, 0
 +  ret i64 %v
++}
++
++; cmpxchg{1,2,4} read the memory word zero-extended to 64 bits and compare it
++; against the *full 64 bits* of ar.ccv, so the comparand must be zero-extended
++; into ar.ccv. Here it arrives as an argument, so nothing guarantees its upper
++; bits are clear.
++;
++; Getting this wrong is worse than a missed swap: the success flag is computed
++; by comparing the returned old value (always zero-extended by the hardware)
++; against the comparand, so an un-extended ar.ccv makes the hardware compare and
++; the success flag disagree -- a cmpxchg the hardware rejected, and therefore
++; did not store, gets reported as having succeeded. The zxt must feed *both*
++; ar.ccv and the compare, hence the same register in all three places.
++define i1 @cmpxchg_i32_zext_ccv(ptr %p, i32 %c, i32 %n) {
++; CHECK-LABEL: cmpxchg_i32_zext_ccv#:
++; CHECK: zxt4 [[C:r[0-9]+]] = {{r[0-9]+}}
++; CHECK: mov ar.ccv = [[C]]
++; CHECK: cmpxchg4.acq [[OLD:r[0-9]+]] = {{\[}}{{r[0-9]+}}], {{r[0-9]+}}, ar.ccv
++; CHECK: cmp.eq {{p[0-9]+}}, {{p[0-9]+}} = [[OLD]], [[C]]
++  %r = cmpxchg ptr %p, i32 %c, i32 %n monotonic monotonic
++  %ok = extractvalue { i32, i1 } %r, 1
++  ret i1 %ok
++}
++
++define i1 @cmpxchg_i16_zext_ccv(ptr %p, i16 %c, i16 %n) {
++; CHECK-LABEL: cmpxchg_i16_zext_ccv#:
++; CHECK: zxt2 [[C:r[0-9]+]] = {{r[0-9]+}}
++; CHECK: mov ar.ccv = [[C]]
++; CHECK: cmpxchg2.acq [[OLD:r[0-9]+]] = {{\[}}{{r[0-9]+}}], {{r[0-9]+}}, ar.ccv
++; CHECK: cmp.eq {{p[0-9]+}}, {{p[0-9]+}} = [[OLD]], [[C]]
++  %r = cmpxchg ptr %p, i16 %c, i16 %n monotonic monotonic
++  %ok = extractvalue { i16, i1 } %r, 1
++  ret i1 %ok
++}
++
++define i1 @cmpxchg_i8_zext_ccv(ptr %p, i8 %c, i8 %n) {
++; CHECK-LABEL: cmpxchg_i8_zext_ccv#:
++; CHECK: zxt1 [[C:r[0-9]+]] = {{r[0-9]+}}
++; CHECK: mov ar.ccv = [[C]]
++; CHECK: cmpxchg1.acq [[OLD:r[0-9]+]] = {{\[}}{{r[0-9]+}}], {{r[0-9]+}}, ar.ccv
++; CHECK: cmp.eq {{p[0-9]+}}, {{p[0-9]+}} = [[OLD]], [[C]]
++  %r = cmpxchg ptr %p, i8 %c, i8 %n monotonic monotonic
++  %ok = extractvalue { i8, i1 } %r, 1
++  ret i1 %ok
++}
++
++; i64 is already full width: no extension, ar.ccv takes the comparand directly.
++define i1 @cmpxchg_i64_no_zext_ccv(ptr %p, i64 %c, i64 %n) {
++; CHECK-LABEL: cmpxchg_i64_no_zext_ccv#:
++; CHECK-NOT: zxt
++; CHECK: mov ar.ccv = {{r[0-9]+}}
++; CHECK: cmpxchg8.acq {{r[0-9]+}} = {{\[}}{{r[0-9]+}}], {{r[0-9]+}}, ar.ccv
++  %r = cmpxchg ptr %p, i64 %c, i64 %n monotonic monotonic
++  %ok = extractvalue { i64, i1 } %r, 1
++  ret i1 %ok
 +}
 +
 +; atomicrmw is expanded to a load + cmpxchg loop.
