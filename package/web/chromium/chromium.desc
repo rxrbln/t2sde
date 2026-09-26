@@ -20,12 +20,14 @@
 [E] add lld nodejs rust-bindgen
 
 [L] BSD
-[V] 153.0.8010.36
+[V] 154.0.8037.57
 
 [CV-URL] https://chromium.googlesource.com/chromium/src/+refs
-[D] 96724ac561c17be1b1ca22bfbf4ceb84a3c03314f28be5d7f0b79e04 chromium-153.0.8010.36-linux.tar.xz https://github.com/chromium-linux-tarballs/chromium-tarballs/releases/download/153.0.8010.36/
-[D] 06b848f9120d6c25350cac73c9931661763c4da265b2d7758a062082 copium-153.0.tar.gz !https://codeberg.org/selfisekai/copium/archive/153.0.tar.gz
+[D] 7ff7b0fceac4aac9580c00c9f39a9eb467009357ea4c5ddcc4b4cc84 chromium-154.0.8037.57-linux.tar.xz https://github.com/chromium-linux-tarballs/chromium-tarballs/releases/download/154.0.8037.57/
+[D] 623cb6dcb02e8bea2c033702ab5660d25d1329449ffcd2ad6b81eb24 copium-154.1.tar.gz !https://codeberg.org/selfisekai/copium/archive/154.1.tar.gz
 [D] 688fcf4e2919ddf7d4e94c416fca658a2b3018a7952a8f72d13028dc wasm-node-4.22.4.tgz https://registry.npmjs.org/@rollup/wasm-node/-/
+[D] b6f8841073eefb22a5b8898b10ec4dcbe451cf816583ba722c32e315 crubit-69b85cba43f85a6439dc0be86a6fe424bb07a100.tar.gz https://github.com/google/crubit/archive/69b85cba43f85a6439dc0be86a6fe424bb07a100/
+
 
 runmake=0
 prefix=opt/chromium
@@ -38,15 +40,17 @@ var_append copium_patches ' ' cr152-ffmpeg-no-agtm.patch
 var_append copium_patches ' ' cr153-no-python-vendoring.patch
 var_append copium_patches ' ' cr153-typescript-break-definitions.patch
 var_append copium_patches ' ' cr153-unbundle-opus-iamf.patch
-var_append copium_patches ' ' cr153-uncrubit-blink-opentype.patch
 
-copium_patches() {
+chromium_prepare_source() {
+	tar $taropt `match_source_file -p crubit` -C ./..
+	mv ./../crubit* ./../crubit
+
 	tar $taropt `match_source_file -p copium` -C ./..
 	for p in $copium_patches; do
 		var_append patchfiles ' ' $builddir/copium/$p
 	done	
 }
-hook_add prepatch 5 copium_patches
+hook_add prepatch 5 chromium_prepare_source
 
 export RUSTC_BOOTSTRAP=1
 
@@ -62,9 +66,11 @@ if atstage cross; then
 	export BUILD_NM=nm
 
 	t2_rust_sysroot="$root/TOOLCHAIN/cross"
+	t2_rustfmt="$(type -P rustfmt)"
 	t2_host_toolchain="//build/toolchain/linux/unbundle:host"
 else
 	t2_rust_sysroot="$root/$(pkgprefix rustc)"
+	t2_rustfmt="$t2_rust_sysroot/bin/rustfmt"
 	t2_host_toolchain="//build/toolchain/linux/unbundle:default"
 fi
 
@@ -75,7 +81,7 @@ chromium_flags="
 	blink_enable_generated_code_formatting=false
 	target_cpu=\"$(case $arch in arm64) echo arm64 ;; riscv64) echo riscv64 ;; *) echo x64 ;; esac)\"
 	build_dawn_tests=false
-	chrome_pgo_phase=0
+	chrome_pgo_phase=2
 	clang_base_path=\"$root/$(pkgprefix clang)\"
 	clang_use_chrome_plugins=false
 	clang_version=\"${T2_CLANG_VERSION}\"
@@ -114,7 +120,6 @@ chromium_flags="
 	rtc_use_h264=false
 	rtc_use_pipewire=false
 	rust_bindgen_root=\"/usr\"
-	rust_sysroot_absolute=\"$t2_rust_sysroot\"
 	rustc_version=\"T2\"
 	safe_browsing_use_unrar=false
 	symbol_level=0
@@ -228,6 +233,20 @@ chromium_premake() {
 	patch -p1 -i ../3pp/patches/typescript_native_preview.patch -d third_party/typescript/linux-amd64/src
 	chmod 755 third_party/typescript/linux-amd64/src/lib/tsc
 
+	#rust toolchain
+	T=third_party/rust-toolchain
+	mkdir -p $T/bin $T/lib/third_party ${T}-intermediate
+	ln -sv /usr/bin/cargo $T/bin/
+	ln -sv $t2_rust_sysroot/bin/rustc $t2_rustfmt $T/bin/
+	ln -sv $t2_rust_sysroot/lib/rustlib $T/lib/
+	ln -sv $t2_rust_sysroot/lib*/librustc_driver-*.so $T/lib/
+	ln -sv ../../../crubit ${T}-intermediate/crubit
+	env -u CARGO_PROFILE_RELEASE_PANIC python3 tools/rust/build_crubit.py --skip-checkout
+	ln -sv ../../../../../crubit $T/lib/third_party/crubit
+	rustc -V | tee $T/VERSION > $T/INSTALLED_VERSION
+	(cd tools/crates/gnrt && env -u RUSTFLAGS cargo build --locked --release)
+	./tools/crates/gnrt/target/release/gnrt gen --for-std $T/lib/rustlib/src/rust
+
 	# rollup wasm
 	rm -rv third_party/devtools-frontend/src/node_modules/rollup
 	mkdir third_party/devtools-frontend/src/node_modules/rollup
@@ -242,6 +261,9 @@ chromium_premake() {
 	# system gperf
 	rm -rv third_party/gperf/cipd/bin/gperf
 	ln -sv /usr/bin/gperf third_party/gperf/cipd/bin
+
+	# system clang-format
+	ln -sfv /usr/bin/clang-format buildtools/linux64-format/clang-format
 
 	# system go
 	case $HOSTTYPE in
