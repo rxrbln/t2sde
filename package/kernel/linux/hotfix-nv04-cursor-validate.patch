@@ -1,0 +1,58 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From:=?UTF-8?q?Ren=C3=A9=20Rebe?= <rene@exactco.de>
+Date: Fri, 31 Jul 2026 16:40:00 +0200
+Subject: [PATCH] drm/nouveau/dispnv04: validate cursor bo size before uploading
+
+nv04_crtc_cursor_set() rejects cursor dimensions other than 64x64, but it
+only checks the width and height passed to the ioctl - it never checks how
+large the backing object actually is. Both upload helpers then read a fixed
+64x64 32bpp image out of it:
+
+	nv04_cursor_upload()	nouveau_bo_rd32(src, i * 64 + j)
+	nv11_cursor_upload()	for (i = 0; i < 64 * 64; i++)
+					pixel = nouveau_bo_rd32(src, i);
+
+nouveau_bo_map() only kmaps PFN_UP(nvbo->bo.base.size) pages, so passing a
+handle to an object smaller than 64 * 64 * 4 makes the loop run off the end
+of the mapping. On a PowerMac G5 (GeForce 7800 GT, NV47) that faults in the
+iomem path and takes the machine down hard:
+
+  DAR: c0003e008016f000 DSISR: 40000000
+  NIP [c000000000599f90] ioread32be+0x34/0x9c
+  LR  [c0003d0001ebef20] nouveau_bo_rd32+0x34/0x60 [nouveau]
+  Call Trace:
+    nouveau_bo_rd32+0x34/0x60 [nouveau]
+    nv04_crtc_cursor_set+0xc0/0x220 [nouveau]
+    drm_mode_cursor_common+0x25c/0x28c [drm]
+    drm_ioctl_kernel+0xcc/0x16c [drm]
+    drm_ioctl+0x2b8/0x36c [drm]
+    nouveau_drm_ioctl+0xa0/0xb0 [drm]
+  note: kwin_wayland[4423] exited with irqs disabled
+
+Recovery needs a SysRq reboot, as systemd and logind stop responding once
+the ioctl dies with interrupts disabled.
+
+The destination object is allocated by the driver at 64 * 64 * 4 and is
+fine; only the client supplied source is unchecked. Reject objects that are
+too small.
+
+Signed-off-by: René Rebe <rene@exactco.de>
+---
+ drivers/gpu/drm/nouveau/dispnv04/crtc.c | 6 ++++++
+ 1 file changed, 6 insertions(+)
+
+--- linux-7.1/drivers/gpu/drm/nouveau/dispnv04/crtc.c.vanilla	2026-07-31 16:37:11.993772470 +0200
++++ linux-7.1/drivers/gpu/drm/nouveau/dispnv04/crtc.c	2026-07-31 16:37:18.982004795 +0200
+@@ -1000,6 +1000,12 @@ nv04_crtc_cursor_set(struct drm_crtc *cr
+ 		return -ENOENT;
+ 	cursor = nouveau_gem_object(gem);
+
++	/* The upload helpers below read a full 64x64 32bpp image. */
++	if (gem->size < 64 * 64 * 4) {
++		ret = -EINVAL;
++		goto out;
++	}
++
+ 	ret = nouveau_bo_map(cursor);
+ 	if (ret)
+ 		goto out;
