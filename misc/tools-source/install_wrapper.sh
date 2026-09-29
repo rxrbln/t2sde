@@ -23,7 +23,7 @@ logfile="${INSTALL_WRAPPER_LOGFILE:-/dev/null}"
 [ -z "${logfile##*/*}" -a ! -d "${logfile%/*}" ] && logfile=/dev/null
 
 command="${0##*/}"
-destination=
+destination= tdir=
 declare -a sources
 newcommand="$command"
 sources_counter=0
@@ -42,24 +42,37 @@ fi
 while [ $# -gt 0 ]; do
     # split combined args
     case "$1" in
-	-*)
-	    # split combined args, like -m755
-	    for a in `echo $1 | sed '/^-[^-]/ {s/^-//; s/\([^0-9-]\)/ -\1/g}'`; do
+	--group|--mode|--owner|--suffix)
+		newcommand="$newcommand $1 $2"
+		shift
+		;;
+	--strip)
+		[[ $command != *install ]] && newcommand="$newcommand $1"
+		;;
+	--*)
+		newcommand="$newcommand $1"
+		;;
+	-?*)
+	    # split combined args, like -Dm755 or -oroot
+	    opts="${1#-}"
+	    while [ -n "$opts" ]; do
+		a="${opts:0:1}" opts="${opts:1}"
 		case "$a" in
-		-g|-m|-o|-S|--group|--mode|--owner|--suffix)
-			newcommand="$newcommand $a $2"
-			shift
-			;;
-		-s|--strip)
-			if [[ $command != *install ]]; then
-				newcommand="$newcommand $a"
+		g|m|o|S|t)
+			val="$opts" opts=
+			[ -z "$val" ] && val="$2" && shift
+			# target directory, we generate the target filenames
+			if [ "$a" = t ]; then
+				tdir="$val"
+			else
+				newcommand="$newcommand -$a $val"
 			fi
 			;;
-		-t)
-			: # skip -t for now, as we generate target filenames
+		s)
+			[[ $command != *install ]] && newcommand="$newcommand -$a"
 			;;
-		-*)
-			newcommand="$newcommand $a"
+		*)
+			newcommand="$newcommand -$a"
 			;;
 		esac
 	    done
@@ -74,6 +87,12 @@ while [ $# -gt 0 ]; do
     esac
     shift
 done
+
+if [ -n "$tdir" ]; then
+	[ -n "$destination" ] && sources[sources_counter++]="$destination"
+	destination="$tdir"
+	[[ " $newcommand " = *" -D "* ]] && mkdir -p "$destination"
+fi
 
 [ -z "${destination##/*}" ] || destination="$PWD/$destination"
 
