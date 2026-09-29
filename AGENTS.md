@@ -58,7 +58,7 @@ cross-compilation, not just look plausible. Never:
 
 ## Comments and attribution
 
-- Do not comment obvious one-lineers or conditionals.
+- Do not add comments for obvious one-lineers or conditionals.
 - Inline comments in `.desc`/patch files: max 1-2 short lines, and never
   prefixed with a maintainer's name/email (e.g. no `# René Rebe: ...`). That
   belongs in the commit message, not scattered through every source file.
@@ -67,6 +67,9 @@ cross-compilation, not just look plausible. Never:
   is visible in the hunk header.
 - `t2 create` and normal `.desc` edits already carry the standard T2
   copyright header — don't invent a different header style.
+- Do not add signed-off-by or additonal copyright to pkgs .patch files..
+- Name temporary latest compiler or other API pkg patches `hotfix-*.patch`.
+  Keep filenames short.
 
 ## Disk space
 
