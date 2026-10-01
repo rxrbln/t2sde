@@ -1,0 +1,161 @@
+# --- T2-COPYRIGHT-BEGIN ---
+# t2/package/*/gnustep-back/hotfix-c23.patch
+# Copyright (C) 2026 The T2 SDE Project
+# SPDX-License-Identifier: GPL-2.0 or patched project license
+# --- T2-COPYRIGHT-END ---
+
+Backport the upstream prototype fixes for C23 function pointers.
+
+Copyright (C) 2026 René Rebe <rene@exactco.de>
+Signed-off-by: René Rebe <rene@exactco.de>
+
+diff -Nrup a/Source/x11/scale.c b/Source/x11/scale.c
+--- a/Source/x11/scale.c	2026-09-27 19:14:39.635599941 +0200
++++ b/Source/x11/scale.c	2026-09-27 19:14:39.637814019 +0200
+@@ -244,8 +244,7 @@ RScaleImage(RImage *src, unsigned new_wi
+ #define	filter_support		(1.0)
+ 
+ static double
+-filter(t)
+-double t;
++filter(double t)
+ {
+     /* f(t) = 2|t|^3 - 3|t|^2 + 1, -1 <= t <= 1 */
+     if(t < 0.0) t = -t;
+@@ -256,8 +255,7 @@ double t;
+ #define	box_support		(0.5)
+ 
+ static double
+-box_filter(t)
+-double t;
++box_filter(double t)
+ {
+     if((t > -0.5) && (t <= 0.5)) return(1.0);
+     return(0.0);
+@@ -266,8 +264,7 @@ double t;
+ #define	triangle_support	(1.0)
+ 
+ static double
+-triangle_filter(t)
+-double t;
++triangle_filter(double t)
+ {
+     if(t < 0.0) t = -t;
+     if(t < 1.0) return(1.0 - t);
+@@ -277,8 +274,7 @@ double t;
+ #define	bell_support		(1.5)
+ 
+ static double
+-bell_filter(t)		/* box (*) box (*) box */
+-double t;
++bell_filter(double t)		/* box (*) box (*) box */
+ {
+     if(t < 0) t = -t;
+     if(t < .5) return(.75 - (t * t));
+@@ -292,8 +288,7 @@ double t;
+ #define	B_spline_support	(2.0)
+ 
+ static double
+-B_spline_filter(t)	/* box (*) box (*) box (*) box */
+-double t;
++B_spline_filter(double t)	/* box (*) box (*) box (*) box */
+ {
+     double tt;
+     
+@@ -309,8 +304,7 @@ double t;
+ }
+ 
+ static double
+-sinc(x)
+-double x;
++sinc(double x)
+ {
+     x *= PI;
+     if(x != 0) return(sin(x) / x);
+@@ -320,8 +314,7 @@ double x;
+ #define	Lanczos3_support	(3.0)
+ 
+ static double
+-Lanczos3_filter(t)
+-double t;
++Lanczos3_filter(double t)
+ {
+     if(t < 0) t = -t;
+     if(t < 3.0) return(sinc(t) * sinc(t/3.0));
+@@ -334,8 +327,7 @@ double t;
+ #define	C	(1.0 / 3.0)
+ 
+ static double
+-Mitchell_filter(t)
+-double t;
++Mitchell_filter(double t)
+ {
+     double tt;
+     
+@@ -356,7 +348,7 @@ double t;
+     return(0.0);
+ }
+ 
+-static double (*filterf)() = Mitchell_filter;
++static double (*filterf)(double) = Mitchell_filter;
+ static double fwidth = Mitchell_support;
+ 
+ void
+@@ -412,7 +404,6 @@ CLIST	*contrib;		/* array of contributio
+ #define CLAMP(v,l,h)    ((v)<(l) ? (l) : (v) > (h) ? (h) : v)
+ 
+ 
+-/* return of calloc is not checked if NULL in the function below! */
+ RImage*
+ RSmoothScaleImage(RImage *src, unsigned new_width, unsigned new_height)
+ {    
+@@ -430,14 +421,25 @@ RSmoothScaleImage(RImage *src, unsigned
+ 
+     
+     dst = RCreateImage(new_width, new_height, False);
++    if (!dst)
++	return NULL;
+ 
+     /* create intermediate image to hold horizontal zoom */
+     tmp = RCreateImage(dst->width, src->height, False);
++    if (!tmp) {
++	RReleaseImage(dst);
++	return NULL;
++    }
+     xscale = (double)new_width / (double)src->width;
+     yscale = (double)new_height / (double)src->height;
+ 
+     /* pre-calculate filter contributions for a row */
+     contrib = (CLIST *)calloc(new_width, sizeof(CLIST));
++    if (!contrib) {
++	RReleaseImage(dst);
++	RReleaseImage(tmp);
++	return NULL;
++    }
+     if (xscale < 1.0) {
+ 	width = fwidth / xscale;
+ 	fscale = 1.0 / xscale;
+@@ -522,6 +524,11 @@ RSmoothScaleImage(RImage *src, unsigned
+     
+     /* pre-calculate filter contributions for a column */
+     contrib = (CLIST *)calloc(dst->height, sizeof(CLIST));
++    if (!contrib) {
++	RReleaseImage(dst);
++	RReleaseImage(tmp);
++	return NULL;
++    }
+     if(yscale < 1.0) {
+ 	width = fwidth / yscale;
+ 	fscale = 1.0 / yscale;
+diff -Nrup a/Source/x11/xutil.c b/Source/x11/xutil.c
+--- a/Source/x11/xutil.c	2026-09-27 19:14:39.635599941 +0200
++++ b/Source/x11/xutil.c	2026-09-27 19:14:39.637814019 +0200
+@@ -42,7 +42,7 @@
+ 
+ static int shmError;
+ 
+-static int (*oldErrorHandler)();
++static int (*oldErrorHandler)(Display*, XErrorEvent*);
+ 
+ static int
+ errorHandler(Display *dpy, XErrorEvent *err)
