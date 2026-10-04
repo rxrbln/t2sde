@@ -1,5 +1,5 @@
 # --- T2-COPYRIGHT-BEGIN ---
-# t2/package/*/ncdu/ncdu-2.9.2-zig-0.16+-rewrite.patch
+# t2/package/*/ncdu/hotfix-zig.patch
 # Copyright (C) 2026 The T2 SDE Project
 # SPDX-License-Identifier: GPL-2.0 or patched project license
 # --- T2-COPYRIGHT-END ---
@@ -2553,3 +2553,247 @@
      }
  
      pub fn read(s: *@This()) !?[]u8 {
+
+--- ncdu-2.9.2/build.zig
++++ ncdu-2.9.2/build.zig
+@@ -41,9 +41,6 @@
+ 
+     const run_cmd = b.addRunArtifact(exe);
+     run_cmd.step.dependOn(b.getInstallStep());
+-    if (b.args) |args| {
+-        run_cmd.addArgs(args);
+-    }
+ 
+     const run_step = b.step("run", "Run the app");
+     run_step.dependOn(&run_cmd.step);
+--- ncdu-2.9.2/src/bin_export.zig
++++ ncdu-2.9.2/src/bin_export.zig
+@@ -49,7 +49,7 @@
+ 
+ // Pessimistic upper bound on the encoded size of an item, excluding the name field.
+ // 2 bytes for map start/end, 11 per field (2 for the key, 9 for a full u64).
+-const MAX_ITEM_LEN = 2 + 11 * @typeInfo(ItemKey).@"enum".fields.len;
++const MAX_ITEM_LEN = 2 + 11 * @typeInfo(ItemKey).@"enum".field_names.len;
+ 
+ pub const CborMajor = enum(u3) { pos, neg, bytes, text, array, map, tag, simple };
+ 
+--- ncdu-2.9.2/src/browser.zig
++++ ncdu-2.9.2/src/browser.zig
+@@ -192,7 +192,7 @@
+         dir_parent = model.root;
+         dir_parents.append(main.allocator, .{ .ptr = &dir_parent.entry }) catch unreachable;
+     }
+-    dir_path = main.allocator.dupeZ(u8, dir_parent.entry.name()) catch unreachable;
++    dir_path = main.allocator.dupeSentinel(u8, dir_parent.entry.name(), 0) catch unreachable;
+     loadDir(io, 0);
+ }
+ 
+@@ -230,7 +230,7 @@
+     } else
+         dir_parent = p.ptr.?.dir() orelse unreachable;
+ 
+-    const newpath = main.allocator.dupeZ(u8, std.fs.path.dirname(dir_path) orelse unreachable) catch unreachable;
++    const newpath = main.allocator.dupeSentinel(u8, std.fs.path.dirname(dir_path) orelse unreachable, 0) catch unreachable;
+     main.allocator.free(dir_path);
+     dir_path = newpath;
+ }
+@@ -548,13 +548,13 @@
+             if (ext.pack.hasuid) {
+                 ui.addstr("  UID: ");
+                 ui.style(.default);
+-                ui.addstr(std.fmt.bufPrintZ(&buf, "{d:<6}", .{ ext.uid }) catch unreachable);
++                ui.addstr(std.fmt.bufPrintSentinel(&buf, "{d:<6}", .{ ext.uid }, 0) catch unreachable);
+                 ui.style(.bold);
+             }
+             if (ext.pack.hasgid) {
+                 ui.addstr(" GID: ");
+                 ui.style(.default);
+-                ui.addstr(std.fmt.bufPrintZ(&buf, "{d:<6}", .{ ext.gid }) catch unreachable);
++                ui.addstr(std.fmt.bufPrintSentinel(&buf, "{d:<6}", .{ ext.gid }, 0) catch unreachable);
+             }
+         } else {
+             ui.addstr("Type: ");
+@@ -603,7 +603,7 @@
+             ui.addstr("  Inode: ");
+             ui.style(.default);
+             var buf: [32]u8 = undefined;
+-            ui.addstr(std.fmt.bufPrintZ(&buf, "{}", .{ l.ino }) catch unreachable);
++            ui.addstr(std.fmt.bufPrintSentinel(&buf, "{}", .{ l.ino }, 0) catch unreachable);
+             row.* += 1;
+         }
+     }
+--- ncdu-2.9.2/src/exclude.zig
++++ ncdu-2.9.2/src/exclude.zig
+@@ -60,7 +60,7 @@
+         var tail = top;
+         tail.sub = null;
+         while (std.mem.indexOfScalar(u8, pat, '/')) |idx| {
+-            tail.pattern = main.allocator.dupeZ(u8, pat[0..idx]) catch unreachable;
++            tail.pattern = main.allocator.dupeSentinel(u8, pat[0..idx], 0) catch unreachable;
+             tail.isdir = true;
+             tail.isliteral = isLiteral(tail.pattern);
+             pat = pat[idx+1..];
+@@ -71,7 +71,7 @@
+             tail = next;
+             tail.sub = null;
+         }
+-        tail.pattern = main.allocator.dupeZ(u8, pat) catch unreachable;
++        tail.pattern = main.allocator.dupeSentinel(u8, pat, 0) catch unreachable;
+         tail.isdir = false;
+         tail.isliteral = isLiteral(tail.pattern);
+         return top;
+@@ -250,7 +250,7 @@
+     var pat = root;
+     defer pat.deinit();
+     while (std.mem.indexOfScalar(u8, path, '/')) |idx| {
+-        const name = main.allocator.dupeZ(u8, path[0..idx]) catch unreachable;
++        const name = main.allocator.dupeSentinel(u8, path[0..idx], 0) catch unreachable;
+         defer main.allocator.free(name);
+         path = path[idx+1..];
+ 
+@@ -259,7 +259,7 @@
+         pat = sub;
+     }
+ 
+-    const name = main.allocator.dupeZ(u8, path) catch unreachable;
++    const name = main.allocator.dupeSentinel(u8, path, 0) catch unreachable;
+     defer main.allocator.free(name);
+     return pat.enter(name);
+ }
+--- ncdu-2.9.2/src/main.zig
++++ ncdu-2.9.2/src/main.zig
+@@ -310,7 +310,7 @@
+     else if (opt.is("--no-confirm-quit")) config.confirm_quit = false
+     else if (opt.is("--confirm-delete")) config.confirm_delete = true
+     else if (opt.is("--no-confirm-delete")) config.confirm_delete = false
+-    else if (opt.is("--delete-command")) config.delete_command = allocator.dupeZ(u8, try args.arg()) catch unreachable
++    else if (opt.is("--delete-command")) config.delete_command = allocator.dupeSentinel(u8, try args.arg(), 0) catch unreachable
+     else if (opt.is("--color")) {
+         const val = try args.arg();
+         if (std.mem.eql(u8, val, "off")) config.ui_color = .off
+@@ -350,11 +350,11 @@
+         }
+         if (line.len == 0 or line[0] == '#') continue;
+         if (std.mem.indexOfAny(u8, line, " \t=")) |i| {
+-            arglist[argc] = allocator.dupeZ(u8, line[0..i]) catch unreachable;
++            arglist[argc] = allocator.dupeSentinel(u8, line[0..i], 0) catch unreachable;
+             argc += 1;
+             line = std.mem.trim(u8, line[i+1..], &std.ascii.whitespace);
+         }
+-        arglist[argc] = allocator.dupeZ(u8, line) catch unreachable;
++        arglist[argc] = allocator.dupeSentinel(u8, line, 0) catch unreachable;
+         argc += 1;
+ 
+         var args = Args.init(arglist[0..argc]);
+@@ -375,6 +375,7 @@
+     var buf: [4096]u8 = undefined; // XXX: This is rather hacky, but should work for print
+     var writer = stdout.writer(io, &buf);
+     writer.interface.writeAll("ncdu " ++ program_version ++ "\n") catch {};
++    writer.interface.flush() catch {};
+     std.process.exit(0);
+ }
+ 
+@@ -435,6 +436,7 @@
+     \\Refer to `man ncdu` for more information.
+     \\
+     ) catch {};
++    writer.interface.flush() catch {};
+     std.process.exit(0);
+ }
+ 
+@@ -517,17 +519,17 @@
+             if (!opt.opt) {
+                 // XXX: ncdu 1.x doesn't error, it just silently ignores all but the last argument.
+                 if (scan_dir != null) ui.die("Multiple directories given, see ncdu -h for help.\n", .{});
+-                scan_dir = allocator.dupeZ(u8, opt.val) catch unreachable;
++                scan_dir = allocator.dupeSentinel(u8, opt.val, 0) catch unreachable;
+                 continue;
+             }
+             if (opt.is("-h") or opt.is("-?") or opt.is("--help")) help(init.io)
+             else if (opt.is("-v") or opt.is("-V") or opt.is("--version")) version(init.io)
+             else if (opt.is("-o") and (export_json != null or export_bin != null)) ui.die("The -o flag can only be given once.\n", .{})
+-            else if (opt.is("-o")) export_json = allocator.dupeZ(u8, args.arg() catch unreachable) catch unreachable
++            else if (opt.is("-o")) export_json = allocator.dupeSentinel(u8, args.arg() catch unreachable, 0) catch unreachable
+             else if (opt.is("-O") and (export_json != null or export_bin != null)) ui.die("The -O flag can only be given once.\n", .{})
+-            else if (opt.is("-O")) export_bin = allocator.dupeZ(u8, args.arg() catch unreachable) catch unreachable
++            else if (opt.is("-O")) export_bin = allocator.dupeSentinel(u8, args.arg() catch unreachable, 0) catch unreachable
+             else if (opt.is("-f") and import_file != null) ui.die("The -f flag can only be given once.\n", .{})
+-            else if (opt.is("-f")) import_file = allocator.dupeZ(u8, args.arg() catch unreachable) catch unreachable
++            else if (opt.is("-f")) import_file = allocator.dupeSentinel(u8, args.arg() catch unreachable, 0) catch unreachable
+             else if (opt.is("--ignore-config")) {}
+             else if (opt.is("--quit-after-scan")) quit_after_scan = true // undocumented feature to help with benchmarking scan/import
+             else if (argConfig(&args, opt, false, init.io, init.minimal.environ)) |_| {}
+@@ -602,7 +604,7 @@
+                 defer full_path.deinit(allocator);
+                 mem_sink.global.root.?.fmtPath(allocator, true, &full_path);
+                 scan.scan(init.io, util.arrayListBufZ(&full_path, allocator)) catch {
+-                    sink.global.last_error = allocator.dupeZ(u8, full_path.items) catch unreachable;
++                    sink.global.last_error = allocator.dupeSentinel(u8, full_path.items, 0) catch unreachable;
+                     sink.global.state = .err;
+                     while (state == .refresh) handleEvent(init.io, true, true);
+                 };
+--- ncdu-2.9.2/src/model.zig
++++ ncdu-2.9.2/src/model.zig
+@@ -109,7 +109,7 @@
+     fn alloc(comptime T: type, allocator: std.mem.Allocator, etype: EType, isext: bool, ename: []const u8) *Entry {
+         const size = (if (isext) @as(usize, @sizeOf(Ext)) else 0) + @sizeOf(T) + ename.len + 1;
+         var ptr = blk: while (true) {
+-            const alignment = if (@typeInfo(@TypeOf(std.mem.Allocator.allocWithOptions)).@"fn".params[3].type == ?u29) 1 else std.mem.Alignment.@"1";
++            const alignment = std.mem.Alignment.@"1";
+             if (allocator.allocWithOptions(u8, size, alignment, null)) |p| break :blk p
+             else |_| {}
+             ui.oom();
+--- ncdu-2.9.2/src/ui.zig
++++ ncdu-2.9.2/src/ui.zig
+@@ -403,7 +403,7 @@
+ // Not to be used for strings that may end up >256 bytes.
+ pub fn addprint(comptime fmt: []const u8, args: anytype) void {
+     var buf: [256:0]u8 = undefined;
+-    const s = std.fmt.bufPrintZ(&buf, fmt, args) catch unreachable;
++    const s = std.fmt.bufPrintSentinel(&buf, fmt, args, 0) catch unreachable;
+     addstr(s);
+ }
+ 
+--- ncdu-2.9.2/src/util.zig
++++ ncdu-2.9.2/src/util.zig
+@@ -28,7 +28,7 @@
+ pub fn castTruncate(comptime T: type, x: anytype) T {
+     const Ti = @typeInfo(T).int;
+     const Xi = @typeInfo(@TypeOf(x)).int;
+-    const nx: std.meta.Int(Ti.signedness, Xi.bits) = @bitCast(x);
++    const nx: @Int(Ti.signedness, Xi.bits) = @bitCast(x);
+     return if (Xi.bits > Ti.bits) @truncate(nx) else nx;
+ }
+ 
+@@ -182,7 +182,7 @@
+ 
+ 
+ pub fn expanduser(path: []const u8, alloc: std.mem.Allocator, environ: std.process.Environ) ![:0]u8 {
+-    if (path.len == 0 or path[0] != '~') return alloc.dupeZ(u8, path);
++    if (path.len == 0 or path[0] != '~') return alloc.dupeSentinel(u8, path, 0);
+ 
+     const len = std.mem.indexOfScalar(u8, path, '/') orelse path.len;
+     const home_raw = blk: {
+@@ -191,7 +191,7 @@
+                 if(environ.getPosix("HOME")) |p| break :blk p;
+                 break :pwd c.getpwuid(c.getuid());
+             } else {
+-                const name = try alloc.dupeZ(u8, path[1..len]);
++                const name = try alloc.dupeSentinel(u8, path[1..len], 0);
+                 defer alloc.free(name);
+                 break :pwd c.getpwnam(name.ptr);
+             }
+@@ -199,11 +199,11 @@
+         if (pwd != null)
+             if (@as(*c.struct_passwd, pwd).pw_dir) |p|
+                 break :blk std.mem.span(p);
+-        return alloc.dupeZ(u8, path);
++        return alloc.dupeSentinel(u8, path, 0);
+     };
+     const home = std.mem.trim(u8, home_raw, "/");
+ 
+-    if (home.len == 0 and path.len == len) return alloc.dupeZ(u8, "/");
++    if (home.len == 0 and path.len == len) return alloc.dupeSentinel(u8, "/", 0);
+     return try std.mem.concatWithSentinel(alloc, u8, &.{ home, path[len..] }, 0);
+ }
+ 
