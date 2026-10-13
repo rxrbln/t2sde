@@ -4,9 +4,12 @@
 # SPDX-License-Identifier: GPL-2.0 or patched project license
 # --- T2-COPYRIGHT-END ---
 
---- linux-6.9/include/linux/pci_ids.h.vanilla	2024-06-23 14:45:08.881974819 +0200
-+++ linux-6.9/include/linux/pci_ids.h	2024-06-23 14:45:45.908972100 +0200
-@@ -1108,8 +1108,9 @@
+# Target: Linux 7.2
+
+diff --git a/include/linux/pci_ids.h b/include/linux/pci_ids.h
+--- a/include/linux/pci_ids.h
++++ b/include/linux/pci_ids.h
+@@ -1112,6 +1112,7 @@
  
  #define PCI_VENDOR_ID_SGI		0x10a9
  #define PCI_DEVICE_ID_SGI_IOC3		0x0003
@@ -14,45 +17,37 @@
  #define PCI_DEVICE_ID_SGI_LITHIUM	0x1002
  
  #define PCI_VENDOR_ID_WINBOND		0x10ad
- #define PCI_DEVICE_ID_WINBOND_82C105	0x0105
- #define PCI_DEVICE_ID_WINBOND_83C553	0x0565
+diff --git a/sound/pci/Kconfig b/sound/pci/Kconfig
 --- a/sound/pci/Kconfig
 +++ b/sound/pci/Kconfig
-@@ -907,6 +907,12 @@ config SND_YMFPCI
+@@ -932,4 +932,15 @@
  	  To compile this driver as a module, choose M here: the module
  	  will be called snd-ymfpci.
  
 +config SND_RAD1
-+	tristate "SGI RAD1"
-+	depends on SND && !ARM
++	tristate "SGI RAD audio with ADAT lightpipe I/O"
++	select SND_PCM
 +	help
-+	  Say 'Y' or 'M' to include support for SGI RAD1 Pro Audio in Octane.
++	  Support SGI RAD and RADICAL PCI audio, including eight-channel
++	  ADAT optical capture and playback. RAD also provides analog I/O.
++	  The optical connectors are shared with stereo IEC958 audio.
++
++	  To compile this driver as a module, choose M here. The module
++	  will be called snd-rad1.
 +
  endif	# SND_PCI
- 
- source "sound/pci/hda/Kconfig"
---- linux-6.9/arch/mips/pci/pci-xtalk-bridge.c.vanilla	2024-06-23 14:48:27.655960221 +0200
-+++ linux-6.9/arch/mips/pci/pci-xtalk-bridge.c	2024-06-23 14:49:02.163957687 +0200
-@@ -105,6 +105,8 @@
- DECLARE_PCI_FIXUP_HEADER(PCI_VENDOR_ID_SGI, PCI_DEVICE_ID_SGI_IOC3,
- 	bridge_disable_swapping);
- 
-+DECLARE_PCI_FIXUP_FINAL(PCI_VENDOR_ID_SGI, PCI_DEVICE_ID_SGI_RAD1,
-+	bridge_disable_swapping);
- 
- /*
-  * The Bridge ASIC supports both type 0 and type 1 access.  Type 1 is
+diff --git a/sound/pci/Makefile b/sound/pci/Makefile
 --- a/sound/pci/Makefile
 +++ b/sound/pci/Makefile
 @@ -22,6 +22,7 @@
  snd-intel8x0-y := intel8x0.o
  snd-intel8x0m-y := intel8x0m.o
  snd-maestro3-y := maestro3.o
-+snd-rad1-objs := rad1.o
++snd-rad1-y := rad1.o
  snd-rme32-y := rme32.o
  snd-rme96-y := rme96.o
  snd-sis7019-y := sis7019.o
-@@ -48,6 +49,7 @@ obj-$(CONFIG_SND_FM801) += snd-fm801.o
+@@ -48,6 +49,7 @@
  obj-$(CONFIG_SND_INTEL8X0) += snd-intel8x0.o
  obj-$(CONFIG_SND_INTEL8X0M) += snd-intel8x0m.o
  obj-$(CONFIG_SND_MAESTRO3) += snd-maestro3.o
@@ -60,9 +55,25 @@
  obj-$(CONFIG_SND_RME32) += snd-rme32.o
  obj-$(CONFIG_SND_RME96) += snd-rme96.o
  obj-$(CONFIG_SND_SIS7019) += snd-sis7019.o
+diff --git a/arch/mips/pci/pci-xtalk-bridge.c b/arch/mips/pci/pci-xtalk-bridge.c
+--- a/arch/mips/pci/pci-xtalk-bridge.c
++++ b/arch/mips/pci/pci-xtalk-bridge.c
+@@ -103,6 +103,10 @@
+ }
+ 
+ DECLARE_PCI_FIXUP_HEADER(PCI_VENDOR_ID_SGI, PCI_DEVICE_ID_SGI_IOC3,
++	bridge_disable_swapping);
++
++/* RAD MMIO and DMA use native big-endian PCI transactions. */
++DECLARE_PCI_FIXUP_HEADER(PCI_VENDOR_ID_SGI, PCI_DEVICE_ID_SGI_RAD1,
+ 	bridge_disable_swapping);
+ 
+ 
+diff --git a/include/sound/rad1.h b/include/sound/rad1.h
 --- /dev/null
 +++ b/include/sound/rad1.h
-@@ -0,0 +1,120 @@
+@@ -0,0 +1,123 @@
++/* SPDX-License-Identifier: GPL-2.0-or-later */
 +/*
 + * This file is subject to the terms and conditions of the GNU General Public
 + * License.  See the file "COPYING" in the main directory of this archive
@@ -86,41 +97,43 @@
 +#define RAD1_AESTX	6
 +#define RAD1_DAC	7
 +#define RAD1_STATUS	8
++#define RAD1_PIPE_COUNT	9
 +
-+struct rad1regs {
++struct rad1_regs {
 +	u32 pci_status;			/* 0x00000000 */
-+	u32 adat_rx_msc_ust; 		/* 0x00000004 */
-+	u32 adat_rx_msc0_submsc; 	/* 0x00000008 */
-+	u32 aes_rx_msc_ust;	 	/* 0x0000000c */
-+	u32 aes_rx_msc0_submsc; 	/* 0x00000010 */
++	u32 adat_rx_msc_ust;		/* 0x00000004 */
++	u32 adat_rx_msc0_submsc;	/* 0x00000008 */
++	u32 aes_rx_msc_ust;		/* 0x0000000c */
++	u32 aes_rx_msc0_submsc;	/* 0x00000010 */
 +	u32 adc_msc_ust;		/* 0x00000014 */
-+	u32 adc_msc0_submsc; 		/* 0x00000018 */
-+	u32 adat_tx_msc_ust; 		/* 0x0000001c */
-+	u32 adat_tx_msc0_submsc; 	/* 0x00000020 */
-+	u32 aes_tx_msc_ust; 		/* 0x00000024 */
-+	u32 aes_tx_msc0_submsc; 	/* 0x00000028 */
-+	u32 dac_msc_ust; 		/* 0x0000002c */
-+	u32 ust_register; 		/* 0x00000030 */
++	u32 adc_msc0_submsc;		/* 0x00000018 */
++	u32 adat_tx_msc_ust;		/* 0x0000001c */
++	u32 adat_tx_msc0_submsc;	/* 0x00000020 */
++	u32 aes_tx_msc_ust;		/* 0x00000024 */
++	u32 aes_tx_msc0_submsc;	/* 0x00000028 */
++	u32 dac_msc_ust;		/* 0x0000002c */
++	u32 ust_register;		/* 0x00000030 */
 +	u32 gpio_status;		/* 0x00000034 */
-+	u32 chip_status1; 		/* 0x00000038 */
++	u32 chip_status1;		/* 0x00000038 */
 +	u32 chip_status0;		/* 0x0000003c */
 +
-+	u32 ust_clock_control; 		/* 0x00000040 */
-+	u32 adat_rx_control; 		/* 0x00000044 */
-+	u32 aes_rx_control;	 	/* 0x00000048 */
-+	u32 adc_control; 		/* 0x0000004c */
-+	u32 adat_tx_control; 		/* 0x00000050 */
-+	u32 aes_tx_control; 		/* 0x00000054 */
-+	u32 dac_control; 		/* 0x00000058 */
-+	u32 status_timer; 		/* 0x0000005c */
++	u32 ust_clock_control;		/* 0x00000040 */
++	u32 adat_rx_control;		/* 0x00000044 */
++	u32 aes_rx_control;		/* 0x00000048 */
++	u32 adc_control;		/* 0x0000004c */
++	u32 adat_tx_control;		/* 0x00000050 */
++	u32 aes_tx_control;		/* 0x00000054 */
++	u32 dac_control;		/* 0x00000058 */
++	u32 status_timer;		/* 0x0000005c */
 +
 +	u32 _pad70[4];
 +
-+	u32 misc_control; 		/* 0x00000070 */
++	u32 misc_control;		/* 0x00000070 */
 +	u32 pci_holdoff;		/* 0x00000074 */
-+	u32 pci_arb_control; 		/* 0x00000078 */
++	u32 pci_arb_control;		/* 0x00000078 */
 +
-+	u32 volume_control; 		/* 0x0000007c */
++	/* RADICAL uses this offset for its master-clock mux. */
++	u32 volume_control;		/* 0x0000007c */
 +
 +	u32 reset;			/* 0x00000080 */
 +
@@ -131,18 +144,18 @@
 +
 +	u32 _pada0[3];
 +
-+	u32 clockgen_ictl; 		/* 0x000000a0 */
-+	u32 clockgen_rem;	 	/* 0x000000a4 */
-+	u32 freq_synth_mux_sel[4]; 	/* 0x000000a8 */
++	u32 clockgen_ictl;		/* 0x000000a0 */
++	u32 clockgen_rem;		/* 0x000000a4 */
++	u32 freq_synth_mux_sel[4];	/* 0x000000a8 */
 +	u32 mpll0_lock_control;		/* 0x000000b8 */
-+	u32 mpll1_lock_control;	 	/* 0x000000bc */
++	u32 mpll1_lock_control;		/* 0x000000bc */
 +
 +	u32 _pad400[208];
 +
 +	/* descriptor RAM */
 +	struct {
-+		u32 loadr; 		/* 0x00000400 + 12*idx */
-+		u32 hiadr; 		/* 0x00000404 + 12*idx */
++		u32 loadr;		/* 0x00000400 + 12*idx */
++		u32 hiadr;		/* 0x00000404 + 12*idx */
 +		u32 control;		/* 0x00000408 + 12*idx */
 +	} pci_descr[16];
 +
@@ -179,309 +192,343 @@
 +	u32 aes_subcode_txb_rv0[2];	/* 0x000011f8 */
 +	u32 aes_subcode_txa_rv2[4];	/* 0x00001200 */
 +	u32 aes_subcode_txb_rv2[4];	/* 0x00001210 */
-+	u32 aes_subcode_tx_unused; 	/* 0x00001220 */
++	u32 aes_subcode_tx_unused;	/* 0x00001220 */
 +};
 +
 +#endif /* _SOUND_RAD1_H */
---- /dev/null	2025-05-26 19:53:29.376577236 +0200
-+++ ./sound/pci/rad1.c	2025-05-28 14:39:11.358132701 +0200
-@@ -0,0 +1,1546 @@
+diff --git a/sound/pci/rad1.c b/sound/pci/rad1.c
+--- /dev/null
++++ b/sound/pci/rad1.c
+@@ -0,0 +1,1298 @@
++// SPDX-License-Identifier: GPL-2.0-or-later
 +/*
-+ * rad1.c - ALSA driver for SGI RAD1 (as found in Octane and Octane2)
-+ * Copyright (C) 2004-2007 by Stanislaw Skowronek <skylark@unaligned.org>
++ * ALSA driver for SGI RAD and RADICAL audio.
++ * Copyright (C) 2004-2007 Stanislaw Skowronek <skylark@unaligned.org>
 + * Copyright (C) 2018-2025 René Rebe <rene@exactcode.de>
 + *
-+ * This program is free software; you can redistribute it and/or modify
-+ * it under the terms of the GNU General Public License as published by
-+ * the Free Software Foundation; either version 2 of the License, or
-+ * (at your option) any later version.
-+ *
-+ * This program is distributed in the hope that it will be useful,
-+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
-+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.See the
-+ * GNU General Public License for more details.
-+ *
-+ * You should have received a copy of the GNU General Public License
-+ * along with this program; if not, write to the Free Software
-+ * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA02111-1307 USA
++ * Register sequences are derived from IRIX rad_dd.o. See
++ * analysis/rad-adat-comparison.md for the disassembly and remaining
++ * hardware validation requirements.
 + */
-+
 +#include <linux/delay.h>
-+#include <linux/init.h>
++#include <linux/dma-mapping.h>
++#include <linux/io.h>
++#include <linux/ktime.h>
++#include <linux/module.h>
++#include <linux/mutex.h>
 +#include <linux/pci.h>
 +#include <linux/slab.h>
-+#include <linux/timer.h>
 +#include <linux/spinlock.h>
-+#include <linux/module.h>
-+
++#include <linux/timer.h>
++#include <sound/control.h>
 +#include <sound/core.h>
 +#include <sound/initval.h>
 +#include <sound/pcm.h>
-+#include <sound/control.h>
-+
++#include <sound/pcm_params.h>
 +#include <sound/rad1.h>
 +
-+struct snd_rad1_pipe {
-+	unsigned long pma;		/* physical addr of the ring */
-+	int *vma;			/* virtual addr of the ring */
-+	struct snd_pcm_substream *subs;	/* ALSA substream */
-+	struct snd_pcm *pcm;
-+	unsigned int pnum;		/* number of periods */
-+	unsigned int plen;		/* length of period (in bytes) */
-+	unsigned int hptr;		/* hardware pointer */
-+	int adma;			/* DMA active flag */
-+	unsigned int qptr;		/* queue pointer */
++#define RAD1_DMA_ENABLE		BIT(0)
++#define RAD1_RX_OPTICAL		BIT(3)
++#define RAD1_OPTICAL_MASK		GENMASK(10, 9)
++#define RAD1_OPTICAL_ADAT		BIT(10)
++#define RAD1_ADAT_RX_CONDITION	BIT(6)
++#define RAD1_ADAT_RX_HOLD		BIT(6)
++#define RAD1_ADAT_RX_RESET	BIT(7)
++#define RAD1_DMA_COUNT_MASK	0xffffff80U
++#define RAD1_MSC_MASK		0x3fffU
++#define RAD1_DMA_ALIGNMENT	128
++#define RAD1_ADC_MIC_CONTROL	0x03000000U
++#define RAD1_ADC_LINE_CONTROL	0x05000000U
++#define RAD1_REV_RAD		12
++#define RAD1_REV_RADICAL		13
++#define RAD1_ROUTE_ADAT_SWITCH	BIT(0)
++#define RAD1_ROUTE_PLAYBACK	BIT(1)
++
++enum rad1_adat_rx_state {
++	RAD1_RX_UNCHECKED,
++	RAD1_RX_READY,
++	RAD1_RX_RECOVERING,
++};
++
++#define rad1_read(chip, reg) ioread32be(&(chip)->mmio->reg)
++#define rad1_write(chip, reg, value) iowrite32be((value), &(chip)->mmio->reg)
++
++struct rad1_pipe {
++	dma_addr_t dma_addr;
++	struct snd_pcm_substream *substream;
++	u32 control;		/* Control register without DMA enable. */
++	u32 buffer_bytes;
++	u32 period_bytes;
++	u32 position;
++	u32 period_progress;
++	bool opened;
++	bool prepared;
++	bool running;
 +};
 +
 +struct snd_rad1 {
-+	spinlock_t lock;
++	spinlock_t lock;		/* MMIO, pipe state, routing and reset shadow. */
++	struct mutex timer_mutex;
 +	struct snd_card *card;
 +	struct pci_dev *pci;
-+	unsigned long mmio_phys;
-+	volatile struct rad1regs *mmio;
-+	int timer_active;
++	struct rad1_regs __iomem *mmio;
 +	struct timer_list timer;
-+	struct snd_rad1_pipe pipes[9];
-+
-+	/* random stuff */
-+	int last_aesrx_rate;
-+
-+	/* card controls */
-+	unsigned int attctrl;		/* Attenuation control */
-+	unsigned int rt_adc;		/* ADC routing */
-+	unsigned int rt_aesr;		/* AES Rx routing */
-+	unsigned int rt_adat;		/* ADAT Rx routing */
-+	unsigned int rt_opto;		/* Optical Out routing */
++	bool timer_paused;
++	bool shutting_down;
++	u8 revision_major;
++	enum rad1_adat_rx_state adat_rx_state;
++	unsigned long adat_retry_jiffies;
++	u32 reset;
++	u32 misc;
++	u32 attenuation;
++	u32 radical_mux;
++	u32 adat_msc;
++	u64 adat_time_ns;
++	struct snd_kcontrol *route_controls[2][2];
++	struct rad1_pipe pipes[RAD1_PIPE_COUNT];
 +};
 +
-+/* ----------------------------------------------------------------------- */
++static const unsigned int rad1_pcm_pipes[] = {
++	RAD1_ADC, RAD1_DAC, RAD1_AESRX, RAD1_AESTX,
++	RAD1_ADATRX, RAD1_ADATTX,
++};
 +
-+
-+/* ----------------------------------------------------------------------- */
-+/* Hardware initialization, DMa, Pipe setup */
-+static void
-+snd_rad1_hw_init(struct snd_rad1 *chip)
++static bool rad1_has_analog(const struct snd_rad1 *chip)
 +{
-+	/* The hex values listed here are, for the most part, unknown values
-+	 * determined by running portions of the IRIX kernel inside of Linux
-+	 * as a userland application and then extracting the run-time info.
-+	 *
-+	 * We could define them via macros if we wanted, but the macro names
-+	 * would be no more intelligible as RAD1_ANCIENT_MU_* than they are
-+	 * simple hex numbers, so until the purpose of each value is known,
-+	 * they shall remain as simple hex numbers.
-+	 *
-+	 * The same applies for pretty much any other hex number found in
-+	 * driver that isn't a bit mask or some sort.  One day, we may figure
-+	 * it all out, and create an appropriate header file to define them
-+	 * all as intelligible macros.
-+	 */
-+	volatile struct rad1regs *mmio = chip->mmio;
-+
-+	mmio->reset =			cpu_to_be32(0xffffffff);
-+	udelay(1000);
-+	mmio->reset =			cpu_to_be32(0xffe3cffe);
-+	mmio->pci_holdoff =		cpu_to_be32(0x08000010);
-+	mmio->pci_arb_control =		cpu_to_be32(0x00fac688);
-+
-+	/* I/O routing */
-+	/* Mike 03000000; LineIn 05000000 */
-+	mmio->adc_control =		cpu_to_be32(0x03000000);
-+	chip->rt_adc =			0x03000000;
-+
-+	/* Default */
-+	mmio->dac_control =		cpu_to_be32(0x20000000);
-+
-+	/* Optical In 00000018; AES In 00000010 */
-+	mmio->aes_rx_control =		cpu_to_be32(0x00000018);
-+	chip->rt_aesr =			0x00000018;
-+
-+	/* Default */
-+	mmio->aes_tx_control =		cpu_to_be32(0x40000000);
-+
-+	/* Disabled a0000000; Optical In a0000018 */
-+	mmio->adat_rx_control =		cpu_to_be32(0xa0000000);
-+	chip->rt_adat =			0xa0000000;
-+
-+	/* Default */
-+	mmio->adat_tx_control =		cpu_to_be32(0x20000000);
-+	mmio->gpio3 =			cpu_to_be32(0x00000002);
-+	mmio->misc_control =		cpu_to_be32(0x00001500);
-+	mmio->mpll0_lock_control =	cpu_to_be32(0x9fffffff);
-+	mmio->mpll1_lock_control =	cpu_to_be32(0x9fffffff);
-+	mmio->reset =			cpu_to_be32(0xffe3c0fe);
-+	udelay(1000);
-+	mmio->clockgen_ictl =		cpu_to_be32(0x02000001);
-+	mmio->reset =			cpu_to_be32(0xffe24070);
-+	udelay(1000);
-+	mmio->reset =			cpu_to_be32(0xffe20000);
-+	mmio->gpio2 =			cpu_to_be32(0x00000002);
-+	mmio->volume_control =		cpu_to_be32(0xd6d6d6d6);
-+	chip->attctrl =			0xd6d6d6d6;
-+	udelay(1000);
-+
-+	/* AES-Optical Out 00001040; AES-AES Out 00001440 */
-+	mmio->misc_control =		cpu_to_be32(0x00001040);
-+	chip->rt_opto =			0x00001040;
-+	mmio->reset =			cpu_to_be32(0xffe20100);
-+	mmio->freq_synth_mux_sel[3] =	cpu_to_be32(0x00000001);
-+	mmio->clockgen_rem =		cpu_to_be32(0x0000ffff);
-+	mmio->clockgen_ictl =		cpu_to_be32(0x10000603);
-+	mmio->reset =			cpu_to_be32(0xffe20000);
-+	mmio->reset =			cpu_to_be32(0xffe20200);
-+	mmio->freq_synth_mux_sel[2] =	cpu_to_be32(0x00000001);
-+	mmio->clockgen_rem =		cpu_to_be32(0x0000ffff);
-+	mmio->clockgen_ictl =		cpu_to_be32(0x20000603);
-+	mmio->reset =			cpu_to_be32(0xffe20000);
-+	mmio->reset =			cpu_to_be32(0xffe20400);
-+	mmio->freq_synth_mux_sel[1] =	cpu_to_be32(0x00000001);
-+	mmio->clockgen_rem =		cpu_to_be32(0x0000ffff);
-+	mmio->clockgen_ictl =		cpu_to_be32(0x40000603);
-+	mmio->reset =			cpu_to_be32(0xffe20000);
-+	mmio->reset =			cpu_to_be32(0xffe20800);
-+	mmio->freq_synth_mux_sel[0] =	cpu_to_be32(0x00000001);
-+	mmio->clockgen_rem =		cpu_to_be32(0x0000ffff);
-+	mmio->clockgen_ictl =		cpu_to_be32(0x80000603);
-+	mmio->reset =			cpu_to_be32(0xffe20000);
-+	mmio->gpio1 =			cpu_to_be32(0x00000003);
-+	udelay(10000);
++	return chip->revision_major == RAD1_REV_RAD;
 +}
 +
-+static void
-+snd_rad1_setup_dma_pipe(struct snd_rad1 *chip, int pidx)
++static unsigned int rad1_pipe_id(struct snd_pcm_substream *substream)
 +{
-+	struct snd_rad1_pipe *pipe = (chip->pipes + pidx);
-+	volatile struct rad1regs *mmio = chip->mmio;
++	static const unsigned int device_pipes[] = {
++		RAD1_DAC, RAD1_ADC, RAD1_AESTX, RAD1_AESRX, RAD1_ADATTX,
++	};
++	unsigned int pipe_id = device_pipes[substream->pcm->device];
 +
-+	if ((-pipe->pnum * pipe->plen) & 0x7f)
-+		printk(KERN_WARNING "rad1: pipe %d has unaligned size %d\n",
-+		       pidx, (pipe->pnum * pipe->plen));
-+
-+	mmio->pci_descr[pidx].hiadr = cpu_to_be32(pipe->pma >> 32);
-+	mmio->pci_descr[pidx].loadr = cpu_to_be32(pipe->pma & 0xffffffff);
-+	mmio->pci_descr[pidx].control = cpu_to_be32(((-pipe->pnum * pipe->plen) &
-+	                                  0xffffff80) | (pidx << 3));
-+
-+	mmio->pci_hiadr[pidx] = cpu_to_be32(pipe->pma >> 32);
-+	mmio->pci_lc[pidx].loadr = cpu_to_be32(pipe->pma & 0xffffffff);
-+	mmio->pci_lc[pidx].control = cpu_to_be32(((-pipe->pnum * pipe->plen) &
-+	                               0xffffff80) | (pidx << 3));
++	if (pipe_id == RAD1_ADATTX && substream->stream == SNDRV_PCM_STREAM_CAPTURE)
++		return RAD1_ADATRX;
++	return pipe_id;
 +}
 +
-+static void
-+snd_rad1_activate_timer(struct snd_rad1 *chip)
++static u32 __iomem *rad1_control_reg(struct snd_rad1 *chip, unsigned int pipe_id)
 +{
-+	if (!chip->timer_active) {
-+		chip->timer.expires = (jiffies + 1);
-+		add_timer(&chip->timer);
-+		chip->timer_active = 1;
++	switch (pipe_id) {
++	case RAD1_ADC:
++		return &chip->mmio->adc_control;
++	case RAD1_DAC:
++		return &chip->mmio->dac_control;
++	case RAD1_AESRX:
++		return &chip->mmio->aes_rx_control;
++	case RAD1_AESTX:
++		return &chip->mmio->aes_tx_control;
++	case RAD1_ADATRX:
++		return &chip->mmio->adat_rx_control;
++	case RAD1_ADATTX:
++		return &chip->mmio->adat_tx_control;
++	default:
++		return NULL;
 +	}
 +}
 +
-+static void
-+snd_rad1_run_pipe(struct snd_rad1 *chip, int pidx, int adma)
++static bool rad1_timer_needed(struct snd_rad1 *chip)
 +{
-+	struct snd_rad1_pipe *pipe = (chip->pipes + pidx);
-+	volatile struct rad1regs *mmio = chip->mmio;
++	unsigned int i;
 +
-+	if (pipe->adma != adma) {
-+		pipe->adma = adma;
++	/* Keep recovering the input clock while an ADAT capture is open. */
++	if (chip->pipes[RAD1_ADATRX].opened)
++		return true;
++	for (i = 0; i < ARRAY_SIZE(rad1_pcm_pipes); i++)
++		if (chip->pipes[rad1_pcm_pipes[i]].running)
++			return true;
++	return false;
++}
 +
-+		switch (pidx) {
-+		case RAD1_ADC:
-+			mmio->adc_control = cpu_to_be32(chip->rt_adc | adma);
-+			break;
-+		case RAD1_DAC:
-+			mmio->dac_control = cpu_to_be32(0x20000000 | adma);
-+			break;
-+		case RAD1_AESRX:
-+			mmio->aes_rx_control = cpu_to_be32(chip->rt_aesr | adma);
-+			break;
-+		case RAD1_AESTX:
-+			mmio->aes_tx_control = cpu_to_be32(0x40000000 | adma);
-+			break;
++/* Caller holds chip->lock; a timer callback uses the same scheduling path. */
++static void rad1_arm_timer(struct snd_rad1 *chip)
++{
++	if (!chip->shutting_down && !chip->timer_paused && rad1_timer_needed(chip))
++		mod_timer(&chip->timer, jiffies + 1);
++}
++
++static int rad1_run_pipe(struct snd_rad1 *chip, unsigned int pipe_id, bool start)
++{
++	struct rad1_pipe *pipe = &chip->pipes[pipe_id];
++	u32 __iomem *reg = rad1_control_reg(chip, pipe_id);
++
++	if (!reg)
++		return -EINVAL;
++	if (start && (chip->shutting_down || !pipe->prepared))
++		return -EBADFD;
++	if (start && pipe_id == RAD1_ADATRX &&
++	    (rad1_read(chip, chip_status1) & RAD1_ADAT_RX_CONDITION))
++		return -ENOLINK;
++	pipe->running = start;
++	iowrite32be(pipe->control | (start ? RAD1_DMA_ENABLE : 0), reg);
++	/* Flush posted control writes before buffer ownership can change. */
++	ioread32be(reg);
++	if (!start)
++		ioread32be(reg);
++	rad1_arm_timer(chip);
++	return 0;
++}
++
++/* The count field represents a negative byte count in 128-byte units. */
++static u32 rad1_position(struct snd_rad1 *chip, unsigned int pipe_id)
++{
++	struct rad1_pipe *pipe = &chip->pipes[pipe_id];
++	u32 pos = pipe->buffer_bytes +
++		(rad1_read(chip, pci_lc[pipe_id].control) & RAD1_DMA_COUNT_MASK);
++
++	/* Count zero denotes the reload boundary, not a position past the ring. */
++	return pos < pipe->buffer_bytes ? pos : 0;
++}
++
++static void rad1_setup_dma(struct snd_rad1 *chip, unsigned int pipe_id)
++{
++	struct rad1_pipe *pipe = &chip->pipes[pipe_id];
++	u32 count = (-pipe->buffer_bytes & RAD1_DMA_COUNT_MASK) | (pipe_id << 3);
++
++	rad1_write(chip, pci_descr[pipe_id].hiadr, upper_32_bits(pipe->dma_addr));
++	rad1_write(chip, pci_descr[pipe_id].loadr, lower_32_bits(pipe->dma_addr));
++	rad1_write(chip, pci_descr[pipe_id].control, count);
++	rad1_write(chip, pci_hiadr[pipe_id], upper_32_bits(pipe->dma_addr));
++	rad1_write(chip, pci_lc[pipe_id].loadr, lower_32_bits(pipe->dma_addr));
++	rad1_write(chip, pci_lc[pipe_id].control, count);
++}
++
++/* IRIX rad_check_adat_rx: hold bit 6, pulse bit 7, release on condition clear. */
++static void rad1_adat_recover(struct snd_rad1 *chip, u32 status)
++{
++	bool bad = status & RAD1_ADAT_RX_CONDITION;
++
++	if (chip->shutting_down)
++		return;
++	if (chip->adat_rx_state == RAD1_RX_READY && bad)
++		chip->adat_rx_state = RAD1_RX_UNCHECKED;
++	if (chip->adat_rx_state == RAD1_RX_UNCHECKED) {
++		if (!bad) {
++			chip->adat_rx_state = RAD1_RX_READY;
++			return;
++		}
++		rad1_write(chip, reset, chip->reset | RAD1_ADAT_RX_HOLD |
++			   RAD1_ADAT_RX_RESET);
++		chip->reset |= RAD1_ADAT_RX_HOLD;
++		rad1_write(chip, reset, chip->reset);
++		chip->adat_rx_state = RAD1_RX_RECOVERING;
++		chip->adat_retry_jiffies = jiffies + msecs_to_jiffies(100);
++	} else if (chip->adat_rx_state == RAD1_RX_RECOVERING) {
++		if (!bad) {
++			chip->reset &= ~RAD1_ADAT_RX_HOLD;
++			rad1_write(chip, reset, chip->reset);
++			chip->adat_rx_state = RAD1_RX_READY;
++		} else if (time_after_eq(jiffies, chip->adat_retry_jiffies)) {
++			rad1_write(chip, reset, chip->reset | RAD1_ADAT_RX_RESET);
++			rad1_write(chip, reset, chip->reset);
++			chip->adat_retry_jiffies = jiffies + msecs_to_jiffies(100);
 +		}
 +	}
-+
-+	if (adma)
-+		snd_rad1_activate_timer(chip);
 +}
 +
-+static void
-+snd_rad1_poll_pipe(struct snd_rad1 *chip, int pidx, int is_tx)
++static u32 rad1_adat_msc(struct snd_rad1 *chip)
 +{
-+	struct snd_rad1_pipe *pipe = (chip->pipes + pidx);
++	/* IRIX rad_devinfo: 14-bit MSC at bits 31:18; rad_update_dev shifts it. */
++	return rad1_read(chip, adat_rx_msc_ust) >> 18;
++}
++
++static bool rad1_adat_rate_matches(unsigned int rate, u32 frames, u64 ns)
++{
++	u64 measured;
++
++	/* A 14-bit counter is unambiguous for this interval at <= 48 kHz. */
++	if (ns < 20 * NSEC_PER_MSEC || ns > 250 * NSEC_PER_MSEC)
++		return false;
++	measured = div_u64((u64)frames * NSEC_PER_SEC, ns);
++	return measured >= rate - rate / 100 && measured <= rate + rate / 100;
++}
++
++static void rad1_poll_timer(struct timer_list *timer)
++{
++	struct snd_rad1 *chip = timer_container_of(chip, timer, timer);
++	struct snd_pcm_substream *elapsed[ARRAY_SIZE(rad1_pcm_pipes)];
++	struct snd_pcm_substream *xrun = NULL;
++	unsigned int i, n = 0;
 +	unsigned long flags;
-+	unsigned int hptr = (pipe->pnum * pipe->plen) +
-+	                     (be32_to_cpu(chip->mmio->pci_lc[pidx].control) & 0xffffff80);
++	u32 status, msc;
++	u64 now, interval;
 +
 +	spin_lock_irqsave(&chip->lock, flags);
-+	if (pipe->adma && pipe->subs) {
-+		/* use hardware pointer to detect period crossing */
-+		if ((hptr / pipe->plen) != (pipe->hptr / pipe->plen)) {
-+			if (is_tx)
-+				pipe->qptr = (hptr / 8);
-+			else
-+				pipe->qptr = (pipe->hptr / 8);
-+			spin_unlock_irqrestore(&chip->lock, flags);
-+			snd_pcm_period_elapsed(pipe->subs);
-+			spin_lock_irqsave(&chip->lock, flags);
++	if (chip->shutting_down)
++		goto unlock;
++	if (chip->pipes[RAD1_ADATRX].opened) {
++		struct rad1_pipe *pipe = &chip->pipes[RAD1_ADATRX];
++
++		status = rad1_read(chip, chip_status1);
++		rad1_adat_recover(chip, status);
++		if (pipe->running) {
++			msc = rad1_adat_msc(chip);
++			now = ktime_get_ns();
++			interval = now - chip->adat_time_ns;
++			if ((status & RAD1_ADAT_RX_CONDITION) ||
++			    (interval >= 100 * NSEC_PER_MSEC &&
++			     interval <= 250 * NSEC_PER_MSEC &&
++			     !rad1_adat_rate_matches(pipe->substream->runtime->rate,
++				(msc - chip->adat_msc) & RAD1_MSC_MASK, interval))) {
++				xrun = pipe->substream;
++				rad1_run_pipe(chip, RAD1_ADATRX, false);
++			}
++			if (interval >= 100 * NSEC_PER_MSEC) {
++				chip->adat_msc = msc;
++				chip->adat_time_ns = now;
++			}
 +		}
-+		pipe->hptr = hptr;
 +	}
++	for (i = 0; i < ARRAY_SIZE(rad1_pcm_pipes); i++) {
++		unsigned int pipe_id = rad1_pcm_pipes[i];
++		struct rad1_pipe *pipe = &chip->pipes[pipe_id];
++		u32 pos, delta;
++
++		if (!pipe->running || !pipe->substream)
++			continue;
++		pos = rad1_position(chip, pipe_id);
++		delta = (pos + pipe->buffer_bytes - pipe->position) % pipe->buffer_bytes;
++		pipe->position = pos;
++		pipe->period_progress += delta;
++		if (pipe->period_progress >= pipe->period_bytes) {
++			pipe->period_progress %= pipe->period_bytes;
++			elapsed[n++] = pipe->substream;
++		}
++	}
++	rad1_arm_timer(chip);
++unlock:
 +	spin_unlock_irqrestore(&chip->lock, flags);
++	/* ALSA can invoke trigger/pointer here; never hold chip->lock. */
++	if (xrun)
++		snd_pcm_stop_xrun(xrun);
++	for (i = 0; i < n; i++)
++		snd_pcm_period_elapsed(elapsed[i]);
 +}
 +
-+static void
-+snd_rad1_poll_timer(struct timer_list *chip_virt)
-+{
-+	struct snd_rad1 *chip = timer_container_of(chip, chip_virt, timer);
-+	int adma = 0;
-+
-+	if (chip->pipes[RAD1_ADC].adma) {
-+		snd_rad1_poll_pipe(chip, RAD1_ADC, 0);
-+		adma = 1;
-+	}
-+
-+	if (chip->pipes[RAD1_DAC].adma) {
-+		snd_rad1_poll_pipe(chip, RAD1_DAC, 1);
-+		adma = 1;
-+	}
-+
-+	if (chip->pipes[RAD1_AESRX].adma) {
-+		snd_rad1_poll_pipe(chip, RAD1_AESRX, 0);
-+		adma = 1;
-+	}
-+
-+	if (chip->pipes[RAD1_AESTX].adma) {
-+		snd_rad1_poll_pipe(chip, RAD1_AESTX, 1);
-+		adma = 1;
-+	}
-+
-+	if (adma) {
-+		chip->timer.expires = (jiffies + 1);
-+		add_timer(&chip->timer);
-+	} else
-+		chip->timer_active = 0;
-+}
-+
-+static int
-+snd_rad1_free_pipe(struct snd_pcm_substream *substream, int pidx)
++/* Quiesce in-flight notifications before ALSA frees/reuses a runtime. */
++static int rad1_sync_stop(struct snd_pcm_substream *substream)
 +{
 +	struct snd_rad1 *chip = snd_pcm_substream_chip(substream);
-+	struct snd_rad1_pipe *pipe = (chip->pipes + pidx);
 +	unsigned long flags;
 +
++	mutex_lock(&chip->timer_mutex);
 +	spin_lock_irqsave(&chip->lock, flags);
-+	snd_rad1_run_pipe(chip, pidx, 0);
-+	pipe->subs = NULL;
++	chip->timer_paused = true;
 +	spin_unlock_irqrestore(&chip->lock, flags);
-+
-+	return snd_pcm_lib_free_pages(substream);
++	timer_delete_sync(&chip->timer);
++	spin_lock_irqsave(&chip->lock, flags);
++	chip->timer_paused = false;
++	rad1_arm_timer(chip);
++	spin_unlock_irqrestore(&chip->lock, flags);
++	mutex_unlock(&chip->timer_mutex);
++	return 0;
 +}
 +
-+static inline long
-+snd_rad1_gcd(long x, long y)
++/* Preserve the original AES channel-status generation. */
++static long rad1_gcd(long x, long y)
 +{
 +	long t;
 +
@@ -492,17 +539,17 @@
 +	}
 +
 +	while (y) {
-+		y = x % (t = y);
++		t = y;
++		y = x % y;
 +		x = t;
 +	}
 +
 +	return x;
 +}
 +
-+static void
-+snd_rad1_red_frac(long *n, long *d, long max)
++static void rad1_reduce_fraction(long *n, long *d, long max)
 +{
-+	long gcd = snd_rad1_gcd(*n, *d);
++	long gcd = rad1_gcd(*n, *d);
 +
 +	if (unlikely(!gcd))
 +		return;
@@ -510,63 +557,54 @@
 +	*n /= gcd;
 +	*d /= gcd;
 +
-+	/* XXX: Lose precision [sic] */
++	/* Scale both terms to fit the hardware divider fields. */
 +	while ((*n > max) || (*d > max)) {
 +		*n >>= 1;
 +		*d >>= 1;
 +	}
 +}
 +
-+static void
-+snd_rad1_set_aestx_subcode(struct snd_rad1 *chip, unsigned char *sub_lc,
-+                           unsigned char *sub_rc)
++static void rad1_write_aes_tx_subcode(struct snd_rad1 *chip, const u8 *sub_lc,
++				    const u8 *sub_rc)
 +{
-+	volatile struct rad1regs *mmio = chip->mmio;
 +	unsigned int i, j, lc[6], rc[6];
 +
 +	for (i = 0; i < 6; i++) {
 +		lc[i] = 0;
 +		rc[i] = 0;
 +		for (j = 0; j < 4; j++) {
-+			lc[i] |= (sub_lc[i * 4 + j] << (j << 3));
-+			rc[i] |= (sub_rc[i * 4 + j] << (j << 3));
++			lc[i] |= (u32)sub_lc[i * 4 + j] << (j * 8);
++			rc[i] |= (u32)sub_rc[i * 4 + j] << (j * 8);
 +		}
 +	}
 +
 +	for (i = 0; i < 6; i++) {
-+		mmio->aes_subcode_txa_lu[i] = cpu_to_be32(0x00000000);
-+		mmio->aes_subcode_txa_lc[i] = cpu_to_be32(lc[i]);
-+		mmio->aes_subcode_txa_lv[i] = cpu_to_be32(0x00000000);
-+		mmio->aes_subcode_txa_ru[i] = cpu_to_be32(0x00000000);
-+		mmio->aes_subcode_txa_rc[i] = cpu_to_be32(rc[i]);
-+		mmio->aes_subcode_txb_lu[i] = cpu_to_be32(0x00000000);
-+		mmio->aes_subcode_txb_lc[i] = cpu_to_be32(lc[i]);
-+		mmio->aes_subcode_txb_lv[i] = cpu_to_be32(0x00000000);
-+		mmio->aes_subcode_txb_ru[i] = cpu_to_be32(0x00000000);
-+		mmio->aes_subcode_txb_rc[i] = cpu_to_be32(rc[i]);
++		rad1_write(chip, aes_subcode_txa_lu[i], 0x00000000);
++		rad1_write(chip, aes_subcode_txa_lc[i], lc[i]);
++		rad1_write(chip, aes_subcode_txa_lv[i], 0x00000000);
++		rad1_write(chip, aes_subcode_txa_ru[i], 0x00000000);
++		rad1_write(chip, aes_subcode_txa_rc[i], rc[i]);
++		rad1_write(chip, aes_subcode_txb_lu[i], 0x00000000);
++		rad1_write(chip, aes_subcode_txb_lc[i], lc[i]);
++		rad1_write(chip, aes_subcode_txb_lv[i], 0x00000000);
++		rad1_write(chip, aes_subcode_txb_ru[i], 0x00000000);
++		rad1_write(chip, aes_subcode_txb_rc[i], rc[i]);
 +	}
 +
 +	for (i = 0; i < 2; i++) {
-+		mmio->aes_subcode_txa_rv0[i] = cpu_to_be32(0x00000000);
-+		mmio->aes_subcode_txb_rv0[i] = cpu_to_be32(0x00000000);
++		rad1_write(chip, aes_subcode_txa_rv0[i], 0x00000000);
++		rad1_write(chip, aes_subcode_txb_rv0[i], 0x00000000);
 +	}
 +
 +	for (i = 0; i < 4; i++) {
-+		mmio->aes_subcode_txa_rv2[i] = cpu_to_be32(0x00000000);
-+		mmio->aes_subcode_txb_rv2[i] = cpu_to_be32(0x00000000);
++		rad1_write(chip, aes_subcode_txa_rv2[i], 0x00000000);
++		rad1_write(chip, aes_subcode_txb_rv2[i], 0x00000000);
 +	}
 +}
 +
-+static void
-+snd_rad1_genset_aestx_subcode(struct snd_rad1 *chip, int rate)
++static void rad1_set_aes_tx_subcode(struct snd_rad1 *chip, int rate)
 +{
-+	int i;
-+	unsigned char lc[24], rc[24];
-+
-+	for (i = 0; i < 24; i++) {
-+		lc[i] = 0x00;
-+		rc[i] = 0x00;
-+	}
++	u8 lc[24] = {}, rc[24] = {};
 +
 +	lc[0] = 0x04;	/* PRO=0, !AUDIO=0, COPY=1, PRE=000, MODE=00 */
 +	rc[0] = 0x04;
@@ -597,1138 +635,866 @@
 +		lc[3] = 0x10;	/* Level III, 44.1 kHz */
 +		rc[3] = 0x10;
 +	}
-+	snd_rad1_set_aestx_subcode(chip, lc, rc);
++	rad1_write_aes_tx_subcode(chip, lc, rc);
 +}
 +
-+static void
-+snd_rad1_set_cg(struct snd_rad1 *chip, int cg, long rate,
-+				long base, unsigned muxsel)
++static int rad1_clockgen_id(struct snd_rad1 *chip, unsigned int pipe_id)
 +{
-+	volatile struct rad1regs *mmio = chip->mmio;
-+	long div, rem;
-+	unsigned flags;
-+
-+	snd_rad1_red_frac(&base, &rate, 0xffff);
-+	div = (base / rate);
-+	rem = (base % rate);
-+	snd_rad1_red_frac(&rem, &rate, 0xffff);
-+	flags = (((rem * 2) < rate) ? 0x600 : 0x200);
-+
-+	mmio->reset = cpu_to_be32(0xffe20000 | (0x100 << cg));
-+	mmio->freq_synth_mux_sel[3 - cg] = cpu_to_be32(muxsel);
-+	mmio->clockgen_rem = cpu_to_be32((rem << 16) | (0x10000 - rate));
-+	mmio->clockgen_ictl = cpu_to_be32((flags | (0x10000000 << cg) | (div - 1)));
-+	mmio->reset = cpu_to_be32(0xffe20000);
-+}
-+
-+/* Select best master clock source for low jitter */
-+static inline void
-+snd_rad1_set_cgms(struct snd_rad1 *chip, int cg, long rate)
-+{
-+	if (!(176400 % rate))
-+		snd_rad1_set_cg(chip, cg, rate, 176400, 0);
-+	else
-+		snd_rad1_set_cg(chip, cg, rate, 192000, 1);
-+}
-+
-+static inline void
-+snd_rad1_setrate_pipe(struct snd_rad1 *chip, int pidx, int rate)
-+{
-+	if (pidx == RAD1_ADC)
-+		snd_rad1_set_cgms(chip, 0, rate);
-+
-+	if (pidx == RAD1_DAC)
-+		snd_rad1_set_cgms(chip, 1, rate);
-+
-+	if (pidx == RAD1_AESTX) {
-+		snd_rad1_set_cgms(chip, 2, rate);
-+		snd_rad1_genset_aestx_subcode(chip, rate);
++	switch (pipe_id) {
++	case RAD1_ADC:
++		return 0;
++	case RAD1_DAC:
++		return 1;
++	case RAD1_AESTX:
++		return rad1_has_analog(chip) ? 2 : 0;
++	case RAD1_ADATTX:
++		return rad1_has_analog(chip) ? 3 : 1;
++	default:
++		return -1; /* Digital inputs use recovered clocks. */
 +	}
 +}
 +
-+static int
-+snd_rad1_prepare_pipe(struct snd_pcm_substream *substream, int pidx)
++static void rad1_set_clock(struct snd_rad1 *chip, unsigned int cg, long rate)
++{
++	long base = !(176400 % rate) ? 176400 : 192000;
++	u32 muxsel = base == 192000;
++	long div, rem;
++	u32 flags;
++
++	rad1_reduce_fraction(&base, &rate, 0xffff);
++	div = base / rate;
++	rem = base % rate;
++	rad1_reduce_fraction(&rem, &rate, 0xffff);
++	flags = rem * 2 < rate ? 0x600 : 0x200;
++
++	chip->reset |= BIT(8 + cg);
++	rad1_write(chip, reset, chip->reset);
++	if (!rad1_has_analog(chip)) {
++		unsigned int synth_shift = cg ? 2 : 0;
++		unsigned int source_shift = cg ? 6 : 4;
++
++		/*
++		 * RADICAL aliases offset 0x7c to the master-clock mux, not volume.
++		 * IRIX rad_vl_set_clockgen_RADICAL selects this synth and source 0.
++		 */
++		chip->radical_mux &= ~((3U << synth_shift) | (3U << source_shift));
++		chip->radical_mux |= cg << synth_shift;
++		rad1_write(chip, volume_control, chip->radical_mux);
++	}
++	rad1_write(chip, freq_synth_mux_sel[3 - cg], muxsel);
++	rad1_write(chip, clockgen_rem, ((u32)rem << 16) | (0x10000 - rate));
++	rad1_write(chip, clockgen_ictl, flags | BIT(28 + cg) | (div - 1));
++	chip->reset &= ~BIT(8 + cg);
++	rad1_write(chip, reset, chip->reset);
++}
++
++static bool rad1_adat_route(struct snd_rad1 *chip, bool playback)
++{
++	return playback ? !!(chip->misc & RAD1_OPTICAL_ADAT) :
++		!!(chip->pipes[RAD1_ADATRX].control & RAD1_RX_OPTICAL);
++}
++
++static int rad1_set_route(struct snd_rad1 *chip, bool playback, bool adat)
++{
++	unsigned int aes = playback ? RAD1_AESTX : RAD1_AESRX;
++	unsigned int ad = playback ? RAD1_ADATTX : RAD1_ADATRX;
++
++	if (adat == rad1_adat_route(chip, playback))
++		return 0;
++	if (chip->pipes[aes].opened || chip->pipes[ad].opened)
++		return -EBUSY;
++	if (playback) {
++		chip->misc &= ~RAD1_OPTICAL_MASK;
++		if (adat)
++			chip->misc |= RAD1_OPTICAL_ADAT;
++		rad1_write(chip, misc_control, chip->misc);
++	} else {
++		chip->pipes[aes].control &= ~RAD1_RX_OPTICAL;
++		chip->pipes[ad].control &= ~RAD1_RX_OPTICAL;
++		if (adat)
++			chip->pipes[ad].control |= RAD1_RX_OPTICAL;
++		else
++			chip->pipes[aes].control |= RAD1_RX_OPTICAL;
++		iowrite32be(chip->pipes[aes].control, rad1_control_reg(chip, aes));
++		iowrite32be(chip->pipes[ad].control, rad1_control_reg(chip, ad));
++	}
++	return 1;
++}
++
++static void rad1_notify_route(struct snd_rad1 *chip, bool playback)
++{
++	unsigned int i;
++
++	for (i = 0; i < 2; i++)
++		if (chip->route_controls[playback][i])
++			snd_ctl_notify(chip->card, SNDRV_CTL_EVENT_MASK_VALUE,
++				       &chip->route_controls[playback][i]->id);
++}
++
++static void rad1_hw_init(struct snd_rad1 *chip)
++{
++	unsigned int cg, i;
++
++	rad1_write(chip, reset, 0xffffffff);
++	udelay(1000);
++	rad1_write(chip, reset, 0xffe3cffe);
++	rad1_write(chip, pci_holdoff, 0x08000010);
++	rad1_write(chip, pci_arb_control, 0x00fac688);
++	chip->pipes[RAD1_ADC].control = RAD1_ADC_MIC_CONTROL;
++	chip->pipes[RAD1_DAC].control = 0x20000000;
++	chip->pipes[RAD1_AESRX].control = 0x00000018;
++	chip->pipes[RAD1_ADATRX].control = 0xa0000000;
++	chip->pipes[RAD1_AESTX].control = rad1_has_analog(chip) ? 0x40000000 : 0;
++	chip->pipes[RAD1_ADATTX].control = rad1_has_analog(chip) ? 0x60000000 : 0x20000000;
++	for (i = 0; i < ARRAY_SIZE(rad1_pcm_pipes); i++) {
++		unsigned int pipe_id = rad1_pcm_pipes[i];
++
++		iowrite32be(chip->pipes[pipe_id].control, rad1_control_reg(chip, pipe_id));
++	}
++	if (!rad1_has_analog(chip)) {
++		rad1_write(chip, gpio0, 0);
++		rad1_write(chip, gpio1, 0);
++		rad1_write(chip, gpio2, 0);
++		rad1_write(chip, gpio3, 0);
++		rad1_write(chip, volume_control, 0);
++	} else {
++		rad1_write(chip, gpio3, 2);
++	}
++	rad1_write(chip, misc_control, 0x1500);
++	rad1_write(chip, mpll0_lock_control, 0x9fffffff);
++	rad1_write(chip, mpll1_lock_control, 0x9fffffff);
++	rad1_write(chip, reset, 0xffe3c0fe);
++	udelay(1000);
++	rad1_write(chip, clockgen_ictl, 0x02000001);
++	rad1_write(chip, reset, 0xffe24070);
++	udelay(1000);
++	chip->reset = 0xffe20000;
++	rad1_write(chip, reset, chip->reset);
++	if (rad1_has_analog(chip)) {
++		rad1_write(chip, gpio2, 2);
++		chip->attenuation = 0xd6d6d6d6;
++		rad1_write(chip, volume_control, chip->attenuation);
++	}
++	udelay(1000);
++	/* Preserve the existing RAD baseline; only bits 10:9 select optical TX. */
++	chip->misc = 0x1040;
++	rad1_write(chip, misc_control, chip->misc);
++	for (cg = 0; cg < (rad1_has_analog(chip) ? 4 : 2); cg++)
++		rad1_set_clock(chip, cg, 48000);
++	/*
++	 * IRIX writes 120 bytes per ADAT bank. Use explicit MMIO offsets,
++	 * including the observed padding, without overrunning the named arrays.
++	 */
++	for (i = 0; i < 30; i++) {
++		iowrite32be(0, (u8 __iomem *)chip->mmio + 0x1000 + i * 4);
++		iowrite32be(0, (u8 __iomem *)chip->mmio + 0x1080 + i * 4);
++	}
++	if (rad1_has_analog(chip))
++		rad1_write(chip, gpio1, 3);
++	fsleep(10000);
++}
++
++static const struct snd_pcm_hardware rad1_pcm_hw = {
++	.info = SNDRV_PCM_INFO_INTERLEAVED | SNDRV_PCM_INFO_MMAP |
++		SNDRV_PCM_INFO_MMAP_VALID | SNDRV_PCM_INFO_BLOCK_TRANSFER,
++#ifdef __BIG_ENDIAN
++	.formats = SNDRV_PCM_FMTBIT_S24_BE,
++#else
++	.formats = SNDRV_PCM_FMTBIT_S24_LE,
++#endif
++	.rates = SNDRV_PCM_RATE_CONTINUOUS | SNDRV_PCM_RATE_32000 |
++		SNDRV_PCM_RATE_44100 | SNDRV_PCM_RATE_48000,
++	.rate_min = 32000,
++	.rate_max = 48000,
++	.channels_min = 2,
++	.channels_max = 2,
++	.buffer_bytes_max = 1024 * 1024,
++	.period_bytes_min = 4096,
++	.period_bytes_max = 4096,
++	.periods_min = 4,
++	.periods_max = 256,
++};
++
++static int rad1_pcm_open(struct snd_pcm_substream *substream)
 +{
 +	struct snd_rad1 *chip = snd_pcm_substream_chip(substream);
 +	struct snd_pcm_runtime *runtime = substream->runtime;
-+	struct snd_rad1_pipe *pipe = (chip->pipes + pidx);
++	unsigned int pipe_id = rad1_pipe_id(substream);
++	bool adat = pipe_id == RAD1_ADATRX || pipe_id == RAD1_ADATTX;
++	unsigned long flags;
++	int err, route = 0;
++
++	runtime->hw = rad1_pcm_hw;
++	if (adat) {
++		runtime->hw.channels_min = 8;
++		runtime->hw.channels_max = 8;
++		/* Ensure at least one poll per minimum-sized ADAT period. */
++		runtime->hw.period_bytes_min = max_t(unsigned int, 4096,
++			roundup(DIV_ROUND_UP(48000 * 32, HZ), RAD1_DMA_ALIGNMENT));
++		runtime->hw.period_bytes_max = 65536;
++	}
++	if (pipe_id == RAD1_AESTX || pipe_id == RAD1_ADATTX)
++		runtime->hw.rates = SNDRV_PCM_RATE_32000 |
++			SNDRV_PCM_RATE_44100 | SNDRV_PCM_RATE_48000;
++	err = snd_pcm_hw_constraint_integer(runtime, SNDRV_PCM_HW_PARAM_PERIODS);
++	if (err < 0)
++		return err;
++	err = snd_pcm_hw_constraint_step(runtime, 0, SNDRV_PCM_HW_PARAM_PERIOD_BYTES,
++				 RAD1_DMA_ALIGNMENT);
++	if (err < 0)
++		return err;
++	err = snd_pcm_hw_constraint_step(runtime, 0, SNDRV_PCM_HW_PARAM_BUFFER_BYTES,
++				 RAD1_DMA_ALIGNMENT);
++	if (err < 0)
++		return err;
++	spin_lock_irqsave(&chip->lock, flags);
++	if (chip->shutting_down) {
++		err = -ENODEV;
++		goto unlock;
++	}
++	if (adat) {
++		route = rad1_set_route(chip, pipe_id == RAD1_ADATTX, true);
++		if (route < 0) {
++			err = route;
++			goto unlock;
++		}
++	}
++	chip->pipes[pipe_id].opened = true;
++	chip->pipes[pipe_id].substream = substream;
++	if (pipe_id == RAD1_ADATRX) {
++		rad1_adat_recover(chip, rad1_read(chip, chip_status1));
++		rad1_arm_timer(chip);
++	}
++	err = 0;
++unlock:
++	spin_unlock_irqrestore(&chip->lock, flags);
++	if (route > 0)
++		rad1_notify_route(chip, pipe_id == RAD1_ADATTX);
++	return err;
++}
++
++static int rad1_pcm_close(struct snd_pcm_substream *substream)
++{
++	struct snd_rad1 *chip = snd_pcm_substream_chip(substream);
++	unsigned int pipe_id = rad1_pipe_id(substream);
 +	unsigned long flags;
 +
 +	spin_lock_irqsave(&chip->lock, flags);
-+	snd_rad1_run_pipe(chip, pidx, 0);
++	rad1_run_pipe(chip, pipe_id, false);
++	chip->pipes[pipe_id].opened = false;
++	chip->pipes[pipe_id].prepared = false;
 +	spin_unlock_irqrestore(&chip->lock, flags);
-+
-+	pipe->subs = substream;
-+	pipe->vma = (int *)runtime->dma_area;
-+	pipe->pma = runtime->dma_addr; /* & ~(0xffUL << 56); */
-+	pipe->pnum = runtime->periods;
-+	pipe->plen = frames_to_bytes(runtime, runtime->period_size);
-+
-+	snd_rad1_setrate_pipe(chip, pidx, runtime->rate);
-+
-+	pipe->hptr = 0;
-+	pipe->qptr = 0;
-+	snd_rad1_setup_dma_pipe(chip, pidx);
-+
++	rad1_sync_stop(substream);
++	spin_lock_irqsave(&chip->lock, flags);
++	chip->pipes[pipe_id].substream = NULL;
++	spin_unlock_irqrestore(&chip->lock, flags);
 +	return 0;
 +}
 +
-+static void
-+snd_rad1_detect_aesrx_rate(struct snd_rad1 *chip, struct snd_pcm_hardware *hw)
-+{
-+	int rate;
-+	unsigned sc = ((be32_to_cpu(chip->mmio->chip_status0) >> 24) & 7);
-+	static int rates[8] = {0, 48000, 44100, 32000, 48000,
-+	                       44100, 44056, 32000};
-+
-+	if (!rates[sc]) {
-+		printk(KERN_INFO "rad1: Warning: Recording from an unlocked "
-+		       "IEC958 source.  Assuming sample rate: %d.\n",
-+		       chip->last_aesrx_rate);
-+		rate = chip->last_aesrx_rate;
-+	} else
-+		rate = rates[sc];
-+
-+	chip->last_aesrx_rate = rate;
-+	hw->rate_min = rate;
-+	hw->rate_max = rate;
-+
-+	switch (rate) {
-+	case 32000:
-+		hw->rates = SNDRV_PCM_RATE_32000;
-+		break;
-+	case 44056:
-+		hw->rates = SNDRV_PCM_RATE_CONTINUOUS;
-+		break;
-+	case 48000:
-+		hw->rates = SNDRV_PCM_RATE_48000;
-+		break;
-+	case 44100:
-+	default:
-+		hw->rates = SNDRV_PCM_RATE_44100;
-+		break;
-+	}
-+}
-+
-+static int
-+snd_rad1_trigger_pipe(struct snd_pcm_substream *substream, int pidx, int cmd)
++static int rad1_pcm_hw_free(struct snd_pcm_substream *substream)
 +{
 +	struct snd_rad1 *chip = snd_pcm_substream_chip(substream);
-+	int result = 0;
++	unsigned int pipe_id = rad1_pipe_id(substream);
++	unsigned long flags;
 +
++	spin_lock_irqsave(&chip->lock, flags);
++	rad1_run_pipe(chip, pipe_id, false);
++	chip->pipes[pipe_id].prepared = false;
++	spin_unlock_irqrestore(&chip->lock, flags);
++	rad1_sync_stop(substream);
++	/* ALSA releases the managed buffer after this callback returns. */
++	return 0;
++}
++
++static int rad1_check_adat_rate(struct snd_rad1 *chip, unsigned int rate)
++{
++	unsigned long flags;
++	u32 status, before, after;
++	u64 start, ns;
++	unsigned int tries;
++
++	for (tries = 0; tries < 10; tries++) {
++		spin_lock_irqsave(&chip->lock, flags);
++		if (chip->shutting_down) {
++			spin_unlock_irqrestore(&chip->lock, flags);
++			return -ENODEV;
++		}
++		status = rad1_read(chip, chip_status1);
++		rad1_adat_recover(chip, status);
++		spin_unlock_irqrestore(&chip->lock, flags);
++		if (!(status & RAD1_ADAT_RX_CONDITION))
++			break;
++		msleep(20);
++	}
++	if (status & RAD1_ADAT_RX_CONDITION)
++		return -ENOLINK;
++	start = ktime_get_ns();
++	before = rad1_adat_msc(chip);
++	msleep(40);
++	spin_lock_irqsave(&chip->lock, flags);
++	if (chip->shutting_down) {
++		spin_unlock_irqrestore(&chip->lock, flags);
++		return -ENODEV;
++	}
++	after = rad1_adat_msc(chip);
++	ns = ktime_get_ns() - start;
++	status = rad1_read(chip, chip_status1);
++	spin_unlock_irqrestore(&chip->lock, flags);
++	if (status & RAD1_ADAT_RX_CONDITION)
++		return -ENOLINK;
++	if (!rad1_adat_rate_matches(rate, (after - before) & RAD1_MSC_MASK, ns))
++		return -EINVAL;
++	return 0;
++}
++
++static int rad1_pcm_prepare(struct snd_pcm_substream *substream)
++{
++	struct snd_rad1 *chip = snd_pcm_substream_chip(substream);
++	struct snd_pcm_runtime *runtime = substream->runtime;
++	unsigned int pipe_id = rad1_pipe_id(substream);
++	struct rad1_pipe *pipe = &chip->pipes[pipe_id];
++	unsigned long flags;
++	unsigned int bytes = frames_to_bytes(runtime, runtime->buffer_size);
++	unsigned int period = frames_to_bytes(runtime, runtime->period_size);
++	int cg = rad1_clockgen_id(chip, pipe_id), err = 0;
++
++	if (!bytes || !period || (bytes & (RAD1_DMA_ALIGNMENT - 1)) ||
++	    (period & (RAD1_DMA_ALIGNMENT - 1)) ||
++	    bytes % period || (runtime->dma_addr & (RAD1_DMA_ALIGNMENT - 1)))
++		return -EINVAL;
++	spin_lock_irqsave(&chip->lock, flags);
++	rad1_run_pipe(chip, pipe_id, false);
++	pipe->prepared = false;
++	spin_unlock_irqrestore(&chip->lock, flags);
++	rad1_sync_stop(substream);
++	if (pipe_id == RAD1_ADATRX) {
++		err = rad1_check_adat_rate(chip, runtime->rate);
++		if (err)
++			return err;
++	} else if (pipe_id == RAD1_AESRX) {
++		/* IRIX rad_cs8412_rate_table, including the 44,056 Hz code. */
++		static const unsigned int cs8412_rates[8] = {
++			0, 48000, 44100, 32000, 48000, 44100, 44056, 32000,
++		};
++		unsigned int code = (rad1_read(chip, chip_status0) >> 24) & 7;
++
++		if (!cs8412_rates[code])
++			return -ENOLINK;
++		if (runtime->rate != cs8412_rates[code])
++			return -EINVAL;
++	}
++	spin_lock_irqsave(&chip->lock, flags);
++	if (chip->shutting_down) {
++		err = -ENODEV;
++		goto unlock;
++	}
++	if (cg >= 0)
++		rad1_set_clock(chip, cg, runtime->rate);
++	if (pipe_id == RAD1_AESTX)
++		rad1_set_aes_tx_subcode(chip, runtime->rate);
++	pipe->dma_addr = runtime->dma_addr;
++	pipe->buffer_bytes = bytes;
++	pipe->period_bytes = period;
++	pipe->position = 0;
++	pipe->period_progress = 0;
++	rad1_setup_dma(chip, pipe_id);
++	pipe->prepared = true;
++unlock:
++	spin_unlock_irqrestore(&chip->lock, flags);
++	return err;
++}
++
++static int rad1_pcm_trigger(struct snd_pcm_substream *substream, int cmd)
++{
++	struct snd_rad1 *chip = snd_pcm_substream_chip(substream);
++	unsigned int pipe_id = rad1_pipe_id(substream);
++	unsigned long flags;
++	int err;
++
++	spin_lock_irqsave(&chip->lock, flags);
 +	switch (cmd) {
 +	case SNDRV_PCM_TRIGGER_START:
 +	case SNDRV_PCM_TRIGGER_RESUME:
-+		snd_rad1_run_pipe(chip, pidx, 1);
++		if (pipe_id == RAD1_ADATRX) {
++			chip->adat_msc = rad1_adat_msc(chip);
++			chip->adat_time_ns = ktime_get_ns();
++		}
++		err = rad1_run_pipe(chip, pipe_id, true);
 +		break;
 +	case SNDRV_PCM_TRIGGER_STOP:
 +	case SNDRV_PCM_TRIGGER_SUSPEND:
-+		snd_rad1_run_pipe(chip, pidx, 0);
++		err = rad1_run_pipe(chip, pipe_id, false);
 +		break;
 +	default:
-+		result = -EINVAL;
-+	}
-+
-+	return result;
-+}
-+
-+static snd_pcm_uframes_t
-+snd_rad1_ptr_pipe(struct snd_pcm_substream *substream, int pidx)
-+{
-+	struct snd_rad1 *chip = snd_pcm_substream_chip(substream);
-+
-+	return chip->pipes[pidx].qptr;
-+}
-+
-+/* ----------------------------------------------------------------------- */
-+
-+
-+/* ----------------------------------------------------------------------- */
-+/* ADC pipe */
-+static struct snd_pcm_hardware
-+snd_rad1_adc_hw = {
-+	.info			= (SNDRV_PCM_INFO_INTERLEAVED |
-+	                           SNDRV_PCM_INFO_MMAP |
-+	                           SNDRV_PCM_INFO_MMAP_VALID |
-+	                           SNDRV_PCM_INFO_BLOCK_TRANSFER),
-+	.rates			= (SNDRV_PCM_RATE_CONTINUOUS |
-+	                           SNDRV_PCM_RATE_32000 |
-+	                           SNDRV_PCM_RATE_44100 |
-+	                           SNDRV_PCM_RATE_48000),
-+#if defined(__BIG_ENDIAN)
-+	.formats		= SNDRV_PCM_FMTBIT_S24_BE,
-+#else
-+	.formats		= SNDRV_PCM_FMTBIT_S24_LE,
-+#endif
-+	.rate_min		= 32000,
-+	.rate_max		= 48000,
-+	.channels_min		= 2,
-+	.channels_max		= 2,
-+	.buffer_bytes_max	= 1048576,
-+	.period_bytes_min	= 4096,
-+	.period_bytes_max	= 4096,
-+	.periods_min		= 4,
-+	.periods_max		= 256,
-+};
-+
-+static int
-+snd_rad1_adc_open(struct snd_pcm_substream *substream)
-+{
-+	struct snd_pcm_runtime *runtime = substream->runtime;
-+
-+	runtime->hw = snd_rad1_adc_hw;
-+
-+	return 0;
-+}
-+
-+static int
-+snd_rad1_adc_close(struct snd_pcm_substream *substream)
-+{
-+	struct snd_rad1 *chip = snd_pcm_substream_chip(substream);
-+
-+	snd_rad1_run_pipe(chip, RAD1_ADC, 0);
-+
-+	return 0;
-+}
-+
-+static int
-+snd_rad1_adc_params(struct snd_pcm_substream *substream,
-+                     struct snd_pcm_hw_params *hw_params)
-+{
-+	return snd_pcm_lib_malloc_pages(substream,
-+	                                params_buffer_bytes(hw_params));
-+}
-+
-+static int
-+snd_rad1_adc_free(struct snd_pcm_substream *substream)
-+{
-+	return snd_rad1_free_pipe(substream, RAD1_ADC);
-+}
-+
-+static int
-+snd_rad1_adc_prepare(struct snd_pcm_substream *substream)
-+{
-+	return snd_rad1_prepare_pipe(substream, RAD1_ADC);
-+}
-+
-+static int
-+snd_rad1_adc_trigger(struct snd_pcm_substream *substream, int cmd)
-+{
-+	return snd_rad1_trigger_pipe(substream, RAD1_ADC, cmd);
-+}
-+
-+static snd_pcm_uframes_t
-+snd_rad1_adc_ptr(struct snd_pcm_substream *substream)
-+{
-+	return snd_rad1_ptr_pipe(substream, RAD1_ADC);
-+}
-+
-+static struct snd_pcm_ops
-+snd_rad1_adc_ops = {
-+	.open = snd_rad1_adc_open,
-+	.close = snd_rad1_adc_close,
-+	.hw_params = snd_rad1_adc_params,
-+	.hw_free = snd_rad1_adc_free,
-+	.prepare = snd_rad1_adc_prepare,
-+	.trigger = snd_rad1_adc_trigger,
-+	.pointer = snd_rad1_adc_ptr,
-+	.ioctl = snd_pcm_lib_ioctl,
-+};
-+
-+static void
-+snd_rad1_adc_pcm_free(struct snd_pcm *pcm)
-+{
-+	snd_pcm_lib_preallocate_free_for_all(pcm);
-+}
-+
-+static int
-+snd_rad1_new_adc(struct snd_rad1 *chip, int dev)
-+{
-+	struct snd_pcm *pcm;
-+	int err;
-+
-+	err = snd_pcm_new(chip->card, "RAD1 ADC", dev, 0, 1, &pcm);
-+	if (unlikely(err < 0))
-+		return err;
-+
-+	pcm->private_data = chip;
-+	pcm->private_free = snd_rad1_adc_pcm_free;
-+	strscpy(pcm->name, "RAD1 ADC", sizeof(pcm->name));
-+	chip->pipes[RAD1_ADC].pcm = pcm;
-+	snd_pcm_set_ops(pcm, SNDRV_PCM_STREAM_CAPTURE, &snd_rad1_adc_ops);
-+	snd_pcm_lib_preallocate_pages_for_all(pcm, SNDRV_DMA_TYPE_DEV,
-+	                                      &chip->pci->dev,
-+	                                      64*1024, 64*1024);
-+
-+	return 0;
-+}
-+
-+/* ----------------------------------------------------------------------- */
-+
-+
-+/* ----------------------------------------------------------------------- */
-+/* DAC pipe */
-+static struct
-+snd_pcm_hardware snd_rad1_dac_hw = {
-+	.info			= (SNDRV_PCM_INFO_INTERLEAVED |
-+	                           SNDRV_PCM_INFO_MMAP |
-+	                           SNDRV_PCM_INFO_MMAP_VALID |
-+	                           SNDRV_PCM_INFO_BLOCK_TRANSFER),
-+	.rates			= (SNDRV_PCM_RATE_CONTINUOUS |
-+	                           SNDRV_PCM_RATE_32000 |
-+	                           SNDRV_PCM_RATE_44100 |
-+	                           SNDRV_PCM_RATE_48000),
-+#if defined(__BIG_ENDIAN)
-+	.formats		= SNDRV_PCM_FMTBIT_S24_BE,
-+#else
-+	.formats		= SNDRV_PCM_FMTBIT_S24_LE,
-+#endif
-+	.rate_min		= 32000,
-+	.rate_max		= 48000,
-+	.channels_min		= 2,
-+	.channels_max		= 2,
-+	.buffer_bytes_max	= 1048576,
-+	.period_bytes_min	= 4096,
-+	.period_bytes_max	= 4096,
-+	.periods_min		= 4,
-+	.periods_max		= 256,
-+};
-+
-+static int
-+snd_rad1_dac_open(struct snd_pcm_substream *substream)
-+{
-+	struct snd_pcm_runtime *runtime = substream->runtime;
-+
-+	runtime->hw = snd_rad1_dac_hw;
-+
-+	return 0;
-+}
-+
-+static int
-+snd_rad1_dac_close(struct snd_pcm_substream *substream)
-+{
-+	struct snd_rad1 *chip = snd_pcm_substream_chip(substream);
-+
-+	snd_rad1_run_pipe(chip, RAD1_DAC, 0);
-+
-+	return 0;
-+}
-+
-+static int
-+snd_rad1_dac_params(struct snd_pcm_substream *substream,
-+                     struct snd_pcm_hw_params *hw_params)
-+{
-+	return snd_pcm_lib_malloc_pages(substream,
-+	                                params_buffer_bytes(hw_params));
-+}
-+
-+static int
-+snd_rad1_dac_free(struct snd_pcm_substream *substream)
-+{
-+	return snd_rad1_free_pipe(substream, RAD1_DAC);
-+}
-+
-+static int
-+snd_rad1_dac_prepare(struct snd_pcm_substream *substream)
-+{
-+	return snd_rad1_prepare_pipe(substream, RAD1_DAC);
-+}
-+
-+static int
-+snd_rad1_dac_trigger(struct snd_pcm_substream *substream, int cmd)
-+{
-+	return snd_rad1_trigger_pipe(substream, RAD1_DAC, cmd);
-+}
-+
-+static snd_pcm_uframes_t
-+snd_rad1_dac_ptr(struct snd_pcm_substream *substream)
-+{
-+	return snd_rad1_ptr_pipe(substream, RAD1_DAC);
-+}
-+
-+static struct snd_pcm_ops
-+snd_rad1_dac_ops = {
-+	.open = snd_rad1_dac_open,
-+	.close = snd_rad1_dac_close,
-+	.hw_params = snd_rad1_dac_params,
-+	.hw_free = snd_rad1_dac_free,
-+	.prepare = snd_rad1_dac_prepare,
-+	.trigger = snd_rad1_dac_trigger,
-+	.pointer = snd_rad1_dac_ptr,
-+	.ioctl = snd_pcm_lib_ioctl,
-+};
-+
-+static void
-+snd_rad1_dac_pcm_free(struct snd_pcm *pcm)
-+{
-+	snd_pcm_lib_preallocate_free_for_all(pcm);
-+}
-+
-+static int
-+snd_rad1_new_dac(struct snd_rad1 *chip, int dev)
-+{
-+	struct snd_pcm *pcm;
-+	int err;
-+
-+	err = snd_pcm_new(chip->card, "RAD1 DAC", dev, 1, 0, &pcm);
-+	if (unlikely(err < 0))
-+		return err;
-+
-+	pcm->private_data = chip;
-+	pcm->private_free = snd_rad1_dac_pcm_free;
-+	strscpy(pcm->name, "RAD1 DAC", sizeof(pcm->name));
-+	chip->pipes[RAD1_DAC].pcm = pcm;
-+	snd_pcm_set_ops(pcm, SNDRV_PCM_STREAM_PLAYBACK, &snd_rad1_dac_ops);
-+	snd_pcm_lib_preallocate_pages_for_all(pcm, SNDRV_DMA_TYPE_DEV,
-+	                                      &chip->pci->dev,
-+	                                      64*1024, 64*1024);
-+
-+	return 0;
-+}
-+
-+/* ----------------------------------------------------------------------- */
-+
-+
-+/* ----------------------------------------------------------------------- */
-+/* AESRX pipe */
-+static struct snd_pcm_hardware
-+snd_rad1_aesrx_hw = {
-+	.info			= (SNDRV_PCM_INFO_INTERLEAVED |
-+	                           SNDRV_PCM_INFO_MMAP |
-+	                           SNDRV_PCM_INFO_MMAP_VALID |
-+	                           SNDRV_PCM_INFO_BLOCK_TRANSFER),
-+	.rates			= (SNDRV_PCM_RATE_32000 |
-+	                           SNDRV_PCM_RATE_44100 |
-+	                           SNDRV_PCM_RATE_48000),
-+#if defined(__BIG_ENDIAN)
-+	.formats		= SNDRV_PCM_FMTBIT_S24_BE,
-+#else
-+	.formats		= SNDRV_PCM_FMTBIT_S24_LE,
-+#endif
-+	.rate_min		= 32000,
-+	.rate_max		= 48000,
-+	.channels_min		= 2,
-+	.channels_max		= 2,
-+	.buffer_bytes_max	= 1048576,
-+	.period_bytes_min	= 4096,
-+	.period_bytes_max	= 4096,
-+	.periods_min		= 4,
-+	.periods_max		= 256,
-+};
-+
-+static int
-+snd_rad1_aesrx_open(struct snd_pcm_substream *substream)
-+{
-+	struct snd_pcm_runtime *runtime = substream->runtime;
-+	struct snd_rad1 *chip = snd_pcm_substream_chip(substream);
-+
-+	runtime->hw = snd_rad1_aesrx_hw;
-+	snd_rad1_detect_aesrx_rate(chip, &runtime->hw);
-+
-+	return 0;
-+}
-+
-+static int
-+snd_rad1_aesrx_close(struct snd_pcm_substream *substream)
-+{
-+	struct snd_rad1 *chip = snd_pcm_substream_chip(substream);
-+
-+	snd_rad1_run_pipe(chip, RAD1_AESRX, 0);
-+
-+	return 0;
-+}
-+
-+static int
-+snd_rad1_aesrx_params(struct snd_pcm_substream *substream,
-+                      struct snd_pcm_hw_params *hw_params)
-+{
-+	return snd_pcm_lib_malloc_pages(substream,
-+	                                params_buffer_bytes(hw_params));
-+}
-+
-+static int
-+snd_rad1_aesrx_free(struct snd_pcm_substream *substream)
-+{
-+	return snd_rad1_free_pipe(substream, RAD1_AESRX);
-+}
-+
-+static int
-+snd_rad1_aesrx_prepare(struct snd_pcm_substream *substream)
-+{
-+	return snd_rad1_prepare_pipe(substream, RAD1_AESRX);
-+}
-+
-+static int
-+snd_rad1_aesrx_trigger(struct snd_pcm_substream *substream, int cmd)
-+{
-+	return snd_rad1_trigger_pipe(substream, RAD1_AESRX, cmd);
-+}
-+
-+static snd_pcm_uframes_t
-+snd_rad1_aesrx_ptr(struct snd_pcm_substream *substream)
-+{
-+	return snd_rad1_ptr_pipe(substream, RAD1_AESRX);
-+}
-+
-+static struct snd_pcm_ops
-+snd_rad1_aesrx_ops = {
-+	.open = snd_rad1_aesrx_open,
-+	.close = snd_rad1_aesrx_close,
-+	.hw_params = snd_rad1_aesrx_params,
-+	.hw_free = snd_rad1_aesrx_free,
-+	.prepare = snd_rad1_aesrx_prepare,
-+	.trigger = snd_rad1_aesrx_trigger,
-+	.pointer = snd_rad1_aesrx_ptr,
-+	.ioctl = snd_pcm_lib_ioctl,
-+};
-+
-+static void
-+snd_rad1_aesrx_pcm_free(struct snd_pcm *pcm)
-+{
-+	snd_pcm_lib_preallocate_free_for_all(pcm);
-+}
-+
-+static int
-+snd_rad1_new_aesrx(struct snd_rad1 *chip, int dev)
-+{
-+	struct snd_pcm *pcm;
-+	int err;
-+
-+	err = snd_pcm_new(chip->card, "RAD1 AES Rx", dev, 0, 1, &pcm);
-+	if (unlikely(err < 0))
-+		return err;
-+
-+	pcm->private_data = chip;
-+	pcm->private_free = snd_rad1_aesrx_pcm_free;
-+	strscpy(pcm->name, "RAD1 AES Rx", sizeof(pcm->name));
-+	chip->pipes[RAD1_AESRX].pcm = pcm;
-+	snd_pcm_set_ops(pcm, SNDRV_PCM_STREAM_CAPTURE, &snd_rad1_aesrx_ops);
-+	snd_pcm_lib_preallocate_pages_for_all(pcm, SNDRV_DMA_TYPE_DEV,
-+	                                      &chip->pci->dev,
-+	                                      64*1024, 64*1024);
-+	chip->last_aesrx_rate = 44100;
-+
-+	return 0;
-+}
-+
-+/* ----------------------------------------------------------------------- */
-+
-+
-+/* ----------------------------------------------------------------------- */
-+/* AESTX pipe */
-+static struct snd_pcm_hardware
-+snd_rad1_aestx_hw = {
-+	.info			= (SNDRV_PCM_INFO_INTERLEAVED |
-+	                           SNDRV_PCM_INFO_MMAP |
-+	                           SNDRV_PCM_INFO_MMAP_VALID |
-+	                           SNDRV_PCM_INFO_BLOCK_TRANSFER),
-+	.rates			= (SNDRV_PCM_RATE_32000 |
-+	                           SNDRV_PCM_RATE_44100 |
-+	                           SNDRV_PCM_RATE_48000),
-+#if defined(__BIG_ENDIAN)
-+	.formats		= SNDRV_PCM_FMTBIT_S24_BE,
-+#else
-+	.formats		= SNDRV_PCM_FMTBIT_S24_LE,
-+#endif
-+	.rate_min		= 32000,
-+	.rate_max		= 48000,
-+	.channels_min		= 2,
-+	.channels_max		= 2,
-+	.buffer_bytes_max	= 1048576,
-+	.period_bytes_min	= 4096,
-+	.period_bytes_max	= 4096,
-+	.periods_min		= 4,
-+	.periods_max		= 256,
-+};
-+
-+static int
-+snd_rad1_aestx_open(struct snd_pcm_substream *substream)
-+{
-+	struct snd_pcm_runtime *runtime = substream->runtime;
-+
-+	runtime->hw = snd_rad1_aestx_hw;
-+
-+	return 0;
-+}
-+
-+static int
-+snd_rad1_aestx_close(struct snd_pcm_substream *substream)
-+{
-+	struct snd_rad1 *chip = snd_pcm_substream_chip(substream);
-+
-+	snd_rad1_run_pipe(chip, RAD1_AESTX, 0);
-+
-+	return 0;
-+}
-+
-+static int
-+snd_rad1_aestx_params(struct snd_pcm_substream *substream,
-+                      struct snd_pcm_hw_params *hw_params)
-+{
-+	return snd_pcm_lib_malloc_pages(substream,
-+	                                params_buffer_bytes(hw_params));
-+}
-+
-+static int
-+snd_rad1_aestx_free(struct snd_pcm_substream *substream)
-+{
-+	return snd_rad1_free_pipe(substream, RAD1_AESTX);
-+}
-+
-+static int
-+snd_rad1_aestx_prepare(struct snd_pcm_substream *substream)
-+{
-+	return snd_rad1_prepare_pipe(substream, RAD1_AESTX);
-+}
-+
-+static int
-+snd_rad1_aestx_trigger(struct snd_pcm_substream *substream, int cmd)
-+{
-+	return snd_rad1_trigger_pipe(substream, RAD1_AESTX, cmd);
-+}
-+
-+static snd_pcm_uframes_t
-+snd_rad1_aestx_ptr(struct snd_pcm_substream *substream)
-+{
-+	return snd_rad1_ptr_pipe(substream, RAD1_AESTX);
-+}
-+
-+static struct snd_pcm_ops
-+snd_rad1_aestx_ops = {
-+	.open = snd_rad1_aestx_open,
-+	.close = snd_rad1_aestx_close,
-+	.hw_params = snd_rad1_aestx_params,
-+	.hw_free = snd_rad1_aestx_free,
-+	.prepare = snd_rad1_aestx_prepare,
-+	.trigger = snd_rad1_aestx_trigger,
-+	.pointer = snd_rad1_aestx_ptr,
-+	.ioctl = snd_pcm_lib_ioctl,
-+};
-+
-+static void
-+snd_rad1_aestx_pcm_free(struct snd_pcm *pcm)
-+{
-+	snd_pcm_lib_preallocate_free_for_all(pcm);
-+}
-+
-+static int
-+snd_rad1_new_aestx(struct snd_rad1 *chip, int dev)
-+{
-+	struct snd_pcm *pcm;
-+	int err;
-+
-+	err = snd_pcm_new(chip->card, "RAD1 AES Tx", dev, 1, 0, &pcm);
-+	if (unlikely(err < 0))
-+		return err;
-+
-+	pcm->private_data = chip;
-+	pcm->private_free = snd_rad1_aestx_pcm_free;
-+	strscpy(pcm->name, "RAD1 AES Tx", sizeof(pcm->name));
-+	chip->pipes[RAD1_AESTX].pcm = pcm;
-+	snd_pcm_set_ops(pcm, SNDRV_PCM_STREAM_PLAYBACK, &snd_rad1_aestx_ops);
-+	snd_pcm_lib_preallocate_pages_for_all(pcm, SNDRV_DMA_TYPE_DEV,
-+	                                      &chip->pci->dev,
-+	                                      64*1024, 64*1024);
-+
-+	return 0;
-+}
-+
-+/* ----------------------------------------------------------------------- */
-+
-+
-+/* ----------------------------------------------------------------------- */
-+/* Volume control */
-+static int
-+snd_rad1_control_pv_info(struct snd_kcontrol *kcontrol,
-+                         struct snd_ctl_elem_info *uinfo)
-+{
-+	uinfo->type = SNDRV_CTL_ELEM_TYPE_INTEGER;
-+	uinfo->count = 2;
-+	uinfo->value.integer.min = 0;
-+	uinfo->value.integer.max = 255;
-+
-+	return 0;
-+}
-+
-+static int
-+snd_rad1_control_pv_get(struct snd_kcontrol *kcontrol,
-+                        struct snd_ctl_elem_value *u)
-+{
-+	int shift = (kcontrol->private_value * 16);
-+	unsigned long flags;
-+	struct snd_rad1 *chip = snd_kcontrol_chip(kcontrol);
-+
-+	spin_lock_irqsave(&chip->lock, flags);
-+	u->value.integer.value[0] = ((chip->attctrl >> shift) & 0xff);
-+	u->value.integer.value[1] = ((chip->attctrl >> (8 + shift)) & 0xff);
-+	spin_unlock_irqrestore(&chip->lock, flags);
-+
-+	return 0;
-+}
-+
-+static int
-+snd_rad1_control_pv_put(struct snd_kcontrol *kcontrol,
-+                        struct snd_ctl_elem_value *u)
-+{
-+	int change = 0;
-+	int shift = (kcontrol->private_value * 16);
-+	unsigned long flags;
-+	struct snd_rad1 *chip = snd_kcontrol_chip(kcontrol);
-+
-+	spin_lock_irqsave(&chip->lock, flags);
-+	if (u->value.integer.value[0] != ((chip->attctrl >> shift) & 0xff))
-+		change = 1;
-+
-+	if (u->value.integer.value[1] != ((chip->attctrl >> (8 + shift)) & 0xff))
-+		change = 1;
-+
-+	if (change) {
-+		chip->attctrl &= (0xffff << (16 - shift));
-+		chip->attctrl |= (u->value.integer.value[0] << shift);
-+		chip->attctrl |= (u->value.integer.value[1] << (8 + shift));
-+		chip->mmio->volume_control = cpu_to_be32(chip->attctrl);
++		err = -EINVAL;
 +	}
 +	spin_unlock_irqrestore(&chip->lock, flags);
-+
-+	return change;
++	return err;
 +}
 +
-+/* ----------------------------------------------------------------------- */
-+
-+
-+/* ----------------------------------------------------------------------- */
-+/* AES Tx route control */
-+static int
-+snd_rad1_control_tr_info(struct snd_kcontrol *kcontrol,
-+                         struct snd_ctl_elem_info *uinfo)
++static snd_pcm_uframes_t rad1_pcm_pointer(struct snd_pcm_substream *substream)
 +{
-+	static char *rts[2] = {"Optical", "Coaxial"};
++	struct snd_rad1 *chip = snd_pcm_substream_chip(substream);
++	unsigned int pipe_id = rad1_pipe_id(substream);
++	unsigned long flags;
++	snd_pcm_uframes_t frames = 0;
 +
-+	uinfo->type = SNDRV_CTL_ELEM_TYPE_ENUMERATED;
-+	uinfo->count = 1;
-+	uinfo->value.enumerated.items = 2;
++	spin_lock_irqsave(&chip->lock, flags);
++	if (chip->pipes[pipe_id].prepared && !chip->shutting_down)
++		frames = bytes_to_frames(substream->runtime, rad1_position(chip, pipe_id));
++	spin_unlock_irqrestore(&chip->lock, flags);
++	return frames;
++}
 +
-+	if (uinfo->value.enumerated.item > 1)
-+		uinfo->value.enumerated.item = 1;
++static const struct snd_pcm_ops rad1_pcm_ops = {
++	.open = rad1_pcm_open,
++	.close = rad1_pcm_close,
++	.ioctl = snd_pcm_lib_ioctl,
++	.hw_free = rad1_pcm_hw_free,
++	.prepare = rad1_pcm_prepare,
++	.trigger = rad1_pcm_trigger,
++	.sync_stop = rad1_sync_stop,
++	.pointer = rad1_pcm_pointer,
++};
 +
-+	strscpy(uinfo->value.enumerated.name,
-+	        rts[uinfo->value.enumerated.item],
-+	        sizeof(uinfo->value.enumerated.name));
++static int rad1_new_pcm(struct snd_rad1 *chip, unsigned int dev,
++			unsigned int pipe_id, const char *name)
++{
++	struct snd_pcm *pcm;
++	bool capture = pipe_id == RAD1_ADC || pipe_id == RAD1_AESRX || pipe_id == RAD1_ADATTX;
++	bool playback = pipe_id == RAD1_DAC || pipe_id == RAD1_AESTX || pipe_id == RAD1_ADATTX;
++	int err;
 +
++	err = snd_pcm_new(chip->card, name, dev, playback, capture, &pcm);
++	if (err < 0)
++		return err;
++	pcm->private_data = chip;
++	strscpy(pcm->name, name, sizeof(pcm->name));
++	if (capture)
++		snd_pcm_set_ops(pcm, SNDRV_PCM_STREAM_CAPTURE, &rad1_pcm_ops);
++	if (playback)
++		snd_pcm_set_ops(pcm, SNDRV_PCM_STREAM_PLAYBACK, &rad1_pcm_ops);
++	return snd_pcm_set_managed_buffer_all(pcm, SNDRV_DMA_TYPE_DEV,
++					      &chip->pci->dev, 64 * 1024, 1024 * 1024);
++}
++
++static int rad1_volume_info(struct snd_kcontrol *ctl, struct snd_ctl_elem_info *info)
++{
++	info->type = SNDRV_CTL_ELEM_TYPE_INTEGER;
++	info->count = 2;
++	info->value.integer.min = 0;
++	info->value.integer.max = 255;
 +	return 0;
 +}
 +
-+static int
-+snd_rad1_control_tr_get(struct snd_kcontrol *kcontrol,
-+                        struct snd_ctl_elem_value *u)
++static int rad1_volume_get(struct snd_kcontrol *ctl, struct snd_ctl_elem_value *value)
 +{
++	struct snd_rad1 *chip = snd_kcontrol_chip(ctl);
++	unsigned int shift = ctl->private_value * 16;
 +	unsigned long flags;
-+	struct snd_rad1 *chip = snd_kcontrol_chip(kcontrol);
 +
 +	spin_lock_irqsave(&chip->lock, flags);
-+	if (chip->rt_opto == 0x00001440)
-+		u->value.enumerated.item[0] = 1;
++	value->value.integer.value[0] = (chip->attenuation >> shift) & 255;
++	value->value.integer.value[1] = (chip->attenuation >> (shift + 8)) & 255;
++	spin_unlock_irqrestore(&chip->lock, flags);
++	return 0;
++}
++
++static int rad1_volume_put(struct snd_kcontrol *ctl, struct snd_ctl_elem_value *value)
++{
++	struct snd_rad1 *chip = snd_kcontrol_chip(ctl);
++	long left = value->value.integer.value[0], right = value->value.integer.value[1];
++	unsigned int shift = ctl->private_value * 16;
++	unsigned long flags;
++	u32 volume;
++	int changed;
++
++	if (left < 0 || left > 255 || right < 0 || right > 255)
++		return -EINVAL;
++	spin_lock_irqsave(&chip->lock, flags);
++	volume = (chip->attenuation & ~(0xffffU << shift)) |
++		 ((u32)left << shift) | ((u32)right << (shift + 8));
++	changed = volume != chip->attenuation;
++	if (changed) {
++		chip->attenuation = volume;
++		rad1_write(chip, volume_control, volume);
++	}
++	spin_unlock_irqrestore(&chip->lock, flags);
++	return changed;
++}
++
++static int rad1_route_info(struct snd_kcontrol *ctl, struct snd_ctl_elem_info *info)
++{
++	static const char * const names[] = { "Optical", "Coaxial" };
++
++	if (ctl->private_value & RAD1_ROUTE_ADAT_SWITCH)
++		return snd_ctl_boolean_mono_info(ctl, info);
++	return snd_ctl_enum_info(info, 1, ARRAY_SIZE(names), names);
++}
++
++static int rad1_route_get(struct snd_kcontrol *ctl, struct snd_ctl_elem_value *value)
++{
++	struct snd_rad1 *chip = snd_kcontrol_chip(ctl);
++	unsigned long flags;
++	bool adat;
++
++	spin_lock_irqsave(&chip->lock, flags);
++	adat = rad1_adat_route(chip, !!(ctl->private_value & RAD1_ROUTE_PLAYBACK));
++	spin_unlock_irqrestore(&chip->lock, flags);
++	if (ctl->private_value & RAD1_ROUTE_ADAT_SWITCH)
++		value->value.integer.value[0] = adat;
 +	else
-+		u->value.enumerated.item[0] = 0;
-+	spin_unlock_irqrestore(&chip->lock, flags);
-+
++		value->value.enumerated.item[0] = adat;
 +	return 0;
 +}
 +
-+static int
-+snd_rad1_control_tr_put(struct snd_kcontrol *kcontrol,
-+                        struct snd_ctl_elem_value *u)
++static int rad1_route_put(struct snd_kcontrol *ctl, struct snd_ctl_elem_value *value)
 +{
-+	int change = 0;
++	struct snd_rad1 *chip = snd_kcontrol_chip(ctl);
++	bool playback = !!(ctl->private_value & RAD1_ROUTE_PLAYBACK);
++	long selection = ctl->private_value & RAD1_ROUTE_ADAT_SWITCH ?
++		value->value.integer.value[0] : value->value.enumerated.item[0];
 +	unsigned long flags;
-+	struct snd_rad1 *chip = snd_kcontrol_chip(kcontrol);
++	int changed;
++
++	if (selection < 0 || selection > 1)
++		return -EINVAL;
++	spin_lock_irqsave(&chip->lock, flags);
++	changed = rad1_set_route(chip, playback, selection);
++	spin_unlock_irqrestore(&chip->lock, flags);
++	if (changed > 0)
++		rad1_notify_route(chip, playback);
++	return changed;
++}
++
++static int rad1_adc_route_info(struct snd_kcontrol *ctl, struct snd_ctl_elem_info *info)
++{
++	static const char * const names[] = { "Mic", "Line" };
++
++	return snd_ctl_enum_info(info, 1, ARRAY_SIZE(names), names);
++}
++
++static int rad1_adc_route_get(struct snd_kcontrol *ctl, struct snd_ctl_elem_value *value)
++{
++	struct snd_rad1 *chip = snd_kcontrol_chip(ctl);
++	unsigned long flags;
 +
 +	spin_lock_irqsave(&chip->lock, flags);
-+	if (u->value.enumerated.item[0] && (chip->rt_opto != 0x00001440))
-+		change = 1;
++	value->value.enumerated.item[0] = chip->pipes[RAD1_ADC].control == RAD1_ADC_LINE_CONTROL;
++	spin_unlock_irqrestore(&chip->lock, flags);
++	return 0;
++}
 +
-+	if (!u->value.enumerated.item[0] && (chip->rt_opto == 0x00001440))
-+		change = 1;
++static int rad1_adc_route_put(struct snd_kcontrol *ctl, struct snd_ctl_elem_value *value)
++{
++	struct snd_rad1 *chip = snd_kcontrol_chip(ctl);
++	struct rad1_pipe *pipe = &chip->pipes[RAD1_ADC];
++	unsigned int selection = value->value.enumerated.item[0];
++	unsigned long flags;
++	u32 control;
++	int changed;
 +
-+	if (change) {
-+		if (u->value.enumerated.item[0])
-+			chip->rt_opto = 0x00001440;
-+		else
-+			chip->rt_opto = 0x00001040;
-+		chip->mmio->misc_control = cpu_to_be32(chip->rt_opto);
++	if (selection > 1)
++		return -EINVAL;
++	control = selection ? 0x05000000 : RAD1_ADC_MIC_CONTROL;
++	spin_lock_irqsave(&chip->lock, flags);
++	changed = pipe->control != control;
++	if (changed) {
++		pipe->control = control;
++		rad1_write(chip, adc_control, control | (pipe->running ? RAD1_DMA_ENABLE : 0));
 +	}
 +	spin_unlock_irqrestore(&chip->lock, flags);
-+
-+	return change;
++	return changed;
 +}
 +
-+/* ----------------------------------------------------------------------- */
-+
-+
-+/* ----------------------------------------------------------------------- */
-+/* AES Rx route control */
-+static int
-+snd_rad1_control_rr_get(struct snd_kcontrol *kcontrol,
-+                        struct snd_ctl_elem_value *u)
-+{
-+	struct snd_rad1 *chip = snd_kcontrol_chip(kcontrol);
-+	unsigned long flags;
-+
-+	spin_lock_irqsave(&chip->lock, flags);
-+	if (chip->rt_aesr == 0x00000010)
-+		u->value.enumerated.item[0] = 1;
-+	else
-+		u->value.enumerated.item[0] = 0;
-+	spin_unlock_irqrestore(&chip->lock, flags);
-+
-+	return 0;
-+}
-+
-+static int
-+snd_rad1_control_rr_put(struct snd_kcontrol *kcontrol,
-+                        struct snd_ctl_elem_value *u)
-+{
-+	struct snd_rad1 *chip = snd_kcontrol_chip(kcontrol);
-+	unsigned long flags;
-+	int change = 0;
-+
-+	spin_lock_irqsave(&chip->lock, flags);
-+	if (u->value.enumerated.item[0] && (chip->rt_aesr != 0x00000010))
-+		change = 1;
-+
-+	if (!u->value.enumerated.item[0] && (chip->rt_aesr == 0x00000010))
-+		change = 1;
-+
-+	if (change) {
-+		if (u->value.enumerated.item[0]) {
-+			chip->rt_aesr = 0x00000010;
-+			chip->rt_adat = 0xa0000018;
-+		} else {
-+			chip->rt_aesr = 0x00000018;
-+			chip->rt_adat = 0xa0000000;
-+		}
-+		chip->mmio->aes_rx_control = cpu_to_be32(chip->rt_aesr |
-+		                              chip->pipes[RAD1_AESRX].adma);
-+		chip->mmio->adat_rx_control = cpu_to_be32(chip->rt_adat |
-+		                               chip->pipes[RAD1_ADATRX].adma);
-+	}
-+	spin_unlock_irqrestore(&chip->lock, flags);
-+
-+	return change;
-+}
-+
-+
-+/* ----------------------------------------------------------------------- */
-+
-+
-+/* ----------------------------------------------------------------------- */
-+/* ADC route control */
-+static int
-+snd_rad1_control_ar_info(struct snd_kcontrol *kcontrol,
-+                         struct snd_ctl_elem_info *uinfo)
-+{
-+	static char *rts[2] = {"Mic", "Line"};
-+
-+	uinfo->type = SNDRV_CTL_ELEM_TYPE_ENUMERATED;
-+	uinfo->count = 1;
-+	uinfo->value.enumerated.items = 2;
-+
-+	if (uinfo->value.enumerated.item > 1)
-+		uinfo->value.enumerated.item = 1;
-+
-+	strscpy(uinfo->value.enumerated.name,
-+	        rts[uinfo->value.enumerated.item],
-+	        sizeof(uinfo->value.enumerated.name));
-+
-+	return 0;
-+}
-+
-+static int
-+snd_rad1_control_ar_get(struct snd_kcontrol *kcontrol,
-+                        struct snd_ctl_elem_value *u)
-+{
-+	struct snd_rad1 *chip = snd_kcontrol_chip(kcontrol);
-+	unsigned long flags;
-+
-+	spin_lock_irqsave(&chip->lock, flags);
-+	if (chip->rt_adc == 0x05000000)
-+		u->value.enumerated.item[0] = 1;
-+	else
-+		u->value.enumerated.item[0] = 0;
-+	spin_unlock_irqrestore(&chip->lock, flags);
-+
-+	return 0;
-+}
-+
-+static int
-+snd_rad1_control_ar_put(struct snd_kcontrol *kcontrol,
-+                        struct snd_ctl_elem_value *u)
-+{
-+	struct snd_rad1 *chip = snd_kcontrol_chip(kcontrol);
-+	unsigned long flags;
-+	int change = 0;
-+
-+	spin_lock_irqsave(&chip->lock, flags);
-+	if (u->value.enumerated.item[0] && (chip->rt_adc != 0x05000000))
-+		change = 1;
-+
-+	if (!u->value.enumerated.item[0] && (chip->rt_adc == 0x05000000))
-+		change = 1;
-+
-+	if (change) {
-+		if (u->value.enumerated.item[0])
-+			chip->rt_adc = 0x05000000;
-+		else
-+			chip->rt_adc = 0x03000000;
-+		chip->mmio->adc_control = cpu_to_be32(chip->rt_adc |
-+		                            chip->pipes[RAD1_ADC].adma);
-+	}
-+	spin_unlock_irqrestore(&chip->lock, flags);
-+
-+	return change;
-+}
-+
-+/* ----------------------------------------------------------------------- */
-+
-+
-+/* ----------------------------------------------------------------------- */
-+/* Controls */
-+static struct snd_kcontrol_new
-+snd_rad1_controls[] = {
++static const struct snd_kcontrol_new rad1_digital_controls[] = {
 +	{
-+		.iface		= SNDRV_CTL_ELEM_IFACE_MIXER,
-+		.name		= "Master Playback Volume",
-+		.info		= snd_rad1_control_pv_info,
-+		.get		= snd_rad1_control_pv_get,
-+		.put		= snd_rad1_control_pv_put,
-+		.private_value	= 1
++		.iface = SNDRV_CTL_ELEM_IFACE_MIXER,
++		.name = "IEC958 Capture Routing",
++		.info = rad1_route_info,
++		.get = rad1_route_get,
++		.put = rad1_route_put,
++		.private_value = 0,
 +	},
 +	{
-+		.iface		= SNDRV_CTL_ELEM_IFACE_MIXER,
-+		.name		= "Line Capture Volume",
-+		.info		= snd_rad1_control_pv_info,
-+		.get		= snd_rad1_control_pv_get,
-+		.put		= snd_rad1_control_pv_put,
-+		.private_value	= 0
++		.iface = SNDRV_CTL_ELEM_IFACE_MIXER,
++		.name = "ADAT Capture Switch",
++		.info = rad1_route_info,
++		.get = rad1_route_get,
++		.put = rad1_route_put,
++		.private_value = RAD1_ROUTE_ADAT_SWITCH,
 +	},
 +	{
-+		.iface		= SNDRV_CTL_ELEM_IFACE_MIXER,
-+		.name		= "IEC958 Playback Routing",
-+		.info		= snd_rad1_control_tr_info,
-+		.get		= snd_rad1_control_tr_get,
-+		.put		= snd_rad1_control_tr_put
++		.iface = SNDRV_CTL_ELEM_IFACE_MIXER,
++		.name = "IEC958 Playback Routing",
++		.info = rad1_route_info,
++		.get = rad1_route_get,
++		.put = rad1_route_put,
++		.private_value = RAD1_ROUTE_PLAYBACK,
 +	},
 +	{
-+		.iface		= SNDRV_CTL_ELEM_IFACE_MIXER,
-+		.name		= "IEC958 Capture Routing",
-+		.info		= snd_rad1_control_tr_info, /* clone */
-+		.get		= snd_rad1_control_rr_get,
-+		.put		= snd_rad1_control_rr_put
-+	},
-+	{
-+		.iface		= SNDRV_CTL_ELEM_IFACE_MIXER,
-+		.name		= "Line Capture Routing",
-+		.info		= snd_rad1_control_ar_info,
-+		.get		= snd_rad1_control_ar_get,
-+		.put		= snd_rad1_control_ar_put
++		.iface = SNDRV_CTL_ELEM_IFACE_MIXER,
++		.name = "ADAT Playback Switch",
++		.info = rad1_route_info,
++		.get = rad1_route_get,
++		.put = rad1_route_put,
++		.private_value = RAD1_ROUTE_PLAYBACK | RAD1_ROUTE_ADAT_SWITCH,
 +	},
 +};
 +
-+static int
-+snd_rad1_add_controls(struct snd_rad1 *chip)
-+{
-+	int idx, err;
++static const struct snd_kcontrol_new rad1_analog_controls[] = {
++	{
++		.iface = SNDRV_CTL_ELEM_IFACE_MIXER,
++		.name = "Master Playback Volume",
++		.info = rad1_volume_info,
++		.get = rad1_volume_get,
++		.put = rad1_volume_put,
++		.private_value = 1,
++	},
++	{
++		.iface = SNDRV_CTL_ELEM_IFACE_MIXER,
++		.name = "Line Capture Volume",
++		.info = rad1_volume_info,
++		.get = rad1_volume_get,
++		.put = rad1_volume_put,
++	},
++	{
++		.iface = SNDRV_CTL_ELEM_IFACE_MIXER,
++		.name = "Line Capture Routing",
++		.info = rad1_adc_route_info,
++		.get = rad1_adc_route_get,
++		.put = rad1_adc_route_put,
++	},
++};
 +
-+	for (idx = 0; idx < 5; idx++) {
-+		err = snd_ctl_add(chip->card,
-+		                  snd_ctl_new1(&snd_rad1_controls[idx], chip));
-+		if (unlikely(err < 0))
++static int rad1_add_controls(struct snd_rad1 *chip)
++{
++	unsigned int digital_count = ARRAY_SIZE(rad1_digital_controls);
++	unsigned int count = digital_count;
++	unsigned int i;
++	int err;
++
++	if (rad1_has_analog(chip))
++		count += ARRAY_SIZE(rad1_analog_controls);
++	for (i = 0; i < count; i++) {
++		const struct snd_kcontrol_new *definition;
++		struct snd_kcontrol *ctl;
++
++		definition = i < digital_count ? &rad1_digital_controls[i] :
++			&rad1_analog_controls[i - digital_count];
++		ctl = snd_ctl_new1(definition, chip);
++		err = snd_ctl_add(chip->card, ctl);
++		if (err < 0)
 +			return err;
-+	}
++		if (i < digital_count) {
++			bool playback = definition->private_value & RAD1_ROUTE_PLAYBACK;
++			bool adat_switch = definition->private_value & RAD1_ROUTE_ADAT_SWITCH;
 +
++			chip->route_controls[playback][adat_switch] = ctl;
++		}
++	}
 +	return 0;
 +}
 +
-+/* ----------------------------------------------------------------------- */
++static void rad1_shutdown(struct snd_rad1 *chip)
++{
++	unsigned long flags;
++	unsigned int i;
 +
++	spin_lock_irqsave(&chip->lock, flags);
++	chip->shutting_down = true;
++	for (i = 0; i < ARRAY_SIZE(rad1_pcm_pipes); i++)
++		rad1_run_pipe(chip, rad1_pcm_pipes[i], false);
++	/* Stop bus mastering before ALSA releases coherent DMA buffers. */
++	rad1_write(chip, reset, 0xffffffff);
++	rad1_read(chip, reset);
++	spin_unlock_irqrestore(&chip->lock, flags);
++	timer_shutdown_sync(&chip->timer);
++	pci_clear_master(chip->pci);
++}
 +
-+/* ----------------------------------------------------------------------- */
-+/* Create/Probe/Free/Module */
++static int rad1_dev_disconnect(struct snd_device *device)
++{
++	rad1_shutdown(device->device_data);
++	return 0;
++}
 +
-+static int
-+snd_rad1_free(struct snd_rad1 *chip)
++static void rad1_free(struct snd_rad1 *chip)
 +{
 +	if (chip->mmio) {
-+		iounmap((void *)(chip->mmio));
-+		chip->mmio = NULL;
++		rad1_shutdown(chip);
++		pci_iounmap(chip->pci, chip->mmio);
 +	}
++	pci_release_regions(chip->pci);
++	pci_disable_device(chip->pci);
 +	kfree(chip);
++}
 +
++static int rad1_dev_free(struct snd_device *device)
++{
++	rad1_free(device->device_data);
 +	return 0;
 +}
 +
-+static int
-+snd_rad1_dev_free(struct snd_device *device)
++static int rad1_create(struct snd_card *card, struct pci_dev *pci,
++		       struct snd_rad1 **rchip)
 +{
-+	struct snd_rad1 *chip = device->device_data;
-+
-+	return snd_rad1_free(chip);
-+}
-+
-+static int
-+snd_rad1_create(struct snd_card *card, struct pci_dev *pci,
-+                struct snd_rad1 **rchip)
-+{
-+	int error = -ENODEV;
-+	struct snd_rad1 *chip;
-+	static struct snd_device_ops ops = {
-+		.dev_free = snd_rad1_dev_free,
++	static const struct snd_device_ops ops = {
++		.dev_disconnect = rad1_dev_disconnect,
++		.dev_free = rad1_dev_free,
 +	};
++	struct snd_rad1 *chip = NULL;
++	unsigned int revision_major = pci->revision >> 4;
++	int err;
 +
 +	*rchip = NULL;
-+
-+	if (unlikely(pci_enable_device(pci)))
-+		goto out;
-+
-+	if (unlikely(pci_request_regions(pci, "rad1")))
-+		goto out_disable_dev;
-+
-+	pci_write_config_byte(pci, PCI_LATENCY_TIMER, 64);
-+	pci_set_master(pci);
-+
-+	/* pci->dev.coherent_dma_mask = DMA_BIT_MASK(64); */
-+
-+	chip = kzalloc(sizeof(struct snd_rad1), GFP_KERNEL);
-+	if (unlikely(!chip)) {
-+		error = -ENOMEM;
-+		goto out_rel_region;
++	if (revision_major != RAD1_REV_RAD && revision_major != RAD1_REV_RADICAL) {
++		dev_err(&pci->dev, "unsupported RAD revision %#x\n", pci->revision);
++		return -ENODEV;
 +	}
-+
-+	timer_setup(&chip->timer, snd_rad1_poll_timer, 0);
-+
++	err = pci_enable_device(pci);
++	if (err)
++		return err;
++	err = pci_request_regions(pci, "rad1");
++	if (err)
++		goto disable;
++	if (!(pci_resource_flags(pci, 0) & IORESOURCE_MEM) ||
++	    pci_resource_len(pci, 0) < sizeof(struct rad1_regs)) {
++		err = -ENODEV;
++		goto release;
++	}
++	err = dma_set_mask_and_coherent(&pci->dev, DMA_BIT_MASK(64));
++	if (err)
++		err = dma_set_mask_and_coherent(&pci->dev, DMA_BIT_MASK(32));
++	if (err)
++		goto release;
++	chip = kzalloc_obj(*chip);
++	if (!chip) {
++		err = -ENOMEM;
++		goto release;
++	}
 +	chip->card = card;
 +	chip->pci = pci;
-+
++	chip->revision_major = revision_major;
 +	spin_lock_init(&chip->lock);
-+
-+	chip->mmio_phys = pci_resource_start(pci, 0);
++	mutex_init(&chip->timer_mutex);
++	timer_setup(&chip->timer, rad1_poll_timer, 0);
 +	chip->mmio = pci_iomap(pci, 0, 0);
-+
-+	snd_rad1_hw_init(chip);
-+
-+	if (snd_device_new(card, SNDRV_DEV_LOWLEVEL, chip, &ops))
-+		goto out_rad1_free;
-+
++	if (!chip->mmio) {
++		err = -ENOMEM;
++		goto free;
++	}
++	pci_write_config_byte(pci, PCI_LATENCY_TIMER, 64);
++	rad1_hw_init(chip);
++	pci_set_master(pci);
++	err = snd_device_new(card, SNDRV_DEV_LOWLEVEL, chip, &ops);
++	if (err)
++		goto free;
 +	snd_card_set_dev(card, &pci->dev);
 +	*rchip = chip;
-+
 +	return 0;
-+
-+out_rad1_free:
-+	snd_rad1_free(chip);
-+out_rel_region:
++free:
++	rad1_free(chip);
++	return err;
++release:
 +	pci_release_regions(pci);
-+out_disable_dev:
++disable:
 +	pci_disable_device(pci);
-+out:
-+	return error;
++	return err;
 +}
 +
-+static struct pci_device_id
-+snd_rad1_ids[] = {
-+	{ PCI_VENDOR_ID_SGI, PCI_DEVICE_ID_SGI_RAD1, PCI_ANY_ID, PCI_ANY_ID, },
-+	{ },
++static const struct pci_device_id rad1_ids[] = {
++	{ PCI_DEVICE(PCI_VENDOR_ID_SGI, PCI_DEVICE_ID_SGI_RAD1) },
++	{ }
 +};
++MODULE_DEVICE_TABLE(pci, rad1_ids);
 +
-+static int index[SNDRV_CARDS] = SNDRV_DEFAULT_IDX;
++static int card_index[SNDRV_CARDS] = SNDRV_DEFAULT_IDX;
 +static char *id[SNDRV_CARDS] = SNDRV_DEFAULT_STR;
-+static int enable[SNDRV_CARDS] = SNDRV_DEFAULT_ENABLE_PNP;
-+static int ndev;
++static bool enable[SNDRV_CARDS] = SNDRV_DEFAULT_ENABLE_PNP;
++static unsigned int ndev;
++module_param_array_named(index, card_index, int, NULL, 0444);
++MODULE_PARM_DESC(index, "ALSA card index");
++module_param_array(id, charp, NULL, 0444);
++MODULE_PARM_DESC(id, "ALSA card ID");
++module_param_array(enable, bool, NULL, 0444);
++MODULE_PARM_DESC(enable, "Enable RAD audio card");
 +
-+static int
-+snd_rad1_probe(struct pci_dev *pci, const struct pci_device_id *pci_id)
++static int rad1_probe(struct pci_dev *pci, const struct pci_device_id *pci_id)
 +{
 +	struct snd_card *card;
 +	struct snd_rad1 *chip;
++	unsigned int slot = ndev;
 +	int err;
 +
-+	if (unlikely(ndev >= SNDRV_CARDS))
++	if (slot >= SNDRV_CARDS)
 +		return -ENODEV;
-+
-+	if (unlikely(!enable[ndev])) {
++	if (!enable[slot]) {
 +		ndev++;
 +		return -ENOENT;
 +	}
-+
-+	err = snd_card_new(&pci->dev, index[ndev], id[ndev], THIS_MODULE, 0, &card);
-+	if (unlikely(err < 0))
++	err = snd_card_new(&pci->dev, card_index[slot], id[slot], THIS_MODULE, 0, &card);
++	if (err < 0)
 +		return err;
-+
-+	err = snd_rad1_create(card, pci, &chip);
-+	if (unlikely(err < 0)) {
-+		snd_card_free(card);
-+		return err;
-+	}
-+
++	err = rad1_create(card, pci, &chip);
++	if (err < 0)
++		goto fail;
++	card->private_data = chip;
 +	strscpy(card->driver, "RAD1", sizeof(card->driver));
-+	strscpy(card->shortname, "RADAudio", sizeof(card->shortname));
-+	snprintf(card->longname, sizeof(card->longname),
-+	         "SGI RAD Audio at 0x%lx", chip->mmio_phys);
-+
-+	/* create pipes */
-+	snd_rad1_new_dac(chip, 0);
-+	snd_rad1_new_adc(chip, 1);
-+	snd_rad1_new_aestx(chip, 2);
-+	snd_rad1_new_aesrx(chip, 3);
-+	snd_rad1_add_controls(chip);
-+
-+	err = snd_card_register(card);
-+	if (unlikely(err < 0)) {
-+		snd_card_free(card);
-+		return err;
++	strscpy(card->shortname, "RAD Audio", sizeof(card->shortname));
++	snprintf(card->longname, sizeof(card->longname), "SGI RAD Audio at %pa",
++		 &pci->resource[0].start);
++	if (rad1_has_analog(chip)) {
++		err = rad1_new_pcm(chip, 0, RAD1_DAC, "RAD1 DAC");
++		if (err < 0)
++			goto fail;
++		err = rad1_new_pcm(chip, 1, RAD1_ADC, "RAD1 ADC");
++		if (err < 0)
++			goto fail;
 +	}
-+
++	err = rad1_new_pcm(chip, 2, RAD1_AESTX, "RAD1 AES Tx");
++	if (err < 0)
++		goto fail;
++	err = rad1_new_pcm(chip, 3, RAD1_AESRX, "RAD1 AES Rx");
++	if (err < 0)
++		goto fail;
++	err = rad1_new_pcm(chip, 4, RAD1_ADATTX, "RAD1 ADAT");
++	if (err < 0)
++		goto fail;
++	err = rad1_add_controls(chip);
++	if (err < 0)
++		goto fail;
++	err = snd_card_register(card);
++	if (err < 0)
++		goto fail;
 +	pci_set_drvdata(pci, card);
 +	ndev++;
-+
 +	return 0;
++fail:
++	if (chip)
++		rad1_shutdown(chip);
++	snd_card_free(card);
++	return err;
 +}
 +
-+static void
-+snd_rad1_remove(struct pci_dev *pci)
++static void rad1_remove(struct pci_dev *pci)
 +{
-+	snd_card_free(pci_get_drvdata(pci));
++	struct snd_card *card = pci_get_drvdata(pci);
++
++	rad1_shutdown(card->private_data);
++	snd_card_free(card);
 +	pci_set_drvdata(pci, NULL);
-+	pci_release_regions(pci);
 +}
 +
-+MODULE_DEVICE_TABLE(pci, snd_rad1_ids);
-+
-+static struct pci_driver
-+rad1_driver = {
++static struct pci_driver rad1_driver = {
 +	.name = "rad1",
-+	.id_table = snd_rad1_ids,
-+	.probe = snd_rad1_probe,
-+	.remove = snd_rad1_remove,
++	.id_table = rad1_ids,
++	.probe = rad1_probe,
++	.remove = rad1_remove,
 +};
-+
-+static int __init
-+alsa_card_rad1_init(void)
-+{
-+	return pci_register_driver(&rad1_driver);
-+}
-+
-+static void __exit
-+alsa_card_rad1_exit(void)
-+{
-+	pci_unregister_driver(&rad1_driver);
-+}
++module_pci_driver(rad1_driver);
 +
 +MODULE_AUTHOR("Stanislaw Skowronek <skylark@unaligned.org>");
-+MODULE_AUTHOR("René Rebe <rene@exactcode.de");
-+MODULE_DESCRIPTION("Sgi Radical Audio (RAD1) driver");
++MODULE_AUTHOR("René Rebe <rene@exactcode.de>");
++MODULE_DESCRIPTION("SGI RAD audio with eight-channel ADAT lightpipe I/O");
 +MODULE_LICENSE("GPL");
-+MODULE_VERSION("0.43.0");
-+
-+module_init(alsa_card_rad1_init)
-+module_exit(alsa_card_rad1_exit)
