@@ -4,7 +4,11 @@
 # SPDX-License-Identifier: GPL-2.0 or patched project license
 # --- T2-COPYRIGHT-END ---
 
-# Target: Linux 7.2
+SGI RAD and RADICAL PCI audio with eight-channel ADAT lightpipe I/O.
+Little-endian MMIO, dword-only PCI config writes and IRIX-derived routing,
+clock and receiver recovery sequences.
+
+Signed-off-by: René Rebe <rene@exactcode.de>
 
 diff --git a/include/linux/pci_ids.h b/include/linux/pci_ids.h
 --- a/include/linux/pci_ids.h
@@ -20,7 +24,7 @@ diff --git a/include/linux/pci_ids.h b/include/linux/pci_ids.h
 diff --git a/sound/pci/Kconfig b/sound/pci/Kconfig
 --- a/sound/pci/Kconfig
 +++ b/sound/pci/Kconfig
-@@ -932,4 +932,15 @@
+@@ -932,4 +932,15 @@ config SND_YMFPCI
  	  To compile this driver as a module, choose M here: the module
  	  will be called snd-ymfpci.
  
@@ -39,7 +43,7 @@ diff --git a/sound/pci/Kconfig b/sound/pci/Kconfig
 diff --git a/sound/pci/Makefile b/sound/pci/Makefile
 --- a/sound/pci/Makefile
 +++ b/sound/pci/Makefile
-@@ -22,6 +22,7 @@
+@@ -22,6 +22,7 @@ snd-fm801-y := fm801.o
  snd-intel8x0-y := intel8x0.o
  snd-intel8x0m-y := intel8x0m.o
  snd-maestro3-y := maestro3.o
@@ -47,7 +51,7 @@ diff --git a/sound/pci/Makefile b/sound/pci/Makefile
  snd-rme32-y := rme32.o
  snd-rme96-y := rme96.o
  snd-sis7019-y := sis7019.o
-@@ -48,6 +49,7 @@
+@@ -48,6 +49,7 @@ obj-$(CONFIG_SND_FM801) += snd-fm801.o
  obj-$(CONFIG_SND_INTEL8X0) += snd-intel8x0.o
  obj-$(CONFIG_SND_INTEL8X0M) += snd-intel8x0m.o
  obj-$(CONFIG_SND_MAESTRO3) += snd-maestro3.o
@@ -58,17 +62,17 @@ diff --git a/sound/pci/Makefile b/sound/pci/Makefile
 diff --git a/arch/mips/pci/pci-xtalk-bridge.c b/arch/mips/pci/pci-xtalk-bridge.c
 --- a/arch/mips/pci/pci-xtalk-bridge.c
 +++ b/arch/mips/pci/pci-xtalk-bridge.c
-@@ -103,6 +103,10 @@
- }
- 
+@@ -105,6 +105,10 @@ static void bridge_disable_swapping(stru
  DECLARE_PCI_FIXUP_HEADER(PCI_VENDOR_ID_SGI, PCI_DEVICE_ID_SGI_IOC3,
-+	bridge_disable_swapping);
-+
-+/* RAD MMIO and DMA use native big-endian PCI transactions. */
-+DECLARE_PCI_FIXUP_HEADER(PCI_VENDOR_ID_SGI, PCI_DEVICE_ID_SGI_RAD1,
  	bridge_disable_swapping);
  
++/* RAD DMA samples are 32-bit word values, not a byte stream. */
++DECLARE_PCI_FIXUP_HEADER(PCI_VENDOR_ID_SGI, PCI_DEVICE_ID_SGI_RAD1,
++	bridge_disable_swapping);
++
  
+ /*
+  * The Bridge ASIC supports both type 0 and type 1 access.  Type 1 is
 diff --git a/include/sound/rad1.h b/include/sound/rad1.h
 --- /dev/null
 +++ b/include/sound/rad1.h
@@ -79,8 +83,8 @@ diff --git a/include/sound/rad1.h b/include/sound/rad1.h
 + * License.  See the file "COPYING" in the main directory of this archive
 + * for more details.
 + *
++ * Copyright (C) 2008-2026 René Rebe <rene@exactcode.de>
 + * Copyright (C) 2004-2007 Stanislaw Skowronek <skylark@unaligned.org>
-+ * Copyright (C) 2018-2025 René Rebe <rene@exactcode.de>
 + */
 +
 +#ifndef _SOUND_RAD1_H
@@ -199,12 +203,12 @@ diff --git a/include/sound/rad1.h b/include/sound/rad1.h
 diff --git a/sound/pci/rad1.c b/sound/pci/rad1.c
 --- /dev/null
 +++ b/sound/pci/rad1.c
-@@ -0,0 +1,1298 @@
+@@ -0,0 +1,1311 @@
 +// SPDX-License-Identifier: GPL-2.0-or-later
 +/*
 + * ALSA driver for SGI RAD and RADICAL audio.
++ * Copyright (C) 2008-2026 René Rebe <rene@exactcode.de>
 + * Copyright (C) 2004-2007 Stanislaw Skowronek <skylark@unaligned.org>
-+ * Copyright (C) 2018-2025 René Rebe <rene@exactcode.de>
 + *
 + * Register sequences are derived from IRIX rad_dd.o. See
 + * analysis/rad-adat-comparison.md for the disassembly and remaining
@@ -250,8 +254,9 @@ diff --git a/sound/pci/rad1.c b/sound/pci/rad1.c
 +	RAD1_RX_RECOVERING,
 +};
 +
-+#define rad1_read(chip, reg) ioread32be(&(chip)->mmio->reg)
-+#define rad1_write(chip, reg, value) iowrite32be((value), &(chip)->mmio->reg)
++/* PCI-native little-endian registers; IRIX's raw IP30 stores equal writel(). */
++#define rad1_read(chip, reg) ioread32(&(chip)->mmio->reg)
++#define rad1_write(chip, reg, value) iowrite32((value), &(chip)->mmio->reg)
 +
 +struct rad1_pipe {
 +	dma_addr_t dma_addr;
@@ -363,11 +368,11 @@ diff --git a/sound/pci/rad1.c b/sound/pci/rad1.c
 +	    (rad1_read(chip, chip_status1) & RAD1_ADAT_RX_CONDITION))
 +		return -ENOLINK;
 +	pipe->running = start;
-+	iowrite32be(pipe->control | (start ? RAD1_DMA_ENABLE : 0), reg);
++	iowrite32(pipe->control | (start ? RAD1_DMA_ENABLE : 0), reg);
 +	/* Flush posted control writes before buffer ownership can change. */
-+	ioread32be(reg);
++	ioread32(reg);
 +	if (!start)
-+		ioread32be(reg);
++		ioread32(reg);
 +	rad1_arm_timer(chip);
 +	return 0;
 +}
@@ -715,8 +720,8 @@ diff --git a/sound/pci/rad1.c b/sound/pci/rad1.c
 +			chip->pipes[ad].control |= RAD1_RX_OPTICAL;
 +		else
 +			chip->pipes[aes].control |= RAD1_RX_OPTICAL;
-+		iowrite32be(chip->pipes[aes].control, rad1_control_reg(chip, aes));
-+		iowrite32be(chip->pipes[ad].control, rad1_control_reg(chip, ad));
++		iowrite32(chip->pipes[aes].control, rad1_control_reg(chip, aes));
++		iowrite32(chip->pipes[ad].control, rad1_control_reg(chip, ad));
 +	}
 +	return 1;
 +}
@@ -749,7 +754,7 @@ diff --git a/sound/pci/rad1.c b/sound/pci/rad1.c
 +	for (i = 0; i < ARRAY_SIZE(rad1_pcm_pipes); i++) {
 +		unsigned int pipe_id = rad1_pcm_pipes[i];
 +
-+		iowrite32be(chip->pipes[pipe_id].control, rad1_control_reg(chip, pipe_id));
++		iowrite32(chip->pipes[pipe_id].control, rad1_control_reg(chip, pipe_id));
 +	}
 +	if (!rad1_has_analog(chip)) {
 +		rad1_write(chip, gpio0, 0);
@@ -786,8 +791,8 @@ diff --git a/sound/pci/rad1.c b/sound/pci/rad1.c
 +	 * including the observed padding, without overrunning the named arrays.
 +	 */
 +	for (i = 0; i < 30; i++) {
-+		iowrite32be(0, (u8 __iomem *)chip->mmio + 0x1000 + i * 4);
-+		iowrite32be(0, (u8 __iomem *)chip->mmio + 0x1080 + i * 4);
++		iowrite32(0, (u8 __iomem *)chip->mmio + 0x1000 + i * 4);
++		iowrite32(0, (u8 __iomem *)chip->mmio + 0x1080 + i * 4);
 +	}
 +	if (rad1_has_analog(chip))
 +		rad1_write(chip, gpio1, 3);
@@ -797,6 +802,7 @@ diff --git a/sound/pci/rad1.c b/sound/pci/rad1.c
 +static const struct snd_pcm_hardware rad1_pcm_hw = {
 +	.info = SNDRV_PCM_INFO_INTERLEAVED | SNDRV_PCM_INFO_MMAP |
 +		SNDRV_PCM_INFO_MMAP_VALID | SNDRV_PCM_INFO_BLOCK_TRANSFER,
++	/* LE DMA words; XIO bridge word-value DMA preserves BE CPU values. */
 +#ifdef __BIG_ENDIAN
 +	.formats = SNDRV_PCM_FMTBIT_S24_BE,
 +#else
@@ -1296,6 +1302,15 @@ diff --git a/sound/pci/rad1.c b/sound/pci/rad1.c
 +	return 0;
 +}
 +
++/* RAD target-aborts 8/16-bit config writes; IRIX rad_start_subsys writes dwords. */
++static void rad1_update_command(struct pci_dev *pci, u16 clear, u16 set)
++{
++	u32 value;
++
++	pci_read_config_dword(pci, PCI_COMMAND, &value);
++	pci_write_config_dword(pci, PCI_COMMAND, ((value & 0xffff) & ~clear) | set);
++}
++
 +static void rad1_shutdown(struct snd_rad1 *chip)
 +{
 +	unsigned long flags;
@@ -1303,14 +1318,12 @@ diff --git a/sound/pci/rad1.c b/sound/pci/rad1.c
 +
 +	spin_lock_irqsave(&chip->lock, flags);
 +	chip->shutting_down = true;
++	/* As IRIX rad_halt: stop DMA only, without asserting reset. */
 +	for (i = 0; i < ARRAY_SIZE(rad1_pcm_pipes); i++)
 +		rad1_run_pipe(chip, rad1_pcm_pipes[i], false);
-+	/* Stop bus mastering before ALSA releases coherent DMA buffers. */
-+	rad1_write(chip, reset, 0xffffffff);
-+	rad1_read(chip, reset);
 +	spin_unlock_irqrestore(&chip->lock, flags);
 +	timer_shutdown_sync(&chip->timer);
-+	pci_clear_master(chip->pci);
++	rad1_update_command(chip->pci, PCI_COMMAND_MASTER, 0);
 +}
 +
 +static int rad1_dev_disconnect(struct snd_device *device)
@@ -1345,6 +1358,7 @@ diff --git a/sound/pci/rad1.c b/sound/pci/rad1.c
 +	};
 +	struct snd_rad1 *chip = NULL;
 +	unsigned int revision_major = pci->revision >> 4;
++	u32 config;
 +	int err;
 +
 +	*rchip = NULL;
@@ -1352,6 +1366,8 @@ diff --git a/sound/pci/rad1.c b/sound/pci/rad1.c
 +		dev_err(&pci->dev, "unsupported RAD revision %#x\n", pci->revision);
 +		return -ENODEV;
 +	}
++	/* Pre-enabled decoding keeps the PCI core from writing a 16-bit COMMAND. */
++	rad1_update_command(pci, 0, PCI_COMMAND_MEMORY);
 +	err = pci_enable_device(pci);
 +	if (err)
 +		return err;
@@ -1384,9 +1400,10 @@ diff --git a/sound/pci/rad1.c b/sound/pci/rad1.c
 +		err = -ENOMEM;
 +		goto free;
 +	}
-+	pci_write_config_byte(pci, PCI_LATENCY_TIMER, 64);
++	pci_read_config_dword(pci, PCI_CACHE_LINE_SIZE, &config);
++	pci_write_config_dword(pci, PCI_CACHE_LINE_SIZE, (config & ~0xff00U) | (64 << 8));
 +	rad1_hw_init(chip);
-+	pci_set_master(pci);
++	rad1_update_command(pci, 0, PCI_COMMAND_MASTER);
 +	err = snd_device_new(card, SNDRV_DEV_LOWLEVEL, chip, &ops);
 +	if (err)
 +		goto free;
@@ -1494,7 +1511,7 @@ diff --git a/sound/pci/rad1.c b/sound/pci/rad1.c
 +};
 +module_pci_driver(rad1_driver);
 +
-+MODULE_AUTHOR("Stanislaw Skowronek <skylark@unaligned.org>");
 +MODULE_AUTHOR("René Rebe <rene@exactcode.de>");
-+MODULE_DESCRIPTION("SGI RAD audio with eight-channel ADAT lightpipe I/O");
++MODULE_AUTHOR("Stanislaw Skowronek <skylark@unaligned.org>");
++MODULE_DESCRIPTION("SGI RADICAL audio");
 +MODULE_LICENSE("GPL");
