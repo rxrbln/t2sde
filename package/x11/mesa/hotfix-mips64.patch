@@ -1,31 +1,94 @@
 # --- T2-COPYRIGHT-BEGIN ---
 # t2/package/*/mesa/hotfix-mips64.patch
-# Copyright (C) 2025 The T2 SDE Project
+# Copyright (C) 2025 - 2026 The T2 SDE Project
 # SPDX-License-Identifier: GPL-2.0 or patched project license
 # --- T2-COPYRIGHT-END ---
 
-Attempt to fix illegal instruction on Sgi MIPS"4" machines, as it does not
-yet fully work there are likely more hiding somewhere.
+gallivm: fall back to the build ISA as LLVM CPU on mips64
 
---- mesa-25.2.1/src/gallium/auxiliary/gallivm/lp_bld_misc.cpp.vanilla	2025-08-26 18:49:44.207513051 +0200
-+++ mesa-25.2.1/src/gallium/auxiliary/gallivm/lp_bld_misc.cpp	2025-08-26 18:50:42.784035892 +0200
-@@ -576,7 +576,7 @@
-        * implemented, feedback to mips64r2 for all other ordinary mips64 cpu.
-        */
-    if (MCPU == "generic")
--      MCPU = util_get_cpu_caps()->has_msa ? "mips64r5" : "mips64r2";
-+      if (util_get_cpu_caps()->has_msa) MCPU = "mips64r5";
- #endif
+LLVM's getHostCPUName() returns "generic" on all mips CPUs, which LLVM maps
+to mips64r1. Upstream then forces mips64r2. Either way the JIT emits
+instructions not present on MIPS IV CPUs, such as the 3-operand mul (SPECIAL2
+funct 0x02), raising SIGILL on SGI R5000/R1x000 with llvmpipe and softpipe
+(through draw). Use the ISA mesa itself is built for instead, still preferring
+mips64r5 if MSA is implemented.
+
+Signed-off-by: René Rebe <rene@exactco.de>
+
+diff -Nurp mesa-26.2.4.orig/src/gallium/auxiliary/gallivm/lp_bld_init_orc.cpp mesa-26.2.4/src/gallium/auxiliary/gallivm/lp_bld_init_orc.cpp
+--- mesa-26.2.4.orig/src/gallium/auxiliary/gallivm/lp_bld_init_orc.cpp	2026-10-01 16:39:53.000000000 +0200
++++ mesa-26.2.4/src/gallium/auxiliary/gallivm/lp_bld_init_orc.cpp	2026-10-16 21:26:56.203939597 +0200
+@@ -492,14 +492,14 @@ llvm::orc::JITTargetMachineBuilder LPJit
  
-    builder.setMCPU(MCPU);
---- mesa-25.2.1/src/gallium/auxiliary/gallivm/lp_bld_init_orc.cpp.vanilla	2025-08-26 19:18:32.337704077 +0200
-+++ mesa-25.2.1/src/gallium/auxiliary/gallivm/lp_bld_init_orc.cpp	2025-08-26 19:19:19.357108798 +0200
-@@ -493,7 +493,7 @@
-     * implemented, feedback to mips64r2 for all other ordinary mips64 cpu.
+ #if DETECT_ARCH_MIPS64 == 1
+    /*
+-    * ls3a4000 CPU and ls2k1000 SoC is a mips64r5 compatible with MSA SIMD
+-    * instruction set implemented, while ls3a3000 is mips64r2 compatible
+-    * only. getHostCPUName() return "generic" on all loongson
+-    * mips CPU currently. So we override the MCPU to mips64r5 if MSA is
+-    * implemented, feedback to mips64r2 for all other ordinary mips64 cpu.
++    * getHostCPUName() returns "generic" on all mips CPUs: use mips64r5 if MSA
++    * is implemented, otherwise the build ISA, e.g. mips4 on SGI R5000/R1x000.
      */
-    if (MCPU == "generic")
+-   if (MCPU == "generic")
 -      MCPU = util_get_cpu_caps()->has_msa ? "mips64r5" : "mips64r2";
-+      if (util_get_cpu_caps()->has_msa) MCPU = "mips64r5";
++   if (MCPU == "generic") {
++      MCPU = LP_MIPS_BUILD_CPU;
++      if (util_get_cpu_caps()->has_msa && MCPU != "mips64r6")
++         MCPU = "mips64r5";
++   }
  #endif
  
  #if DETECT_ARCH_RISCV64 == 1
+diff -Nurp mesa-26.2.4.orig/src/gallium/auxiliary/gallivm/lp_bld_misc.cpp mesa-26.2.4/src/gallium/auxiliary/gallivm/lp_bld_misc.cpp
+--- mesa-26.2.4.orig/src/gallium/auxiliary/gallivm/lp_bld_misc.cpp	2026-10-01 16:39:53.000000000 +0200
++++ mesa-26.2.4/src/gallium/auxiliary/gallivm/lp_bld_misc.cpp	2026-10-16 21:26:56.174939215 +0200
+@@ -602,15 +602,15 @@ lp_build_create_jit_compiler_for_module(
+ #endif
+ 
+ #if DETECT_ARCH_MIPS64
+-      /*
+-       * ls3a4000 CPU and ls2k1000 SoC is a mips64r5 compatible with MSA SIMD
+-       * instruction set implemented, while ls3a3000 is mips64r2 compatible
+-       * only. getHostCPUName() return "generic" on all loongson
+-       * mips CPU currently. So we override the MCPU to mips64r5 if MSA is
+-       * implemented, feedback to mips64r2 for all other ordinary mips64 cpu.
+-       */
+-   if (MCPU == "generic")
+-      MCPU = util_get_cpu_caps()->has_msa ? "mips64r5" : "mips64r2";
++   /*
++    * getHostCPUName() returns "generic" on all mips CPUs: use mips64r5 if MSA
++    * is implemented, otherwise the build ISA, e.g. mips4 on SGI R5000/R1x000.
++    */
++   if (MCPU == "generic") {
++      MCPU = LP_MIPS_BUILD_CPU;
++      if (util_get_cpu_caps()->has_msa && MCPU != "mips64r6")
++         MCPU = "mips64r5";
++   }
+ #endif
+ 
+    builder.setMCPU(MCPU);
+diff -Nurp mesa-26.2.4.orig/src/gallium/auxiliary/gallivm/lp_bld_misc.h mesa-26.2.4/src/gallium/auxiliary/gallivm/lp_bld_misc.h
+--- mesa-26.2.4.orig/src/gallium/auxiliary/gallivm/lp_bld_misc.h	2026-10-01 16:39:53.000000000 +0200
++++ mesa-26.2.4/src/gallium/auxiliary/gallivm/lp_bld_misc.h	2026-10-16 21:26:56.116938450 +0200
+@@ -35,6 +35,20 @@
+ #include <llvm-c/ExecutionEngine.h>
+ #include <llvm-c/Target.h>
+ 
++#ifdef __mips64
++/* LLVM CPU for the ISA mesa is built for, as LLVM maps "generic" to mips64r1 */
++#if __mips_isa_rev >= 6
++#define LP_MIPS_BUILD_CPU "mips64r6"
++#elif __mips_isa_rev >= 2
++#define LP_MIPS_BUILD_CPU "mips64r2"
++#elif __mips_isa_rev == 1
++#define LP_MIPS_BUILD_CPU "mips64"
++#elif __mips == 4
++#define LP_MIPS_BUILD_CPU "mips4"
++#else
++#define LP_MIPS_BUILD_CPU "mips3"
++#endif
++#endif
+ 
+ #ifdef __cplusplus
+ extern "C" {
