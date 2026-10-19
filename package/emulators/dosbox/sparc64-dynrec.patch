@@ -10,16 +10,18 @@ Derived from the PowerPC backends. Generated code runs in its own
 register window, helpers are called relative to the cpu_regs base
 register as the code cache is mapped out of call range of the binary.
 Values passed to C functions are zero-extended as required by the ABI.
+Blocks return directly with ret/restore, and on CPUs with a coherent
+I-cache (UltraSPARC III and later) a single flush per block is issued.
 
 Performance on a Sun UltraSPARC IIIi (sun4u, 1 CPU), DOSBox cycles=max,
 machine=svga_s3, SB Pro, measured under Xvfb:
 
   Test                    normal core   dynamic core   speedup
-  3DBENCH                 18.1 fps      31.2 fps       1.72x
-  Doom -timedemo demo3     7.5 fps      16.2 fps       2.17x
-                          (10012 rt)    (4609 rt, 2134 gametics)
-  Quake +timedemo demo1    2.3 fps       5.3 fps       2.27x
-                          (418.0 s)     (184.1 s, 969 frames)
+  3DBENCH                 18.1 fps      32.2 fps       1.78x
+  Doom -timedemo demo3     7.5 fps      17.7 fps       2.37x
+                          (10012 rt)    (4227 rt, 2134 gametics)
+  Quake +timedemo demo1    2.3 fps       5.8 fps       2.50x
+                          (418.0 s)     (166.9 s, 969 frames)
 
 Signed-off-by: René Rebe <rene@exactco.de>
 
@@ -113,7 +115,7 @@ diff --git a/src/cpu/core_dynrec/risc_sparc64.h b/src/cpu/core_dynrec/risc_sparc
 new file mode 100644
 --- /dev/null
 +++ b/src/cpu/core_dynrec/risc_sparc64.h
-@@ -0,0 +1,912 @@
+@@ -0,0 +1,919 @@
 +/*
 + *  Copyright (C) 2002-2019  The DOSBox Team
 + *  Copyright (C) 2026 René Rebe <rene@exactco.de>
@@ -204,6 +206,8 @@ new file mode 100644
 +static const HostReg RegParams[] = {
 +	HOST_O0, HOST_O1, HOST_O2, HOST_O3, HOST_O4, HOST_O5
 +};
++
++#include <sys/auxv.h>
 +
 +#if C_FPU
 +#include "fpu.h"
@@ -757,21 +761,27 @@ new file mode 100644
 +	gen_fill_branch((DRC_PTR_SIZE_IM)data);
 +}
 +
++// I-cache is coherent with stores (UltraSPARC III and later), set by gen_run_code
++static bool icache_coherent;
++
 +static void cache_block_closing(Bit8u* block_start,Bitu block_size) {
-+	// flush synchronizes at least the doubleword addressed
++	// a single flush synchronizes the pipeline with a coherent I-cache
++	if (icache_coherent) {
++		asm volatile("flush %0" :: "r"(block_start) : "memory");
++		return;
++	}
++	// otherwise flush synchronizes at least the doubleword addressed
 +	for (Bit8u* p = (Bit8u*)((Bit64u)block_start & ~7ULL); p < block_start + block_size; p += 8)
 +		asm volatile("flush %0" :: "r"(p) : "memory");
 +}
 +
 +static void cache_block_before_close(void) {}
 +
-+// jump to target, may_call allows the use of %o7 for an extended range
-+static void gen_jmp_to(void* target,bool may_call) {
++// jump to target
++static void gen_jmp_to(void* target) {
 +	Bit64s disp = ((Bit64s)target - (Bit64s)cache.pos) >> 2;
 +	if (sfits(disp, 22)) {
 +		cache_addd(BA(disp));
-+	} else if (may_call && sfits(disp, 30)) {
-+		cache_addd(CALL(disp));
 +	} else {
 +		gen_mov_imm64(HOST_G1, (Bit64u)target, true);
 +		cache_addd(JMPL_I(HOST_G0, HOST_G1, 0));
@@ -779,10 +789,12 @@ new file mode 100644
 +	NOP_OP(); // delay slot
 +}
 +
-+// gen_run_code is assumed to be called exactly once, gen_return_function() jumps back to it
-+static void* epilog_addr;
++// gen_run_code is assumed to be called exactly once
 +static Bit8u *getCF_glue;
 +static void gen_run_code(void) {
++	// the kernel skips I-cache flushing on these, see flush_icache_range()
++	icache_coherent = (getauxval(AT_HWCAP) & (HWCAP_SPARC_ULTRA3 | HWCAP_SPARC_BLKINIT | HWCAP_SPARC_N2)) != 0;
++
 +	// prolog, the code pointer is passed in %i0 after the save
 +	ALU_I_OP(OP3_SAVE, HOST_O6, HOST_O6, -176);
 +	gen_mov_imm64(FC_REGS_ADDR, (Bit64u)&cpu_regs, false);
@@ -793,19 +805,16 @@ new file mode 100644
 +	cache_addd(JMPL_I(HOST_G0, HOST_I0, 0));
 +	NOP_OP();
 +
-+	// epilog, return FC_RETOP to the caller
-+	epilog_addr = cache.pos;
-+	cache_addd(JMPL_I(HOST_G0, HOST_I7, 8)); // ret
-+	ALU_R_OP(OP3_RESTORE, HOST_O0, HOST_O0, HOST_G0); // restore %o0,%g0,%o0
-+
 +	// trampoline to call get_CF(), keeps %o7
 +	getCF_glue = cache.pos;
-+	gen_jmp_to((void*)get_CF, false);
++	gen_jmp_to((void*)get_CF);
 +}
 +
 +// return from a function
++// generated code runs in the register window of gen_run_code, return directly
 +static void gen_return_function(void) {
-+	gen_jmp_to(epilog_addr, true);
++	cache_addd(JMPL_I(HOST_G0, HOST_I7, 8)); // ret
++	ALU_R_OP(OP3_RESTORE, HOST_O0, HOST_O0, HOST_G0); // restore %o0,%g0,%o0
 +}
 +
 +// zero-extend FC_RETOP from the operand size of flags_type
