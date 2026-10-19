@@ -7,21 +7,29 @@
 dynrec: add SPARC V9 64-bit backend
 
 Derived from the PowerPC backends. Generated code runs in its own
-register window, helpers are called relative to the cpu_regs base
-register as the code cache is mapped out of call range of the binary.
-Values passed to C functions are zero-extended as required by the ABI.
-Blocks return directly with ret/restore, and on CPUs with a coherent
-I-cache (UltraSPARC III and later) a single flush per block is issued.
+register window, values passed to C functions are zero-extended as
+required by the ABI. Blocks return directly with ret/restore, and on
+CPUs with a coherent I-cache (UltraSPARC III and later) a single flush
+per block is issued.
+
+The code cache is mapped right below the executable (DRC_CACHE_ALLOC),
+so helpers are reached with a direct call; only calls that may be
+replaced by flags optimization keep a padded stanza. Memory accesses
+look up the TLB inline and use direct host pointers little-endian via
+ASI_PRIMARY_LITTLE (DRC_USE_INLINE_MEMORY). Branch conditions are
+evaluated inline from the lazy flags, guessing the last flags operation
+of the block and checking lflags.type at runtime (DRC_USE_INLINE_FLAGS).
+Base registers address core_dynrec, cache, cache_blocks and the TLB.
 
 Performance on a Sun UltraSPARC IIIi (sun4u, 1 CPU), DOSBox cycles=max,
 machine=svga_s3, SB Pro, measured under Xvfb:
 
   Test                    normal core   dynamic core   speedup
-  3DBENCH                 18.1 fps      32.2 fps       1.78x
-  Doom -timedemo demo3     7.5 fps      17.7 fps       2.37x
-                          (10012 rt)    (4227 rt, 2134 gametics)
-  Quake +timedemo demo1    2.3 fps       5.8 fps       2.50x
-                          (418.0 s)     (166.9 s, 969 frames)
+  3DBENCH                 18.1 fps      40.0 fps       2.21x
+  Doom -timedemo demo3     7.5 fps      18.7 fps       2.49x
+                          (10012 rt)    (3985 rt, 2134 gametics)
+  Quake +timedemo demo1    2.3 fps       9.7 fps       4.22x
+                          (418.0 s)     (90.1 s, 969 frames)
 
 Signed-off-by: René Rebe <rene@exactco.de>
 
@@ -111,11 +119,354 @@ diff --git a/configure.ac b/configure.ac
          AC_DEFINE(C_DYNREC,1)
          AC_MSG_RESULT(yes)
      else      
+diff --git a/src/cpu/core_dynrec.cpp b/src/cpu/core_dynrec.cpp
+--- a/src/cpu/core_dynrec.cpp
++++ b/src/cpu/core_dynrec.cpp
+@@ -124,23 +124,44 @@ static void IllegalOptionDynrec(const char* msg) {
+ 	E_Exit("DynrecCore: illegal option in %s",msg);
+ }
+ 
++#define X86			0x01
++#define X86_64		0x02
++#define MIPSEL		0x03
++#define ARMV4LE		0x04
++#define POWERPC		0x06
++#define PPC64LE		0x08
++#define SPARC64		0x09
++
++// backend configuration needed before the backend is included
++#if C_TARGETCPU == SPARC64
++// the code cache is placed by the backend
++#define DRC_CACHE_ALLOC
++// protected_regs is indexed by host register number
++#define DRC_PROTECTED_REGS 32
++#endif
++
++#if !defined(DRC_PROTECTED_REGS)
++#define DRC_PROTECTED_REGS 8
++#endif
++
+ static struct {
+ 	BlockReturn (*runcode)(Bit8u*);		// points to code that can start a block
+ 	Bit32u callback;			// the occurred callback (written as 32bit by generated code)
+ 	Bitu readdata;				// spare space used when reading from memory
+-	Bit32u protected_regs[8];	// space to save/restore register values
++	Bit32u protected_regs[DRC_PROTECTED_REGS];	// space to save/restore register values
+ } core_dynrec;
+ 
+ 
+ #include "core_dynrec/cache.h"
+ 
+-#define X86			0x01
+-#define X86_64		0x02
+-#define MIPSEL		0x03
+-#define ARMV4LE		0x04
+-#define POWERPC		0x06
+-#define PPC64LE		0x08
+-#define SPARC64		0x09
++// set when the next generated call may be replaced by gen_fill_function_ptr
++static bool drc_next_call_patchable=false;
++
++// conditions for gen_set_condition, comparing two 32bit values
++enum DrcCond {
++	DRC_COND_E, DRC_COND_NE, DRC_COND_LU, DRC_COND_GEU, DRC_COND_LEU, DRC_COND_GU,
++	DRC_COND_L, DRC_COND_GE, DRC_COND_LE, DRC_COND_G, DRC_COND_NEG, DRC_COND_POS
++};
+ 
+ #if C_TARGETCPU == X86_64
+ #include "core_dynrec/risc_x64.h"
+diff --git a/src/cpu/core_dynrec/cache.h b/src/cpu/core_dynrec/cache.h
+--- a/src/cpu/core_dynrec/cache.h
++++ b/src/cpu/core_dynrec/cache.h
+@@ -555,6 +555,9 @@ static void dyn_return(BlockReturn retcode,bool ret_exception);
+ static void dyn_run_code(void);
+ static void cache_block_before_close(void);
+ static void cache_block_closing(Bit8u* block_start,Bitu block_size);
++#if defined(DRC_CACHE_ALLOC)
++static Bit8u* cache_alloc_code(Bitu size);
++#endif
+ 
+ 
+ /* Define temporary pagesize so the MPROTECT case and the regular case share as much code as possible */
+@@ -587,7 +590,9 @@ static void cache_init(bool enable) {
+ 		}
+ 		if (cache_code_start_ptr==NULL) {
+ 			// allocate the code cache memory
+-#if defined (WIN32)
++#if defined(DRC_CACHE_ALLOC)
++			cache_code_start_ptr=cache_alloc_code(CACHE_TOTAL+CACHE_MAXSIZE+PAGESIZE_TEMP-1+PAGESIZE_TEMP);
++#elif defined (WIN32)
+ 			cache_code_start_ptr=(Bit8u*)VirtualAlloc(0,CACHE_TOTAL+CACHE_MAXSIZE+PAGESIZE_TEMP-1+PAGESIZE_TEMP,
+ 				MEM_COMMIT,PAGE_EXECUTE_READWRITE);
+ 			if (!cache_code_start_ptr)
+diff --git a/src/cpu/core_dynrec/decoder_basic.h b/src/cpu/core_dynrec/decoder_basic.h
+--- a/src/cpu/core_dynrec/decoder_basic.h
++++ b/src/cpu/core_dynrec/decoder_basic.h
+@@ -753,47 +753,67 @@ bool DRC_CALL_CONV mem_writed_checked_drc(PhysPt address,Bit32u val) {
+ 
+ // functions that enable access to the memory
+ 
++// backends may emit an inline access for memory with a direct host pointer,
++// the returned jump skips the generic code handling all remaining cases
++#if defined(DRC_USE_INLINE_MEMORY)
++#define DRC_MEM_FAST(fast) DRC_PTR_SIZE_IM mem_done=fast
++#define DRC_MEM_DONE() gen_fill_jump(mem_done)
++#else
++#define DRC_MEM_FAST(fast)
++#define DRC_MEM_DONE()
++#endif
++
+ // read a byte from a given address and store it in reg_dst
+ static void dyn_read_byte(HostReg reg_addr,HostReg reg_dst) {
++	DRC_MEM_FAST(gen_mem_fast(reg_addr,reg_dst,1,false));
+ 	gen_mov_regs(FC_OP1,reg_addr);
+ 	gen_call_function_raw((void *)&mem_readb_checked_drc);
+ 	dyn_check_exception(FC_RETOP);
+ 	gen_mov_byte_to_reg_low(reg_dst,&core_dynrec.readdata);
++	DRC_MEM_DONE();
+ }
+ static void dyn_read_byte_canuseword(HostReg reg_addr,HostReg reg_dst) {
++	DRC_MEM_FAST(gen_mem_fast(reg_addr,reg_dst,1,false));
+ 	gen_mov_regs(FC_OP1,reg_addr);
+ 	gen_call_function_raw((void *)&mem_readb_checked_drc);
+ 	dyn_check_exception(FC_RETOP);
+ 	gen_mov_byte_to_reg_low_canuseword(reg_dst,&core_dynrec.readdata);
++	DRC_MEM_DONE();
+ }
+ 
+ // write a byte from reg_val into the memory given by the address
+ static void dyn_write_byte(HostReg reg_addr,HostReg reg_val) {
++	DRC_MEM_FAST(gen_mem_fast(reg_addr,reg_val,1,true));
+ 	gen_mov_regs(FC_OP2,reg_val);
+ 	gen_mov_regs(FC_OP1,reg_addr);
+ 	gen_call_function_raw((void *)&mem_writeb_checked_drc);
+ 	dyn_check_exception(FC_RETOP);
++	DRC_MEM_DONE();
+ }
+ 
+ // read a 32bit (dword=true) or 16bit (dword=false) value
+ // from a given address and store it in reg_dst
+ static void dyn_read_word(HostReg reg_addr,HostReg reg_dst,bool dword) {
++	DRC_MEM_FAST(gen_mem_fast(reg_addr,reg_dst,dword?4:2,false));
+ 	gen_mov_regs(FC_OP1,reg_addr);
+ 	if (dword) gen_call_function_raw((void *)&mem_readd_checked_drc);
+ 	else gen_call_function_raw((void *)&mem_readw_checked_drc);
+ 	dyn_check_exception(FC_RETOP);
+ 	gen_mov_word_to_reg(reg_dst,&core_dynrec.readdata,dword);
++	DRC_MEM_DONE();
+ }
+ 
+ // write a 32bit (dword=true) or 16bit (dword=false) value
+ // from reg_val into the memory given by the address
+ static void dyn_write_word(HostReg reg_addr,HostReg reg_val,bool dword) {
++	DRC_MEM_FAST(gen_mem_fast(reg_addr,reg_val,dword?4:2,true));
+ //	if (!dword) gen_extend_word(false,reg_val);
+ 	gen_mov_regs(FC_OP2,reg_val);
+ 	gen_mov_regs(FC_OP1,reg_addr);
+ 	if (dword) gen_call_function_raw((void *)&mem_writed_checked_drc);
+ 	else gen_call_function_raw((void *)&mem_writew_checked_drc);
+ 	dyn_check_exception(FC_RETOP);
++	DRC_MEM_DONE();
+ }
+ 
+ 
+@@ -1204,8 +1224,13 @@ static void gen_restore_reg(HostReg reg,HostReg dest_reg) {
+ 	Bitu ftype;
+ } mf_functions[64];
+ 
++// type of the last flags generating operation of the block, a guess
++// for inline flags evaluation which checks lflags.type at runtime
++static Bitu drc_flags_type_guess=t_UNKNOWN;
++
+ static void InitFlagsOptimization(void) {
+ 	mf_functions_num=0;
++	drc_flags_type_guess=t_UNKNOWN;
+ }
+ 
+ // replace all queued functions with their simpler variants
+@@ -1224,7 +1249,9 @@ static void InvalidateFlags(void) {
+ // because the current instruction destroys all condition flags and
+ // the flags are not required before
+ static void InvalidateFlags(void* current_simple_function,Bitu flags_type) {
++	drc_flags_type_guess=flags_type;
+ #ifdef DRC_FLAGS_INVALIDATION
++	drc_next_call_patchable=true;
+ 	for (Bitu ct=0; ct<mf_functions_num; ct++) {
+ 		gen_fill_function_ptr(mf_functions[ct].pos,mf_functions[ct].fct_ptr,mf_functions[ct].ftype);
+ 	}
+@@ -1239,7 +1266,9 @@ static void InvalidateFlags(void* current_simple_function,Bitu flags_type) {
+ // destroys all condition flags and the flags weren't needed in-between
+ // this function can be replaced by a simpler one as well
+ static void InvalidateFlagsPartially(void* current_simple_function,Bitu flags_type) {
++	drc_flags_type_guess=flags_type;
+ #ifdef DRC_FLAGS_INVALIDATION
++	drc_next_call_patchable=true;
+ 	mf_functions[mf_functions_num].pos=cache.pos;
+ 	mf_functions[mf_functions_num].fct_ptr=current_simple_function;
+ 	mf_functions[mf_functions_num].ftype=flags_type;
+@@ -1251,6 +1280,7 @@ static void InvalidateFlagsPartially(void* current_simple_function,Bitu flags_ty
+ // destroys all condition flags and the flags weren't needed in-between
+ // this function can be replaced by a simpler one as well
+ static void InvalidateFlagsPartially(void* current_simple_function,DRC_PTR_SIZE_IM cpos,Bitu flags_type) {
++	drc_flags_type_guess=flags_type;
+ #ifdef DRC_FLAGS_INVALIDATION
+ 	mf_functions[mf_functions_num].pos=(Bit8u*)cpos;
+ 	mf_functions[mf_functions_num].fct_ptr=current_simple_function;
+diff --git a/src/cpu/core_dynrec/operators.h b/src/cpu/core_dynrec/operators.h
+--- a/src/cpu/core_dynrec/operators.h
++++ b/src/cpu/core_dynrec/operators.h
+@@ -1,5 +1,6 @@
+ /*
+  *  Copyright (C) 2002-2010  The DOSBox Team
++ *  Copyright (C) 2026 René Rebe <rene@exactco.de>
+  *
+  *  This program is free software; you can redistribute it and/or modify
+  *  it under the terms of the GNU General Public License as published by
+@@ -1354,26 +1355,121 @@ static Bit32u DRC_CALL_CONV dynrec_get_nzf_and_sf_eq_of(void)	DRC_FC;
+ static Bit32u DRC_CALL_CONV dynrec_get_nzf_and_sf_eq_of(void)	{ return TFLG_NLE; }
+ 
+ 
+-static void dyn_branchflag_to_reg(BranchTypes btype) {
++static void* dyn_branchflag_function(BranchTypes btype) {
+ 	switch (btype) {
+-		case BR_O:gen_call_function_raw((void*)&dynrec_get_of);break;
+-		case BR_NO:gen_call_function_raw((void*)&dynrec_get_nof);break;
+-		case BR_B:gen_call_function_raw((void*)&dynrec_get_cf);break;
+-		case BR_NB:gen_call_function_raw((void*)&dynrec_get_ncf);break;
+-		case BR_Z:gen_call_function_raw((void*)&dynrec_get_zf);break;
+-		case BR_NZ:gen_call_function_raw((void*)&dynrec_get_nzf);break;
+-		case BR_BE:gen_call_function_raw((void*)&dynrec_get_cf_or_zf);break;
+-		case BR_NBE:gen_call_function_raw((void*)&dynrec_get_ncf_and_nzf);break;
+-
+-		case BR_S:gen_call_function_raw((void*)&dynrec_get_sf);break;
+-		case BR_NS:gen_call_function_raw((void*)&dynrec_get_nsf);break;
+-		case BR_P:gen_call_function_raw((void*)&dynrec_get_pf);break;
+-		case BR_NP:gen_call_function_raw((void*)&dynrec_get_npf);break;
+-		case BR_L:gen_call_function_raw((void*)&dynrec_get_sf_neq_of);break;
+-		case BR_NL:gen_call_function_raw((void*)&dynrec_get_sf_eq_of);break;
+-		case BR_LE:gen_call_function_raw((void*)&dynrec_get_zf_or_sf_neq_of);break;
+-		case BR_NLE:gen_call_function_raw((void*)&dynrec_get_nzf_and_sf_eq_of);break;
++		case BR_O:return (void*)&dynrec_get_of;
++		case BR_NO:return (void*)&dynrec_get_nof;
++		case BR_B:return (void*)&dynrec_get_cf;
++		case BR_NB:return (void*)&dynrec_get_ncf;
++		case BR_Z:return (void*)&dynrec_get_zf;
++		case BR_NZ:return (void*)&dynrec_get_nzf;
++		case BR_BE:return (void*)&dynrec_get_cf_or_zf;
++		case BR_NBE:return (void*)&dynrec_get_ncf_and_nzf;
++
++		case BR_S:return (void*)&dynrec_get_sf;
++		case BR_NS:return (void*)&dynrec_get_nsf;
++		case BR_P:return (void*)&dynrec_get_pf;
++		case BR_NP:return (void*)&dynrec_get_npf;
++		case BR_L:return (void*)&dynrec_get_sf_neq_of;
++		case BR_NL:return (void*)&dynrec_get_sf_eq_of;
++		case BR_LE:return (void*)&dynrec_get_zf_or_sf_neq_of;
++		case BR_NLE:return (void*)&dynrec_get_nzf_and_sf_eq_of;
+ 	}
++	return NULL;
++}
++
++#if defined(DRC_USE_INLINE_FLAGS)
++// load a lazy flags value of size bytes, sign or zero extended
++static void dyn_load_lflag(HostReg reg,GenReg32 & val,Bitu size,bool sign) {
++	switch (size) {
++		case 1:
++			gen_mov_byte_to_reg_low(reg,&val.byte[BL_INDEX]);
++			gen_extend_byte(sign,reg);
++			break;
++		case 2:
++			gen_mov_word_to_reg(reg,&val.word[W_INDEX],false);
++			gen_extend_word(sign,reg);
++			break;
++		default:
++			gen_mov_word_to_reg(reg,&val.dword[DW_INDEX],true);
++			break;
++	}
++}
++
++// evaluate the condition inline for the guessed type of the last flags
++// operation, the generic function is called if lflags.type differs
++static bool dyn_branchflag_inline(BranchTypes btype,void* func) {
++	enum { CL_CMP, CL_LOGIC, CL_RES } cl;
++	Bitu type=drc_flags_type_guess;
++	Bitu size;
++	switch (type) {
++		case t_CMPb: case t_SUBb: cl=CL_CMP; size=1; break;
++		case t_CMPw: case t_SUBw: cl=CL_CMP; size=2; break;
++		case t_CMPd: case t_SUBd: cl=CL_CMP; size=4; break;
++		case t_ANDb: case t_ORb: case t_XORb: case t_TESTb: cl=CL_LOGIC; size=1; break;
++		case t_ANDw: case t_ORw: case t_XORw: case t_TESTw: cl=CL_LOGIC; size=2; break;
++		case t_ANDd: case t_ORd: case t_XORd: case t_TESTd: cl=CL_LOGIC; size=4; break;
++		case t_ADDb: case t_ADCb: case t_SBBb: case t_INCb: case t_DECb:
++		case t_NEGb: case t_SHLb: case t_SHRb: case t_SARb: cl=CL_RES; size=1; break;
++		case t_ADDw: case t_ADCw: case t_SBBw: case t_INCw: case t_DECw:
++		case t_NEGw: case t_SHLw: case t_SHRw: case t_SARw: cl=CL_RES; size=2; break;
++		case t_ADDd: case t_ADCd: case t_SBBd: case t_INCd: case t_DECd:
++		case t_NEGd: case t_SHLd: case t_SHRd: case t_SARd: cl=CL_RES; size=4; break;
++		default: return false;
++	}
++	DrcCond cond;
++	bool sign=false;
++	switch (btype) {
++		case BR_Z: cond=DRC_COND_E; break;
++		case BR_NZ: cond=DRC_COND_NE; break;
++		case BR_B: cond=DRC_COND_LU; break;
++		case BR_NB: cond=DRC_COND_GEU; break;
++		case BR_BE: cond=DRC_COND_LEU; break;
++		case BR_NBE: cond=DRC_COND_GU; break;
++		case BR_L: cond=DRC_COND_L; sign=true; break;
++		case BR_NL: cond=DRC_COND_GE; sign=true; break;
++		case BR_LE: cond=DRC_COND_LE; sign=true; break;
++		case BR_NLE: cond=DRC_COND_G; sign=true; break;
++		case BR_S: cond=DRC_COND_NEG; sign=true; break;
++		case BR_NS: cond=DRC_COND_POS; sign=true; break;
++		default: return false;
++	}
++	// with only the result known CF and OF are not available
++	if (cl==CL_RES && btype!=BR_Z && btype!=BR_NZ && btype!=BR_S && btype!=BR_NS) return false;
++
++	// lflags.type is a Bitu, compare its lower 32bit
++#if defined(WORDS_BIGENDIAN)
++	gen_mov_word_to_reg(FC_OP1,(Bit8u*)&lflags.type+sizeof(lflags.type)-4,true);
++#else
++	gen_mov_word_to_reg(FC_OP1,&lflags.type,true);
++#endif
++	gen_add_imm(FC_OP1,(Bit32u)(-(Bit32s)type));
++	DRC_PTR_SIZE_IM slow=gen_create_branch_on_nonzero(FC_OP1,true);
++
++	// subtraction operands compare as the flags of the subtraction, all
++	// others compare the result against zero with cleared CF and OF
++	if (cl==CL_CMP && btype!=BR_S && btype!=BR_NS) {
++		dyn_load_lflag(FC_OP1,lflags.var1,size,sign);
++		dyn_load_lflag(FC_OP2,lflags.var2,size,sign);
++	} else {
++		dyn_load_lflag(FC_OP1,lflags.res,size,true);
++		gen_mov_dword_to_reg_imm(FC_OP2,0);
++	}
++	gen_set_condition(FC_RETOP,FC_OP1,FC_OP2,cond);
++	DRC_PTR_SIZE_IM done=gen_create_jump();
++	gen_fill_branch(slow);
++	gen_call_function_raw(func);
++	gen_fill_jump(done);
++	return true;
++}
++#endif
++
++static void dyn_branchflag_to_reg(BranchTypes btype) {
++	void* func=dyn_branchflag_function(btype);
++#if defined(DRC_USE_INLINE_FLAGS)
++	if (dyn_branchflag_inline(btype,func)) return;
++#endif
++	gen_call_function_raw(func);
+ }
+ 
+ 
 diff --git a/src/cpu/core_dynrec/risc_sparc64.h b/src/cpu/core_dynrec/risc_sparc64.h
 new file mode 100644
 --- /dev/null
 +++ b/src/cpu/core_dynrec/risc_sparc64.h
-@@ -0,0 +1,919 @@
+@@ -0,0 +1,1052 @@
 +/*
 + *  Copyright (C) 2002-2019  The DOSBox Team
 + *  Copyright (C) 2026 René Rebe <rene@exactco.de>
@@ -189,12 +540,12 @@ new file mode 100644
 +	HOST_L3,	// points to current CacheBlockDynRec (decode.block)
 +	HOST_L4,	// points to fpu
 +	HOST_L5,	// generic non-volatile (used for inline adc/sbb)
-+	HOST_L6,
-+	HOST_L7,
++	HOST_L6,	// points to paging.tlb.read
++	HOST_L7,	// points to paging.tlb.write
 +	HOST_I0,	// code pointer passed to gen_run_code
-+	HOST_I1,
-+	HOST_I2,
-+	HOST_I3,
++	HOST_I1,	// points to core_dynrec
++	HOST_I2,	// points to cache
++	HOST_I3,	// points to cache_blocks
 +	HOST_I4,
 +	HOST_I5,
 +	HOST_I6,	// frame pointer
@@ -208,6 +559,8 @@ new file mode 100644
 +};
 +
 +#include <sys/auxv.h>
++#include <sys/mman.h>
++#include <unistd.h>
 +
 +#if C_FPU
 +#include "fpu.h"
@@ -247,6 +600,18 @@ new file mode 100644
 +
 +#define BLOCK_REG HOST_L3
 +#define FPU_REG HOST_L4
++#define DYNREC_REG HOST_I1
++#define CACHE_REG HOST_I2
++#define BLOCKS_REG HOST_I3
++#define TLBR_REG HOST_L6
++#define TLBW_REG HOST_L7
++
++// inline accesses to memory with a direct host pointer in the TLB
++#if defined(USE_FULL_TLB)
++#define DRC_USE_INLINE_MEMORY
++#endif
++// inline evaluation of branch conditions from the lazy flags
++#define DRC_USE_INLINE_FLAGS
 +
 +// opcode fields (SPARC V9 architecture manual)
 +enum {
@@ -257,8 +622,10 @@ new file mode 100644
 +};
 +enum {
 +	OP3_LDUW=0x00, OP3_LDUB=0x01, OP3_LDUH=0x02, OP3_STW=0x04, OP3_STB=0x05,
-+	OP3_STH=0x06, OP3_LDX=0x0b, OP3_STX=0x0e, OP3_LDUWA=0x10, OP3_LDUHA=0x12
++	OP3_STH=0x06, OP3_LDX=0x0b, OP3_STX=0x0e, OP3_LDUWA=0x10, OP3_LDUHA=0x12,
++	OP3_STWA=0x14, OP3_STHA=0x16
 +};
++enum { RCOND_Z=0x1 };
 +enum { COND_E=0x1, COND_LE=0x2, COND_A=0x8, COND_NE=0x9 };
 +
 +#define ASI_PRIMARY_LITTLE 0x88
@@ -274,6 +641,8 @@ new file mode 100644
 +#define SHFX_I(op3,rd,rs1,cnt)  F3I(2,rd,op3,rs1,0x1000|((cnt)&63))
 +#define SETHI(rd,imm22)         (Bit32u)(((rd)<<25)|(4<<22)|((imm22)&0x3fffff))
 +#define BPCC(cond,p,disp19)     (Bit32u)(((cond)<<25)|(1<<22)|(0<<20)|((p)<<19)|((disp19)&0x7ffff)) // %icc
++#define BPR(rcond,p,rs1,d16)    (Bit32u)(((rcond)<<25)|(3<<22)|((((d16)>>14)&3)<<20)|((p)<<19)|((rs1)<<14)|((d16)&0x3fff))
++#define MOVCC_I(cond,rd,simm11) (Bit32u)((2<<30)|((rd)<<25)|(0x2c<<19)|(1<<18)|((cond)<<14)|(1<<13)|((simm11)&0x7ff)) // %icc
 +#define BA(disp22)              (Bit32u)((COND_A<<25)|(2<<22)|((disp22)&0x3fffff))
 +#define CALL(disp30)            (Bit32u)((1<<30)|((disp30)&0x3fffffff))
 +#define JMPL_I(rd,rs1,imm)      ALU_I(OP3_JMPL,rd,rs1,imm)
@@ -285,8 +654,9 @@ new file mode 100644
 +#define SHF_I_OP(op3,rd,rs1,cnt) cache_addd(SHF_I(op3,rd,rs1,cnt))
 +#define NOP_OP()                 cache_addd(NOP)
 +
-+// length of a function call stanza in instructions, see do_gen_call
-+#define CALL_STANZA 7
++// length of a patchable function call stanza in instructions, see gen_fill_function_ptr
++// with the code cache in call range 6 suffice, set by cache_alloc_code
++static Bitu call_stanza = 7;
 +
 +static INLINE bool simm13(Bit64s v) { return v >= -4096 && v < 4096; }
 +static INLINE bool sfits(Bit64s v, int bits) { return v >= -(1LL<<(bits-1)) && v < (1LL<<(bits-1)); }
@@ -371,6 +741,12 @@ new file mode 100644
 +	if (block_ptr && gen_addr_base(a, addr, (Bit64s)block_ptr, BLOCK_REG)) return;
 +#if C_FPU
 +	if (gen_addr_base(a, addr, (Bit64s)&fpu, FPU_REG)) return;
++#endif
++	if (gen_addr_base(a, addr, (Bit64s)&core_dynrec, DYNREC_REG)) return;
++	if (gen_addr_base(a, addr, (Bit64s)&cache, CACHE_REG)) return;
++#if defined(DRC_USE_INLINE_MEMORY)
++	// also covers lflags located next to paging
++	if (gen_addr_base(a, addr, (Bit64s)&paging.tlb.read, TLBR_REG)) return;
 +#endif
 +	Bit64s off = addr - (Bit64s)&cpu_regs;
 +	if ((Bit32s)off == off) {
@@ -576,7 +952,15 @@ new file mode 100644
 +// move an address into memory (assumes address != NULL)
 +static void INLINE gen_mov_direct_ptr(void* dest,DRC_PTR_SIZE_IM imm) {
 +	block_ptr = 0;
-+	gen_mov_imm64(BLOCK_REG, imm, true);
++	// blocks are allocated from cache_blocks, address them relative to it
++	Bit64s off = (Bit64s)imm - (Bit64s)cache_blocks;
++	if ((Bit32s)off == off) {
++		if (simm13(off)) ALU_I_OP(OP3_ADD, BLOCK_REG, BLOCKS_REG, off);
++		else {
++			gen_mov_simm32(BLOCK_REG, (Bit32s)off);
++			ALU_R_OP(OP3_ADD, BLOCK_REG, BLOCK_REG, BLOCKS_REG);
++		}
++	} else gen_mov_imm64(BLOCK_REG, imm, true);
 +	// this will be used to look-up the linked blocks
 +	block_ptr = imm;
 +	SparcAddr a;
@@ -625,9 +1009,8 @@ new file mode 100644
 +	gen_add_imm(dest_reg, (Bit32u)imm);
 +}
 +
-+// write a fixed length function call stanza to pos
-+// the length must match the assumptions in gen_fill_function_ptr
-+static void do_gen_call(void *func,Bit32u *pos) {
++// write a function call to pos, padded to pad instructions if non-zero
++static Bit32u* do_gen_call(void *func,Bit32u *pos,Bitu pad) {
 +	Bit8u* save_pos = cache.pos;
 +	Bit64s f = (Bit64s)func;
 +	Bit64s disp = (f - (Bit64s)pos) >> 2;
@@ -647,15 +1030,21 @@ new file mode 100644
 +		}
 +	}
 +	NOP_OP(); // delay slot
-+	__ASSERT(cache.pos <= (Bit8u*)(pos + CALL_STANZA), "sparc64: call stanza overflow\n");
-+	while (cache.pos < (Bit8u*)(pos + CALL_STANZA)) NOP_OP();
++	if (pad) {
++		__ASSERT(cache.pos <= (Bit8u*)(pos + pad), "sparc64: call stanza overflow\n");
++		while (cache.pos < (Bit8u*)(pos + pad)) NOP_OP();
++	}
++	Bit32u* end = (Bit32u*)cache.pos;
 +	cache.pos = save_pos;
++	return end;
 +}
 +
 +// generate a call to a parameterless function
 +static void INLINE gen_call_function_raw(void * func,bool fastcall=true) {
-+	do_gen_call(func, (Bit32u*)cache.pos);
-+	cache.pos += CALL_STANZA*4;
++	// only calls that may be replaced later need the padded stanza
++	Bitu pad = drc_next_call_patchable ? call_stanza : 0;
++	drc_next_call_patchable = false;
++	cache.pos = (Bit8u*)do_gen_call(func, (Bit32u*)cache.pos, pad);
 +}
 +
 +// generate a call to a function with paramcount parameters
@@ -663,6 +1052,8 @@ new file mode 100644
 +// using the gen_load_param_ functions below
 +static Bit64u INLINE gen_call_function_setup(void * func,Bitu paramcount,bool fastcall=false) {
 +	Bit64u proc_addr = (Bit64u)cache.pos;
++	// fastcall marks calls whose address is passed to InvalidateFlagsPartially
++	if (fastcall) drc_next_call_patchable = true;
 +	gen_call_function_raw(func, fastcall);
 +	return proc_addr;
 +}
@@ -701,6 +1092,71 @@ new file mode 100644
 +	cache_addd(MEM_I(OP3_LDX, HOST_G5, HOST_G5, imm));
 +	cache_addd(JMPL_I(HOST_G0, HOST_G5, 0));
 +	NOP_OP();
++}
++
++// unconditional jump, the destination is set by gen_fill_jump() later
++static Bit64u gen_create_jump(void) {
++	Bit64u pos = (Bit64u)cache.pos;
++	cache_addd(BA(0));
++	NOP_OP(); // delay slot
++	return pos;
++}
++
++static void gen_fill_jump(Bit64u data) {
++	Bit64s disp = ((Bit64s)cache.pos - (Bit64s)data) >> 2;
++	__ASSERT(sfits(disp, 22), "sparc64: jump out of range %ld\n", (long)disp);
++	*(Bit32u*)data = BA(disp);
++}
++
++#if defined(DRC_USE_INLINE_MEMORY)
++// access memory with a direct host pointer in the TLB inline, little-endian
++// through the alternate space; unaligned and handler accesses branch to the
++// generic code following, returns the jump over it for gen_fill_jump()
++static Bit64u gen_mem_fast(HostReg reg_addr,HostReg reg,Bitu size,bool write) {
++	SHF_I_OP(OP3_SRL, HOST_G4, reg_addr, 12);
++	cache_addd(SHFX_I(OP3_SLL, HOST_G4, HOST_G4, 3));
++	cache_addd(MEM_R(OP3_LDX, HOST_G4, write ? TLBW_REG : TLBR_REG, HOST_G4));
++	Bit32u* unaligned = NULL;
++	if (size > 1) {
++		ALU_I_OP(OP3_ANDCC, HOST_G0, reg_addr, size - 1);
++		unaligned = (Bit32u*)cache.pos;
++		cache_addd(BPCC(COND_NE, 0, 0));
++	}
++	SHF_I_OP(OP3_SRL, HOST_G1, reg_addr, 0); // zero-extended address, delay slot
++	Bit32u* nohost = (Bit32u*)cache.pos;
++	cache_addd(BPR(RCOND_Z, 0, HOST_G4, 0));
++	NOP_OP();
++	switch (size) {
++		case 1:
++			cache_addd(MEM_R(write ? OP3_STB : OP3_LDUB, reg, HOST_G4, HOST_G1));
++			break;
++		case 2:
++			cache_addd(MEM_RA(write ? OP3_STHA : OP3_LDUHA, reg, HOST_G4, HOST_G1, ASI_PRIMARY_LITTLE));
++			break;
++		default:
++			cache_addd(MEM_RA(write ? OP3_STWA : OP3_LDUWA, reg, HOST_G4, HOST_G1, ASI_PRIMARY_LITTLE));
++			break;
++	}
++	Bit64u done = (Bit64u)cache.pos;
++	cache_addd(BA(0));
++	NOP_OP();
++
++	if (unaligned) *unaligned |= ((Bit32u*)cache.pos - unaligned) & 0x7ffff;
++	Bit64s disp = (Bit32u*)cache.pos - nohost;
++	*nohost = BPR(RCOND_Z, 0, HOST_G4, disp);
++	return done;
++}
++#endif
++
++// set dest_reg to 1 if the 32bit comparison of reg_a with reg_b meets cond, 0 otherwise
++static void gen_set_condition(HostReg dest_reg,HostReg reg_a,HostReg reg_b,DrcCond cond) {
++	static const Bit8u icc_cond[] = {
++		0x1, 0x9, 0x5, 0xd, 0x4, 0xc,	// e, ne, cs, cc, leu, gu
++		0x3, 0xb, 0x2, 0xa, 0x6, 0xe	// l, ge, le, g, neg, pos
++	};
++	ALU_R_OP(OP3_SUBCC, HOST_G0, reg_a, reg_b);
++	ALU_R_OP(OP3_OR, dest_reg, HOST_G0, HOST_G0);
++	cache_addd(MOVCC_I(icc_cond[cond], dest_reg, 1));
 +}
 +
 +static Bit64u gen_create_branch(Bit32u cond) {
@@ -761,6 +1217,25 @@ new file mode 100644
 +	gen_fill_branch((DRC_PTR_SIZE_IM)data);
 +}
 +
++extern "C" char __executable_start, _end;
++
++// map the code cache right below the executable, so helpers are in call range
++static Bit8u* cache_alloc_code(Bitu size) {
++	Bit64u exe = (Bit64u)&__executable_start;
++	Bit64u pagesize = sysconf(_SC_PAGESIZE);
++	Bit64u hint = (exe - size - 0x100000) & ~(pagesize - 1);
++	void* p = mmap((void*)hint, size, PROT_READ|PROT_WRITE|PROT_EXEC,
++		MAP_PRIVATE|MAP_ANONYMOUS|MAP_FIXED_NOREPLACE, -1, 0);
++	if (p == MAP_FAILED)
++		p = mmap(NULL, size, PROT_READ|PROT_WRITE|PROT_EXEC, MAP_PRIVATE|MAP_ANONYMOUS, -1, 0);
++	if (p == MAP_FAILED) return NULL;
++	Bit64u lo = (Bit64u)p < exe ? (Bit64u)p : exe;
++	Bit64u hi = (Bit64u)p + size > (Bit64u)&_end ? (Bit64u)p + size : (Bit64u)&_end;
++	if (hi - lo < 0x7fffffffULL) call_stanza = 6;
++	LOG_MSG("DYNREC: code cache at %p, %s call range", p, call_stanza == 6 ? "in" : "out of");
++	return (Bit8u*)p;
++}
++
 +// I-cache is coherent with stores (UltraSPARC III and later), set by gen_run_code
 +static bool icache_coherent;
 +
@@ -802,6 +1277,13 @@ new file mode 100644
 +#if C_FPU
 +	gen_mov_imm64(FPU_REG, (Bit64u)&fpu, true);
 +#endif
++	gen_mov_imm64(DYNREC_REG, (Bit64u)&core_dynrec, true);
++	gen_mov_imm64(CACHE_REG, (Bit64u)&cache, true);
++	gen_mov_imm64(BLOCKS_REG, (Bit64u)cache_blocks, false);
++#if defined(DRC_USE_INLINE_MEMORY)
++	gen_mov_imm64(TLBR_REG, (Bit64u)&paging.tlb.read, true);
++	gen_mov_imm64(TLBW_REG, (Bit64u)&paging.tlb.write, true);
++#endif
 +	cache_addd(JMPL_I(HOST_G0, HOST_I0, 0));
 +	NOP_OP();
 +
@@ -841,7 +1323,7 @@ new file mode 100644
 +	Bit32u *op = (Bit32u*)pos;
 +	Bitu size = 4;
 +
-+	for (Bitu i = 0; i < CALL_STANZA; i++) op[i] = NOP;
++	for (Bitu i = 0; i < call_stanza; i++) op[i] = NOP;
 +
 +	switch (flags_type) {
 +#if defined(DRC_FLAGS_INVALIDATION_DCODE)
@@ -880,7 +1362,9 @@ new file mode 100644
 +		case t_SBBw:
 +		case t_SBBd: {
 +			bool adc = flags_type == t_ADCb || flags_type == t_ADCw || flags_type == t_ADCd;
-+			Bit64s disp = ((Bit64s)getCF_glue - (Bit64s)op) >> 2;
++			// call get_CF directly if in range, otherwise through the glue
++			Bit64s disp = ((Bit64s)get_CF - (Bit64s)op) >> 2;
++			if (!sfits(disp, 30)) disp = ((Bit64s)getCF_glue - (Bit64s)op) >> 2;
 +			__ASSERT(sfits(disp, 30), "sparc64: get_CF glue out of range\n");
 +			*op++ = CALL(disp); // get_CF
 +			*op++ = ALU_R(adc ? OP3_ADD : OP3_SUB, HOST_L5, FC_OP1, FC_OP2); // delay slot
@@ -956,7 +1440,7 @@ new file mode 100644
 +			break;
 +#endif
 +		default:
-+			do_gen_call(fct_ptr, op);
++			do_gen_call(fct_ptr, op, call_stanza);
 +			return;
 +	}
 +	gen_fill_extend(op, size);
