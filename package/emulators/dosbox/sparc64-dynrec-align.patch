@@ -1,0 +1,92 @@
+# --- T2-COPYRIGHT-BEGIN ---
+# t2/package/*/dosbox/sparc64-dynrec-align.patch
+# Copyright (C) 2026 The T2 SDE Project
+# SPDX-License-Identifier: GPL-2.0 or patched project license
+# --- T2-COPYRIGHT-END ---
+
+dynrec: use alignment-safe accessors for the code page write map
+
+The write map is a byte array accessed at arbitrary offsets, which
+raises SIGBUS on strict-alignment hosts like SPARC.
+
+Signed-off-by: René Rebe <rene@exactco.de>
+
+dynrec: use alignment-safe accessors when marking the write map in the decoder
+
+Signed-off-by: René Rebe <rene@exactco.de>
+
+  src/cpu/core_dynrec/cache.h         | 9 +++++----
+  src/cpu/core_dynrec/decoder_basic.h | 9 +++++----
+  2 files changed, 10 insertions(+), 8 deletions(-)
+
+diff --git a/src/cpu/core_dynrec/cache.h b/src/cpu/core_dynrec/cache.h
+--- a/src/cpu/core_dynrec/cache.h
++++ b/src/cpu/core_dynrec/cache.h
+@@ -162,7 +163,7 @@ void writew(PhysPt addr,Bitu val){
+ 		if (host_readw(hostmem+addr)==(Bit16u)val) return;
+ 		host_writew(hostmem+addr,val);
+ 		// see if there's code where we are writing to
+-		if (!*(Bit16u*)&write_map[addr]) {
++		if (!host_readw(&write_map[addr])) {
+ 			if (active_blocks) return;		// still some blocks in this page
+ 			active_count--;
+ 			if (!active_count) Release();	// delay page releasing until active_count is zero
+@@ -184,7 +185,7 @@ void writed(PhysPt addr,Bitu val){
+ 		if (host_readd(hostmem+addr)==(Bit32u)val) return;
+ 		host_writed(hostmem+addr,val);
+ 		// see if there's code where we are writing to
+-		if (!*(Bit32u*)&write_map[addr]) {
++		if (!host_readd(&write_map[addr])) {
+ 			if (active_blocks) return;		// still some blocks in this page
+ 			active_count--;
+ 			if (!active_count) Release();	// delay page releasing until active_count is zero
+@@ -229,7 +230,7 @@ bool writew_checked(PhysPt addr,Bitu val) {
+ 		addr&=4095;
+ 		if (host_readw(hostmem+addr)==(Bit16u)val) return false;
+ 		// see if there's code where we are writing to
+-		if (!*(Bit16u*)&write_map[addr]) {
++		if (!host_readw(&write_map[addr])) {
+ 			if (!active_blocks) {
+ 				// no blocks left in this page, still delay the page releasing a bit
+ 				active_count--;
+@@ -258,7 +259,7 @@ bool writed_checked(PhysPt addr,Bitu val) {
+ 		addr&=4095;
+ 		if (host_readd(hostmem+addr)==(Bit32u)val) return false;
+ 		// see if there's code where we are writing to
+-		if (!*(Bit32u*)&write_map[addr]) {
++		if (!host_readd(&write_map[addr])) {
+ 			if (!active_blocks) {
+ 				// no blocks left in this page, still delay the page releasing a bit
+ 				active_count--;
+diff --git a/src/cpu/core_dynrec/decoder_basic.h b/src/cpu/core_dynrec/decoder_basic.h
+--- a/src/cpu/core_dynrec/decoder_basic.h
++++ b/src/cpu/core_dynrec/decoder_basic.h
+@@ -229,7 +230,7 @@ static Bit16u decode_fetchw(void) {
+ 		val|=decode_fetchb() << 8;
+ 		return val;
+ 	}
+-	*(Bit16u *)&decode.page.wmap[decode.page.index]+=0x0101;
++	host_writew(&decode.page.wmap[decode.page.index],host_readw(&decode.page.wmap[decode.page.index])+0x0101);
+ 	decode.code+=2;decode.page.index+=2;
+ 	return mem_readw(decode.code-2);
+ }
+@@ -243,7 +244,7 @@ static Bit32u decode_fetchd(void) {
+ 		return val;
+         /* Advance to the next page */
+ 	}
+-	*(Bit32u *)&decode.page.wmap[decode.page.index]+=0x01010101;
++	host_writed(&decode.page.wmap[decode.page.index],host_readd(&decode.page.wmap[decode.page.index])+0x01010101);
+ 	decode.code+=4;decode.page.index+=4;
+ 	return mem_readd(decode.code-4);
+ }
+@@ -279,8 +280,8 @@ static void INLINE decode_increase_wmapmask(Bitu size) {
+ 	// update mask entries
+ 	switch (size) {
+ 		case 1 : activecb->cache.wmapmask[mapidx]+=0x01; break;
+-		case 2 : (*(Bit16u*)&activecb->cache.wmapmask[mapidx])+=0x0101; break;
+-		case 4 : (*(Bit32u*)&activecb->cache.wmapmask[mapidx])+=0x01010101; break;
++		case 2 : host_writew(&activecb->cache.wmapmask[mapidx],host_readw(&activecb->cache.wmapmask[mapidx])+0x0101); break;
++		case 4 : host_writed(&activecb->cache.wmapmask[mapidx],host_readd(&activecb->cache.wmapmask[mapidx])+0x01010101); break;
+ 	}
+ }
+ 

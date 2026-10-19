@@ -1,0 +1,66 @@
+# --- T2-COPYRIGHT-BEGIN ---
+# t2/package/*/dosbox/sparc64-dynrec-be64.patch
+# Copyright (C) 2026 The T2 SDE Project
+# SPDX-License-Identifier: GPL-2.0 or patched project license
+# --- T2-COPYRIGHT-END ---
+
+dynrec: fix 64-bit big-endian host issues in shared code
+
+- core_dynrec.callback is written as 32bit by generated code, make it Bit32u
+- cpu.direction is a Bits, load its lower 32bit on big-endian hosts
+- protected_regs is indexed by host register number, size it for 32 regs
+
+Signed-off-by: René Rebe <rene@exactco.de>
+
+  src/cpu/core_dynrec.cpp               | 8 ++++++--
+  src/cpu/core_dynrec/decoder_opcodes.h | 6 ++++++
+  2 files changed, 12 insertions(+), 2 deletions(-)
+
+diff --git a/src/cpu/core_dynrec.cpp b/src/cpu/core_dynrec.cpp
+--- a/src/cpu/core_dynrec.cpp
++++ b/src/cpu/core_dynrec.cpp
+@@ -126,9 +127,9 @@ static void IllegalOptionDynrec(const char* msg) {
+ 
+ static struct {
+ 	BlockReturn (*runcode)(Bit8u*);		// points to code that can start a block
+-	Bitu callback;				// the occurred callback
++	Bit32u callback;			// the occurred callback (written as 32bit by generated code)
+ 	Bitu readdata;				// spare space used when reading from memory
+-	Bit32u protected_regs[8];	// space to save/restore register values
++	Bit32u protected_regs[32];	// space to save/restore register values, indexed by host register
+ } core_dynrec;
+ 
+ 
+@@ -140,6 +141,7 @@ static void IllegalOptionDynrec(const char* msg) {
+ #define ARMV4LE		0x04
+ #define POWERPC		0x06
+ #define PPC64LE		0x08
++#define SPARC64		0x09
+ 
+ #if C_TARGETCPU == X86_64
+ #include "core_dynrec/risc_x64.h"
+@@ -153,6 +155,8 @@ static void IllegalOptionDynrec(const char* msg) {
+ #include "core_dynrec/risc_ppc.h"
+ #elif C_TARGETCPU == PPC64LE
+ #include "core_dynrec/risc_ppc64le.h"
++#elif C_TARGETCPU == SPARC64
++#include "core_dynrec/risc_sparc64.h"
+ #endif
+ 
+ #if !defined(WORDS_BIGENDIAN)
+diff --git a/src/cpu/core_dynrec/decoder_opcodes.h b/src/cpu/core_dynrec/decoder_opcodes.h
+--- a/src/cpu/core_dynrec/decoder_opcodes.h
++++ b/src/cpu/core_dynrec/decoder_opcodes.h
+@@ -1260,7 +1261,12 @@ static void dyn_interrupt(Bit8u num) {
+ static void dyn_string(StringOps op) {
+ 	if (decode.rep) MOV_REG_WORD_TO_HOST_REG(FC_OP1,DRC_REG_ECX,decode.big_addr);
+ 	else gen_mov_dword_to_reg_imm(FC_OP1,1);
++	// cpu.direction is a Bits, access its lower 32bit
++#if defined(WORDS_BIGENDIAN)
++	gen_mov_word_to_reg(FC_OP2,(Bit8u*)&cpu.direction+sizeof(cpu.direction)-4,true);
++#else
+ 	gen_mov_word_to_reg(FC_OP2,&cpu.direction,true);
++#endif
+ 	Bit8u di_base_addr=decode.seg_prefix_used ? decode.seg_prefix : DRC_SEG_DS;
+ 	switch (op) {
+ 		case STR_MOVSB:
