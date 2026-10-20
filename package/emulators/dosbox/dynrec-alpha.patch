@@ -1,0 +1,1313 @@
+# --- T2-COPYRIGHT-BEGIN ---
+# t2/package/*/dosbox/dynrec-alpha.patch
+# Copyright (C) 2026 The T2 SDE Project
+# SPDX-License-Identifier: GPL-2.0 or patched project license
+# --- T2-COPYRIGHT-END ---
+
+dynrec: add Alpha backend
+
+Alpha (EV56 and later, BWX) 64-bit backend derived from the sparc64 one,
+using the generic hooks. 32bit values are kept sign-extended in registers
+as the ABI requires, helpers are called through $27 relative to the
+cpu_regs base register. The code cache is placed near the executable
+(above it, as Linux puts the stack right below the executable on Alpha).
+Memory and stack accesses look up the TLB inline, unaligned reads within
+a page use ldq_u/extxl/extxh; branch conditions, the carry into ADC/SBB,
+flag-setting ALU operations, shifts and INC/DEC are evaluated inline, block
+links are patched to br, jsr/jmp carry target hints. FPU arithmetic, stack
+and loads/stores are inline with IEEE software completion (/su), and the C
+code is built with -mieee, as masked x87 exceptions must not raise SIGFPE.
+
+Performance on a Digital AlphaPC 164LX (EV56 599 MHz), DOSBox cycles=max,
+machine=svga_s3, SB Pro, measured under Xvfb:
+
+  Test                    normal core   dynamic core   speedup
+  3DBENCH                  8.4 fps      25.0 fps       2.98x
+  Doom -timedemo demo3                  12.8 fps
+                                        (5845 rt, 2134 gametics)
+  Quake +timedemo demo1                  4.2 fps
+                                        (232.8 s, 969 frames)
+
+Signed-off-by: René Rebe <rene@exactco.de>
+
+diff --git a/configure b/configure
+--- a/configure
++++ b/configure
+@@ -6739,6 +6739,18 @@ $as_echo "Power PC" >&6; }
+     c_targetcpu="powerpc"
+     c_unalignedmemory=yes
+     ;;
++   alpha*)
++    $as_echo "#define C_TARGETCPU ALPHA" >>confdefs.h
++
++    $as_echo "#define PAGESIZE 8192" >>confdefs.h
++
++    { $as_echo "$as_me:${as_lineno-$LINENO}: result: Alpha" >&5
++$as_echo "Alpha" >&6; }
++    c_targetcpu="alpha"
++    c_unalignedmemory=no
++    CFLAGS="$CFLAGS -mieee"
++    CXXFLAGS="$CXXFLAGS -mieee"
++    ;;
+    m68k*)
+     $as_echo "#define C_TARGETCPU M68K" >>confdefs.h
+ 
+@@ -6854,7 +6866,7 @@ $as_echo "yes" >&6; }
+ $as_echo "no, using dynamic-x86" >&6; }
+     fi
+   else
+-    if test x$c_targetcpu = xx86_64 ; then
++    if test x$c_targetcpu = xx86_64 -o x$c_targetcpu = xalpha; then
+         $as_echo "#define C_DYNREC 1" >>confdefs.h
+ 
+         { $as_echo "$as_me:${as_lineno-$LINENO}: result: yes" >&5
+diff --git a/configure.ac b/configure.ac
+--- a/configure.ac
++++ b/configure.ac
+@@ -264,6 +264,16 @@ case "$host_cpu" in
+     c_targetcpu="powerpc"
+     c_unalignedmemory=yes
+     ;;
++   alpha*)
++    AC_DEFINE(C_TARGETCPU,ALPHA)
++    AC_DEFINE(PAGESIZE,8192,Non-4K page size)
++    AC_MSG_RESULT(Alpha)
++    c_targetcpu="alpha"
++    c_unalignedmemory=no
++    dnl masked x87 exceptions need IEEE results instead of SIGFPE
++    CFLAGS="$CFLAGS -mieee"
++    CXXFLAGS="$CXXFLAGS -mieee"
++    ;;
+    m68k*)
+     AC_DEFINE(C_TARGETCPU,M68K)
+     AC_MSG_RESULT(Motorola 68000)
+@@ -338,7 +348,7 @@ dnl x86 only enable it if dynamic-x86 is disabled.
+         AC_MSG_RESULT([no, using dynamic-x86])
+     fi
+   else 
+-    if test x$c_targetcpu = xx86_64 ; then
++    if test x$c_targetcpu = xx86_64 -o x$c_targetcpu = xalpha; then
+         AC_DEFINE(C_DYNREC,1)
+         AC_MSG_RESULT(yes)
+     else      
+diff --git a/src/cpu/core_dynrec/risc_alpha.h b/src/cpu/core_dynrec/risc_alpha.h
+new file mode 100644
+--- /dev/null
++++ b/src/cpu/core_dynrec/risc_alpha.h
+@@ -0,0 +1,1216 @@
++/*
++ *  Copyright (C) 2002-2019  The DOSBox Team
++ *  Copyright (C) 2026 René Rebe <rene@exactco.de>
++ *
++ *  This program is free software; you can redistribute it and/or modify
++ *  it under the terms of the GNU General Public License as published by
++ *  the Free Software Foundation; either version 2 of the License, or
++ *  (at your option) any later version.
++ *
++ *  This program is distributed in the hope that it will be useful,
++ *  but WITHOUT ANY WARRANTY; without even the implied warranty of
++ *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ *  GNU General Public License for more details.
++ *
++ *  You should have received a copy of the GNU General Public License along
++ *  with this program; if not, write to the Free Software Foundation, Inc.,
++ *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
++ */
++
++// Alpha (EV56 and later, BWX) 64-bit little-endian backend, derived from the
++// sparc64 backend. 32bit values are kept sign-extended in registers as the
++// ABI requires for passing them to C functions, calls go through $27 (pv).
++
++#include <sys/mman.h>
++#include <unistd.h>
++
++// debugging
++#define __ASSERT(x,...) \
++	{ if(!(x)) { fprintf(stderr, "ASSERT:" __VA_ARGS__); abort(); } }
++
++// some configuring defines that specify the capabilities of this architecture
++// or aspects of the recompiling
++
++// protect FC_ADDR over function calls if necessaray
++//#define DRC_PROTECT_ADDR_REG
++
++// try to use non-flags generating functions if possible
++#define DRC_FLAGS_INVALIDATION
++// try to replace _simple functions by code
++#define DRC_FLAGS_INVALIDATION_DCODE
++
++// type with the same size as a pointer
++#define DRC_PTR_SIZE_IM Bit64u
++
++// calling convention modifier
++#define DRC_FC /* nothing */
++#define DRC_CALL_CONV /* nothing */
++
++#define DRC_USE_REGS_ADDR
++#define DRC_USE_SEGS_ADDR
++
++// register mapping
++enum HostReg {
++	HOST_R0=0,	// return value
++	HOST_R1,	// TEMP_REG_DRC
++	HOST_R2,
++	HOST_R3,
++	HOST_R4,
++	HOST_R5,
++	HOST_R6,
++	HOST_R7,
++	HOST_R8,
++	HOST_R9,	// FC_ADDR
++	HOST_R10,	// points to Segs
++	HOST_R11,	// points to cpu_regs
++	HOST_R12,	// points to current CacheBlockDynRec (decode.block)
++	HOST_R13,	// points to paging.tlb.read
++	HOST_R14,	// points to cache_blocks
++	HOST_R15,	// generic non-volatile (used for inline adc/sbb)
++	HOST_R16,	// parameters
++	HOST_R17,
++	HOST_R18,
++	HOST_R19,
++	HOST_R20,
++	HOST_R21,
++	HOST_R22,	// scratch: address calculation
++	HOST_R23,	// scratch
++	HOST_R24,	// scratch: values
++	HOST_R25,	// scratch
++	HOST_R26,	// return address
++	HOST_R27,	// procedure value, call target
++	HOST_R28,	// assembler temporary
++	HOST_R29,	// global pointer
++	HOST_R30,	// stack pointer
++	HOST_R31,	// always zero
++
++	HOST_NONE
++};
++
++static const HostReg RegParams[] = {
++	HOST_R16, HOST_R17, HOST_R18, HOST_R19, HOST_R20, HOST_R21
++};
++
++#if C_FPU
++#include "fpu.h"
++extern FPU_rec fpu;
++#endif
++
++// register that holds function return values
++#define FC_RETOP HOST_R0
++
++// register used for address calculations, if the ABI does not
++// state that this register is preserved across function calls
++// then define DRC_PROTECT_ADDR_REG above
++#define FC_ADDR HOST_R9
++
++// register that points to Segs[]
++#define FC_SEGS_ADDR HOST_R10
++// register that points to cpu_regs[]
++#define FC_REGS_ADDR HOST_R11
++
++// register that holds the first parameter
++#define FC_OP1 RegParams[0]
++
++// register that holds the second parameter
++#define FC_OP2 RegParams[1]
++
++// special register that holds the third parameter for _R3 calls (byte accessible)
++#define FC_OP3 RegParams[2]
++
++// register that holds byte-accessible temporary values
++#define FC_TMP_BA1 FC_OP2
++
++// register that holds byte-accessible temporary values
++#define FC_TMP_BA2 FC_OP1
++
++// temporary register for LEA
++#define TEMP_REG_DRC HOST_R1
++
++#define BLOCK_REG HOST_R12
++#define TLBR_REG HOST_R13
++#define BLOCKS_REG HOST_R14
++#define CARRY_REG HOST_R15
++#define TMP_ADDR HOST_R22
++#define TMP_CONST HOST_R23
++#define TMP_VAL HOST_R24
++#define TMP_VAL2 HOST_R25
++
++// inline accesses to memory with a direct host pointer in the TLB
++#if defined(USE_FULL_TLB)
++#define DRC_USE_INLINE_MEMORY
++#define DRC_USE_INLINE_STACK
++#endif
++// inline evaluation of branch conditions from the lazy flags
++#define DRC_USE_INLINE_FLAGS
++// inline evaluation of the carry into ADC/SBB
++#define DRC_USE_INLINE_CARRY
++// direct continuation at the last target of computed control transfers
++#define DRC_USE_INDIRECT_LINK
++// flag-setting ALU operations inline
++#define DRC_USE_INLINE_FLAGS_OPS
++// FPU arithmetic, stack and loads/stores on fpu.regs inline
++#if C_FPU
++#define DRC_USE_INLINE_FPU_ARITH
++#define DRC_USE_INLINE_FPU
++#endif
++
++// opcodes (Alpha Architecture Reference Manual)
++enum {
++	OP_LDA=0x08, OP_LDAH=0x09, OP_LDBU=0x0a, OP_LDQ_U=0x0b, OP_LDWU=0x0c,
++	OP_STW=0x0d, OP_STB=0x0e, OP_INTA=0x10, OP_INTL=0x11, OP_INTS=0x12,
++	OP_FPTI=0x1c, OP_JMP=0x1a, OP_LDL=0x28, OP_LDQ=0x29, OP_STL=0x2c,
++	OP_STQ=0x2d, OP_BR=0x30, OP_BEQ=0x39, OP_BLE=0x3b, OP_BNE=0x3d
++};
++enum {
++	// INTA
++	F_ADDL=0x00, F_S4ADDL=0x02, F_SUBL=0x09, F_S8ADDL=0x12, F_CMPULT=0x1d,
++	F_ADDQ=0x20, F_S4ADDQ=0x22, F_S8ADDQ=0x32, F_CMPEQ=0x2d, F_SUBQ=0x29, F_CMPULE=0x3d,
++	F_CMPLT=0x4d, F_CMPLE=0x6d,
++	// INTL
++	F_AND=0x00, F_BIS=0x20, F_XOR=0x40,
++	// INTS
++	F_EXTWL=0x16, F_EXTLL=0x26, F_ZAPNOT=0x31, F_SRL=0x34, F_SLL=0x39,
++	F_SRA=0x3c, F_EXTWH=0x5a, F_EXTLH=0x6a,
++	// FPTI
++	F_SEXTB=0x00, F_SEXTW=0x01
++};
++
++#define MEM(op,ra,rb,disp)          (Bit32u)(((op)<<26)|((ra)<<21)|((rb)<<16)|((disp)&0xffff))
++#define OPR(op,ra,rb,func,rc)       (Bit32u)(((op)<<26)|((ra)<<21)|((rb)<<16)|((func)<<5)|(rc))
++#define OPL(op,ra,lit,func,rc)      (Bit32u)(((op)<<26)|((ra)<<21)|(((lit)&0xff)<<13)|(1<<12)|((func)<<5)|(rc))
++#define BRA(op,ra,disp21)           (Bit32u)(((op)<<26)|((ra)<<21)|((disp21)&0x1fffff))
++#define JMP(ra,rb,func)             (Bit32u)((OP_JMP<<26)|((ra)<<21)|((rb)<<16)|((func)<<14))
++// jump emitted at cache.pos with the target hint for instruction fetch prediction
++#define JMP_HINT(ra,rb,func,target) (JMP(ra,rb,func)|((((Bit64s)(target)-(Bit64s)cache.pos-4)>>2)&0x3fff))
++#define NOP                         OPR(OP_INTL,HOST_R31,HOST_R31,F_BIS,HOST_R31)
++#define IMB                         (Bit32u)0x00000086
++
++#define MEM_OP(op,ra,rb,disp)       cache_addd(MEM(op,ra,rb,disp))
++#define OPR_OP(op,ra,rb,func,rc)    cache_addd(OPR(op,ra,rb,func,rc))
++#define OPL_OP(op,ra,lit,func,rc)   cache_addd(OPL(op,ra,lit,func,rc))
++#define NOP_OP()                    cache_addd(NOP)
++
++// length of a patchable function call stanza in instructions, see gen_fill_function_ptr
++static const Bitu call_stanza = 8;
++
++static INLINE bool sfits(Bit64s v, int bits) { return v >= -(1LL<<(bits-1)) && v < (1LL<<(bits-1)); }
++
++// dest_reg = src_reg + c with lda/ldah, c must be within the signed 32bit range
++static void gen_add_const32(HostReg dest_reg,HostReg src_reg,Bit64s c) {
++	Bit64s lo = (Bit16s)(c & 0xffff);
++	Bit64s hi = (c - lo) >> 16;
++	__ASSERT(hi >= -0x8000 && hi <= 0x8000, "alpha: constant out of range\n");
++	// 0x7fff8000 and above need two ldah
++	if (hi > 0x7fff) {
++		MEM_OP(OP_LDAH, dest_reg, src_reg, 0x4000);
++		src_reg = dest_reg;
++		hi -= 0x4000;
++	}
++	if (hi) {
++		MEM_OP(OP_LDAH, dest_reg, src_reg, hi);
++		src_reg = dest_reg;
++	}
++	if (lo || src_reg != dest_reg) MEM_OP(OP_LDA, dest_reg, src_reg, lo);
++}
++
++static INLINE bool fits_const32(Bit64s c) {
++	return c >= -0x80000000LL - 0x8000 && c <= 0x7fffffffLL;
++}
++
++// move a 64bit constant value into dest_reg, optionally relative to FC_REGS_ADDR
++static void gen_mov_imm64(HostReg dest_reg,Bit64u imm,bool use_base) {
++	Bit64s v = (Bit64s)imm;
++	if (fits_const32(v)) {
++		gen_add_const32(dest_reg, HOST_R31, v);
++		return;
++	}
++	if (use_base) {
++		Bit64s off = v - (Bit64s)&cpu_regs;
++		if (fits_const32(off)) {
++			gen_add_const32(dest_reg, FC_REGS_ADDR, off);
++			return;
++		}
++	}
++	Bit64s lo = (Bit32s)(v & 0xffffffff);
++	gen_add_const32(dest_reg, HOST_R31, (v - lo) >> 32);
++	OPL_OP(OP_INTS, dest_reg, 32, F_SLL, dest_reg);
++	if (lo) gen_add_const32(dest_reg, dest_reg, lo);
++}
++
++// move a 32bit constant value into dest_reg, sign-extended
++static void gen_mov_imm32(HostReg dest_reg,Bit32u imm) {
++	gen_add_const32(dest_reg, HOST_R31, (Bit32s)imm);
++}
++
++DRC_PTR_SIZE_IM block_ptr;
++
++// memory operand base+disp
++struct AlphaAddr {
++	HostReg base;
++	Bit32s disp;
++};
++
++static INLINE bool gen_addr_base(AlphaAddr &a,Bit64s addr,Bit64s base_addr,HostReg base) {
++	Bit64s off = addr - base_addr;
++	if (!sfits(off, 16)) return false;
++	a.base = base;
++	a.disp = (Bit32s)off;
++	return true;
++}
++
++// generate the address of ptr, tmp may be used to hold (parts of) it
++static void gen_addr(AlphaAddr &a,void* ptr,HostReg tmp) {
++	Bit64s addr = (Bit64s)ptr;
++	if (gen_addr_base(a, addr, (Bit64s)&cpu_regs, FC_REGS_ADDR)) return;
++	if (gen_addr_base(a, addr, (Bit64s)&Segs, FC_SEGS_ADDR)) return;
++	if (block_ptr && gen_addr_base(a, addr, (Bit64s)block_ptr, BLOCK_REG)) return;
++#if defined(DRC_USE_INLINE_MEMORY)
++	if (gen_addr_base(a, addr, (Bit64s)&paging.tlb.read, TLBR_REG)) return;
++#endif
++	Bit64s off = addr - (Bit64s)&cpu_regs;
++	Bit64s lo = (Bit16s)(off & 0xffff);
++	if (fits_const32(off - lo) && lo == (Bit16s)lo) {
++		gen_add_const32(tmp, FC_REGS_ADDR, off - lo);
++		a.base = tmp;
++		a.disp = (Bit32s)lo;
++		return;
++	}
++	gen_mov_imm64(tmp, (Bit64u)addr, false);
++	a.base = tmp;
++	a.disp = 0;
++}
++
++static void gen_mem(Bit32u op,HostReg ra,const AlphaAddr &a) {
++	MEM_OP(op, ra, a.base, a.disp);
++}
++
++// load an unaligned 16/32bit value with ldq_u, the 32bit value sign-extended
++static void gen_load_unaligned(HostReg dest_reg,void* data,bool dword) {
++	gen_mov_imm64(TMP_ADDR, (Bit64u)data, true);
++	MEM_OP(OP_LDQ_U, TMP_CONST, TMP_ADDR, 0);
++	MEM_OP(OP_LDQ_U, TMP_VAL, TMP_ADDR, dword ? 3 : 1);
++	OPR_OP(OP_INTS, TMP_CONST, TMP_ADDR, dword ? F_EXTLL : F_EXTWL, TMP_CONST);
++	OPR_OP(OP_INTS, TMP_VAL, TMP_ADDR, dword ? F_EXTLH : F_EXTWH, TMP_VAL);
++	OPR_OP(OP_INTL, TMP_CONST, TMP_VAL, F_BIS, dest_reg);
++	if (dword) OPR_OP(OP_INTA, HOST_R31, dest_reg, F_ADDL, dest_reg);
++}
++
++// move a full register from reg_src to reg_dst
++// sign-extend the lower 32bit, as required for passing values to C functions
++static void gen_mov_regs(HostReg reg_dst,HostReg reg_src) {
++	OPR_OP(OP_INTA, HOST_R31, reg_src, F_ADDL, reg_dst);
++}
++
++// move a 16bit constant value into dest_reg
++// the upper 16bit of the destination register may be destroyed
++static void gen_mov_word_to_reg_imm(HostReg dest_reg,Bit16u imm) {
++	gen_mov_imm32(dest_reg, imm);
++}
++
++// move a 32bit constant value into dest_reg
++static void gen_mov_dword_to_reg_imm(HostReg dest_reg,Bit32u imm) {
++	gen_mov_imm32(dest_reg, imm);
++}
++
++// move a 32bit (dword==true) or 16bit (dword==false) value from memory into dest_reg
++// 16bit moves may destroy the upper 16bit of the destination register
++static void gen_mov_word_to_reg(HostReg dest_reg,void* data,bool dword) {
++	if ((Bit64u)data & (dword ? 3 : 1)) {
++		gen_load_unaligned(dest_reg, data, dword);
++		return;
++	}
++	AlphaAddr a;
++	gen_addr(a, data, TMP_ADDR);
++	gen_mem(dword ? OP_LDL : OP_LDWU, dest_reg, a);
++}
++
++// move an 8bit constant value into dest_reg
++// the upper 24bit of the destination register can be destroyed
++// this function does not use FC_OP1/FC_OP2 as dest_reg as these
++// registers might not be directly byte-accessible on some architectures
++static void gen_mov_byte_to_reg_low_imm(HostReg dest_reg,Bit8u imm) {
++	gen_mov_imm32(dest_reg, imm);
++}
++
++// move an 8bit constant value into dest_reg
++// the upper 24bit of the destination register can be destroyed
++// this function can use FC_OP1/FC_OP2 as dest_reg which are
++// not directly byte-accessible on some architectures
++static void gen_mov_byte_to_reg_low_imm_canuseword(HostReg dest_reg,Bit8u imm) {
++	gen_mov_imm32(dest_reg, imm);
++}
++
++// move 32bit (dword==true) or 16bit (dword==false) of a register into memory
++static void gen_mov_word_from_reg(HostReg src_reg,void* dest,bool dword) {
++	__ASSERT(!((Bit64u)dest & (dword ? 3 : 1)), "alpha: unaligned store to %p\n", dest);
++	AlphaAddr a;
++	gen_addr(a, dest, TMP_ADDR);
++	gen_mem(dword ? OP_STL : OP_STW, src_reg, a);
++}
++
++// move an 8bit value from memory into dest_reg
++// the upper 24bit of the destination register can be destroyed
++// this function does not use FC_OP1/FC_OP2 as dest_reg as these
++// registers might not be directly byte-accessible on some architectures
++static void gen_mov_byte_to_reg_low(HostReg dest_reg,void* data) {
++	AlphaAddr a;
++	gen_addr(a, data, TMP_ADDR);
++	gen_mem(OP_LDBU, dest_reg, a);
++}
++
++// move an 8bit value from memory into dest_reg
++// the upper 24bit of the destination register can be destroyed
++// this function can use FC_OP1/FC_OP2 as dest_reg which are
++// not directly byte-accessible on some architectures
++static void gen_mov_byte_to_reg_low_canuseword(HostReg dest_reg,void* data) {
++	gen_mov_byte_to_reg_low(dest_reg, data);
++}
++
++// move the lowest 8bit of a register into memory
++static void gen_mov_byte_from_reg_low(HostReg src_reg,void* dest) {
++	AlphaAddr a;
++	gen_addr(a, dest, TMP_ADDR);
++	gen_mem(OP_STB, src_reg, a);
++}
++
++// convert an 8bit word to a 32bit dword
++// the register is zero-extended (sign==false) or sign-extended (sign==true)
++static void gen_extend_byte(bool sign,HostReg reg) {
++	if (sign) OPR_OP(OP_FPTI, HOST_R31, reg, F_SEXTB, reg);
++	else OPL_OP(OP_INTL, reg, 0xff, F_AND, reg);
++}
++
++// convert a 16bit word to a 32bit dword
++// the register is zero-extended (sign==false) or sign-extended (sign==true)
++static void gen_extend_word(bool sign,HostReg reg) {
++	if (sign) OPR_OP(OP_FPTI, HOST_R31, reg, F_SEXTW, reg);
++	else OPL_OP(OP_INTS, reg, 0x3, F_ZAPNOT, reg);
++}
++
++// add a 32bit value from memory to a full register
++static void gen_add(HostReg reg,void* op) {
++	gen_mov_word_to_reg(TMP_VAL2, op, true);
++	OPR_OP(OP_INTA, reg, TMP_VAL2, F_ADDL, reg);
++}
++
++// add a 32bit constant value to a full register
++static void gen_add_imm(HostReg reg,Bit32u imm) {
++	Bit32s v = (Bit32s)imm;
++	if (!v) return;
++	if (v > 0 && v < 256) {
++		OPL_OP(OP_INTA, reg, v, F_ADDL, reg);
++		return;
++	}
++	if (v < 0 && v > -256) {
++		OPL_OP(OP_INTA, reg, -v, F_SUBL, reg);
++		return;
++	}
++	gen_add_const32(reg, reg, v);
++	OPR_OP(OP_INTA, HOST_R31, reg, F_ADDL, reg);
++}
++
++// and a 32bit constant value with a full register
++static void gen_and_imm(HostReg reg,Bit32u imm) {
++	switch (imm) {
++		case 0xffffffff:
++			return;
++		case 0xffffff:
++			OPL_OP(OP_INTS, reg, 0x7, F_ZAPNOT, reg);
++			return;
++		case 0xffff:
++			OPL_OP(OP_INTS, reg, 0x3, F_ZAPNOT, reg);
++			return;
++	}
++	if (imm < 256) {
++		OPL_OP(OP_INTL, reg, imm, F_AND, reg);
++		return;
++	}
++	gen_mov_imm32(TMP_CONST, imm);
++	OPR_OP(OP_INTL, reg, TMP_CONST, F_AND, reg);
++}
++
++// move a 32bit constant value into memory
++static void gen_mov_direct_dword(void* dest,Bit32u imm) {
++	gen_mov_imm32(TMP_VAL, imm);
++	gen_mov_word_from_reg(TMP_VAL, dest, true);
++}
++
++// move an address into memory (assumes address != NULL)
++static void INLINE gen_mov_direct_ptr(void* dest,DRC_PTR_SIZE_IM imm) {
++	block_ptr = 0;
++	// blocks are allocated from cache_blocks, address them relative to it
++	Bit64s off = (Bit64s)imm - (Bit64s)cache_blocks;
++	if (fits_const32(off)) gen_add_const32(BLOCK_REG, BLOCKS_REG, off);
++	else gen_mov_imm64(BLOCK_REG, imm, true);
++	// this will be used to look-up the linked blocks
++	block_ptr = imm;
++	AlphaAddr a;
++	gen_addr(a, dest, TMP_ADDR);
++	gen_mem(OP_STQ, BLOCK_REG, a);
++}
++
++// add a 32bit (dword==true) or 16bit (dword==false) constant value to a 32bit memory value
++static void gen_add_direct_word(void* dest,Bit32u imm,bool dword) {
++	if (!dword) imm = (Bit32u)(Bit32s)(Bit16s)imm;
++	if (!imm) return;
++
++	AlphaAddr a;
++	gen_addr(a, dest, TMP_ADDR);
++	gen_mem(dword ? OP_LDL : OP_LDWU, TMP_VAL, a);
++	gen_add_imm(TMP_VAL, imm);
++	gen_mem(dword ? OP_STL : OP_STW, TMP_VAL, a);
++}
++
++// subtract a 32bit (dword==true) or 16bit (dword==false) constant value from a 32-bit memory value
++static void gen_sub_direct_word(void* dest,Bit32u imm,bool dword) {
++	gen_add_direct_word(dest, -(Bit32s)imm, dword);
++}
++
++// effective address calculation, destination is dest_reg
++// scale_reg is scaled by scale (scale_reg*(2^scale)) and
++// added to dest_reg, then the immediate value is added
++static INLINE void gen_lea(HostReg dest_reg,HostReg scale_reg,Bitu scale,Bits imm) {
++	switch (scale) {
++		case 0:
++			OPR_OP(OP_INTA, dest_reg, scale_reg, F_ADDL, dest_reg);
++			break;
++		case 1:
++			OPR_OP(OP_INTA, scale_reg, scale_reg, F_ADDL, TMP_VAL);
++			OPR_OP(OP_INTA, dest_reg, TMP_VAL, F_ADDL, dest_reg);
++			break;
++		case 2:
++			OPR_OP(OP_INTA, scale_reg, dest_reg, F_S4ADDL, dest_reg);
++			break;
++		default:
++			OPR_OP(OP_INTA, scale_reg, dest_reg, F_S8ADDL, dest_reg);
++			break;
++	}
++	gen_add_imm(dest_reg, (Bit32u)imm);
++}
++
++// effective address calculation, destination is dest_reg
++// dest_reg is scaled by scale (dest_reg*(2^scale)),
++// then the immediate value is added
++static INLINE void gen_lea(HostReg dest_reg,Bitu scale,Bits imm) {
++	switch (scale) {
++		case 0:
++			break;
++		case 1:
++			OPR_OP(OP_INTA, dest_reg, dest_reg, F_ADDL, dest_reg);
++			break;
++		case 2:
++			OPR_OP(OP_INTA, dest_reg, HOST_R31, F_S4ADDL, dest_reg);
++			break;
++		default:
++			OPR_OP(OP_INTA, dest_reg, HOST_R31, F_S8ADDL, dest_reg);
++			break;
++	}
++	gen_add_imm(dest_reg, (Bit32u)imm);
++}
++
++// write a function call to pos, padded to pad instructions if non-zero
++// the callee derives its global pointer from $27
++static Bit32u* do_gen_call(void *func,Bit32u *pos,Bitu pad) {
++	Bit8u* save_pos = cache.pos;
++	cache.pos = (Bit8u*)pos;
++	gen_mov_imm64(HOST_R27, (Bit64u)func, true);
++	cache_addd(JMP_HINT(HOST_R26, HOST_R27, 1, func)); // jsr $26,($27)
++	if (pad) {
++		__ASSERT(cache.pos <= (Bit8u*)(pos + pad), "alpha: call stanza overflow\n");
++		while (cache.pos < (Bit8u*)(pos + pad)) NOP_OP();
++	}
++	Bit32u* end = (Bit32u*)cache.pos;
++	cache.pos = save_pos;
++	return end;
++}
++
++// generate a call to a parameterless function
++static void INLINE gen_call_function_raw(void * func,bool fastcall=true) {
++	// only calls that may be replaced later need the padded stanza
++	Bitu pad = drc_next_call_patchable ? call_stanza : 0;
++	drc_next_call_patchable = false;
++	cache.pos = (Bit8u*)do_gen_call(func, (Bit32u*)cache.pos, pad);
++}
++
++// generate a call to a function with paramcount parameters
++// note: the parameters are loaded in the architecture specific way
++// using the gen_load_param_ functions below
++static Bit64u INLINE gen_call_function_setup(void * func,Bitu paramcount,bool fastcall=false) {
++	Bit64u proc_addr = (Bit64u)cache.pos;
++	// fastcall marks calls whose address is passed to InvalidateFlagsPartially
++	if (fastcall) drc_next_call_patchable = true;
++	gen_call_function_raw(func, fastcall);
++	return proc_addr;
++}
++
++// load an immediate value as param'th function parameter
++// these are 32-bit (see risc_x64.h)
++static void INLINE gen_load_param_imm(Bitu imm,Bitu param) {
++	gen_mov_imm32(RegParams[param], (Bit32u)imm);
++}
++
++// load an address as param'th function parameter
++static void INLINE gen_load_param_addr(Bitu addr,Bitu param) {
++	gen_mov_imm64(RegParams[param], addr, true);
++}
++
++// load a host-register as param'th function parameter
++static void INLINE gen_load_param_reg(Bitu reg,Bitu param) {
++	gen_mov_regs(RegParams[param], (HostReg)reg);
++}
++
++// load a value from memory as param'th function parameter
++static void INLINE gen_load_param_mem(Bitu mem,Bitu param) {
++	gen_mov_word_to_reg(RegParams[param], (void*)mem, true);
++}
++
++// jump to an address pointed at by ptr, offset is in imm
++static void gen_jmp_ptr(void * ptr,Bits imm=0) {
++	AlphaAddr a;
++	gen_addr(a, ptr, TMP_ADDR);
++	gen_mem(OP_LDQ, TMP_VAL, a);
++	if (!sfits(imm, 16)) {
++		gen_add_const32(TMP_VAL, TMP_VAL, imm & ~0xffffLL);
++		imm = (Bit16s)(imm & 0xffff);
++	}
++	MEM_OP(OP_LDQ, TMP_VAL, TMP_VAL, imm);
++	cache_addd(JMP(HOST_R31, TMP_VAL, 0)); // jmp $31,($24)
++}
++
++static Bit64u gen_create_branch(Bit32u op,HostReg reg) {
++	Bit64u pos = (Bit64u)cache.pos;
++	cache_addd(BRA(op, reg, 0));
++	return pos;
++}
++
++// calculate relative offset and fill it into the location pointed to by data
++static void gen_fill_branch(DRC_PTR_SIZE_IM data) {
++	Bit64s disp = ((Bit64s)cache.pos - (Bit64s)data - 4) >> 2;
++	__ASSERT(sfits(disp, 21), "alpha: branch out of range %ld\n", (long)disp);
++	Bit32u* op = (Bit32u*)data;
++	*op = (*op & ~0x1fffffU) | (disp & 0x1fffff);
++}
++
++// unconditional jump, the destination is set by gen_fill_jump() later
++static Bit64u gen_create_jump(void) {
++	return gen_create_branch(OP_BR, HOST_R31);
++}
++
++static void gen_fill_jump(Bit64u data) {
++	gen_fill_branch(data);
++}
++
++// short conditional jump (+-127 bytes) if register is zero
++// the destination is set by gen_fill_branch() later
++static Bit64u gen_create_branch_on_zero(HostReg reg,bool dword) {
++	if (!dword) {
++		OPL_OP(OP_INTS, reg, 0x3, F_ZAPNOT, TMP_VAL);
++		reg = TMP_VAL;
++	}
++	return gen_create_branch(OP_BEQ, reg);
++}
++
++// short conditional jump (+-127 bytes) if register is nonzero
++// the destination is set by gen_fill_branch() later
++static Bit64u gen_create_branch_on_nonzero(HostReg reg,bool dword) {
++	if (!dword) {
++		OPL_OP(OP_INTS, reg, 0x3, F_ZAPNOT, TMP_VAL);
++		reg = TMP_VAL;
++	}
++	return gen_create_branch(OP_BNE, reg);
++}
++
++// conditional jump if register is nonzero
++// for isdword==true the 32bit of the register are tested
++// for isdword==false the lowest 8bit of the register are tested
++static Bit64u gen_create_branch_long_nonzero(HostReg reg,bool dword) {
++	if (!dword) {
++		OPL_OP(OP_INTL, reg, 0xff, F_AND, TMP_VAL);
++		reg = TMP_VAL;
++	}
++	return gen_create_branch(OP_BNE, reg);
++}
++
++// compare 32bit-register against zero and jump if value less/equal than zero
++static Bit64u gen_create_branch_long_leqzero(HostReg reg) {
++	return gen_create_branch(OP_BLE, reg);
++}
++
++// calculate long relative offset and fill it into the location pointed to by data
++static void gen_fill_branch_long(Bit64u data) {
++	gen_fill_branch((DRC_PTR_SIZE_IM)data);
++}
++
++#if defined(DRC_USE_INLINE_MEMORY)
++// access memory with a direct host pointer in the TLB inline, unaligned reads
++// within a page through ldq_u; page crossing, unaligned writes and handler
++// accesses branch to the generic code following, returns the jump over it
++// tail (if non-zero) is executed after a fast access
++static Bit64u gen_mem_fast(HostReg reg_addr,HostReg reg,Bitu size,bool write,Bit32u tail=0) {
++	OPL_OP(OP_INTS, reg_addr, 0xf, F_ZAPNOT, TMP_ADDR);
++	OPL_OP(OP_INTS, TMP_ADDR, 12, F_SRL, TMP_CONST);
++	OPR_OP(OP_INTA, TMP_CONST, TLBR_REG, F_S8ADDQ, TMP_CONST);
++	// paging.tlb.write follows paging.tlb.read
++	if (write) MEM_OP(OP_LDAH, TMP_CONST, TMP_CONST, (TLB_SIZE * sizeof(HostPt)) >> 16);
++	MEM_OP(OP_LDQ, TMP_CONST, TMP_CONST, 0);
++	// the alignment test fills the load-use delay of the TLB entry
++	if (size > 1) OPL_OP(OP_INTL, TMP_ADDR, size - 1, F_AND, TMP_VAL);
++	Bit64u nohost = gen_create_branch(OP_BEQ, TMP_CONST);
++	Bit64u unaligned = 0;
++	if (size > 1) unaligned = gen_create_branch(OP_BNE, TMP_VAL);
++	OPR_OP(OP_INTA, TMP_CONST, TMP_ADDR, F_ADDQ, TMP_CONST);
++	switch (size) {
++		case 1:
++			MEM_OP(write ? OP_STB : OP_LDBU, reg, TMP_CONST, 0);
++			break;
++		case 2:
++			MEM_OP(write ? OP_STW : OP_LDWU, reg, TMP_CONST, 0);
++			break;
++		default:
++			MEM_OP(write ? OP_STL : OP_LDL, reg, TMP_CONST, 0);
++			break;
++	}
++	if (tail) cache_addd(tail);
++	Bit64u done = gen_create_jump();
++	if (unaligned && !write) {
++		gen_fill_branch(unaligned);
++		unaligned = 0;
++		// the last byte must be within the page
++		OPL_OP(OP_INTS, TMP_ADDR, 52, F_SLL, TMP_VAL);
++		OPL_OP(OP_INTS, TMP_VAL, 52, F_SRL, TMP_VAL);
++		MEM_OP(OP_LDA, TMP_VAL2, HOST_R31, 0x1000 - size);
++		OPR_OP(OP_INTA, TMP_VAL, TMP_VAL2, F_CMPULE, TMP_VAL);
++		unaligned = gen_create_branch(OP_BEQ, TMP_VAL);
++		OPR_OP(OP_INTA, TMP_CONST, TMP_ADDR, F_ADDQ, TMP_CONST);
++		MEM_OP(OP_LDQ_U, TMP_VAL, TMP_CONST, 0);
++		MEM_OP(OP_LDQ_U, TMP_VAL2, TMP_CONST, size - 1);
++		OPR_OP(OP_INTS, TMP_VAL, TMP_CONST, size == 2 ? F_EXTWL : F_EXTLL, TMP_VAL);
++		OPR_OP(OP_INTS, TMP_VAL2, TMP_CONST, size == 2 ? F_EXTWH : F_EXTLH, TMP_VAL2);
++		OPR_OP(OP_INTL, TMP_VAL, TMP_VAL2, F_BIS, reg);
++		if (size == 4) OPR_OP(OP_INTA, HOST_R31, reg, F_ADDL, reg);
++		if (tail) cache_addd(tail);
++		// continue at the jump over the generic code
++		Bit64s disp = ((Bit64s)done - (Bit64s)cache.pos - 4) >> 2;
++		cache_addd(BRA(OP_BR, HOST_R31, disp));
++	}
++	if (unaligned) gen_fill_branch(unaligned);
++	gen_fill_branch(nohost);
++	return done;
++}
++
++// inline push of FC_OP1 or pop into FC_RETOP, using the parameter registers
++// FC_OP2 to RegParams[5]; the generic call follows, returns the jump over it
++static Bit64u gen_stack_fast(Bitu size,bool push) {
++	HostReg esp = RegParams[1], mask = RegParams[2], ofs = RegParams[3];
++	HostReg addr = RegParams[4], new_esp = RegParams[5];
++	gen_mov_word_to_reg(esp, &reg_esp, true);
++	// cpu.stack.mask is a Bitu, use its lower 32bit
++	gen_mov_word_to_reg(mask, &cpu.stack.mask, true);
++	gen_mov_word_to_reg(addr, &Segs.phys[ss], true);
++	// new_esp = (esp & notmask) | ((esp -/+ size) & mask)
++	OPL_OP(OP_INTA, esp, size, push ? F_SUBL : F_ADDL, new_esp);
++	OPR_OP(OP_INTL, new_esp, mask, F_AND, new_esp);
++	OPR_OP(OP_INTL, esp, mask, F_AND, ofs);
++	OPR_OP(OP_INTA, esp, ofs, F_SUBL, esp);
++	OPR_OP(OP_INTL, esp, new_esp, F_BIS, esp);
++	OPR_OP(OP_INTA, addr, push ? new_esp : ofs, F_ADDL, addr);
++	AlphaAddr a;
++	gen_addr(a, &reg_esp, TMP_ADDR);
++	__ASSERT(a.base != TMP_ADDR, "alpha: reg_esp not base relative\n");
++	return gen_mem_fast(addr, push ? FC_OP1 : FC_RETOP, size, push, MEM(OP_STL, esp, a.base, a.disp));
++}
++#endif
++
++// 32bit operation dest_reg = reg_a op reg_b, sign-extended
++static void gen_alu_op(DrcAluOp op,HostReg dest_reg,HostReg reg_a,HostReg reg_b) {
++	switch (op) {
++		case DRC_ALU_ADD: OPR_OP(OP_INTA, reg_a, reg_b, F_ADDL, dest_reg); break;
++		case DRC_ALU_SUB: OPR_OP(OP_INTA, reg_a, reg_b, F_SUBL, dest_reg); break;
++		case DRC_ALU_AND: OPR_OP(OP_INTL, reg_a, reg_b, F_AND, dest_reg); break;
++		case DRC_ALU_OR: OPR_OP(OP_INTL, reg_a, reg_b, F_BIS, dest_reg); break;
++		case DRC_ALU_XOR: OPR_OP(OP_INTL, reg_a, reg_b, F_XOR, dest_reg); break;
++	}
++}
++
++#if defined(DRC_USE_INLINE_FPU)
++#define FPU_TAG_OFS ((Bit8u*)&fpu.tags[0] - (Bit8u*)&fpu.regs[0])
++enum { OP_LDS=0x22, OP_LDT=0x23, OP_STS=0x26, OP_STT=0x27, OP_FLTI=0x16 };
++
++// dest = &fpu.regs[idx] (dest + FPU_TAG_OFS for fpu.tags[idx]) relative to TMP_ADDR
++static void gen_fpu_slot(HostReg dest,HostReg idx,bool tag) {
++	OPR_OP(OP_INTA, idx, TMP_ADDR, tag ? F_S4ADDQ : F_S8ADDQ, dest);
++}
++
++static void gen_fpu_base(void) {
++	gen_mov_imm64(TMP_ADDR, (Bit64u)&fpu.regs[0], true);
++}
++
++static void gen_fpu_set_tag(HostReg idx,Bitu tag) {
++	gen_fpu_base();
++	gen_fpu_slot(TMP_VAL, idx, true);
++	if (tag) MEM_OP(OP_LDA, TMP_VAL2, HOST_R31, tag);
++	MEM_OP(OP_STL, tag ? TMP_VAL2 : HOST_R31, TMP_VAL, FPU_TAG_OFS);
++}
++
++// fpu.regs[dst] = fpu.regs[src] with its tag
++static void gen_fpu_copy(HostReg dst,HostReg src) {
++	gen_fpu_base();
++	gen_fpu_slot(TMP_VAL, src, false);
++	gen_fpu_slot(TMP_VAL2, src, true);
++	MEM_OP(OP_LDQ, TMP_CONST, TMP_VAL, 0);
++	MEM_OP(OP_LDL, HOST_R28, TMP_VAL2, FPU_TAG_OFS);
++	gen_fpu_slot(TMP_VAL, dst, false);
++	gen_fpu_slot(TMP_VAL2, dst, true);
++	MEM_OP(OP_STQ, TMP_CONST, TMP_VAL, 0);
++	MEM_OP(OP_STL, HOST_R28, TMP_VAL2, FPU_TAG_OFS);
++}
++
++static void gen_fpu_xchg(HostReg a,HostReg b) {
++	gen_fpu_base();
++	gen_fpu_slot(TMP_VAL, a, false);
++	gen_fpu_slot(TMP_VAL2, b, false);
++	MEM_OP(OP_LDQ, TMP_CONST, TMP_VAL, 0);
++	MEM_OP(OP_LDQ, HOST_R28, TMP_VAL2, 0);
++	MEM_OP(OP_STQ, TMP_CONST, TMP_VAL2, 0);
++	MEM_OP(OP_STQ, HOST_R28, TMP_VAL, 0);
++	gen_fpu_slot(TMP_VAL, a, true);
++	gen_fpu_slot(TMP_VAL2, b, true);
++	MEM_OP(OP_LDL, TMP_CONST, TMP_VAL, FPU_TAG_OFS);
++	MEM_OP(OP_LDL, HOST_R28, TMP_VAL2, FPU_TAG_OFS);
++	MEM_OP(OP_STL, TMP_CONST, TMP_VAL2, FPU_TAG_OFS);
++	MEM_OP(OP_STL, HOST_R28, TMP_VAL, FPU_TAG_OFS);
++}
++
++// fpu.regs[idx] from the guest single (lo) or double (hi:lo) bit pattern
++static void gen_fpu_load(HostReg idx,HostReg lo,HostReg hi,bool f64) {
++	gen_fpu_base();
++	gen_fpu_slot(TMP_VAL, idx, false);
++	MEM_OP(OP_STL, lo, TMP_VAL, 0);
++	if (f64) {
++		MEM_OP(OP_STL, hi, TMP_VAL, 4);
++		return;
++	}
++	// the S floating value is converted by the load to the register format
++	MEM_OP(OP_LDS, 10, TMP_VAL, 0);
++	MEM_OP(OP_STT, 10, TMP_VAL, 0);
++}
++
++// guest single (lo) or double (hi:lo) bit pattern of fpu.regs[idx], sign-extended
++static void gen_fpu_store(HostReg idx,HostReg lo,HostReg hi,bool f64) {
++	gen_fpu_base();
++	gen_fpu_slot(TMP_VAL, idx, false);
++	if (f64) {
++		MEM_OP(OP_LDL, lo, TMP_VAL, 0);
++		MEM_OP(OP_LDL, hi, TMP_VAL, 4);
++		return;
++	}
++	// cvtts/su $f31,$f10,$f11, stored through the scratch fpu.regs[8]
++	MEM_OP(OP_LDT, 10, TMP_VAL, 0);
++	cache_addd((OP_FLTI << 26) | (31 << 21) | (10 << 16) | (0x5ac << 5) | 11);
++	MEM_OP(OP_STS, 11, TMP_ADDR, 8 * sizeof(FPU_Reg));
++	MEM_OP(OP_LDL, lo, TMP_ADDR, 8 * sizeof(FPU_Reg));
++}
++#endif
++
++#if defined(DRC_USE_INLINE_FPU_ARITH)
++// fpu.regs[st] = fpu.regs[st] op fpu.regs[other] in T floating (IEEE double),
++// with software completion (/SU) giving masked x87 results instead of SIGFPE
++static void gen_fpu_arith(DrcFpuOp op,HostReg st,HostReg other) {
++	enum { FA=10, FB=11 };
++	static const Bit32u f[] = { 0x5a0, 0x5a2, 0x5a1, 0x5a1, 0x5a3, 0x5a3 };	// addt/su, mult/su, subt/su, divt/su
++	bool rev = op == DRC_FPU_SUBR || op == DRC_FPU_DIVR;
++	gen_mov_imm64(TMP_ADDR, (Bit64u)&fpu.regs[0], true);
++	OPR_OP(OP_INTA, st, TMP_ADDR, F_S8ADDQ, TMP_VAL);
++	OPR_OP(OP_INTA, other, TMP_ADDR, F_S8ADDQ, TMP_VAL2);
++	MEM_OP(OP_LDT, FA, TMP_VAL, 0);
++	MEM_OP(OP_LDT, FB, TMP_VAL2, 0);
++	cache_addd((OP_FLTI << 26) | ((rev ? FB : FA) << 21) | ((rev ? FA : FB) << 16) | (f[op] << 5) | FA);
++	MEM_OP(OP_STT, FA, TMP_VAL, 0);
++}
++#endif
++
++// shift of src by count (1-31) into dest, sign-extended
++static void gen_shift_op(DrcShiftOp op,HostReg dest_reg,HostReg src_reg,HostReg count,Bitu size) {
++	switch (op) {
++		case DRC_SHIFT_SHL:
++			OPR_OP(OP_INTS, src_reg, count, F_SLL, dest_reg);
++			if (size == 4) OPR_OP(OP_INTA, HOST_R31, dest_reg, F_ADDL, dest_reg);
++			break;
++		case DRC_SHIFT_SHR:
++			OPL_OP(OP_INTS, src_reg, size == 1 ? 0x1 : size == 2 ? 0x3 : 0xf, F_ZAPNOT, dest_reg);
++			OPR_OP(OP_INTS, dest_reg, count, F_SRL, dest_reg);
++			if (size == 4) OPR_OP(OP_INTA, HOST_R31, dest_reg, F_ADDL, dest_reg);
++			break;
++		default:
++			OPR_OP(OP_INTS, src_reg, count, F_SRA, dest_reg);
++			break;
++	}
++}
++
++// branch if count is zero, with dest = src on that path
++static Bit64u gen_branch_zero_keep(HostReg count,HostReg dest_reg,HostReg src_reg) {
++	OPR_OP(OP_INTL, src_reg, src_reg, F_BIS, dest_reg);
++	return gen_create_branch(OP_BEQ, count);
++}
++
++// 32bit results are kept sign-extended by the operations
++static void gen_canonical_dword(HostReg reg) {}
++
++// jump from from over code to to, used once code became unneeded
++static void gen_fill_skip(Bit8u * from,Bit8u * to) {
++	*(Bit32u*)from = BRA(OP_BR, HOST_R31, ((Bit64s)to - (Bit64s)from - 4) >> 2);
++}
++
++// pad code started at start to a call stanza, false if it does not fit
++static bool gen_close_call_stanza(Bit8u * start) {
++	Bit8u * end = start + call_stanza * 4;
++	if (cache.pos > end) return false;
++	while (cache.pos < end) NOP_OP();
++	return true;
++}
++
++// set dest_reg to 1 if the 32bit comparison of reg_a with reg_b meets cond, 0 otherwise
++// both registers hold sign-extended 32bit values
++static void gen_set_condition(HostReg dest_reg,HostReg reg_a,HostReg reg_b,DrcCond cond) {
++	switch (cond) {
++		case DRC_COND_E: OPR_OP(OP_INTA, reg_a, reg_b, F_CMPEQ, dest_reg); break;
++		case DRC_COND_NE:
++			OPR_OP(OP_INTA, reg_a, reg_b, F_CMPEQ, dest_reg);
++			OPL_OP(OP_INTL, dest_reg, 1, F_XOR, dest_reg);
++			break;
++		case DRC_COND_LU: OPR_OP(OP_INTA, reg_a, reg_b, F_CMPULT, dest_reg); break;
++		case DRC_COND_GEU: OPR_OP(OP_INTA, reg_b, reg_a, F_CMPULE, dest_reg); break;
++		case DRC_COND_LEU: OPR_OP(OP_INTA, reg_a, reg_b, F_CMPULE, dest_reg); break;
++		case DRC_COND_GU: OPR_OP(OP_INTA, reg_b, reg_a, F_CMPULT, dest_reg); break;
++		case DRC_COND_L:
++		case DRC_COND_NEG: OPR_OP(OP_INTA, reg_a, reg_b, F_CMPLT, dest_reg); break;
++		case DRC_COND_GE:
++		case DRC_COND_POS: OPR_OP(OP_INTA, reg_b, reg_a, F_CMPLE, dest_reg); break;
++		case DRC_COND_LE: OPR_OP(OP_INTA, reg_a, reg_b, F_CMPLE, dest_reg); break;
++		case DRC_COND_G: OPR_OP(OP_INTA, reg_b, reg_a, F_CMPLT, dest_reg); break;
++	}
++}
++
++extern "C" char __executable_start, _end;
++
++// map the code cache near the executable, so the epilog and helpers are in
++// range of cpu_regs relative addressing; below it, or above leaving 1GB for
++// the heap as Linux places the stack right below the executable on Alpha
++static Bit8u* cache_alloc_code(Bitu size) {
++	Bit64u exe = (Bit64u)&__executable_start;
++	Bit64u pagesize = sysconf(_SC_PAGESIZE);
++	Bit64u hint = (exe - size - 0x100000) & ~(pagesize - 1);
++	void* p = mmap((void*)hint, size, PROT_READ|PROT_WRITE|PROT_EXEC,
++		MAP_PRIVATE|MAP_ANONYMOUS|MAP_FIXED_NOREPLACE, -1, 0);
++	if (p == MAP_FAILED) {
++		hint = ((Bit64u)&_end + 0x40000000) & ~(pagesize - 1);
++		p = mmap((void*)hint, size, PROT_READ|PROT_WRITE|PROT_EXEC,
++			MAP_PRIVATE|MAP_ANONYMOUS|MAP_FIXED_NOREPLACE, -1, 0);
++	}
++	if (p == MAP_FAILED)
++		p = mmap(NULL, size, PROT_READ|PROT_WRITE|PROT_EXEC, MAP_PRIVATE|MAP_ANONYMOUS, -1, 0);
++	if (p == MAP_FAILED) return NULL;
++	Bit64u lo = (Bit64u)p < exe ? (Bit64u)p : exe;
++	Bit64u hi = (Bit64u)p + size > (Bit64u)&_end ? (Bit64u)p + size : (Bit64u)&_end;
++	LOG_MSG("DYNREC: code cache at %p, %s range of the executable", p, hi - lo < 0x7fff0000ULL ? "in" : "out of");
++	return (Bit8u*)p;
++}
++
++static bool gen_link_patch(Bit8u * site,Bit8u * target,Bit8u * saved) {
++	Bit64s disp = ((Bit64s)target - (Bit64s)site - 4) >> 2;
++	if (!sfits(disp, 21)) return false;
++	memcpy(saved, site, DRC_LINK_PATCH_SIZE);
++	*(Bit32u*)site = BRA(OP_BR, HOST_R31, disp);
++	asm volatile("call_pal 0x86" ::: "memory");
++	return true;
++}
++
++static void gen_link_unpatch(Bit8u * site,const Bit8u * saved) {
++	memcpy(site, saved, DRC_LINK_PATCH_SIZE);
++	asm volatile("call_pal 0x86" ::: "memory");
++}
++
++static void cache_block_closing(Bit8u* block_start,Bitu block_size) {
++	// synchronize the instruction stream with the written code
++	asm volatile("call_pal 0x86" ::: "memory");
++}
++
++static void cache_block_before_close(void) {}
++
++// registers saved by gen_run_code, $26 and $9 to $15
++#define RUN_FRAME 64
++
++// gen_run_code is assumed to be called exactly once
++static void* epilog_addr;
++static void gen_run_code(void) {
++	// prolog, the code pointer is passed in $16
++	MEM_OP(OP_LDA, HOST_R30, HOST_R30, -RUN_FRAME);
++	MEM_OP(OP_STQ, HOST_R26, HOST_R30, 0);
++	for (Bitu i = 0; i < 7; i++) MEM_OP(OP_STQ, HOST_R9 + i, HOST_R30, 8 + i * 8);
++	gen_mov_imm64(FC_REGS_ADDR, (Bit64u)&cpu_regs, false);
++	gen_mov_imm64(FC_SEGS_ADDR, (Bit64u)&Segs, true);
++	gen_mov_imm64(BLOCKS_REG, (Bit64u)cache_blocks, true);
++#if defined(DRC_USE_INLINE_MEMORY)
++	gen_mov_imm64(TLBR_REG, (Bit64u)&paging.tlb.read, true);
++#endif
++	cache_addd(JMP(HOST_R31, HOST_R16, 0)); // jmp $31,($16)
++
++	// epilog, FC_RETOP is already the return value
++	epilog_addr = cache.pos;
++	MEM_OP(OP_LDQ, HOST_R26, HOST_R30, 0);
++	for (Bitu i = 0; i < 7; i++) MEM_OP(OP_LDQ, HOST_R9 + i, HOST_R30, 8 + i * 8);
++	MEM_OP(OP_LDA, HOST_R30, HOST_R30, RUN_FRAME);
++	cache_addd(JMP(HOST_R31, HOST_R26, 2)); // ret $31,($26)
++}
++
++// return from a function
++static void gen_return_function(void) {
++	Bit64s disp = ((Bit64s)epilog_addr - (Bit64s)cache.pos - 4) >> 2;
++	if (sfits(disp, 21)) {
++		cache_addd(BRA(OP_BR, HOST_R31, disp));
++		return;
++	}
++	gen_mov_imm64(TMP_VAL, (Bit64u)epilog_addr, true);
++	cache_addd(JMP_HINT(HOST_R31, TMP_VAL, 0, epilog_addr));
++}
++
++// zero-extend (byte/word) or sign-extend (dword) FC_RETOP to the operand size
++static Bit32u* gen_fill_extend(Bit32u* op,Bitu size) {
++	switch (size) {
++		case 1: *op++ = OPL(OP_INTL, FC_RETOP, 0xff, F_AND, FC_RETOP); break;
++		case 2: *op++ = OPL(OP_INTS, FC_RETOP, 0x3, F_ZAPNOT, FC_RETOP); break;
++		default: *op++ = OPR(OP_INTA, HOST_R31, FC_RETOP, F_ADDL, FC_RETOP); break;
++	}
++	return op;
++}
++
++// write instructions emitted by f into op
++#define EMIT_AT(op, f) { Bit8u* save_pos = cache.pos; cache.pos = (Bit8u*)(op); f; op = (Bit32u*)cache.pos; cache.pos = save_pos; }
++
++// called when a call to a function can be replaced by a
++// call to a simpler function
++// these must fit the length of a call stanza (see do_gen_call)
++static void gen_fill_function_ptr(Bit8u * pos,void* fct_ptr,Bitu flags_type) {
++	Bit32u *op = (Bit32u*)pos;
++	Bitu size = 4;
++
++	for (Bitu i = 0; i < call_stanza; i++) op[i] = NOP;
++
++#if defined(DRC_FLAGS_INVALIDATION_DCODE)
++	// functions with the carry passed in FC_OP3, ADC/SBB are done inline
++	bool carry = (flags_type & DRC_FTYPE_CF) != 0;
++	flags_type &= ~DRC_FTYPE_CF;
++	if (carry && flags_type >= t_ADCb && flags_type <= t_SBBd) {
++		bool adc = flags_type == t_ADCb || flags_type == t_ADCw || flags_type == t_ADCd;
++		Bit32u f = adc ? F_ADDL : F_SUBL;
++		*op++ = OPR(OP_INTA, FC_OP1, FC_OP2, f, FC_RETOP);
++		*op++ = OPR(OP_INTA, FC_RETOP, FC_OP3, f, FC_RETOP);
++		size = (flags_type == t_ADCb || flags_type == t_SBBb) ? 1 :
++			(flags_type == t_ADCw || flags_type == t_SBBw) ? 2 : 4;
++		gen_fill_extend(op, size);
++		return;
++	}
++#endif
++
++	switch (flags_type) {
++#if defined(DRC_FLAGS_INVALIDATION_DCODE)
++		case t_ADDb: case t_ORb: case t_ADCb: case t_SBBb: case t_ANDb:
++		case t_SUBb: case t_XORb: case t_INCb: case t_DECb: case t_NEGb:
++		case t_SHLb: case t_SHRb: case t_SARb:
++			size = 1;
++			break;
++		case t_ADDw: case t_ORw: case t_ADCw: case t_SBBw: case t_ANDw:
++		case t_SUBw: case t_XORw: case t_INCw: case t_DECw: case t_NEGw:
++		case t_SHLw: case t_SHRw: case t_SARw:
++			size = 2;
++			break;
++#endif
++		default:
++			break;
++	}
++
++	switch (flags_type) {
++#if defined(DRC_FLAGS_INVALIDATION_DCODE)
++		// try to avoid function calls but rather directly fill in code
++		case t_ADDb:
++		case t_ADDw:
++		case t_ADDd:
++			*op++ = OPR(OP_INTA, FC_OP1, FC_OP2, F_ADDL, FC_RETOP);
++			break;
++		case t_ORb:
++		case t_ORw:
++		case t_ORd:
++			*op++ = OPR(OP_INTL, FC_OP1, FC_OP2, F_BIS, FC_RETOP);
++			break;
++		case t_ADCb:
++		case t_ADCw:
++		case t_ADCd:
++		case t_SBBb:
++		case t_SBBw:
++		case t_SBBd: {
++			bool adc = flags_type == t_ADCb || flags_type == t_ADCw || flags_type == t_ADCd;
++			*op++ = OPR(OP_INTA, FC_OP1, FC_OP2, adc ? F_ADDL : F_SUBL, CARRY_REG);
++			EMIT_AT(op, gen_mov_imm64(HOST_R27, (Bit64u)get_CF, true); cache_addd(JMP_HINT(HOST_R26, HOST_R27, 1, get_CF)));
++			*op++ = OPR(OP_INTA, HOST_R31, FC_RETOP, F_CMPULT, TMP_VAL); // !!CF
++			*op++ = OPR(OP_INTA, CARRY_REG, TMP_VAL, adc ? F_ADDL : F_SUBL, FC_RETOP);
++			break;
++		}
++		case t_ANDb:
++		case t_ANDw:
++		case t_ANDd:
++			*op++ = OPR(OP_INTL, FC_OP1, FC_OP2, F_AND, FC_RETOP);
++			break;
++		case t_SUBb:
++		case t_SUBw:
++		case t_SUBd:
++			*op++ = OPR(OP_INTA, FC_OP1, FC_OP2, F_SUBL, FC_RETOP);
++			break;
++		case t_XORb:
++		case t_XORw:
++		case t_XORd:
++			*op++ = OPR(OP_INTL, FC_OP1, FC_OP2, F_XOR, FC_RETOP);
++			break;
++		case t_CMPb:
++		case t_CMPw:
++		case t_CMPd:
++		case t_TESTb:
++		case t_TESTw:
++		case t_TESTd:
++			return;
++		case t_INCb:
++		case t_INCw:
++		case t_INCd:
++			*op++ = OPL(OP_INTA, FC_OP1, 1, F_ADDL, FC_RETOP);
++			break;
++		case t_DECb:
++		case t_DECw:
++		case t_DECd:
++			*op++ = OPL(OP_INTA, FC_OP1, 1, F_SUBL, FC_RETOP);
++			break;
++		case t_NEGb:
++		case t_NEGw:
++		case t_NEGd:
++			*op++ = OPR(OP_INTA, HOST_R31, FC_OP1, F_SUBL, FC_RETOP);
++			break;
++		case t_SHLb:
++		case t_SHLw:
++		case t_SHLd:
++			*op++ = OPR(OP_INTS, FC_OP1, FC_OP2, F_SLL, FC_RETOP);
++			break;
++		case t_SHRb:
++			*op++ = OPL(OP_INTL, FC_OP1, 0xff, F_AND, FC_RETOP);
++			*op++ = OPR(OP_INTS, FC_RETOP, FC_OP2, F_SRL, FC_RETOP);
++			break;
++		case t_SHRw:
++			*op++ = OPL(OP_INTS, FC_OP1, 0x3, F_ZAPNOT, FC_RETOP);
++			*op++ = OPR(OP_INTS, FC_RETOP, FC_OP2, F_SRL, FC_RETOP);
++			break;
++		case t_SHRd:
++			*op++ = OPL(OP_INTS, FC_OP1, 0xf, F_ZAPNOT, FC_RETOP);
++			*op++ = OPR(OP_INTS, FC_RETOP, FC_OP2, F_SRL, FC_RETOP);
++			break;
++		case t_SARb:
++			*op++ = OPR(OP_FPTI, HOST_R31, FC_OP1, F_SEXTB, FC_RETOP);
++			*op++ = OPR(OP_INTS, FC_RETOP, FC_OP2, F_SRA, FC_RETOP);
++			break;
++		case t_SARw:
++			*op++ = OPR(OP_FPTI, HOST_R31, FC_OP1, F_SEXTW, FC_RETOP);
++			*op++ = OPR(OP_INTS, FC_RETOP, FC_OP2, F_SRA, FC_RETOP);
++			break;
++		case t_SARd:
++			*op++ = OPR(OP_INTA, HOST_R31, FC_OP1, F_ADDL, FC_RETOP);
++			*op++ = OPR(OP_INTS, FC_RETOP, FC_OP2, F_SRA, FC_RETOP);
++			break;
++		case t_ROLd:
++		case t_RORd:
++			// rotate the zero-extended value by count and 32-count,
++			// count 0 shifts by 32 which yields 0 for the second part
++			*op++ = OPL(OP_INTS, FC_OP1, 0xf, F_ZAPNOT, TMP_VAL);
++			*op++ = OPR(OP_INTS, TMP_VAL, FC_OP2, flags_type == t_ROLd ? F_SLL : F_SRL, TMP_VAL2);
++			*op++ = MEM(OP_LDA, TMP_CONST, HOST_R31, 32);
++			*op++ = OPR(OP_INTA, TMP_CONST, FC_OP2, F_SUBQ, TMP_CONST);
++			*op++ = OPR(OP_INTS, TMP_VAL, TMP_CONST, flags_type == t_ROLd ? F_SRL : F_SLL, TMP_VAL);
++			*op++ = OPR(OP_INTL, TMP_VAL, TMP_VAL2, F_BIS, FC_RETOP);
++			break;
++#endif
++		default:
++			do_gen_call(fct_ptr, op, call_stanza);
++			return;
++	}
++	gen_fill_extend(op, size);
++}
++
++// mov 16bit value from Segs[index] into dest_reg using FC_SEGS_ADDR (index modulo 2 must be zero)
++// 16bit moves may destroy the upper 16bit of the destination register
++static void gen_mov_seg16_to_reg(HostReg dest_reg,Bitu index) {
++	gen_mov_word_to_reg(dest_reg, (Bit8u*)&Segs + index, false);
++}
++
++// mov 32bit value from Segs[index] into dest_reg using FC_SEGS_ADDR (index modulo 4 must be zero)
++static void gen_mov_seg32_to_reg(HostReg dest_reg,Bitu index) {
++	gen_mov_word_to_reg(dest_reg, (Bit8u*)&Segs + index, true);
++}
++
++// add a 32bit value from Segs[index] to a full register using FC_SEGS_ADDR (index modulo 4 must be zero)
++static void gen_add_seg32_to_reg(HostReg reg,Bitu index) {
++	gen_add(reg, (Bit8u*)&Segs + index);
++}
++
++// mov 16bit value from cpu_regs[index] into dest_reg using FC_REGS_ADDR (index modulo 2 must be zero)
++// 16bit moves may destroy the upper 16bit of the destination register
++static void gen_mov_regval16_to_reg(HostReg dest_reg,Bitu index) {
++	gen_mov_word_to_reg(dest_reg, (Bit8u*)&cpu_regs + index, false);
++}
++
++// mov 32bit value from cpu_regs[index] into dest_reg using FC_REGS_ADDR (index modulo 4 must be zero)
++static void gen_mov_regval32_to_reg(HostReg dest_reg,Bitu index) {
++	gen_mov_word_to_reg(dest_reg, (Bit8u*)&cpu_regs + index, true);
++}
++
++// move an 8bit value from cpu_regs[index]  into dest_reg using FC_REGS_ADDR
++// the upper 24bit of the destination register can be destroyed
++// this function does not use FC_OP1/FC_OP2 as dest_reg as these
++// registers might not be directly byte-accessible on some architectures
++static void gen_mov_regbyte_to_reg_low(HostReg dest_reg,Bitu index) {
++	gen_mov_byte_to_reg_low(dest_reg, (Bit8u*)&cpu_regs + index);
++}
++
++// move an 8bit value from cpu_regs[index]  into dest_reg using FC_REGS_ADDR
++// the upper 24bit of the destination register can be destroyed
++// this function can use FC_OP1/FC_OP2 as dest_reg which are
++// not directly byte-accessible on some architectures
++static void INLINE gen_mov_regbyte_to_reg_low_canuseword(HostReg dest_reg,Bitu index) {
++	gen_mov_byte_to_reg_low_canuseword(dest_reg, (Bit8u*)&cpu_regs + index);
++}
++
++// move 16bit of register into cpu_regs[index] using FC_REGS_ADDR (index modulo 2 must be zero)
++static void gen_mov_regval16_from_reg(HostReg src_reg,Bitu index) {
++	gen_mov_word_from_reg(src_reg, (Bit8u*)&cpu_regs + index, false);
++}
++
++// move 32bit of register into cpu_regs[index] using FC_REGS_ADDR (index modulo 4 must be zero)
++static void gen_mov_regval32_from_reg(HostReg src_reg,Bitu index) {
++	gen_mov_word_from_reg(src_reg, (Bit8u*)&cpu_regs + index, true);
++}
++
++// move the lowest 8bit of a register into cpu_regs[index] using FC_REGS_ADDR
++static void gen_mov_regbyte_from_reg_low(HostReg src_reg,Bitu index) {
++	gen_mov_byte_from_reg_low(src_reg, (Bit8u*)&cpu_regs + index);
++}
++
++// add a 32bit value from cpu_regs[index] to a full register using FC_REGS_ADDR (index modulo 4 must be zero)
++static void gen_add_regval32_to_reg(HostReg reg,Bitu index) {
++	gen_add(reg, (Bit8u*)&cpu_regs + index);
++}
++
++// move 32bit (dword==true) or 16bit (dword==false) of a register into cpu_regs[index] using FC_REGS_ADDR (if dword==true index modulo 4 must be zero) (if dword==false index modulo 2 must be zero)
++static void gen_mov_regword_from_reg(HostReg src_reg,Bitu index,bool dword) {
++	gen_mov_word_from_reg(src_reg, (Bit8u*)&cpu_regs + index, dword);
++}
++
++// move a 32bit (dword==true) or 16bit (dword==false) value from cpu_regs[index] into dest_reg using FC_REGS_ADDR (if dword==true index modulo 4 must be zero) (if dword==false index modulo 2 must be zero)
++// 16bit moves may destroy the upper 16bit of the destination register
++static void gen_mov_regword_to_reg(HostReg dest_reg,Bitu index,bool dword) {
++	gen_mov_word_to_reg(dest_reg, (Bit8u*)&cpu_regs + index, dword);
++}

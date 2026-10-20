@@ -1,0 +1,3170 @@
+# --- T2-COPYRIGHT-BEGIN ---
+# t2/package/*/dosbox/dynrec-0-generic.patch
+# Copyright (C) 2026 The T2 SDE Project
+# SPDX-License-Identifier: GPL-2.0 or patched project license
+# --- T2-COPYRIGHT-END ---
+
+dynrec: generic support for 64-bit, big-endian and strict alignment hosts, and performance improvements
+
+Shared code for the alpha, mips64, sparc64 and PowerPC backends:
+
+- 64-bit big-endian host fixes: core_dynrec.callback is Bit32u as written
+  by generated code, lower 32bit of cpu.direction, lflags.type and
+  cpu.stack.mask on big-endian hosts
+- alignment-safe accessors for the code page write map
+- backend hooks: code cache placement (DRC_CACHE_ALLOC), protected_regs
+  indexed by host register (DRC_PROTECTED_REGS), padded stanzas only for
+  calls that may be replaced, inline TLB memory accesses
+  (DRC_USE_INLINE_MEMORY), branch conditions from the guessed last flags
+  operation checked against lflags.type at runtime (DRC_USE_INLINE_FLAGS),
+  inline push/pop (DRC_USE_INLINE_STACK), the carry into ADC/SBB/RCL/RCR
+  (DRC_USE_INLINE_CARRY), and direct continuation at the last target of
+  RET and indirect JMP/CALL (DRC_USE_INDIRECT_LINK)
+- string operations on runs within a page through the host pointer, and
+  as block writes into handler memory (chained VGA in 4 byte groups,
+  unchained VGA with one address translation per run)
+- RCL/RCR flags-invalidation variants without flag materialization
+- string direction taken from cpu.direction, the signed parameter may
+  arrive zero-extended from generated code
+- backend hooks for link jumps patched to direct jumps (DRC_USE_LINK_PATCH),
+  flag-setting ALU operations, shifts and INC/DEC inline in the call stanza
+  (DRC_USE_INLINE_FLAGS_OPS, code only needed by the full function is
+  skipped once it is replaced), FPU arithmetic (DRC_USE_INLINE_FPU_ARITH)
+  and FPU stack, register moves and m32/m64 loads/stores (DRC_USE_INLINE_FPU)
+- optional perf map of the generated blocks with DOSBOX_PERF_MAP set
+- PAGESIZE config.h template
+- shared parts of the PowerPC backends: write map accesses on big-endian
+  hosts, little-endian access to guest immediates (gen_add_LE,
+  gen_mov_LE_word_to_reg), backend cache block hooks, POWERPC id
+
+Signed-off-by: René Rebe <rene@exactco.de>
+
+diff --git a/config.h.in b/config.h.in
+--- a/config.h.in
++++ b/config.h.in
+@@ -167,6 +167,9 @@
+ /* Name of package */
+ #undef PACKAGE
+ 
++/* Non-4K page size */
++#undef PAGESIZE
++
+ /* Define to the address where bug reports for this package should be sent. */
+ #undef PACKAGE_BUGREPORT
+ 
+diff --git a/include/paging.h b/include/paging.h
+--- a/include/paging.h
++++ b/include/paging.h
+@@ -1,5 +1,6 @@
+ /*
+  *  Copyright (C) 2002-2010  The DOSBox Team
++ *  Copyright (C) 2026 René Rebe <rene@exactco.de>
+  *
+  *  This program is free software; you can redistribute it and/or modify
+  *  it under the terms of the GNU General Public License as published by
+@@ -75,6 +76,10 @@ public:
+ 	virtual bool writeb_checked(PhysPt addr,Bitu val);
+ 	virtual bool writew_checked(PhysPt addr,Bitu val);
+ 	virtual bool writed_checked(PhysPt addr,Bitu val);
++	// write len bytes from src, or fill len bytes with the little-endian value
++	// of size bytes, starting at addr within one page; false if not supported
++	virtual bool writeblock(PhysPt /*addr*/,const Bit8u * /*src*/,Bitu /*len*/) { return false; }
++	virtual bool fillblock(PhysPt /*addr*/,Bit32u /*val*/,Bitu /*size*/,Bitu /*len*/) { return false; }
+ 	Bitu flags;
+ };
+ 
+diff --git a/src/cpu/core_dynrec.cpp b/src/cpu/core_dynrec.cpp
+--- a/src/cpu/core_dynrec.cpp
++++ b/src/cpu/core_dynrec.cpp
+@@ -1,5 +1,6 @@
+ /*
+  *  Copyright (C) 2002-2010  The DOSBox Team
++ *  Copyright (C) 2026 René Rebe <rene@exactco.de>
+  *
+  *  This program is free software; you can redistribute it and/or modify
+  *  it under the terms of the GNU General Public License as published by
+@@ -32,6 +33,8 @@
+ #if defined (WIN32)
+ #include <windows.h>
+ #include <winbase.h>
++#else
++#include <unistd.h>
+ #endif
+ 
+ #if (C_HAVE_MPROTECT)
+@@ -124,21 +127,70 @@ static void IllegalOptionDynrec(const char* msg) {
+ 	E_Exit("DynrecCore: illegal option in %s",msg);
+ }
+ 
++#define X86			0x01
++#define X86_64		0x02
++#define MIPSEL		0x03
++#define ARMV4LE		0x04
++#define POWERPC		0x06
++#define PPC64LE		0x08
++#define SPARC64		0x09
++#define ALPHA		0x0a
++#define MIPS64		0x0b
++
++// backend configuration needed before the backend is included
++#if C_TARGETCPU == SPARC64 || C_TARGETCPU == ALPHA || C_TARGETCPU == MIPS64
++// the code cache is placed by the backend
++#define DRC_CACHE_ALLOC
++// protected_regs is indexed by host register number
++#define DRC_PROTECTED_REGS 32
++#endif
++
++#if !defined(DRC_PROTECTED_REGS)
++#define DRC_PROTECTED_REGS 8
++#endif
++
++// link jumps are patched to direct jumps of this many bytes by the backend
++#if C_TARGETCPU == MIPS64
++#define DRC_USE_LINK_PATCH
++#define DRC_LINK_PATCH_SIZE 8
++#elif C_TARGETCPU == ALPHA
++#define DRC_USE_LINK_PATCH
++#define DRC_LINK_PATCH_SIZE 4
++#elif C_TARGETCPU == SPARC64
++#define DRC_USE_LINK_PATCH
++#define DRC_LINK_PATCH_SIZE 8
++#endif
++
+ static struct {
+ 	BlockReturn (*runcode)(Bit8u*);		// points to code that can start a block
+-	Bitu callback;				// the occurred callback
++	Bit32u callback;			// the occurred callback (written as 32bit by generated code)
+ 	Bitu readdata;				// spare space used when reading from memory
+-	Bit32u protected_regs[8];	// space to save/restore register values
++	Bit32u protected_regs[DRC_PROTECTED_REGS];	// space to save/restore register values
+ } core_dynrec;
+ 
+ 
+ #include "core_dynrec/cache.h"
+ 
+-#define X86			0x01
+-#define X86_64		0x02
+-#define MIPSEL		0x03
+-#define ARMV4LE		0x04
+-#define POWERPC		0x04
++// set when the next generated call may be replaced by gen_fill_function_ptr
++static bool drc_next_call_patchable=false;
++
++// flags type marker of simple functions taking the carry as third parameter
++#define DRC_FTYPE_CF 0x100
++
++// operations for gen_fpu_arith
++enum DrcFpuOp { DRC_FPU_ADD, DRC_FPU_MUL, DRC_FPU_SUB, DRC_FPU_SUBR, DRC_FPU_DIV, DRC_FPU_DIVR };
++
++// operations for gen_shift_op
++enum DrcShiftOp { DRC_SHIFT_SHL, DRC_SHIFT_SHR, DRC_SHIFT_SAR };
++
++// operations for gen_alu_op
++enum DrcAluOp { DRC_ALU_ADD, DRC_ALU_SUB, DRC_ALU_AND, DRC_ALU_OR, DRC_ALU_XOR };
++
++// conditions for gen_set_condition, comparing two 32bit values
++enum DrcCond {
++	DRC_COND_E, DRC_COND_NE, DRC_COND_LU, DRC_COND_GEU, DRC_COND_LEU, DRC_COND_GU,
++	DRC_COND_L, DRC_COND_GE, DRC_COND_LE, DRC_COND_G, DRC_COND_NEG, DRC_COND_POS
++};
+ 
+ #if C_TARGETCPU == X86_64
+ #include "core_dynrec/risc_x64.h"
+@@ -150,6 +202,19 @@ static struct {
+ #include "core_dynrec/risc_armv4le.h"
+ #elif C_TARGETCPU == POWERPC
+ #include "core_dynrec/risc_ppc.h"
++#elif C_TARGETCPU == PPC64LE
++#include "core_dynrec/risc_ppc64le.h"
++#elif C_TARGETCPU == SPARC64
++#include "core_dynrec/risc_sparc64.h"
++#elif C_TARGETCPU == ALPHA
++#include "core_dynrec/risc_alpha.h"
++#elif C_TARGETCPU == MIPS64
++#include "core_dynrec/risc_mips64.h"
++#endif
++
++#if !defined(WORDS_BIGENDIAN)
++#define gen_add_LE gen_add
++#define gen_mov_LE_word_to_reg gen_mov_word_to_reg
+ #endif
+ 
+ #include "core_dynrec/decoder.h"
+@@ -164,7 +229,10 @@ CacheBlockDynRec * LinkBlocks(BlockReturn ret) {
+ 		block=temp_handler->FindCacheBlock(temp_ip & 4095);
+ 		if (!block) return NULL;
+ 
+-		// found it, link the current block to 
++		// found it, link the current block to it, replacing a link
++		// made for another computed target
++		cache.block.running->Unlink(ret==BR_Link2);
++		cache.block.running->link_ip=temp_ip;
+ 		cache.block.running->LinkTo(ret==BR_Link2,block);
+ 		return block;
+ 	}
+diff --git a/src/cpu/core_dynrec/cache.h b/src/cpu/core_dynrec/cache.h
+--- a/src/cpu/core_dynrec/cache.h
++++ b/src/cpu/core_dynrec/cache.h
+@@ -1,5 +1,6 @@
+ /*
+  *  Copyright (C) 2002-2010  The DOSBox Team
++ *  Copyright (C) 2026 René Rebe <rene@exactco.de>
+  *
+  *  This program is free software; you can redistribute it and/or modify
+  *  it under the terms of the GNU General Public License as published by
+@@ -19,10 +20,19 @@
+ 
+ class CodePageHandlerDynRec;	// forward
+ 
++#if defined(DRC_USE_LINK_PATCH)
++// backend: replace the jump through a link at site by a direct jump to target,
++// saving the original code; false if the target is out of reach
++static bool gen_link_patch(Bit8u * site,Bit8u * target,Bit8u * saved);
++static void gen_link_unpatch(Bit8u * site,const Bit8u * saved);
++#endif
++
+ // basic cache block representation
+ class CacheBlockDynRec {
+ public:
+ 	void Clear(void);
++	// remove the link of the given index, pointing it to the standard linkcode
++	void Unlink(Bitu index);
+ 	// link this cache block to another block, index specifies the code
+ 	// path (always zero for unconditional links, 0/1 for conditional ones
+ 	void LinkTo(Bitu index,CacheBlockDynRec * toblock) {
+@@ -30,7 +40,13 @@ public:
+ 		link[index].to=toblock;
+ 		link[index].next=toblock->link[index].from;	// set target block
+ 		toblock->link[index].from=this;				// remember who links me
++#if defined(DRC_USE_LINK_PATCH)
++		if (link[index].site)
++			link[index].patched=gen_link_patch(link[index].site,toblock->cache.start,link[index].saved);
++#endif
+ 	}
++	// point the link to the standard linkcode
++	void ResetLink(Bitu index);
+ 	struct {
+ 		Bit16u start,end;		// where in the page is the original code
+ 		CodePageHandlerDynRec * handler;			// page containing this code
+@@ -53,7 +69,13 @@ public:
+ 		CacheBlockDynRec * to;		// this block can transfer control to the to-block
+ 		CacheBlockDynRec * next;
+ 		CacheBlockDynRec * from;	// the from-block can transfer control to this block
++#if defined(DRC_USE_LINK_PATCH)
++		Bit8u * site;			// jump through to, patched to a direct jump when linked
++		bool patched;
++		Bit8u saved[DRC_LINK_PATCH_SIZE];
++#endif
+ 	} link[2];	// maximal two links (conditional jumps)
++	PhysPt link_ip;		// linear target link[0] was made for, for computed targets
+ 	CacheBlockDynRec * crossblock;
+ };
+ 
+@@ -145,7 +167,7 @@ public:
+ 		if (host_readb(hostmem+addr)==(Bit8u)val) return;
+ 		host_writeb(hostmem+addr,val);
+ 		// see if there's code where we are writing to
+-		if (!host_readb(&write_map[addr])) {
++		if (!write_map[addr]) {
+ 			if (active_blocks) return;		// still some blocks in this page
+ 			active_count--;
+ 			if (!active_count) Release();	// delay page releasing until active_count is zero
+@@ -171,7 +193,7 @@ public:
+ 			invalidation_map=(Bit8u*)malloc(4096);
+ 			memset(invalidation_map,0,4096);
+ 		}
+-#if defined(WORDS_BIGENDIAN) || !defined(C_UNALIGNED_MEMORY)
++#if !defined(C_UNALIGNED_MEMORY)
+ 		host_writew(&invalidation_map[addr],
+ 			host_readw(&invalidation_map[addr])+0x101);
+ #else
+@@ -193,7 +215,7 @@ public:
+ 			invalidation_map=(Bit8u*)malloc(4096);
+ 			memset(invalidation_map,0,4096);
+ 		}
+-#if defined(WORDS_BIGENDIAN) || !defined(C_UNALIGNED_MEMORY)
++#if !defined(C_UNALIGNED_MEMORY)
+ 		host_writed(&invalidation_map[addr],
+ 			host_readd(&invalidation_map[addr])+0x1010101);
+ #else
+@@ -240,7 +262,7 @@ public:
+ 				invalidation_map=(Bit8u*)malloc(4096);
+ 				memset(invalidation_map,0,4096);
+ 			}
+-#if defined(WORDS_BIGENDIAN) || !defined(C_UNALIGNED_MEMORY)
++#if !defined(C_UNALIGNED_MEMORY)
+ 			host_writew(&invalidation_map[addr],
+ 				host_readw(&invalidation_map[addr])+0x101);
+ #else
+@@ -269,7 +291,7 @@ public:
+ 				invalidation_map=(Bit8u*)malloc(4096);
+ 				memset(invalidation_map,0,4096);
+ 			}
+-#if defined(WORDS_BIGENDIAN) || !defined(C_UNALIGNED_MEMORY)
++#if !defined(C_UNALIGNED_MEMORY)
+ 			host_writed(&invalidation_map[addr],
+ 				host_readd(&invalidation_map[addr])+0x1010101);
+ #else
+@@ -372,11 +394,11 @@ public:
+ 		return 0;	// none found
+ 	}
+ 
+-	HostPt GetHostReadPt(Bitu phys_page) { 
++	HostPt GetHostReadPt(Bitu phys_page) {
+ 		hostmem=old_pagehandler->GetHostReadPt(phys_page);
+ 		return hostmem;
+ 	}
+-	HostPt GetHostWritePt(Bitu phys_page) { 
++	HostPt GetHostWritePt(Bitu phys_page) {
+ 		return GetHostReadPt( phys_page );
+ 	}
+ public:
+@@ -392,7 +414,7 @@ private:
+ 
+ 	Bitu active_blocks;		// the number of cache blocks in this page
+ 	Bitu active_count;		// delaying parameter to not immediately release a page
+-	HostPt hostmem;	
++	HostPt hostmem;
+ 	Bitu phys_page;
+ };
+ 
+@@ -412,6 +434,33 @@ static CacheBlockDynRec * cache_getblock(void) {
+ 	return ret;
+ }
+ 
++void CacheBlockDynRec::Unlink(Bitu ind) {
++	if (link[ind].to==&link_blocks[ind]) return;
++	// not linked to the standard linkcode, find the block that links to this block
++	CacheBlockDynRec * * wherelink=&link[ind].to->link[ind].from;
++	while (*wherelink != this && *wherelink) {
++		wherelink = &(*wherelink)->link[ind].next;
++	}
++	// now remove the link
++	if(*wherelink)
++		*wherelink = (*wherelink)->link[ind].next;
++	else {
++		LOG(LOG_CPU,LOG_ERROR)("Cache anomaly. please investigate");
++	}
++	ResetLink(ind);
++}
++
++void CacheBlockDynRec::ResetLink(Bitu ind) {
++	link[ind].to=&link_blocks[ind];
++	link[ind].next=0;
++#if defined(DRC_USE_LINK_PATCH)
++	if (link[ind].patched) {
++		gen_link_unpatch(link[ind].site,link[ind].saved);
++		link[ind].patched=false;
++	}
++#endif
++}
++
+ void CacheBlockDynRec::Clear(void) {
+ 	Bitu ind;
+ 	// check if this is not a cross page block
+@@ -421,25 +470,12 @@ void CacheBlockDynRec::Clear(void) {
+ 		while (fromlink) {
+ 			CacheBlockDynRec * nextlink=fromlink->link[ind].next;
+ 			// clear the next-link and let the block point to the standard linkcode
+-			fromlink->link[ind].next=0;
+-			fromlink->link[ind].to=&link_blocks[ind];
++			fromlink->ResetLink(ind);
+ 
+ 			fromlink=nextlink;
+ 		}
+-		if (link[ind].to!=&link_blocks[ind]) {
+-			// not linked to the standard linkcode, find the block that links to this block
+-			CacheBlockDynRec * * wherelink=&link[ind].to->link[ind].from;
+-			while (*wherelink != this && *wherelink) {
+-				wherelink = &(*wherelink)->link[ind].next;
+-			}
+-			// now remove the link
+-			if(*wherelink) 
+-				*wherelink = (*wherelink)->link[ind].next;
+-			else {
+-				LOG(LOG_CPU,LOG_ERROR)("Cache anomaly. please investigate");
+-			}
+-		}
+-	} else 
++		Unlink(ind);
++	} else
+ 		cache_addunusedblock(this);
+ 	if (crossblock) {
+ 		// clear out the crossblock (in the page before) as well
+@@ -464,7 +500,7 @@ static CacheBlockDynRec * cache_openblock(void) {
+ 	// check for enough space in this block
+ 	Bitu size=block->cache.size;
+ 	CacheBlockDynRec * nextblock=block->cache.next;
+-	if (block->page.handler) 
++	if (block->page.handler)
+ 		block->Clear();
+ 	// block size must be at least CACHE_MAXSIZE
+ 	while (size<CACHE_MAXSIZE) {
+@@ -473,7 +509,7 @@ static CacheBlockDynRec * cache_openblock(void) {
+ 		// merge blocks
+ 		size+=nextblock->cache.size;
+ 		CacheBlockDynRec * tempblock=nextblock->cache.next;
+-		if (nextblock->page.handler) 
++		if (nextblock->page.handler)
+ 			nextblock->Clear();
+ 		// block is free now
+ 		cache_addunusedblock(nextblock);
+@@ -483,6 +519,13 @@ skipresize:
+ 	// adjust parameters and open this block
+ 	block->cache.size=size;
+ 	block->cache.next=nextblock;
++#if defined(DRC_USE_LINK_PATCH)
++	// the link jump sites are recorded by the decoder
++	for (Bitu ind=0;ind<2;ind++) {
++		block->link[ind].site=NULL;
++		block->link[ind].patched=false;
++	}
++#endif
+ 	cache.pos=block->cache.start;
+ 	return block;
+ }
+@@ -496,12 +539,13 @@ static void cache_closeblock(void) {
+ 	block->link[1].from=0;
+ 	block->link[0].next=0;
+ 	block->link[1].next=0;
++	block->link_ip=0;
+ 	// close the block with correct alignment
+ 	Bitu written=(Bitu)(cache.pos-block->cache.start);
+ 	if (written>block->cache.size) {
+ 		if (!block->cache.next) {
+-			if (written>block->cache.size+CACHE_MAXSIZE) E_Exit("CacheBlock overrun 1 %d",written-block->cache.size);	
+-		} else E_Exit("CacheBlock overrun 2 written %d size %d",written,block->cache.size);	
++			if (written>block->cache.size+CACHE_MAXSIZE) E_Exit("CacheBlock overrun 1 %d",written-block->cache.size);
++		} else E_Exit("CacheBlock overrun 2 written %d size %d",written,block->cache.size);
+ 	} else {
+ 		Bitu new_size;
+ 		Bitu left=block->cache.size-written;
+@@ -553,12 +597,17 @@ static INLINE void cache_addq(Bit64u val) {
+ 
+ static void dyn_return(BlockReturn retcode,bool ret_exception);
+ static void dyn_run_code(void);
++static void cache_block_before_close(void);
++static void cache_block_closing(Bit8u* block_start,Bitu block_size);
++#if defined(DRC_CACHE_ALLOC)
++static Bit8u* cache_alloc_code(Bitu size);
++#endif
+ 
+ 
+ /* Define temporary pagesize so the MPROTECT case and the regular case share as much code as possible */
+ #if (C_HAVE_MPROTECT)
+ #define PAGESIZE_TEMP PAGESIZE
+-#else 
++#else
+ #define PAGESIZE_TEMP 4096
+ #endif
+ 
+@@ -585,7 +634,9 @@ static void cache_init(bool enable) {
+ 		}
+ 		if (cache_code_start_ptr==NULL) {
+ 			// allocate the code cache memory
+-#if defined (WIN32)
++#if defined(DRC_CACHE_ALLOC)
++			cache_code_start_ptr=cache_alloc_code(CACHE_TOTAL+CACHE_MAXSIZE+PAGESIZE_TEMP-1+PAGESIZE_TEMP);
++#elif defined (WIN32)
+ 			cache_code_start_ptr=(Bit8u*)VirtualAlloc(0,CACHE_TOTAL+CACHE_MAXSIZE+PAGESIZE_TEMP-1+PAGESIZE_TEMP,
+ 				MEM_COMMIT,PAGE_EXECUTE_READWRITE);
+ 			if (!cache_code_start_ptr)
+@@ -614,18 +665,27 @@ static void cache_init(bool enable) {
+ 		}
+ 		// setup the default blocks for block linkage returns
+ 		cache.pos=&cache_code_link_blocks[0];
++		core_dynrec.runcode=(BlockReturn (*)(Bit8u*))cache.pos;
++		// can use op to PAGESIZE_TEMP-64 bytes
++		dyn_run_code();
++		cache_block_before_close();
++		cache_block_closing(cache_code_link_blocks, cache.pos-cache_code_link_blocks);
++
++		cache.pos=&cache_code_link_blocks[PAGESIZE_TEMP-64];
+ 		link_blocks[0].cache.start=cache.pos;
+ 		// link code that returns with a special return code
++		// must be less than 32 bytes
+ 		dyn_return(BR_Link1,false);
+-		cache.pos=&cache_code_link_blocks[32];
++		cache_block_before_close();
++		cache_block_closing(link_blocks[0].cache.start, cache.pos-link_blocks[0].cache.start);
++
++		cache.pos=&cache_code_link_blocks[PAGESIZE_TEMP-32];
+ 		link_blocks[1].cache.start=cache.pos;
+ 		// link code that returns with a special return code
++		// must be less than 32 bytes
+ 		dyn_return(BR_Link2,false);
+-
+-		cache.pos=&cache_code_link_blocks[64];
+-		core_dynrec.runcode=(BlockReturn (*)(Bit8u*))cache.pos;
+-//		link_blocks[1].cache.start=cache.pos;
+-		dyn_run_code();
++		cache_block_before_close();
++		cache_block_closing(link_blocks[1].cache.start, cache.pos-link_blocks[1].cache.start);
+ 
+ 		cache.free_pages=0;
+ 		cache.last_page=0;
+diff --git a/src/cpu/core_dynrec/decoder.h b/src/cpu/core_dynrec/decoder.h
+--- a/src/cpu/core_dynrec/decoder.h
++++ b/src/cpu/core_dynrec/decoder.h
+@@ -1,5 +1,6 @@
+ /*
+  *  Copyright (C) 2002-2010  The DOSBox Team
++ *  Copyright (C) 2026 René Rebe <rene@exactco.de>
+  *
+  *  This program is free software; you can redistribute it and/or modify
+  *  it under the terms of the GNU General Public License as published by
+@@ -590,12 +591,12 @@ restart_prefix:
+ 	// link to next block because the maximal number of opcodes has been reached
+ 	dyn_set_eip_end();
+ 	dyn_reduce_cycles();
+-	gen_jmp_ptr(&decode.block->link[0].to,offsetof(CacheBlockDynRec,cache.start));
++	dyn_jmp_link(0);
+ 	dyn_closeblock();
+     goto finish_block;
+ core_close_block:
+ 	dyn_reduce_cycles();
+-	dyn_return(BR_Normal);
++	dyn_return_indirect();
+ 	dyn_closeblock();
+ 	goto finish_block;
+ illegalopcode:
+diff --git a/src/cpu/core_dynrec/decoder_basic.h b/src/cpu/core_dynrec/decoder_basic.h
+--- a/src/cpu/core_dynrec/decoder_basic.h
++++ b/src/cpu/core_dynrec/decoder_basic.h
+@@ -1,5 +1,6 @@
+ /*
+  *  Copyright (C) 2002-2010  The DOSBox Team
++ *  Copyright (C) 2026 René Rebe <rene@exactco.de>
+  *
+  *  This program is free software; you can redistribute it and/or modify
+  *  it under the terms of the GNU General Public License as published by
+@@ -229,7 +230,7 @@ static Bit16u decode_fetchw(void) {
+ 		val|=decode_fetchb() << 8;
+ 		return val;
+ 	}
+-	*(Bit16u *)&decode.page.wmap[decode.page.index]+=0x0101;
++	host_writew(&decode.page.wmap[decode.page.index],host_readw(&decode.page.wmap[decode.page.index])+0x0101);
+ 	decode.code+=2;decode.page.index+=2;
+ 	return mem_readw(decode.code-2);
+ }
+@@ -243,7 +244,7 @@ static Bit32u decode_fetchd(void) {
+ 		return val;
+         /* Advance to the next page */
+ 	}
+-	*(Bit32u *)&decode.page.wmap[decode.page.index]+=0x01010101;
++	host_writed(&decode.page.wmap[decode.page.index],host_readd(&decode.page.wmap[decode.page.index])+0x01010101);
+ 	decode.code+=4;decode.page.index+=4;
+ 	return mem_readd(decode.code-4);
+ }
+@@ -279,8 +280,8 @@ static void INLINE decode_increase_wmapmask(Bitu size) {
+ 	// update mask entries
+ 	switch (size) {
+ 		case 1 : activecb->cache.wmapmask[mapidx]+=0x01; break;
+-		case 2 : (*(Bit16u*)&activecb->cache.wmapmask[mapidx])+=0x0101; break;
+-		case 4 : (*(Bit32u*)&activecb->cache.wmapmask[mapidx])+=0x01010101; break;
++		case 2 : host_writew(&activecb->cache.wmapmask[mapidx],host_readw(&activecb->cache.wmapmask[mapidx])+0x0101); break;
++		case 4 : host_writed(&activecb->cache.wmapmask[mapidx],host_readd(&activecb->cache.wmapmask[mapidx])+0x01010101); break;
+ 	}
+ }
+ 
+@@ -494,7 +495,6 @@ static INLINE void dyn_set_eip_end(HostReg reg,Bit32u imm=0) {
+ 	gen_mov_word_to_reg(reg,&reg_eip,true); //get_extend_word will mask off the upper bits
+ 	//gen_mov_word_to_reg(reg,&reg_eip,decode.big_op);
+ 	gen_add_imm(reg,(Bit32u)(decode.code-decode.code_start+imm));
+-	if (!decode.big_op) gen_extend_word(false,reg);
+ }
+ 
+ 
+@@ -631,6 +631,31 @@ static void dyn_return(BlockReturn retcode,bool ret_exception=false) {
+ 	gen_return_function();
+ }
+ 
++// jump to the block link[index] points to; the jump may be patched later
++static void dyn_jmp_link(Bitu index) {
++#if defined(DRC_USE_LINK_PATCH)
++	decode.block->link[index].site=cache.pos;
++#endif
++	gen_jmp_ptr(&decode.block->link[index].to,offsetof(CacheBlockDynRec,cache.start));
++}
++
++// leave the block after a transfer to a computed target, continuing directly
++// at the block link[0] was made for if the target is the same
++static void dyn_return_indirect(void) {
++#if defined(DRC_USE_INDIRECT_LINK)
++	gen_mov_word_to_reg(FC_OP1,&reg_eip,true);
++	gen_add(FC_OP1,DRCD_SEG_PHYS(DRC_SEG_CS));
++	gen_mov_word_to_reg(FC_OP2,&decode.block->link_ip,true);
++	gen_set_condition(FC_RETOP,FC_OP1,FC_OP2,DRC_COND_NE);
++	DRC_PTR_SIZE_IM miss=gen_create_branch_on_nonzero(FC_RETOP,true);
++	dyn_jmp_link(0);
++	gen_fill_branch(miss);
++	dyn_return(BR_Link1);
++#else
++	dyn_return(BR_Normal);
++#endif
++}
++
+ static void dyn_run_code(void) {
+ 	gen_run_code();
+ 	gen_return_function();
+@@ -664,12 +689,34 @@ static void dyn_fill_blocks(void) {
+ }
+ 
+ 
++#if !defined(WIN32)
++// symbols of the generated blocks for perf, enabled by DOSBOX_PERF_MAP
++static void dyn_perf_map(CacheBlockDynRec * block) {
++	static FILE * map=NULL;
++	static bool checked=false;
++	if (!checked) {
++		checked=true;
++		if (getenv("DOSBOX_PERF_MAP")) {
++			char name[64];
++			snprintf(name,sizeof(name),"/tmp/perf-%d.map",(int)getpid());
++			map=fopen(name,"w");
++			if (map) setvbuf(map,NULL,_IOLBF,0);
++		}
++	}
++	if (map) fprintf(map,"%lx %lx dynrec_%08x\n",(unsigned long)block->cache.start,
++		(unsigned long)block->cache.size,(unsigned int)decode.code_start);
++}
++#endif
++
+ static void dyn_closeblock(void) {
+ 	//Shouldn't create empty block normally but let's do it like this
+ 	dyn_fill_blocks();
+ 	cache_block_before_close();
+ 	cache_closeblock();
+ 	cache_block_closing(decode.block->cache.start,decode.block->cache.size);
++#if !defined(WIN32)
++	dyn_perf_map(decode.block);
++#endif
+ }
+ 
+ 
+@@ -754,47 +801,67 @@ bool DRC_CALL_CONV mem_writed_checked_drc(PhysPt address,Bit32u val) {
+ 
+ // functions that enable access to the memory
+ 
++// backends may emit an inline access for memory with a direct host pointer,
++// the returned jump skips the generic code handling all remaining cases
++#if defined(DRC_USE_INLINE_MEMORY)
++#define DRC_MEM_FAST(fast) DRC_PTR_SIZE_IM mem_done=fast
++#define DRC_MEM_DONE() gen_fill_jump(mem_done)
++#else
++#define DRC_MEM_FAST(fast)
++#define DRC_MEM_DONE()
++#endif
++
+ // read a byte from a given address and store it in reg_dst
+ static void dyn_read_byte(HostReg reg_addr,HostReg reg_dst) {
++	DRC_MEM_FAST(gen_mem_fast(reg_addr,reg_dst,1,false));
+ 	gen_mov_regs(FC_OP1,reg_addr);
+ 	gen_call_function_raw((void *)&mem_readb_checked_drc);
+ 	dyn_check_exception(FC_RETOP);
+ 	gen_mov_byte_to_reg_low(reg_dst,&core_dynrec.readdata);
++	DRC_MEM_DONE();
+ }
+ static void dyn_read_byte_canuseword(HostReg reg_addr,HostReg reg_dst) {
++	DRC_MEM_FAST(gen_mem_fast(reg_addr,reg_dst,1,false));
+ 	gen_mov_regs(FC_OP1,reg_addr);
+ 	gen_call_function_raw((void *)&mem_readb_checked_drc);
+ 	dyn_check_exception(FC_RETOP);
+ 	gen_mov_byte_to_reg_low_canuseword(reg_dst,&core_dynrec.readdata);
++	DRC_MEM_DONE();
+ }
+ 
+ // write a byte from reg_val into the memory given by the address
+ static void dyn_write_byte(HostReg reg_addr,HostReg reg_val) {
++	DRC_MEM_FAST(gen_mem_fast(reg_addr,reg_val,1,true));
+ 	gen_mov_regs(FC_OP2,reg_val);
+ 	gen_mov_regs(FC_OP1,reg_addr);
+ 	gen_call_function_raw((void *)&mem_writeb_checked_drc);
+ 	dyn_check_exception(FC_RETOP);
++	DRC_MEM_DONE();
+ }
+ 
+ // read a 32bit (dword=true) or 16bit (dword=false) value
+ // from a given address and store it in reg_dst
+ static void dyn_read_word(HostReg reg_addr,HostReg reg_dst,bool dword) {
++	DRC_MEM_FAST(gen_mem_fast(reg_addr,reg_dst,dword?4:2,false));
+ 	gen_mov_regs(FC_OP1,reg_addr);
+ 	if (dword) gen_call_function_raw((void *)&mem_readd_checked_drc);
+ 	else gen_call_function_raw((void *)&mem_readw_checked_drc);
+ 	dyn_check_exception(FC_RETOP);
+ 	gen_mov_word_to_reg(reg_dst,&core_dynrec.readdata,dword);
++	DRC_MEM_DONE();
+ }
+ 
+ // write a 32bit (dword=true) or 16bit (dword=false) value
+ // from reg_val into the memory given by the address
+ static void dyn_write_word(HostReg reg_addr,HostReg reg_val,bool dword) {
++	DRC_MEM_FAST(gen_mem_fast(reg_addr,reg_val,dword?4:2,true));
+ //	if (!dword) gen_extend_word(false,reg_val);
+ 	gen_mov_regs(FC_OP2,reg_val);
+ 	gen_mov_regs(FC_OP1,reg_addr);
+ 	if (dword) gen_call_function_raw((void *)&mem_writed_checked_drc);
+ 	else gen_call_function_raw((void *)&mem_writew_checked_drc);
+ 	dyn_check_exception(FC_RETOP);
++	DRC_MEM_DONE();
+ }
+ 
+ 
+@@ -987,10 +1054,10 @@ skip_extend_word:
+ 							// succeeded, use the pointer to avoid code invalidation
+ 							if (!addseg) {
+ 								if (!scaled_reg_used) {
+-									gen_mov_word_to_reg(ea_reg,(void*)val,true);
++									gen_mov_LE_word_to_reg(ea_reg,(void*)val,true);
+ 								} else {
+ 									DYN_LEA_MEM_REG_VAL(ea_reg,NULL,scaled_reg,scale,0);
+-									gen_add(ea_reg,(void*)val);
++									gen_add_LE(ea_reg,(void*)val);
+ 								}
+ 							} else {
+ 								if (!scaled_reg_used) {
+@@ -998,7 +1065,7 @@ skip_extend_word:
+ 								} else {
+ 									DYN_LEA_SEG_PHYS_REG_VAL(ea_reg,(decode.seg_prefix_used ? decode.seg_prefix : seg_base),scaled_reg,scale,0);
+ 								}
+-								gen_add(ea_reg,(void*)val);
++								gen_add_LE(ea_reg,(void*)val);
+ 							}
+ 							return;
+ 						}
+@@ -1039,10 +1106,10 @@ skip_extend_word:
+ 						if (!addseg) {
+ 							if (!scaled_reg_used) {
+ 								MOV_REG_VAL_TO_HOST_REG(ea_reg,base_reg);
+-								gen_add(ea_reg,(void*)val);
++								gen_add_LE(ea_reg,(void*)val);
+ 							} else {
+ 								DYN_LEA_REG_VAL_REG_VAL(ea_reg,base_reg,scaled_reg,scale,0);
+-								gen_add(ea_reg,(void*)val);
++								gen_add_LE(ea_reg,(void*)val);
+ 							}
+ 						} else {
+ 							if (!scaled_reg_used) {
+@@ -1051,7 +1118,7 @@ skip_extend_word:
+ 								DYN_LEA_SEG_PHYS_REG_VAL(ea_reg,(decode.seg_prefix_used ? decode.seg_prefix : seg_base),scaled_reg,scale,0);
+ 							}
+ 							ADD_REG_VAL_TO_HOST_REG(ea_reg,base_reg);
+-							gen_add(ea_reg,(void*)val);
++							gen_add_LE(ea_reg,(void*)val);
+ 						}
+ 						return;
+ 					}
+@@ -1116,11 +1183,11 @@ skip_extend_word:
+ 				// succeeded, use the pointer to avoid code invalidation
+ 				if (!addseg) {
+ 					MOV_REG_VAL_TO_HOST_REG(ea_reg,base_reg);
+-					gen_add(ea_reg,(void*)val);
++					gen_add_LE(ea_reg,(void*)val);
+ 				} else {
+ 					MOV_SEG_PHYS_TO_HOST_REG(ea_reg,(decode.seg_prefix_used ? decode.seg_prefix : seg_base));
+ 					ADD_REG_VAL_TO_HOST_REG(ea_reg,base_reg);
+-					gen_add(ea_reg,(void*)val);
++					gen_add_LE(ea_reg,(void*)val);
+ 				}
+ 				return;
+ 			}
+@@ -1203,10 +1270,24 @@ static struct {
+ 	Bit8u* pos;
+ 	void* fct_ptr;
+ 	Bitu ftype;
++	Bit8u* pre;		// code before pos only needed by the full function, skipped otherwise
+ } mf_functions[64];
+ 
++// replace a queued function by its simpler variant
++static void dyn_fill_mf_function(Bitu ct) {
++#if defined(DRC_USE_INLINE_FLAGS_OPS)
++	if (mf_functions[ct].pre) gen_fill_skip(mf_functions[ct].pre,mf_functions[ct].pos);
++#endif
++	gen_fill_function_ptr(mf_functions[ct].pos,mf_functions[ct].fct_ptr,mf_functions[ct].ftype);
++}
++
++// type of the last flags generating operation of the block, a guess
++// for inline flags evaluation which checks lflags.type at runtime
++static Bitu drc_flags_type_guess=t_UNKNOWN;
++
+ static void InitFlagsOptimization(void) {
+ 	mf_functions_num=0;
++	drc_flags_type_guess=t_UNKNOWN;
+ }
+ 
+ // replace all queued functions with their simpler variants
+@@ -1215,7 +1296,7 @@ static void InitFlagsOptimization(void) {
+ static void InvalidateFlags(void) {
+ #ifdef DRC_FLAGS_INVALIDATION
+ 	for (Bitu ct=0; ct<mf_functions_num; ct++) {
+-		gen_fill_function_ptr(mf_functions[ct].pos,mf_functions[ct].fct_ptr,mf_functions[ct].ftype);
++		dyn_fill_mf_function(ct);
+ 	}
+ 	mf_functions_num=0;
+ #endif
+@@ -1225,14 +1306,17 @@ static void InvalidateFlags(void) {
+ // because the current instruction destroys all condition flags and
+ // the flags are not required before
+ static void InvalidateFlags(void* current_simple_function,Bitu flags_type) {
++	drc_flags_type_guess=flags_type;
+ #ifdef DRC_FLAGS_INVALIDATION
++	drc_next_call_patchable=true;
+ 	for (Bitu ct=0; ct<mf_functions_num; ct++) {
+-		gen_fill_function_ptr(mf_functions[ct].pos,mf_functions[ct].fct_ptr,mf_functions[ct].ftype);
++		dyn_fill_mf_function(ct);
+ 	}
+ 	mf_functions_num=1;
+ 	mf_functions[0].pos=cache.pos;
+ 	mf_functions[0].fct_ptr=current_simple_function;
+ 	mf_functions[0].ftype=flags_type;
++	mf_functions[0].pre=NULL;
+ #endif
+ }
+ 
+@@ -1240,10 +1324,13 @@ static void InvalidateFlags(void* current_simple_function,Bitu flags_type) {
+ // destroys all condition flags and the flags weren't needed in-between
+ // this function can be replaced by a simpler one as well
+ static void InvalidateFlagsPartially(void* current_simple_function,Bitu flags_type) {
++	drc_flags_type_guess=flags_type&~DRC_FTYPE_CF;
+ #ifdef DRC_FLAGS_INVALIDATION
++	drc_next_call_patchable=true;
+ 	mf_functions[mf_functions_num].pos=cache.pos;
+ 	mf_functions[mf_functions_num].fct_ptr=current_simple_function;
+ 	mf_functions[mf_functions_num].ftype=flags_type;
++	mf_functions[mf_functions_num].pre=NULL;
+ 	mf_functions_num++;
+ #endif
+ }
+@@ -1252,10 +1339,12 @@ static void InvalidateFlagsPartially(void* current_simple_function,Bitu flags_ty
+ // destroys all condition flags and the flags weren't needed in-between
+ // this function can be replaced by a simpler one as well
+ static void InvalidateFlagsPartially(void* current_simple_function,DRC_PTR_SIZE_IM cpos,Bitu flags_type) {
++	drc_flags_type_guess=flags_type;
+ #ifdef DRC_FLAGS_INVALIDATION
+ 	mf_functions[mf_functions_num].pos=(Bit8u*)cpos;
+ 	mf_functions[mf_functions_num].fct_ptr=current_simple_function;
+ 	mf_functions[mf_functions_num].ftype=flags_type;
++	mf_functions[mf_functions_num].pre=NULL;
+ 	mf_functions_num++;
+ #endif
+ }
+diff --git a/src/cpu/core_dynrec/decoder_opcodes.h b/src/cpu/core_dynrec/decoder_opcodes.h
+--- a/src/cpu/core_dynrec/decoder_opcodes.h
++++ b/src/cpu/core_dynrec/decoder_opcodes.h
+@@ -1,5 +1,6 @@
+ /*
+  *  Copyright (C) 2002-2010  The DOSBox Team
++ *  Copyright (C) 2026 René Rebe <rene@exactco.de>
+  *
+  *  This program is free software; you can redistribute it and/or modify
+  *  it under the terms of the GNU General Public License as published by
+@@ -251,12 +252,12 @@ static void dyn_prep_word_imm(Bit8u reg) {
+ 	Bitu val;
+ 	if (decode.big_op) {
+ 		if (decode_fetchd_imm(val)) {
+-			gen_mov_word_to_reg(FC_OP2,(void*)val,true);
++			gen_mov_LE_word_to_reg(FC_OP2,(void*)val,true);
+ 			return;
+ 		}
+ 	} else {
+ 		if (decode_fetchw_imm(val)) {
+-			gen_mov_word_to_reg(FC_OP2,(void*)val,false);
++			gen_mov_LE_word_to_reg(FC_OP2,(void*)val,false);
+ 			return;
+ 		}
+ 	}
+@@ -288,13 +289,13 @@ static void dyn_mov_word_imm(Bit8u reg) {
+ 	Bitu val;
+ 	if (decode.big_op) {
+ 		if (decode_fetchd_imm(val)) {
+-			gen_mov_word_to_reg(FC_OP1,(void*)val,true);
++			gen_mov_LE_word_to_reg(FC_OP1,(void*)val,true);
+ 			MOV_REG_WORD32_FROM_HOST_REG(FC_OP1,reg);
+ 			return;
+ 		}
+ 	} else {
+ 		if (decode_fetchw_imm(val)) {
+-			gen_mov_word_to_reg(FC_OP1,(void*)val,false);
++			gen_mov_LE_word_to_reg(FC_OP1,(void*)val,false);
+ 			MOV_REG_WORD16_FROM_HOST_REG(FC_OP1,reg);
+ 			return;
+ 		}
+@@ -331,7 +332,7 @@ static void dyn_mov_byte_direct_al() {
+ 	if (decode.big_addr) {
+ 		Bitu val;
+ 		if (decode_fetchd_imm(val)) {
+-			gen_add(FC_ADDR,(void*)val);
++			gen_add_LE(FC_ADDR,(void*)val);
+ 		} else {
+ 			gen_add_imm(FC_ADDR,(Bit32u)val);
+ 		}
+@@ -399,13 +400,37 @@ static void dyn_lea(void) {
+ }
+ 
+ 
++// push FC_OP1 or pop into FC_RETOP, backends may emit an inline access
++// for a stack with a direct host pointer before the generic call
++static void dyn_push_call(bool dword) {
++#if defined(DRC_USE_INLINE_STACK)
++	DRC_PTR_SIZE_IM done=gen_stack_fast(dword?4:2,true);
++#endif
++	if (dword) gen_call_function_raw((void*)&dynrec_push_dword);
++	else gen_call_function_raw((void*)&dynrec_push_word);
++#if defined(DRC_USE_INLINE_STACK)
++	gen_fill_jump(done);
++#endif
++}
++
++static void dyn_pop_call(bool dword) {
++#if defined(DRC_USE_INLINE_STACK)
++	DRC_PTR_SIZE_IM done=gen_stack_fast(dword?4:2,false);
++#endif
++	if (dword) gen_call_function_raw((void*)&dynrec_pop_dword);
++	else gen_call_function_raw((void*)&dynrec_pop_word);
++#if defined(DRC_USE_INLINE_STACK)
++	gen_fill_jump(done);
++#endif
++}
++
+ static void dyn_push_seg(Bit8u seg) {
+ 	MOV_SEG_VAL_TO_HOST_REG(FC_OP1,seg);
+ 	if (decode.big_op) {
+ 		gen_extend_word(false,FC_OP1);
+-		gen_call_function_raw((void*)&dynrec_push_dword);
++		dyn_push_call(true);
+ 	} else {
+-		gen_call_function_raw((void*)&dynrec_push_word);
++		dyn_push_call(false);
+ 	}
+ }
+ 
+@@ -416,29 +441,26 @@ static void dyn_pop_seg(Bit8u seg) {
+ 
+ static void dyn_push_reg(Bit8u reg) {
+ 	MOV_REG_WORD_TO_HOST_REG(FC_OP1,reg,decode.big_op);
+-	if (decode.big_op) gen_call_function_raw((void*)&dynrec_push_dword);
+-	else gen_call_function_raw((void*)&dynrec_push_word);
++	dyn_push_call(decode.big_op);
+ }
+ 
+ static void dyn_pop_reg(Bit8u reg) {
+-	if (decode.big_op) gen_call_function_raw((void*)&dynrec_pop_dword);
+-	else gen_call_function_raw((void*)&dynrec_pop_word);
++	dyn_pop_call(decode.big_op);
+ 	MOV_REG_WORD_FROM_HOST_REG(FC_RETOP,reg,decode.big_op);
+ }
+ 
+ static void dyn_push_byte_imm(Bit8s imm) {
+ 	gen_mov_dword_to_reg_imm(FC_OP1,(Bit32u)imm);
+-	if (decode.big_op) gen_call_function_raw((void*)&dynrec_push_dword);
+-	else gen_call_function_raw((void*)&dynrec_push_word);
++	dyn_push_call(decode.big_op);
+ }
+ 
+ static void dyn_push_word_imm(Bitu imm) {
+ 	if (decode.big_op) {
+ 		gen_mov_dword_to_reg_imm(FC_OP1,imm);
+-		gen_call_function_raw((void*)&dynrec_push_dword);
++		dyn_push_call(true);
+ 	} else {
+ 		gen_mov_word_to_reg_imm(FC_OP1,(Bit16u)imm);
+-		gen_call_function_raw((void*)&dynrec_push_word);
++		dyn_push_call(false);
+ 	}
+ }
+ 
+@@ -448,8 +470,7 @@ static void dyn_pop_ev(void) {
+ 		// save original ESP
+ 		MOV_REG_WORD32_TO_HOST_REG(FC_OP2,DRC_REG_ESP);
+ 		gen_protect_reg(FC_OP2);
+-		if (decode.big_op) gen_call_function_raw((void*)&dynrec_pop_dword);
+-		else gen_call_function_raw((void*)&dynrec_pop_word);
++		dyn_pop_call(decode.big_op);
+ 		dyn_fill_ea(FC_ADDR);
+ 		gen_mov_regs(FC_OP2,FC_RETOP);
+ 		gen_mov_regs(FC_OP1,FC_ADDR);
+@@ -463,8 +484,7 @@ static void dyn_pop_ev(void) {
+ 		dyn_check_exception(FC_RETOP);
+ 		gen_fill_branch(no_fault);
+ 	} else {
+-		if (decode.big_op) gen_call_function_raw((void*)&dynrec_pop_dword);
+-		else gen_call_function_raw((void*)&dynrec_pop_word);
++		dyn_pop_call(decode.big_op);
+ 		MOV_REG_WORD_FROM_HOST_REG(FC_RETOP,decode.modrm.rm,decode.big_op);
+ 	}
+ }
+@@ -852,8 +872,7 @@ static Bitu dyn_grp4_ev(void) {
+ 		gen_protect_addr_reg();
+ 		gen_mov_word_to_reg(FC_OP1,decode.big_op?(void*)(&reg_eip):(void*)(&reg_ip),decode.big_op);
+ 		gen_add_imm(FC_OP1,(Bit32u)(decode.code-decode.code_start));
+-		if (decode.big_op) gen_call_function_raw((void*)&dynrec_push_dword);
+-		else gen_call_function_raw((void*)&dynrec_push_word);
++		dyn_push_call(decode.big_op);
+ 
+ 		gen_restore_addr_reg();
+ 		gen_mov_word_from_reg(FC_ADDR,decode.big_op?(void*)(&reg_eip):(void*)(&reg_ip),decode.big_op);
+@@ -876,8 +895,7 @@ static Bitu dyn_grp4_ev(void) {
+ 			decode.big_op,FC_OP2,FC_ADDR,FC_RETOP);
+ 		return 1;
+ 	case 0x6:		// PUSH Ev
+-		if (decode.big_op) gen_call_function_raw((void*)&dynrec_push_dword);
+-		else gen_call_function_raw((void*)&dynrec_push_word);
++		dyn_push_call(decode.big_op);
+ 		break;
+ 	default:
+ //		IllegalOptionDynrec("dyn_grp4_ev");
+@@ -1098,7 +1116,7 @@ static void dyn_sahf(void) {
+ static void dyn_exit_link(Bits eip_change) {
+ 	gen_add_direct_word(&reg_eip,(decode.code-decode.code_start)+eip_change,decode.big_op);
+ 	dyn_reduce_cycles();
+-	gen_jmp_ptr(&decode.block->link[0].to,offsetof(CacheBlockDynRec,cache.start));
++	dyn_jmp_link(0);
+ 	dyn_closeblock();
+ }
+ 
+@@ -1112,12 +1130,12 @@ static void dyn_branched_exit(BranchTypes btype,Bit32s eip_add) {
+ 
+  	// Branch not taken
+ 	gen_add_direct_word(&reg_eip,eip_base,decode.big_op);
+- 	gen_jmp_ptr(&decode.block->link[0].to,offsetof(CacheBlockDynRec,cache.start));
++ 	dyn_jmp_link(0);
+  	gen_fill_branch(data);
+ 
+  	// Branch taken
+ 	gen_add_direct_word(&reg_eip,eip_base+eip_add,decode.big_op);
+- 	gen_jmp_ptr(&decode.block->link[1].to,offsetof(CacheBlockDynRec,cache.start));
++ 	dyn_jmp_link(1);
+  	dyn_closeblock();
+ }
+ 
+@@ -1166,7 +1184,7 @@ static void dyn_loop(LoopTypes type) {
+ 		break;
+ 	}
+ 	gen_add_direct_word(&reg_eip,eip_base+eip_add,true);
+-	gen_jmp_ptr(&decode.block->link[0].to,offsetof(CacheBlockDynRec,cache.start));
++	dyn_jmp_link(0);
+ 	if (branch1) {
+ 		gen_fill_branch(branch1);
+ 		MOV_REG_WORD_TO_HOST_REG(FC_OP1,DRC_REG_ECX,decode.big_addr);
+@@ -1176,7 +1194,7 @@ static void dyn_loop(LoopTypes type) {
+ 	// Branch taken
+ 	gen_fill_branch(branch2);
+ 	gen_add_direct_word(&reg_eip,eip_base,decode.big_op);
+-	gen_jmp_ptr(&decode.block->link[1].to,offsetof(CacheBlockDynRec,cache.start));
++	dyn_jmp_link(1);
+ 	dyn_closeblock();
+ }
+ 
+@@ -1184,15 +1202,11 @@ static void dyn_loop(LoopTypes type) {
+ static void dyn_ret_near(Bitu bytes) {
+ 	dyn_reduce_cycles();
+ 
+-	if (decode.big_op) gen_call_function_raw((void*)&dynrec_pop_dword);
+-	else {
+-		gen_call_function_raw((void*)&dynrec_pop_word);
+-		gen_extend_word(false,FC_RETOP);
+-	}
+-	gen_mov_word_from_reg(FC_RETOP,decode.big_op?(void*)(&reg_eip):(void*)(&reg_ip),true);
++	dyn_pop_call(decode.big_op);
++	gen_mov_word_from_reg(FC_RETOP,decode.big_op?(void*)(&reg_eip):(void*)(&reg_ip),decode.big_op);
+ 
+ 	if (bytes) gen_add_direct_word(&reg_esp,bytes,true);
+-	dyn_return(BR_Normal);
++	dyn_return_indirect();
+ 	dyn_closeblock();
+ }
+ 
+@@ -1201,14 +1215,13 @@ static void dyn_call_near_imm(void) {
+ 	if (decode.big_op) imm=(Bit32s)decode_fetchd();
+ 	else imm=(Bit16s)decode_fetchw();
+ 	dyn_set_eip_end(FC_OP1);
+-	if (decode.big_op) gen_call_function_raw((void*)&dynrec_push_dword);
+-	else gen_call_function_raw((void*)&dynrec_push_word);
++	dyn_push_call(decode.big_op);
+ 
+ 	dyn_set_eip_end(FC_OP1,imm);
+ 	gen_mov_word_from_reg(FC_OP1,decode.big_op?(void*)(&reg_eip):(void*)(&reg_ip),decode.big_op);
+ 
+ 	dyn_reduce_cycles();
+-	gen_jmp_ptr(&decode.block->link[0].to,offsetof(CacheBlockDynRec,cache.start));
++	dyn_jmp_link(0);
+ 	dyn_closeblock();
+ }
+ 
+@@ -1216,7 +1229,7 @@ static void dyn_ret_far(Bitu bytes) {
+ 	dyn_reduce_cycles();
+ 	dyn_set_eip_last_end(FC_RETOP);
+ 	gen_call_function_IIR((void*)&CPU_RET,decode.big_op,bytes,FC_RETOP);
+-	dyn_return(BR_Normal);
++	dyn_return_indirect();
+ 	dyn_closeblock();
+ }
+ 
+@@ -1263,7 +1276,12 @@ static void dyn_interrupt(Bit8u num) {
+ static void dyn_string(StringOps op) {
+ 	if (decode.rep) MOV_REG_WORD_TO_HOST_REG(FC_OP1,DRC_REG_ECX,decode.big_addr);
+ 	else gen_mov_dword_to_reg_imm(FC_OP1,1);
++	// cpu.direction is a Bits, access its lower 32bit
++#if defined(WORDS_BIGENDIAN)
++	gen_mov_word_to_reg(FC_OP2,(Bit8u*)&cpu.direction+sizeof(cpu.direction)-4,true);
++#else
+ 	gen_mov_word_to_reg(FC_OP2,&cpu.direction,true);
++#endif
+ 	Bit8u di_base_addr=decode.seg_prefix_used ? decode.seg_prefix : DRC_SEG_DS;
+ 	switch (op) {
+ 		case STR_MOVSB:
+diff --git a/src/cpu/core_dynrec/dyn_fpu.h b/src/cpu/core_dynrec/dyn_fpu.h
+--- a/src/cpu/core_dynrec/dyn_fpu.h
++++ b/src/cpu/core_dynrec/dyn_fpu.h
+@@ -1,5 +1,6 @@
+ /*
+  *  Copyright (C) 2002-2010  The DOSBox Team
++ *  Copyright (C) 2026 René Rebe <rene@exactco.de>
+  *
+  *  This program is free software; you can redistribute it and/or modify
+  *  it under the terms of the GNU General Public License as published by
+@@ -68,33 +69,106 @@ static INLINE void dyn_fpu_top_swapped() {
+ 	gen_mov_word_to_reg(FC_OP2,(void*)(&TOP),true);
+ }
+ 
++#if defined(DRC_USE_INLINE_FPU)
++// TOP-1 into TOP and FC_OP1, the new top is marked valid
++static void dyn_fpu_prep_push(void) {
++	gen_mov_word_to_reg(FC_OP1,(void*)(&TOP),true);
++	gen_add_imm(FC_OP1,(Bit32u)-1);
++	gen_and_imm(FC_OP1,7);
++	gen_mov_word_from_reg(FC_OP1,(void*)(&TOP),true);
++	gen_fpu_set_tag(FC_OP1,TAG_Valid);
++}
++
++static void dyn_fpu_pop(void) {
++	gen_mov_word_to_reg(FC_OP1,(void*)(&TOP),true);
++	gen_fpu_set_tag(FC_OP1,TAG_Empty);
++	gen_add_imm(FC_OP1,1);
++	gen_and_imm(FC_OP1,7);
++	gen_mov_word_from_reg(FC_OP1,(void*)(&TOP),true);
++}
++
++// FLD m32/m64, the memory is read before the stack is changed
++static void dyn_fpu_fld_mem(bool f64) {
++	dyn_fill_ea(FC_ADDR);
++	dyn_read_word(FC_ADDR,FC_OP2,true);
++	if (f64) {
++		gen_protect_reg(FC_OP2);
++		gen_add_imm(FC_ADDR,4);
++		dyn_read_word(FC_ADDR,FC_OP3,true);
++		gen_restore_reg(FC_OP2);
++	}
++	dyn_fpu_prep_push();
++	gen_fpu_load(FC_OP1,FC_OP2,FC_OP3,f64);
++}
++
++// FST m32/m64 of ST(0) to the address in FC_ADDR
++static void dyn_fpu_fst_mem(bool f64) {
++	gen_mov_word_to_reg(FC_OP1,(void*)(&TOP),true);
++	gen_fpu_store(FC_OP1,FC_OP2,FC_OP3,f64);
++	if (f64) gen_protect_reg(FC_OP3);
++	dyn_write_word(FC_ADDR,FC_OP2,true);
++	if (f64) {
++		gen_restore_reg(FC_OP3);
++		gen_add_imm(FC_ADDR,4);
++		dyn_write_word(FC_ADDR,FC_OP3,true);
++	}
++}
++#endif
++
++#if defined(DRC_USE_INLINE_FPU)
++#define DYN_FPU_POP() dyn_fpu_pop()
++#define DYN_FPU_PREP_PUSH() dyn_fpu_prep_push()
++#define DYN_FPU_FST() gen_fpu_copy(FC_OP2,FC_OP1)
++#define DYN_FPU_FXCH() gen_fpu_xchg(FC_OP1,FC_OP2)
++#else
++#define DYN_FPU_POP() gen_call_function_raw((void*)&FPU_FPOP)
++#define DYN_FPU_PREP_PUSH() gen_call_function_raw((void*)&FPU_PREP_PUSH)
++#define DYN_FPU_FST() gen_call_function_RR((void*)&FPU_FST,FC_OP1,FC_OP2)
++#define DYN_FPU_FXCH() gen_call_function_RR((void*)&FPU_FXCH,FC_OP1,FC_OP2)
++#endif
++
++// fpu.regs[st] = fpu.regs[st] op fpu.regs[other] with st in FC_OP1 and other in
++// FC_OP2, or the loaded memory operand in fpu.regs[8] for ea
++static void dyn_fpu_arith(DrcFpuOp op,bool ea) {
++#if defined(DRC_USE_INLINE_FPU_ARITH)
++	if (ea) gen_mov_dword_to_reg_imm(FC_OP2,8);
++	gen_fpu_arith(op,FC_OP1,FC_OP2);
++#else
++	static void (* const func[])(Bitu,Bitu) = {
++		FPU_FADD, FPU_FMUL, FPU_FSUB, FPU_FSUBR, FPU_FDIV, FPU_FDIVR
++	};
++	if (ea) gen_mov_dword_to_reg_imm(FC_OP2,8);
++	gen_call_function_RR((void*)func[op],FC_OP1,FC_OP2);
++#endif
++}
++
+ static void dyn_eatree() {
+ 	Bitu group=(decode.modrm.val >> 3) & 7;
+ 	switch (group){
+ 	case 0x00:		// FADD ST,STi
+-		gen_call_function_R((void*)&FPU_FADD_EA,FC_OP1);
++		dyn_fpu_arith(DRC_FPU_ADD,true);
+ 		break;
+ 	case 0x01:		// FMUL  ST,STi
+-		gen_call_function_R((void*)&FPU_FMUL_EA,FC_OP1);
++		dyn_fpu_arith(DRC_FPU_MUL,true);
+ 		break;
+ 	case 0x02:		// FCOM  STi
+ 		gen_call_function_R((void*)&FPU_FCOM_EA,FC_OP1);
+ 		break;
+ 	case 0x03:		// FCOMP STi
+ 		gen_call_function_R((void*)&FPU_FCOM_EA,FC_OP1);
+-		gen_call_function_raw((void*)&FPU_FPOP);
++		DYN_FPU_POP();
+ 		break;
+ 	case 0x04:		// FSUB  ST,STi
+-		gen_call_function_R((void*)&FPU_FSUB_EA,FC_OP1);
++		dyn_fpu_arith(DRC_FPU_SUB,true);
+ 		break;	
+ 	case 0x05:		// FSUBR ST,STi
+-		gen_call_function_R((void*)&FPU_FSUBR_EA,FC_OP1);
++		dyn_fpu_arith(DRC_FPU_SUBR,true);
+ 		break;
+ 	case 0x06:		// FDIV  ST,STi
+-		gen_call_function_R((void*)&FPU_FDIV_EA,FC_OP1);
++		dyn_fpu_arith(DRC_FPU_DIV,true);
+ 		break;
+ 	case 0x07:		// FDIVR ST,STi
+-		gen_call_function_R((void*)&FPU_FDIVR_EA,FC_OP1);
++		dyn_fpu_arith(DRC_FPU_DIVR,true);
+ 		break;
+ 	default:
+ 		break;
+@@ -107,29 +181,29 @@ static void dyn_fpu_esc0(){
+ 		dyn_fpu_top();
+ 		switch (decode.modrm.reg){
+ 		case 0x00:		//FADD ST,STi
+-			gen_call_function_RR((void*)&FPU_FADD,FC_OP1,FC_OP2);
++			dyn_fpu_arith(DRC_FPU_ADD,false);
+ 			break;
+ 		case 0x01:		// FMUL  ST,STi
+-			gen_call_function_RR((void*)&FPU_FMUL,FC_OP1,FC_OP2);
++			dyn_fpu_arith(DRC_FPU_MUL,false);
+ 			break;
+ 		case 0x02:		// FCOM  STi
+ 			gen_call_function_RR((void*)&FPU_FCOM,FC_OP1,FC_OP2);
+ 			break;
+ 		case 0x03:		// FCOMP STi
+ 			gen_call_function_RR((void*)&FPU_FCOM,FC_OP1,FC_OP2);
+-			gen_call_function_raw((void*)&FPU_FPOP);
++			DYN_FPU_POP();
+ 			break;
+ 		case 0x04:		// FSUB  ST,STi
+-			gen_call_function_RR((void*)&FPU_FSUB,FC_OP1,FC_OP2);
++			dyn_fpu_arith(DRC_FPU_SUB,false);
+ 			break;	
+ 		case 0x05:		// FSUBR ST,STi
+-			gen_call_function_RR((void*)&FPU_FSUBR,FC_OP1,FC_OP2);
++			dyn_fpu_arith(DRC_FPU_SUBR,false);
+ 			break;
+ 		case 0x06:		// FDIV  ST,STi
+-			gen_call_function_RR((void*)&FPU_FDIV,FC_OP1,FC_OP2);
++			dyn_fpu_arith(DRC_FPU_DIV,false);
+ 			break;
+ 		case 0x07:		// FDIVR ST,STi
+-			gen_call_function_RR((void*)&FPU_FDIVR,FC_OP1,FC_OP2);
++			dyn_fpu_arith(DRC_FPU_DIVR,false);
+ 			break;
+ 		default:
+ 			break;
+@@ -152,22 +226,22 @@ static void dyn_fpu_esc1(){
+ 			gen_add_imm(FC_OP1,decode.modrm.rm);
+ 			gen_and_imm(FC_OP1,7);
+ 			gen_protect_reg(FC_OP1);
+-			gen_call_function_raw((void*)&FPU_PREP_PUSH); 
++			DYN_FPU_PREP_PUSH(); 
+ 			gen_mov_word_to_reg(FC_OP2,(void*)(&TOP),true);
+ 			gen_restore_reg(FC_OP1);
+-			gen_call_function_RR((void*)&FPU_FST,FC_OP1,FC_OP2);
++			DYN_FPU_FST();
+ 			break;
+ 		case 0x01: /* FXCH STi */
+ 			dyn_fpu_top();
+-			gen_call_function_RR((void*)&FPU_FXCH,FC_OP1,FC_OP2);
++			DYN_FPU_FXCH();
+ 			break;
+ 		case 0x02: /* FNOP */
+ 			gen_call_function_raw((void*)&FPU_FNOP);
+ 			break;
+ 		case 0x03: /* FSTP STi */
+ 			dyn_fpu_top();
+-			gen_call_function_RR((void*)&FPU_FST,FC_OP1,FC_OP2);
+-			gen_call_function_raw((void*)&FPU_FPOP);
++			DYN_FPU_FST();
++			DYN_FPU_POP();
+ 			break;   
+ 		case 0x04:
+ 			switch(decode.modrm.rm){
+@@ -290,22 +364,34 @@ static void dyn_fpu_esc1(){
+ 	} else {
+ 		switch(decode.modrm.reg){
+ 		case 0x00: /* FLD float*/
+-			gen_call_function_raw((void*)&FPU_PREP_PUSH);
++			#if defined(DRC_USE_INLINE_FPU)
++			dyn_fpu_fld_mem(false);
++#else
++			DYN_FPU_PREP_PUSH();
+ 			dyn_fill_ea(FC_OP1);
+ 			gen_mov_word_to_reg(FC_OP2,(void*)(&TOP),true);
+ 			gen_call_function_RR((void*)&FPU_FLD_F32,FC_OP1,FC_OP2);
++#endif
+ 			break;
+ 		case 0x01: /* UNKNOWN */
+ 			LOG(LOG_FPU,LOG_WARN)("ESC EA 1:Unhandled group %d subfunction %d",decode.modrm.reg,decode.modrm.rm);
+ 			break;
+ 		case 0x02: /* FST float*/
+ 			dyn_fill_ea(FC_ADDR);
++			#if defined(DRC_USE_INLINE_FPU)
++			dyn_fpu_fst_mem(false);
++#else
+ 			gen_call_function_R((void*)&FPU_FST_F32,FC_ADDR);
++#endif
+ 			break;
+ 		case 0x03: /* FSTP float*/
+ 			dyn_fill_ea(FC_ADDR);
++			#if defined(DRC_USE_INLINE_FPU)
++			dyn_fpu_fst_mem(false);
++#else
+ 			gen_call_function_R((void*)&FPU_FST_F32,FC_ADDR);
+-			gen_call_function_raw((void*)&FPU_FPOP);
++#endif
++			DYN_FPU_POP();
+ 			break;
+ 		case 0x04: /* FLDENV */
+ 			dyn_fill_ea(FC_ADDR);
+@@ -342,8 +428,8 @@ static void dyn_fpu_esc2(){
+ 				gen_and_imm(FC_OP2,7);
+ 				gen_mov_word_to_reg(FC_OP1,(void*)(&TOP),true);
+ 				gen_call_function_RR((void *)&FPU_FUCOM,FC_OP1,FC_OP2);
+-				gen_call_function_raw((void *)&FPU_FPOP);
+-				gen_call_function_raw((void *)&FPU_FPOP);
++				DYN_FPU_POP();
++				DYN_FPU_POP();
+ 				break;
+ 			default:
+ 				LOG(LOG_FPU,LOG_WARN)("ESC 2:Unhandled group %d subfunction %d",decode.modrm.reg,decode.modrm.rm); 
+@@ -393,7 +479,7 @@ static void dyn_fpu_esc3(){
+ 	} else {
+ 		switch(decode.modrm.reg){
+ 		case 0x00:	/* FILD */
+-			gen_call_function_raw((void*)&FPU_PREP_PUSH);
++			DYN_FPU_PREP_PUSH();
+ 			dyn_fill_ea(FC_OP1); 
+ 			gen_mov_word_to_reg(FC_OP2,(void*)(&TOP),true);
+ 			gen_call_function_RR((void*)&FPU_FLD_I32,FC_OP1,FC_OP2);
+@@ -408,17 +494,17 @@ static void dyn_fpu_esc3(){
+ 		case 0x03:	/* FISTP */
+ 			dyn_fill_ea(FC_ADDR); 
+ 			gen_call_function_R((void*)&FPU_FST_I32,FC_ADDR);
+-			gen_call_function_raw((void*)&FPU_FPOP);
++			DYN_FPU_POP();
+ 			break;
+ 		case 0x05:	/* FLD 80 Bits Real */
+-			gen_call_function_raw((void*)&FPU_PREP_PUSH);
++			DYN_FPU_PREP_PUSH();
+ 			dyn_fill_ea(FC_ADDR); 
+ 			gen_call_function_R((void*)&FPU_FLD_F80,FC_ADDR);
+ 			break;
+ 		case 0x07:	/* FSTP 80 Bits Real */
+ 			dyn_fill_ea(FC_ADDR); 
+ 			gen_call_function_R((void*)&FPU_FST_F80,FC_ADDR);
+-			gen_call_function_raw((void*)&FPU_FPOP);
++			DYN_FPU_POP();
+ 			break;
+ 		default:
+ 			LOG(LOG_FPU,LOG_WARN)("ESC 3 EA:Unhandled group %d subfunction %d",decode.modrm.reg,decode.modrm.rm);
+@@ -432,11 +518,11 @@ static void dyn_fpu_esc4(){
+ 		switch(decode.modrm.reg){
+ 		case 0x00:	/* FADD STi,ST*/
+ 			dyn_fpu_top_swapped();
+-			gen_call_function_RR((void*)&FPU_FADD,FC_OP1,FC_OP2);
++			dyn_fpu_arith(DRC_FPU_ADD,false);
+ 			break;
+ 		case 0x01:	/* FMUL STi,ST*/
+ 			dyn_fpu_top_swapped();
+-			gen_call_function_RR((void*)&FPU_FMUL,FC_OP1,FC_OP2);
++			dyn_fpu_arith(DRC_FPU_MUL,false);
+ 			break;
+ 		case 0x02:  /* FCOM*/
+ 			dyn_fpu_top();
+@@ -445,23 +531,23 @@ static void dyn_fpu_esc4(){
+ 		case 0x03:  /* FCOMP*/
+ 			dyn_fpu_top();
+ 			gen_call_function_RR((void*)&FPU_FCOM,FC_OP1,FC_OP2);
+-			gen_call_function_raw((void*)&FPU_FPOP);
++			DYN_FPU_POP();
+ 			break;
+ 		case 0x04:  /* FSUBR STi,ST*/
+ 			dyn_fpu_top_swapped();
+-			gen_call_function_RR((void*)&FPU_FSUBR,FC_OP1,FC_OP2);
++			dyn_fpu_arith(DRC_FPU_SUBR,false);
+ 			break;
+ 		case 0x05:  /* FSUB  STi,ST*/
+ 			dyn_fpu_top_swapped();
+-			gen_call_function_RR((void*)&FPU_FSUB,FC_OP1,FC_OP2);
++			dyn_fpu_arith(DRC_FPU_SUB,false);
+ 			break;
+ 		case 0x06:  /* FDIVR STi,ST*/
+ 			dyn_fpu_top_swapped();
+-			gen_call_function_RR((void*)&FPU_FDIVR,FC_OP1,FC_OP2);
++			dyn_fpu_arith(DRC_FPU_DIVR,false);
+ 			break;
+ 		case 0x07:  /* FDIV STi,ST*/
+ 			dyn_fpu_top_swapped();
+-			gen_call_function_RR((void*)&FPU_FDIV,FC_OP1,FC_OP2);
++			dyn_fpu_arith(DRC_FPU_DIV,false);
+ 			break;
+ 		default:
+ 			break;
+@@ -483,21 +569,21 @@ static void dyn_fpu_esc5(){
+ 			gen_call_function_R((void*)&FPU_FFREE,FC_OP2);
+ 			break;
+ 		case 0x01: /* FXCH STi*/
+-			gen_call_function_RR((void*)&FPU_FXCH,FC_OP1,FC_OP2);
++			DYN_FPU_FXCH();
+ 			break;
+ 		case 0x02: /* FST STi */
+-			gen_call_function_RR((void*)&FPU_FST,FC_OP1,FC_OP2);
++			DYN_FPU_FST();
+ 			break;
+ 		case 0x03:  /* FSTP STi*/
+-			gen_call_function_RR((void*)&FPU_FST,FC_OP1,FC_OP2);
+-			gen_call_function_raw((void*)&FPU_FPOP);
++			DYN_FPU_FST();
++			DYN_FPU_POP();
+ 			break;
+ 		case 0x04:	/* FUCOM STi */
+ 			gen_call_function_RR((void*)&FPU_FUCOM,FC_OP1,FC_OP2);
+ 			break;
+ 		case 0x05:	/*FUCOMP STi */
+ 			gen_call_function_RR((void*)&FPU_FUCOM,FC_OP1,FC_OP2);
+-			gen_call_function_raw((void*)&FPU_FPOP);
++			DYN_FPU_POP();
+ 			break;
+ 		default:
+ 			LOG(LOG_FPU,LOG_WARN)("ESC 5:Unhandled group %d subfunction %d",decode.modrm.reg,decode.modrm.rm);
+@@ -506,22 +592,34 @@ static void dyn_fpu_esc5(){
+ 	} else {
+ 		switch(decode.modrm.reg){
+ 		case 0x00:  /* FLD double real*/
+-			gen_call_function_raw((void*)&FPU_PREP_PUSH);
+-			dyn_fill_ea(FC_OP1); 
++			#if defined(DRC_USE_INLINE_FPU)
++			dyn_fpu_fld_mem(true);
++#else
++			DYN_FPU_PREP_PUSH();
++			dyn_fill_ea(FC_OP1);
+ 			gen_mov_word_to_reg(FC_OP2,(void*)(&TOP),true);
+ 			gen_call_function_RR((void*)&FPU_FLD_F64,FC_OP1,FC_OP2);
++#endif
+ 			break;
+ 		case 0x01:  /* FISTTP longint*/
+ 			LOG(LOG_FPU,LOG_WARN)("ESC 5 EA:Unhandled group %d subfunction %d",decode.modrm.reg,decode.modrm.rm);
+ 			break;
+ 		case 0x02:   /* FST double real*/
+ 			dyn_fill_ea(FC_ADDR); 
++			#if defined(DRC_USE_INLINE_FPU)
++			dyn_fpu_fst_mem(true);
++#else
+ 			gen_call_function_R((void*)&FPU_FST_F64,FC_ADDR);
++#endif
+ 			break;
+ 		case 0x03:	/* FSTP double real*/
+ 			dyn_fill_ea(FC_ADDR); 
++			#if defined(DRC_USE_INLINE_FPU)
++			dyn_fpu_fst_mem(true);
++#else
+ 			gen_call_function_R((void*)&FPU_FST_F64,FC_ADDR);
+-			gen_call_function_raw((void*)&FPU_FPOP);
++#endif
++			DYN_FPU_POP();
+ 			break;
+ 		case 0x04:	/* FRSTOR */
+ 			dyn_fill_ea(FC_ADDR); 
+@@ -550,11 +648,11 @@ static void dyn_fpu_esc6(){
+ 		switch(decode.modrm.reg){
+ 		case 0x00:	/*FADDP STi,ST*/
+ 			dyn_fpu_top_swapped();
+-			gen_call_function_RR((void*)&FPU_FADD,FC_OP1,FC_OP2);
++			dyn_fpu_arith(DRC_FPU_ADD,false);
+ 			break;
+ 		case 0x01:	/* FMULP STi,ST*/
+ 			dyn_fpu_top_swapped();
+-			gen_call_function_RR((void*)&FPU_FMUL,FC_OP1,FC_OP2);
++			dyn_fpu_arith(DRC_FPU_MUL,false);
+ 			break;
+ 		case 0x02:  /* FCOMP5*/
+ 			dyn_fpu_top();
+@@ -570,28 +668,28 @@ static void dyn_fpu_esc6(){
+ 			gen_and_imm(FC_OP2,7);
+ 			gen_mov_word_to_reg(FC_OP1,(void*)(&TOP),true);
+ 			gen_call_function_RR((void*)&FPU_FCOM,FC_OP1,FC_OP2);
+-			gen_call_function_raw((void*)&FPU_FPOP); /* extra pop at the bottom*/
++			DYN_FPU_POP(); /* extra pop at the bottom*/
+ 			break;
+ 		case 0x04:  /* FSUBRP STi,ST*/
+ 			dyn_fpu_top_swapped();
+-			gen_call_function_RR((void*)&FPU_FSUBR,FC_OP1,FC_OP2);
++			dyn_fpu_arith(DRC_FPU_SUBR,false);
+ 			break;
+ 		case 0x05:  /* FSUBP  STi,ST*/
+ 			dyn_fpu_top_swapped();
+-			gen_call_function_RR((void*)&FPU_FSUB,FC_OP1,FC_OP2);
++			dyn_fpu_arith(DRC_FPU_SUB,false);
+ 			break;
+ 		case 0x06:	/* FDIVRP STi,ST*/
+ 			dyn_fpu_top_swapped();
+-			gen_call_function_RR((void*)&FPU_FDIVR,FC_OP1,FC_OP2);
++			dyn_fpu_arith(DRC_FPU_DIVR,false);
+ 			break;
+ 		case 0x07:  /* FDIVP STi,ST*/
+ 			dyn_fpu_top_swapped();
+-			gen_call_function_RR((void*)&FPU_FDIV,FC_OP1,FC_OP2);
++			dyn_fpu_arith(DRC_FPU_DIV,false);
+ 			break;
+ 		default:
+ 			break;
+ 		}
+-		gen_call_function_raw((void*)&FPU_FPOP);		
++		DYN_FPU_POP();		
+ 	} else {
+ 		dyn_fill_ea(FC_ADDR);
+ 		gen_call_function_R((void*)&FPU_FLD_I16_EA,FC_ADDR); 
+@@ -607,17 +705,17 @@ static void dyn_fpu_esc7(){
+ 		case 0x00: /* FFREEP STi */
+ 			dyn_fpu_top();
+ 			gen_call_function_R((void*)&FPU_FFREE,FC_OP2);
+-			gen_call_function_raw((void*)&FPU_FPOP);
++			DYN_FPU_POP();
+ 			break;
+ 		case 0x01: /* FXCH STi*/
+ 			dyn_fpu_top();
+-			gen_call_function_RR((void*)&FPU_FXCH,FC_OP1,FC_OP2);
++			DYN_FPU_FXCH();
+ 			break;
+ 		case 0x02:  /* FSTP STi*/
+ 		case 0x03:  /* FSTP STi*/
+ 			dyn_fpu_top();
+-			gen_call_function_RR((void*)&FPU_FST,FC_OP1,FC_OP2);
+-			gen_call_function_raw((void*)&FPU_FPOP);
++			DYN_FPU_FST();
++			DYN_FPU_POP();
+ 			break;
+ 		case 0x04:
+ 			switch(decode.modrm.rm){
+@@ -639,7 +737,7 @@ static void dyn_fpu_esc7(){
+ 	} else {
+ 		switch(decode.modrm.reg){
+ 		case 0x00:  /* FILD Bit16s */
+-			gen_call_function_raw((void*)&FPU_PREP_PUSH);
++			DYN_FPU_PREP_PUSH();
+ 			dyn_fill_ea(FC_OP1); 
+ 			gen_mov_word_to_reg(FC_OP2,(void*)(&TOP),true);
+ 			gen_call_function_RR((void*)&FPU_FLD_I16,FC_OP1,FC_OP2);
+@@ -654,16 +752,16 @@ static void dyn_fpu_esc7(){
+ 		case 0x03:	/* FISTP Bit16s */
+ 			dyn_fill_ea(FC_ADDR); 
+ 			gen_call_function_R((void*)&FPU_FST_I16,FC_ADDR);
+-			gen_call_function_raw((void*)&FPU_FPOP);
++			DYN_FPU_POP();
+ 			break;
+ 		case 0x04:   /* FBLD packed BCD */
+-			gen_call_function_raw((void*)&FPU_PREP_PUSH);
++			DYN_FPU_PREP_PUSH();
+ 			dyn_fill_ea(FC_OP1);
+ 			gen_mov_word_to_reg(FC_OP2,(void*)(&TOP),true);
+ 			gen_call_function_RR((void*)&FPU_FBLD,FC_OP1,FC_OP2);
+ 			break;
+ 		case 0x05:  /* FILD Bit64s */
+-			gen_call_function_raw((void*)&FPU_PREP_PUSH);
++			DYN_FPU_PREP_PUSH();
+ 			dyn_fill_ea(FC_OP1);
+ 			gen_mov_word_to_reg(FC_OP2,(void*)(&TOP),true);
+ 			gen_call_function_RR((void*)&FPU_FLD_I64,FC_OP1,FC_OP2);
+@@ -671,12 +769,12 @@ static void dyn_fpu_esc7(){
+ 		case 0x06:	/* FBSTP packed BCD */
+ 			dyn_fill_ea(FC_ADDR); 
+ 			gen_call_function_R((void*)&FPU_FBST,FC_ADDR);
+-			gen_call_function_raw((void*)&FPU_FPOP);
++			DYN_FPU_POP();
+ 			break;
+ 		case 0x07:  /* FISTP Bit64s */
+ 			dyn_fill_ea(FC_ADDR); 
+ 			gen_call_function_R((void*)&FPU_FST_I64,FC_ADDR);
+-			gen_call_function_raw((void*)&FPU_FPOP);
++			DYN_FPU_POP();
+ 			break;
+ 		default:
+ 			LOG(LOG_FPU,LOG_WARN)("ESC 7 EA:Unhandled group %d subfunction %d",decode.modrm.reg,decode.modrm.rm);
+diff --git a/src/cpu/core_dynrec/operators.h b/src/cpu/core_dynrec/operators.h
+--- a/src/cpu/core_dynrec/operators.h
++++ b/src/cpu/core_dynrec/operators.h
+@@ -1,5 +1,6 @@
+ /*
+  *  Copyright (C) 2002-2010  The DOSBox Team
++ *  Copyright (C) 2026 René Rebe <rene@exactco.de>
+  *
+  *  This program is free software; you can redistribute it and/or modify
+  *  it under the terms of the GNU General Public License as published by
+@@ -48,6 +49,21 @@ static Bit8u DRC_CALL_CONV dynrec_adc_byte_simple(Bit8u op1,Bit8u op2) {
+ 	return (Bit8u)(op1+op2+(Bitu)(get_CF()!=0));
+ }
+ 
++static Bit8u DRC_CALL_CONV dynrec_adc_byte_cf(Bit8u op1,Bit8u op2,Bit8u cf) DRC_FC;
++static Bit8u DRC_CALL_CONV dynrec_adc_byte_cf(Bit8u op1,Bit8u op2,Bit8u cf) {
++	lflags.oldcf=cf!=0;
++	lf_var1b=op1;
++	lf_var2b=op2;
++	lf_resb=(Bit8u)(lf_var1b+lf_var2b+cf);
++	lflags.type=t_ADCb;
++	return lf_resb;
++}
++
++static Bit8u DRC_CALL_CONV dynrec_adc_byte_simple_cf(Bit8u op1,Bit8u op2,Bit8u cf) DRC_FC;
++static Bit8u DRC_CALL_CONV dynrec_adc_byte_simple_cf(Bit8u op1,Bit8u op2,Bit8u cf) {
++	return (Bit8u)(op1+op2+cf);
++}
++
+ static Bit8u DRC_CALL_CONV dynrec_sub_byte(Bit8u op1,Bit8u op2) DRC_FC;
+ static Bit8u DRC_CALL_CONV dynrec_sub_byte(Bit8u op1,Bit8u op2) {
+ 	lf_var1b=op1;
+@@ -77,6 +93,21 @@ static Bit8u DRC_CALL_CONV dynrec_sbb_byte_simple(Bit8u op1,Bit8u op2) {
+ 	return (Bit8u)(op1-(op2+(Bitu)(get_CF()!=0)));
+ }
+ 
++static Bit8u DRC_CALL_CONV dynrec_sbb_byte_cf(Bit8u op1,Bit8u op2,Bit8u cf) DRC_FC;
++static Bit8u DRC_CALL_CONV dynrec_sbb_byte_cf(Bit8u op1,Bit8u op2,Bit8u cf) {
++	lflags.oldcf=cf!=0;
++	lf_var1b=op1;
++	lf_var2b=op2;
++	lf_resb=(Bit8u)(lf_var1b-(lf_var2b+cf));
++	lflags.type=t_SBBb;
++	return lf_resb;
++}
++
++static Bit8u DRC_CALL_CONV dynrec_sbb_byte_simple_cf(Bit8u op1,Bit8u op2,Bit8u cf) DRC_FC;
++static Bit8u DRC_CALL_CONV dynrec_sbb_byte_simple_cf(Bit8u op1,Bit8u op2,Bit8u cf) {
++	return (Bit8u)(op1-(op2+cf));
++}
++
+ static void DRC_CALL_CONV dynrec_cmp_byte(Bit8u op1,Bit8u op2) DRC_FC;
+ static void DRC_CALL_CONV dynrec_cmp_byte(Bit8u op1,Bit8u op2) {
+ 	lf_var1b=op1;
+@@ -172,6 +203,21 @@ static Bit16u DRC_CALL_CONV dynrec_adc_word_simple(Bit16u op1,Bit16u op2) {
+ 	return (Bit16u)(op1+op2+(Bitu)(get_CF()!=0));
+ }
+ 
++static Bit16u DRC_CALL_CONV dynrec_adc_word_cf(Bit16u op1,Bit16u op2,Bit8u cf) DRC_FC;
++static Bit16u DRC_CALL_CONV dynrec_adc_word_cf(Bit16u op1,Bit16u op2,Bit8u cf) {
++	lflags.oldcf=cf!=0;
++	lf_var1w=op1;
++	lf_var2w=op2;
++	lf_resw=(Bit16u)(lf_var1w+lf_var2w+cf);
++	lflags.type=t_ADCw;
++	return lf_resw;
++}
++
++static Bit16u DRC_CALL_CONV dynrec_adc_word_simple_cf(Bit16u op1,Bit16u op2,Bit8u cf) DRC_FC;
++static Bit16u DRC_CALL_CONV dynrec_adc_word_simple_cf(Bit16u op1,Bit16u op2,Bit8u cf) {
++	return (Bit16u)(op1+op2+cf);
++}
++
+ static Bit16u DRC_CALL_CONV dynrec_sub_word(Bit16u op1,Bit16u op2) DRC_FC;
+ static Bit16u DRC_CALL_CONV dynrec_sub_word(Bit16u op1,Bit16u op2) {
+ 	lf_var1w=op1;
+@@ -201,6 +247,21 @@ static Bit16u DRC_CALL_CONV dynrec_sbb_word_simple(Bit16u op1,Bit16u op2) {
+ 	return (Bit16u)(op1-(op2+(Bitu)(get_CF()!=0)));
+ }
+ 
++static Bit16u DRC_CALL_CONV dynrec_sbb_word_cf(Bit16u op1,Bit16u op2,Bit8u cf) DRC_FC;
++static Bit16u DRC_CALL_CONV dynrec_sbb_word_cf(Bit16u op1,Bit16u op2,Bit8u cf) {
++	lflags.oldcf=cf!=0;
++	lf_var1w=op1;
++	lf_var2w=op2;
++	lf_resw=(Bit16u)(lf_var1w-(lf_var2w+cf));
++	lflags.type=t_SBBw;
++	return lf_resw;
++}
++
++static Bit16u DRC_CALL_CONV dynrec_sbb_word_simple_cf(Bit16u op1,Bit16u op2,Bit8u cf) DRC_FC;
++static Bit16u DRC_CALL_CONV dynrec_sbb_word_simple_cf(Bit16u op1,Bit16u op2,Bit8u cf) {
++	return (Bit16u)(op1-(op2+cf));
++}
++
+ static void DRC_CALL_CONV dynrec_cmp_word(Bit16u op1,Bit16u op2) DRC_FC;
+ static void DRC_CALL_CONV dynrec_cmp_word(Bit16u op1,Bit16u op2) {
+ 	lf_var1w=op1;
+@@ -296,6 +357,21 @@ static Bit32u DRC_CALL_CONV dynrec_adc_dword_simple(Bit32u op1,Bit32u op2) {
+ 	return op1+op2+(Bitu)(get_CF()!=0);
+ }
+ 
++static Bit32u DRC_CALL_CONV dynrec_adc_dword_cf(Bit32u op1,Bit32u op2,Bit8u cf) DRC_FC;
++static Bit32u DRC_CALL_CONV dynrec_adc_dword_cf(Bit32u op1,Bit32u op2,Bit8u cf) {
++	lflags.oldcf=cf!=0;
++	lf_var1d=op1;
++	lf_var2d=op2;
++	lf_resd=(Bit32u)(lf_var1d+lf_var2d+cf);
++	lflags.type=t_ADCd;
++	return lf_resd;
++}
++
++static Bit32u DRC_CALL_CONV dynrec_adc_dword_simple_cf(Bit32u op1,Bit32u op2,Bit8u cf) DRC_FC;
++static Bit32u DRC_CALL_CONV dynrec_adc_dword_simple_cf(Bit32u op1,Bit32u op2,Bit8u cf) {
++	return (Bit32u)(op1+op2+cf);
++}
++
+ static Bit32u DRC_CALL_CONV dynrec_sub_dword(Bit32u op1,Bit32u op2) DRC_FC;
+ static Bit32u DRC_CALL_CONV dynrec_sub_dword(Bit32u op1,Bit32u op2) {
+ 	lf_var1d=op1;
+@@ -325,6 +401,21 @@ static Bit32u DRC_CALL_CONV dynrec_sbb_dword_simple(Bit32u op1,Bit32u op2) {
+ 	return op1-(op2+(Bitu)(get_CF()!=0));
+ }
+ 
++static Bit32u DRC_CALL_CONV dynrec_sbb_dword_cf(Bit32u op1,Bit32u op2,Bit8u cf) DRC_FC;
++static Bit32u DRC_CALL_CONV dynrec_sbb_dword_cf(Bit32u op1,Bit32u op2,Bit8u cf) {
++	lflags.oldcf=cf!=0;
++	lf_var1d=op1;
++	lf_var2d=op2;
++	lf_resd=(Bit32u)(lf_var1d-(lf_var2d+cf));
++	lflags.type=t_SBBd;
++	return lf_resd;
++}
++
++static Bit32u DRC_CALL_CONV dynrec_sbb_dword_simple_cf(Bit32u op1,Bit32u op2,Bit8u cf) DRC_FC;
++static Bit32u DRC_CALL_CONV dynrec_sbb_dword_simple_cf(Bit32u op1,Bit32u op2,Bit8u cf) {
++	return (Bit32u)(op1-(op2+cf));
++}
++
+ static void DRC_CALL_CONV dynrec_cmp_dword(Bit32u op1,Bit32u op2) DRC_FC;
+ static void DRC_CALL_CONV dynrec_cmp_dword(Bit32u op1,Bit32u op2) {
+ 	lf_var1d=op1;
+@@ -392,45 +483,263 @@ static void DRC_CALL_CONV dynrec_test_dword_simple(Bit32u op1,Bit32u op2) {
+ }
+ 
+ 
++// the lower 32bit of a Bitu variable
++#if defined(WORDS_BIGENDIAN)
++#define DRC_LOW32(var) ((Bit8u*)&(var)+sizeof(var)-4)
++#else
++#define DRC_LOW32(var) ((Bit8u*)&(var))
++#endif
++
++#if defined(DRC_USE_INLINE_FLAGS)
++// load a lazy flags value of size bytes, sign or zero extended
++static void dyn_load_lflag(HostReg reg,GenReg32 & val,Bitu size,bool sign) {
++	switch (size) {
++		case 1:
++			gen_mov_byte_to_reg_low(reg,&val.byte[BL_INDEX]);
++			gen_extend_byte(sign,reg);
++			break;
++		case 2:
++			gen_mov_word_to_reg(reg,&val.word[W_INDEX],false);
++			gen_extend_word(sign,reg);
++			break;
++		default:
++			gen_mov_word_to_reg(reg,&val.dword[DW_INDEX],true);
++			break;
++	}
++}
++
++
++// branch to the returned location if lflags.type differs from type
++static DRC_PTR_SIZE_IM dyn_lflags_type_differs(HostReg reg,Bitu type) {
++	// lflags.type is a Bitu, compare its lower 32bit
++#if defined(WORDS_BIGENDIAN)
++	gen_mov_word_to_reg(reg,(Bit8u*)&lflags.type+sizeof(lflags.type)-4,true);
++#else
++	gen_mov_word_to_reg(reg,&lflags.type,true);
++#endif
++	gen_add_imm(reg,(Bit32u)(-(Bit32s)type));
++	return gen_create_branch_on_nonzero(reg,true);
++}
++
++#endif
++
++#if defined(DRC_USE_INLINE_CARRY)
++// evaluate CF of the guessed last flags operation into reg, slow is set to
++// the branch taken if lflags.type differs at runtime; TEMP_REG_DRC is destroyed
++static bool dyn_carry_to_reg(Bitu type,HostReg reg,DRC_PTR_SIZE_IM & slow) {
++	enum { CF_SUB, CF_ADD, CF_ZERO, CF_FLAGS } cl;
++	Bitu size;
++	switch (type) {
++		case t_CMPb: case t_SUBb: cl=CF_SUB; size=1; break;
++		case t_CMPw: case t_SUBw: cl=CF_SUB; size=2; break;
++		case t_CMPd: case t_SUBd: cl=CF_SUB; size=4; break;
++		case t_ADDb: cl=CF_ADD; size=1; break;
++		case t_ADDw: cl=CF_ADD; size=2; break;
++		case t_ADDd: cl=CF_ADD; size=4; break;
++		case t_ANDb: case t_ORb: case t_XORb: case t_TESTb:
++		case t_ANDw: case t_ORw: case t_XORw: case t_TESTw:
++		case t_ANDd: case t_ORd: case t_XORd: case t_TESTd: cl=CF_ZERO; size=4; break;
++		// the carry is kept in reg_flags
++		case t_UNKNOWN: case t_INCb: case t_INCw: case t_INCd:
++		case t_DECb: case t_DECw: case t_DECd: cl=CF_FLAGS; size=4; break;
++		default: return false;
++	}
++	slow=dyn_lflags_type_differs(reg,type);
++	switch (cl) {
++		case CF_SUB:
++			dyn_load_lflag(reg,lflags.var1,size,false);
++			dyn_load_lflag(TEMP_REG_DRC,lflags.var2,size,false);
++			gen_set_condition(reg,reg,TEMP_REG_DRC,DRC_COND_LU);
++			break;
++		case CF_ADD:
++			dyn_load_lflag(reg,lflags.res,size,false);
++			dyn_load_lflag(TEMP_REG_DRC,lflags.var1,size,false);
++			gen_set_condition(reg,reg,TEMP_REG_DRC,DRC_COND_LU);
++			break;
++		case CF_FLAGS:
++			gen_mov_word_to_reg(reg,DRC_LOW32(reg_flags),true);
++			gen_and_imm(reg,FLAG_CF);
++			break;
++		default:
++			gen_mov_dword_to_reg_imm(reg,0);
++			break;
++	}
++	return true;
++}
++#endif
++
++// ADC/SBB, with an inline evaluated carry passed to func_cf if possible
++static void dyn_carry_op_gencall(void* simple,void* func,void* simple_cf,void* func_cf,Bitu ftype) {
++	AcquireFlags(FLAG_CF);
++#if defined(DRC_USE_INLINE_CARRY)
++	DRC_PTR_SIZE_IM slow;
++	if (dyn_carry_to_reg(drc_flags_type_guess,FC_OP3,slow)) {
++		InvalidateFlagsPartially(simple_cf,ftype|DRC_FTYPE_CF);
++		gen_call_function_raw(func_cf);
++		DRC_PTR_SIZE_IM done=gen_create_jump();
++		gen_fill_branch(slow);
++		gen_call_function_raw(func);
++		gen_fill_jump(done);
++		return;
++	}
++#endif
++	InvalidateFlagsPartially(simple,ftype);
++	gen_call_function_raw(func);
++}
++
++#if defined(DRC_USE_INLINE_FLAGS_OPS)
++// store a lazy flags value of size bytes
++static void dyn_store_lflag(HostReg reg,GenReg32 & val,Bitu size) {
++	switch (size) {
++		case 1: gen_mov_byte_from_reg_low(reg,&val.byte[BL_INDEX]); break;
++		case 2: gen_mov_word_from_reg(reg,&val.word[W_INDEX],false); break;
++		default: gen_mov_word_from_reg(reg,&val.dword[DW_INDEX],true); break;
++	}
++}
++
++// store the flags type, done after the call stanza as it is harmless if the
++// stanza is replaced by the simple function: all flags are set again later
++static void dyn_store_lflags_type(Bitu type) {
++	gen_mov_dword_to_reg_imm(TEMP_REG_DRC,(Bit32u)type);
++	gen_mov_word_from_reg(TEMP_REG_DRC,DRC_LOW32(lflags.type),true);
++}
++
++// extend the result, done after the call stanza as the simple function
++// result is the same when extended again
++static void dyn_extend_result(Bitu size) {
++	if (size==1) gen_extend_byte(false,FC_RETOP);
++	else if (size==2) gen_extend_word(false,FC_RETOP);
++	else gen_canonical_dword(FC_RETOP);
++}
++
++// flag-setting dual operation inline in place of the call to the full function,
++// within the call stanza that is replaced when the flags are not needed
++static bool dyn_dop_flags_inline(DrcAluOp op,Bitu size,Bitu type,bool result) {
++	Bit8u * start=cache.pos;
++	dyn_store_lflag(FC_OP1,lflags.var1,size);
++	dyn_store_lflag(FC_OP2,lflags.var2,size);
++	gen_alu_op(op,FC_RETOP,FC_OP1,FC_OP2);
++	dyn_store_lflag(FC_RETOP,lflags.res,size);
++	if (!gen_close_call_stanza(start)) {
++		cache.pos=start;
++		return false;
++	}
++	if (result) dyn_extend_result(size);
++	dyn_store_lflags_type(type);
++	drc_next_call_patchable=false;
++	return true;
++}
++
++// flag-setting shift inline, a zero count keeps the operand and all flags
++static bool dyn_shift_flags_inline(DrcShiftOp op,Bitu size,Bitu type) {
++	Bit8u * start=cache.pos;
++	// a zero count branches over everything with the operand as result
++	DRC_PTR_SIZE_IM skip=gen_branch_zero_keep(FC_OP2,FC_RETOP,FC_OP1);
++	dyn_store_lflag(FC_OP1,lflags.var1,size);
++	gen_mov_byte_from_reg_low(FC_OP2,&lflags.var2.byte[BL_INDEX]);
++	gen_shift_op(op,FC_RETOP,FC_OP1,FC_OP2,size);
++	if (!gen_close_call_stanza(start)) {
++		cache.pos=start;
++		return false;
++	}
++	dyn_extend_result(size);
++	dyn_store_lflag(FC_RETOP,lflags.res,size);
++	dyn_store_lflags_type(type);
++	gen_fill_branch(skip);
++	drc_next_call_patchable=false;
++	return true;
++}
++#endif
++
++// flag-setting shift, replaceable by simple when the flags are not needed
++static void dyn_shift_flags_call(void* simple,void* func,Bitu type,DrcShiftOp op,Bitu size) {
++	InvalidateFlagsPartially(simple,type);
++#if defined(DRC_USE_INLINE_FLAGS_OPS)
++	if (dyn_shift_flags_inline(op,size,type)) return;
++#endif
++	gen_call_function_raw(func);
++}
++
++// INC/DEC keep the carry, which is evaluated before the call stanza and
++// stored to reg_flags inside it; that code is skipped with the simple function
++static void dyn_incdec_call(void* simple,void* func,Bitu type,bool inc,Bitu size) {
++#if defined(DRC_USE_INLINE_FLAGS_OPS) && defined(DRC_USE_INLINE_CARRY)
++	Bit8u * pre=cache.pos;
++	DRC_PTR_SIZE_IM slow;
++	if (dyn_carry_to_reg(drc_flags_type_guess,FC_OP3,slow)) {
++		HostReg one=RegParams[3];
++		gen_mov_dword_to_reg_imm(one,1);
++		gen_alu_op(DRC_ALU_XOR,FC_OP3,FC_OP3,one);
++		gen_mov_dword_to_reg_imm(FC_OP2,inc ? 1 : 0xffffffff);
++		InvalidateFlagsPartially(simple,type);
++		Bit8u * start=cache.pos;
++		// reg_flags = (reg_flags | CF) ^ !carry
++		gen_mov_word_to_reg(TEMP_REG_DRC,DRC_LOW32(reg_flags),true);
++		gen_alu_op(DRC_ALU_OR,TEMP_REG_DRC,TEMP_REG_DRC,one);
++		gen_alu_op(DRC_ALU_XOR,TEMP_REG_DRC,TEMP_REG_DRC,FC_OP3);
++		gen_mov_word_from_reg(TEMP_REG_DRC,DRC_LOW32(reg_flags),true);
++		dyn_store_lflag(FC_OP1,lflags.var1,size);
++		gen_alu_op(DRC_ALU_ADD,FC_RETOP,FC_OP1,FC_OP2);
++		if (gen_close_call_stanza(start)) {
++			mf_functions[mf_functions_num-1].pre=pre;
++			dyn_extend_result(size);
++			dyn_store_lflag(FC_RETOP,lflags.res,size);
++			dyn_store_lflags_type(type);
++			drc_next_call_patchable=false;
++			DRC_PTR_SIZE_IM done=gen_create_jump();
++			gen_fill_branch(slow);
++			gen_call_function_raw(func);
++			gen_fill_jump(done);
++			return;
++		}
++		// does not fit, the carry is evaluated in vain
++		cache.pos=start;
++		gen_fill_branch(slow);
++		gen_call_function_raw(func);
++		return;
++	}
++#endif
++	InvalidateFlagsPartially(simple,type);
++	gen_call_function_raw(func);
++}
++
++// flag-setting dual operation, replaceable by simple when the flags are not needed
++static void dyn_dop_flags_call(void* simple,void* func,Bitu type,DrcAluOp op,Bitu size,bool result) {
++	InvalidateFlags(simple,type);
++#if defined(DRC_USE_INLINE_FLAGS_OPS)
++	if (dyn_dop_flags_inline(op,size,type,result)) return;
++#endif
++	gen_call_function_raw(func);
++}
++
+ static void dyn_dop_byte_gencall(DualOps op) {
+ 	switch (op) {
+ 		case DOP_ADD:
+-			InvalidateFlags((void*)&dynrec_add_byte_simple,t_ADDb);
+-			gen_call_function_raw((void*)&dynrec_add_byte);
++			dyn_dop_flags_call((void*)&dynrec_add_byte_simple,(void*)&dynrec_add_byte,t_ADDb,DRC_ALU_ADD,1,true);
+ 			break;
+ 		case DOP_ADC:
+-			AcquireFlags(FLAG_CF);
+-			InvalidateFlagsPartially((void*)&dynrec_adc_byte_simple,t_ADCb);
+-			gen_call_function_raw((void*)&dynrec_adc_byte);
++			dyn_carry_op_gencall((void*)&dynrec_adc_byte_simple,(void*)&dynrec_adc_byte,(void*)&dynrec_adc_byte_simple_cf,(void*)&dynrec_adc_byte_cf,t_ADCb);
+ 			break;
+ 		case DOP_SUB:
+-			InvalidateFlags((void*)&dynrec_sub_byte_simple,t_SUBb);
+-			gen_call_function_raw((void*)&dynrec_sub_byte);
++			dyn_dop_flags_call((void*)&dynrec_sub_byte_simple,(void*)&dynrec_sub_byte,t_SUBb,DRC_ALU_SUB,1,true);
+ 			break;
+ 		case DOP_SBB:
+-			AcquireFlags(FLAG_CF);
+-			InvalidateFlagsPartially((void*)&dynrec_sbb_byte_simple,t_SBBb);
+-			gen_call_function_raw((void*)&dynrec_sbb_byte);
++			dyn_carry_op_gencall((void*)&dynrec_sbb_byte_simple,(void*)&dynrec_sbb_byte,(void*)&dynrec_sbb_byte_simple_cf,(void*)&dynrec_sbb_byte_cf,t_SBBb);
+ 			break;
+ 		case DOP_CMP:
+-			InvalidateFlags((void*)&dynrec_cmp_byte_simple,t_CMPb);
+-			gen_call_function_raw((void*)&dynrec_cmp_byte);
++			dyn_dop_flags_call((void*)&dynrec_cmp_byte_simple,(void*)&dynrec_cmp_byte,t_CMPb,DRC_ALU_SUB,1,false);
+ 			break;
+ 		case DOP_XOR:
+-			InvalidateFlags((void*)&dynrec_xor_byte_simple,t_XORb);
+-			gen_call_function_raw((void*)&dynrec_xor_byte);
++			dyn_dop_flags_call((void*)&dynrec_xor_byte_simple,(void*)&dynrec_xor_byte,t_XORb,DRC_ALU_XOR,1,true);
+ 			break;
+ 		case DOP_AND:
+-			InvalidateFlags((void*)&dynrec_and_byte_simple,t_ANDb);
+-			gen_call_function_raw((void*)&dynrec_and_byte);
++			dyn_dop_flags_call((void*)&dynrec_and_byte_simple,(void*)&dynrec_and_byte,t_ANDb,DRC_ALU_AND,1,true);
+ 			break;
+ 		case DOP_OR:
+-			InvalidateFlags((void*)&dynrec_or_byte_simple,t_ORb);
+-			gen_call_function_raw((void*)&dynrec_or_byte);
++			dyn_dop_flags_call((void*)&dynrec_or_byte_simple,(void*)&dynrec_or_byte,t_ORb,DRC_ALU_OR,1,true);
+ 			break;
+ 		case DOP_TEST:
+-			InvalidateFlags((void*)&dynrec_test_byte_simple,t_TESTb);
+-			gen_call_function_raw((void*)&dynrec_test_byte);
++			dyn_dop_flags_call((void*)&dynrec_test_byte_simple,(void*)&dynrec_test_byte,t_TESTb,DRC_ALU_AND,1,false);
+ 			break;
+ 		default: IllegalOptionDynrec("dyn_dop_byte_gencall");
+ 	}
+@@ -440,84 +749,62 @@ static void dyn_dop_word_gencall(DualOps op,bool dword) {
+ 	if (dword) {
+ 		switch (op) {
+ 			case DOP_ADD:
+-				InvalidateFlags((void*)&dynrec_add_dword_simple,t_ADDd);
+-				gen_call_function_raw((void*)&dynrec_add_dword);
++				dyn_dop_flags_call((void*)&dynrec_add_dword_simple,(void*)&dynrec_add_dword,t_ADDd,DRC_ALU_ADD,4,true);
+ 				break;
+ 			case DOP_ADC:
+-				AcquireFlags(FLAG_CF);
+-				InvalidateFlagsPartially((void*)&dynrec_adc_dword_simple,t_ADCd);
+-				gen_call_function_raw((void*)&dynrec_adc_dword);
++				dyn_carry_op_gencall((void*)&dynrec_adc_dword_simple,(void*)&dynrec_adc_dword,(void*)&dynrec_adc_dword_simple_cf,(void*)&dynrec_adc_dword_cf,t_ADCd);
+ 				break;
+ 			case DOP_SUB:
+-				InvalidateFlags((void*)&dynrec_sub_dword_simple,t_SUBd);
+-				gen_call_function_raw((void*)&dynrec_sub_dword);
++				dyn_dop_flags_call((void*)&dynrec_sub_dword_simple,(void*)&dynrec_sub_dword,t_SUBd,DRC_ALU_SUB,4,true);
+ 				break;
+ 			case DOP_SBB:
+-				AcquireFlags(FLAG_CF);
+-				InvalidateFlagsPartially((void*)&dynrec_sbb_dword_simple,t_SBBd);
+-				gen_call_function_raw((void*)&dynrec_sbb_dword);
++				dyn_carry_op_gencall((void*)&dynrec_sbb_dword_simple,(void*)&dynrec_sbb_dword,(void*)&dynrec_sbb_dword_simple_cf,(void*)&dynrec_sbb_dword_cf,t_SBBd);
+ 				break;
+ 			case DOP_CMP:
+-				InvalidateFlags((void*)&dynrec_cmp_dword_simple,t_CMPd);
+-				gen_call_function_raw((void*)&dynrec_cmp_dword);
++				dyn_dop_flags_call((void*)&dynrec_cmp_dword_simple,(void*)&dynrec_cmp_dword,t_CMPd,DRC_ALU_SUB,4,false);
+ 				break;
+ 			case DOP_XOR:
+-				InvalidateFlags((void*)&dynrec_xor_dword_simple,t_XORd);
+-				gen_call_function_raw((void*)&dynrec_xor_dword);
++				dyn_dop_flags_call((void*)&dynrec_xor_dword_simple,(void*)&dynrec_xor_dword,t_XORd,DRC_ALU_XOR,4,true);
+ 				break;
+ 			case DOP_AND:
+-				InvalidateFlags((void*)&dynrec_and_dword_simple,t_ANDd);
+-				gen_call_function_raw((void*)&dynrec_and_dword);
++				dyn_dop_flags_call((void*)&dynrec_and_dword_simple,(void*)&dynrec_and_dword,t_ANDd,DRC_ALU_AND,4,true);
+ 				break;
+ 			case DOP_OR:
+-				InvalidateFlags((void*)&dynrec_or_dword_simple,t_ORd);
+-				gen_call_function_raw((void*)&dynrec_or_dword);
++				dyn_dop_flags_call((void*)&dynrec_or_dword_simple,(void*)&dynrec_or_dword,t_ORd,DRC_ALU_OR,4,true);
+ 				break;
+ 			case DOP_TEST:
+-				InvalidateFlags((void*)&dynrec_test_dword_simple,t_TESTd);
+-				gen_call_function_raw((void*)&dynrec_test_dword);
++				dyn_dop_flags_call((void*)&dynrec_test_dword_simple,(void*)&dynrec_test_dword,t_TESTd,DRC_ALU_AND,4,false);
+ 				break;
+ 			default: IllegalOptionDynrec("dyn_dop_dword_gencall");
+ 		}
+ 	} else {
+ 		switch (op) {
+ 			case DOP_ADD:
+-				InvalidateFlags((void*)&dynrec_add_word_simple,t_ADDw);
+-				gen_call_function_raw((void*)&dynrec_add_word);
++				dyn_dop_flags_call((void*)&dynrec_add_word_simple,(void*)&dynrec_add_word,t_ADDw,DRC_ALU_ADD,2,true);
+ 				break;
+ 			case DOP_ADC:
+-				AcquireFlags(FLAG_CF);
+-				InvalidateFlagsPartially((void*)&dynrec_adc_word_simple,t_ADCw);
+-				gen_call_function_raw((void*)&dynrec_adc_word);
++				dyn_carry_op_gencall((void*)&dynrec_adc_word_simple,(void*)&dynrec_adc_word,(void*)&dynrec_adc_word_simple_cf,(void*)&dynrec_adc_word_cf,t_ADCw);
+ 				break;
+ 			case DOP_SUB:
+-				InvalidateFlags((void*)&dynrec_sub_word_simple,t_SUBw);
+-				gen_call_function_raw((void*)&dynrec_sub_word);
++				dyn_dop_flags_call((void*)&dynrec_sub_word_simple,(void*)&dynrec_sub_word,t_SUBw,DRC_ALU_SUB,2,true);
+ 				break;
+ 			case DOP_SBB:
+-				AcquireFlags(FLAG_CF);
+-				InvalidateFlagsPartially((void*)&dynrec_sbb_word_simple,t_SBBw);
+-				gen_call_function_raw((void*)&dynrec_sbb_word);
++				dyn_carry_op_gencall((void*)&dynrec_sbb_word_simple,(void*)&dynrec_sbb_word,(void*)&dynrec_sbb_word_simple_cf,(void*)&dynrec_sbb_word_cf,t_SBBw);
+ 				break;
+ 			case DOP_CMP:
+-				InvalidateFlags((void*)&dynrec_cmp_word_simple,t_CMPw);
+-				gen_call_function_raw((void*)&dynrec_cmp_word);
++				dyn_dop_flags_call((void*)&dynrec_cmp_word_simple,(void*)&dynrec_cmp_word,t_CMPw,DRC_ALU_SUB,2,false);
+ 				break;
+ 			case DOP_XOR:
+-				InvalidateFlags((void*)&dynrec_xor_word_simple,t_XORw);
+-				gen_call_function_raw((void*)&dynrec_xor_word);
++				dyn_dop_flags_call((void*)&dynrec_xor_word_simple,(void*)&dynrec_xor_word,t_XORw,DRC_ALU_XOR,2,true);
+ 				break;
+ 			case DOP_AND:
+-				InvalidateFlags((void*)&dynrec_and_word_simple,t_ANDw);
+-				gen_call_function_raw((void*)&dynrec_and_word);
++				dyn_dop_flags_call((void*)&dynrec_and_word_simple,(void*)&dynrec_and_word,t_ANDw,DRC_ALU_AND,2,true);
+ 				break;
+ 			case DOP_OR:
+-				InvalidateFlags((void*)&dynrec_or_word_simple,t_ORw);
+-				gen_call_function_raw((void*)&dynrec_or_word);
++				dyn_dop_flags_call((void*)&dynrec_or_word_simple,(void*)&dynrec_or_word,t_ORw,DRC_ALU_OR,2,true);
+ 				break;
+ 			case DOP_TEST:
+-				InvalidateFlags((void*)&dynrec_test_word_simple,t_TESTw);
+-				gen_call_function_raw((void*)&dynrec_test_word);
++				dyn_dop_flags_call((void*)&dynrec_test_word_simple,(void*)&dynrec_test_word,t_TESTw,DRC_ALU_AND,2,false);
+ 				break;
+ 			default: IllegalOptionDynrec("dyn_dop_word_gencall");
+ 		}
+@@ -667,12 +954,10 @@ static Bit32u DRC_CALL_CONV dynrec_neg_dword_simple(Bit32u op) {
+ static void dyn_sop_byte_gencall(SingleOps op) {
+ 	switch (op) {
+ 		case SOP_INC:
+-			InvalidateFlagsPartially((void*)&dynrec_inc_byte_simple,t_INCb);
+-			gen_call_function_raw((void*)&dynrec_inc_byte);
++			dyn_incdec_call((void*)&dynrec_inc_byte_simple,(void*)&dynrec_inc_byte,t_INCb,true,1);
+ 			break;
+ 		case SOP_DEC:
+-			InvalidateFlagsPartially((void*)&dynrec_dec_byte_simple,t_DECb);
+-			gen_call_function_raw((void*)&dynrec_dec_byte);
++			dyn_incdec_call((void*)&dynrec_dec_byte_simple,(void*)&dynrec_dec_byte,t_DECb,false,1);
+ 			break;
+ 		case SOP_NOT:
+ 			gen_call_function_raw((void*)&dynrec_not_byte);
+@@ -689,12 +974,10 @@ static void dyn_sop_word_gencall(SingleOps op,bool dword) {
+ 	if (dword) {
+ 		switch (op) {
+ 			case SOP_INC:
+-				InvalidateFlagsPartially((void*)&dynrec_inc_dword_simple,t_INCd);
+-				gen_call_function_raw((void*)&dynrec_inc_dword);
++				dyn_incdec_call((void*)&dynrec_inc_dword_simple,(void*)&dynrec_inc_dword,t_INCd,true,4);
+ 				break;
+ 			case SOP_DEC:
+-				InvalidateFlagsPartially((void*)&dynrec_dec_dword_simple,t_DECd);
+-				gen_call_function_raw((void*)&dynrec_dec_dword);
++				dyn_incdec_call((void*)&dynrec_dec_dword_simple,(void*)&dynrec_dec_dword,t_DECd,false,4);
+ 				break;
+ 			case SOP_NOT:
+ 				gen_call_function_raw((void*)&dynrec_not_dword);
+@@ -708,12 +991,10 @@ static void dyn_sop_word_gencall(SingleOps op,bool dword) {
+ 	} else {
+ 		switch (op) {
+ 			case SOP_INC:
+-				InvalidateFlagsPartially((void*)&dynrec_inc_word_simple,t_INCw);
+-				gen_call_function_raw((void*)&dynrec_inc_word);
++				dyn_incdec_call((void*)&dynrec_inc_word_simple,(void*)&dynrec_inc_word,t_INCw,true,2);
+ 				break;
+ 			case SOP_DEC:
+-				InvalidateFlagsPartially((void*)&dynrec_dec_word_simple,t_DECw);
+-				gen_call_function_raw((void*)&dynrec_dec_word);
++				dyn_incdec_call((void*)&dynrec_dec_word_simple,(void*)&dynrec_dec_word,t_DECw,false,2);
+ 				break;
+ 			case SOP_NOT:
+ 				gen_call_function_raw((void*)&dynrec_not_word);
+@@ -791,6 +1072,36 @@ static Bit8u DRC_CALL_CONV dynrec_rcl_byte(Bit8u op1,Bit8u op2) {
+ 	} else return op1;
+ }
+ 
++static INLINE Bit8u dyn_rcl_byte_res(Bit8u op1,Bit8u op2,Bit32u cf) {
++	Bitu c=op2%9;
++	if (!c) return op1;
++	return (Bit8u)((op1 << c) | (cf << (c-1)) | (op1 >> (9-c)));
++}
++
++static Bit8u DRC_CALL_CONV dynrec_rcl_byte_simple(Bit8u op1,Bit8u op2) DRC_FC;
++static Bit8u DRC_CALL_CONV dynrec_rcl_byte_simple(Bit8u op1,Bit8u op2) {
++	return dyn_rcl_byte_res(op1,op2,get_CF()!=0);
++}
++
++static Bit8u DRC_CALL_CONV dynrec_rcl_byte_simple_cf(Bit8u op1,Bit8u op2,Bit8u cf) DRC_FC;
++static Bit8u DRC_CALL_CONV dynrec_rcl_byte_simple_cf(Bit8u op1,Bit8u op2,Bit8u cf) {
++	return dyn_rcl_byte_res(op1,op2,cf);
++}
++
++static Bit8u DRC_CALL_CONV dynrec_rcl_byte_cf(Bit8u op1,Bit8u op2,Bit8u cf_in) DRC_FC;
++static Bit8u DRC_CALL_CONV dynrec_rcl_byte_cf(Bit8u op1,Bit8u op2,Bit8u cf_in) {
++	if (op2%9) {
++		Bit8u cf=cf_in;
++		FillFlagsNoCFOF();
++		lf_var1b=op1;
++		lf_var2b=op2%9;
++		lf_resb=(lf_var1b << lf_var2b) | (cf << (lf_var2b-1)) | (lf_var1b >> (9-lf_var2b));
++		SETFLAGBIT(CF,((lf_var1b >> (8-lf_var2b)) & 1));
++		SETFLAGBIT(OF,(reg_flags & 1) ^ (lf_resb >> 7));
++		return lf_resb;
++	} else return op1;
++}
++
+ static Bit8u DRC_CALL_CONV dynrec_rcr_byte(Bit8u op1,Bit8u op2) DRC_FC;
+ static Bit8u DRC_CALL_CONV dynrec_rcr_byte(Bit8u op1,Bit8u op2) {
+ 	if (op2%9) {
+@@ -804,6 +1115,36 @@ static Bit8u DRC_CALL_CONV dynrec_rcr_byte(Bit8u op1,Bit8u op2) {
+ 	} else return op1;
+ }
+ 
++static INLINE Bit8u dyn_rcr_byte_res(Bit8u op1,Bit8u op2,Bit32u cf) {
++	Bitu c=op2%9;
++	if (!c) return op1;
++	return (Bit8u)((op1 >> c) | (cf << (8-c)) | (op1 << (9-c)));
++}
++
++static Bit8u DRC_CALL_CONV dynrec_rcr_byte_simple(Bit8u op1,Bit8u op2) DRC_FC;
++static Bit8u DRC_CALL_CONV dynrec_rcr_byte_simple(Bit8u op1,Bit8u op2) {
++	return dyn_rcr_byte_res(op1,op2,get_CF()!=0);
++}
++
++static Bit8u DRC_CALL_CONV dynrec_rcr_byte_simple_cf(Bit8u op1,Bit8u op2,Bit8u cf) DRC_FC;
++static Bit8u DRC_CALL_CONV dynrec_rcr_byte_simple_cf(Bit8u op1,Bit8u op2,Bit8u cf) {
++	return dyn_rcr_byte_res(op1,op2,cf);
++}
++
++static Bit8u DRC_CALL_CONV dynrec_rcr_byte_cf(Bit8u op1,Bit8u op2,Bit8u cf_in) DRC_FC;
++static Bit8u DRC_CALL_CONV dynrec_rcr_byte_cf(Bit8u op1,Bit8u op2,Bit8u cf_in) {
++	if (op2%9) {
++		Bit8u cf=cf_in;
++		FillFlagsNoCFOF();
++		lf_var1b=op1;
++		lf_var2b=op2%9;
++	 	lf_resb=(lf_var1b >> lf_var2b) | (cf << (8-lf_var2b)) | (lf_var1b << (9-lf_var2b));					\
++		SETFLAGBIT(CF,(lf_var1b >> (lf_var2b - 1)) & 1);
++		SETFLAGBIT(OF,(lf_resb ^ (lf_resb<<1)) & 0x80);
++		return lf_resb;
++	} else return op1;
++}
++
+ static Bit8u DRC_CALL_CONV dynrec_shl_byte(Bit8u op1,Bit8u op2) DRC_FC;
+ static Bit8u DRC_CALL_CONV dynrec_shl_byte(Bit8u op1,Bit8u op2) {
+ 	if (!op2) return op1;
+@@ -922,6 +1263,36 @@ static Bit16u DRC_CALL_CONV dynrec_rcl_word(Bit16u op1,Bit8u op2) {
+ 	} else return op1;
+ }
+ 
++static INLINE Bit16u dyn_rcl_word_res(Bit16u op1,Bit8u op2,Bit32u cf) {
++	Bitu c=op2%17;
++	if (!c) return op1;
++	return (Bit16u)((op1 << c) | (cf << (c-1)) | (op1 >> (17-c)));
++}
++
++static Bit16u DRC_CALL_CONV dynrec_rcl_word_simple(Bit16u op1,Bit8u op2) DRC_FC;
++static Bit16u DRC_CALL_CONV dynrec_rcl_word_simple(Bit16u op1,Bit8u op2) {
++	return dyn_rcl_word_res(op1,op2,get_CF()!=0);
++}
++
++static Bit16u DRC_CALL_CONV dynrec_rcl_word_simple_cf(Bit16u op1,Bit8u op2,Bit8u cf) DRC_FC;
++static Bit16u DRC_CALL_CONV dynrec_rcl_word_simple_cf(Bit16u op1,Bit8u op2,Bit8u cf) {
++	return dyn_rcl_word_res(op1,op2,cf);
++}
++
++static Bit16u DRC_CALL_CONV dynrec_rcl_word_cf(Bit16u op1,Bit8u op2,Bit8u cf_in) DRC_FC;
++static Bit16u DRC_CALL_CONV dynrec_rcl_word_cf(Bit16u op1,Bit8u op2,Bit8u cf_in) {
++	if (op2%17) {
++		Bit16u cf=cf_in;
++		FillFlagsNoCFOF();
++		lf_var1w=op1;
++		lf_var2b=op2%17;
++		lf_resw=(lf_var1w << lf_var2b) | (cf << (lf_var2b-1)) | (lf_var1w >> (17-lf_var2b));
++		SETFLAGBIT(CF,((lf_var1w >> (16-lf_var2b)) & 1));
++		SETFLAGBIT(OF,(reg_flags & 1) ^ (lf_resw >> 15));
++		return lf_resw;
++	} else return op1;
++}
++
+ static Bit16u DRC_CALL_CONV dynrec_rcr_word(Bit16u op1,Bit8u op2) DRC_FC;
+ static Bit16u DRC_CALL_CONV dynrec_rcr_word(Bit16u op1,Bit8u op2) {
+ 	if (op2%17) {
+@@ -935,6 +1306,36 @@ static Bit16u DRC_CALL_CONV dynrec_rcr_word(Bit16u op1,Bit8u op2) {
+ 	} else return op1;
+ }
+ 
++static INLINE Bit16u dyn_rcr_word_res(Bit16u op1,Bit8u op2,Bit32u cf) {
++	Bitu c=op2%17;
++	if (!c) return op1;
++	return (Bit16u)((op1 >> c) | (cf << (16-c)) | (op1 << (17-c)));
++}
++
++static Bit16u DRC_CALL_CONV dynrec_rcr_word_simple(Bit16u op1,Bit8u op2) DRC_FC;
++static Bit16u DRC_CALL_CONV dynrec_rcr_word_simple(Bit16u op1,Bit8u op2) {
++	return dyn_rcr_word_res(op1,op2,get_CF()!=0);
++}
++
++static Bit16u DRC_CALL_CONV dynrec_rcr_word_simple_cf(Bit16u op1,Bit8u op2,Bit8u cf) DRC_FC;
++static Bit16u DRC_CALL_CONV dynrec_rcr_word_simple_cf(Bit16u op1,Bit8u op2,Bit8u cf) {
++	return dyn_rcr_word_res(op1,op2,cf);
++}
++
++static Bit16u DRC_CALL_CONV dynrec_rcr_word_cf(Bit16u op1,Bit8u op2,Bit8u cf_in) DRC_FC;
++static Bit16u DRC_CALL_CONV dynrec_rcr_word_cf(Bit16u op1,Bit8u op2,Bit8u cf_in) {
++	if (op2%17) {
++		Bit16u cf=cf_in;
++		FillFlagsNoCFOF();
++		lf_var1w=op1;
++		lf_var2b=op2%17;
++	 	lf_resw=(lf_var1w >> lf_var2b) | (cf << (16-lf_var2b)) | (lf_var1w << (17-lf_var2b));
++		SETFLAGBIT(CF,(lf_var1w >> (lf_var2b - 1)) & 1);
++		SETFLAGBIT(OF,(lf_resw ^ (lf_resw<<1)) & 0x8000);
++		return lf_resw;
++	} else return op1;
++}
++
+ static Bit16u DRC_CALL_CONV dynrec_shl_word(Bit16u op1,Bit8u op2) DRC_FC;
+ static Bit16u DRC_CALL_CONV dynrec_shl_word(Bit16u op1,Bit8u op2) {
+ 	if (!op2) return op1;
+@@ -1042,6 +1443,39 @@ static Bit32u DRC_CALL_CONV dynrec_rcl_dword(Bit32u op1,Bit8u op2) {
+ 	return lf_resd;
+ }
+ 
++static INLINE Bit32u dyn_rcl_dword_res(Bit32u op1,Bit8u op2,Bit32u cf) {
++	Bitu c=op2;
++	if (!c) return op1;
++	return c==1 ? (Bit32u)((op1 << 1) | cf) : (Bit32u)((op1 << c) | (cf << (c-1)) | (op1 >> (33-c)));
++}
++
++static Bit32u DRC_CALL_CONV dynrec_rcl_dword_simple(Bit32u op1,Bit8u op2) DRC_FC;
++static Bit32u DRC_CALL_CONV dynrec_rcl_dword_simple(Bit32u op1,Bit8u op2) {
++	return dyn_rcl_dword_res(op1,op2,get_CF()!=0);
++}
++
++static Bit32u DRC_CALL_CONV dynrec_rcl_dword_simple_cf(Bit32u op1,Bit8u op2,Bit8u cf) DRC_FC;
++static Bit32u DRC_CALL_CONV dynrec_rcl_dword_simple_cf(Bit32u op1,Bit8u op2,Bit8u cf) {
++	return dyn_rcl_dword_res(op1,op2,cf);
++}
++
++static Bit32u DRC_CALL_CONV dynrec_rcl_dword_cf(Bit32u op1,Bit8u op2,Bit8u cf_in) DRC_FC;
++static Bit32u DRC_CALL_CONV dynrec_rcl_dword_cf(Bit32u op1,Bit8u op2,Bit8u cf_in) {
++	if (!op2) return op1;
++	Bit32u cf=cf_in;
++		FillFlagsNoCFOF();
++	lf_var1d=op1;
++	lf_var2b=op2;
++	if (lf_var2b==1) {
++		lf_resd=(lf_var1d << 1) | cf;
++	} else 	{
++		lf_resd=(lf_var1d << lf_var2b) | (cf << (lf_var2b-1)) | (lf_var1d >> (33-lf_var2b));
++	}
++	SETFLAGBIT(CF,((lf_var1d >> (32-lf_var2b)) & 1));
++	SETFLAGBIT(OF,(reg_flags & 1) ^ (lf_resd >> 31));
++	return lf_resd;
++}
++
+ static Bit32u DRC_CALL_CONV dynrec_rcr_dword(Bit32u op1,Bit8u op2) DRC_FC;
+ static Bit32u DRC_CALL_CONV dynrec_rcr_dword(Bit32u op1,Bit8u op2) {
+ 	if (op2) {
+@@ -1059,6 +1493,40 @@ static Bit32u DRC_CALL_CONV dynrec_rcr_dword(Bit32u op1,Bit8u op2) {
+ 	} else return op1;
+ }
+ 
++static INLINE Bit32u dyn_rcr_dword_res(Bit32u op1,Bit8u op2,Bit32u cf) {
++	Bitu c=op2;
++	if (!c) return op1;
++	return c==1 ? (Bit32u)((op1 >> 1) | (cf << 31)) : (Bit32u)((op1 >> c) | (cf << (32-c)) | (op1 << (33-c)));
++}
++
++static Bit32u DRC_CALL_CONV dynrec_rcr_dword_simple(Bit32u op1,Bit8u op2) DRC_FC;
++static Bit32u DRC_CALL_CONV dynrec_rcr_dword_simple(Bit32u op1,Bit8u op2) {
++	return dyn_rcr_dword_res(op1,op2,get_CF()!=0);
++}
++
++static Bit32u DRC_CALL_CONV dynrec_rcr_dword_simple_cf(Bit32u op1,Bit8u op2,Bit8u cf) DRC_FC;
++static Bit32u DRC_CALL_CONV dynrec_rcr_dword_simple_cf(Bit32u op1,Bit8u op2,Bit8u cf) {
++	return dyn_rcr_dword_res(op1,op2,cf);
++}
++
++static Bit32u DRC_CALL_CONV dynrec_rcr_dword_cf(Bit32u op1,Bit8u op2,Bit8u cf_in) DRC_FC;
++static Bit32u DRC_CALL_CONV dynrec_rcr_dword_cf(Bit32u op1,Bit8u op2,Bit8u cf_in) {
++	if (op2) {
++		Bit32u cf=cf_in;
++		FillFlagsNoCFOF();
++		lf_var1d=op1;
++		lf_var2b=op2;
++		if (lf_var2b==1) {
++			lf_resd=lf_var1d >> 1 | cf << 31;
++		} else {
++ 			lf_resd=(lf_var1d >> lf_var2b) | (cf << (32-lf_var2b)) | (lf_var1d << (33-lf_var2b));
++		}
++		SETFLAGBIT(CF,(lf_var1d >> (lf_var2b - 1)) & 1);
++		SETFLAGBIT(OF,(lf_resd ^ (lf_resd<<1)) & 0x80000000);
++		return lf_resd;
++	} else return op1;
++}
++
+ static Bit32u DRC_CALL_CONV dynrec_shl_dword(Bit32u op1,Bit8u op2) DRC_FC;
+ static Bit32u DRC_CALL_CONV dynrec_shl_dword(Bit32u op1,Bit8u op2) {
+ 	if (!op2) return op1;
+@@ -1123,21 +1591,17 @@ static void dyn_shift_byte_gencall(ShiftOps op) {
+ 			gen_call_function_raw((void*)&dynrec_ror_byte);
+ 			break;
+ 		case SHIFT_RCL:
+-			AcquireFlags(FLAG_CF);
+-			gen_call_function_raw((void*)&dynrec_rcl_byte);
++			dyn_carry_op_gencall((void*)&dynrec_rcl_byte_simple,(void*)&dynrec_rcl_byte,(void*)&dynrec_rcl_byte_simple_cf,(void*)&dynrec_rcl_byte_cf,t_RCLb);
+ 			break;
+ 		case SHIFT_RCR:
+-			AcquireFlags(FLAG_CF);
+-			gen_call_function_raw((void*)&dynrec_rcr_byte);
++			dyn_carry_op_gencall((void*)&dynrec_rcr_byte_simple,(void*)&dynrec_rcr_byte,(void*)&dynrec_rcr_byte_simple_cf,(void*)&dynrec_rcr_byte_cf,t_RCRb);
+ 			break;
+ 		case SHIFT_SHL:
+ 		case SHIFT_SAL:
+-			InvalidateFlagsPartially((void*)&dynrec_shl_byte_simple,t_SHLb);
+-			gen_call_function_raw((void*)&dynrec_shl_byte);
++			dyn_shift_flags_call((void*)&dynrec_shl_byte_simple,(void*)&dynrec_shl_byte,t_SHLb,DRC_SHIFT_SHL,1);
+ 			break;
+ 		case SHIFT_SHR:
+-			InvalidateFlagsPartially((void*)&dynrec_shr_byte_simple,t_SHRb);
+-			gen_call_function_raw((void*)&dynrec_shr_byte);
++			dyn_shift_flags_call((void*)&dynrec_shr_byte_simple,(void*)&dynrec_shr_byte,t_SHRb,DRC_SHIFT_SHR,1);
+ 			break;
+ 		case SHIFT_SAR:
+ 			InvalidateFlagsPartially((void*)&dynrec_sar_byte_simple,t_SARb);
+@@ -1159,25 +1623,20 @@ static void dyn_shift_word_gencall(ShiftOps op,bool dword) {
+ 				gen_call_function_raw((void*)&dynrec_ror_dword);
+ 				break;
+ 			case SHIFT_RCL:
+-				AcquireFlags(FLAG_CF);
+-				gen_call_function_raw((void*)&dynrec_rcl_dword);
++				dyn_carry_op_gencall((void*)&dynrec_rcl_dword_simple,(void*)&dynrec_rcl_dword,(void*)&dynrec_rcl_dword_simple_cf,(void*)&dynrec_rcl_dword_cf,t_RCLd);
+ 				break;
+ 			case SHIFT_RCR:
+-				AcquireFlags(FLAG_CF);
+-				gen_call_function_raw((void*)&dynrec_rcr_dword);
++				dyn_carry_op_gencall((void*)&dynrec_rcr_dword_simple,(void*)&dynrec_rcr_dword,(void*)&dynrec_rcr_dword_simple_cf,(void*)&dynrec_rcr_dword_cf,t_RCRd);
+ 				break;
+ 			case SHIFT_SHL:
+ 			case SHIFT_SAL:
+-				InvalidateFlagsPartially((void*)&dynrec_shl_dword_simple,t_SHLd);
+-				gen_call_function_raw((void*)&dynrec_shl_dword);
++				dyn_shift_flags_call((void*)&dynrec_shl_dword_simple,(void*)&dynrec_shl_dword,t_SHLd,DRC_SHIFT_SHL,4);
+ 				break;
+ 			case SHIFT_SHR:
+-				InvalidateFlagsPartially((void*)&dynrec_shr_dword_simple,t_SHRd);
+-				gen_call_function_raw((void*)&dynrec_shr_dword);
++				dyn_shift_flags_call((void*)&dynrec_shr_dword_simple,(void*)&dynrec_shr_dword,t_SHRd,DRC_SHIFT_SHR,4);
+ 				break;
+ 			case SHIFT_SAR:
+-				InvalidateFlagsPartially((void*)&dynrec_sar_dword_simple,t_SARd);
+-				gen_call_function_raw((void*)&dynrec_sar_dword);
++				dyn_shift_flags_call((void*)&dynrec_sar_dword_simple,(void*)&dynrec_sar_dword,t_SARd,DRC_SHIFT_SAR,4);
+ 				break;
+ 			default: IllegalOptionDynrec("dyn_shift_dword_gencall");
+ 		}
+@@ -1192,21 +1651,17 @@ static void dyn_shift_word_gencall(ShiftOps op,bool dword) {
+ 				gen_call_function_raw((void*)&dynrec_ror_word);
+ 				break;
+ 			case SHIFT_RCL:
+-				AcquireFlags(FLAG_CF);
+-				gen_call_function_raw((void*)&dynrec_rcl_word);
++				dyn_carry_op_gencall((void*)&dynrec_rcl_word_simple,(void*)&dynrec_rcl_word,(void*)&dynrec_rcl_word_simple_cf,(void*)&dynrec_rcl_word_cf,t_RCLw);
+ 				break;
+ 			case SHIFT_RCR:
+-				AcquireFlags(FLAG_CF);
+-				gen_call_function_raw((void*)&dynrec_rcr_word);
++				dyn_carry_op_gencall((void*)&dynrec_rcr_word_simple,(void*)&dynrec_rcr_word,(void*)&dynrec_rcr_word_simple_cf,(void*)&dynrec_rcr_word_cf,t_RCRw);
+ 				break;
+ 			case SHIFT_SHL:
+ 			case SHIFT_SAL:
+-				InvalidateFlagsPartially((void*)&dynrec_shl_word_simple,t_SHLw);
+-				gen_call_function_raw((void*)&dynrec_shl_word);
++				dyn_shift_flags_call((void*)&dynrec_shl_word_simple,(void*)&dynrec_shl_word,t_SHLw,DRC_SHIFT_SHL,2);
+ 				break;
+ 			case SHIFT_SHR:
+-				InvalidateFlagsPartially((void*)&dynrec_shr_word_simple,t_SHRw);
+-				gen_call_function_raw((void*)&dynrec_shr_word);
++				dyn_shift_flags_call((void*)&dynrec_shr_word_simple,(void*)&dynrec_shr_word,t_SHRw,DRC_SHIFT_SHR,2);
+ 				break;
+ 			case SHIFT_SAR:
+ 				InvalidateFlagsPartially((void*)&dynrec_sar_word_simple,t_SARw);
+@@ -1354,26 +1809,97 @@ static Bit32u DRC_CALL_CONV dynrec_get_nzf_and_sf_eq_of(void)	DRC_FC;
+ static Bit32u DRC_CALL_CONV dynrec_get_nzf_and_sf_eq_of(void)	{ return TFLG_NLE; }
+ 
+ 
+-static void dyn_branchflag_to_reg(BranchTypes btype) {
++static void* dyn_branchflag_function(BranchTypes btype) {
++	switch (btype) {
++		case BR_O:return (void*)&dynrec_get_of;
++		case BR_NO:return (void*)&dynrec_get_nof;
++		case BR_B:return (void*)&dynrec_get_cf;
++		case BR_NB:return (void*)&dynrec_get_ncf;
++		case BR_Z:return (void*)&dynrec_get_zf;
++		case BR_NZ:return (void*)&dynrec_get_nzf;
++		case BR_BE:return (void*)&dynrec_get_cf_or_zf;
++		case BR_NBE:return (void*)&dynrec_get_ncf_and_nzf;
++
++		case BR_S:return (void*)&dynrec_get_sf;
++		case BR_NS:return (void*)&dynrec_get_nsf;
++		case BR_P:return (void*)&dynrec_get_pf;
++		case BR_NP:return (void*)&dynrec_get_npf;
++		case BR_L:return (void*)&dynrec_get_sf_neq_of;
++		case BR_NL:return (void*)&dynrec_get_sf_eq_of;
++		case BR_LE:return (void*)&dynrec_get_zf_or_sf_neq_of;
++		case BR_NLE:return (void*)&dynrec_get_nzf_and_sf_eq_of;
++	}
++	return NULL;
++}
++
++#if defined(DRC_USE_INLINE_FLAGS)
++// evaluate the condition inline for the guessed type of the last flags
++// operation, the generic function is called if lflags.type differs
++static bool dyn_branchflag_inline(BranchTypes btype,void* func) {
++	enum { CL_CMP, CL_LOGIC, CL_RES } cl;
++	Bitu type=drc_flags_type_guess;
++	Bitu size;
++	switch (type) {
++		case t_CMPb: case t_SUBb: cl=CL_CMP; size=1; break;
++		case t_CMPw: case t_SUBw: cl=CL_CMP; size=2; break;
++		case t_CMPd: case t_SUBd: cl=CL_CMP; size=4; break;
++		case t_ANDb: case t_ORb: case t_XORb: case t_TESTb: cl=CL_LOGIC; size=1; break;
++		case t_ANDw: case t_ORw: case t_XORw: case t_TESTw: cl=CL_LOGIC; size=2; break;
++		case t_ANDd: case t_ORd: case t_XORd: case t_TESTd: cl=CL_LOGIC; size=4; break;
++		case t_ADDb: case t_ADCb: case t_SBBb: case t_INCb: case t_DECb:
++		case t_NEGb: case t_SHLb: case t_SHRb: case t_SARb: cl=CL_RES; size=1; break;
++		case t_ADDw: case t_ADCw: case t_SBBw: case t_INCw: case t_DECw:
++		case t_NEGw: case t_SHLw: case t_SHRw: case t_SARw: cl=CL_RES; size=2; break;
++		case t_ADDd: case t_ADCd: case t_SBBd: case t_INCd: case t_DECd:
++		case t_NEGd: case t_SHLd: case t_SHRd: case t_SARd: cl=CL_RES; size=4; break;
++		default: return false;
++	}
++	DrcCond cond;
++	bool sign=false;
+ 	switch (btype) {
+-		case BR_O:gen_call_function_raw((void*)&dynrec_get_of);break;
+-		case BR_NO:gen_call_function_raw((void*)&dynrec_get_nof);break;
+-		case BR_B:gen_call_function_raw((void*)&dynrec_get_cf);break;
+-		case BR_NB:gen_call_function_raw((void*)&dynrec_get_ncf);break;
+-		case BR_Z:gen_call_function_raw((void*)&dynrec_get_zf);break;
+-		case BR_NZ:gen_call_function_raw((void*)&dynrec_get_nzf);break;
+-		case BR_BE:gen_call_function_raw((void*)&dynrec_get_cf_or_zf);break;
+-		case BR_NBE:gen_call_function_raw((void*)&dynrec_get_ncf_and_nzf);break;
+-
+-		case BR_S:gen_call_function_raw((void*)&dynrec_get_sf);break;
+-		case BR_NS:gen_call_function_raw((void*)&dynrec_get_nsf);break;
+-		case BR_P:gen_call_function_raw((void*)&dynrec_get_pf);break;
+-		case BR_NP:gen_call_function_raw((void*)&dynrec_get_npf);break;
+-		case BR_L:gen_call_function_raw((void*)&dynrec_get_sf_neq_of);break;
+-		case BR_NL:gen_call_function_raw((void*)&dynrec_get_sf_eq_of);break;
+-		case BR_LE:gen_call_function_raw((void*)&dynrec_get_zf_or_sf_neq_of);break;
+-		case BR_NLE:gen_call_function_raw((void*)&dynrec_get_nzf_and_sf_eq_of);break;
++		case BR_Z: cond=DRC_COND_E; break;
++		case BR_NZ: cond=DRC_COND_NE; break;
++		case BR_B: cond=DRC_COND_LU; break;
++		case BR_NB: cond=DRC_COND_GEU; break;
++		case BR_BE: cond=DRC_COND_LEU; break;
++		case BR_NBE: cond=DRC_COND_GU; break;
++		case BR_L: cond=DRC_COND_L; sign=true; break;
++		case BR_NL: cond=DRC_COND_GE; sign=true; break;
++		case BR_LE: cond=DRC_COND_LE; sign=true; break;
++		case BR_NLE: cond=DRC_COND_G; sign=true; break;
++		case BR_S: cond=DRC_COND_NEG; sign=true; break;
++		case BR_NS: cond=DRC_COND_POS; sign=true; break;
++		default: return false;
+ 	}
++	// with only the result known CF and OF are not available
++	if (cl==CL_RES && btype!=BR_Z && btype!=BR_NZ && btype!=BR_S && btype!=BR_NS) return false;
++
++	DRC_PTR_SIZE_IM slow=dyn_lflags_type_differs(FC_OP1,type);
++
++	// subtraction operands compare as the flags of the subtraction, all
++	// others compare the result against zero with cleared CF and OF
++	if (cl==CL_CMP && btype!=BR_S && btype!=BR_NS) {
++		dyn_load_lflag(FC_OP1,lflags.var1,size,sign);
++		dyn_load_lflag(FC_OP2,lflags.var2,size,sign);
++	} else {
++		dyn_load_lflag(FC_OP1,lflags.res,size,true);
++		gen_mov_dword_to_reg_imm(FC_OP2,0);
++	}
++	gen_set_condition(FC_RETOP,FC_OP1,FC_OP2,cond);
++	DRC_PTR_SIZE_IM done=gen_create_jump();
++	gen_fill_branch(slow);
++	gen_call_function_raw(func);
++	gen_fill_jump(done);
++	return true;
++}
++#endif
++
++static void dyn_branchflag_to_reg(BranchTypes btype) {
++	void* func=dyn_branchflag_function(btype);
++#if defined(DRC_USE_INLINE_FLAGS)
++	if (dyn_branchflag_inline(btype,func)) return;
++#endif
++	gen_call_function_raw(func);
+ }
+ 
+ 
+@@ -1641,330 +2167,216 @@ static void DRC_CALL_CONV dynrec_std(void) {
+ }
+ 
+ 
+-static Bit16u DRC_CALL_CONV dynrec_movsb_word(Bit16u count,Bit16s add_index,PhysPt si_base,PhysPt di_base) DRC_FC;
+-static Bit16u DRC_CALL_CONV dynrec_movsb_word(Bit16u count,Bit16s add_index,PhysPt si_base,PhysPt di_base) {
+-	Bit16u count_left;
+-	if (count<(Bitu)CPU_Cycles) {
+-		count_left=0;
++enum DrcStrOp { DRC_STR_MOVS, DRC_STR_LODS, DRC_STR_STOS };
++
++template <typename T> static INLINE T dyn_str_mem_read(PhysPt addr) {
++	return sizeof(T)==1 ? mem_readb(addr) : sizeof(T)==2 ? mem_readw(addr) : mem_readd(addr);
++}
++template <typename T> static INLINE void dyn_str_mem_write(PhysPt addr,T val) {
++	if (sizeof(T)==1) mem_writeb(addr,(Bit8u)val);
++	else if (sizeof(T)==2) mem_writew(addr,(Bit16u)val);
++	else mem_writed(addr,(Bit32u)val);
++}
++template <typename T> static INLINE T dyn_str_host_read(HostPt p) {
++	return sizeof(T)==1 ? host_readb(p) : sizeof(T)==2 ? host_readw(p) : host_readd(p);
++}
++template <typename T> static INLINE void dyn_str_host_write(HostPt p,T val) {
++	if (sizeof(T)==1) host_writeb(p,(Bit8u)val);
++	else if (sizeof(T)==2) host_writew(p,(Bit16u)val);
++	else host_writed(p,(Bit32u)val);
++}
++
++// number of elements from base+index on that stay within the page
++// and do not wrap the index register of the given mask
++static INLINE Bitu dyn_str_run(PhysPt base,Bitu index,Bitu mask,Bits add,Bitu size) {
++	Bitu ofs=(base+index)&4095;
++	if (ofs+size>4096 || index+size-1>mask) return 0;
++	Bitu page,wrap;
++	if (add>0) {
++		page=(4096-ofs)/size;
++		wrap=(mask-(size-1)-index)/size+1;
+ 	} else {
+-		count_left=(Bit16u)(count-CPU_Cycles);
+-		count=(Bit16u)CPU_Cycles;
+-		CPU_Cycles=0;
+-	}
+-	for (;count>0;count--) {
+-		mem_writeb(di_base+reg_di,mem_readb(si_base+reg_si));
+-		reg_si+=add_index;
+-		reg_di+=add_index;
++		page=ofs/size+1;
++		wrap=index/size+1;
+ 	}
+-	return count_left;
++	return page<wrap ? page : wrap;
+ }
+ 
+-static Bit32u DRC_CALL_CONV dynrec_movsb_dword(Bit32u count,Bit32s add_index,PhysPt si_base,PhysPt di_base) DRC_FC;
+-static Bit32u DRC_CALL_CONV dynrec_movsb_dword(Bit32u count,Bit32s add_index,PhysPt si_base,PhysPt di_base) {
+-	Bit32u count_left;
++// string operation through the direct host pointers on runs of elements
++// within a page, single elements through the generic memory access
++template <typename T,typename I,DrcStrOp op>
++static INLINE I dyn_string_op(I count,Bits add_index,PhysPt si_base,PhysPt di_base,I& si,I& di,T& acc) {
++	I count_left;
+ 	if (count<(Bitu)CPU_Cycles) {
+ 		count_left=0;
+ 	} else {
+-		count_left=count-CPU_Cycles;
+-		count=CPU_Cycles;
++		count_left=(I)(count-CPU_Cycles);
++		count=(I)CPU_Cycles;
+ 		CPU_Cycles=0;
+ 	}
+-	for (;count>0;count--) {
+-		mem_writeb(di_base+reg_edi,mem_readb(si_base+reg_esi));
+-		reg_esi+=add_index;
+-		reg_edi+=add_index;
++	const Bitu mask=(I)~0;
++	// add_index is cpu.direction, which is read directly as the signed parameter
++	// may arrive zero-extended from the generated code (sparc64)
++	add_index=cpu.direction*(Bits)sizeof(T);
++	while (count>0) {
++		Bitu n=count,rs=count,rd=count;
++		HostPt src=NULL,dst=NULL;
++		if (op!=DRC_STR_STOS) {
++			rs=dyn_str_run(si_base,si,mask,add_index,sizeof(T));
++			if (rs<n) n=rs;
++			src=get_tlb_read(si_base+si);
++			if (!src) n=0;
++		}
++		if (op!=DRC_STR_LODS) {
++			rd=dyn_str_run(di_base,di,mask,add_index,sizeof(T));
++			if (rd<n) n=rd;
++			dst=get_tlb_write(di_base+di);
++			if (!dst) n=0;
++		}
++		// ascending runs into handler memory as one block, from host memory
++		if (!n && op!=DRC_STR_LODS && !dst && add_index>0 && (op==DRC_STR_STOS || src)) {
++			Bitu r=count;
++			if (rd<r) r=rd;
++			if (op==DRC_STR_MOVS && rs<r) r=rs;
++			PageHandler * handler=get_tlb_writehandler(di_base+di);
++			if (r && (op==DRC_STR_MOVS ? handler->writeblock(di_base+di,src+(PhysPt)(si_base+si),r*sizeof(T)) :
++				handler->fillblock(di_base+di,(Bit32u)acc,sizeof(T),r*sizeof(T)))) {
++				if (op==DRC_STR_MOVS) si+=(I)(r*add_index);
++				di+=(I)(r*add_index);
++				count-=(I)r;
++				continue;
++			}
++		}
++		if (!n) {
++			if (op==DRC_STR_MOVS) dyn_str_mem_write<T>(di_base+di,dyn_str_mem_read<T>(si_base+si));
++			else if (op==DRC_STR_LODS) acc=dyn_str_mem_read<T>(si_base+si);
++			else dyn_str_mem_write<T>(di_base+di,acc);
++			if (op!=DRC_STR_STOS) si+=(I)add_index;
++			if (op!=DRC_STR_LODS) di+=(I)add_index;
++			count--;
++			continue;
++		}
++		PhysPt sa=si_base+si,da=di_base+di;
++		for (Bitu i=0;i<n;i++) {
++			if (op==DRC_STR_MOVS) dyn_str_host_write<T>(dst+da,dyn_str_host_read<T>(src+sa));
++			else if (op==DRC_STR_LODS) acc=dyn_str_host_read<T>(src+sa);
++			else dyn_str_host_write<T>(dst+da,acc);
++			sa+=(PhysPt)add_index;
++			da+=(PhysPt)add_index;
++		}
++		if (op!=DRC_STR_STOS) si+=(I)(n*add_index);
++		if (op!=DRC_STR_LODS) di+=(I)(n*add_index);
++		count-=(I)n;
+ 	}
+ 	return count_left;
+ }
+ 
++static Bit16u DRC_CALL_CONV dynrec_movsb_word(Bit16u count,Bit16s add_index,PhysPt si_base,PhysPt di_base) DRC_FC;
++static Bit16u DRC_CALL_CONV dynrec_movsb_word(Bit16u count,Bit16s add_index,PhysPt si_base,PhysPt di_base) {
++	Bit8u acc;
++	return dyn_string_op<Bit8u,Bit16u,DRC_STR_MOVS>(count,add_index,si_base,di_base,reg_si,reg_di,acc);
++}
++
++static Bit32u DRC_CALL_CONV dynrec_movsb_dword(Bit32u count,Bit32s add_index,PhysPt si_base,PhysPt di_base) DRC_FC;
++static Bit32u DRC_CALL_CONV dynrec_movsb_dword(Bit32u count,Bit32s add_index,PhysPt si_base,PhysPt di_base) {
++	Bit8u acc;
++	return dyn_string_op<Bit8u,Bit32u,DRC_STR_MOVS>(count,add_index,si_base,di_base,reg_esi,reg_edi,acc);
++}
++
+ static Bit16u DRC_CALL_CONV dynrec_movsw_word(Bit16u count,Bit16s add_index,PhysPt si_base,PhysPt di_base) DRC_FC;
+ static Bit16u DRC_CALL_CONV dynrec_movsw_word(Bit16u count,Bit16s add_index,PhysPt si_base,PhysPt di_base) {
+-	Bit16u count_left;
+-	if (count<(Bitu)CPU_Cycles) {
+-		count_left=0;
+-	} else {
+-		count_left=(Bit16u)(count-CPU_Cycles);
+-		count=(Bit16u)CPU_Cycles;
+-		CPU_Cycles=0;
+-	}
+-	add_index<<=1;
+-	for (;count>0;count--) {
+-		mem_writew(di_base+reg_di,mem_readw(si_base+reg_si));
+-		reg_si+=add_index;
+-		reg_di+=add_index;
+-	}
+-	return count_left;
++	Bit16u acc;
++	return dyn_string_op<Bit16u,Bit16u,DRC_STR_MOVS>(count,add_index,si_base,di_base,reg_si,reg_di,acc);
+ }
+ 
+ static Bit32u DRC_CALL_CONV dynrec_movsw_dword(Bit32u count,Bit32s add_index,PhysPt si_base,PhysPt di_base) DRC_FC;
+ static Bit32u DRC_CALL_CONV dynrec_movsw_dword(Bit32u count,Bit32s add_index,PhysPt si_base,PhysPt di_base) {
+-	Bit32u count_left;
+-	if (count<(Bitu)CPU_Cycles) {
+-		count_left=0;
+-	} else {
+-		count_left=count-CPU_Cycles;
+-		count=CPU_Cycles;
+-		CPU_Cycles=0;
+-	}
+-	add_index<<=1;
+-	for (;count>0;count--) {
+-		mem_writew(di_base+reg_edi,mem_readw(si_base+reg_esi));
+-		reg_esi+=add_index;
+-		reg_edi+=add_index;
+-	}
+-	return count_left;
++	Bit16u acc;
++	return dyn_string_op<Bit16u,Bit32u,DRC_STR_MOVS>(count,add_index,si_base,di_base,reg_esi,reg_edi,acc);
+ }
+ 
+ static Bit16u DRC_CALL_CONV dynrec_movsd_word(Bit16u count,Bit16s add_index,PhysPt si_base,PhysPt di_base) DRC_FC;
+ static Bit16u DRC_CALL_CONV dynrec_movsd_word(Bit16u count,Bit16s add_index,PhysPt si_base,PhysPt di_base) {
+-	Bit16u count_left;
+-	if (count<(Bitu)CPU_Cycles) {
+-		count_left=0;
+-	} else {
+-		count_left=(Bit16u)(count-CPU_Cycles);
+-		count=(Bit16u)CPU_Cycles;
+-		CPU_Cycles=0;
+-	}
+-	add_index<<=2;
+-	for (;count>0;count--) {
+-		mem_writed(di_base+reg_di,mem_readd(si_base+reg_si));
+-		reg_si+=add_index;
+-		reg_di+=add_index;
+-	}
+-	return count_left;
++	Bit32u acc;
++	return dyn_string_op<Bit32u,Bit16u,DRC_STR_MOVS>(count,add_index,si_base,di_base,reg_si,reg_di,acc);
+ }
+ 
+ static Bit32u DRC_CALL_CONV dynrec_movsd_dword(Bit32u count,Bit32s add_index,PhysPt si_base,PhysPt di_base) DRC_FC;
+ static Bit32u DRC_CALL_CONV dynrec_movsd_dword(Bit32u count,Bit32s add_index,PhysPt si_base,PhysPt di_base) {
+-	Bit32u count_left;
+-	if (count<(Bitu)CPU_Cycles) {
+-		count_left=0;
+-	} else {
+-		count_left=count-CPU_Cycles;
+-		count=CPU_Cycles;
+-		CPU_Cycles=0;
+-	}
+-	add_index<<=2;
+-	for (;count>0;count--) {
+-		mem_writed(di_base+reg_edi,mem_readd(si_base+reg_esi));
+-		reg_esi+=add_index;
+-		reg_edi+=add_index;
+-	}
+-	return count_left;
++	Bit32u acc;
++	return dyn_string_op<Bit32u,Bit32u,DRC_STR_MOVS>(count,add_index,si_base,di_base,reg_esi,reg_edi,acc);
+ }
+ 
+-
+ static Bit16u DRC_CALL_CONV dynrec_lodsb_word(Bit16u count,Bit16s add_index,PhysPt si_base) DRC_FC;
+ static Bit16u DRC_CALL_CONV dynrec_lodsb_word(Bit16u count,Bit16s add_index,PhysPt si_base) {
+-	Bit16u count_left;
+-	if (count<(Bitu)CPU_Cycles) {
+-		count_left=0;
+-	} else {
+-		count_left=(Bit16u)(count-CPU_Cycles);
+-		count=(Bit16u)CPU_Cycles;
+-		CPU_Cycles=0;
+-	}
+-	for (;count>0;count--) {
+-		reg_al=mem_readb(si_base+reg_si);
+-		reg_si+=add_index;
+-	}
+-	return count_left;
++	Bit16u di=0;
++	return dyn_string_op<Bit8u,Bit16u,DRC_STR_LODS>(count,add_index,si_base,0,reg_si,di,reg_al);
+ }
+ 
+ static Bit32u DRC_CALL_CONV dynrec_lodsb_dword(Bit32u count,Bit32s add_index,PhysPt si_base) DRC_FC;
+ static Bit32u DRC_CALL_CONV dynrec_lodsb_dword(Bit32u count,Bit32s add_index,PhysPt si_base) {
+-	Bit32u count_left;
+-	if (count<(Bitu)CPU_Cycles) {
+-		count_left=0;
+-	} else {
+-		count_left=count-CPU_Cycles;
+-		count=CPU_Cycles;
+-		CPU_Cycles=0;
+-	}
+-	for (;count>0;count--) {
+-		reg_al=mem_readb(si_base+reg_esi);
+-		reg_esi+=add_index;
+-	}
+-	return count_left;
++	Bit32u di=0;
++	return dyn_string_op<Bit8u,Bit32u,DRC_STR_LODS>(count,add_index,si_base,0,reg_esi,di,reg_al);
+ }
+ 
+ static Bit16u DRC_CALL_CONV dynrec_lodsw_word(Bit16u count,Bit16s add_index,PhysPt si_base) DRC_FC;
+ static Bit16u DRC_CALL_CONV dynrec_lodsw_word(Bit16u count,Bit16s add_index,PhysPt si_base) {
+-	Bit16u count_left;
+-	if (count<(Bitu)CPU_Cycles) {
+-		count_left=0;
+-	} else {
+-		count_left=(Bit16u)(count-CPU_Cycles);
+-		count=(Bit16u)CPU_Cycles;
+-		CPU_Cycles=0;
+-	}
+-	add_index<<=1;
+-	for (;count>0;count--) {
+-		reg_ax=mem_readw(si_base+reg_si);
+-		reg_si+=add_index;
+-	}
+-	return count_left;
++	Bit16u di=0;
++	return dyn_string_op<Bit16u,Bit16u,DRC_STR_LODS>(count,add_index,si_base,0,reg_si,di,reg_ax);
+ }
+ 
+ static Bit32u DRC_CALL_CONV dynrec_lodsw_dword(Bit32u count,Bit32s add_index,PhysPt si_base) DRC_FC;
+ static Bit32u DRC_CALL_CONV dynrec_lodsw_dword(Bit32u count,Bit32s add_index,PhysPt si_base) {
+-	Bit32u count_left;
+-	if (count<(Bitu)CPU_Cycles) {
+-		count_left=0;
+-	} else {
+-		count_left=count-CPU_Cycles;
+-		count=CPU_Cycles;
+-		CPU_Cycles=0;
+-	}
+-	add_index<<=1;
+-	for (;count>0;count--) {
+-		reg_ax=mem_readw(si_base+reg_esi);
+-		reg_esi+=add_index;
+-	}
+-	return count_left;
++	Bit32u di=0;
++	return dyn_string_op<Bit16u,Bit32u,DRC_STR_LODS>(count,add_index,si_base,0,reg_esi,di,reg_ax);
+ }
+ 
+ static Bit16u DRC_CALL_CONV dynrec_lodsd_word(Bit16u count,Bit16s add_index,PhysPt si_base) DRC_FC;
+ static Bit16u DRC_CALL_CONV dynrec_lodsd_word(Bit16u count,Bit16s add_index,PhysPt si_base) {
+-	Bit16u count_left;
+-	if (count<(Bitu)CPU_Cycles) {
+-		count_left=0;
+-	} else {
+-		count_left=(Bit16u)(count-CPU_Cycles);
+-		count=(Bit16u)CPU_Cycles;
+-		CPU_Cycles=0;
+-	}
+-	add_index<<=2;
+-	for (;count>0;count--) {
+-		reg_eax=mem_readd(si_base+reg_si);
+-		reg_si+=add_index;
+-	}
+-	return count_left;
++	Bit16u di=0;
++	return dyn_string_op<Bit32u,Bit16u,DRC_STR_LODS>(count,add_index,si_base,0,reg_si,di,reg_eax);
+ }
+ 
+ static Bit32u DRC_CALL_CONV dynrec_lodsd_dword(Bit32u count,Bit32s add_index,PhysPt si_base) DRC_FC;
+ static Bit32u DRC_CALL_CONV dynrec_lodsd_dword(Bit32u count,Bit32s add_index,PhysPt si_base) {
+-	Bit32u count_left;
+-	if (count<(Bitu)CPU_Cycles) {
+-		count_left=0;
+-	} else {
+-		count_left=count-CPU_Cycles;
+-		count=CPU_Cycles;
+-		CPU_Cycles=0;
+-	}
+-	add_index<<=2;
+-	for (;count>0;count--) {
+-		reg_eax=mem_readd(si_base+reg_esi);
+-		reg_esi+=add_index;
+-	}
+-	return count_left;
++	Bit32u di=0;
++	return dyn_string_op<Bit32u,Bit32u,DRC_STR_LODS>(count,add_index,si_base,0,reg_esi,di,reg_eax);
+ }
+ 
+-
+ static Bit16u DRC_CALL_CONV dynrec_stosb_word(Bit16u count,Bit16s add_index,PhysPt di_base) DRC_FC;
+ static Bit16u DRC_CALL_CONV dynrec_stosb_word(Bit16u count,Bit16s add_index,PhysPt di_base) {
+-	Bit16u count_left;
+-	if (count<(Bitu)CPU_Cycles) {
+-		count_left=0;
+-	} else {
+-		count_left=(Bit16u)(count-CPU_Cycles);
+-		count=(Bit16u)CPU_Cycles;
+-		CPU_Cycles=0;
+-	}
+-	for (;count>0;count--) {
+-		mem_writeb(di_base+reg_di,reg_al);
+-		reg_di+=add_index;
+-	}
+-	return count_left;
++	Bit16u si=0;
++	return dyn_string_op<Bit8u,Bit16u,DRC_STR_STOS>(count,add_index,0,di_base,si,reg_di,reg_al);
+ }
+ 
+ static Bit32u DRC_CALL_CONV dynrec_stosb_dword(Bit32u count,Bit32s add_index,PhysPt di_base) DRC_FC;
+ static Bit32u DRC_CALL_CONV dynrec_stosb_dword(Bit32u count,Bit32s add_index,PhysPt di_base) {
+-	Bit32u count_left;
+-	if (count<(Bitu)CPU_Cycles) {
+-		count_left=0;
+-	} else {
+-		count_left=count-CPU_Cycles;
+-		count=CPU_Cycles;
+-		CPU_Cycles=0;
+-	}
+-	for (;count>0;count--) {
+-		mem_writeb(di_base+reg_edi,reg_al);
+-		reg_edi+=add_index;
+-	}
+-	return count_left;
++	Bit32u si=0;
++	return dyn_string_op<Bit8u,Bit32u,DRC_STR_STOS>(count,add_index,0,di_base,si,reg_edi,reg_al);
+ }
+ 
+ static Bit16u DRC_CALL_CONV dynrec_stosw_word(Bit16u count,Bit16s add_index,PhysPt di_base) DRC_FC;
+ static Bit16u DRC_CALL_CONV dynrec_stosw_word(Bit16u count,Bit16s add_index,PhysPt di_base) {
+-	Bit16u count_left;
+-	if (count<(Bitu)CPU_Cycles) {
+-		count_left=0;
+-	} else {
+-		count_left=(Bit16u)(count-CPU_Cycles);
+-		count=(Bit16u)CPU_Cycles;
+-		CPU_Cycles=0;
+-	}
+-	add_index<<=1;
+-	for (;count>0;count--) {
+-		mem_writew(di_base+reg_di,reg_ax);
+-		reg_di+=add_index;
+-	}
+-	return count_left;
++	Bit16u si=0;
++	return dyn_string_op<Bit16u,Bit16u,DRC_STR_STOS>(count,add_index,0,di_base,si,reg_di,reg_ax);
+ }
+ 
+ static Bit32u DRC_CALL_CONV dynrec_stosw_dword(Bit32u count,Bit32s add_index,PhysPt di_base) DRC_FC;
+ static Bit32u DRC_CALL_CONV dynrec_stosw_dword(Bit32u count,Bit32s add_index,PhysPt di_base) {
+-	Bit32u count_left;
+-	if (count<(Bitu)CPU_Cycles) {
+-		count_left=0;
+-	} else {
+-		count_left=count-CPU_Cycles;
+-		count=CPU_Cycles;
+-		CPU_Cycles=0;
+-	}
+-	add_index<<=1;
+-	for (;count>0;count--) {
+-		mem_writew(di_base+reg_edi,reg_ax);
+-		reg_edi+=add_index;
+-	}
+-	return count_left;
++	Bit32u si=0;
++	return dyn_string_op<Bit16u,Bit32u,DRC_STR_STOS>(count,add_index,0,di_base,si,reg_edi,reg_ax);
+ }
+ 
+ static Bit16u DRC_CALL_CONV dynrec_stosd_word(Bit16u count,Bit16s add_index,PhysPt di_base) DRC_FC;
+ static Bit16u DRC_CALL_CONV dynrec_stosd_word(Bit16u count,Bit16s add_index,PhysPt di_base) {
+-	Bit16u count_left;
+-	if (count<(Bitu)CPU_Cycles) {
+-		count_left=0;
+-	} else {
+-		count_left=(Bit16u)(count-CPU_Cycles);
+-		count=(Bit16u)CPU_Cycles;
+-		CPU_Cycles=0;
+-	}
+-	add_index<<=2;
+-	for (;count>0;count--) {
+-		mem_writed(di_base+reg_di,reg_eax);
+-		reg_di+=add_index;
+-	}
+-	return count_left;
++	Bit16u si=0;
++	return dyn_string_op<Bit32u,Bit16u,DRC_STR_STOS>(count,add_index,0,di_base,si,reg_di,reg_eax);
+ }
+ 
+ static Bit32u DRC_CALL_CONV dynrec_stosd_dword(Bit32u count,Bit32s add_index,PhysPt di_base) DRC_FC;
+ static Bit32u DRC_CALL_CONV dynrec_stosd_dword(Bit32u count,Bit32s add_index,PhysPt di_base) {
+-	Bit32u count_left;
+-	if (count<(Bitu)CPU_Cycles) {
+-		count_left=0;
+-	} else {
+-		count_left=count-CPU_Cycles;
+-		count=CPU_Cycles;
+-		CPU_Cycles=0;
+-	}
+-	add_index<<=2;
+-	for (;count>0;count--) {
+-		mem_writed(di_base+reg_edi,reg_eax);
+-		reg_edi+=add_index;
+-	}
+-	return count_left;
++	Bit32u si=0;
++	return dyn_string_op<Bit32u,Bit32u,DRC_STR_STOS>(count,add_index,0,di_base,si,reg_edi,reg_eax);
+ }
+ 
+ 
+diff --git a/src/hardware/vga_memory.cpp b/src/hardware/vga_memory.cpp
+--- a/src/hardware/vga_memory.cpp
++++ b/src/hardware/vga_memory.cpp
+@@ -1,5 +1,6 @@
+ /*
+  *  Copyright (C) 2002-2010  The DOSBox Team
++ *  Copyright (C) 2026 René Rebe <rene@exactco.de>
+  *
+  *  This program is free software; you can redistribute it and/or modify
+  *  it under the terms of the GNU General Public License as published by
+@@ -414,6 +415,61 @@ public:
+ 		}
+ 		writeCache<Bit32u>( addr, val );
+ 	}
++	template <bool fill>
++	static INLINE Bit8u blockByte(const Bit8u * src,Bit32u val,Bitu size,Bitu i) {
++		return fill ? (Bit8u)(val >> ((i & (size-1)) * 8)) : src[i];
++	}
++	// write a run of bytes; the chained layout keeps each aligned group of
++	// 4 bytes together in vga.mem.linear, at a stride of 16 bytes
++	template <bool fill>
++	void writeBlock(PhysPt addr,const Bit8u * src,Bit32u val,Bitu size,Bitu len) {
++		PhysPt phys = PAGING_GetPhysicalAddress(addr);
++		PhysPt start = CHECKED((phys & vgapages.mask) + vga.svga.bank_write_full);
++		if (((phys & vgapages.mask) + len - 1 != ((phys + len - 1) & vgapages.mask)) ||
++			(CHECKED(start + len - 1) != start + len - 1)) {
++			// the run wraps, write it byte by byte
++			for (Bitu i=0;i<len;i++) {
++				PhysPt a = CHECKED(((phys+i) & vgapages.mask) + vga.svga.bank_write_full);
++				Bit8u b = blockByte<fill>(src,val,size,i);
++				MEM_CHANGED( a );
++				writeHandler<Bit8u>( a, b );
++				writeCache<Bit8u>( a, b );
++			}
++			return;
++		}
++#ifdef VGA_KEEP_CHANGES
++		for (PhysPt a=start;a<start+len;a+=1<<VGA_CHANGE_SHIFT) MEM_CHANGED( a );
++		MEM_CHANGED( start + len - 1 );
++#endif
++		Bitu i=0;
++		for (;i<len && ((start+i) & 3);i++)
++			writeHandler<Bit8u>( start+i, blockByte<fill>(src,val,size,i) );
++		if (i+4<=len) {
++			Bit8u group[4];
++			if (fill) for (Bitu k=0;k<4;k++) group[k]=blockByte<true>(src,val,size,i+k);
++			for (;i+4<=len;i+=4)
++				memcpy( &vga.mem.linear[(start+i)<<2], fill ? group : src+i, 4 );
++		}
++		for (;i<len;i++)
++			writeHandler<Bit8u>( start+i, blockByte<fill>(src,val,size,i) );
++		// the cache is linear, the first line is replicated
++		Bit8u * cache = &vga.fastmem[start];
++		if (!fill) memcpy( cache, src, len );
++		else if (size == 1) memset( cache, (Bit8u)val, len );
++		else for (i=0;i<len;i++) cache[i] = blockByte<true>(src,val,size,i);
++		if (GCC_UNLIKELY(start < 320)) {
++			Bitu first = 320 - start < len ? 320 - start : len;
++			memcpy( cache + 64*1024, cache, first );
++		}
++	}
++	bool writeblock(PhysPt addr,const Bit8u * src,Bitu len) {
++		writeBlock<false>( addr, src, 0, 1, len );
++		return true;
++	}
++	bool fillblock(PhysPt addr,Bit32u val,Bitu size,Bitu len) {
++		writeBlock<true>( addr, NULL, val, size, len );
++		return true;
++	}
+ };
+ 
+ class VGA_UnchainedVGA_Handler : public VGA_UnchainedRead_Handler {
+@@ -457,6 +513,24 @@ public:
+ 		writeHandler(addr+2,(Bit8u)(val >> 16));
+ 		writeHandler(addr+3,(Bit8u)(val >> 24));
+ 	}
++	// runs of bytes with one address translation, each byte written as by writeb
++	template <bool fill>
++	void writeBlock(PhysPt addr,const Bit8u * src,Bit32u val,Bitu size,Bitu len) {
++		PhysPt phys = PAGING_GetPhysicalAddress(addr);
++		for (Bitu i=0;i<len;i++) {
++			PhysPt a = CHECKED2(((phys+i) & vgapages.mask) + vga.svga.bank_write_full);
++			MEM_CHANGED( a << 2 );
++			writeHandler(a, fill ? (Bit8u)(val >> ((i & (size-1)) * 8)) : src[i]);
++		}
++	}
++	bool writeblock(PhysPt addr,const Bit8u * src,Bitu len) {
++		writeBlock<false>( addr, src, 0, 1, len );
++		return true;
++	}
++	bool fillblock(PhysPt addr,Bit32u val,Bitu size,Bitu len) {
++		writeBlock<true>( addr, NULL, val, size, len );
++		return true;
++	}
+ };
+ 
+ class VGA_TEXT_PageHandler : public PageHandler {
