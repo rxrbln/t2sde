@@ -1,0 +1,447 @@
+# --- T2-COPYRIGHT-BEGIN ---
+# t2/package/*/linux/hotfix-ultra45-hwmon.patch
+# Copyright (C) 2026 The T2 SDE Project
+# SPDX-License-Identifier: GPL-2.0 or patched project license
+# --- T2-COPYRIGHT-END ---
+
+From: René Rebe <rene@exactco.de>
+Subject: [PATCH] hwmon: (ultra45_env) convert to hwmon_device_register_with_info
+
+The driver registered an empty hwmon device and put its readings as
+non-standard attributes (cpu0_temp, fan0_speed, ...) on the platform
+device, so libsensors only showed the fanN_fault entries as N/A.
+
+Use the hwmon info API with standard attributes:
+ - temp1..9_input/label for the nine temperatures
+ - fan1..6_input/fault/label for the CPU0, CPU1 and SYS0..SYS3 fans,
+   adding the previously unexported SYS3 tach (indirect register 5)
+ - fan7_fault/label for the PSU fan, which only has a status bit
+Fan names and status bit order follow the obdiag env-monitor test.
+
+The status register flags and firmware version have no hwmon
+equivalent and are kept as a small extra group on the hwmon device:
+status_fault, status_busy, status_stale, status_tgood,
+firmware_version.
+
+The fan speed write is dropped: it stored a computed period into the
+tach register, and neither OBP nor obdiag ever writes the PIC fan
+registers, the PIC controls the fans on its own.
+
+Also fix the temperature decoding: the values use offset 64 encoding,
+the s8 cast turned readings of 64 C and above negative. A raw 0
+(absent sensor, e.g. CPU1 on single CPU systems) now returns -ENODATA
+instead of -64 C. Resources are devm managed.
+
+Signed-off-by: René Rebe <rene@exactco.de>
+---
+--- a/drivers/hwmon/ultra45_env.c
++++ b/drivers/hwmon/ultra45_env.c
+@@ -3,20 +3,20 @@
+  * ultra45_env.c: Driver for Ultra45 PIC16F747 environmental monitor.
+  *
+  * Copyright (C) 2008 David S. Miller <davem@davemloft.net>
++ * Copyright (C) 2026 René Rebe <rene@exactco.de>
+  */
+ 
++#include <linux/bits.h>
+ #include <linux/kernel.h>
+ #include <linux/types.h>
+-#include <linux/slab.h>
+ #include <linux/module.h>
+ #include <linux/of.h>
+ #include <linux/platform_device.h>
+ #include <linux/io.h>
+ #include <linux/hwmon.h>
+-#include <linux/hwmon-sysfs.h>
+ #include <linux/err.h>
+ 
+-#define DRV_MODULE_VERSION	"0.1"
++#define DRV_MODULE_VERSION	"0.2"
+ 
+ MODULE_AUTHOR("David S. Miller <davem@davemloft.net>");
+ MODULE_DESCRIPTION("Ultra45 environmental monitor driver");
+@@ -59,31 +59,33 @@ MODULE_VERSION(DRV_MODULE_VERSION);
+ #define IREG_VMEM1		0x12
+ #define IREG_PSU_TEMP		0x13
+ 
++
+ struct env {
+ 	void __iomem	*regs;
+-	spinlock_t	lock;
+-
+-	struct device	*hwmon_dev;
++	struct resource	*res;
+ };
+ 
+-static u8 env_read(struct env *p, u8 ireg)
+-{
+-	u8 ret;
++static const u8 env_temp_reg[] = {
++	IREG_LCL_TEMP, IREG_RMT1_TEMP, IREG_RMT2_TEMP, IREG_RMT3_TEMP,
++	IREG_LM95221_TEMP, IREG_FIRE_TEMP, IREG_LSI1064_TEMP, IREG_FRONT_TEMP,
++	IREG_PSU_TEMP,
++};
+ 
+-	spin_lock(&p->lock);
+-	writeb(ireg, p->regs + REG_ADDR);
+-	ret = readb(p->regs + REG_DATA);
+-	spin_unlock(&p->lock);
++/* fan status bits as named by the obdiag env-monitor test, PSU has no tach */
++static const char * const env_fan_label[] = {
++	"CPU0", "CPU1", "SYS0", "SYS1", "SYS2", "SYS3", "PSU",
++};
+ 
+-	return ret;
+-}
++static const char * const env_temp_label[] = {
++	"ADT7462 local", "CPU0", "CPU1", "Motherboard", "LM95221 local",
++	"Fire", "LSI1064 local", "Front panel", "PSU",
++};
+ 
+-static void env_write(struct env *p, u8 ireg, u8 val)
++/* hwmon core serializes the attribute callbacks, no extra locking needed */
++static u8 env_read(struct env *p, u8 ireg)
+ {
+-	spin_lock(&p->lock);
+ 	writeb(ireg, p->regs + REG_ADDR);
+-	writeb(val, p->regs + REG_DATA);
+-	spin_unlock(&p->lock);
++	return readb(p->regs + REG_DATA);
+ }
+ 
+ /*
+@@ -91,215 +93,156 @@ static void env_write(struct env *p, u8
+  * of these calculations are borrowed from the adt7470 driver.
+  */
+ #define FAN_PERIOD_TO_RPM(x)	((90000 * 60) / (x))
+-#define FAN_RPM_TO_PERIOD	FAN_PERIOD_TO_RPM
+ #define FAN_PERIOD_INVALID	(0xff << 8)
+ #define FAN_DATA_VALID(x)	((x) && (x) != FAN_PERIOD_INVALID)
+ 
+-static ssize_t show_fan_speed(struct device *dev, struct device_attribute *attr,
+-			      char *buf)
+-{
+-	int fan_nr = to_sensor_dev_attr(attr)->index;
+-	struct env *p = dev_get_drvdata(dev);
+-	int rpm, period;
+-	u8 val;
+-
+-	val = env_read(p, IREG_FAN0 + fan_nr);
+-	period = (int) val << 8;
+-	if (FAN_DATA_VALID(period))
+-		rpm = FAN_PERIOD_TO_RPM(period);
+-	else
+-		rpm = 0;
+-
+-	return sprintf(buf, "%d\n", rpm);
+-}
+-
+-static ssize_t set_fan_speed(struct device *dev, struct device_attribute *attr,
+-			     const char *buf, size_t count)
++static int env_hwmon_read(struct device *dev, enum hwmon_sensor_types type,
++			  u32 attr, int channel, long *val)
+ {
+-	int fan_nr = to_sensor_dev_attr(attr)->index;
+-	unsigned long rpm;
+ 	struct env *p = dev_get_drvdata(dev);
+ 	int period;
+-	u8 val;
+-	int err;
+-
+-	err = kstrtoul(buf, 10, &rpm);
+-	if (err)
+-		return err;
++	u8 raw;
+ 
+-	if (!rpm)
+-		return -EINVAL;
+-
+-	period = FAN_RPM_TO_PERIOD(rpm);
+-	val = period >> 8;
+-	env_write(p, IREG_FAN0 + fan_nr, val);
+-
+-	return count;
++	switch (type) {
++	case hwmon_temp:
++		/* offset 64 encoding, 0 is reported for absent sensors */
++		raw = env_read(p, env_temp_reg[channel]);
++		if (!raw)
++			return -ENODATA;
++		*val = ((long)raw - 64) * 1000;
++		return 0;
++	case hwmon_fan:
++		if (attr == hwmon_fan_fault) {
++			*val = !!(env_read(p, IREG_FAN_STAT) & BIT(channel));
++			return 0;
++		}
++		period = (int)env_read(p, IREG_FAN0 + channel) << 8;
++		*val = FAN_DATA_VALID(period) ? FAN_PERIOD_TO_RPM(period) : 0;
++		return 0;
++	default:
++		return -EOPNOTSUPP;
++	}
+ }
+ 
+-static ssize_t show_fan_fault(struct device *dev, struct device_attribute *attr,
+-			      char *buf)
+-{
+-	int fan_nr = to_sensor_dev_attr(attr)->index;
+-	struct env *p = dev_get_drvdata(dev);
+-	u8 val = env_read(p, IREG_FAN_STAT);
+-	return sprintf(buf, "%d\n", (val & (1 << fan_nr)) ? 1 : 0);
++static int env_hwmon_read_string(struct device *dev,
++				 enum hwmon_sensor_types type, u32 attr,
++				 int channel, const char **str)
++{
++	if (type == hwmon_temp)
++		*str = env_temp_label[channel];
++	else if (type == hwmon_fan)
++		*str = env_fan_label[channel];
++	else
++		return -EOPNOTSUPP;
++	return 0;
+ }
+ 
+-#define fan(index)							\
+-static SENSOR_DEVICE_ATTR(fan##index##_speed, S_IRUGO | S_IWUSR,	\
+-		show_fan_speed, set_fan_speed, index);			\
+-static SENSOR_DEVICE_ATTR(fan##index##_fault, S_IRUGO,			\
+-		show_fan_fault, NULL, index)
+-
+-fan(0);
+-fan(1);
+-fan(2);
+-fan(3);
+-fan(4);
+-
+-static SENSOR_DEVICE_ATTR(psu_fan_fault, S_IRUGO, show_fan_fault, NULL, 6);
+-
+-static ssize_t show_temp(struct device *dev, struct device_attribute *attr,
+-			 char *buf)
+-{
+-	int temp_nr = to_sensor_dev_attr(attr)->index;
+-	struct env *p = dev_get_drvdata(dev);
+-	s8 val;
++static const struct hwmon_ops env_hwmon_ops = {
++	.visible	= 0444,
++	.read		= env_hwmon_read,
++	.read_string	= env_hwmon_read_string,
++};
+ 
+-	val = env_read(p, IREG_LCL_TEMP + temp_nr);
+-	return sprintf(buf, "%d\n", ((int) val) - 64);
+-}
++static const struct hwmon_channel_info * const env_info[] = {
++	HWMON_CHANNEL_INFO(temp,
++			   HWMON_T_INPUT | HWMON_T_LABEL,
++			   HWMON_T_INPUT | HWMON_T_LABEL,
++			   HWMON_T_INPUT | HWMON_T_LABEL,
++			   HWMON_T_INPUT | HWMON_T_LABEL,
++			   HWMON_T_INPUT | HWMON_T_LABEL,
++			   HWMON_T_INPUT | HWMON_T_LABEL,
++			   HWMON_T_INPUT | HWMON_T_LABEL,
++			   HWMON_T_INPUT | HWMON_T_LABEL,
++			   HWMON_T_INPUT | HWMON_T_LABEL),
++	HWMON_CHANNEL_INFO(fan,
++			   HWMON_F_INPUT | HWMON_F_FAULT | HWMON_F_LABEL,
++			   HWMON_F_INPUT | HWMON_F_FAULT | HWMON_F_LABEL,
++			   HWMON_F_INPUT | HWMON_F_FAULT | HWMON_F_LABEL,
++			   HWMON_F_INPUT | HWMON_F_FAULT | HWMON_F_LABEL,
++			   HWMON_F_INPUT | HWMON_F_FAULT | HWMON_F_LABEL,
++			   HWMON_F_INPUT | HWMON_F_FAULT | HWMON_F_LABEL,
++			   HWMON_F_FAULT | HWMON_F_LABEL),
++	NULL
++};
+ 
+-static SENSOR_DEVICE_ATTR(adt7462_local_temp, S_IRUGO, show_temp, NULL, 0);
+-static SENSOR_DEVICE_ATTR(cpu0_temp, S_IRUGO, show_temp, NULL, 1);
+-static SENSOR_DEVICE_ATTR(cpu1_temp, S_IRUGO, show_temp, NULL, 2);
+-static SENSOR_DEVICE_ATTR(motherboard_temp, S_IRUGO, show_temp, NULL, 3);
+-static SENSOR_DEVICE_ATTR(lm95221_local_temp, S_IRUGO, show_temp, NULL, 4);
+-static SENSOR_DEVICE_ATTR(fire_temp, S_IRUGO, show_temp, NULL, 5);
+-static SENSOR_DEVICE_ATTR(lsi1064_local_temp, S_IRUGO, show_temp, NULL, 6);
+-static SENSOR_DEVICE_ATTR(front_panel_temp, S_IRUGO, show_temp, NULL, 7);
+-static SENSOR_DEVICE_ATTR(psu_temp, S_IRUGO, show_temp, NULL, 13);
++static const struct hwmon_chip_info env_chip_info = {
++	.ops	= &env_hwmon_ops,
++	.info	= env_info,
++};
+ 
+-static ssize_t show_stat_bit(struct device *dev, struct device_attribute *attr,
+-			     char *buf)
++static ssize_t env_stat_show(struct device *dev, char *buf, u8 mask)
+ {
+-	int index = to_sensor_dev_attr(attr)->index;
+ 	struct env *p = dev_get_drvdata(dev);
+-	u8 val;
+ 
+-	val = readb(p->regs + REG_STAT);
+-	return sprintf(buf, "%d\n", (val & (1 << index)) ? 1 : 0);
++	return sysfs_emit(buf, "%d\n", !!(readb(p->regs + REG_STAT) & mask));
+ }
+ 
+-static SENSOR_DEVICE_ATTR(fan_failure, S_IRUGO, show_stat_bit, NULL, 0);
+-static SENSOR_DEVICE_ATTR(env_bus_busy, S_IRUGO, show_stat_bit, NULL, 1);
+-static SENSOR_DEVICE_ATTR(env_data_stale, S_IRUGO, show_stat_bit, NULL, 2);
+-static SENSOR_DEVICE_ATTR(tpm_self_test_passed, S_IRUGO, show_stat_bit, NULL,
+-			  3);
++#define ENV_STAT_ATTR(_name, _mask)					\
++static ssize_t status_##_name##_show(struct device *dev,		\
++				     struct device_attribute *attr,	\
++				     char *buf)				\
++{									\
++	return env_stat_show(dev, buf, _mask);				\
++}									\
++static DEVICE_ATTR_RO(status_##_name)
++
++ENV_STAT_ATTR(fault, REG_STAT_FAULT);
++ENV_STAT_ATTR(busy, REG_STAT_BUSY);
++ENV_STAT_ATTR(stale, REG_STAT_STALE);
++ENV_STAT_ATTR(tgood, REG_STAT_TGOOD);
+ 
+-static ssize_t show_fwver(struct device *dev, struct device_attribute *attr,
+-			  char *buf)
++static ssize_t firmware_version_show(struct device *dev,
++				     struct device_attribute *attr, char *buf)
+ {
+ 	struct env *p = dev_get_drvdata(dev);
+-	u8 val;
+ 
+-	val = readb(p->regs + REG_STAT);
+-	return sprintf(buf, "%d\n", val >> 4);
++	return sysfs_emit(buf, "%u\n", readb(p->regs + REG_STAT) >> 4);
+ }
++static DEVICE_ATTR_RO(firmware_version);
+ 
+-static SENSOR_DEVICE_ATTR(firmware_version, S_IRUGO, show_fwver, NULL, 0);
++static struct attribute *env_status_attrs[] = {
++	&dev_attr_status_fault.attr,
++	&dev_attr_status_busy.attr,
++	&dev_attr_status_stale.attr,
++	&dev_attr_status_tgood.attr,
++	&dev_attr_firmware_version.attr,
++	NULL
++};
++ATTRIBUTE_GROUPS(env_status);
+ 
+-static ssize_t show_name(struct device *dev, struct device_attribute *attr,
+-			 char *buf)
++static void env_iounmap(void *data)
+ {
+-	return sprintf(buf, "ultra45\n");
+-}
++	struct env *p = data;
+ 
+-static SENSOR_DEVICE_ATTR(name, S_IRUGO, show_name, NULL, 0);
+-
+-static struct attribute *env_attributes[] = {
+-	&sensor_dev_attr_fan0_speed.dev_attr.attr,
+-	&sensor_dev_attr_fan0_fault.dev_attr.attr,
+-	&sensor_dev_attr_fan1_speed.dev_attr.attr,
+-	&sensor_dev_attr_fan1_fault.dev_attr.attr,
+-	&sensor_dev_attr_fan2_speed.dev_attr.attr,
+-	&sensor_dev_attr_fan2_fault.dev_attr.attr,
+-	&sensor_dev_attr_fan3_speed.dev_attr.attr,
+-	&sensor_dev_attr_fan3_fault.dev_attr.attr,
+-	&sensor_dev_attr_fan4_speed.dev_attr.attr,
+-	&sensor_dev_attr_fan4_fault.dev_attr.attr,
+-	&sensor_dev_attr_psu_fan_fault.dev_attr.attr,
+-	&sensor_dev_attr_adt7462_local_temp.dev_attr.attr,
+-	&sensor_dev_attr_cpu0_temp.dev_attr.attr,
+-	&sensor_dev_attr_cpu1_temp.dev_attr.attr,
+-	&sensor_dev_attr_motherboard_temp.dev_attr.attr,
+-	&sensor_dev_attr_lm95221_local_temp.dev_attr.attr,
+-	&sensor_dev_attr_fire_temp.dev_attr.attr,
+-	&sensor_dev_attr_lsi1064_local_temp.dev_attr.attr,
+-	&sensor_dev_attr_front_panel_temp.dev_attr.attr,
+-	&sensor_dev_attr_psu_temp.dev_attr.attr,
+-	&sensor_dev_attr_fan_failure.dev_attr.attr,
+-	&sensor_dev_attr_env_bus_busy.dev_attr.attr,
+-	&sensor_dev_attr_env_data_stale.dev_attr.attr,
+-	&sensor_dev_attr_tpm_self_test_passed.dev_attr.attr,
+-	&sensor_dev_attr_firmware_version.dev_attr.attr,
+-	&sensor_dev_attr_name.dev_attr.attr,
+-	NULL,
+-};
+-
+-static const struct attribute_group env_group = {
+-	.attrs = env_attributes,
+-};
++	of_iounmap(p->res, p->regs, REG_SIZE);
++}
+ 
+ static int env_probe(struct platform_device *op)
+ {
+-	struct env *p = devm_kzalloc(&op->dev, sizeof(*p), GFP_KERNEL);
+-	int err = -ENOMEM;
++	struct device *hwmon_dev;
++	struct env *p;
++	int err;
+ 
++	p = devm_kzalloc(&op->dev, sizeof(*p), GFP_KERNEL);
+ 	if (!p)
+-		goto out;
+-
+-	spin_lock_init(&p->lock);
++		return -ENOMEM;
+ 
+-	p->regs = of_ioremap(&op->resource[0], 0, REG_SIZE, "pic16f747");
++	p->res = &op->resource[0];
++	p->regs = of_ioremap(p->res, 0, REG_SIZE, "pic16f747");
+ 	if (!p->regs)
+-		goto out;
++		return -ENOMEM;
+ 
+-	err = sysfs_create_group(&op->dev.kobj, &env_group);
++	err = devm_add_action_or_reset(&op->dev, env_iounmap, p);
+ 	if (err)
+-		goto out_iounmap;
+-
+-	p->hwmon_dev = hwmon_device_register(&op->dev);
+-	if (IS_ERR(p->hwmon_dev)) {
+-		err = PTR_ERR(p->hwmon_dev);
+-		goto out_sysfs_remove_group;
+-	}
+-
+-	platform_set_drvdata(op, p);
+-	err = 0;
+-
+-out:
+-	return err;
+-
+-out_sysfs_remove_group:
+-	sysfs_remove_group(&op->dev.kobj, &env_group);
+-
+-out_iounmap:
+-	of_iounmap(&op->resource[0], p->regs, REG_SIZE);
+-
+-	goto out;
+-}
++		return err;
+ 
+-static void env_remove(struct platform_device *op)
+-{
+-	struct env *p = platform_get_drvdata(op);
++	dev_info(&op->dev, "firmware version %u\n",
++		 readb(p->regs + REG_STAT) >> 4);
+ 
+-	if (p) {
+-		sysfs_remove_group(&op->dev.kobj, &env_group);
+-		hwmon_device_unregister(p->hwmon_dev);
+-		of_iounmap(&op->resource[0], p->regs, REG_SIZE);
+-	}
++	hwmon_dev = devm_hwmon_device_register_with_info(&op->dev, "ultra45", p,
++							 &env_chip_info,
++							 env_status_groups);
++	return PTR_ERR_OR_ZERO(hwmon_dev);
+ }
+ 
+ static const struct of_device_id env_match[] = {
+@@ -317,7 +260,6 @@ static struct platform_driver env_driver
+ 		.of_match_table = env_match,
+ 	},
+ 	.probe		= env_probe,
+-	.remove		= env_remove,
+ };
+ 
+ module_platform_driver(env_driver);
