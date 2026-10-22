@@ -1,0 +1,76 @@
+From: René Rebe <rene@exactco.de>
+Subject: [PATCH] sparc64: vdso: map the vvar at the D-cache colour of the kernel data
+
+The L1 D-cache of sun4u CPUs (Spitfire 16K direct mapped, Cheetah and
+Jalapeno 64K 4-way) is virtually indexed with 8K pages, so VA bit 13
+selects the cache colour. The kernel updates the vDSO time data through
+its linear mapping, user space reads it through the [vvar] mapping, whose
+address is randomized at page granularity. When the two colours differ,
+the write-through stores of the kernel never touch the user's alias lines
+and the vDSO keeps reading stale lines until they are displaced.
+
+As seq and cycle_last share one 32-byte line and the clock bases sit in
+the next one, the lines go stale independently and the seqcount cannot
+detect the mix: on an Ultra 25 (UltraSPARC IIIi, HZ=300) every process
+whose vvar has the other colour (about half of them) sees vDSO
+CLOCK_MONOTONIC/REALTIME step backwards and forwards by up to 1.6 s,
+the user view of seq advances 2-4 times per second instead of 300, and
+journald logs "Time jumped backwards, rotating". With user space
+displacing the D-cache every round the error shrinks to one tick
+(3.3 ms); with a matching colour it is zero.
+
+Map the vvar at the colour of the kernel's mapping of the time page, as
+MIPS does for its aliasing caches. sun4v CPUs have no such aliasing.
+
+Signed-off-by: René Rebe <rene@exactco.de>
+---
+--- a/arch/sparc/vdso/vma.c
++++ b/arch/sparc/vdso/vma.c
+@@ -21,6 +21,7 @@
+ #include <asm/spitfire.h>
+ #include <asm/vdso.h>
+ #include <asm/page.h>
++#include <asm/shmparam.h>
+ 
+ #include <vdso/datapage.h>
+ #include <asm/vdso/vsyscall.h>
+@@ -123,6 +124,8 @@ static int map_vdso(const struct vdso_im
+ 		struct vm_special_mapping *vdso_mapping)
+ {
+ 	const size_t area_size = image->size + VDSO_NR_PAGES * PAGE_SIZE;
++	/* room to move the vvar to the D-cache colour of the kernel data pages */
++	const size_t colour_pad = tlb_type == hypervisor ? 0 : SHMLBA - PAGE_SIZE;
+ 	struct mm_struct *mm = current->mm;
+ 	struct vm_area_struct *vma;
+ 	unsigned long text_start, addr = 0;
+@@ -135,19 +138,27 @@ static int map_vdso(const struct vdso_im
+ 	 * region is free.
+ 	 */
+ 	if (current->flags & PF_RANDOMIZE) {
+-		addr = get_unmapped_area(NULL, 0, area_size, 0, 0);
++		addr = get_unmapped_area(NULL, 0, area_size + colour_pad, 0, 0);
+ 		if (IS_ERR_VALUE(addr)) {
+ 			ret = addr;
+ 			goto up_fail;
+ 		}
+-		addr = vdso_addr(addr, area_size);
++		addr = vdso_addr(addr, area_size + colour_pad);
+ 	}
+-	addr = get_unmapped_area(NULL, addr, area_size, 0, 0);
++	addr = get_unmapped_area(NULL, addr, area_size + colour_pad, 0, 0);
+ 	if (IS_ERR_VALUE(addr)) {
+ 		ret = addr;
+ 		goto up_fail;
+ 	}
+ 
++	/*
++	 * The sun4u L1 D-cache is virtually indexed: a vvar of another colour than
++	 * the kernel's linear mapping keeps stale lines and returns stale time data.
++	 */
++	if (colour_pad)
++		addr += ((unsigned long)vdso_k_time_data -
++			 VDSO_TIME_PAGE_OFFSET * PAGE_SIZE - addr) & (SHMLBA - 1);
++
+ 	text_start = addr + VDSO_NR_PAGES * PAGE_SIZE;
+ 	current->mm->context.vdso = (void __user *)text_start;
+ 
