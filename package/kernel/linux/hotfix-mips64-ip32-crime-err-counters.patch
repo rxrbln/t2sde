@@ -1,0 +1,89 @@
+From: René Rebe <rene@exactco.de>
+Subject: [PATCH] MIPS: IP32: count CRIME error interrupts, rate limit their messages
+
+Count CRIME memory and CPU error interrupts with the last address and
+status in debugfs crime-errors, and rate limit the non-fatal messages,
+so error bursts (e.g. from speculative accesses) can be measured without
+flooding the log.  Multiple-bit and hard memory errors stay fatal.
+
+Signed-off-by: René Rebe <rene@exactco.de>
+---
+--- a/arch/mips/sgi-ip32/crime.c
++++ b/arch/mips/sgi-ip32/crime.c
+@@ -6,6 +6,8 @@
+  * Copyright (C) 2001, 2003 Keith M Wesolowski
+  * Copyright (C) 2005 Ilya A. Volynets <ilya@total-knowledge.com>
+  */
++#include <linux/debugfs.h>
++#include <linux/seq_file.h>
+ #include <linux/types.h>
+ #include <linux/init.h>
+ #include <linux/kernel.h>
+@@ -25,6 +27,12 @@ struct sgi_mace __iomem *mace;
+ 
+ EXPORT_SYMBOL_GPL(mace);
+ 
++/* error interrupt counts for debugfs crime-errors, e.g. speculative accesses */
++static struct {
++	unsigned long mem, mem_fatal, cpu;
++	unsigned long mem_addr, mem_stat, cpu_addr, cpu_stat;
++} crime_errors;
++
+ void __init crime_init(void)
+ {
+ 	unsigned int id, rev;
+@@ -48,6 +56,15 @@ irqreturn_t crime_memerr_intr(int irq, v
+ 
+ 	stat = crime->mem_error_stat & CRIME_MEM_ERROR_STAT_MASK;
+ 	addr = crime->mem_error_addr & CRIME_MEM_ERROR_ADDR_MASK;
++	crime_errors.mem++;
++	crime_errors.mem_addr = addr;
++	crime_errors.mem_stat = stat;
++	/* uncorrectable errors stay fatal, the rest is counted and rate limited */
++	if (!(stat & (CRIME_MEM_ERROR_MULTIPLE | CRIME_MEM_ERROR_HARD_ERR)) &&
++	    !printk_ratelimit()) {
++		crime->mem_error_stat = 0;
++		return IRQ_HANDLED;
++	}
+ 
+ 	printk("CRIME memory error at 0x%08lx status 0x%08lx<", addr, stat);
+ 
+@@ -84,6 +101,7 @@ irqreturn_t crime_memerr_intr(int irq, v
+ 	crime->mem_error_stat = 0;
+ 
+ 	if (fatal) {
++		crime_errors.mem_fatal++;
+ 		printk(KERN_CONT "FATAL>\n");
+ 		panic("Fatal memory error.");
+ 	} else
+@@ -98,8 +116,29 @@ irqreturn_t crime_cpuerr_intr(int irq, v
+ 	unsigned long addr = crime->cpu_error_addr & CRIME_CPU_ERROR_ADDR_MASK;
+ 
+ 	addr <<= 2;
+-	printk("CRIME CPU error at 0x%09lx status 0x%08lx\n", addr, stat);
++	crime_errors.cpu++;
++	crime_errors.cpu_addr = addr;
++	crime_errors.cpu_stat = stat;
++	pr_err_ratelimited("CRIME CPU error at 0x%09lx status 0x%08lx\n", addr, stat);
+ 	crime->cpu_error_stat = 0;
+ 
+ 	return IRQ_HANDLED;
+ }
++
++static int crime_errors_show(struct seq_file *m, void *v)
++{
++	seq_printf(m, "memory errors %lu (fatal %lu), last at 0x%08lx status 0x%08lx\n",
++		   crime_errors.mem, crime_errors.mem_fatal, crime_errors.mem_addr,
++		   crime_errors.mem_stat);
++	seq_printf(m, "cpu errors %lu, last at 0x%09lx status 0x%08lx\n", crime_errors.cpu,
++		   crime_errors.cpu_addr, crime_errors.cpu_stat);
++	return 0;
++}
++DEFINE_SHOW_ATTRIBUTE(crime_errors);
++
++static int __init crime_errors_debugfs_init(void)
++{
++	debugfs_create_file("crime-errors", 0444, NULL, NULL, &crime_errors_fops);
++	return 0;
++}
++late_initcall(crime_errors_debugfs_init);

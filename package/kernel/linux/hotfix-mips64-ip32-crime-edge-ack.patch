@@ -1,0 +1,95 @@
+From: René Rebe <rene@exactco.de>
+Subject: [PATCH] MIPS: ip32: do not mask CRIME edge interrupts on ack
+
+handle_edge_irq() calls irq_ack and never unmasks afterwards, but the
+CRIME edge chip also masked the source in its ack callback.  Every CRIME
+edge interrupt, e.g. the VICE accelerator, was delivered only once per
+request_irq().  Use 64-bit bit math, bit 31 sign-extended into the mask.
+
+Signed-off-by: René Rebe <rene@exactco.de>
+---
+--- a/arch/mips/sgi-ip32/ip32-irq.c
++++ b/arch/mips/sgi-ip32/ip32-irq.c
+@@ -120,7 +120,7 @@ static inline void crime_enable_irq(stru
+ {
+ 	unsigned int bit = d->irq - CRIME_IRQ_BASE;
+ 
+-	crime_mask |= 1 << bit;
++	crime_mask |= BIT_ULL(bit);
+ 	crime->imask = crime_mask;
+ }
+ 
+@@ -128,7 +128,7 @@ static inline void crime_disable_irq(str
+ {
+ 	unsigned int bit = d->irq - CRIME_IRQ_BASE;
+ 
+-	crime_mask &= ~(1 << bit);
++	crime_mask &= ~BIT_ULL(bit);
+ 	crime->imask = crime_mask;
+ 	flush_crime_bus();
+ }
+@@ -139,22 +139,27 @@ static struct irq_chip crime_level_inter
+ 	.irq_unmask	= crime_enable_irq,
+ };
+ 
+-static void crime_edge_mask_and_ack_irq(struct irq_data *d)
++static void crime_edge_ack_irq(struct irq_data *d)
+ {
+ 	unsigned int bit = d->irq - CRIME_IRQ_BASE;
+ 	uint64_t crime_int;
+ 
+ 	/* Edge triggered interrupts must be cleared. */
+ 	crime_int = crime->hard_int;
+-	crime_int &= ~(1 << bit);
++	crime_int &= ~BIT_ULL(bit);
+ 	crime->hard_int = crime_int;
++}
+ 
++/* ack alone must not mask: handle_edge_irq() never unmasks after ack */
++static void crime_edge_mask_and_ack_irq(struct irq_data *d)
++{
++	crime_edge_ack_irq(d);
+ 	crime_disable_irq(d);
+ }
+ 
+ static struct irq_chip crime_edge_interrupt = {
+ 	.name		= "IP32 CRIME",
+-	.irq_ack	= crime_edge_mask_and_ack_irq,
++	.irq_ack	= crime_edge_ack_irq,
+ 	.irq_mask	= crime_disable_irq,
+ 	.irq_mask_ack	= crime_edge_mask_and_ack_irq,
+ 	.irq_unmask	= crime_enable_irq,
+@@ -172,13 +177,13 @@ static void enable_macepci_irq(struct ir
+ {
+ 	macepci_mask |= MACEPCI_CONTROL_INT(d->irq - MACEPCI_SCSI0_IRQ);
+ 	mace->pci.control = macepci_mask;
+-	crime_mask |= 1 << (d->irq - CRIME_IRQ_BASE);
++	crime_mask |= BIT_ULL(d->irq - CRIME_IRQ_BASE);
+ 	crime->imask = crime_mask;
+ }
+ 
+ static void disable_macepci_irq(struct irq_data *d)
+ {
+-	crime_mask &= ~(1 << (d->irq - CRIME_IRQ_BASE));
++	crime_mask &= ~BIT_ULL(d->irq - CRIME_IRQ_BASE);
+ 	crime->imask = crime_mask;
+ 	flush_crime_bus();
+ 	macepci_mask &= ~MACEPCI_CONTROL_INT(d->irq - MACEPCI_SCSI0_IRQ);
+@@ -307,7 +312,7 @@ static void enable_mace_irq(struct irq_d
+ {
+ 	unsigned int bit = d->irq - CRIME_IRQ_BASE;
+ 
+-	crime_mask |= (1 << bit);
++	crime_mask |= BIT_ULL(bit);
+ 	crime->imask = crime_mask;
+ }
+ 
+@@ -315,7 +320,7 @@ static void disable_mace_irq(struct irq_
+ {
+ 	unsigned int bit = d->irq - CRIME_IRQ_BASE;
+ 
+-	crime_mask &= ~(1 << bit);
++	crime_mask &= ~BIT_ULL(bit);
+ 	crime->imask = crime_mask;
+ 	flush_crime_bus();
+ }

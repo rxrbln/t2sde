@@ -1,0 +1,93 @@
+# --- T2-COPYRIGHT-BEGIN ---
+# t2/package/*/linux/hotfix-mips64-sgi-ip32-r10k.patch
+# Copyright (C) 2024 - 2026 The T2 SDE Project
+# SPDX-License-Identifier: GPL-2.0 or patched project license
+# --- T2-COPYRIGHT-END ---
+
+Apply ip28 indigo 2 r10k speculative load-store workaround for r10k/r120 o2 ip32, too.
+
+--- linux-6.6/arch/mips/Kconfig.vanilla	2024-01-06 20:52:06.032449685 +0100
++++ linux-6.6/arch/mips/Kconfig	2024-01-06 20:52:47.309454246 +0100
+@@ -785,7 +785,7 @@
+ 	select R5000_CPU_SCACHE
+ 	select RM7000_CPU_SCACHE
+ 	select SYS_HAS_CPU_R5000
+-	select SYS_HAS_CPU_R10000 if BROKEN
++	select SYS_HAS_CPU_R10000
+ 	select SYS_HAS_CPU_RM7000
+ 	select SYS_HAS_CPU_NEVADA
+ 	select SYS_SUPPORTS_64BIT_KERNEL
+--- linux-6.6/arch/mips/sgi-ip32/Platform.vanilla	2024-01-06 20:56:28.524478690 +0100
++++ linux-6.6/arch/mips/sgi-ip32/Platform	2024-01-06 20:57:21.112484501 +0100
+@@ -7,4 +7,5 @@
+ # will break.
+ #
+ cflags-$(CONFIG_SGI_IP32)	+= -I$(srctree)/arch/mips/include/asm/mach-ip32
++cflags-$(CONFIG_CPU_R10000)	+= -mr10k-cache-barrier=store
+ load-$(CONFIG_SGI_IP32)		+= 0xffffffff80004000
+
+From: René Rebe <rene@exactco.de>
+Subject: [PATCH] MIPS: R10KCBARRIER for IP32 R10000 too
+
+memcpy, memset and strncpy_user only had their speculative store
+barriers on IP28; IP32 with R10000/R12000 is non-coherent the same way.
+
+Signed-off-by: René Rebe <rene@exactco.de>
+---
+--- a/arch/mips/include/asm/asm.h
++++ b/arch/mips/include/asm/asm.h
+@@ -345,7 +345,7 @@ symbol		=	value
+ # define SC_BEQZ	beqz
+ #endif
+ 
+-#ifdef CONFIG_SGI_IP28
++#if defined(CONFIG_SGI_IP28) || (defined(CONFIG_SGI_IP32) && defined(CONFIG_CPU_R10000))
+ /* Inhibit speculative stores to volatile (e.g.DMA) or invalid addresses. */
+ #include <asm/cacheops.h>
+ #define R10KCBARRIER(addr)  cache   Cache_Barrier, addr;
+From: René Rebe <rene@exactco.de>
+Subject: [PATCH] MIPS: page: cache barrier in the clear/copy page tail loops for R10000
+
+The no-prefetch loops of the synthesized clear_page/copy_page run to the
+page end; a mispredicted loop branch speculatively runs the loop head's
+stores into the next page.  Start the loops with a cache barrier on
+non-coherent R10000 systems (IP28, IP32).
+
+Signed-off-by: René Rebe <rene@exactco.de>
+---
+--- a/arch/mips/mm/page.c
++++ b/arch/mips/mm/page.c
+@@ -218,6 +218,17 @@ static void set_prefetch_parameters(void
+ 				      4 * copy_word_size));
+ }
+ 
++/*
++ * R10000 on non-coherent IP28/IP32: a mispredicted loop branch may run the
++ * loop head's stores past the page end, a cache barrier keeps them out.
++ */
++static void build_r10k_cache_barrier(u32 **buf)
++{
++	if (IS_ENABLED(CONFIG_SGI_IP28) ||
++	    (IS_ENABLED(CONFIG_SGI_IP32) && IS_ENABLED(CONFIG_CPU_R10000)))
++		uasm_i_cache(buf, Cache_Barrier, 0, GPR_SP);
++}
++
+ static void build_clear_store(u32 **buf, int off)
+ {
+ 	if (cpu_has_64bit_gp_regs || cpu_has_64bit_zero_reg) {
+@@ -321,6 +332,7 @@ void build_clear_page(void)
+ 	if (pref_bias_clear_store) {
+ 		pg_addiu(&buf, GPR_A2, GPR_A0, pref_bias_clear_store);
+ 		uasm_l_clear_nopref(&l, buf);
++		build_r10k_cache_barrier(&buf);
+ 		off = 0;
+ 		do {
+ 			build_clear_store(&buf, off);
+@@ -552,6 +564,7 @@ void build_copy_page(void)
+ 	if (pref_bias_copy_store) {
+ 		pg_addiu(&buf, GPR_A2, GPR_A0, pref_bias_copy_store);
+ 		uasm_l_copy_nopref(&l, buf);
++		build_r10k_cache_barrier(&buf);
+ 		off = 0;
+ 		do {
+ 			build_copy_load(&buf, GPR_T0, off);
