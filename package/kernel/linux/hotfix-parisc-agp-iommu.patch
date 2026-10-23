@@ -1,0 +1,474 @@
+parisc: make radeon work on HP C8000 (combined)
+
+All five patches of parisc-radeon-v2 squashed into one diff.
+Base: b88c841d11641923fa3a4da011d7202cd89df68a (v7.3-rc6-390-gb88c841d1164)
+Apply from the top of the kernel tree:  patch -p1 < parisc-c8000-radeon-combined.patch
+
+  03e77d62245b parisc/sba_iommu: reserve and release every word of a multi-word IOVA range
+  d0fc5eb769a8 drm/radeon: flush the ring through its vmap alias before committing
+  064b72853c3d parisc/sba_iommu: clear ROPE_CONFIG bit 2 on ropes carrying an AGP bridge
+  53f2538f12e2 parisc/sba_iommu: enable AGP support when parisc-agp is a module
+  b8c29d19cddf parisc/sba_iommu: pad DMA mappings behind a Quicksilver AGP bridge
+
+ arch/parisc/include/asm/ropes.h      |  22 +++-
+ drivers/gpu/drm/radeon/radeon_ring.c |   6 +
+ drivers/parisc/lba_pci.c             |   8 --
+ drivers/parisc/sba_iommu.c           | 232 +++++++++++++++++++++++++++++++----
+ 4 files changed, 233 insertions(+), 35 deletions(-)
+
+diff --git a/arch/parisc/include/asm/ropes.h b/arch/parisc/include/asm/ropes.h
+index e2d2d7e9bfde..e509984e7ba9 100644
+--- a/arch/parisc/include/asm/ropes.h
++++ b/arch/parisc/include/asm/ropes.h
+@@ -26,6 +26,13 @@
+ #define MAX_IOC		2	/* per Ike. Pluto/Astro only have 1. */
+ #define ROPES_PER_IOC	8	/* per Ike half or Pluto/Astro */
+ 
++/*
++** Extract LBA (Rope) number from HPA: the bridges are laid out one per 8KB
++** slot below the IOC.
++** REVISIT: 16 ropes for Stretch/Ike?
++*/
++#define LBA_NUM(x)	((((unsigned long) x) >> 13) & (ROPES_PER_IOC - 1))
++
+ struct ioc {
+ 	void __iomem	*ioc_hpa;	/* I/O MMU base address */
+ 	char		*res_map;	/* resource map, bit == pdir entry */
+@@ -168,6 +175,12 @@ static inline int IS_PLUTO(struct parisc_device *d) {
+ 
+ #define IOC_ROPE0_CFG	0x500	/* pluto only */
+ #define   IOC_ROPE_AO	  0x10	/* Allow "Relaxed Ordering" */
++/*
++** Bit 2 is not described by the zx1 mio ERS.  The name records what it does:
++** while it is set, a Quicksilver on that rope accepts inbound transactions and
++** then abandons them.  Firmware sets it, HP-UX clears it.  See sba_hw_init().
++*/
++#define   IOC_ROPE_INBOUND_STALL	0x4
+ 
+ #define HF_ENABLE	0x40
+ 
+@@ -225,15 +238,18 @@ struct lba_device {
+ #define MERCURY_HVERS		0x783
+ #define QUICKSILVER_HVERS	0x784
+ 
+-static inline int IS_ELROY(struct parisc_device *d) {
++static inline int IS_ELROY(const struct parisc_device *d)
++{
+ 	return (d->id.hversion == ELROY_HVERS);
+ }
+ 
+-static inline int IS_MERCURY(struct parisc_device *d) {
++static inline int IS_MERCURY(const struct parisc_device *d)
++{
+ 	return (d->id.hversion == MERCURY_HVERS);
+ }
+ 
+-static inline int IS_QUICKSILVER(struct parisc_device *d) {
++static inline int IS_QUICKSILVER(const struct parisc_device *d)
++{
+ 	return (d->id.hversion == QUICKSILVER_HVERS);
+ }
+ 
+diff --git a/drivers/gpu/drm/radeon/radeon_ring.c b/drivers/gpu/drm/radeon/radeon_ring.c
+index a5dff072c1ac..96c2ca6b796c 100644
+--- a/drivers/gpu/drm/radeon/radeon_ring.c
++++ b/drivers/gpu/drm/radeon/radeon_ring.c
+@@ -28,6 +28,7 @@
+  */
+ 
+ #include <linux/debugfs.h>
++#include <linux/highmem.h>
+ 
+ #include <drm/drm_device.h>
+ #include <drm/drm_file.h>
+@@ -179,6 +180,11 @@ void radeon_ring_commit(struct radeon_device *rdev, struct radeon_ring *ring,
+ 		radeon_ring_write(ring, ring->nop);
+ 	}
+ 	mb();
++	/* TTM maps the ring with vmap(); on aliasing-cache architectures mb()
++	 * does not push the writes out of that alias, so the GPU can fetch
++	 * stale data.  A no-op where the arch does not need it.
++	 */
++	flush_kernel_vmap_range((void *)ring->ring, ring->ring_size);
+ 	/* If we are emitting the HDP flush via MMIO, we need to do it after
+ 	 * all CPU writes to VRAM finished.
+ 	 */
+diff --git a/drivers/parisc/lba_pci.c b/drivers/parisc/lba_pci.c
+index 5197a3c93c70..b22e885dc10b 100644
+--- a/drivers/parisc/lba_pci.c
++++ b/drivers/parisc/lba_pci.c
+@@ -147,14 +147,6 @@ static inline struct lba_device *LBA_DEV(struct pci_hba_data *hba)
+ #define LBA_CFG_FUNC(tok) ((u8) ((tok)>>8 ) & 0x7)
+ 
+ 
+-/*
+-** Extract LBA (Rope) number from HPA
+-** REVISIT: 16 ropes for Stretch/Ike?
+-*/
+-#define ROPES_PER_IOC	8
+-#define LBA_NUM(x)    ((((unsigned long) x) >> 13) & (ROPES_PER_IOC-1))
+-
+-
+ static void
+ lba_dump_res(struct resource *r, int d)
+ {
+diff --git a/drivers/parisc/sba_iommu.c b/drivers/parisc/sba_iommu.c
+index e0a148ab5876..897df9a4b02f 100644
+--- a/drivers/parisc/sba_iommu.c
++++ b/drivers/parisc/sba_iommu.c
+@@ -108,7 +108,7 @@ static unsigned long piranha_bad_128k = 0;
+ /* Looks nice and keeps the compiler happy */
+ #define SBA_DEV(d) ((struct sba_device *) (d))
+ 
+-#ifdef CONFIG_AGP_PARISC
++#if IS_ENABLED(CONFIG_AGP_PARISC)
+ #define SBA_AGP_SUPPORT
+ #endif /*CONFIG_AGP_PARISC*/
+ 
+@@ -118,6 +118,48 @@ module_param(sba_reserve_agpgart, int, 0444);
+ MODULE_PARM_DESC(sba_reserve_agpgart, "Reserve half of IO pdir as AGPGART");
+ #endif
+ 
++/*
++ * Pad DMA mappings made behind a Quicksilver AGP bridge.
++ *
++ * For a connected PCI DMA read, the IOC keeps fetching ahead until the bridge
++ * disconnects.  A Quicksilver does not disconnect at the 4KB page boundary, so
++ * a read that runs to the end of a mapping prefetches into the next IOVA page.
++ * If that page is not mapped the IOMMU rejects it, the rope hard-fails and the
++ * machine takes an HPMC.  HP's zx1 IOMMU driver for ia64 described the same
++ * hazard and noted that later zx1 LBA revisions disconnect on 4KB boundaries;
++ * the Quicksilver in the C8000 is TR1.0.
++ *
++ * So follow each such mapping with one extra pdir entry pointing at a shared
++ * scratch page: the prefetch then reads that page instead of hard-failing.
++ * AGP mode is unaffected, since parisc-agp keeps the whole GART aperture valid.
++ *
++ * sba_iommu.sba_prefetch_pad=0 disables it, for diagnosis only.
++ */
++static int sba_prefetch_pad = 1;
++module_param(sba_prefetch_pad, int, 0444);
++MODULE_PARM_DESC(sba_prefetch_pad,
++		 "Pad DMA mappings behind a Quicksilver AGP bridge (1, default; 0 to diagnose)");
++
++static unsigned long sba_pad_pa;	/* scratch page the pad entries point at */
++
++/*
++ * Keyed on the bridge rather than the device: the fault has been seen with two
++ * different graphics cards behind a Quicksilver and never behind a Mercury.
++ * Only the AGP slot sits behind a Quicksilver, so this also covers whatever
++ * card is fitted there.
++ */
++static bool sba_needs_prefetch_pad(struct device *dev)
++{
++	struct pci_hba_data *hba;
++
++	if (!sba_pad_pa || !dev)
++		return false;
++
++	hba = parisc_walk_tree(dev);
++
++	return hba && hba->dev && IS_QUICKSILVER(hba->dev);
++}
++
+ static struct proc_dir_entry *proc_runway_root __ro_after_init;
+ static struct proc_dir_entry *proc_mckinley_root __ro_after_init;
+ 
+@@ -317,7 +359,38 @@ sba_dump_sg( struct ioc *ioc, struct scatterlist *startsg, int nents)
+ #define PDIR_INDEX(iovp)   ((iovp)>>IOVP_SHIFT)
+ 
+ #define RESMAP_MASK(n)    (~0UL << (BITS_PER_LONG - (n)))
+-#define RESMAP_IDX_MASK   (sizeof(unsigned long) - 1)
++
++/**
++ * sba_resmap_update - set or clear a run of bits in the resource bitmap
++ * @ioc: IO MMU structure which owns the bitmap
++ * @start: first bit (pide) of the run
++ * @nbits: length of the run
++ * @set: true to mark busy, false to mark free
++ *
++ * Bits are numbered most-significant-first within each word, the opposite of
++ * the convention bitmap_set()/bitmap_clear() use, so those cannot be
++ * substituted.  Walking a word at a time also keeps RESMAP_MASK() within the
++ * 1..BITS_PER_LONG range it is defined for.
++ */
++static void sba_resmap_update(struct ioc *ioc, unsigned long start,
++			      unsigned long nbits, bool set)
++{
++	unsigned long *map = (unsigned long *) ioc->res_map;
++
++	while (nbits) {
++		unsigned long off = start % BITS_PER_LONG;
++		unsigned long n = min(nbits, BITS_PER_LONG - off);
++		unsigned long mask = RESMAP_MASK(n) >> off;
++
++		if (set)
++			map[start / BITS_PER_LONG] |= mask;
++		else
++			map[start / BITS_PER_LONG] &= ~mask;
++
++		start += n;
++		nbits -= n;
++	}
++}
+ 
+ static unsigned long ptr_to_pide(struct ioc *ioc, unsigned long *res_ptr,
+ 				 unsigned int bitshiftcnt)
+@@ -357,18 +430,51 @@ sba_search_bitmap(struct ioc *ioc, struct device *dev,
+ #endif
+ 
+ 	if (bits_wanted > (BITS_PER_LONG/2)) {
+-		/* Search word at a time - no mask needed */
+-		for(; res_ptr < res_end; ++res_ptr) {
++		/*
++		 * Search word at a time - no mask needed.  A request this
++		 * large may span several words, all of which have to be free
++		 * and all of which have to be marked busy.
++		 *
++		 * Like the small path below, start on a boundary of the
++		 * power-of-two size sba_mark_invalid() purges: PCOM only
++		 * purges a naturally aligned range, so a misaligned mapping
++		 * would leave stale IOTLB entries for its tail when freed.
++		 * Since words <= align, a busy word is always inside the
++		 * current slot, and stepping by align already skips past it.
++		 */
++		unsigned long *map = (unsigned long *) ioc->res_map;
++		unsigned long words = BITS_TO_LONGS(bits_wanted);
++		unsigned long align = (1UL << get_order(bits_wanted << PAGE_SHIFT))
++				      / BITS_PER_LONG;
++		unsigned long i;
++
++		res_ptr = map + ALIGN(res_ptr - map, align);
++		for (; res_ptr + words <= res_end; res_ptr += align) {
++			for (i = 0; i < words; i++)
++				if (res_ptr[i] != 0)
++					break;
++			if (i != words)
++				continue;
++
+ 			tpide = ptr_to_pide(ioc, res_ptr, 0);
+ 			ret = iommu_is_span_boundary(tpide, bits_wanted,
+ 						     shift,
+ 						     boundary_size);
+-			if ((*res_ptr == 0) && !ret) {
+-				*res_ptr = RESMAP_MASK(bits_wanted);
+-				pide = tpide;
+-				break;
+-			}
++			if (ret)
++				continue;
++
++			sba_resmap_update(ioc, tpide, bits_wanted, true);
++			pide = tpide;
++			res_ptr += words - 1;
++			break;
+ 		}
++		/*
++		 * The scan can stop short of res_end, so on failure force
++		 * res_ptr there -- otherwise the caller skips its wrap-and-
++		 * retry from the start of the map and panics instead.
++		 */
++		if (pide == ~0UL)
++			res_ptr = res_end;
+ 		/* point to the next word on next pass */
+ 		res_ptr++;
+ 		ioc->res_bitshift = 0;
+@@ -494,23 +600,17 @@ sba_free_range(struct ioc *ioc, dma_addr_t iova, size_t size)
+ {
+ 	unsigned long iovp = SBA_IOVP(ioc, iova);
+ 	unsigned int pide = PDIR_INDEX(iovp);
+-	unsigned int ridx = pide >> 3;	/* convert bit to byte address */
+-	unsigned long *res_ptr = (unsigned long *) &((ioc)->res_map[ridx & ~RESMAP_IDX_MASK]);
+ 
+ 	int bits_not_wanted = size >> IOVP_SHIFT;
+ 
+-	/* 3-bits "bit" address plus 2 (or 3) bits for "byte" == bit in word */
+-	unsigned long m = RESMAP_MASK(bits_not_wanted) >> (pide & (BITS_PER_LONG - 1));
+-
+-	DBG_RES("%s( ,%x,%x) %x/%lx %x %p %lx\n",
+-		__func__, (uint) iova, size,
+-		bits_not_wanted, m, pide, res_ptr, *res_ptr);
++	DBG_RES("%s( ,%x,%x) %x %x\n",
++		__func__, (uint) iova, size, bits_not_wanted, pide);
+ 
+ #ifdef SBA_COLLECT_STATS
+ 	ioc->used_pages -= bits_not_wanted;
+ #endif
+ 
+-	*res_ptr &= ~m;
++	sba_resmap_update(ioc, pide, bits_not_wanted, false);
+ }
+ 
+ 
+@@ -712,6 +812,7 @@ sba_map_single(struct device *dev, phys_addr_t addr, size_t size,
+ 	dma_addr_t offset;
+ 	__le64 *pdir_start;
+ 	int pide;
++	bool padded = sba_needs_prefetch_pad(dev);
+ 
+ 	ioc = GET_IOC(dev);
+ 	if (!ioc)
+@@ -732,7 +833,7 @@ sba_map_single(struct device *dev, phys_addr_t addr, size_t size,
+ 	ioc->msingle_calls++;
+ 	ioc->msingle_pages += size >> IOVP_SHIFT;
+ #endif
+-	pide = sba_alloc_range(ioc, dev, size);
++	pide = sba_alloc_range(ioc, dev, padded ? size + IOVP_SIZE : size);
+ 	iovp = (dma_addr_t) pide << IOVP_SHIFT;
+ 
+ 	DBG_RUN("%s() 0x%pa -> 0x%lx\n",
+@@ -760,6 +861,13 @@ sba_map_single(struct device *dev, phys_addr_t addr, size_t size,
+ 		pdir_start++;
+ 	}
+ 
++	/*
++	 * The pad: a valid translation to a shared scratch page, so a one-page
++	 * overrun reads zeroes instead of hard-failing the rope.
++	 */
++	if (padded)
++		sba_io_pdir_entry(pdir_start, KERNEL_SPACE, sba_pad_pa, 0);
++
+ 	/* force FDC ops in io_pdir_entry() to be visible to IOMMU */
+ 	asm_io_sync();
+ 
+@@ -824,6 +932,31 @@ sba_unmap_phys(struct device *dev, dma_addr_t iova, size_t size,
+ 	ioc->usingle_pages += size >> IOVP_SHIFT;
+ #endif
+ 
++	/*
++	 * Release the guard page too -- but only if this mapping actually has
++	 * one.  sba_map_sg() allocates through sba_coalesce_chunks() and only
++	 * reaches sba_map_single() on its nents == 1 fast path, while
++	 * sba_unmap_sg() routes *every* entry through here.  Keying this off the
++	 * device would therefore free one page too many per coalesced
++	 * scatter-gather entry, handing live IOVAs back to the allocator.
++	 *
++	 * So ask the pdir instead of tracking it: the entry just past the range
++	 * is ours if and only if it is valid and points at the scratch page,
++	 * which is never handed to anyone else.  Symmetric by construction.
++	 */
++	if (sba_pad_pa) {
++		unsigned long gp = PDIR_INDEX(SBA_IOVP(ioc, iova + size));
++
++		/* An unpadded mapping may end at the top of the pdir. */
++		if (gp < ioc->pdir_size / sizeof(u64)) {
++			u64 e = le64_to_cpu(ioc->pdir_base[gp]);
++
++			if ((e & SBA_PDIR_VALID_BIT) &&
++			    (e & IOVP_MASK & ~SBA_PDIR_VALID_BIT) == sba_pad_pa)
++				size += IOVP_SIZE;
++		}
++	}
++
+ 	sba_mark_invalid(ioc, iova, size);
+ 
+ #if DELAYED_RESOURCE_CNT > 0
+@@ -1253,18 +1386,34 @@ setup_ibase_imask(struct parisc_device *sba, struct ioc *ioc, int ioc_num)
+ 			      setup_ibase_imask_callback);
+ }
+ 
+-#ifdef SBA_AGP_SUPPORT
+ static int
+ sba_ioc_find_quicksilver(struct device *dev, void *data)
+ {
+-	int *agp_found = data;
++	unsigned int *ropes = data;
+ 	struct parisc_device *lba = to_parisc_device(dev);
+ 
+ 	if (IS_QUICKSILVER(lba))
+-		*agp_found = 1;
++		*ropes |= 1u << LBA_NUM(lba->hpa.start);
+ 	return 0;
+ }
+-#endif
++
++/**
++ * sba_quicksilver_ropes - which of this SBA's ropes carry an AGP bridge
++ * @sba: the SBA whose children to walk
++ *
++ * Returns a bitmask of rope numbers that have a Quicksilver behind them.  Both
++ * the AGP aperture reservation and the ROPE_CONFIG fixup in sba_hw_init() need
++ * this.  The fixup has to work whether or not AGP support is configured in --
++ * the bridge fails to complete inbound DMA in plain PCI bus-master mode too --
++ * so this is deliberately not gated on SBA_AGP_SUPPORT.
++ */
++static unsigned int sba_quicksilver_ropes(struct parisc_device *sba)
++{
++	unsigned int ropes = 0;
++
++	device_for_each_child(&sba->dev, &ropes, sba_ioc_find_quicksilver);
++	return ropes;
++}
+ 
+ static void
+ sba_ioc_init_pluto(struct parisc_device *sba, struct ioc *ioc, int ioc_num)
+@@ -1376,7 +1525,7 @@ sba_ioc_init_pluto(struct parisc_device *sba, struct ioc *ioc, int ioc_num)
+ 	** We program the next pdir index after we stop w/ a key for
+ 	** the GART code to handshake on.
+ 	*/
+-	device_for_each_child(&sba->dev, &agp_found, sba_ioc_find_quicksilver);
++	agp_found = !!sba_quicksilver_ropes(sba);
+ 
+ 	if (agp_found && sba_reserve_agpgart) {
+ 		printk(KERN_INFO "%s: reserving %dMb of IOVA space for agpgart\n",
+@@ -1530,6 +1679,7 @@ static void sba_hw_init(struct sba_device *sba_dev)
+ { 
+ 	int i;
+ 	int num_ioc;
++	unsigned int qs_ropes;
+ 	u64 ioc_ctl;
+ 
+ 	if (!is_pdc_pat()) {
+@@ -1632,11 +1782,32 @@ printk("sba_hw_init(): mem_boot 0x%x 0x%x 0x%x 0x%x\n", PAGE0->mem_boot.hpa,
+ 	/* XXX: What about Reo Grande? */
+ 
+ 	sba_dev->num_ioc = num_ioc;
++
++	/*
++	 * Ropes with a Quicksilver AGP bridge on them need an extra bit cleared
++	 * in ROPE(N)_CONFIG below.  That register is Pluto-only, and so is the
++	 * fixup that consumes this, so skip the walk entirely on anything else.
++	 */
++	qs_ropes = IS_PLUTO(sba_dev->dev) ?
++		   sba_quicksilver_ropes(sba_dev->dev) : 0;
++
++	/* Devices behind a Quicksilver also need the prefetch pad. */
++	if (qs_ropes && sba_prefetch_pad && !sba_pad_pa) {
++		unsigned long pg = get_zeroed_page(GFP_KERNEL);
++
++		if (pg)
++			sba_pad_pa = virt_to_phys((void *)pg);
++		else
++			pr_warn("%s: no scratch page for the DMA prefetch pad; padding disabled\n",
++				__func__);
++	}
++
+ 	for (i = 0; i < num_ioc; i++) {
+ 		void __iomem *ioc_hpa = sba_dev->ioc[i].ioc_hpa;
+ 		unsigned int j;
+ 
+ 		for (j=0; j < sizeof(u64) * ROPES_PER_IOC; j+=sizeof(u64)) {
++			unsigned int rope = j / sizeof(u64);
+ 
+ 			/*
+ 			 * Clear ROPE(N)_CONFIG AO bit.
+@@ -1651,6 +1822,19 @@ printk("sba_hw_init(): mem_boot 0x%x 0x%x 0x%x 0x%x\n", PAGE0->mem_boot.hpa,
+ 				rope_cfg = ioc_hpa + IOC_ROPE0_CFG + j;
+ 				cfg_val = READ_REG(rope_cfg);
+ 				cfg_val &= ~IOC_ROPE_AO;
++
++				/*
++				 * And clear bit 2 on a rope carrying an AGP
++				 * bridge.  Firmware leaves it set there and a
++				 * Quicksilver then accepts inbound cycles and
++				 * abandons them -- see IOC_ROPE_INBOUND_STALL.
++				 */
++				if (qs_ropes & (1u << rope)) {
++					pr_info("%s: rope%u has an AGP bridge; clearing ROPE_CONFIG bit 2 (was %#lx)\n",
++						__func__, rope, cfg_val);
++					cfg_val &= ~(unsigned long)IOC_ROPE_INBOUND_STALL;
++				}
++
+ 				WRITE_REG(cfg_val, rope_cfg);
+ 			}
+ 
