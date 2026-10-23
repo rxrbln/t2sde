@@ -1,0 +1,130 @@
+--- dclib-0.3.23/dclib/core/cssl.cpp	2026-10-18 15:17:28.631222175 +0200
++++ dclib-0.3.23/dclib/core/cssl.cpp	2026-10-18 15:17:37.832661793 +0200
+@@ -86,7 +86,7 @@ void CSSL::DeInitSSLLibrary()
+ /** */
+ SSL_CTX * CSSL::InitClientCTX()
+ {
+-	SSL_METHOD *method;
++	const SSL_METHOD *method;
+ 	SSL_CTX *ctx = NULL;
+ 
+ 	method = SSLv23_client_method();		/* Create new client-method instance */
+@@ -109,7 +109,7 @@ SSL_CTX * CSSL::InitClientCTX()
+ /** */
+ SSL_CTX * CSSL::InitServerCTX()
+ {
+-	SSL_METHOD *method;
++	const SSL_METHOD *method;
+ 	SSL_CTX *ctx = NULL;
+ 
+ 	method = SSLv23_server_method();		/* Create new client-method instance */
+@@ -130,7 +130,7 @@ SSL_CTX * CSSL::InitServerCTX()
+ /** */
+ SSL_CTX * CSSL::NewTLSv1ClientCTX()
+ {
+-	SSL_METHOD * method = TLSv1_client_method();
++	const SSL_METHOD * method = TLSv1_client_method();
+ 	SSL_CTX * ctx = NULL;
+ 	
+ 	if ( method != NULL )
+@@ -149,7 +149,7 @@ SSL_CTX * CSSL::NewTLSv1ClientCTX()
+ /** */
+ SSL_CTX * CSSL::NewTLSv1ServerCTX()
+ {
+-	SSL_METHOD * method = TLSv1_server_method();
++	const SSL_METHOD * method = TLSv1_server_method();
+ 	SSL_CTX * ctx = NULL;
+ 	
+ 	if ( method != NULL )
+@@ -429,7 +429,7 @@ CString CSSL::EncryptData( CSSLObject *
+ 	CString res;
+ 	CByteArray bain,baout;
+ 	int i,tmplen;
+-	EVP_CIPHER_CTX ctx;
++	EVP_CIPHER_CTX *ctx;
+ 
+ 	// sanity check
+ 	if ( !SSLObject || (s.IsEmpty()) )
+@@ -437,8 +437,8 @@ CString CSSL::EncryptData( CSSLObject *
+ 		return res;
+ 	}
+ 	
+-	EVP_CIPHER_CTX_init(&ctx);
+-	EVP_EncryptInit(&ctx, EVP_bf_cbc(), SSLObject->m_remotekey, SSLObject->m_remoteiv);
++	ctx = EVP_CIPHER_CTX_new();
++	EVP_EncryptInit(ctx, EVP_bf_cbc(), SSLObject->m_remotekey, SSLObject->m_remoteiv);
+ 
+ 	// init input array
+ 	bain.SetSize(2);
+@@ -448,13 +448,13 @@ CString CSSL::EncryptData( CSSLObject *
+ 	// init output array
+ 	// input size + cipher_block_size for EVP_EncryptUpdate
+ 	// plus cipher_block_size for EVP_EncryptFinal
+-	baout.SetSize( bain.Size() + ( 2 * EVP_CIPHER_CTX_block_size(&ctx) ) );
++	baout.SetSize( bain.Size() + ( 2 * EVP_CIPHER_CTX_block_size(ctx) ) );
+ 	//printf("CSSL::EncryptData: wrong old size=%lu new size=%lu\n",bain.Size()*2,baout.Size());
+ 	i = baout.Size();
+ 
+-	if ( EVP_EncryptUpdate(&ctx, baout.Data(), &i, bain.Data(), bain.Size() ) )
++	if ( EVP_EncryptUpdate(ctx, baout.Data(), &i, bain.Data(), bain.Size() ) )
+ 	{
+-		if ( EVP_EncryptFinal(&ctx, baout.Data()+i, &tmplen) )
++		if ( EVP_EncryptFinal(ctx, baout.Data()+i, &tmplen) )
+ 		{
+ 			i+=tmplen;
+ 			bain.SetSize(0);
+@@ -465,7 +465,7 @@ CString CSSL::EncryptData( CSSLObject *
+ 		}
+ 	}
+ 
+-	EVP_CIPHER_CTX_cleanup(&ctx);
++	EVP_CIPHER_CTX_free(ctx);
+ 
+ 	return res;
+ }
+@@ -476,7 +476,7 @@ CString CSSL::DecryptData( CSSLObject *
+ 	CString res;
+ 	CByteArray bain,baout;
+ 	int i,tmplen;
+-	EVP_CIPHER_CTX ctx;
++	EVP_CIPHER_CTX *ctx;
+ 
+ 	// sanity check
+ 	if ( !SSLObject || (s.IsEmpty()) )
+@@ -484,22 +484,22 @@ CString CSSL::DecryptData( CSSLObject *
+ 		return res;
+ 	}
+ 	
+-	EVP_CIPHER_CTX_init(&ctx);
+-	EVP_DecryptInit(&ctx, EVP_bf_cbc(), SSLObject->m_localkey, SSLObject->m_localiv);
++	ctx = EVP_CIPHER_CTX_new();
++	EVP_DecryptInit(ctx, EVP_bf_cbc(), SSLObject->m_localkey, SSLObject->m_localiv);
+ 
+ 	bain.SetSize(0);
+ 	bain.Append(s.Data(),s.Length());
+ 
+ 	if ( CBase64::Decode(&baout,&bain) > 0 )
+ 	{
+-		bain.SetSize( baout.Size() + ( 2 * EVP_CIPHER_CTX_block_size(&ctx) ) );
++		bain.SetSize( baout.Size() + ( 2 * EVP_CIPHER_CTX_block_size(ctx) ) );
+ 		//printf("CSSL::DecryptData: wrong old size=%lu new size=%lu\n",baout.Size()*2,bain.Size());
+ 		i = 0;
+ 
+-		if ( EVP_DecryptUpdate(&ctx, bain.Data(), &i, baout.Data(), (int)baout.Size() ) )
++		if ( EVP_DecryptUpdate(ctx, bain.Data(), &i, baout.Data(), (int)baout.Size() ) )
+ 		{
+ 			tmplen = 0;
+-			if ( EVP_DecryptFinal(&ctx, bain.Data()+i, &tmplen) )
++			if ( EVP_DecryptFinal(ctx, bain.Data()+i, &tmplen) )
+ 			{
+ 				i+=tmplen;
+ 				res.Set((const char*)bain.Data()+2,i-2);
+@@ -507,7 +507,7 @@ CString CSSL::DecryptData( CSSLObject *
+ 		}
+ 	}
+ 
+-	EVP_CIPHER_CTX_cleanup(&ctx);
++	EVP_CIPHER_CTX_free(ctx);
+ 
+ 	return res;
+ }
