@@ -1,0 +1,55 @@
+# --- T2-COPYRIGHT-BEGIN ---
+# t2/package/*/xorg-server/restore-z-xaa-easy-polygon.patch
+# Copyright (C) 2026 The T2 SDE Project
+# SPDX-License-Identifier: GPL-2.0 or patched project license
+# --- T2-COPYRIGHT-END ---
+
+XAAIsEasyPolygon compares the packed (x, y) vertices against the clip box,
+which has to be packed the same way, and the stippled and tiled fills pass
+XAAFillPolygonHelper the drawable origin packed, as it unpacks it with
+intToX and intToY. The upstream commit
+
+  613ce0955032fb032de0a3940752828d314f057a (master, xorg-server 1.6.0)
+  f385303cd0242e3a7fded15f8b5c3d610c13ee41 (server-1.5-branch, 1.5.0)
+  "Fix strict-aliasing silliness in XAA.", Adam Jackson, 2008-09-02
+
+replaced *((int *)&extents->x1), *((int *)&extents->x2) and
+*((int *)&pDraw->x) by the bare x shorts. Every vertex off row 0 then
+looks clipped, so all FillPolygon calls go to miFillPolygon: XAA's polygon
+fills and SubsequentSolidFillTrap have been unused since, and the stippled
+and tiled fills would draw at a wrong drawable offset (x as y, x = 0 on
+big-endian; y = 0 on little-endian). Pack them with coordToInt.
+
+Signed-off-by: René Rebe <rene@exactco.de>
+
+--- a/hw/xfree86/xaa/xaaFillPoly.c
++++ b/hw/xfree86/xaa/xaaFillPoly.c
+@@ -123,8 +123,8 @@ XAAIsEasyPolygon(DDXPointPtr ptsIn, int
+     *bottomY = 0;
+ 
+     origin -= (origin & 0x8000) << 1;
+-    vertex1 = extents->x1 - origin;
+-    vertex2 = extents->x2 - origin /* - 0x00010001 */ ;
++    vertex1 = coordToInt(extents->x1, extents->y1) - origin;
++    vertex2 = coordToInt(extents->x2, extents->y2) - origin /* - 0x00010001 */ ;
+     /* I think this was an error in cfb ^ */
+ 
+     if (shape == Convex) {
+@@ -727,7 +727,7 @@ XAAFillPolygonStippled(DrawablePtr pDraw
+         return;
+     }
+ 
+-    origin = pDraw->x;
++    origin = coordToInt(pDraw->x, pDraw->y);
+ 
+     switch (XAAIsEasyPolygon(ptsIn, count, &pGC->pCompositeClip->extents,
+                              origin, &topPoint, &y, &maxy, shape)) {
+@@ -887,7 +887,7 @@ XAAFillPolygonTiled(DrawablePtr pDraw,
+         return;
+     }
+ 
+-    origin = pDraw->x;
++    origin = coordToInt(pDraw->x, pDraw->y);
+ 
+     switch (XAAIsEasyPolygon(ptsIn, count, &pGC->pCompositeClip->extents,
+                              origin, &topPoint, &y, &maxy, shape)) {
