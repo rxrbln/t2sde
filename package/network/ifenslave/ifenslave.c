@@ -1,10 +1,8 @@
-/*
- * --- T2-COPYRIGHT-BEGIN ---
- * t2/package/*/ifenslave/ifenslave.c
- * Copyright (C) 2004 - 2026 The T2 SDE Project
- * SPDX-License-Identifier: GPL-2.0
- * --- T2-COPYRIGHT-END ---
- */
+// --- T2-COPYRIGHT-BEGIN ---
+// t2/package/*/ifenslave/ifenslave.c
+// Copyright (C) 2004 - 2026 The T2 SDE Project
+// SPDX-License-Identifier: GPL-2.0
+// --- T2-COPYRIGHT-END ---
 
 /* Mode: C;
  * ifenslave.c: Configure network interfaces for parallel routing.
