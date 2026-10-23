@@ -1,0 +1,95 @@
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -54,14 +54,25 @@ option(ENABLE_NLS "Enable building of tr
+ 
+ # The next line is the minimum version of Boost. The version that's actually found will be put in Boost_VERSION.
+ set(MIN_USABLE_BOOST_VERSION "1.67")
+-set(BOOST_REQ_COMPONENTS iostreams program_options regex thread random coroutine locale filesystem graph)
++set(BOOST_REQ_COMPONENTS iostreams program_options regex thread random locale filesystem graph)
+ 
+ if(ENABLE_TESTS)
+ 	list(APPEND BOOST_REQ_COMPONENTS unit_test_framework)
+ endif()
+ 
+ find_package(Boost ${MIN_USABLE_BOOST_VERSION} REQUIRED CONFIG COMPONENTS ${BOOST_REQ_COMPONENTS}
+-	OPTIONAL_COMPONENTS charconv process system)
++	OPTIONAL_COMPONENTS charconv context coroutine process system)
++
++# Boost.Asio spawn is based on Boost.Context since 1.80
++if(${Boost_VERSION} VERSION_LESS "1.80")
++	set(BOOST_SPAWN_COMPONENT coroutine)
++else()
++	set(BOOST_SPAWN_COMPONENT context)
++endif()
++if(NOT boost_${BOOST_SPAWN_COMPONENT}_DIR)
++	message(FATAL_ERROR "Couldn't find the boost_${BOOST_SPAWN_COMPONENT} component")
++endif()
++set(BOOST_SPAWN_LIB Boost::${BOOST_SPAWN_COMPONENT})
+ 
+ # Boost System became header-only with a stub library in 1.69, and the library was removed in 1.89.
+ if(${Boost_VERSION} VERSION_LESS "1.69" AND NOT boost_system_DIR)
+--- a/src/CMakeLists.txt
++++ b/src/CMakeLists.txt
+@@ -242,7 +242,7 @@ if(ENABLE_GAME)
+ 		Boost::program_options
+ 		Boost::regex
+ 		Boost::random
+-		Boost::coroutine
++		${BOOST_SPAWN_LIB}
+ 		Boost::locale
+ 		Boost::filesystem
+ 	)
+@@ -304,7 +304,7 @@ if(ENABLE_TESTS)
+ 		Boost::regex
+ 		Boost::system
+ 		Boost::random
+-		Boost::coroutine
++		${BOOST_SPAWN_LIB}
+ 		Boost::locale
+ 		Boost::filesystem
+ 		Boost::unit_test_framework
+@@ -347,7 +347,7 @@ if(ENABLE_SERVER)
+ 		Boost::program_options
+ 		Boost::regex
+ 		Boost::random
+-		Boost::coroutine
++		${BOOST_SPAWN_LIB}
+ 		Boost::locale
+ 		Boost::filesystem
+ 	)
+@@ -395,7 +395,7 @@ if(ENABLE_CAMPAIGN_SERVER)
+ 		Boost::regex
+ 		Boost::system
+ 		Boost::random
+-		Boost::coroutine
++		${BOOST_SPAWN_LIB}
+ 		Boost::locale
+ 		Boost::filesystem
+ 	)
+--- a/src/server/wesnothd/game.cpp
++++ b/src/server/wesnothd/game.cpp
+@@ -27,7 +27,12 @@
+ #include <iomanip>
+ #include <sstream>
+ 
++#include <boost/version.hpp>
++#if BOOST_VERSION < 108000
+ #include <boost/coroutine/exceptions.hpp>
++#else
++#include <boost/context/fiber.hpp>
++#endif
+ 
+ static lg::log_domain log_server("server");
+ #define ERR_GAME LOG_STREAM(err, log_server)
+@@ -129,7 +134,11 @@ game::~game()
+ 		}
+ 
+ 		clear_history();
++#if BOOST_VERSION < 108000
+ 	} catch(const boost::coroutines::detail::forced_unwind&) {
++#else
++	} catch(const boost::context::detail::forced_unwind&) {
++#endif
+ 		ERR_GAME << "Caught forced_unwind in game destructor!";
+ 	} catch(...) {
+ 		ERR_GAME << "Caught other exception in game destructor: " << utils::get_unknown_exception_type();
