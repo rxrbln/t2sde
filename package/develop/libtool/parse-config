@@ -96,6 +96,28 @@ libtool_final_check() {
 	fi
 }
 
+# The cross ld ignores the DT_RUNPATH of needed libraries and prefixes -rpath
+# with the sysroot, so uninstalled indirect dependencies need -rpath-link.
+libtool_cross_rpath_link() {
+	[[ ${PWD//src.$pkg.$config.$id/} = $PWD ]] && return
+
+	local loop='for libdir in $compile_rpath $newdependency_libs; do case $libdir in -*) continue ;; *.la) libdir=`dirname "$libdir"`/$objdir ;; esac; case " $VAR " in *" ${wl}-rpath-link ${wl}$libdir "*) ;; *) test -d "$libdir" && VAR="$VAR ${wl}-rpath-link ${wl}$libdir" ;; esac; done'
+	find -type f \( -name libtool -o -name ltmain.sh \) | while read f; do
+		grep -q 'rpath-link' $f && continue
+		grep -q '^[[:space:]]*for libdir in \$compile_rpath \$finalize_rpath; do$' $f || continue
+		cp -p $f $f.ltrpl
+		awk -v prog="      ${loop//VAR/compile_command}" -v lib="	  ${loop//VAR/dep_rpath}" '
+			/^[[:space:]]*for libdir in \$compile_rpath \$finalize_rpath; do$/ { print prog }
+			/^[[:space:]]*test -n "\$dep_rpath" && deplibs="\$dep_rpath \$deplibs"$/ { print lib }
+			{ print }' $f.ltrpl > $f
+		touch -r $f.ltrpl $f
+		rm -f $f.ltrpl
+		echo "Added -rpath-link to $f"
+	done
+}
+
+atstage cross && [ "$pkg" != libtool ] && hook_add premake 8 libtool_cross_rpath_link
+
 if ! atstage toolchain && hasflag LIBTOOL-QUIRK; then
 	hook_add preconf 8 libtool_fixup
 elif ! hasflag NO-LIBTOOL-FIX; then
