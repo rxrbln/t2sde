@@ -10,3 +10,26 @@ var_append flistrfilter '|' '.*:	.*\.(pth|egg)'
 #var_apddpend flistrfilter '|' '.*:	.*__pycache__.*\.pyc'
 var_append flistdel '|' '.*/__pycache__.*'
 var_append flistdel '|' '.*easy-install\.pth'
+
+# cross: the build host python reports the target sysconfig, include and lib paths below $root
+pysysconfig_cross() {
+	local f="$(ls -d $root/usr/lib*/python3.*/_sysconfigdata__*.py 2>/dev/null | sort -V | tail -n 1)"
+	[ -f "$f" -a -d "$builddir" -a "$pkg" != python ] || return 0
+	local n="${f##*/}"; n="${n%.py}"
+	mkdir -p "$builddir/pysysconfig"
+	_PYTHON_HOST_PLATFORM="$(python3 -I - "$f" "$root" "$builddir/pysysconfig/$n.py" <<-'EOT'
+		import sys, runpy
+		src, root, dst = sys.argv[1:]
+		v = runpy.run_path(src)["build_time_vars"]
+		for k in ("INCLUDEPY", "CONFINCLUDEPY", "INCLUDEDIR", "CONFINCLUDEDIR", "LIBDIR", "LIBPL"):
+		    if isinstance(v.get(k), str) and v[k].startswith("/"):
+		        v[k] = root + v[k]
+		with open(dst, "w") as o:
+		    o.write("build_time_vars = %r\n" % v)
+		print("%s-%s" % (v["MACHDEP"], v["HOST_GNU_TYPE"].split("-")[0]))
+	EOT
+	)" || return 0
+	export _PYTHON_HOST_PLATFORM _PYTHON_SYSCONFIGDATA_NAME="$n" \
+		_PYTHON_SYSCONFIGDATA_PATH="$builddir/pysysconfig"
+}
+atstage cross && pysysconfig_cross
