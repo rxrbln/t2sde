@@ -1,0 +1,117 @@
+--- imake-1.0.11.orig/imake.c	2025-12-30 21:13:23.000000000 +0100
++++ imake-1.0.11/imake.c	2026-10-17 20:33:38.924344066 +0200
+@@ -890,70 +890,22 @@ trim_version(char *p)
+ #if defined(linux) || defined(__GLIBC__)
+ const char *libc_c=
+ "#include <stdio.h>\n"
+-"#include <ctype.h>\n"
+-"\n"
+-"#if 1\n"
+-"#pragma weak gnu_get_libc_version\n"
+-"#pragma weak __libc_version\n"
+-"#pragma weak __linux_C_lib_version\n"
++"#ifdef __GLIBC__\n"
++"imake_libc_version __GLIBC__ __GLIBC_MINOR__\n"
+ "#endif\n"
+-"\n"
+-"extern const char * gnu_get_libc_version (void);\n"
+-"extern const char * __linux_C_lib_version;\n"
+-"extern const char __libc_version [];\n"
+-"\n"
+-"int\n"
+-"main ()\n"
+-"{\n"
+-"  int libcmajor = 0, libcminor = 0, libcteeny = 0;\n"
+-"  const char * ptr = NULL;\n"
+-"  int glibcmajor = 0;\n"
+-"\n"
+-"  if (gnu_get_libc_version != 0)\n"
+-"  {\n"
+-"    ptr = gnu_get_libc_version ();\n"
+-"    glibcmajor = 4;\n"
+-"  }\n"
+-"  else if (&__libc_version != 0)\n"
+-"  {\n"
+-"    ptr = __libc_version;\n"
+-"    glibcmajor = 4;\n"
+-"  }\n"
+-"  else if (&__linux_C_lib_version != 0)\n"
+-"  {\n"
+-"    ptr = __linux_C_lib_version;\n"
+-"  }\n"
+-"  else\n"
+-"  {\n"
+-"    libcmajor = 0; libcminor = 0; libcteeny = 0;\n"
+-"  }\n"
+-"\n"
+-"  if (ptr)\n"
+-"  {\n"
+-"    while (!isdigit (*ptr))\n"
+-"      ptr++;\n"
+-"\n"
+-"    sscanf (ptr, \"%d.%d.%d\", &libcmajor, &libcminor, &libcteeny);\n"
+-"    libcmajor += glibcmajor;\n"
+-"  }\n"
+-"\n"
+-"  printf(\"#define DefaultLinuxCLibMajorVersion %d\\n\", libcmajor);\n"
+-"  printf(\"#define DefaultLinuxCLibMinorVersion %d\\n\", libcminor);\n"
+-"  printf(\"#define DefaultLinuxCLibTeenyVersion %d\\n\", libcteeny);\n"
+-"\n"
+-"  return 0;\n"
+-"}\n"
+ ;
+ 
++/* only preprocess, so it also works with a cross compiler */
+ static void
+ get_libc_version(FILE *inFile)
+ {
+   char aout[4096], *tmpdir;
+   FILE *fp;
+-  const char *format = "%s -o %s -x c -";
++  const char *format = "%s -E -P -x c %s";
+   char *cc;
+   int len;
+   char *command;
++  int libcmajor = 0, libcminor = 0;
+ 
+   /* If $TMPDIR is defined and has an acceptable length,
+    * use that as tmp dir, else use /tmp.  That fixes
+@@ -973,6 +925,8 @@ get_libc_version(FILE *inFile)
+       perror("mkstemp");
+       abort();
+     }
++    if (write(tmpfd, libc_c, strlen(libc_c)) != (ssize_t)strlen(libc_c))
++      abort();
+     close(tmpfd);
+   }
+   cc = getenv ("CC");
+@@ -986,22 +940,22 @@ get_libc_version(FILE *inFile)
+   if (snprintf (command , len, format, cc, aout) == len)
+     abort ();
+ 
+-  fp = popen (command, "w");
+-  if (fp == NULL || fprintf (fp, "%s\n", libc_c) < 0
+-      || pclose (fp) != 0)
+-    abort ();
+-
+-  fp = popen (aout, "r");
++  fp = popen (command, "r");
+   if (fp == NULL)
+     abort ();
+ 
+   while (fgets (command, len, fp))
+-    fputs (command, inFile);
++    if (sscanf (command, "imake_libc_version %d %d", &libcmajor, &libcminor) == 2)
++      libcmajor += 4;
+ 
+   len = pclose (fp);
+   remove (aout);
+   if (len)
+     abort ();
++
++  fprintf (inFile, "#define DefaultLinuxCLibMajorVersion %d\n", libcmajor);
++  fprintf (inFile, "#define DefaultLinuxCLibMinorVersion %d\n", libcminor);
++  fprintf (inFile, "#define DefaultLinuxCLibTeenyVersion 0\n");
+ }
+ #endif
+ 
