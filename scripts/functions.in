@@ -449,6 +449,26 @@ EOT
 	fi
 }
 
+# numpy's long double format property, from the compiler, as it can not run test binaries
+meson_longdouble_format() {
+	local m=$($CC $CFLAGS -dM -E - < /dev/null | awk '
+		/ __LDBL_MANT_DIG__ / { d = $3 } / __SIZEOF_LONG_DOUBLE__ / { s = $3 }
+		/ __BYTE_ORDER__ / { e = ($3 == "__ORDER_BIG_ENDIAN__") ? "BE" : "LE" }
+		END { print d, s, e }')
+	local f
+	case "$m" in
+		"53 "*\ LE) f=IEEE_DOUBLE_LE ;;
+		"53 "*\ BE) f=IEEE_DOUBLE_BE ;;
+		"64 12 LE") f=INTEL_EXTENDED_12_BYTES_LE ;;
+		"64 12 BE") f=MOTOROLA_EXTENDED_12_BYTES_BE ;;
+		"64 16 LE") f=INTEL_EXTENDED_16_BYTES_LE ;;
+		"113 16 "*) f=IEEE_QUAD_${m##* } ;;
+		"106 16 "*) f=IBM_DOUBLE_DOUBLE_${m##* } ;;
+		*) return 0 ;;
+	esac
+	echo "longdouble_format = '$f'"
+}
+
 create_meson_cross() {
 	cat <<-EOT
 [binaries]
@@ -475,6 +495,7 @@ alignment_void* = $arch_sizeof_int
 alignment_double = 4
 has_function_printf = true
 needs_exe_wrapper = true
+$(meson_longdouble_format)
 
 [host_machine]
 system = '$SDECFG_KERNEL'
@@ -1108,6 +1129,12 @@ build_this_package() {
 			echo "Running ninja $ninjaopt"
 			ninja $ninjaopt
 		elif [ -f pyproject.toml -a "$rungpepinstall" = 1 ]; then
+			if atstage cross &&
+			   grep -q "^build-backend *= *[\"']mesonpy[\"']" pyproject.toml; then
+				create_meson_cross > cross.ini
+				var_append gpepopt ' ' "--config-json={\"setup-args\":[\"--cross-file=$PWD/cross.ini\"]}"
+				local CC=cc CXX=c++ # make meson happy :-/
+			fi
 			echo "Running gpep517 $gpepopt 3>&1 >&2"
 			gpep517 $gpepopt 3>&1 >&2
 			hook_eval inmake
