@@ -1,0 +1,60 @@
+# --- T2-COPYRIGHT-BEGIN ---
+# t2/package/*/linux/hotfix-nouveau-nv40-shader-pll.patch
+# Copyright (C) 2026 The T2 SDE Project
+# SPDX-License-Identifier: GPL-2.0 or patched project license
+# --- T2-COPYRIGHT-END ---
+
+From: René Rebe <rene@exactco.de>
+Subject: [PATCH] drm/nouveau/bios: map the NV40 shader PLL for limit lookups
+
+NV4x boards with differing core and shader clocks in their performance
+table (e.g. G70 / GeForce 7800 GT: core 375 MHz, shader 400 MHz) drive
+the shader/ROP domain from the second PLL at 0x004008. nv40_clk_calc()
+looks up the limits of that PLL by register, but nv40_pll_mapping[]
+lacks an entry for it, so pll_map_reg() fails and nvbios_pll_parse()
+returns -ENOENT. The core and shader clocks are then never changed,
+while the memory clock and voltage of the new performance level are
+applied, e.g. on a PowerMac G5 7800 GT after selecting pstate 0x21:
+
+  21: core 375 MHz shader 400 MHz memory 1000 MHz AC DC *
+  AC: core 275 MHz shader 275 MHz memory 1000 MHz
+
+The BIT 'C' PLL limits table (v0x21) of such boards carries a dedicated
+0x004008 entry (VCO 400-800 MHz), which the lookup by register finds
+once the PLL is mapped. Tables without one fall back to the first
+entry, as already done for the core PLL.
+
+Also report a failed PLL limits lookup in nv40_clk_calc_pll(), which
+so far returned without any message, like nv40_ram_calc() already does
+for the memory PLL.
+
+Signed-off-by: René Rebe <rene@exactco.de>
+---
+ drivers/gpu/drm/nouveau/nvkm/subdev/bios/pll.c |    2 ++
+ drivers/gpu/drm/nouveau/nvkm/subdev/clk/nv40.c |    5 ++++-
+ 2 files changed, 6 insertions(+), 1 deletion(-)
+
+--- a/drivers/gpu/drm/nouveau/nvkm/subdev/bios/pll.c
++++ b/drivers/gpu/drm/nouveau/nvkm/subdev/bios/pll.c
+@@ -45,6 +46,7 @@ nv04_pll_mapping[] = {
+ static struct pll_mapping
+ nv40_pll_mapping[] = {
+ 	{ PLL_CORE  , 0x004000 },
++	{ PLL_SHADER, 0x004008 },
+ 	{ PLL_MEMORY, 0x004020 },
+ 	{ PLL_VPLL0 , 0x680508 },
+ 	{ PLL_VPLL1 , 0x680520 },
+--- a/drivers/gpu/drm/nouveau/nvkm/subdev/clk/nv40.c
++++ b/drivers/gpu/drm/nouveau/nvkm/subdev/clk/nv40.c
+@@ -129,8 +130,10 @@ nv40_clk_calc_pll(struct nv40_clk *clk,
+ 	int ret;
+ 
+ 	ret = nvbios_pll_parse(subdev->device->bios, reg, &pll);
+-	if (ret)
++	if (ret) {
++		nvkm_error(subdev, "pll %06x limits not found: %d\n", reg, ret);
+ 		return ret;
++	}
+ 
+ 	if (khz < pll.vco1.max_freq)
+ 		pll.vco2.max_freq = 0;
