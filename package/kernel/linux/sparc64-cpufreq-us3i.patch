@@ -1,0 +1,408 @@
+From: René Rebe <rene@exactco.de>
+Subject: [PATCH] cpufreq: add UltraSPARC-IIIi (Jalapeno/Serrano) driver
+
+sparc-us3-cpufreq only handles the Safari config divider of Cheetah,
+Cheetah+, Jaguar and Panther. UltraSPARC-IIIi has the E* clock divider
+in bits 14:13 of the JBus config register (same ASI 0x4a) and needs
+more care around it:
+
+ - Jalapeno erratum 85: the MCU control register 1 FSM bits 26:25 are
+   cleared when entering E* and restored at full speed, as done by the
+   OpenSolaris us3_jalapeno.c cpu_change_speed().
+ - The Fire host bridge E* registers are programmed in the same order
+   and with the same values as OBP POST does on the Ultra 25: the PEC
+   register at leaf offset 0x52000, the JBus unit control at 0x410058
+   (0x20 E*, 0x01 full) and the handshake at 0x410060 (write 0x10,
+   wait for 0x18, write 0). Addresses come from the Fire OF nodes.
+
+Full speed, 1/2 and 1/32 are offered. POST only uses full and 1/32,
+the Fire control value 0x02 for 1/2 is taken from the Tomatillo E*
+register (OpenSolaris cheetahregs.h). All cpus share one policy since
+the bridge state is global. Systems with a Tomatillo bridge are not
+supported. Timekeeping and delays use STICK, so CPUFREQ_CONST_LOOPS
+is set.
+
+Tested on an Ultra 25 at 1600 MHz: %tick against %stick measures
+1600.02, 800.01 and 50.00 MHz, a register loop scales 1 : 2.00 : 33.7,
+full speed is restored after E*. Synchronous sysfs transitions take
+~10 us between 1/1 and 1/2 and ~70..150 us average to and from 1/32
+(worst case 0.8 ms), so transition_latency is set to 150 us.
+
+Signed-off-by: René Rebe <rene@exactco.de>
+---
+--- a/drivers/cpufreq/Kconfig
++++ b/drivers/cpufreq/Kconfig
+@@ -305,6 +305,20 @@ config SPARC_US3_CPUFREQ
+ 
+ 	  If in doubt, say N.
+ 
++config SPARC_US3I_CPUFREQ
++	tristate "UltraSPARC-IIIi CPU Frequency driver"
++	help
++	  This adds the CPUFreq driver for UltraSPARC-IIIi (Jalapeno) and
++	  UltraSPARC-IIIi+ (Serrano) processors in Fire based systems such
++	  as the Ultra 25 and Ultra 45, using the E* clock divider (full
++	  speed, 1/2 and 1/32).
++
++	  Entering E* also puts the Fire PCI-E leaves into E*. A Wildcat
++	  Realizm GPU job timeout was observed while switching through 1/32,
++	  so devices with tight DMA timeouts may not cope with 1/32.
++
++	  If in doubt, say N.
++
+ config SPARC_US2E_CPUFREQ
+ 	tristate "UltraSPARC-IIe CPU Frequency driver"
+ 	help
+--- a/drivers/cpufreq/Makefile
++++ b/drivers/cpufreq/Makefile
+@@ -104,3 +104,4 @@ obj-$(CONFIG_LOONGSON3_CPUFREQ)		+= loon
+ obj-$(CONFIG_SH_CPU_FREQ)		+= sh-cpufreq.o
+ obj-$(CONFIG_SPARC_US2E_CPUFREQ)	+= sparc-us2e-cpufreq.o
+ obj-$(CONFIG_SPARC_US3_CPUFREQ)		+= sparc-us3-cpufreq.o
++obj-$(CONFIG_SPARC_US3I_CPUFREQ)	+= sparc-us3i-cpufreq.o
+--- /dev/null
++++ b/drivers/cpufreq/sparc-us3i-cpufreq.c
+@@ -0,0 +1,343 @@
++// SPDX-License-Identifier: GPL-2.0-only
++/* sparc-us3i-cpufreq.c: UltraSPARC-IIIi (Jalapeno/Serrano) cpu frequency support
++ *
++ * Copyright (C) 2026 René Rebe <rene@exactco.de>
++ *
++ * The E* clock divider lives in the JBus config register.  Entering and
++ * leaving E* also needs the Jalapeno MCU FSM workaround (erratum 85, as in
++ * the OpenSolaris us3_jalapeno.c) and the Fire host bridge sequence used
++ * by OBP POST.
++ *
++ * Measured on an Ultra 25 at 1600 MHz: 1/1 <-> 1/2 take ~10 us, transitions
++ * to and from 1/32 ~70..150 us on average (sysfs write, worst case 0.8 ms).
++ */
++
++#include <linux/kernel.h>
++#include <linux/module.h>
++#include <linux/cpufreq.h>
++#include <linux/cpumask.h>
++#include <linux/delay.h>
++#include <linux/init.h>
++#include <linux/of.h>
++#include <linux/percpu.h>
++#include <linux/slab.h>
++#include <linux/smp.h>
++
++#include <asm/head.h>
++#include <asm/prom.h>
++#include <asm/timer.h>
++#include <asm/upa.h>
++
++#define JBUS_CFG_ECLK_1		0x0000000000000000UL
++#define JBUS_CFG_ECLK_2		0x0000000000002000UL
++#define JBUS_CFG_ECLK_32	0x0000000000004000UL
++#define JBUS_CFG_ECLK_MASK	0x0000000000006000UL
++
++/* MCU control register 1, ASI_MCU_CTRL_REG VA 0 */
++#define MCU_CTRL1_FSM_MASK	0x0000000006000000UL
++
++/* Fire JBus unit registers, relative to the second "reg" (offset 0x410000) */
++#define FIRE_JBC_ESTAR_CTRL	0x58UL
++#define  FIRE_ESTAR_FULL	0x01UL
++#define  FIRE_ESTAR_HALF	0x02UL	/* POST uses no 1/2, Tomatillo value */
++#define  FIRE_ESTAR_SLOW	0x20UL
++#define FIRE_JBC_ESTAR_SYNC	0x60UL
++#define  FIRE_ESTAR_SYNC_REQ	0x10UL
++#define  FIRE_ESTAR_SYNC_DONE	0x18UL
++
++/* Fire PCI-E leaf register, relative to the first "reg" */
++#define FIRE_PEC_ESTAR		0x52000UL
++
++struct us3i_fire {
++	unsigned long	pec;
++	unsigned long	jbc;	/* 0 for the second leaf of a chip */
++};
++
++static struct us3i_fire *us3i_fire;
++static int us3i_num_fire;
++
++#define US3I_TRANSITION_LATENCY	(150 * NSEC_PER_USEC)
++
++static DEFINE_PER_CPU(unsigned long, us3i_mcu_fsm);
++
++static struct cpufreq_frequency_table us3i_freq_table[] = {
++	{ .driver_data = JBUS_CFG_ECLK_1 },
++	{ .driver_data = JBUS_CFG_ECLK_2 },
++	{ .driver_data = JBUS_CFG_ECLK_32 },
++	{ .frequency = CPUFREQ_TABLE_END },
++};
++
++static unsigned long read_jbus_cfg(void)
++{
++	unsigned long ret;
++
++	__asm__ __volatile__("ldxa	[%%g0] %1, %0"
++			     : "=r" (ret)
++			     : "i" (ASI_JBUS_CONFIG));
++	return ret;
++}
++
++static void write_jbus_cfg(unsigned long val)
++{
++	__asm__ __volatile__("stxa	%0, [%%g0] %1\n\t"
++			     "membar	#Sync"
++			     : /* no outputs */
++			     : "r" (val), "i" (ASI_JBUS_CONFIG)
++			     : "memory");
++}
++
++static unsigned long read_mcu_ctrl1(void)
++{
++	unsigned long ret;
++
++	__asm__ __volatile__("ldxa	[%%g0] %1, %0"
++			     : "=r" (ret)
++			     : "i" (ASI_MCU_CTRL_REG));
++	return ret;
++}
++
++static void write_mcu_ctrl1(unsigned long val)
++{
++	__asm__ __volatile__("stxa	%0, [%%g0] %1\n\t"
++			     "membar	#Sync"
++			     : /* no outputs */
++			     : "r" (val), "i" (ASI_MCU_CTRL_REG)
++			     : "memory");
++}
++
++static void us3i_save_fsm(void *unused)
++{
++	__this_cpu_write(us3i_mcu_fsm, read_mcu_ctrl1() & MCU_CTRL1_FSM_MASK);
++}
++
++static void us3i_read_eclk(void *arg)
++{
++	*(unsigned long *)arg = read_jbus_cfg() & JBUS_CFG_ECLK_MASK;
++}
++
++/* runs on each cpu, the MCU FSM bits are cleared in E* and restored at full speed */
++static void us3i_set_eclk(void *arg)
++{
++	unsigned long eclk = *(unsigned long *)arg;
++	unsigned long reg = read_jbus_cfg();
++	unsigned long mcu;
++
++	write_jbus_cfg((reg & ~JBUS_CFG_ECLK_MASK) | eclk);
++	read_jbus_cfg();
++
++	mcu = read_mcu_ctrl1();
++	if (eclk == JBUS_CFG_ECLK_1)
++		mcu |= __this_cpu_read(us3i_mcu_fsm);
++	else if (!(reg & JBUS_CFG_ECLK_MASK))
++		mcu &= ~MCU_CTRL1_FSM_MASK;
++	else
++		return;
++	write_mcu_ctrl1(mcu);
++	read_mcu_ctrl1();
++}
++
++static void fire_estar_sync(unsigned long jbc)
++{
++	int i;
++
++	upa_writeq(FIRE_ESTAR_SYNC_REQ, jbc + FIRE_JBC_ESTAR_SYNC);
++	for (i = 0; i < 100000; i++) {
++		if (upa_readq(jbc + FIRE_JBC_ESTAR_SYNC) == FIRE_ESTAR_SYNC_DONE)
++			break;
++		udelay(1);
++	}
++	if (i == 100000)
++		pr_warn("us3i-cpufreq: Fire E* sync timeout at %lx\n", jbc);
++	upa_writeq(0, jbc + FIRE_JBC_ESTAR_SYNC);
++}
++
++static unsigned long fire_estar_ctrl(unsigned long eclk)
++{
++	return eclk == JBUS_CFG_ECLK_32 ? FIRE_ESTAR_SLOW :
++	       eclk == JBUS_CFG_ECLK_2 ? FIRE_ESTAR_HALF : FIRE_ESTAR_FULL;
++}
++
++/* same register order as OBP POST for entering and leaving E* */
++static void fire_estar(unsigned long old, unsigned long eclk)
++{
++	int i;
++
++	if (old == JBUS_CFG_ECLK_1) {
++		for (i = 0; i < us3i_num_fire; i++)
++			upa_writeq(1, us3i_fire[i].pec);
++	}
++	for (i = 0; i < us3i_num_fire; i++) {
++		unsigned long jbc = us3i_fire[i].jbc;
++
++		if (!jbc)
++			continue;
++		upa_writeq(fire_estar_ctrl(eclk), jbc + FIRE_JBC_ESTAR_CTRL);
++		__asm__ __volatile__("membar	#Sync" : : : "memory");
++		fire_estar_sync(jbc);
++	}
++	if (eclk == JBUS_CFG_ECLK_1) {
++		for (i = 0; i < us3i_num_fire; i++)
++			upa_writeq(0, us3i_fire[i].pec);
++	}
++}
++
++static unsigned int us3i_eclk_to_freq(unsigned int cpu, unsigned long eclk)
++{
++	unsigned long khz = sparc64_get_clock_tick(cpu) / 1000;
++
++	return eclk == JBUS_CFG_ECLK_32 ? khz / 32 :
++	       eclk == JBUS_CFG_ECLK_2 ? khz / 2 : khz;
++}
++
++static unsigned int us3i_freq_get(unsigned int cpu)
++{
++	unsigned long eclk;
++
++	if (smp_call_function_single(cpu, us3i_read_eclk, &eclk, 1))
++		return 0;
++	return us3i_eclk_to_freq(cpu, eclk);
++}
++
++static int us3i_set_speed(unsigned long eclk)
++{
++	unsigned long cur;
++
++	us3i_read_eclk(&cur);
++	if (cur == eclk)
++		return 0;
++
++	on_each_cpu(us3i_set_eclk, &eclk, 1);
++	fire_estar(cur, eclk);
++	return 0;
++}
++
++static int us3i_freq_target(struct cpufreq_policy *policy, unsigned int index)
++{
++	return us3i_set_speed(policy->freq_table[index].driver_data);
++}
++
++static int us3i_freq_cpu_init(struct cpufreq_policy *policy)
++{
++	unsigned int cpu = policy->cpu;
++	struct cpufreq_frequency_table *pos;
++	unsigned long eclk;
++
++	us3i_read_eclk(&eclk);
++	if (eclk != JBUS_CFG_ECLK_1) {
++		pr_err("us3i-cpufreq: cpu %u not at full speed\n", cpu);
++		return -EBUSY;
++	}
++
++	cpufreq_for_each_entry(pos, us3i_freq_table)
++		pos->frequency = us3i_eclk_to_freq(cpu, pos->driver_data);
++
++	on_each_cpu(us3i_save_fsm, NULL, 1);
++
++	/* the Fire E* state is shared, so all cpus change together */
++	cpumask_setall(policy->cpus);
++	policy->cpuinfo.transition_latency = US3I_TRANSITION_LATENCY;
++	policy->cur = us3i_eclk_to_freq(cpu, eclk);
++	policy->freq_table = us3i_freq_table;
++
++	return 0;
++}
++
++static void us3i_freq_cpu_exit(struct cpufreq_policy *policy)
++{
++	us3i_set_speed(JBUS_CFG_ECLK_1);
++}
++
++static struct cpufreq_driver cpufreq_us3i_driver = {
++	.name		= "UltraSPARC-IIIi",
++	.flags		= CPUFREQ_CONST_LOOPS,
++	.init		= us3i_freq_cpu_init,
++	.verify		= cpufreq_generic_frequency_table_verify,
++	.target_index	= us3i_freq_target,
++	.get		= us3i_freq_get,
++	.exit		= us3i_freq_cpu_exit,
++};
++
++/* both Fire leaves of a chip alias its JBus unit, POST drives it via the even port */
++static int us3i_find_fire(void)
++{
++	struct device_node *dp;
++	int n = 0;
++
++	for_each_compatible_node(dp, NULL, "pci108e,a801") {
++		pr_info("us3i-cpufreq: Tomatillo host bridge not supported\n");
++		of_node_put(dp);
++		return -ENODEV;
++	}
++
++	for_each_compatible_node(dp, NULL, "pciex108e,80f0")
++		n++;
++	if (!n)
++		return -ENODEV;
++
++	us3i_fire = kcalloc(n, sizeof(*us3i_fire), GFP_KERNEL);
++	if (!us3i_fire)
++		return -ENOMEM;
++
++	for_each_compatible_node(dp, NULL, "pciex108e,80f0") {
++		const struct linux_prom64_registers *regs;
++		u32 portid = of_getintprop_default(dp, "portid", 0xff);
++		int len;
++
++		regs = of_get_property(dp, "reg", &len);
++		if (!regs || len < 2 * sizeof(*regs) || us3i_num_fire == n) {
++			of_node_put(dp);
++			kfree(us3i_fire);
++			us3i_fire = NULL;
++			us3i_num_fire = 0;
++			return -ENODEV;
++		}
++		us3i_fire[us3i_num_fire].pec = regs[0].phys_addr + FIRE_PEC_ESTAR;
++		us3i_fire[us3i_num_fire].jbc = (portid & 1) ? 0 : regs[1].phys_addr;
++		us3i_num_fire++;
++	}
++
++	return 0;
++}
++
++static int __init us3i_freq_init(void)
++{
++	unsigned long manuf, impl, ver;
++	int ret;
++
++	if (tlb_type != cheetah_plus)
++		return -ENODEV;
++
++	__asm__("rdpr %%ver, %0" : "=r" (ver));
++	manuf = ((ver >> 48) & 0xffff);
++	impl  = ((ver >> 32) & 0xffff);
++
++	if (manuf != CHEETAH_MANUF ||
++	    (impl != JALAPENO_IMPL && impl != SERRANO_IMPL))
++		return -ENODEV;
++
++	ret = us3i_find_fire();
++	if (ret)
++		return ret;
++
++	ret = cpufreq_register_driver(&cpufreq_us3i_driver);
++	if (ret) {
++		kfree(us3i_fire);
++		us3i_fire = NULL;
++		us3i_num_fire = 0;
++	}
++
++	return ret;
++}
++
++static void __exit us3i_freq_exit(void)
++{
++	cpufreq_unregister_driver(&cpufreq_us3i_driver);
++	kfree(us3i_fire);
++}
++
++MODULE_AUTHOR("René Rebe <rene@exactco.de>");
++MODULE_DESCRIPTION("cpufreq driver for UltraSPARC-IIIi");
++MODULE_LICENSE("GPL");
++
++module_init(us3i_freq_init);
++module_exit(us3i_freq_exit);
