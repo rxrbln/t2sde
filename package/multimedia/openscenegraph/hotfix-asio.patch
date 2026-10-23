@@ -1,0 +1,103 @@
+--- a/src/osgPlugins/RestHttpDevice/connection.cpp	2026-10-17 22:12:18.095002875 +0200
++++ b/src/osgPlugins/RestHttpDevice/connection.cpp	2026-10-17 22:12:18.123127152 +0200
+@@ -17,7 +17,7 @@
+ namespace http {
+ namespace server {
+ 
+-connection::connection(asio::io_service& io_service,
++connection::connection(asio::io_context& io_service,
+     request_handler& handler)
+   : socket_(io_service),
+     request_handler_(handler)
+--- a/src/osgPlugins/RestHttpDevice/connection.hpp	2026-10-17 22:12:18.095050654 +0200
++++ b/src/osgPlugins/RestHttpDevice/connection.hpp	2026-10-17 22:12:18.102543330 +0200
+@@ -31,7 +31,7 @@ class connection
+ {
+ public:
+   /// Construct a connection with the given io_service.
+-  explicit connection(asio::io_service& io_service,
++  explicit connection(asio::io_context& io_service,
+       request_handler& handler);
+ 
+   /// Get the socket associated with the connection.
+--- a/src/osgPlugins/RestHttpDevice/io_service_pool.cpp	2026-10-17 22:12:18.095133034 +0200
++++ b/src/osgPlugins/RestHttpDevice/io_service_pool.cpp	2026-10-17 22:12:18.123368181 +0200
+@@ -10,6 +10,7 @@
+ 
+ #include "server.hpp"
+ #include <stdexcept>
++#include <thread>
+ #include <boost/bind.hpp>
+ #include <boost/shared_ptr.hpp>
+ 
+@@ -26,8 +27,8 @@ io_service_pool::io_service_pool(std::si
+   // exit until they are explicitly stopped.
+   for (std::size_t i = 0; i < pool_size; ++i)
+   {
+-    io_service_ptr io_service(new asio::io_service);
+-    work_ptr work(new asio::io_service::work(*io_service));
++    io_service_ptr io_service(new asio::io_context);
++    work_ptr work(new asio::executor_work_guard<asio::io_context::executor_type>(io_service->get_executor()));
+     io_services_.push_back(io_service);
+     work_.push_back(work);
+   }
+@@ -36,11 +37,12 @@ io_service_pool::io_service_pool(std::si
+ void io_service_pool::run()
+ {
+   // Create a pool of threads to run all of the io_services.
+-  std::vector<boost::shared_ptr<asio::thread> > threads;
++  std::vector<boost::shared_ptr<std::thread> > threads;
+   for (std::size_t i = 0; i < io_services_.size(); ++i)
+   {
+-    boost::shared_ptr<asio::thread> thread(new asio::thread(
+-          boost::bind(&asio::io_service::run, io_services_[i])));
++    io_service_ptr io_service = io_services_[i];
++    boost::shared_ptr<std::thread> thread(new std::thread(
++          [io_service]() { io_service->run(); }));
+     threads.push_back(thread);
+   }
+ 
+@@ -56,10 +58,10 @@ void io_service_pool::stop()
+     io_services_[i]->stop();
+ }
+ 
+-asio::io_service& io_service_pool::get_io_service()
++asio::io_context& io_service_pool::get_io_service()
+ {
+   // Use a round-robin scheme to choose the next io_service to use.
+-  asio::io_service& io_service = *io_services_[next_io_service_];
++  asio::io_context& io_service = *io_services_[next_io_service_];
+   ++next_io_service_;
+   if (next_io_service_ == io_services_.size())
+     next_io_service_ = 0;
+--- a/src/osgPlugins/RestHttpDevice/io_service_pool.hpp	2026-10-17 22:12:18.095169174 +0200
++++ b/src/osgPlugins/RestHttpDevice/io_service_pool.hpp	2026-10-17 22:12:18.102629090 +0200
+@@ -34,11 +34,11 @@ public:
+   void stop();
+ 
+   /// Get an io_service to use.
+-  asio::io_service& get_io_service();
++  asio::io_context& get_io_service();
+ 
+ private:
+-  typedef boost::shared_ptr<asio::io_service> io_service_ptr;
+-  typedef boost::shared_ptr<asio::io_service::work> work_ptr;
++  typedef boost::shared_ptr<asio::io_context> io_service_ptr;
++  typedef boost::shared_ptr<asio::executor_work_guard<asio::io_context::executor_type>> work_ptr;
+ 
+   /// The pool of io_services.
+   std::vector<io_service_ptr> io_services_;
+--- a/src/osgPlugins/RestHttpDevice/server.cpp	2026-10-17 22:12:18.095608973 +0200
++++ b/src/osgPlugins/RestHttpDevice/server.cpp	2026-10-17 22:12:18.123314201 +0200
+@@ -23,9 +23,8 @@ server::server(const std::string& addres
+     request_handler_(doc_root)
+ {
+   // Open the acceptor with the option to reuse the address (i.e. SO_REUSEADDR).
+-  asio::ip::tcp::resolver resolver(acceptor_.get_io_service());
+-  asio::ip::tcp::resolver::query query(address, port);
+-  asio::ip::tcp::endpoint endpoint = *resolver.resolve(query);
++  asio::ip::tcp::resolver resolver(acceptor_.get_executor());
++  asio::ip::tcp::endpoint endpoint = *resolver.resolve(address, port).begin();
+   acceptor_.open(endpoint.protocol());
+   acceptor_.set_option(asio::ip::tcp::acceptor::reuse_address(true));
+   acceptor_.bind(endpoint);
