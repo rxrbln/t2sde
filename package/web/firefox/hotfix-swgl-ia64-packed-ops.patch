@@ -1,0 +1,118 @@
+# --- T2-COPYRIGHT-BEGIN ---
+# t2/package/*/firefox/hotfix-swgl-ia64-packed-ops.patch
+# Copyright (C) 2026 The T2 SDE Project
+# SPDX-License-Identifier: GPL-2.0 or patched project license
+# --- T2-COPYRIGHT-END ---
+
+--- firefox-152.0.6/gfx/wr/swgl/build.rs.vanilla	2026-07-19 19:20:50.371548918 +0200
++++ firefox-152.0.6/gfx/wr/swgl/build.rs	2026-07-19 19:58:05.948695250 +0200
+@@ -231,6 +231,13 @@
+                 .flag("-Xclang")
+                 .flag("-mrecip=none")
+                 .flag("/clang:-fno-finite-math-only");
++        } else if std::env::var("CARGO_CFG_TARGET_ARCH").as_deref() == Ok("ia64") {
++            // Itanium always divides via a reciprocal approximation regardless
++            // of -mrecip, so the fuzz concerns above don't apply here.
++            build
++                .flag("-ffast-math")
++                .flag("-minline-float-divide-max-throughput")
++                .flag("-minline-sqrt-max-throughput");
+         } else if tool.is_like_clang() {
+             // gcc only supports -mrecip=none on some targets so to keep
+             // things simple we don't use -ffast-math with gcc at all
+
+--- firefox-153.0.1/gfx/wr/swgl/src/vector_type.h.vanilla
++++ firefox-153.0.1/gfx/wr/swgl/src/vector_type.h
+@@ -534,6 +534,38 @@
+ };
+ #endif
+ 
++#ifdef __ia64__
++// GCC's ia64 backend has no patterns for the saturating packed ops, so the
++// portable fallbacks below expand to 24 instructions for a saturating add and
++// 51 for a saturating pack. A 16-byte vector is a TImode register pair here,
++// hence the per-half wrapping at the call sites.
++typedef int16_t ia64_i16x4 __attribute__((vector_size(8)));
++typedef uint16_t ia64_u16x4 __attribute__((vector_size(8)));
++typedef uint8_t ia64_u8x8 __attribute__((vector_size(8)));
++
++// == _mm_adds_epi16
++SI ia64_i16x4 ia64_padd2_sss(ia64_i16x4 a, ia64_i16x4 b) {
++  ia64_i16x4 r;
++  __asm__("padd2.sss %0 = %1, %2" : "=r"(r) : "r"(a), "r"(b));
++  return r;
++}
++
++// == _mm_adds_epu16
++SI ia64_u16x4 ia64_padd2_uuu(ia64_u16x4 a, ia64_u16x4 b) {
++  ia64_u16x4 r;
++  __asm__("padd2.uuu %0 = %1, %2" : "=r"(r) : "r"(a), "r"(b));
++  return r;
++}
++
++// Lanes are read as signed and saturated into unsigned bytes; |a| supplies the
++// low four bytes and |b| the high four, matching _mm_packus_epi16(lo, hi).
++SI ia64_u8x8 ia64_pack2_uss(ia64_u16x4 a, ia64_u16x4 b) {
++  ia64_u8x8 r;
++  __asm__("pack2.uss %0 = %1, %2" : "=r"(r) : "r"(a), "r"(b));
++  return r;
++}
++#endif
++
+ template <typename T, typename P>
+ SI T unaligned_load(const P* p) {
+   return Unaligned<T>::load(p);
+--- firefox-153.0.1/gfx/wr/swgl/src/texture.h.vanilla
++++ firefox-153.0.1/gfx/wr/swgl/src/texture.h
+@@ -26,6 +26,11 @@
+ #elif USE_NEON
+   return vcombine_u8(vqmovun_s16(bit_cast<V8<int16_t>>(lowHalf(p))),
+                      vqmovun_s16(bit_cast<V8<int16_t>>(highHalf(p))));
++#elif defined(__ia64__)
++  auto lo = lowHalf(p);
++  auto hi = highHalf(p);
++  return PackedRGBA8::wrap(ia64_pack2_uss(lo.low_half, lo.high_half),
++                           ia64_pack2_uss(hi.low_half, hi.high_half));
+ #else
+   return genericPackWide(p);
+ #endif
+@@ -44,6 +49,8 @@
+ #elif USE_NEON
+   return lowHalf(
+       bit_cast<V8<uint8_t>>(vqmovun_s16(bit_cast<V8<int16_t>>(expand(p)))));
++#elif defined(__ia64__)
++  return lowHalf(VectorType<uint8_t, 8>::wrap(ia64_pack2_uss(p.data, p.data)));
+ #else
+   return genericPackWide(p);
+ #endif
+@@ -57,6 +64,8 @@
+   return lowHalf(bit_cast<V16<uint8_t>>(_mm_packus_epi16(p, p)));
+ #elif USE_NEON
+   return bit_cast<V8<uint8_t>>(vqmovun_s16(bit_cast<V8<int16_t>>(p)));
++#elif defined(__ia64__)
++  return PackedRG8::wrap(ia64_pack2_uss(p.low_half, p.high_half));
+ #else
+   return genericPackWide(p);
+ #endif
+@@ -1157,6 +1166,9 @@
+   return _mm_adds_epu16(x, y);
+ #elif USE_NEON
+   return vqaddq_u16(x, y);
++#elif defined(__ia64__)
++  return V8<uint16_t>::wrap(ia64_padd2_uuu(x.low_half, y.low_half),
++                            ia64_padd2_uuu(x.high_half, y.high_half));
+ #else
+   auto r = x + y;
+   return r | (r < x);
+--- firefox-153.0.1/gfx/wr/swgl/src/composite.h.vanilla
++++ firefox-153.0.1/gfx/wr/swgl/src/composite.h
+@@ -605,6 +605,9 @@
+   return _mm_adds_epi16(x, y);
+ #elif USE_NEON
+   return vqaddq_s16(x, y);
++#elif defined(__ia64__)
++  return V8<int16_t>::wrap(ia64_padd2_sss(x.low_half, y.low_half),
++                           ia64_padd2_sss(x.high_half, y.high_half));
+ #else
+   auto r = x + y;
+   // An overflow occurred if the signs of both inputs x and y did not differ

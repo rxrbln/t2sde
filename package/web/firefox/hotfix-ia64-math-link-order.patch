@@ -1,0 +1,138 @@
+# --- T2-COPYRIGHT-BEGIN ---
+# t2/package/*/firefox/hotfix-ia64-math-link-order.patch
+# Copyright (C) 2026 The T2 SDE Project
+# SPDX-License-Identifier: GPL-2.0 or patched project license
+# --- T2-COPYRIGHT-END ---
+
+# Stop Rust's compiler_builtins from shadowing ia64's real math routines.
+#
+# compiler_builtins ships *weak* definitions of the soft-float and soft-integer
+# division helpers (__divsf3, __divdf3, __divdi3, __udivdi3, __moddi3,
+# __umoddi3) and of a large set of libm entry points (ceil/ceilf, floor/floorf,
+# trunc/truncf, round/roundf, rint/rintf, sqrt/sqrtf, fmod/fmodf, fmin/fminf,
+# fmax/fmaxf, cbrt/cbrtf ...), each in its own codegen unit, and they land in
+# libgkrust.a. config/rules.mk links libxul.so as
+#
+#   $(MKSHLIB) ... $(OBJS) $(LDFLAGS) $(STATIC_LIBS) $(SHARED_LIBS) ... $(OS_LIBS)
+#
+# with libgkrust.a in STATIC_LIBS. Both of the libraries that would otherwise
+# provide these -- the -lgcc the compiler driver appends, and the -lm in
+# OS_LIBS -- are scanned *after* it, so libgkrust.a wins every time and the
+# real routines are never pulled in. Because a definition inside libxul.so also
+# preempts the dynamic symbol lookup, this affects the C++ side too, not just
+# Rust: SWGL's calls to ceilf() end up in compiler_builtins as well.
+#
+# On most targets this is harmless. On ia64 it is not:
+#
+#   __divsf3   compiler_builtins does IEEE-754 division in portable integer
+#              code -- ~190 bundles, never touches the FPU, and it opens by
+#              spilling both operands to the stack and reloading them with ld4.
+#              libgcc's ia64 __divsf3 is 15 bundles: frcpa plus the
+#              Newton-Raphson fnma/fma chain the architecture provides for
+#              exactly this. (GCC emits that inline for C/C++, which is why
+#              only calls that reach the helper are affected.)
+#
+#   ceilf      compiler_builtins decomposes the exponent by hand: stfs to the
+#              stack, ld4 it back into a GR, then five branches of bit
+#              twiddling, ~30 bundles. glibc's ia64 ceilf is Intel's
+#              hand-written kernel -- getf.exp / fclass / fcvt.fx.trunc /
+#              fnorm, everything stays in the FP register file, common path
+#              about four bundles. Same for floorf, truncf and roundf.
+#
+# Measured on a Lichess profile (Firefox 154, perf cycles, epic-t2, 328.1 CPU-s
+# total): the division helpers cost 9.5 s, 8.5 s of it on WRRenderBackend; the
+# libm shims cost a further ~7.6 s, of which 4.5 s is on the Renderer thread
+# (ceilf alone is 2.9% of that thread) and 2.5 s on WRRenderBackend.
+#
+# The two halves need different treatment:
+#
+#   libgcc is a static archive, so it only yields members for symbols that are
+#   already undefined at that point on the link line. The six names are given
+#   explicitly with -u.
+#
+#   libm is a shared library, so it is enough to make it visible before
+#   libgkrust.a: a symbol it defines is no longer undefined when the archive is
+#   scanned, and the corresponding codegen unit is simply never extracted. That
+#   needs no -u list, so the set self-maintains. --no-as-needed is required
+#   because some of these references come only from Rust code inside
+#   libgkrust.a, i.e. from later on the link line, and --push-state/--pop-state
+#   keeps the setting from leaking into the rest of the link. libm.so is
+#   already a DT_NEEDED of libxul.so, so this changes resolution order only.
+#
+# Both -lgcc and -lm are passed *inside* the -Wl option. This is not cosmetic.
+# libxul is linked with g++, and the g++ driver rewrites the library sequence:
+# a bare -lm written here is deleted from this position and re-emitted after
+# -lstdc++, which is after libgkrust.a. The flags still read correctly in the
+# build log and in COMPUTED_LDFLAGS, but collect2 receives -lm in the wrong
+# place and the libm half of the fix silently does nothing. (The gcc driver
+# does not do this, so a test built with gcc instead of g++ will pass while the
+# real link fails.) Hiding the options behind -Wl keeps the driver from
+# recognising them as libraries, so they reach the linker where they were put.
+#
+# Since each compiler_builtins codegen unit defines nothing but its one weak
+# symbol, satisfying the reference elsewhere means the member is not extracted
+# at all: no weak/strong duplicate arises and the dead bodies drop out of
+# libxul.so.
+#
+# Verified with the real archives from an ia64 build tree (binutils 2.46):
+# libgcc's frcpa routines are extracted in place of all six division helpers,
+# and ceil/ceilf/floorf/truncf/round/roundf go from local definitions inside
+# the output to PLT references against libm.so.6.1, with zero compiler_builtins
+# members pulled in either case.
+#
+# Scope note: only the 20 libm entry points that libgkrust.a actually defines
+# change hands. pow, exp, log and the other transcendentals are not among them
+# -- nothing extracts those members today, so they already bind to glibc and
+# are unaffected. This matters because glibc's ia64 pow() has a separate bug
+# (it flushes subnormal results to zero).
+
+--- firefox-154.0.1/toolkit/library/build/moz.build.vanilla
++++ firefox-154.0.1/toolkit/library/build/moz.build
+@@ -40,3 +40,47 @@
+     OBJDIR_FILES.dist.bin += ["../libxul.so-gdb.py"]
+ 
+ DUMP_SYMBOLS_FLAGS += ["--count-ctors"]
++
++# ia64: keep Rust's compiler_builtins from shadowing the target's real math
++# routines. See hotfix-ia64-math-link-order.patch for the full story.
++#
++# compiler_builtins defines the soft-float/soft-integer division helpers and a
++# large set of libm entry points as *weak* symbols, one per codegen unit, and
++# they end up in libgkrust.a. config/rules.mk links libxul.so as
++#
++#   ... $(OBJS) $(LDFLAGS) $(STATIC_LIBS) $(SHARED_LIBS) ... $(OS_LIBS)
++#
++# so libgkrust.a is scanned before both the -lgcc the driver appends and the
++# -lm in OS_LIBS. Whichever reference is still open when libgkrust.a is reached
++# is satisfied from compiler_builtins, and the real routines are never pulled
++# in. On ia64 that is a bad trade in both directions: compiler_builtins does
++# this work in portable branchy integer code, while libgcc has the frcpa
++# Newton-Raphson divide and glibc has Intel's hand-written fcvt.fx/fclass
++# kernels, which is what the architecture is built around.
++#
++# Both libraries are offered here, from LDFLAGS, which is emitted ahead of
++# STATIC_LIBS. -u is needed for libgcc because a static archive only yields
++# members for symbols that are already undefined; libm is a shared library, so
++# merely making it visible at this point is enough -- a symbol it defines is no
++# longer undefined when libgkrust.a is scanned, and the matching codegen unit
++# is skipped. Each compiler_builtins codegen unit defines nothing but its one
++# weak symbol, so those members are then never extracted at all: no weak/strong
++# duplicate, and the dead bodies drop out of libxul.
++#
++# -lgcc and -lm must be passed *inside* the -Wl option rather than as bare
++# driver arguments. libxul is linked with g++, and the g++ driver rewrites the
++# library sequence: a bare -lm is removed from where it was written and
++# re-emitted after -lstdc++, i.e. after libgkrust.a, which silently undoes the
++# whole fix while leaving the flags looking correct on the command line.
++# Hiding them behind -Wl keeps the driver from recognising them as libraries,
++# so the linker sees them in the intended position.
++if CONFIG["TARGET_CPU"] == "ia64":
++    LDFLAGS += [
++        "-Wl,-u,__divsf3",
++        "-Wl,-u,__divdf3",
++        "-Wl,-u,__divdi3",
++        "-Wl,-u,__udivdi3",
++        "-Wl,-u,__moddi3",
++        "-Wl,-u,__umoddi3",
++        "-Wl,--push-state,--no-as-needed,-lgcc,-lm,--pop-state",
++    ]

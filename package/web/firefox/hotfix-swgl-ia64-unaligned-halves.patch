@@ -1,0 +1,124 @@
+# --- T2-COPYRIGHT-BEGIN ---
+# t2/package/*/firefox/hotfix-swgl-ia64-unaligned-halves.patch
+# Copyright (C) 2026 The T2 SDE Project
+# SPDX-License-Identifier: GPL-2.0 or patched project license
+# --- T2-COPYRIGHT-END ---
+
+# Store and load 16-byte SWGL vectors as their two native halves on ia64.
+#
+# SWGL commits a span of pixels with unaligned_store(), which for a VectorType
+# goes through memcpy(p, v.elements, sizeof(v)).  On ia64 a 16-byte vector has
+# no register class at all and the architecture has no unaligned wide access,
+# so that memcpy spills the value to the stack and copies it back a byte at a
+# time.  The inner loop of the linear-gradient span shader came out as:
+#
+#   pshr2.u x4          ; color >> 8          <- the real work
+#   padd2   x4          ; color += deltaColor <- the real work
+#   st8     x4          ; spill to the stack
+#   ld1     x16         ; read it back a byte at a time
+#   shl/or  x28         ; reassemble
+#   st1     x16         ; and store it a byte at a time
+#
+# 74 real instructions in 50 bundles for four pixels, of which ten were doing
+# arithmetic.  Each 8-byte half is a native general register, so splitting the
+# access there removes the round trip entirely.
+#
+# Measured with the stock cross compiler on that loop, per four pixels:
+#
+#   before   121 slots   94 real instructions   16 st1
+#   after     73 slots   52 real instructions    4 st4
+#
+# i.e. 1.8x fewer instructions, with no compiler change.  (An earlier attempt to
+# fix this in the ia64 back end instead -- giving V16QI/V8HI/V4SI a general
+# register pair the way the V4SF patch does for floats -- was built and
+# measured, and is neutral at best and a regression on the current source, since
+# the tree-level vector lowering pass already splits these operations correctly.
+# The problem was never the arithmetic.)
+#
+# Two details matter for correctness:
+#
+#   The wrapper lowers alignment with |packed| plus |aligned|.  A bare aligned()
+#   attribute can only *raise* alignment, and it is additionally dropped without
+#   a diagnostic from a dependent typedef inside a template -- both of which
+#   leave an st8 pointed at a 4-byte-aligned framebuffer row, which ia64 traps
+#   on rather than fixing up in hardware.  This was observed, not assumed.
+#
+#   The split is taken only when the buffer is known to be at least 4-byte
+#   aligned.  Texture rows are reached through uint8_t*, and those loads keep
+#   the memcpy; they are 8 bytes wide and would gain nothing from splitting.
+#
+# The remaining 4-byte stores could become two st8 if a span were known to start
+# on an 8-byte boundary, worth about another 12% of this loop, but spans start
+# at an arbitrary pixel so that needs alignment peeling in the caller.
+
+--- firefox-154.0.1/gfx/wr/swgl/src/vector_type.h.vanilla
++++ firefox-154.0.1/gfx/wr/swgl/src/vector_type.h
+@@ -518,18 +518,64 @@
+ };
+ 
+ #ifndef __clang__
++
++#ifdef __ia64__
++// A 16-byte vector has no register class on ia64, and there is no unaligned
++// wide load or store, so memcpy through |elements| spills the value to the
++// stack and then copies it a byte at a time -- a 4-pixel RGBA8 span store came
++// out as 16 st1 plus the shl/or sequence needed to reassemble the value. Each
++// 8-byte half, on the other hand, is a native general register.
++//
++// Access the halves through a wrapper whose alignment is lowered to that of the
++// buffer. |packed| plus |aligned| is the documented way to lower a type's
++// alignment: a bare aligned() attribute can only raise it, and on top of that
++// it is silently dropped from a dependent typedef inside a template, which
++// would leave an st8 aimed at a 4-byte-aligned framebuffer row -- ia64 traps on
++// that rather than fixing it up.
++template <typename H>
++struct UnalignedHalf {
++  H v;
++} __attribute__((packed, aligned(4), may_alias));
++
++// Only 16-byte vectors are worth splitting: the 8- and 4-byte ones already move
++// in a single instruction. The buffer must be known to be at least 4-byte
++// aligned, which rules out the texture rows reached through uint8_t*; those
++// keep the memcpy, and being 8 bytes wide they would gain nothing anyway.
++#  define SWGL_SPLIT_UNALIGNED(T, N, P) \
++    (N >= 4 && sizeof(VectorType<T, N>) == 16 && alignof(P) >= 4)
++#endif
++
+ template <typename T, int N>
+ struct Unaligned<VectorType<T, N>> {
+   template <typename P>
+   SI VectorType<T, N> load(const P* p) {
+-    VectorType<T, N> v;
+-    memcpy(v.elements, p, sizeof(v));
+-    return v;
++#ifdef __ia64__
++    if constexpr (SWGL_SPLIT_UNALIGNED(T, N, P)) {
++      using Half = UnalignedHalf<typename VectorType<T, N>::half_type>;
++      auto* h = (const Half*)p;
++      return VectorType<T, N>::wrap(h[0].v, h[1].v);
++    } else
++#endif
++    {
++      VectorType<T, N> v;
++      memcpy(v.elements, p, sizeof(v));
++      return v;
++    }
+   }
+ 
+   template <typename P>
+   SI void store(P* p, VectorType<T, N> v) {
+-    memcpy(p, v.elements, sizeof(v));
++#ifdef __ia64__
++    if constexpr (SWGL_SPLIT_UNALIGNED(T, N, P)) {
++      using Half = UnalignedHalf<typename VectorType<T, N>::half_type>;
++      auto* h = (Half*)p;
++      h[0].v = v.low_half;
++      h[1].v = v.high_half;
++    } else
++#endif
++    {
++      memcpy(p, v.elements, sizeof(v));
++    }
+   }
+ };
+ #endif
