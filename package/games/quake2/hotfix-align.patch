@@ -1,0 +1,105 @@
+# --- T2-COPYRIGHT-BEGIN ---
+# t2/package/*/quake2/hotfix-align.patch
+# Copyright (C) 2026 The T2 SDE Project
+# SPDX-License-Identifier: GPL-2.0 or patched project license
+# --- T2-COPYRIGHT-END ---
+
+From: René Rebe <rene@exactco.de>
+Subject: keep hunk allocations aligned for 64-bit data
+
+The hunk handed out memory right after a 4 byte size header, so every
+allocation was only 4 byte aligned and 64-bit loads of model and map
+data took SIGBUS on sparc64.  Reserve a 32 byte header instead, the
+allocation granularity Hunk_Alloc already rounds sizes to.
+
+Signed-off-by: René Rebe <rene@exactco.de>
+
+--- a/src/q_sh.c
++++ b/src/q_sh.c
+@@ -43,13 +43,15 @@
+ //===============================================================================
+ 
+ byte *membase;
++/* header of the hunk size, keeps allocations aligned for 64-bit data */
++#define HUNK_HDR 32
+ int maxhunksize;
+ int curhunksize;
+ 
+ void *Hunk_Begin (int maxsize)
+ {
+ 	// reserve a huge chunk of memory, but don't commit any yet
+-	maxhunksize = maxsize + sizeof(int);
++	maxhunksize = maxsize + HUNK_HDR;
+ 	curhunksize = 0;
+ /* merged in from q_sh*.c -- jaq */
+ /* FIXME: clean all this up into configure tests for mmap, MAP_ANONYMOUS and malloc */
+@@ -67,7 +69,7 @@ void *Hunk_Begin (int maxsize)
+ 
+ 	*((int *)membase) = curhunksize;
+ 
+-	return membase + sizeof(int);
++	return membase + HUNK_HDR;
+ }
+ 
+ void *Hunk_Alloc (int size)
+@@ -78,7 +80,7 @@ void *Hunk_Alloc (int size)
+ 	size = (size+31)&~31;
+ 	if (curhunksize + size > maxhunksize)
+ 		Sys_Error("Hunk_Alloc overflow");
+-	buf = membase + sizeof(int) + curhunksize;
++	buf = membase + HUNK_HDR + curhunksize;
+ 	curhunksize += size;
+ 	return buf;
+ }
+@@ -91,7 +93,7 @@ int Hunk_End (void)
+ /* from relnev 0.9 -- jaq */
+ #ifdef __FreeBSD__
+ 	size_t old_size = maxhunksize;
+-	size_t new_size = curhunksize + sizeof(int);
++	size_t new_size = curhunksize + HUNK_HDR;
+ 	void * unmap_base;
+ 	size_t unmap_len;
+ 
+@@ -107,13 +109,13 @@ int Hunk_End (void)
+ #endif
+ 
+ #ifdef __linux__
+-	n = mremap(membase, maxhunksize, curhunksize + sizeof(int), 0);
++	n = mremap(membase, maxhunksize, curhunksize + HUNK_HDR, 0);
+ #else /* __sun__ */
+ 	n = realloc(membase, curhunksize);
+ #endif
+ 	if (n != membase)
+ 		Sys_Error("Hunk_End:  Could not remap virtual block (%d)", errno);
+-	*((int *)membase) = curhunksize + sizeof(int);
++	*((int *)membase) = curhunksize + HUNK_HDR;
+ 	
+ 	return curhunksize;
+ }
+@@ -127,7 +129,7 @@ int Hunk_End (void)
+ 	if (pgsz == -1)
+ 		Sys_Error("Hunk_End: Sysconf() failed: %s", strerror(errno));
+ 
+-	newsz = curhunksize + sizeof(int);
++	newsz = curhunksize + HUNK_HDR;
+ 
+ 	if (newsz > maxhunksize)
+ 		Sys_Error("Hunk_End Overflow");
+@@ -139,7 +141,7 @@ int Hunk_End (void)
+ 			Sys_Error("Hunk_End: munmap() failed: %s", strerror(errno));
+ 	}
+ 
+-	*((int *)membase) = curhunksize + sizeof(int);
++	*((int *)membase) = curhunksize + HUNK_HDR;
+ #endif /* __sgi */
+ 	return curhunksize;
+ }
+@@ -154,7 +156,7 @@ void Hunk_Free (void *base)
+ #ifdef __sun__
+ 		/* free(base); FIXME: It segfaults here. doesn't happen with icculus. Coyote */
+ #else
+-		m = ((byte *)base) - sizeof(int);
++		m = ((byte *)base) - HUNK_HDR;
+ 	#ifdef __sgi
+ 		free(m);
+ 	#else
