@@ -1,11 +1,17 @@
 #!/bin/sh
+# --- T2-COPYRIGHT-BEGIN ---
+# t2/package/*/mkinitrd/initrdinit.sh
+# Copyright (C) 2026 The T2 SDE Project
+# SPDX-License-Identifier: GPL-2.0
+# --- T2-COPYRIGHT-END ---
+
 
 PATH=/sbin:/bin:/usr/bin:/usr/sbin
 
 echo "T2 SDE early userspace (c)2005-2026 Rene Rebe, ExactCODE GmbH; Germany."
 
 getopt() {
-	_="$2 $1" _=${_##*$2} _=${_%% *}
+	_=" $2 $1" _=${_##* $2} _=${_%% *}
 	echo "$_"
 	unset _
 }
