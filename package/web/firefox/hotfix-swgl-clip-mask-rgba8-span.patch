@@ -1,0 +1,206 @@
+# --- T2-COPYRIGHT-BEGIN ---
+# t2/package/*/firefox/hotfix-swgl-clip-mask-rgba8-span.patch
+# Copyright (C) 2026 The T2 SDE Project
+# SPDX-License-Identifier: GPL-2.0 or patched project license
+# --- T2-COPYRIGHT-END ---
+
+# SWGL has no span path for clip masks drawn onto a color target.
+#
+# handle_clips() draws ps_quad_mask FAST_PATH with BlendMode::Multiply straight
+# onto content already in a color target. The shader only provides
+# swgl_drawSpanR8, for the alpha-target use, so on an RGBA8 target every chunk
+# ran main() - a rounded-box distance with a square root - and then the
+# generic blend: on a browsing session (news, Discord, YouTube) that was 1% of
+# all CPU cycles on ia64.
+#
+#   - swgl_drawSpanRGBA8 for FAST_PATH walks the span like the R8 version:
+#     clear run, AA run, opaque run, AA run, clear run, committing vec4(mask)
+#     as main() does. The R8 walk's corner planes bound the opaque run only
+#     approximately (next to a corner they admitted pixels that main() covers
+#     by ~0.95), so this one evaluates one more chunk per pixel on each side
+#     of it. Over 60 random clip geometries, both clip modes, the output is
+#     then byte-identical to the fragment shader.
+#
+#   - commit_solid_span under BLEND_KEY(GL_ZERO, GL_SRC_COLOR), which is
+#     Multiply: muldiv255(255, d) == d and muldiv255(0, d) == 0 exactly, so an
+#     opaque run leaves the target alone and a clear run is a plain store.
+#
+# Itanium 2 (Montecito), cycles per pixel, a 1024x768 rounded clip:
+#                       fragment shader   + span   + solid runs   x86-64 frag.
+#   clip mask multiply       151.0          22.7        3.7          31.9
+#   clip mask odd            150.9          22.9        3.9          32.3
+#
+# Neither change is ia64 specific.
+
+--- firefox-158.0/gfx/wr/webrender/res/ps_quad_mask.glsl.vanilla
++++ firefox-158.0/gfx/wr/webrender/res/ps_quad_mask.glsl
+@@ -499,6 +499,139 @@
+     #undef AA_RECT
+     #undef AA_CORNER
+ }
++
++#ifdef WR_FEATURE_FAST_PATH
++// The same span walk for an RGBA8 target: handle_clips() multiplies the mask
++// into content already in a color target, and without a span the fragment
++// shader ran for every pixel there. The output is vec4(mask), as main()'s;
++// under the Multiply blend SWGL skips the opaque run (x * 1 == x) and stores
++// the clear runs (x * 0 == 0) without reading the target.
++void swgl_drawSpanRGBA8() {
++    if (swgl_interpStep(vClipLocalPos).w != 0.0) {
++        return;
++    }
++
++    float w = swgl_forceScalar(vClipLocalPos.w);
++    if (w <= 0.0) {
++        swgl_commitSolidRGBA8(vec4(0.0));
++        return;
++    }
++
++    w = 1.0 / w;
++    vec2 local_pos = vClipLocalPos.xy * w;
++    vec2 local_pos0 = swgl_forceScalar(local_pos);
++    vec2 local_step = swgl_interpStep(vClipLocalPos).xy * w;
++    float step_scale = max(dot(local_step, local_step), 1.0e-6);
++
++    float aa_range = compute_aa_range(local_pos);
++    float aa_margin = inversesqrt(aa_range * aa_range * step_scale);
++
++    vec4 clip_rect = vec4(-v_clip_size, v_clip_size);
++    vec4 clip_dist =
++        mix(clip_rect, clip_rect.zwxy, lessThan(local_step, vec2(0.0)).xyxy)
++            - local_pos0.xyxy;
++
++    float aa_band = 0.5 * recip(aa_range);
++    vec2 inset = min(-clip_dist.xy, clip_dist.zw);
++    bvec2 flat_axis = equal(local_step, vec2(0.0));
++    bvec2 partial = lessThan(inset, vec2(aa_band));
++    bool aa_span = (flat_axis.x && partial.x) || (flat_axis.y && partial.y);
++
++    clip_dist =
++        mix(1.0e6 * step(0.0, clip_dist - vec4(aa_band, aa_band, -aa_band, -aa_band)),
++            clip_dist * recip(local_step).xyxy,
++            notEqual(local_step, vec2(0.0)).xyxy);
++
++    float opaque_start = max(clip_dist.x, clip_dist.y);
++    float opaque_end = min(clip_dist.z, clip_dist.w);
++    float aa_start = opaque_start;
++    float aa_end = opaque_end;
++
++    #define CLIP_CORNER(plane) do {                                           \
++        float dist = dot(local_pos0, plane.xy) - plane.z;                     \
++        float scale = -dot(local_step, plane.xy);                             \
++        if (scale >= 0.0) {                                                   \
++            if (dist > opaque_start * scale) {                                \
++                float inv_scale = recip(max(scale, 1.0e-6));                  \
++                opaque_start = dist * inv_scale;                              \
++                float apex = (0.7071 - 0.5) * 2.0 * abs(plane.x * plane.y);   \
++                aa_start = opaque_start - apex * inv_scale;                   \
++            }                                                                 \
++        } else if (dist > opaque_end * scale) {                               \
++            float inv_scale = recip(min(scale, -1.0e-6));                     \
++            opaque_end = dist * inv_scale;                                    \
++            float apex = (0.7071 - 0.5) * 2.0 * abs(plane.x * plane.y);       \
++            aa_end = opaque_end - apex * inv_scale;                           \
++        }                                                                     \
++    } while (false)
++
++    #define OFFSET_FOR(radii) \
++      (v_clip_size.x + v_clip_size.y - radii) * radii
++    vec3 plane_br = vec3(v_clip_radii.xx, OFFSET_FOR(v_clip_radii.x));
++    vec3 plane_tr = vec3(v_clip_radii.y, -v_clip_radii.y, OFFSET_FOR(v_clip_radii.y));
++    vec3 plane_bl = vec3(-v_clip_radii.z, v_clip_radii.z, OFFSET_FOR(v_clip_radii.z));
++    vec3 plane_tl = vec3(-v_clip_radii.ww, OFFSET_FOR(v_clip_radii.w));
++
++    CLIP_CORNER(plane_tl);
++    CLIP_CORNER(plane_tr);
++    CLIP_CORNER(plane_br);
++    CLIP_CORNER(plane_bl);
++
++    aa_margin = max(aa_margin - max(aa_start - aa_end, 0.0), 0.0);
++    aa_start -= aa_margin;
++    aa_end += aa_margin;
++
++    // The corner planes bound the opaque run only approximately: next to a
++    // corner they admit pixels that main() covers by slightly less than 1.
++    // The R8 target tolerates that; here the fragment shader is the
++    // reference, so evaluate one more chunk per pixel on either side.
++    opaque_start += 1.0;
++    opaque_end -= 1.0;
++
++    if (aa_span) {
++        opaque_end = min(opaque_end, opaque_start);
++    }
++
++    ivec4 steps = ivec4(clamp(
++        swgl_SpanLength -
++            swgl_StepSize *
++                vec4(floor(aa_start), ceil(opaque_start), floor(opaque_end), ceil(aa_end)),
++        0.0, swgl_SpanLength));
++    int aa_start_len = steps.x;
++    int opaque_start_len = steps.y;
++    int opaque_end_len = steps.z;
++    int aa_end_len = steps.w;
++
++    if (swgl_SpanLength > aa_start_len) {
++        int num_aa = swgl_SpanLength - aa_start_len;
++        swgl_commitPartialSolidRGBA8(num_aa, vec4(vClipMode.x));
++        local_pos += float(num_aa / swgl_StepSize) * local_step;
++    }
++    while (swgl_SpanLength > opaque_start_len) {
++        float alpha = distance_aa(aa_range,
++            sd_round_box(local_pos, v_clip_size, v_clip_radii));
++        swgl_commitColorRGBA8(vec4(mix(alpha, 1.0 - alpha, vClipMode.x)));
++        local_pos += local_step;
++    }
++    if (swgl_SpanLength > opaque_end_len) {
++        int num_opaque = swgl_SpanLength - opaque_end_len;
++        swgl_commitPartialSolidRGBA8(num_opaque, vec4(1.0 - vClipMode.x));
++        local_pos += float(num_opaque / swgl_StepSize) * local_step;
++    }
++    while (swgl_SpanLength > aa_end_len) {
++        float alpha = distance_aa(aa_range,
++            sd_round_box(local_pos, v_clip_size, v_clip_radii));
++        swgl_commitColorRGBA8(vec4(mix(alpha, 1.0 - alpha, vClipMode.x)));
++        local_pos += local_step;
++    }
++    if (swgl_SpanLength > 0) {
++        swgl_commitPartialSolidRGBA8(swgl_SpanLength, vec4(vClipMode.x));
++    }
++
++    #undef CLIP_CORNER
++    #undef OFFSET_FOR
++}
++#endif
+ #endif
+ 
+ #endif
+--- firefox-158.0/gfx/wr/swgl/src/blend.h.vanilla
++++ firefox-158.0/gfx/wr/swgl/src/blend.h
+@@ -840,8 +840,27 @@
+   }
+ }
+ 
++// Whether every channel of a solid span color is |v| (0 or 255).
++static ALWAYS_INLINE bool solid_span_is(const WideRGBA8& r, uint64_t v) {
++  uint64_t w[4];
++  memcpy(w, &r, sizeof(w));
++  return w[0] == v && w[1] == v && w[2] == v && w[3] == v;
++}
++
+ template <bool BLEND>
+ static void commit_solid_span(uint32_t* buf, WideRGBA8 r, int len) {
++  // Multiply (WebRender's clip masks applied to content in a color target):
++  // muldiv255(255, d) == d and muldiv255(0, d) == 0 exactly, so an opaque run
++  // leaves the target alone and a transparent one is a plain store.
++  if (blend_key == BLEND_KEY(GL_ZERO, GL_SRC_COLOR)) {
++    if (solid_span_is(r, 0x00FF00FF00FF00FFull)) {
++      return;
++    }
++    if (solid_span_is(r, 0)) {
++      fill_n(buf, len, 0u);
++      return;
++    }
++  }
+   commit_blend_solid_span(buf, r, len);
+ }
+ 

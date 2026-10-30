@@ -1,0 +1,175 @@
+# --- T2-COPYRIGHT-BEGIN ---
+# t2/package/*/firefox/hotfix-swgl-ia64-scalar-uv-lanes.patch
+# Copyright (C) 2026 The T2 SDE Project
+# SPDX-License-Identifier: GPL-2.0 or patched project license
+# --- T2-COPYRIGHT-END ---
+
+# A 16-byte Float has no register class on ia64, so SWGL's generic vector code
+# keeps uv coordinates in general registers and clamps and converts them a
+# lane at a time through setf/fcmp/getf. Step, clamp and convert uv as scalar
+# lanes instead (each lane still accumulates uv_step on its own, so rounding is
+# unchanged) in the clamped nearest and the R8 bilinear span loops.
+#
+# For an R8 span whose row is constant, also hoist the row pointers and the y
+# fraction, and pipeline the loop by hand (tap offsets two steps ahead, taps
+# one step ahead). This C path is the fallback for the Tier III kernels in
+# hotfix-swgl-ia64-tier3-r8-kernels.patch (textures wider than 32767 texels).
+#
+# Itanium 2 (Montecito), cycles per pixel, byte-identical output:
+#   nearest 0.5 texel/px   43.2 -> 12.7
+#   nearest 0.5 blend      53.7 -> 24.1
+#   R8 mask 0.5 texel/px   58.5 -> 38.3
+
+--- firefox-158.0/gfx/wr/swgl/src/swgl_ext.h.vanilla
++++ firefox-158.0/gfx/wr/swgl/src/swgl_ext.h
+@@ -641,6 +641,103 @@
+     return 0;
+   }
+   LINEAR_QUANTIZE_UV(sampler, uv, uv_step, uv_rect, min_uv, max_uv);
++#ifdef __ia64__
++  // As in blendTextureNearestRepeat: a 16-byte Float lives in general
++  // registers on ia64, so step, clamp and convert uv as scalar lanes, each
++  // accumulating uv_step on its own exactly like the vector code.
++  float x0 = uv.x.x, x1 = uv.x.y, x2 = uv.x.z, x3 = uv.x.w;
++  float y0 = uv.y.x, y1 = uv.y.y, y2 = uv.y.z, y3 = uv.y.w;
++  if (uv_step.y == 0.0f && y0 == y1 && y0 == y2 && y0 == y3) {
++    // The row is constant over the span, so hoist what textureLinearUnpackedR8
++    // derives from y: both row pointers and the y fraction. Per lane only x
++    // remains, and the taps are interpolated as separate left and right 4-lane
++    // vectors - native registers here - instead of one 8-lane vector that is
++    // shuffled apart. Same int16 lane arithmetic, so the same result.
++    int yi = int(clamp(y0, min_uv.y, max_uv.y));
++    int iy = yi >> 7;
++    const uint8_t* row0 = (const uint8_t*)sampler->buf +
++                          clampCoord(iy, sampler->height) *
++                              int32_t(sampler->stride);
++    const uint8_t* row1 =
++        row0 + (iy >= 0 && iy < int32_t(sampler->height) - 1 ? sampler->stride
++                                                              : 0);
++    I16 fracy = int16_t(yi & 0x7F);
++    int width = sampler->width;
++    // GCC does not modulo-schedule here, and one iteration is a single
++    // dependency chain from the float clamp through the byte loads to the
++    // store, so the loop is pipelined by hand in three stages: the tap
++    // offsets and x fractions are computed two steps ahead (A), the taps are
++    // loaded one step ahead (B), and the current step is interpolated and
++    // committed (C). Running ahead of the span end is harmless, as the offsets
++    // are clamped to the row and only stage C stores.
++    int c0, c1, c2, c3;
++    int16_t fx0, fx1, fx2, fx3;
++    // Stage A, computeRow and computeFracX for one lane.
++#define IA64_R8_TAP(n)                                                     \
++  do {                                                                    \
++    int xi = int(clamp(x##n, min_uv.x, max_uv.x));                        \
++    int ix = xi >> 7;                                                     \
++    c##n = clampCoord(ix, width - 1);                                     \
++    fx##n = ix > width - 2 ? 128 : (ix >= 0 ? xi & 0x7F : 0);             \
++    x##n += uv_step.x;                                                    \
++  } while (0)
++#define IA64_R8_STAGE_A() \
++  IA64_R8_TAP(0);         \
++  IA64_R8_TAP(1);         \
++  IA64_R8_TAP(2);         \
++  IA64_R8_TAP(3)
++    // Stage B.
++#define IA64_R8_STAGE_B(l0, r0, l1, r1, fracx)                             \
++  I16 l0 = {row0[c0], row0[c1], row0[c2], row0[c3]};                      \
++  I16 r0 = {row0[c0 + 1], row0[c1 + 1], row0[c2 + 1], row0[c3 + 1]};      \
++  I16 l1 = {row1[c0], row1[c1], row1[c2], row1[c3]};                      \
++  I16 r1 = {row1[c0 + 1], row1[c1 + 1], row1[c2 + 1], row1[c3 + 1]};      \
++  I16 fracx = {fx0, fx1, fx2, fx3}
++    IA64_R8_STAGE_A();
++    IA64_R8_STAGE_B(l0, r0, l1, r1, fracx);
++    IA64_R8_STAGE_A();
++    for (P* end = buf + span; buf < end; buf += swgl_StepSize) {
++      IA64_R8_STAGE_B(next_l0, next_r0, next_l1, next_r1, next_fracx);
++      IA64_R8_STAGE_A();
++      // Stage C.
++      l0 += ((l1 - l0) * fracy) >> 7;
++      r0 += ((r1 - r0) * fracy) >> 7;
++      l0 += ((r0 - l0) * fracx) >> 7;
++      commit_blend_span<BLEND>(
++          buf, applyColor(expand_mask(buf, U16(l0)), color));
++      l0 = next_l0;
++      r0 = next_r0;
++      l1 = next_l1;
++      r1 = next_r1;
++      fracx = next_fracx;
++    }
++#undef IA64_R8_STAGE_B
++#undef IA64_R8_STAGE_A
++#undef IA64_R8_TAP
++    return span;
++  }
++  for (P* end = buf + span; buf < end; buf += swgl_StepSize) {
++    ivec2 i(I32{int(clamp(x0, min_uv.x, max_uv.x)),
++                int(clamp(x1, min_uv.x, max_uv.x)),
++                int(clamp(x2, min_uv.x, max_uv.x)),
++                int(clamp(x3, min_uv.x, max_uv.x))},
++            I32{int(clamp(y0, min_uv.y, max_uv.y)),
++                int(clamp(y1, min_uv.y, max_uv.y)),
++                int(clamp(y2, min_uv.y, max_uv.y)),
++                int(clamp(y3, min_uv.y, max_uv.y))});
++    commit_blend_span<BLEND>(
++        buf, applyColor(expand_mask(buf, textureLinearUnpackedR8(sampler, i)),
++                        color));
++    x0 += uv_step.x;
++    x1 += uv_step.x;
++    x2 += uv_step.x;
++    x3 += uv_step.x;
++    y0 += uv_step.y;
++    y1 += uv_step.y;
++    y2 += uv_step.y;
++    y3 += uv_step.y;
++  }
++#else
+   for (P* end = buf + span; buf < end; buf += swgl_StepSize, uv += uv_step) {
+     commit_blend_span<BLEND>(
+         buf, applyColor(expand_mask(buf, textureLinearUnpackedR8(
+@@ -648,6 +745,7 @@
+                                              ivec2(clamp(uv, min_uv, max_uv)))),
+                         color));
+   }
++#endif
+   return span;
+ }
+ 
+@@ -825,6 +923,38 @@
+                                         color),
+                              span);
+   } else {
++#ifdef __ia64__
++    // A 16-byte Float has no register class on ia64, so the generic loop
++    // below keeps uv in general registers and clamps and converts it a lane at
++    // a time through setf/fcmp/getf, at about 43 cycles per pixel. For a
++    // clamped RGBA8 span whose row does not change, do the same per-lane float
++    // steps as scalars, which stay in FP registers, and hoist the row offset.
++    // Each lane still accumulates uv_step on its own, so the rounding matches.
++    if constexpr (!REPEAT && sizeof(P) == 4) {
++      if (uv_step.y == 0.0f && uv.y.x == uv.y.y && uv.y.x == uv.y.z &&
++          uv.y.x == uv.y.w) {
++        int y = int(clamp(uv.y.x, min_uv.y, max_uv.y));
++        const uint32_t* row =
++            &sampler->buf[clampCoord(y, sampler->height) * sampler->stride];
++        int width = sampler->width;
++        float x0 = uv.x.x, x1 = uv.x.y, x2 = uv.x.z, x3 = uv.x.w;
++        for (P* end = buf + span; buf < end; buf += swgl_StepSize) {
++          U32 texels = {
++              row[clampCoord(int(clamp(x0, min_uv.x, max_uv.x)), width)],
++              row[clampCoord(int(clamp(x1, min_uv.x, max_uv.x)), width)],
++              row[clampCoord(int(clamp(x2, min_uv.x, max_uv.x)), width)],
++              row[clampCoord(int(clamp(x3, min_uv.x, max_uv.x)), width)]};
++          commit_blend_span<BLEND>(
++              buf, applyColor(bit_cast<PackedRGBA8>(texels), color));
++          x0 += uv_step.x;
++          x1 += uv_step.x;
++          x2 += uv_step.x;
++          x3 += uv_step.x;
++        }
++        return span;
++      }
++    }
++#endif
+     for (P* end = buf + span; buf < end; buf += swgl_StepSize, uv += uv_step) {
+       if (REPEAT) {
+         int steps = int(end - buf) / swgl_StepSize;

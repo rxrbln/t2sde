@@ -1,0 +1,455 @@
+# --- T2-COPYRIGHT-BEGIN ---
+# t2/package/*/firefox/hotfix-swgl-box-shadow-span.patch
+# Copyright (C) 2026 The T2 SDE Project
+# SPDX-License-Identifier: GPL-2.0 or patched project license
+# --- T2-COPYRIGHT-END ---
+
+# SWGL has no span path for box shadows.
+#
+# ps_quad_box_shadow has only pattern_fragment(), so every box shadow pixel
+# goes through the generic four-pixel fragment path. Per group of four pixels
+# that costs a nine-patch texture sample, four corner half-space tests, an
+# ellipse distance, a rect distance - and, because the shader rebuilds its
+# constants from the flat varyings every time, eight divisions plus the plane
+# and bounds setup.
+#
+# Almost none of that varies along a span:
+#
+#   - Every input to the distance field is a flat varying, so the plane
+#     normals, plane constants, inverse radii and element bounds are the same
+#     for every pixel of every span of the draw call. The shader cannot hoist
+#     them into the vertex shader because that costs varyings, and this shader
+#     already sits close to the GLES3 minimum of 15 (see the comment on
+#     vElemCenter_Radius_TL and bug 2043249). A span path can memoize them
+#     instead.
+#
+#   - A corner's half-space test selects that corner's ellipse only on one side
+#     of the diagonal through the corner. Everywhere else the rounded-rect
+#     distance is exactly signed_distance_rect(), whose gradient has unit
+#     length. aa_range is the reciprocal of fwidth(local_pos), so the coverage
+#     argument then moves by at most one per pixel, and a saturated coverage -
+#     the element clipping the shadow out entirely, or not clipping it at all -
+#     can be carried across a run of pixels from a single evaluation.
+#
+#   - The nine-patch clamp pins the UV to a constant across the middle region,
+#     so a run that is both fully covered and inside that region is one solid
+#     color.
+#
+# swgl_commitBoxShadowRGBA8() walks the span as a sequence of such runs: a
+# solid color, a textured run with no distance field work at all, or - only in
+# the anti-aliased band and on the corner side of a diagonal - a single chunk
+# of the full per-pixel evaluation. On a 320x180 card with an 8px radius and a
+# 12px blur, 74% of the pixels are a solid transparent run, 20% are textured
+# runs and 5% still need the distance field.
+#
+# The run bounds were checked against a per-pixel evaluation over 71M pixels of
+# randomized element rects, radii, nine-patch parameters and span steps: no
+# pixel differs by more than the 1/255 output quantum.
+#
+# The decomposition is not ia64 specific - it applies to every SWGL platform.
+#
+# Rebased onto 158 (it had stopped applying): the hir.rs declaration lost its
+# anchor, swgl_commitGradientRGBA8, and now follows swgl_commitColorR8; and
+# vElemShape only exists under WR_FEATURE_SUPERELLIPSE, so the span's shape
+# test is guarded. Measured on an Itanium 2 (Montecito) in the T2 SWGL
+# benchmark, cycles per pixel, byte-identical to the fragment shader on an
+# outset, an inset and a fractional-geometry shadow:
+#
+#                        fragment shader   span   x86-64 fragment
+#   box shadow                366.3         55.3        98.7
+#   box shadow inset          366.2         58.2        98.3
+#   box shadow odd            366.8         56.5        98.1
+
+--- firefox-158.0/gfx/wr/glsl-to-cxx/src/hir.rs.vanilla
++++ firefox-158.0/gfx/wr/glsl-to-cxx/src/hir.rs
+@@ -3909,6 +3909,15 @@
+     );
+     declare_function(
+         state,
++        "swgl_commitBoxShadowRGBA8",
++        None,
++        Type::new(Void),
++        vec![Type::new(Sampler2D), Type::new(Vec2), Type::new(Vec2), Type::new(Vec4),
++             Type::new(Vec4), Type::new(Vec4), Type::new(Vec4), Type::new(Vec4),
++             Type::new(Vec4), Type::new(Vec4), Type::new(Vec4), Type::new(Vec4)],
++    );
++    declare_function(
++        state,
+         "swgl_blendDropShadow",
+         None,
+         Type::new(Void),
+--- firefox-158.0/gfx/wr/webrender/res/ps_quad_box_shadow.glsl.vanilla
++++ firefox-158.0/gfx/wr/webrender/res/ps_quad_box_shadow.glsl
+@@ -213,4 +213,36 @@
+     return base_color * alpha * element_clip;
+ }
+ 
++#if defined(SWGL_DRAW_SPAN)
++void swgl_drawSpanRGBA8() {
++    // A mask output broadcasts the red channel to all four; no commit here
++    // does that.
++    if (v_flags_is_mask != 0) {
++        return;
++    }
++
++    // Only plain round corners go through the analytic rounded-rect distance
++    // the span path implements. Anything else - a squircle, a bevel - falls
++    // back to the fragment shader.
++#ifdef WR_FEATURE_SUPERELLIPSE
++    if (vElemShape != vec4(1.0)) {
++        return;
++    }
++#endif
++
++    swgl_commitBoxShadowRGBA8(sColor0,
++                              v_shadow_pos_local_pos.xy,
++                              v_shadow_pos_local_pos.zw,
++                              v_uv_scale_inset,
++                              v_edge,
++                              v_uv_rect,
++                              v_uv_bounds,
++                              vElemCenter_Radius_TL,
++                              vElemCenter_Radius_TR,
++                              vElemCenter_Radius_BR,
++                              vElemCenter_Radius_BL,
++                              v_color);
++}
++#endif
++
+ #endif
+--- firefox-158.0/gfx/wr/swgl/src/swgl_ext.h.vanilla
++++ firefox-158.0/gfx/wr/swgl/src/swgl_ext.h
+@@ -2099,6 +2099,333 @@
+     }                                                                       \
+   } while (0)
+ 
++// Box shadows are drawn by ps_quad_box_shadow as a nine-patch sample of a
++// blurred shadow texture, modulated by an analytic rounded-rect distance field
++// for the element that casts (outset) or receives (inset) the shadow. Per
++// pixel that is a texture sample, four half-space tests, an ellipse distance
++// and a rect distance - but almost none of it actually varies along a span:
++//
++//  * Every input to the distance field is a flat varying, so the corner plane
++//    normals, the plane constants, the inverse radii and the element bounds
++//    are the same for every pixel of every span in the draw call. The fragment
++//    path rebuilds them - including eight divisions - for each group of four
++//    pixels. They are memoized in BoxShadowElement instead.
++//
++//  * A corner's half-space test only passes inside the small triangle its
++//    diagonal cuts off - for a rect at the origin with corner radius r, the
++//    top-left test reduces to x + y < r. Everywhere else the rounded-rect
++//    distance is exactly signed_distance_rect(), whose gradient has unit
++//    length. aa_range is the reciprocal of fwidth(local_pos), so the coverage
++//    argument then moves by at most one per pixel, and a saturated coverage -
++//    fully clipped out, or fully covered - can be carried across a run of
++//    pixels from a single evaluation.
++//
++//  * The nine-patch clamp pins the UV to a constant across the whole middle
++//    region, so a run that is both fully covered and inside that region is a
++//    single solid color.
++//
++// The span is therefore walked as a sequence of runs, each of which is a solid
++// color, a textured run with no distance field work at all, or - only within
++// the anti-aliased band and the corner triangles - one chunk of the full
++// per-pixel evaluation.
++
++struct BoxShadowElement {
++  // Key: the flat center/radius varyings everything below is derived from.
++  vec4_scalar srcTL, srcTR, srcBR, srcBL;
++  // Corner half-space plane normals and constants.
++  vec2_scalar nTL, nTR, nBR, nBL;
++  float pTL, pTR, pBR, pBL;
++  // Corner ellipse centers and inverse squared radii.
++  vec2_scalar cTL, cTR, cBR, cBL;
++  vec2_scalar invTL, invTR, invBR, invBL;
++  // The element rect as p0.xy / p1.zw.
++  vec4_scalar bounds;
++  bool valid;
++};
++
++// Only the main thread ever runs a shader's span or fragment code - the bound
++// shader state is itself a set of file scope statics - so this needs no
++// synchronization, in the same way as sLinearGradientStopPairCache.
++static BoxShadowElement sBoxShadowElement = {};
++
++static ALWAYS_INLINE vec2_scalar boxShadowInvRadiiSq(vec2_scalar r) {
++  return vec2_scalar{1.0f / max(r.x * r.x, 1.0e-6f),
++                     1.0f / max(r.y * r.y, 1.0e-6f)};
++}
++
++static const BoxShadowElement& getBoxShadowElement(const vec4_scalar& crTL,
++                                                   const vec4_scalar& crTR,
++                                                   const vec4_scalar& crBR,
++                                                   const vec4_scalar& crBL) {
++  BoxShadowElement& e = sBoxShadowElement;
++  if (e.valid && e.srcTL == crTL && e.srcTR == crTR && e.srcBR == crBR &&
++      e.srcBL == crBL) {
++    return e;
++  }
++
++  vec2_scalar cTL = {crTL.x, crTL.y}, rTL = {crTL.z, crTL.w};
++  vec2_scalar cTR = {crTR.x, crTR.y}, rTR = {crTR.z, crTR.w};
++  vec2_scalar cBR = {crBR.x, crBR.y}, rBR = {crBR.z, crBR.w};
++  vec2_scalar cBL = {crBL.x, crBL.y}, rBL = {crBL.z, crBL.w};
++
++  e.nTL = vec2_scalar{-rTL.y, -rTL.x};
++  e.nTR = vec2_scalar{rTR.y, -rTR.x};
++  e.nBR = vec2_scalar{rBR.y, rBR.x};
++  e.nBL = vec2_scalar{-rBL.y, rBL.x};
++
++  e.pTL = dot(e.nTL, vec2_scalar{cTL.x - rTL.x, cTL.y});
++  e.pTR = dot(e.nTR, vec2_scalar{cTR.x, cTR.y - rTR.y});
++  e.pBR = dot(e.nBR, vec2_scalar{cBR.x + rBR.x, cBR.y});
++  e.pBL = dot(e.nBL, vec2_scalar{cBL.x, cBL.y + rBL.y});
++
++  e.cTL = cTL;
++  e.cTR = cTR;
++  e.cBR = cBR;
++  e.cBL = cBL;
++
++  e.invTL = boxShadowInvRadiiSq(rTL);
++  e.invTR = boxShadowInvRadiiSq(rTR);
++  e.invBR = boxShadowInvRadiiSq(rBR);
++  e.invBL = boxShadowInvRadiiSq(rBL);
++
++  e.bounds = vec4_scalar{cTL.x - rTL.x, cTL.y - rTL.y, cBR.x + rBR.x,
++                         cBR.y + rBR.y};
++
++  e.srcTL = crTL;
++  e.srcTR = crTR;
++  e.srcBR = crBR;
++  e.srcBL = crBL;
++  e.valid = true;
++  return e;
++}
++
++// The per-pixel rounded-rect distance, matching distance_to_rounded_rect() but
++// reading the planes and radii out of the memoized element.
++static ALWAYS_INLINE Float boxShadowElemDist(vec2 pos,
++                                             const BoxShadowElement& e) {
++  vec2 p = make_vec2(1.0e-6f);
++  vec2 inv = make_vec2(1.0f);
++
++  auto inTL = dot(pos, e.nTL) > e.pTL;
++  p = if_then_else(inTL, vec2(e.cTL.x - pos.x, e.cTL.y - pos.y), p);
++  inv = if_then_else(inTL, e.invTL, inv);
++
++  auto inTR = dot(pos, e.nTR) > e.pTR;
++  p = if_then_else(inTR, vec2(pos.x - e.cTR.x, e.cTR.y - pos.y), p);
++  inv = if_then_else(inTR, e.invTR, inv);
++
++  auto inBR = dot(pos, e.nBR) > e.pBR;
++  p = if_then_else(inBR, vec2(pos.x - e.cBR.x, pos.y - e.cBR.y), p);
++  inv = if_then_else(inBR, e.invBR, inv);
++
++  auto inBL = dot(pos, e.nBL) > e.pBL;
++  p = if_then_else(inBL, vec2(e.cBL.x - pos.x, pos.y - e.cBL.y), p);
++  inv = if_then_else(inBL, e.invBL, inv);
++
++  vec2 pr = p * inv;
++  Float g = dot(p, pr) - 1.0f;
++  vec2 dG = 2.0f * pr;
++  Float ellipse = g * inversesqrt(dot(dG, dG));
++
++  vec2 d = max(vec2(e.bounds.x - pos.x, e.bounds.y - pos.y),
++               vec2(pos.x - e.bounds.z, pos.y - e.bounds.w));
++  return max(ellipse, max(d.x, d.y));
++}
++
++// The nine-patch UV, matching the head of pattern_fragment().
++static ALWAYS_INLINE vec2 boxShadowUV(vec2 shadowPos, vec2_scalar uvScale,
++                                      const vec4_scalar& edge,
++                                      const vec4_scalar& uvRect,
++                                      const vec4_scalar& uvBounds) {
++  vec2 uvLinear = shadowPos * uvScale;
++  vec2 uv = clamp(uvLinear, make_vec2(0.0f), make_vec2(edge.x, edge.y));
++  uv += max(make_vec2(0.0f), uvLinear - make_vec2(edge.z, edge.w));
++  uv = mix(make_vec2(uvRect.x, uvRect.y), make_vec2(uvRect.z, uvRect.w), uv);
++  return clamp(uv, make_vec2(uvBounds.x, uvBounds.y),
++               make_vec2(uvBounds.z, uvBounds.w));
++}
++
++// Evaluates one corner half-space test at the head of the current run and
++// clamps |run| to the number of pixels the test's result is good for. The test
++// is linear in x, so that is just where it crosses zero.
++static ALWAYS_INLINE void boxShadowCornerRun(vec2_scalar n, float p, float x,
++                                             float y, float stepX,
++                                             bool& inCorner, float& run) {
++  float f = n.x * x + n.y * y - p;
++  if (f > 0.0f) {
++    inCorner = true;
++  }
++  float slope = n.x * stepX;
++  if (slope != 0.0f) {
++    float cross = -f / slope;
++    if (cross >= 0.0f) {
++      run = min(run, max(ceil(cross), 1.0f));
++    }
++  }
++}
++
++// Samples an entire span of a box shadow.
++template <bool BLEND>
++static bool commitBoxShadow(sampler2D sampler, vec2 shadowPos, vec2 localPos,
++                            const vec4_scalar& uvScaleInset,
++                            const vec4_scalar& edge, const vec4_scalar& uvRect,
++                            const vec4_scalar& uvBounds,
++                            const vec4_scalar& crTL, const vec4_scalar& crTR,
++                            const vec4_scalar& crBR, const vec4_scalar& crBL,
++                            const vec4_scalar& baseColor, uint32_t* buf,
++                            int span) {
++  if (!swgl_isTextureR8(sampler)) {
++    return false;
++  }
++  // The run decomposition below assumes the span only advances along local x,
++  // so that the vertical half of the rect distance and the nine-patch row are
++  // both span invariant. Anything else falls back to the fragment shader.
++  vec2_scalar localStep = dFdx(localPos);
++  vec2_scalar shadowStep = dFdx(shadowPos);
++  if (localStep.y != 0.0f || shadowStep.y != 0.0f || localStep.x <= 0.0f) {
++    return false;
++  }
++  float aaRange = recip(fwidth(localPos).x);
++  if (!isfinite(aaRange)) {
++    return false;
++  }
++
++  const BoxShadowElement& e = getBoxShadowElement(crTL, crTR, crBR, crBL);
++
++  vec2_scalar uvScale = vec2_scalar{uvScaleInset.x, uvScaleInset.y};
++  bool inset = uvScaleInset.z != 0.0f;
++
++  // Scalar tracking of the leading pixel of the current run.
++  float x = localPos.x.x;
++  float y = localPos.y.x;
++  float stepX = localStep.x;
++  float uvStepX = shadowStep.x * uvScale.x;
++  float uvLinearX = shadowPos.x.x * uvScale.x;
++
++  // The vertical half of the rect distance is constant along the span.
++  float distY = max(e.bounds.y - y, y - e.bounds.w);
++
++  WideRGBA8 clippedOut =
++      pack_pixels_RGBA8(vec4_scalar{0.0f, 0.0f, 0.0f, 0.0f});
++
++  while (span > 0) {
++    float run = float(span);
++
++    // Which corner ellipse, if any, the distance field would use here, and how
++    // long that stays true. A corner is only selected inside the triangle its
++    // diagonal cuts off, so for most of the span none is.
++    bool inCorner = false;
++    boxShadowCornerRun(e.nTL, e.pTL, x, y, stepX, inCorner, run);
++    boxShadowCornerRun(e.nTR, e.pTR, x, y, stepX, inCorner, run);
++    boxShadowCornerRun(e.nBR, e.pBR, x, y, stepX, inCorner, run);
++    boxShadowCornerRun(e.nBL, e.pBL, x, y, stepX, inCorner, run);
++
++    // 0 = clipped out, 1 = fully covered, 2 = evaluate per pixel.
++    int mode = 2;
++    bool constUV = false;
++    if (!inCorner) {
++      // Outside every corner triangle the distance is exactly the rect
++      // distance, whose gradient has unit length, so scaled by aaRange the
++      // coverage argument moves by at most one per pixel.
++      float dist = max(max(e.bounds.x - x, x - e.bounds.z), distY);
++      float cov = (inset ? dist : -dist) * aaRange;
++      if (cov >= 0.5f) {
++        mode = 0;
++        run = min(run, 1.0f + floor(cov - 0.5f));
++      } else if (cov <= -0.5f) {
++        mode = 1;
++        run = min(run, 1.0f + floor(-cov - 0.5f));
++        if (uvStepX == 0.0f) {
++          constUV = true;
++        } else if (uvLinearX >= edge.x && uvLinearX <= edge.z) {
++          // Inside the middle of the nine patch the UV is pinned to a
++          // constant, so the run is one solid color for as long as it stays
++          // there.
++          constUV = true;
++          float leave = uvStepX > 0.0f ? (edge.z - uvLinearX) / uvStepX
++                                       : (edge.x - uvLinearX) / uvStepX;
++          run = min(run, 1.0f + floor(leave));
++        }
++      }
++    }
++
++    // A run of constant coverage is only worth taking in whole chunks.
++    int chunks = mode != 2 ? int(min(run, float(span))) / 4 : 0;
++    if (chunks == 0) {
++      // Anti-aliased band, or inside a corner triangle: fall back to the full
++      // per-pixel evaluation for a single chunk.
++      vec2 uv = boxShadowUV(shadowPos, uvScale, edge, uvRect, uvBounds);
++      Float alpha = texture(sampler, uv).x;
++      if (inset) {
++        alpha = 1.0f - alpha;
++      }
++      Float dist = boxShadowElemDist(localPos, e);
++      Float cov = clamp(0.5f - (inset ? dist : -dist) * aaRange, 0.0f, 1.0f);
++      commit_blend_span<BLEND>(buf,
++                               pack_pixels_RGBA8(baseColor * (alpha * cov)));
++      chunks = 1;
++    } else if (mode == 0) {
++      commit_solid_span<BLEND>(buf, clippedOut, chunks * 4);
++    } else if (constUV) {
++      Float sample = texture(sampler, boxShadowUV(shadowPos, uvScale, edge,
++                                                  uvRect, uvBounds))
++                         .x;
++      float alpha = inset ? 1.0f - sample.x : sample.x;
++      commit_solid_span<BLEND>(buf, pack_pixels_RGBA8(baseColor * alpha),
++                               chunks * 4);
++    } else {
++      // Fully covered by the element clip, so only the nine-patch sample is
++      // left to compute.
++      vec2 pos = shadowPos;
++      vec2_scalar chunkStep = shadowStep * float(swgl_StepSize);
++      uint32_t* dest = buf;
++      for (uint32_t* end = dest + chunks * 4; dest < end;
++           dest += swgl_StepSize, pos += chunkStep) {
++        Float alpha =
++            texture(sampler, boxShadowUV(pos, uvScale, edge, uvRect, uvBounds))
++                .x;
++        if (inset) {
++          alpha = 1.0f - alpha;
++        }
++        commit_blend_span<BLEND>(dest, pack_pixels_RGBA8(baseColor * alpha));
++      }
++    }
++
++    int pixels = chunks * 4;
++    buf += pixels;
++    span -= pixels;
++    float advance = float(pixels);
++    shadowPos += shadowStep * advance;
++    localPos += localStep * advance;
++    x += stepX * advance;
++    uvLinearX += uvStepX * advance;
++  }
++  return true;
++}
++
++// Commits an entire span of a box shadow: a nine-patch sample of the blurred
++// shadow texture in |sampler|, modulated by the analytic rounded-rect coverage
++// of the element the shadow belongs to.
++#define swgl_commitBoxShadowRGBA8(sampler, shadowPos, localPos, uvScaleInset, \
++                                  edge, uvRect, uvBounds, crTL, crTR, crBR,   \
++                                  crBL, color)                                \
++  do {                                                                        \
++    bool drawn = false;                                                       \
++    if (blend_key) {                                                          \
++      drawn = commitBoxShadow<true>(                                          \
++          sampler, shadowPos, localPos, uvScaleInset, edge, uvRect, uvBounds, \
++          crTL, crTR, crBR, crBL, color, swgl_OutRGBA8, swgl_SpanLength);     \
++    } else {                                                                  \
++      drawn = commitBoxShadow<false>(                                         \
++          sampler, shadowPos, localPos, uvScaleInset, edge, uvRect, uvBounds, \
++          crTL, crTR, crBR, crBL, color, swgl_OutRGBA8, swgl_SpanLength);     \
++    }                                                                         \
++    if (drawn) {                                                              \
++      swgl_OutRGBA8 += swgl_SpanLength;                                       \
++      swgl_SpanLength = 0;                                                    \
++    }                                                                         \
++  } while (0)
++
+ // Extension to set a clip mask image to be sampled during blending. The offset
+ // specifies the positioning of the clip mask image relative to the viewport
+ // origin. The bounding box specifies the rectangle relative to the clip mask's

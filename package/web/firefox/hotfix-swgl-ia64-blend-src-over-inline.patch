@@ -1,0 +1,61 @@
+# --- T2-COPYRIGHT-BEGIN ---
+# t2/package/*/firefox/hotfix-swgl-ia64-blend-src-over-inline.patch
+# Copyright (C) 2026 The T2 SDE Project
+# SPDX-License-Identifier: GPL-2.0 or patched project license
+# --- T2-COPYRIGHT-END ---
+
+# blend_pixels is never inlined: it holds every blend key. On ia64 that makes
+# each four-pixel step of a blended span a call with a 93-register frame, a
+# 2 KB stack frame, the 32-byte source passed through memory and a jump-table
+# dispatch. Test for premultiplied source-over, which WebRender uses for nearly
+# everything, in the always-inlined blend_span, so that path stays in the span
+# loop. Same expression as the switch case.
+#
+# Itanium 2 (Montecito), cycles per pixel, byte-identical output:
+#   linear 8 stops blend   48.2 -> 16.4
+#   bilinear 0.5 blend     61.9 -> 31.2
+
+--- firefox-158.0/gfx/wr/swgl/src/blend.h.vanilla
++++ firefox-158.0/gfx/wr/swgl/src/blend.h
+@@ -753,6 +753,33 @@ static ALWAYS_INLINE void commit_span(uint32_t* buf, WideRGBA8 r, int len) {
+   partial_store_span(buf, pack(r), len);
+ }
+ 
++#ifdef __ia64__
++// blend_pixels holds every blend key and is far too large to inline, so on
++// ia64 each four pixel step pays a call with a ~93 register frame, a 2 KB stack
++// frame, the 32-byte source passed through memory and a jump table dispatch.
++// Premultiplied source-over is the key WebRender uses for nearly everything,
++// so test for it here, in the always-inlined caller, and keep that path inside
++// the span loop. Same expression as the matching case in blend_pixels.
++#define IA64_SRC_OVER_FAST_PATH(pdst, src, ...)                     \
++  do {                                                              \
++    if (blend_key == BLEND_KEY(GL_ONE, GL_ONE_MINUS_SRC_ALPHA)) {   \
++      WideRGBA8 dst = unpack(pdst);                                 \
++      return src + dst - muldiv255(dst, alphas(src));               \
++    }                                                               \
++    return blend_pixels(__VA_ARGS__);                               \
++  } while (0)
++
++static ALWAYS_INLINE WideRGBA8 blend_span(uint32_t* buf, WideRGBA8 r) {
++  PackedRGBA8 pdst = unaligned_load<PackedRGBA8>(buf);
++  IA64_SRC_OVER_FAST_PATH(pdst, r, buf, pdst, r);
++}
++
++static ALWAYS_INLINE WideRGBA8 blend_span(uint32_t* buf, WideRGBA8 r, int len) {
++  PackedRGBA8 pdst = partial_load_span<PackedRGBA8>(buf, len);
++  IA64_SRC_OVER_FAST_PATH(pdst, r, buf, pdst, r, len);
++}
++#undef IA64_SRC_OVER_FAST_PATH
++#else
+ static ALWAYS_INLINE WideRGBA8 blend_span(uint32_t* buf, WideRGBA8 r) {
+   return blend_pixels(buf, unaligned_load<PackedRGBA8>(buf), r);
+ }
+@@ -760,6 +787,7 @@ static ALWAYS_INLINE WideRGBA8 blend_span(uint32_t* buf, WideRGBA8 r) {
+ static ALWAYS_INLINE WideRGBA8 blend_span(uint32_t* buf, WideRGBA8 r, int len) {
+   return blend_pixels(buf, partial_load_span<PackedRGBA8>(buf, len), r, len);
+ }
++#endif
+ 
+ static ALWAYS_INLINE void commit_span(uint32_t* buf, PackedRGBA8 r) {
+   unaligned_store(buf, r);
