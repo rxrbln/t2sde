@@ -1,0 +1,227 @@
+From 2fdad5e910111f9ea06426ef299ecd76da3fa0a5 Mon Sep 17 00:00:00 2001
+From: Atharva Tiwari <atharvatiwarilinuxdev@gmail.com>
+Date: Sat, 12 Sep 2026 16:24:11 -0400
+Subject: [PATCH 03/14] watchdog: add driver for apple smc
+
+Signed-off-by: Atharva Tiwari <atharvatiwarilinuxdev@gmail.com>
+---
+ drivers/mfd/macsmc-core.c     |  11 +++
+ drivers/watchdog/Kconfig      |  11 +++
+ drivers/watchdog/Makefile     |   2 +-
+ drivers/watchdog/macsmc_wdt.c | 140 ++++++++++++++++++++++++++++++++++
+ 4 files changed, 163 insertions(+), 1 deletion(-)
+ create mode 100644 drivers/watchdog/macsmc_wdt.c
+
+diff --git a/drivers/mfd/macsmc-core.c b/drivers/mfd/macsmc-core.c
+index b8905c834..1c1469828 100644
+--- a/drivers/mfd/macsmc-core.c
++++ b/drivers/mfd/macsmc-core.c
+@@ -33,6 +33,10 @@ static const struct mfd_cell apple_smc_acpi_rtc[] = {
+ 	MFD_CELL_NAME("macsmc-rtc"),
+ };
+ 
++static const struct mfd_cell apple_smc_acpi_wdt[] = {
++	MFD_CELL_NAME("macsmc-wdt"),
++};
++
+ int apple_smc_read(struct apple_smc *smc, smc_key key, void *buf, size_t size)
+ {
+ 	guard(mutex)(&smc->mutex);
+@@ -147,6 +151,13 @@ int apple_smc_probe(struct device *dev, const struct apple_smc_backend_ops *ops,
+ 				return ret;
+ 		}
+ 
++		if (apple_smc_key_exists(smc, SMC_KEY(NATJ))) {
++			ret = devm_mfd_add_devices(dev, -1, apple_smc_acpi_wdt,
++				ARRAY_SIZE(apple_smc_acpi_wdt), NULL, 0, NULL);
++			if (ret < 0)
++				return ret;
++		}
++
+ 	} else
+ 		ret = devm_mfd_add_devices(dev, -1, apple_smc_rtkit_devs,
+ 			ARRAY_SIZE(apple_smc_rtkit_devs), NULL, 0, NULL);
+diff --git a/drivers/watchdog/Kconfig b/drivers/watchdog/Kconfig
+index f7d0a0c2c..854ab772f 100644
+--- a/drivers/watchdog/Kconfig
++++ b/drivers/watchdog/Kconfig
+@@ -1810,6 +1810,17 @@ config SIEMENS_SIMATIC_IPC_WDT
+ 	  To compile this driver as a module, choose M here: the module will be
+ 	  called simatic-ipc-wdt.
+ 
++config MACSMC_WDT
++	tristate "Apple SMC Watchdog"
++	depends on X86 && MACSMC_ACPI
++	select WATCHDOG_CORE
++	help
++	  This driver adds support for Watchdogs in Intel macs Using
++	  Apple SMC.
++
++	  To compile this driver as a module, choose M here: the module will be
++	  called macsmc_wdt.
++
+ # M68K Architecture
+ 
+ config M54xx_WATCHDOG
+diff --git a/drivers/watchdog/Makefile b/drivers/watchdog/Makefile
+index 9ac406677..f142a5d8d 100644
+--- a/drivers/watchdog/Makefile
++++ b/drivers/watchdog/Makefile
+@@ -158,7 +158,7 @@ obj-$(CONFIG_NIC7018_WDT) += nic7018_wdt.o
+ obj-$(CONFIG_MLX_WDT) += mlx_wdt.o
+ obj-$(CONFIG_KEEMBAY_WATCHDOG) += keembay_wdt.o
+ obj-$(CONFIG_SIEMENS_SIMATIC_IPC_WDT) += simatic-ipc-wdt.o
+-
++obj-$(CONFIG_MACSMC_WDT) += macsmc_wdt.o
+ # M68K Architecture
+ obj-$(CONFIG_M54xx_WATCHDOG) += m54xx_wdt.o
+ 
+diff --git a/drivers/watchdog/macsmc_wdt.c b/drivers/watchdog/macsmc_wdt.c
+new file mode 100644
+index 000000000..38f68d0d8
+--- /dev/null
++++ b/drivers/watchdog/macsmc_wdt.c
+@@ -0,0 +1,140 @@
++// SPDX-License-Identifier: GPL-2.0 OR MIT
++/*
++ * Apple SMC Watchdog Driver
++ *
++ * Copyright (C) 2026 Atharva Tiwari <atharvatiwarilinuxdev@gmail.com>
++ */
++
++#include <linux/mfd/macsmc.h>
++#include <linux/platform_device.h>
++#include <linux/watchdog.h>
++
++#define WATCHDOG_TIMEOUT 60 /* 60 sec default timeout */
++
++static bool nowayout = WATCHDOG_NOWAYOUT;
++module_param(nowayout, bool, 0);
++MODULE_PARM_DESC(nowayout, "Watchdog cannot be stopped once started default="
++		 __MODULE_STRING(WATCHDOG_NOWAYOUT) ")");
++
++static int timeout = WATCHDOG_TIMEOUT; /* in secounds */
++module_param(timeout, int, 0);
++MODULE_PARM_DESC(timeout,
++		 "Watchdog timeout in seconds. 1 <= timeout <= 255, default="
++		 __MODULE_STRING(WATCHDOG_TIMEOUT) ".");
++
++struct macsmc_wdt {
++	struct apple_smc *smc;
++	bool has_oswd; /* Newer version of watchdogs in macsmc */
++	struct watchdog_device wdd;
++};
++
++static int macsmc_wdt_set_timeout(struct watchdog_device *wdd, unsigned int timeout)
++{
++	struct macsmc_wdt *drv = watchdog_get_drvdata(wdd);
++	int ret;
++
++	if (timeout)
++		wdd->timeout = timeout;
++
++	if (drv->has_oswd) {
++		ret = apple_smc_write_u16(drv->smc, SMC_KEY(OSWD), (u16)(timeout << 8));
++		if (ret < 0)
++			return ret;
++	} else {
++		/*
++		 * NATJ = 2, makes the watchdog do force restart if NATi == 0
++		 * NATJ = 0, makes the watchdog do nothing if NATi == 0
++		 */
++		if (timeout == 0) {
++			ret = apple_smc_write_u16(drv->smc, SMC_KEY(NATJ), 0);
++			if (ret < 0)
++				return ret;
++		}
++		ret = apple_smc_write_u16(drv->smc, SMC_KEY(NATi), (u16)(timeout << 8));
++		if (ret < 0)
++			return ret;
++
++		if (timeout != 0) {
++			ret = apple_smc_write_u16(drv->smc, SMC_KEY(NATJ), 2);
++			if (ret < 0)
++				return ret;
++		}
++	}
++
++	return 0;
++}
++static int macsmc_wdt_start(struct watchdog_device *wdd)
++{
++	return macsmc_wdt_set_timeout(wdd, wdd->timeout);
++}
++static int macsmc_wdt_stop(struct watchdog_device *wdd)
++{
++	return macsmc_wdt_set_timeout(wdd, 0);
++}
++
++static int macsmc_wdt_ping(struct watchdog_device *wdd)
++{
++	struct macsmc_wdt *drv = watchdog_get_drvdata(wdd);
++	int ret;
++
++	if (drv->has_oswd)
++		ret = apple_smc_write_u16(drv->smc, SMC_KEY(OSWD), (u16)(wdd->timeout << 8));
++	else
++		ret = apple_smc_write_u16(drv->smc, SMC_KEY(NATi), (u16)(wdd->timeout << 8));
++
++	if (ret < 0)
++		return ret;
++
++	return 0;
++}
++
++static const struct watchdog_ops macsmc_wdt_ops = {
++	.owner =	THIS_MODULE,
++	.start =	macsmc_wdt_start,
++	.stop  =	macsmc_wdt_stop,
++	.set_timeout =	macsmc_wdt_set_timeout,
++	.ping =	macsmc_wdt_ping,
++};
++
++static const struct watchdog_info macsmc_wdt_info = {
++	.options = WDIOF_SETTIMEOUT | WDIOF_KEEPALIVEPING,
++	.identity = "Macsmc Watchdog timer",
++};
++
++static int macsmc_wdt_probe(struct platform_device *pdev)
++{
++	struct macsmc_wdt *drv;
++
++	drv = devm_kzalloc(&pdev->dev, sizeof(struct macsmc_wdt), GFP_KERNEL);
++	if (!drv)
++		return -ENOMEM;
++
++	drv->smc = dev_get_drvdata(pdev->dev.parent);
++	if (apple_smc_key_exists(drv->smc, SMC_KEY(OSWD)))
++		drv->has_oswd = true;
++	else
++		drv->has_oswd = false;
++
++	drv->wdd.ops = &macsmc_wdt_ops;
++	drv->wdd.info = &macsmc_wdt_info;
++	drv->wdd.min_timeout = 1;
++	drv->wdd.max_timeout = 255;
++	watchdog_init_timeout(&drv->wdd, timeout, &pdev->dev);
++	watchdog_set_nowayout(&drv->wdd, nowayout);
++	watchdog_set_drvdata(&drv->wdd, drv);
++
++	return devm_watchdog_register_device(&pdev->dev, &drv->wdd);
++}
++
++static struct platform_driver macsmc_wdt_driver = {
++	.probe = macsmc_wdt_probe,
++	.driver = {
++		.name = "macsmc-wdt"
++	},
++};
++module_platform_driver(macsmc_wdt_driver);
++
++MODULE_AUTHOR("Atharva Tiwari <atharvatiwarilinuxdev@gmail.com>");
++MODULE_LICENSE("Dual MIT/GPL");
++MODULE_DESCRIPTION("Apple SMC Watchdog Driver");
++MODULE_ALIAS("platform:macsmc-wdt");
+-- 
+2.55.0
+

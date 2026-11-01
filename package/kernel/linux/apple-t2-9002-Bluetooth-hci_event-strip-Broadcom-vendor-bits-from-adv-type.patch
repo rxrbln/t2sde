@@ -1,0 +1,46 @@
+From e09bde5c4c139e73f244e355f756c857abc0846f Mon Sep 17 00:00:00 2001
+From: Jose Miguel Ochoa <josemiguelo.ochoa@gmail.com>
+Date: Fri, 28 Aug 2026 13:08:15 -0500
+Subject: [PATCH] Bluetooth: hci_event: strip Broadcom vendor bits from legacy
+ adv report type
+
+Broadcom controllers running ROM firmware on T2 Macs (no patchram
+exists, e.g. BCM4364B3 on MacBookPro16,1) set vendor bits
+0x10/0x20/0x80 in the legacy LE Advertising Report Event_Type, so
+ADV_DIRECT_IND arrives as 0x81/0x91/0xa1 and process_adv_report()
+drops it ("unknown advertising packet type"). Bonded LE peripherals
+reconnect via directed adverts, so auto-reconnect only works when a
+report happens to come through clean (~1 in 20); no userspace
+workaround exists since every connect path uses the same
+scan-then-connect code.
+
+The valid type is always in the low nibble: mask it for Broadcom
+controllers when out of range. Valid reports (0x00-0x04) are
+untouched, low nibbles >= 5 are still dropped, and controllers with
+proper firmware never emit these types.
+
+Signed-off-by: Jose Miguel Ochoa <josemiguelo.ochoa@gmail.com>
+---
+ net/bluetooth/hci_event.c | 7 +++++++
+ 1 file changed, 7 insertions(+)
+
+diff --git a/net/bluetooth/hci_event.c b/net/bluetooth/hci_event.c
+index 1b3b913..10afa21 100644
+--- a/net/bluetooth/hci_event.c
++++ b/net/bluetooth/hci_event.c
+@@ -6424,6 +6424,13 @@ static void hci_le_adv_report_evt(struct hci_dev *hdev, void *data,
+
+ 		hci_store_wake_reason(hdev, &info->bdaddr, info->bdaddr_type);
+
++		/* Broadcom ROM firmware (BCM4364B3 on Apple T2 Macs, no
++		 * patchram) sets vendor bits in the legacy Event_Type; the
++		 * valid type is in the low nibble.
++		 */
++		if (hdev->manufacturer == 15 && info->type > LE_ADV_SCAN_RSP)
++			info->type &= 0x0f;
++
+ 		if (info->length <= max_adv_len(hdev)) {
+ 			rssi = info->data[info->length];
+ 			process_adv_report(hdev, info->type, &info->bdaddr,
+--
+2.55.0

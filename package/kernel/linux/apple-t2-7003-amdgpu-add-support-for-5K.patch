@@ -1,0 +1,359 @@
+From 851f60c72e57d7bfb1261a133b87b61024586a45 Mon Sep 17 00:00:00 2001
+From: Atharva Tiwari <atharvatiwarilinuxdev@gmail.com>
+Date: Fri, 2 Oct 2026 19:49:46 -0400
+Subject: [PATCH] amdgpu: add support for 5K
+
+This patch adds support for 5K in iMac20,1 and iMac20,2.
+
+genlock taken from:
+https://github.com/MarkPronkin/imac5k-universal-linux-patcher/blob/main/patches/genlock-fix.patch
+
+Signed-off-by: Atharva Tiwari <atharvatiwarilinuxdev@gmail.com>
+---
+ drivers/gpu/drm/amd/amdgpu/amdgpu_discovery.c | 31 +++++++++++--
+ .../gpu/drm/amd/display/amdgpu_dm/amdgpu_dm.c | 45 ++++++++++++++++++-
+ .../gpu/drm/amd/display/amdgpu_dm/amdgpu_dm.h |  7 +++
+ .../display/amdgpu_dm/amdgpu_dm_connector.c   |  7 +++
+ .../amd/display/amdgpu_dm/amdgpu_dm_quirks.c  | 29 +++++++++++-
+ .../gpu/drm/amd/display/dc/core/dc_resource.c |  8 ++++
+ drivers/gpu/drm/amd/display/dc/dc.h           |  2 +
+ .../amd/display/dc/hwss/dcn10/dcn10_hwseq.c   |  8 +++-
+ .../drm/amd/display/dc/link/link_detection.c  |  5 ++-
+ 9 files changed, 135 insertions(+), 7 deletions(-)
+
+diff --git a/drivers/gpu/drm/amd/amdgpu/amdgpu_discovery.c b/drivers/gpu/drm/amd/amdgpu/amdgpu_discovery.c
+index 7ab2ad2c5..bb672a923 100644
+--- a/drivers/gpu/drm/amd/amdgpu/amdgpu_discovery.c
++++ b/drivers/gpu/drm/amd/amdgpu/amdgpu_discovery.c
+@@ -21,6 +21,7 @@
+  *
+  */
+ 
++#include <linux/dmi.h>
+ #include <linux/firmware.h>
+ #include <linux/kernfs.h>
+ 
+@@ -3082,6 +3083,22 @@ static int amdgpu_discovery_set_isp_ip_blocks(struct amdgpu_device *adev)
+ 	return 0;
+ }
+ 
++static const struct dmi_system_id imac5k_table[] = {
++	{
++		.matches = {
++			DMI_MATCH(DMI_SYS_VENDOR, "Apple Inc."),
++			DMI_MATCH(DMI_PRODUCT_NAME, "iMac20,1"),
++		},
++	},
++	{
++		.matches = {
++			DMI_MATCH(DMI_SYS_VENDOR, "Apple Inc."),
++			DMI_MATCH(DMI_PRODUCT_NAME, "iMac20,2"),
++		},
++	},
++	{}
++};
++
+ int amdgpu_discovery_set_ip_blocks(struct amdgpu_device *adev)
+ {
+ 	int r;
+@@ -3679,15 +3696,23 @@ int amdgpu_discovery_set_ip_blocks(struct amdgpu_device *adev)
+ 		}
+ 	}
+ 
++	if (unlikely(dmi_check_system(imac5k_table))) {
++		r = amdgpu_discovery_set_display_ip_blocks(adev);
++		if (r)
++			return r;
++	}
++
+ 	if (likely(adev->firmware.load_type == AMDGPU_FW_LOAD_PSP)) {
+ 		r = amdgpu_discovery_set_smu_ip_blocks(adev);
+ 		if (r)
+ 			return r;
+ 	}
+ 
+-	r = amdgpu_discovery_set_display_ip_blocks(adev);
+-	if (r)
+-		return r;
++	if (likely(!dmi_check_system(imac5k_table))) {
++		r = amdgpu_discovery_set_display_ip_blocks(adev);
++		if (r)
++			return r;
++	}
+ 
+ 	r = amdgpu_discovery_set_gc_ip_blocks(adev);
+ 	if (r)
+diff --git a/drivers/gpu/drm/amd/display/amdgpu_dm/amdgpu_dm.c b/drivers/gpu/drm/amd/display/amdgpu_dm/amdgpu_dm.c
+index 47a0ff2ed..7161f8a95 100644
+--- a/drivers/gpu/drm/amd/display/amdgpu_dm/amdgpu_dm.c
++++ b/drivers/gpu/drm/amd/display/amdgpu_dm/amdgpu_dm.c
+@@ -617,6 +617,8 @@ static int amdgpu_dm_init(struct amdgpu_device *adev)
+ 	retrieve_dmi_info(&adev->dm);
+ 	if (adev->dm.edp0_on_dp1_quirk)
+ 		init_data.flags.support_edp0_on_dp1 = true;
++	if (adev->dm.imac5K_support)
++		init_data.flags.imac5K_support = true;
+ 
+ 	if (adev->dm.bb_from_dmub)
+ 		init_data.bb_from_dmub = adev->dm.bb_from_dmub;
+@@ -1925,6 +1927,11 @@ static int dm_resume(struct amdgpu_ip_block *ip_block)
+ 		dc_exit_ips_for_hw_access(dm->dc);
+ 		WARN_ON(!dc_commit_streams(dm->dc, &commit_params));
+ 
++		if (dm->dc->config.imac5K_using_5K) {
++			const u8 value = 1;
++
++			core_link_write_dpcd(dm->dc->links[0], 0x4F1, &value, 1);
++		}
+ 		dm_gpureset_commit_state(dm->cached_dc_state, dm);
+ 
+ 		dm_gpureset_toggle_interrupts(adev, dm->cached_dc_state, true);
+@@ -2012,11 +2019,20 @@ static int dm_resume(struct amdgpu_ip_block *ip_block)
+ 		if (!dc_link_detect_connection_type(aconnector->dc_link, &new_connection_type))
+ 			drm_err(adev_to_drm(adev), "KMS: Failed to detect connector\n");
+ 
+-		if (aconnector->base.force && new_connection_type == dc_connection_none) {
++		if ((aconnector->base.force && new_connection_type == dc_connection_none)
++				|| (dm->dc->config.imac5K_support &&
++					!dm->dc->config.imac5K_using_5K &&
++					aconnector->dc_link->link_index == 1)) {
+ 			amdgpu_dm_emulated_link_detect(aconnector->dc_link);
+ 		} else {
+ 			guard(mutex)(&dm->dc_lock);
+ 			dc_exit_ips_for_hw_access(dm->dc);
++			if (dm->dc->config.imac5K_using_5K &&
++					aconnector->dc_link->link_index == 1) {
++				const u8 value = 1;
++
++				core_link_write_dpcd(dm->dc->links[0], 0x4F1, &value, 1);
++			}
+ 			ret = dc_link_detect(aconnector->dc_link, DETECT_REASON_RESUMEFROMS3S4);
+ 			if (ret) {
+ 				/* w/a delay for certain panels */
+@@ -4627,6 +4643,25 @@ static void amdgpu_dm_commit_streams(struct drm_atomic_commit *state,
+ 	dc_exit_ips_for_hw_access(dm->dc);
+ 	WARN_ON(!dc_commit_streams(dm->dc, &params));
+ 
++	if (dm->imac5K_support) {
++		for_each_new_crtc_in_state(state, crtc, new_crtc_state, i) {
++			dm_new_crtc_state = to_dm_crtc_state(new_crtc_state);
++
++			if (!dm_new_crtc_state->stream)
++				continue;
++
++			if (dm_new_crtc_state->stream->signal != SIGNAL_TYPE_EDP)
++				continue;
++
++			if (new_crtc_state->mode.vdisplay == 2880 && new_crtc_state->mode.hdisplay == 2560) {
++				u8 value = 1;
++
++				core_link_write_dpcd(dm->dc->links[0], 0x4F1, &value, 1);
++				dm->dc->config.imac5K_using_5K = true;
++			} else
++				dm->dc->config.imac5K_using_5K = false;
++		}
++	}
+ 	bool frl_stream_found = false;
+ 
+ 	for (i = 0; i < params.stream_count; i++) {
+@@ -5011,6 +5046,14 @@ STATIC_IFN_KUNIT void dm_enable_per_frame_crtc_master_sync(struct dc_state *cont
+ 		 */
+ 	}
+ 
++	if (context->streams[0]->ctx->dc->config.imac5K_support) {
++		for (i = 0; i < context->stream_count; i++) {
++			stream = context->streams[i];
++			if (stream && stream->link && stream->link->link_index == 1)
++				stream->triggered_crtc_reset.enabled = true;
++		}
++	}
++
+ 	set_master_stream(context->streams, context->stream_count);
+ 
+ 	for (i = 0; i < context->stream_count ; i++) {
+diff --git a/drivers/gpu/drm/amd/display/amdgpu_dm/amdgpu_dm.h b/drivers/gpu/drm/amd/display/amdgpu_dm/amdgpu_dm.h
+index 881c8d1c3..e75f04260 100644
+--- a/drivers/gpu/drm/amd/display/amdgpu_dm/amdgpu_dm.h
++++ b/drivers/gpu/drm/amd/display/amdgpu_dm/amdgpu_dm.h
+@@ -689,6 +689,13 @@ struct amdgpu_display_manager {
+ 	 */
+ 	bool edp0_on_dp1_quirk;
+ 
++	/**
++	 * @imac5K_support:
++	 *
++	 * quirk for iMac that support 5K
++	 */
++	bool imac5K_support;
++
+ 	/**
+ 	 * @dpia_aux_lock:
+ 	 *
+diff --git a/drivers/gpu/drm/amd/display/amdgpu_dm/amdgpu_dm_connector.c b/drivers/gpu/drm/amd/display/amdgpu_dm/amdgpu_dm_connector.c
+index 45a69bf43..0b6d44890 100644
+--- a/drivers/gpu/drm/amd/display/amdgpu_dm/amdgpu_dm_connector.c
++++ b/drivers/gpu/drm/amd/display/amdgpu_dm/amdgpu_dm_connector.c
+@@ -125,6 +125,13 @@ STATIC_IFN_KUNIT int dm_encoder_helper_atomic_check(struct drm_encoder *encoder,
+ 				       drm_mode_vrefresh(adjusted_mode));
+ 			dm_new_connector_state->scaling = RMX_ASPECT;
+ 		}
++
++		if (aconnector->dc_link->dc->config.imac5K_support) {
++			if (crtc_state->mode.vdisplay != 2880)
++				dm_new_connector_state->scaling = RMX_FULL;
++			else
++				dm_new_connector_state->scaling = RMX_OFF;
++		}
+ 		return 0;
+ 	}
+ 
+diff --git a/drivers/gpu/drm/amd/display/amdgpu_dm/amdgpu_dm_quirks.c b/drivers/gpu/drm/amd/display/amdgpu_dm/amdgpu_dm_quirks.c
+index 259966703..8657dd972 100644
+--- a/drivers/gpu/drm/amd/display/amdgpu_dm/amdgpu_dm_quirks.c
++++ b/drivers/gpu/drm/amd/display/amdgpu_dm/amdgpu_dm_quirks.c
+@@ -33,11 +33,13 @@
+ struct amdgpu_dm_quirks {
+ 	bool aux_hpd_discon;
+ 	bool support_edp0_on_dp1;
++	bool imac5K_support;
+ };
+ 
+ static struct amdgpu_dm_quirks quirk_entries = {
+ 	.aux_hpd_discon = false,
+-	.support_edp0_on_dp1 = false
++	.support_edp0_on_dp1 = false,
++	.imac5K_support = false,
+ };
+ 
+ static int edp0_on_dp1_callback(const struct dmi_system_id *id)
+@@ -52,6 +54,12 @@ static int aux_hpd_discon_callback(const struct dmi_system_id *id)
+ 	return 0;
+ }
+ 
++static int imac5K_support_callback(const struct dmi_system_id *id)
++{
++	quirk_entries.imac5K_support = true;
++	return 0;
++}
++
+ static const struct dmi_system_id dmi_quirk_table[] = {
+ 	{
+ 		.callback = aux_hpd_discon_callback,
+@@ -151,6 +159,20 @@ static const struct dmi_system_id dmi_quirk_table[] = {
+ 			DMI_MATCH(DMI_PRODUCT_NAME, "HP ProBook 465 16 inch G11 Notebook PC"),
+ 		},
+ 	},
++	{
++		.callback = imac5K_support_callback,
++		.matches = {
++			DMI_MATCH(DMI_SYS_VENDOR, "Apple Inc."),
++			DMI_MATCH(DMI_PRODUCT_NAME, "iMac20,1"),
++		},
++	},
++	{
++		.callback = imac5K_support_callback,
++		.matches = {
++			DMI_MATCH(DMI_SYS_VENDOR, "Apple Inc."),
++			DMI_MATCH(DMI_PRODUCT_NAME, "iMac20,2"),
++		},
++	},
+ 	{}
+ 	/* TODO: refactor this from a fixed table to a dynamic option */
+ };
+@@ -162,6 +184,7 @@ void retrieve_dmi_info(struct amdgpu_display_manager *dm)
+ 
+ 	dm->aux_hpd_discon_quirk = false;
+ 	dm->edp0_on_dp1_quirk = false;
++	dm->imac5K_support = false;
+ 
+ 	dmi_id = dmi_check_system(dmi_quirk_table);
+ 
+@@ -176,6 +199,10 @@ void retrieve_dmi_info(struct amdgpu_display_manager *dm)
+ 		dm->edp0_on_dp1_quirk = true;
+ 		drm_info(dev, "support_edp0_on_dp1 attached\n");
+ 	}
++	if (quirk_entries.imac5K_support) {
++		dm->imac5K_support = true;
++		drm_info(dev, "imac5K_support attached\n");
++	}
+ }
+ EXPORT_IF_KUNIT(retrieve_dmi_info);
+ 
+diff --git a/drivers/gpu/drm/amd/display/dc/core/dc_resource.c b/drivers/gpu/drm/amd/display/dc/core/dc_resource.c
+index fc9080f0c..4bf16f3a7 100644
+--- a/drivers/gpu/drm/amd/display/dc/core/dc_resource.c
++++ b/drivers/gpu/drm/amd/display/dc/core/dc_resource.c
+@@ -685,6 +685,14 @@ bool resource_are_streams_timing_synchronizable(
+ 	struct dc_stream_state *stream1,
+ 	struct dc_stream_state *stream2)
+ {
++
++	if (stream1->ctx->dc->config.imac5K_support &&
++		((stream1->signal == SIGNAL_TYPE_EDP && stream2->signal == SIGNAL_TYPE_DISPLAY_PORT &&
++		stream2->link->link_index == 1) ||
++		(stream2->signal == SIGNAL_TYPE_EDP && stream1->signal == SIGNAL_TYPE_DISPLAY_PORT &&
++		stream1->link->link_index == 1)))
++		return true;
++
+ 	if (stream1->timing.h_total != stream2->timing.h_total)
+ 		return false;
+ 
+diff --git a/drivers/gpu/drm/amd/display/dc/dc.h b/drivers/gpu/drm/amd/display/dc/dc.h
+index 871063f80..022707594 100644
+--- a/drivers/gpu/drm/amd/display/dc/dc.h
++++ b/drivers/gpu/drm/amd/display/dc/dc.h
+@@ -631,6 +631,8 @@ struct dc_config {
+ 	struct spl_sharpness_range dcn_sharpness_range;
+ 	struct spl_sharpness_range dcn_override_sharpness_range;
+ 	bool no_native422_support;
++	bool imac5K_support;
++	bool imac5K_using_5K;
+ };
+ 
+ enum visual_confirm {
+diff --git a/drivers/gpu/drm/amd/display/dc/hwss/dcn10/dcn10_hwseq.c b/drivers/gpu/drm/amd/display/dc/hwss/dcn10/dcn10_hwseq.c
+index 097e4ac2d..0c9784dbb 100644
+--- a/drivers/gpu/drm/amd/display/dc/hwss/dcn10/dcn10_hwseq.c
++++ b/drivers/gpu/drm/amd/display/dc/hwss/dcn10/dcn10_hwseq.c
+@@ -2675,15 +2675,21 @@ void dcn10_enable_per_frame_crtc_position_reset(
+ 	struct pipe_ctx *grouped_pipes[])
+ {
+ 	int i;
++	int source_tg_inst = 0;
+ 
+ 	DC_LOGGER_INIT(dc->ctx);
+ 
+ 	DC_SYNC_INFO("Setting up\n");
++	if (dc->config.imac5K_support &&
++			grouped_pipes[0]->stream ==
++			grouped_pipes[0]->stream->triggered_crtc_reset.event_source)
++		source_tg_inst = grouped_pipes[0]->stream_res.tg->inst;
++
+ 	for (i = 0; i < group_size; i++)
+ 		if (grouped_pipes[i]->stream_res.tg->funcs->enable_crtc_reset)
+ 			grouped_pipes[i]->stream_res.tg->funcs->enable_crtc_reset(
+ 					grouped_pipes[i]->stream_res.tg,
+-					0,
++					source_tg_inst,
+ 					&grouped_pipes[i]->stream->triggered_crtc_reset);
+ 
+ 	DC_SYNC_INFO("Waiting for trigger\n");
+diff --git a/drivers/gpu/drm/amd/display/dc/link/link_detection.c b/drivers/gpu/drm/amd/display/dc/link/link_detection.c
+index 22ad6a743..f254f2d9e 100644
+--- a/drivers/gpu/drm/amd/display/dc/link/link_detection.c
++++ b/drivers/gpu/drm/amd/display/dc/link/link_detection.c
+@@ -1203,7 +1203,10 @@ static bool detect_link_and_local_sink(struct dc_link *link,
+ 				if (!link->dpcd_caps.set_power_state_capable_edp)
+ 					link->wa_flags.dp_keep_receiver_powered = true;
+ 			}
+-
++			if (dc->config.imac5K_support) {
++				const uint8_t val = 1;
++				core_link_write_dpcd(link, 0x4F1, &val, 1);
++			}
+ 			sink_caps.transaction_type = DDC_TRANSACTION_TYPE_I2C_OVER_AUX;
+ 			sink_caps.signal = SIGNAL_TYPE_EDP;
+ 			break;
+-- 
+2.55.0
+

@@ -1,0 +1,150 @@
+From 14d2faf7922476bae1b7caae874760c1e9705cdc Mon Sep 17 00:00:00 2001
+From: Atharva Tiwari <atharvatiwarilinuxdev@gmail.com>
+Date: Sat, 3 Oct 2026 21:18:24 -0400
+Subject: [PATCH 06/14] leds: add support for macsmc kbl
+
+Signed-off-by: Atharva Tiwari <atharvatiwarilinuxdev@gmail.com>
+---
+ drivers/leds/Kconfig       | 11 +++++++
+ drivers/leds/Makefile      |  1 +
+ drivers/leds/leds-macsmc.c | 64 ++++++++++++++++++++++++++++++++++++++
+ drivers/mfd/macsmc-core.c  | 11 +++++++
+ 4 files changed, 87 insertions(+)
+ create mode 100644 drivers/leds/leds-macsmc.c
+
+diff --git a/drivers/leds/Kconfig b/drivers/leds/Kconfig
+index d0d318223..1fd8161a1 100644
+--- a/drivers/leds/Kconfig
++++ b/drivers/leds/Kconfig
+@@ -729,6 +729,17 @@ config LEDS_ADP5520
+ 	  To compile this driver as a module, choose M here: the module will
+ 	  be called leds-adp5520.
+ 
++config LEDS_MACSMC
++	tristate "Keyboard Backlight support for Intel-Macs"
++	depends on LEDS_CLASS
++	depends on MACSMC_ACPI
++	help
++	  This option enables support for the Keyboard backlight in
++	  Intel-Macs using macsmc.
++
++	  To compile this driver as a module, choose M here: the module will
++	  be called leds-macsmc.
++
+ config LEDS_MAX5970
+ 	tristate "LED Support for Maxim 5970"
+ 	depends on LEDS_CLASS
+diff --git a/drivers/leds/Makefile b/drivers/leds/Makefile
+index a68244bd5..ac3e3572c 100644
+--- a/drivers/leds/Makefile
++++ b/drivers/leds/Makefile
+@@ -12,6 +12,7 @@ obj-$(CONFIG_LEDS_KUNIT_TEST)		+= led-test.o
+ obj-$(CONFIG_LEDS_88PM860X)		+= leds-88pm860x.o
+ obj-$(CONFIG_LEDS_ACER_A500)		+= leds-acer-a500.o
+ obj-$(CONFIG_LEDS_ADP5520)		+= leds-adp5520.o
++obj-$(CONFIG_LEDS_MACSMC)		+= leds-macsmc.o
+ obj-$(CONFIG_LEDS_AN30259A)		+= leds-an30259a.o
+ obj-$(CONFIG_LEDS_APU)			+= leds-apu.o
+ obj-$(CONFIG_LEDS_ARIEL)		+= leds-ariel.o
+diff --git a/drivers/leds/leds-macsmc.c b/drivers/leds/leds-macsmc.c
+new file mode 100644
+index 000000000..8957ab743
+--- /dev/null
++++ b/drivers/leds/leds-macsmc.c
+@@ -0,0 +1,64 @@
++// SPDX-License-Identifier: GPL-2.0 OR MIT
++/*
++ * Apple SMC Keyboard backlight driver
++ *
++ * Copyright (C) 2026 Atharva Tiwari <atharvatiwarilinuxdev@gmail.com>
++ */
++
++#include <linux/leds.h>
++#include <linux/mfd/macsmc.h>
++#include <linux/platform_device.h>
++
++struct macsmc_led {
++	struct led_classdev cdev;
++	struct apple_smc *smc;
++	u8 brightness;
++};
++
++static enum led_brightness macsmc_led_get_brightness(struct led_classdev *cdev)
++{
++	struct macsmc_led *drv = container_of(cdev, struct macsmc_led, cdev);
++
++	return drv->brightness;
++}
++
++static void macsmc_led_set_brightness(struct led_classdev *cdev, enum led_brightness value)
++{
++	struct macsmc_led *drv = container_of(cdev, struct macsmc_led, cdev);
++
++	drv->brightness = (u8) value;
++
++	apple_smc_write_u16(drv->smc, SMC_KEY(LKSB), drv->brightness);
++}
++
++static int macsmc_led_probe(struct platform_device *pdev)
++{
++	struct macsmc_led *drv;
++
++	drv = devm_kzalloc(&pdev->dev, sizeof(*drv), GFP_KERNEL);
++	if (!drv)
++		return -ENOMEM;
++
++	drv->smc = dev_get_drvdata(pdev->dev.parent);
++
++	drv->cdev.name = "macsmc-led";
++	drv->cdev.max_brightness = 255;
++	drv->cdev.brightness_get = macsmc_led_get_brightness;
++	drv->cdev.brightness_set = macsmc_led_set_brightness;
++	drv->cdev.dev = &pdev->dev;
++
++	return devm_led_classdev_register(&pdev->dev, &drv->cdev);
++}
++
++static struct platform_driver macsmc_led_driver = {
++	.probe = macsmc_led_probe,
++	.driver = {
++		.name = "macsmc-led",
++	},
++};
++module_platform_driver(macsmc_led_driver);
++
++MODULE_AUTHOR("Atharva Tiwari <atharvatiwarilinuxdev@gmail.com>");
++MODULE_DESCRIPTION("LED keyboard backlight driver for Intel-macs using macsmc");
++MODULE_LICENSE("Dual MIT/GPL");
++MODULE_ALIAS("platform:macsmc-led");
+diff --git a/drivers/mfd/macsmc-core.c b/drivers/mfd/macsmc-core.c
+index 6567d2f1f..bc4200f57 100644
+--- a/drivers/mfd/macsmc-core.c
++++ b/drivers/mfd/macsmc-core.c
+@@ -33,6 +33,10 @@ static const struct mfd_cell apple_smc_acpi_common[] = {
+ 	MFD_CELL_NAME("macsmc-power"),
+ };
+ 
++static const struct mfd_cell apple_smc_acpi_led[] = {
++	MFD_CELL_NAME("macsmc-led"),
++};
++
+ static const struct mfd_cell apple_smc_acpi_light[] = {
+ 	MFD_CELL_NAME("macsmc-light"),
+ };
+@@ -179,6 +183,13 @@ int apple_smc_probe(struct device *dev, const struct apple_smc_backend_ops *ops,
+ 			if (ret < 0)
+ 				return ret;
+ 		}
++
++		if (apple_smc_key_exists(smc, SMC_KEY(LKSB))) {
++			ret = devm_mfd_add_devices(dev, -1, apple_smc_acpi_led,
++				ARRAY_SIZE(apple_smc_acpi_led), NULL, 0, NULL);
++			if (ret < 0)
++				return ret;
++		}
+ 	} else
+ 		ret = devm_mfd_add_devices(dev, -1, apple_smc_rtkit_devs,
+ 			ARRAY_SIZE(apple_smc_rtkit_devs), NULL, 0, NULL);
+-- 
+2.55.0
+

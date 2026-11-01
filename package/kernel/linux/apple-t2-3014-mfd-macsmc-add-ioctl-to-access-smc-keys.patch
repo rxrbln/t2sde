@@ -1,0 +1,252 @@
+From a24c0088bd1e0d62566f5e27effc4d61a533ef14 Mon Sep 17 00:00:00 2001
+From: Atharva Tiwari <atharvatiwarilinuxdev@gmail.com>
+Date: Sun, 18 Oct 2026 19:59:55 -0400
+Subject: [PATCH 14/14] mfd/macsmc: add ioctl to access smc keys
+
+Signed-off-by: Atharva Tiwari <atharvatiwarilinuxdev@gmail.com>
+---
+ drivers/mfd/macsmc-core.c  | 155 +++++++++++++++++++++++++++++++++++++
+ include/linux/mfd/macsmc.h |  27 +++++++
+ 2 files changed, 182 insertions(+)
+
+diff --git a/drivers/mfd/macsmc-core.c b/drivers/mfd/macsmc-core.c
+index bc4200f57..a30f7386e 100644
+--- a/drivers/mfd/macsmc-core.c
++++ b/drivers/mfd/macsmc-core.c
+@@ -6,10 +6,13 @@
+ 
+ #include <linux/bitfield.h>
+ #include <linux/device.h>
++#include <linux/fs.h>
+ #include <linux/mfd/core.h>
+ #include <linux/mfd/macsmc.h>
++#include <linux/miscdevice.h>
+ #include <linux/mutex.h>
+ #include <linux/spinlock.h>
++#include <linux/uaccess.h>
+ 
+ static const struct mfd_cell apple_smc_rtkit_devs[] = {
+ 	MFD_CELL_NAME("macsmc-input"),
+@@ -112,6 +115,144 @@ static void apple_smc_disable_notifications(void *data)
+ 	smc->be->disable_notifications(smc->be_cookie);
+ }
+ 
++static long apple_smc_fops_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
++{
++	struct apple_smc *smc = file->private_data;
++	void __user *argp = (void __user *)arg;
++	int ret;
++
++	switch (cmd) {
++	case IOCTL_SMC_READ: {
++		struct ioctl_smc_rw_payload payload;
++		struct apple_smc_key_info info;
++
++		if (copy_from_user(&payload, argp, sizeof(payload)))
++			return -EFAULT;
++
++		ret = apple_smc_get_key_info(smc, payload.key, &info);
++		if (ret < 0)
++			return ret;
++
++		if (payload.size != info.size)
++			return -EINVAL;
++
++		if (payload.size > 32)
++			return -EINVAL;
++
++		ret = apple_smc_read(smc, payload.key, payload.buf, payload.size);
++		if (ret < 0)
++			return ret;
++
++		if (copy_to_user(argp, &payload, sizeof(payload)))
++			return -EFAULT;
++		return 0;
++	}
++	case IOCTL_SMC_WRITE: {
++		struct ioctl_smc_rw_payload payload;
++		struct apple_smc_key_info info;
++
++		if (copy_from_user(&payload, argp, sizeof(payload)))
++			return -EFAULT;
++
++		ret = apple_smc_get_key_info(smc, payload.key, &info);
++		if (ret < 0)
++			return ret;
++
++		if (payload.size != info.size)
++			return -EINVAL;
++
++		if (payload.size > 32)
++			return -EINVAL;
++
++		switch (payload.key) {
++		case __SMC_KEY('C', 'H', '0', 'I'):
++		case __SMC_KEY('C', 'H', '0', 'C'):
++		case __SMC_KEY('C', 'H', '0', 'K'):
++		case __SMC_KEY('C', 'H', '0', 'B'):
++		case __SMC_KEY('C', 'H', 'T', 'E'):
++		case __SMC_KEY('C', 'H', 'L', 'S'):
++		case __SMC_KEY('B', 'C', 'L', 'M'):
++		case __SMC_KEY('M', 'B', 'S', 'E'):
++		case __SMC_KEY('C', 'L', 'K', 'L'):
++		case __SMC_KEY('C', 'L', 'K', 'O'):
++		case __SMC_KEY('O', 'S', 'W', 'D'):
++		case __SMC_KEY('N', 'A', 'T', 'J'):
++		case __SMC_KEY('N', 'A', 'T', 'i'):
++		case __SMC_KEY('N', 'E', 'S', 'N'):
++		case __SMC_KEY('M', 'O', 'C', 'N'):
++		case __SMC_KEY('L', 'K', 'S', 'B'):
++		case __SMC_KEY('N', 'T', 'O', 'K'):
++		case __SMC_KEY('N', 'T', 'A', 'P'):
++		case __SMC_KEY('F', '0', 'T', 'g'):
++		case __SMC_KEY('F', '1', 'T', 'g'):
++		case __SMC_KEY('F', '0', 'M', 'd'):
++		case __SMC_KEY('F', '1', 'M', 'd'):
++		case __SMC_KEY('F', 'S', '!', ' '):
++			return -EPERM;
++		}
++
++		ret = apple_smc_write(smc, payload.key, payload.buf, payload.size);
++		if (ret < 0)
++			return ret;
++
++		return 0;
++	}
++	case IOCTL_SMC_GET_KEY_INDEX: {
++		struct ioctl_smc_index_payload payload;
++
++		if (copy_from_user(&payload, argp, sizeof(payload)))
++			return -EFAULT;
++
++		ret = apple_smc_get_key_by_index(smc, payload.index, &payload.key);
++		if (ret < 0)
++			return ret;
++
++		if (copy_to_user(argp, &payload, sizeof(payload)))
++			return -EFAULT;
++
++		return 0;
++	}
++	case IOCTL_SMC_GET_KEY_INFO: {
++		struct ioctl_smc_info_payload payload;
++
++		if (copy_from_user(&payload, argp, sizeof(payload)))
++			return -EFAULT;
++
++		ret = apple_smc_get_key_info(smc, payload.key, &payload.info);
++		if (ret < 0)
++			return ret;
++
++		if (copy_to_user(argp, &payload, sizeof(payload)))
++			return -EFAULT;
++
++		return 0;
++	}
++	default:
++		return -EINVAL;
++	}
++}
++
++static int apple_smc_fops_open(struct inode *inode, struct file *file)
++{
++	struct miscdevice *misc = file->private_data;
++
++	file->private_data = container_of(misc, struct apple_smc, miscdev);
++	return 0;
++}
++
++static const struct file_operations apple_smc_fops = {
++	.owner		= THIS_MODULE,
++	.open		= apple_smc_fops_open,
++	.unlocked_ioctl	= apple_smc_fops_ioctl,
++	.compat_ioctl	= compat_ptr_ioctl,
++	.llseek		= noop_llseek,
++};
++
++static void apple_smc_misc_unregister(void *data)
++{
++	misc_deregister(data);
++}
++
+ int apple_smc_probe(struct device *dev, const struct apple_smc_backend_ops *ops,
+ 		void *cookie, struct blocking_notifier_head *event_handlers, bool is_acpi)
+ {
+@@ -150,6 +291,20 @@ int apple_smc_probe(struct device *dev, const struct apple_smc_backend_ops *ops,
+ 	if (ret)
+ 		return ret;
+ 
++	smc->miscdev.minor = MISC_DYNAMIC_MINOR;
++	smc->miscdev.name = "smc";
++	smc->miscdev.fops = &apple_smc_fops;
++	smc->miscdev.parent = dev;
++	smc->miscdev.mode = 0600;
++
++	ret = misc_register(&smc->miscdev);
++	if (ret)
++		return ret;
++
++	ret = devm_add_action_or_reset(dev, apple_smc_misc_unregister, &smc->miscdev);
++	if (ret)
++		return ret;
++
+ 	if (smc->is_acpi) {
+ 		ret = devm_mfd_add_devices(dev, -1, apple_smc_acpi_common,
+ 			ARRAY_SIZE(apple_smc_acpi_common), NULL, 0, NULL);
+diff --git a/include/linux/mfd/macsmc.h b/include/linux/mfd/macsmc.h
+index 4b4368b99..29fd7b20c 100644
+--- a/include/linux/mfd/macsmc.h
++++ b/include/linux/mfd/macsmc.h
+@@ -8,6 +8,8 @@
+ #ifndef _LINUX_MFD_MACSMC_H
+ #define _LINUX_MFD_MACSMC_H
+ 
++#include <linux/ioctl.h>
++#include <linux/miscdevice.h>
+ #include <linux/soc/apple/rtkit.h>
+ 
+ /**
+@@ -125,6 +127,7 @@ struct apple_smc_backend_ops {
+  * @is_acpi: Is the backend ACPI based
+  * @mutex: Mutex for non-atomic mode
+  * @lock: Spinlock for atomic mode
++ * @miscdev: Misc Device struct for ioctl ops
+  */
+ struct apple_smc {
+ 	struct device *dev;
+@@ -141,8 +144,32 @@ struct apple_smc {
+ 
+ 	struct mutex mutex;
+ 	spinlock_t lock;
++
++	struct miscdevice miscdev;
++};
++
++struct ioctl_smc_rw_payload {
++	smc_key key;
++	size_t size;
++	u8 buf[32];
++};
++
++struct ioctl_smc_index_payload {
++	int index;
++	smc_key key;
++};
++
++struct ioctl_smc_info_payload {
++	smc_key key;
++	struct apple_smc_key_info info;
+ };
+ 
++#define APPLE_SMC_MAGIC 'S'
++#define IOCTL_SMC_READ           _IOWR(APPLE_SMC_MAGIC, 1, struct ioctl_smc_rw_payload)
++#define IOCTL_SMC_WRITE          _IOW(APPLE_SMC_MAGIC, 2, struct ioctl_smc_rw_payload)
++#define IOCTL_SMC_GET_KEY_INDEX  _IOWR(APPLE_SMC_MAGIC, 3, struct ioctl_smc_index_payload)
++#define IOCTL_SMC_GET_KEY_INFO   _IOWR(APPLE_SMC_MAGIC, 4, struct ioctl_smc_info_payload)
++
+ /**
+  * apple_smc_read - Read size bytes from given SMC key into buf
+  * @smc: Pointer to apple_smc struct
+-- 
+2.55.0
+

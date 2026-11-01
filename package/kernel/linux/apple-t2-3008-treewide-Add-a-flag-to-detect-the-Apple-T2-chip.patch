@@ -1,0 +1,170 @@
+From c1b3c2210357881f8920cd35cb3c0d9c12e6179a Mon Sep 17 00:00:00 2001
+From: Atharva Tiwari <atharvatiwarilinuxdev@gmail.com>
+Date: Wed, 19 Aug 2026 17:44:04 -0400
+Subject: [PATCH 08/14] treewide: Add a flag to detect the Apple T2 chip
+
+Add a flag to detect Apple T2 chips on Intel Macs.
+Cache the result to avoid repeated checks. That will
+be used in upcoming patches.
+
+Signed-off-by: Atharva Tiwari <atharvatiwarilinuxdev@gmail.com>
+---
+ arch/x86/kernel/quirks.c                      | 37 ++++++++++++++++++
+ include/linux/platform_data/x86/apple.h       |  5 +++
+ .../platform_certs/keyring_handler.h          |  8 ----
+ security/integrity/platform_certs/load_uefi.c | 38 ++++---------------
+ 4 files changed, 50 insertions(+), 38 deletions(-)
+
+diff --git a/arch/x86/kernel/quirks.c b/arch/x86/kernel/quirks.c
+index a92f18db9..6651e5d4d 100644
+--- a/arch/x86/kernel/quirks.c
++++ b/arch/x86/kernel/quirks.c
+@@ -664,8 +664,45 @@ DECLARE_PCI_FIXUP_EARLY(PCI_VENDOR_ID_INTEL, 0x2083, quirk_intel_purley_xeon_ras
+ bool x86_apple_machine;
+ EXPORT_SYMBOL(x86_apple_machine);
+ 
++bool has_apple_t2_chip;
++EXPORT_SYMBOL(has_apple_t2_chip);
++
++static const char * const __initconst apple_t2_models[] = {
++	"MacBookPro15,1",
++	"MacBookPro15,2",
++	"MacBookPro15,3",
++	"MacBookPro15,4",
++	"MacBookPro16,1",
++	"MacBookPro16,2",
++	"MacBookPro16,3",
++	"MacBookPro16,4",
++	"MacBookAir8,1",
++	"MacBookAir8,2",
++	"MacBookAir9,1",
++	"Macmini8,1",
++	"MacPro7,1",
++	"iMac20,1",
++	"iMac20,2",
++	"iMacPro1,1",
++};
++
+ void __init early_platform_quirks(void)
+ {
+ 	x86_apple_machine = dmi_match(DMI_SYS_VENDOR, "Apple Inc.") ||
+ 			    dmi_match(DMI_SYS_VENDOR, "Apple Computer, Inc.");
++
++	if (x86_apple_machine) {
++		const char *product_name = dmi_get_system_info(DMI_PRODUCT_NAME);
++		int i;
++
++		if (!product_name)
++			return;
++
++		for (i = 0; i < ARRAY_SIZE(apple_t2_models); i++) {
++			if (!strcmp(product_name, apple_t2_models[i])) {
++				has_apple_t2_chip = true;
++				break;
++			}
++		}
++	}
+ }
+diff --git a/include/linux/platform_data/x86/apple.h b/include/linux/platform_data/x86/apple.h
+index 079e816c3..47b27dcea 100644
+--- a/include/linux/platform_data/x86/apple.h
++++ b/include/linux/platform_data/x86/apple.h
+@@ -6,8 +6,13 @@
+  * x86_apple_machine - whether the machine is an x86 Apple Macintosh
+  */
+ extern bool x86_apple_machine;
++/**
++ * has_apple_t2_chip - whether the machine has the Apple T2 chip
++ */
++extern bool has_apple_t2_chip;
+ #else
+ #define x86_apple_machine false
++#define has_apple_t2_chip false
+ #endif
+ 
+ #endif
+diff --git a/security/integrity/platform_certs/keyring_handler.h b/security/integrity/platform_certs/keyring_handler.h
+index f92895cc5..a355f4400 100644
+--- a/security/integrity/platform_certs/keyring_handler.h
++++ b/security/integrity/platform_certs/keyring_handler.h
+@@ -45,11 +45,3 @@ efi_element_handler_t get_handler_for_code_signing_keys(const efi_guid_t *sig_ty
+ efi_element_handler_t get_handler_for_dbx(const efi_guid_t *sig_type);
+ 
+ #endif
+-
+-#ifndef UEFI_QUIRK_SKIP_CERT
+-#define UEFI_QUIRK_SKIP_CERT(vendor, product) \
+-		 .matches = { \
+-			DMI_MATCH(DMI_BOARD_VENDOR, vendor), \
+-			DMI_MATCH(DMI_PRODUCT_NAME, product), \
+-		},
+-#endif
+diff --git a/security/integrity/platform_certs/load_uefi.c b/security/integrity/platform_certs/load_uefi.c
+index c0d694844..b4096d4c8 100644
+--- a/security/integrity/platform_certs/load_uefi.c
++++ b/security/integrity/platform_certs/load_uefi.c
+@@ -3,42 +3,16 @@
+ #include <linux/kernel.h>
+ #include <linux/sched.h>
+ #include <linux/cred.h>
+-#include <linux/dmi.h>
+ #include <linux/err.h>
+ #include <linux/efi.h>
+ #include <linux/slab.h>
+ #include <linux/ima.h>
++#include <linux/platform_data/x86/apple.h>
+ #include <keys/asymmetric-type.h>
+ #include <keys/system_keyring.h>
+ #include "../integrity.h"
+ #include "keyring_handler.h"
+ 
+-/*
+- * On T2 Macs reading the db and dbx efi variables to load UEFI Secure Boot
+- * certificates causes occurrence of a page fault in Apple's firmware and
+- * a crash disabling EFI runtime services. The following quirk skips reading
+- * these variables.
+- */
+-static const struct dmi_system_id uefi_skip_cert[] = {
+-	{ UEFI_QUIRK_SKIP_CERT("Apple Inc.", "MacBookPro15,1") },
+-	{ UEFI_QUIRK_SKIP_CERT("Apple Inc.", "MacBookPro15,2") },
+-	{ UEFI_QUIRK_SKIP_CERT("Apple Inc.", "MacBookPro15,3") },
+-	{ UEFI_QUIRK_SKIP_CERT("Apple Inc.", "MacBookPro15,4") },
+-	{ UEFI_QUIRK_SKIP_CERT("Apple Inc.", "MacBookPro16,1") },
+-	{ UEFI_QUIRK_SKIP_CERT("Apple Inc.", "MacBookPro16,2") },
+-	{ UEFI_QUIRK_SKIP_CERT("Apple Inc.", "MacBookPro16,3") },
+-	{ UEFI_QUIRK_SKIP_CERT("Apple Inc.", "MacBookPro16,4") },
+-	{ UEFI_QUIRK_SKIP_CERT("Apple Inc.", "MacBookAir8,1") },
+-	{ UEFI_QUIRK_SKIP_CERT("Apple Inc.", "MacBookAir8,2") },
+-	{ UEFI_QUIRK_SKIP_CERT("Apple Inc.", "MacBookAir9,1") },
+-	{ UEFI_QUIRK_SKIP_CERT("Apple Inc.", "Macmini8,1") },
+-	{ UEFI_QUIRK_SKIP_CERT("Apple Inc.", "MacPro7,1") },
+-	{ UEFI_QUIRK_SKIP_CERT("Apple Inc.", "iMac20,1") },
+-	{ UEFI_QUIRK_SKIP_CERT("Apple Inc.", "iMac20,2") },
+-	{ UEFI_QUIRK_SKIP_CERT("Apple Inc.", "iMacPro1,1") },
+-	{ }
+-};
+-
+ /*
+  * Look to see if a UEFI variable called MokIgnoreDB exists and return true if
+  * it does.
+@@ -165,10 +139,14 @@ static int __init load_uefi_certs(void)
+ 	unsigned long dbsize = 0, dbxsize = 0, mokxsize = 0;
+ 	efi_status_t status;
+ 	int rc = 0;
+-	const struct dmi_system_id *dmi_id;
+ 
+-	dmi_id = dmi_first_match(uefi_skip_cert);
+-	if (dmi_id) {
++	/*
++	 * On T2 Macs reading the db and dbx efi variables to load UEFI Secure Boot
++	 * certificates causes occurrence of a page fault in Apple's firmware and
++	 * a crash disabling EFI runtime services. The following quirk skips reading
++	 * these variables.
++	 */
++	if (has_apple_t2_chip) {
+ 		pr_err("Reading UEFI Secure Boot Certs is not supported on T2 Macs.\n");
+ 		return false;
+ 	}
+-- 
+2.55.0
+

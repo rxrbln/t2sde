@@ -1,0 +1,275 @@
+From 6ac083e5db5583c73fd63834794285a24755f6e3 Mon Sep 17 00:00:00 2001
+From: Atharva Tiwari <atharvatiwarilinuxdev@gmail.com>
+Date: Fri, 25 Sep 2026 15:42:28 -0400
+Subject: [PATCH 04/14] iio/light: add new driver for macsmc
+
+Signed-off-by: Atharva Tiwari <atharvatiwarilinuxdev@gmail.com>
+---
+ drivers/iio/light/Kconfig        |  11 ++
+ drivers/iio/light/Makefile       |   1 +
+ drivers/iio/light/macsmc-light.c | 189 +++++++++++++++++++++++++++++++
+ drivers/mfd/macsmc-core.c        |  11 ++
+ 4 files changed, 212 insertions(+)
+ create mode 100644 drivers/iio/light/macsmc-light.c
+
+diff --git a/drivers/iio/light/Kconfig b/drivers/iio/light/Kconfig
+index f23bbce12..a16277796 100644
+--- a/drivers/iio/light/Kconfig
++++ b/drivers/iio/light/Kconfig
+@@ -457,6 +457,17 @@ config LV0104CS
+ 	  To compile this driver as a module, choose M here:
+ 	  the module will be called lv0104cs.
+ 
++config MACSMC_LIGHT
++	tristate "Apple SMC Light Sensor"
++	depends on MACSMC_ACPI
++	help
++	  Say Y here if you have a Intel-based Mac. and you
++	  want support for light sensors.
++
++	  To compile this driver as a module, choose M here:
++	  the module will be called macsmc_light
++
++
+ config MAX44000
+ 	tristate "MAX44000 Ambient and Infrared Proximity Sensor"
+ 	depends on I2C
+diff --git a/drivers/iio/light/Makefile b/drivers/iio/light/Makefile
+index 64e354c49..fe5848e55 100644
+--- a/drivers/iio/light/Makefile
++++ b/drivers/iio/light/Makefile
+@@ -40,6 +40,7 @@ obj-$(CONFIG_LTR390)		+= ltr390.o
+ obj-$(CONFIG_LTR501)		+= ltr501.o
+ obj-$(CONFIG_LTRF216A)		+= ltrf216a.o
+ obj-$(CONFIG_LV0104CS)		+= lv0104cs.o
++obj-$(CONFIG_MACSMC_LIGHT)	+= macsmc-light.o
+ obj-$(CONFIG_MAX44000)		+= max44000.o
+ obj-$(CONFIG_MAX44009)		+= max44009.o
+ obj-$(CONFIG_NOA1305)		+= noa1305.o
+diff --git a/drivers/iio/light/macsmc-light.c b/drivers/iio/light/macsmc-light.c
+new file mode 100644
+index 000000000..9d4532b34
+--- /dev/null
++++ b/drivers/iio/light/macsmc-light.c
+@@ -0,0 +1,189 @@
++// SPDX-License-Identifier: GPL-2.0 OR MIT
++/*
++ * Apple SMC Light Sensor Driver
++ *
++ * Copyright (C) 2026 Atharva Tiwari <atharvatiwarilinuxdev@gmail.com>
++ *
++ * Based on drivers/hwmom/applesmc.c:
++ * Copyright (C) 2007 Nicolas Boichat <nicolas@boichat.ch>
++ * Copyright (C) 2010 Henrik Rydberg <rydberg@euromail.se>
++ */
++
++#include <linux/iio/events.h>
++#include <linux/iio/iio.h>
++#include <linux/byteorder/generic.h>
++#include <linux/mfd/macsmc.h>
++#include <linux/platform_device.h>
++#include <linux/unaligned.h>
++
++enum {
++	LEFT_LIGHT = 0,
++	RIGHT_LIGHT
++};
++
++struct macsmc_light {
++	struct apple_smc *smc;
++	struct notifier_block nb;
++	struct iio_dev *indio_dev;
++	u8 size;
++};
++
++static int macsmc_light_read_raw(struct iio_dev *indio_dev,
++		const struct iio_chan_spec *chan,
++		int *val, int *val2, long mask)
++
++{
++	struct macsmc_light *drv = iio_priv(indio_dev);
++	u8 buffer[10];
++	int ret;
++
++	if (mask != IIO_CHAN_INFO_RAW)
++		return -EINVAL;
++
++	switch (chan->channel) {
++	case LEFT_LIGHT:
++		ret = apple_smc_read(drv->smc, SMC_KEY(ALV0), buffer, drv->size);
++		if (ret < 0)
++			return ret;
++
++		if (drv->size == 10)
++			*val = be16_to_cpu(get_unaligned_be16(buffer + 6)) >> 10;
++		else
++			*val = buffer[2];
++
++		break;
++	case RIGHT_LIGHT:
++		if (drv->size == 10) {
++			*val = 0;
++			break;
++		}
++		ret = apple_smc_read(drv->smc, SMC_KEY(ALV1), buffer, drv->size);
++		if (ret < 0)
++			return ret;
++
++		*val = buffer[2];
++		break;
++	default:
++		return -EINVAL;
++	}
++
++	return IIO_VAL_INT;
++}
++
++static int macsmc_light_event(struct notifier_block *nb, unsigned long event, void *data)
++{
++	struct macsmc_light *drv = container_of(nb, struct macsmc_light, nb);
++	s64 timestamp = iio_get_time_ns(drv->indio_dev);
++
++	/* check if event is for us */
++	if (event != 0x2A)
++		return NOTIFY_DONE;
++
++	iio_push_event(drv->indio_dev,
++		IIO_UNMOD_EVENT_CODE(IIO_LIGHT,
++				LEFT_LIGHT,
++				IIO_EV_TYPE_CHANGE,
++				IIO_EV_DIR_EITHER),
++		timestamp);
++
++	if (drv->size != 10) {
++		iio_push_event(drv->indio_dev,
++			IIO_UNMOD_EVENT_CODE(IIO_LIGHT,
++					RIGHT_LIGHT,
++					IIO_EV_TYPE_CHANGE,
++					IIO_EV_DIR_EITHER),
++				timestamp);
++	}
++
++	return NOTIFY_OK;
++}
++
++static void macsmc_light_unregister_notifier(void *data)
++{
++	struct macsmc_light *drv = data;
++
++	blocking_notifier_chain_unregister(drv->smc->event_handlers,
++					   &drv->nb);
++}
++
++static const struct iio_event_spec macsmc_light_events[] = {
++	{
++		.type = IIO_EV_TYPE_CHANGE,
++		.dir = IIO_EV_DIR_EITHER,
++		.mask_separate = BIT(IIO_EV_INFO_ENABLE),
++	},
++};
++
++static const struct iio_chan_spec macsmc_light_channels[] = {
++	{
++		.type = IIO_LIGHT,
++		.channel = LEFT_LIGHT,
++		.extend_name = "left",
++		.info_mask_separate = BIT(IIO_CHAN_INFO_RAW),
++		.event_spec = macsmc_light_events,
++		.num_event_specs = ARRAY_SIZE(macsmc_light_events),
++	},
++	{
++		.type = IIO_LIGHT,
++		.channel = RIGHT_LIGHT,
++		.extend_name = "right",
++		.info_mask_separate = BIT(IIO_CHAN_INFO_RAW),
++		.event_spec = macsmc_light_events,
++		.num_event_specs = ARRAY_SIZE(macsmc_light_events),
++	},
++};
++
++static const struct iio_info macsmc_light_info = {
++	.read_raw = macsmc_light_read_raw,
++};
++
++static int macsmc_light_probe(struct platform_device *pdev)
++{
++	struct iio_dev *indio_dev;
++	struct macsmc_light *drv;
++	struct apple_smc_key_info info;
++	int ret;
++
++	indio_dev = devm_iio_device_alloc(&pdev->dev, sizeof(*drv));
++	if (!indio_dev)
++		return -ENOMEM;
++
++	drv = iio_priv(indio_dev);
++	drv->smc = dev_get_drvdata(pdev->dev.parent);
++
++	ret = apple_smc_get_key_info(drv->smc, SMC_KEY(ALV0), &info);
++	if (ret < 0)
++		return -ENODEV;
++
++	drv->size = info.size;
++	drv->indio_dev = indio_dev;
++	drv->nb.notifier_call = macsmc_light_event;
++	ret = blocking_notifier_chain_register(drv->smc->event_handlers, &drv->nb);
++	if (ret)
++		return ret;
++
++	ret = devm_add_action_or_reset(&pdev->dev, macsmc_light_unregister_notifier, drv);
++	if (ret)
++		return ret;
++
++	indio_dev->name = "macsmc-light";
++	indio_dev->modes = INDIO_DIRECT_MODE;
++	indio_dev->info = &macsmc_light_info;
++	indio_dev->channels = macsmc_light_channels;
++	indio_dev->num_channels = ARRAY_SIZE(macsmc_light_channels);
++
++	return devm_iio_device_register(&pdev->dev, indio_dev);
++}
++
++static struct platform_driver macsmc_light_driver = {
++	.probe = macsmc_light_probe,
++	.driver = {
++		.name = "macsmc-light",
++	},
++};
++module_platform_driver(macsmc_light_driver);
++
++MODULE_AUTHOR("Atharva Tiwari <atharvatiwarilinuxdev@gmail.com>");
++MODULE_LICENSE("Dual MIT/GPL");
++MODULE_DESCRIPTION("Apple SMC Light Sensor Driver");
++MODULE_ALIAS("platform:macsmc-light");
+diff --git a/drivers/mfd/macsmc-core.c b/drivers/mfd/macsmc-core.c
+index 1c1469828..6014df4fe 100644
+--- a/drivers/mfd/macsmc-core.c
++++ b/drivers/mfd/macsmc-core.c
+@@ -29,6 +29,10 @@ static const struct mfd_cell apple_smc_acpi_common[] = {
+ 	MFD_CELL_NAME("macsmc-power"),
+ };
+ 
++static const struct mfd_cell apple_smc_acpi_light[] = {
++	MFD_CELL_NAME("macsmc-light"),
++};
++
+ static const struct mfd_cell apple_smc_acpi_rtc[] = {
+ 	MFD_CELL_NAME("macsmc-rtc"),
+ };
+@@ -158,6 +162,13 @@ int apple_smc_probe(struct device *dev, const struct apple_smc_backend_ops *ops,
+ 				return ret;
+ 		}
+ 
++		if (apple_smc_key_exists(smc, SMC_KEY(ALV0))) {
++			ret = devm_mfd_add_devices(dev, -1, apple_smc_acpi_light,
++				ARRAY_SIZE(apple_smc_acpi_light), NULL, 0, NULL);
++			if (ret < 0)
++				return ret;
++		}
++
+ 	} else
+ 		ret = devm_mfd_add_devices(dev, -1, apple_smc_rtkit_devs,
+ 			ARRAY_SIZE(apple_smc_rtkit_devs), NULL, 0, NULL);
+-- 
+2.55.0
+
