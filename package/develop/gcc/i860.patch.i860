@@ -1,0 +1,3870 @@
+# --- T2-COPYRIGHT-BEGIN ---
+# t2/package/*/gcc/i860.patch.i860
+# Copyright (C) 2026 The T2 SDE Project
+# SPDX-License-Identifier: GPL-2.0 or patched project license
+# --- T2-COPYRIGHT-END ---
+
+From: René Rebe <rene@exactco.de>
+Subject: [PATCH] i860: restore the backend, port to current GCC, add Linux target
+
+Restores the backend removed from GCC: no cc0, LRA, RTL prologue and epilogue, i860-*-sysv4* and i860-*-linux*. PIC and shared libraries, TLS, IEEE division through libgcc, filled delay slots.
+
+Against upstream commit ada5b8f08739b26bf76558c9d5157cbbdd16c205 (tree-optimization/128322 - amend PR127377 fix).
+Branch i860 at d9abbf7da6c. Tested in the MAME magicst2 model only, not on real hardware.
+
+Signed-off-by: René Rebe <rene@exactco.de>
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ gcc/config.gcc                    |   11 +
+ gcc/config/i860/constraints.md    |   68 +
+ gcc/config/i860/i860-protos.h     |   67 +
+ gcc/config/i860/i860.cc           | 1918 +++++++++++++++++++++++++++++
+ gcc/config/i860/i860.h            |  272 ++++
+ gcc/config/i860/i860.md           |  998 +++++++++++++++
+ gcc/config/i860/i860.opt          |   28 +
+ gcc/config/i860/i860.opt.urls     |    8 +
+ gcc/config/i860/linux.h           |   42 +
+ gcc/config/i860/predicates.md     |   84 ++
+ gcc/config/i860/sysv4.h           |   63 +
+ gcc/doc/install.texi              |   19 +
+ gcc/doc/invoke.texi               |   21 +
+ libgcc/config.host                |    8 +
+ libgcc/config/i860/fdiv-special.c |   54 +
+ libgcc/config/i860/t-i860         |   24 +
+ 16 files changed, 3685 insertions(+)
+
+diff --git a/gcc/config.gcc b/gcc/config.gcc
+index 01750947c4d..9b8b1fa4f6a 100644
+--- a/gcc/config.gcc
++++ b/gcc/config.gcc
+@@ -289,6 +289,7 @@ esac
+ case ${target}${target_min} in
+  # Avoid special cases that are not obsolete
+    arm*-*-*eabi*			\
++ | i860-*-sysv4*			\
+  )
+ 	;;
+    arm*-wince-pe*			\
+@@ -436,6 +437,9 @@ ft32*)	cpu_type=ft32
+ moxie*)	cpu_type=moxie
+ 	target_has_targetm_common=no
+ 	;;
++i860*)	cpu_type=i860
++	target_has_targetm_common=no
++	;;
+ fido-*-*)
+ 	cpu_type=m68k
+ 	extra_headers=math-68881.h
+@@ -2352,6 +2356,13 @@ x86_64-*-fuchsia*)
+ 	tmake_file="${tmake_file} i386/t-x86_64-elf"
+ 	tm_file="${tm_file} i386/unix.h i386/att.h elfos.h newlib-stdint.h i386/i386elf.h i386/x86-64.h fuchsia.h"
+ 	;;
++i860-*-linux*)
++	tm_file="elfos.h ${tm_file} gnu-user.h linux.h glibc-stdint.h i860/linux.h"
++	;;
++i860-*-sysv4*)
++	tm_file="elfos.h newlib-stdint.h ${tm_file} i860/sysv4.h"
++	use_gcc_stdint=wrap
++	;;
+ ia64*-*-elf*)
+ 	tm_file="${tm_file} elfos.h newlib-stdint.h ia64/sysv4.h ia64/elf.h"
+ 	tmake_file="ia64/t-ia64"
+diff --git a/gcc/config/i860/constraints.md b/gcc/config/i860/constraints.md
+new file mode 100644
+index 00000000000..57bbe51b94c
+--- /dev/null
++++ b/gcc/config/i860/constraints.md
+@@ -0,0 +1,68 @@
++;; Constraint definitions for the Intel i860.
++;; Copyright (C) 2026 Free Software Foundation, Inc.
++;; Copyright (C) 2026 René Rebe <rene@exactco.de>
++;;
++;; This file is part of GCC.
++;;
++;; GCC is free software; you can redistribute it and/or modify it
++;; under the terms of the GNU General Public License as published
++;; by the Free Software Foundation; either version 3, or (at your
++;; option) any later version.
++;;
++;; GCC is distributed in the hope that it will be useful, but WITHOUT
++;; ANY WARRANTY; without even the implied warranty of MERCHANTABILITY
++;; or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public
++;; License for more details.
++;;
++;; You should have received a copy of the GNU General Public License
++;; along with GCC; see the file COPYING3.  If not see
++;; <http://www.gnu.org/licenses/>.
++
++(define_register_constraint "f" "FP_REGS"
++  "Floating point registers.")
++
++;; Not -0x8000: add/subtract immediates are sometimes negated.
++(define_constraint "I"
++  "A signed 16-bit immediate for add/subtract."
++  (and (match_code "const_int")
++       (match_test "IN_RANGE (ival, -0x7fff, 0x7fff)")))
++
++(define_constraint "J"
++  "Integer zero."
++  (and (match_code "const_int")
++       (match_test "ival == 0")))
++
++(define_constraint "K"
++  "An unsigned 5-bit immediate (bte/btne)."
++  (and (match_code "const_int")
++       (match_test "IN_RANGE (ival, 0, 31)")))
++
++(define_constraint "L"
++  "An unsigned 16-bit immediate for logical instructions."
++  (and (match_code "const_int")
++       (match_test "IN_RANGE (ival, 0, 0xffff)")))
++
++(define_constraint "M"
++  "A constant with the low 16 bits clear (orh/andh/xorh)."
++  (and (match_code "const_int")
++       (match_test "(ival & 0xffff) == 0")))
++
++(define_constraint "G"
++  "Floating point zero."
++  (and (match_code "const_double")
++       (match_test "op == CONST0_RTX (GET_MODE (op))")))
++
++(define_memory_constraint "Q"
++  "A memory reference with a register, register + register or
++   register + offset address (no constant address)."
++  (and (match_code "mem")
++       (match_test "i860_q_address_p (XEXP (op, 0), mode)")))
++
++(define_memory_constraint "Y"
++  "A call target: memory at an integer register or symbol address."
++  (and (match_code "mem")
++       (match_test "i860_call_address_p (XEXP (op, 0), true)")))
++
++(define_constraint "Z"
++  "A symbol as a direct call target, also valid in PIC code."
++  (match_code "symbol_ref"))
+diff --git a/gcc/config/i860/i860-protos.h b/gcc/config/i860/i860-protos.h
+new file mode 100644
+index 00000000000..9cc7c4e4d78
+--- /dev/null
++++ b/gcc/config/i860/i860-protos.h
+@@ -0,0 +1,67 @@
++/* Prototypes for i860.cc functions used in the md file & elsewhere.
++   Copyright (C) 2000-2026 Free Software Foundation, Inc.
++   Copyright (C) 2026 René Rebe <rene@exactco.de>
++
++This file is part of GCC.
++
++GCC is free software; you can redistribute it and/or modify
++it under the terms of the GNU General Public License as published by
++the Free Software Foundation; either version 3, or (at your option)
++any later version.
++
++GCC is distributed in the hope that it will be useful,
++but WITHOUT ANY WARRANTY; without even the implied warranty of
++MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++GNU General Public License for more details.
++
++You should have received a copy of the GNU General Public License
++along with GCC; see the file COPYING3.  If not see
++<http://www.gnu.org/licenses/>.  */
++
++#ifndef GCC_I860_PROTOS_H
++#define GCC_I860_PROTOS_H
++
++extern HOST_WIDE_INT i860_initial_elimination_offset (int, int);
++extern void i860_expand_prologue (void);
++extern void i860_expand_epilogue (void);
++extern void i860_output_function_prefix (FILE *, const char *);
++
++#ifdef RTX_CODE
++extern rtx i860_return_addr_rtx (int, rtx);
++extern rtx i860_eh_return_handler_rtx (void);
++extern void i860_expand_move (machine_mode, rtx *);
++extern void i860_expand_floatsidf (rtx, rtx);
++extern bool i860_indexed_address_p (rtx, bool);
++extern bool i860_q_address_p (rtx, machine_mode);
++extern bool i860_call_address_p (rtx, bool);
++extern bool i860_mem_aligned8_p (rtx);
++extern int i860_mem_move_length (rtx *);
++extern int i860_move_double_length (rtx *);
++extern int i860_logic_length (enum rtx_code, rtx *);
++extern rtx i860_gotoff_mem (rtx, rtx, rtx);
++extern const char *i860_output_gotoff_access (rtx *, bool);
++extern const char *i860_output_load (rtx *);
++extern const char *i860_output_store (rtx *);
++extern const char *i860_output_load_ext (rtx *, const char *);
++extern const char *i860_output_sf_const (rtx *);
++extern const char *i860_output_move_double (rtx *);
++extern const char *i860_output_logic (enum rtx_code, rtx *);
++extern bool i860_cbranch_operand_p (enum rtx_code, rtx);
++extern void i860_expand_fdiv (machine_mode, rtx *);
++extern bool i860_bte_form_p (rtx *);
++extern bool i860_symbolic_p (rtx);
++extern rtx i860_legitimize_pic_address (rtx, rtx);
++extern int i860_cbranch_length (rtx *, bool);
++extern const char *i860_output_cbranch (rtx_insn *, rtx *, bool);
++extern const char *i860_output_bit_cbranch (rtx *, bool);
++extern const char *i860_output_fp_cbranch (rtx *, machine_mode, bool);
++extern bool i860_fp_cbranch_simple_p (rtx *, bool);
++extern bool i860_annul_branch_p (rtx_insn *);
++extern const char *i860_output_call (rtx *, int);
++#endif
++
++#ifdef TREE_CODE
++extern void i860_init_cumulative_args (CUMULATIVE_ARGS *, tree);
++#endif
++
++#endif /* GCC_I860_PROTOS_H */
+diff --git a/gcc/config/i860/i860.cc b/gcc/config/i860/i860.cc
+new file mode 100644
+index 00000000000..b78b687303d
+--- /dev/null
++++ b/gcc/config/i860/i860.cc
+@@ -0,0 +1,1918 @@
++/* Subroutines for insn-output.cc for Intel i860.
++   Copyright (C) 1989-2005, 2026 Free Software Foundation, Inc.
++   Copyright (C) 2026 René Rebe <rene@exactco.de>
++   Derived from sparc.c.
++
++   Written by Richard Stallman (rms@ai.mit.edu).
++
++   Hacked substantially by Ron Guilmette (rfg@netcom.com) to cater
++   to the whims of the System V Release 4 assembler.
++
++This file is part of GCC.
++
++GCC is free software; you can redistribute it and/or modify
++it under the terms of the GNU General Public License as published by
++the Free Software Foundation; either version 3, or (at your option)
++any later version.
++
++GCC is distributed in the hope that it will be useful,
++but WITHOUT ANY WARRANTY; without even the implied warranty of
++MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++GNU General Public License for more details.
++
++You should have received a copy of the GNU General Public License
++along with GCC; see the file COPYING3.  If not see
++<http://www.gnu.org/licenses/>.  */
++
++#define IN_TARGET_CODE 1
++
++#include "config.h"
++#include "system.h"
++#include "coretypes.h"
++#include "backend.h"
++#include "target.h"
++#include "rtl.h"
++#include "tree.h"
++#include "stringpool.h"
++#include "attribs.h"
++#include "df.h"
++#include "memmodel.h"
++#include "gimple.h"
++#include "tm_p.h"
++#include "expmed.h"
++#include "optabs.h"
++#include "regs.h"
++#include "emit-rtl.h"
++#include "recog.h"
++#include "diagnostic-core.h"
++#include "output.h"
++#include "insn-attr.h"
++#include "alias.h"
++#include "fold-const.h"
++#include "stor-layout.h"
++#include "calls.h"
++#include "varasm.h"
++#include "explow.h"
++#include "expr.h"
++#include "builtins.h"
++#include "gimplify.h"
++#include "langhooks.h"
++#include "predict.h"
++#include "tm-constrs.h"
++
++/* This file should be included last.  */
++#include "target-def.h"
++
++/* Frame layout, high to low addresses:
++
++     incoming stack arguments		<- old sp (= fp + 16, arg pointer)
++     unused (8 bytes)
++     saved r1				fp + 4
++     saved fp				<- fp
++     callee-saved registers		fp - 4, fp - 8, ...
++     varargs register save area		8 FP then 12 integer words
++     local variables			<- soft frame pointer
++     outgoing arguments
++					<- sp
++
++   This matches the native SVR4 compilers: fp points at the saved fp and
++   the return address follows it.  */
++
++struct i860_frame_info
++{
++  HOST_WIDE_INT regs;		/* callee-saved registers, rounded */
++  HOST_WIDE_INT va;		/* varargs save area */
++  HOST_WIDE_INT locals;
++  HOST_WIDE_INT outgoing;
++  HOST_WIDE_INT total;
++  bool save_r1;
++};
++
++#define I860_VA_SAVE_SIZE \
++  ((I860_NUM_FP_ARGS + I860_NUM_INT_ARGS) * UNITS_PER_WORD)
++
++static bool
++i860_save_reg_p (unsigned int regno)
++{
++  if (crtl->calls_eh_return)
++    for (unsigned i = 0; EH_RETURN_DATA_REGNO (i) != INVALID_REGNUM; i++)
++      if (regno == EH_RETURN_DATA_REGNO (i))
++	return true;
++  /* The PIC register is fixed, but callee saved.  */
++  if (regno == PIC_OFFSET_TABLE_REGNUM)
++    return crtl->uses_pic_offset_table;
++  return df_regs_ever_live_p (regno) && !call_used_or_fixed_reg_p (regno);
++}
++
++static void
++i860_compute_frame (struct i860_frame_info *f)
++{
++  int n = 0;
++
++  for (unsigned r = 0; r < FIRST_PSEUDO_REGISTER; r++)
++    if (i860_save_reg_p (r))
++      n++;
++
++  f->regs = ROUND_UP (n * UNITS_PER_WORD, 16);
++  f->va = cfun->stdarg ? I860_VA_SAVE_SIZE : 0;
++  f->locals = ROUND_UP (get_frame_size (), 16);
++  f->outgoing = ROUND_UP (crtl->outgoing_args_size, 16);
++  f->total = 16 + f->regs + f->va + f->locals + f->outgoing;
++  /* Loading the PIC register reads the PC with a call.  */
++  f->save_r1 = (!crtl->is_leaf || crtl->profile || crtl->calls_eh_return
++		|| crtl->uses_pic_offset_table
++		|| df_regs_ever_live_p (I860_RETURN_REGNUM));
++}
++
++HOST_WIDE_INT
++i860_initial_elimination_offset (int from, int to)
++{
++  struct i860_frame_info f;
++
++  i860_compute_frame (&f);
++  if (from == ARG_POINTER_REGNUM && to == HARD_FRAME_POINTER_REGNUM)
++    return 16;
++  if (from == ARG_POINTER_REGNUM && to == STACK_POINTER_REGNUM)
++    return f.total;
++  if (from == FRAME_POINTER_REGNUM && to == HARD_FRAME_POINTER_REGNUM)
++    return -(f.regs + f.va);
++  if (from == FRAME_POINTER_REGNUM && to == STACK_POINTER_REGNUM)
++    return f.locals + f.outgoing;
++  gcc_unreachable ();
++}
++
++static bool
++i860_frame_pointer_required (void)
++{
++  return true;
++}
++
++static bool
++i860_can_eliminate (const int from ATTRIBUTE_UNUSED, const int to)
++{
++  return to == HARD_FRAME_POINTER_REGNUM || !frame_pointer_needed;
++}
++
++rtx
++i860_return_addr_rtx (int count, rtx frame)
++{
++  if (count == 0)
++    return get_hard_reg_initial_val (Pmode, I860_RETURN_REGNUM);
++  return gen_rtx_MEM (Pmode, plus_constant (Pmode, frame, 4));
++}
++
++rtx
++i860_eh_return_handler_rtx (void)
++{
++  return gen_frame_mem (Pmode, plus_constant (Pmode, hard_frame_pointer_rtx,
++					      4));
++}
++
++static rtx_insn *
++emit_frame_insn (rtx x)
++{
++  rtx_insn *insn = emit_insn (x);
++  RTX_FRAME_RELATED_P (insn) = 1;
++  return insn;
++}
++
++static rtx
++fp_slot (machine_mode mode, HOST_WIDE_INT offset)
++{
++  return gen_frame_mem (mode, plus_constant (Pmode, hard_frame_pointer_rtx,
++					     offset));
++}
++
++/* Save mode for a callee-saved register.  */
++static machine_mode
++i860_save_mode (unsigned int regno)
++{
++  if (FP_REGNO_P (regno))
++    return SFmode;
++  return SImode;
++}
++
++void
++i860_expand_prologue (void)
++{
++  struct i860_frame_info f;
++  rtx sp = stack_pointer_rtx, fp = hard_frame_pointer_rtx;
++
++  i860_compute_frame (&f);
++
++  if (f.total <= 0x7fff)
++    {
++      emit_frame_insn (gen_addsi3 (sp, sp, GEN_INT (-f.total)));
++      emit_frame_insn (gen_rtx_SET (gen_frame_mem (SImode,
++						   plus_constant (Pmode, sp,
++								  f.total - 16)),
++				    fp));
++      emit_frame_insn (gen_addsi3 (fp, sp, GEN_INT (f.total - 16)));
++    }
++  else
++    {
++      emit_frame_insn (gen_addsi3 (sp, sp, GEN_INT (-16)));
++      emit_frame_insn (gen_rtx_SET (gen_frame_mem (SImode, sp), fp));
++      emit_frame_insn (gen_rtx_SET (fp, sp));
++      /* The CFA is fp based from here on.  */
++      emit_insn (gen_addsi3 (sp, sp, GEN_INT (-(f.total - 16))));
++    }
++
++  if (f.save_r1)
++    emit_frame_insn (gen_rtx_SET (fp_slot (SImode, 4),
++				  gen_rtx_REG (SImode, I860_RETURN_REGNUM)));
++
++  HOST_WIDE_INT off = 0;
++  for (unsigned r = 0; r < FIRST_PSEUDO_REGISTER; r++)
++    if (i860_save_reg_p (r))
++      {
++	machine_mode mode = i860_save_mode (r);
++	off -= UNITS_PER_WORD;
++	emit_frame_insn (gen_rtx_SET (fp_slot (mode, off),
++				      gen_rtx_REG (mode, r)));
++      }
++
++  if (f.va)
++    {
++      HOST_WIDE_INT base = -(f.regs + f.va);
++
++      for (int i = 0; i < I860_NUM_FP_ARGS; i += 2)
++	{
++	  rtx mem = fp_slot (DFmode, base + i * UNITS_PER_WORD);
++	  set_mem_align (mem, 64);
++	  emit_move_insn (mem, gen_rtx_REG (DFmode, I860_FIRST_FP_ARG + i));
++	}
++      for (int i = 0; i < I860_NUM_INT_ARGS; i++)
++	emit_move_insn (fp_slot (SImode, base + (I860_NUM_FP_ARGS + i)
++					       * UNITS_PER_WORD),
++			gen_rtx_REG (SImode, I860_FIRST_INT_ARG + i));
++    }
++
++  if (crtl->uses_pic_offset_table)
++    {
++      emit_insn (gen_i860_set_got ());
++      if (has_hard_reg_initial_val (Pmode, I860_RETURN_REGNUM))
++	emit_move_insn (gen_rtx_REG (SImode, I860_RETURN_REGNUM),
++			fp_slot (SImode, 4));
++    }
++}
++
++void
++i860_expand_epilogue (void)
++{
++  struct i860_frame_info f;
++  rtx fp = hard_frame_pointer_rtx;
++  rtx r31 = gen_rtx_REG (SImode, I860_TEMP_REGNUM);
++  bool sp_from_fp = (cfun->calls_alloca || cfun->has_nonlocal_label
++		     || crtl->calls_eh_return);
++
++  i860_compute_frame (&f);
++  if (f.total > 0x7fff)
++    sp_from_fp = true;
++
++  HOST_WIDE_INT off = 0;
++  for (unsigned r = 0; r < FIRST_PSEUDO_REGISTER; r++)
++    if (i860_save_reg_p (r))
++      {
++	machine_mode mode = i860_save_mode (r);
++	off -= UNITS_PER_WORD;
++	emit_move_insn (gen_rtx_REG (mode, r), fp_slot (mode, off));
++      }
++
++  if (sp_from_fp)
++    {
++      emit_insn (gen_addsi3 (r31, fp, GEN_INT (16)));
++      if (crtl->calls_eh_return)
++	emit_insn (gen_addsi3 (r31, r31, EH_RETURN_STACKADJ_RTX));
++    }
++
++  if (f.save_r1)
++    emit_move_insn (gen_rtx_REG (SImode, I860_RETURN_REGNUM),
++		    fp_slot (SImode, 4));
++  emit_move_insn (fp, fp_slot (SImode, 0));
++
++  if (sp_from_fp)
++    emit_jump_insn (gen_i860_return_reg (r31));
++  else
++    emit_jump_insn (gen_i860_return_adjust (GEN_INT (f.total)));
++}
++
++/* The word in front of each function: a nop that also carries the
++   prologue length for the SVR4 debugger.  */
++void
++i860_output_function_prefix (FILE *file, const char *name)
++{
++  fputs ("\t.long\t.ep.", file);
++  assemble_name (file, name);
++  fputs ("-", file);
++  assemble_name (file, name);
++  fputs ("+0xc8000000\n\tnop\n", file);
++}
++
++static void
++i860_function_end_prologue (FILE *file)
++{
++  const char *name = XSTR (XEXP (DECL_RTL (current_function_decl), 0), 0);
++
++  fputs (".ep.", file);
++  assemble_name (file, name);
++  fputs (":\n", file);
++}
++
++/* Argument passing.  */
++
++void
++i860_init_cumulative_args (CUMULATIVE_ARGS *cum, tree fntype)
++{
++  /* A structure return address occupies r16.  */
++  cum->ints = (fntype && aggregate_value_p (TREE_TYPE (fntype), fntype)
++	       ? UNITS_PER_WORD : 0);
++  cum->floats = 0;
++}
++
++enum i860_arg_class { ARG_MEM, ARG_INT, ARG_FP };
++
++static enum i860_arg_class
++i860_arg_class (machine_mode mode, const_tree type)
++{
++  if (type && AGGREGATE_TYPE_P (type))
++    return ARG_MEM;
++  if (GET_MODE_CLASS (mode) == MODE_FLOAT
++      || (mode == DImode && !I860_DIMODE_ARGS_IN_GPRS))
++    return ARG_FP;
++  if (GET_MODE_CLASS (mode) == MODE_INT)
++    return ARG_INT;
++  return ARG_MEM;
++}
++
++static rtx
++i860_function_arg (cumulative_args_t cum_v, const function_arg_info &arg)
++{
++  CUMULATIVE_ARGS *cum = get_cumulative_args (cum_v);
++  int size = GET_MODE_SIZE (arg.mode);
++  int off;
++
++  if (arg.end_marker_p ())
++    return NULL_RTX;
++
++  switch (i860_arg_class (arg.mode, arg.type))
++    {
++    case ARG_FP:
++      off = ROUND_UP (cum->floats, size);
++      if (off + size <= I860_NUM_FP_ARGS * UNITS_PER_WORD)
++	return gen_rtx_REG (arg.mode, I860_FIRST_FP_ARG + off / UNITS_PER_WORD);
++      break;
++    case ARG_INT:
++      /* integer register pairs are not aligned */
++      off = cum->ints;
++      if (off + size <= I860_NUM_INT_ARGS * UNITS_PER_WORD)
++	return gen_rtx_REG (arg.mode,
++			    I860_FIRST_INT_ARG + off / UNITS_PER_WORD);
++      break;
++    default:
++      break;
++    }
++  return NULL_RTX;
++}
++
++static void
++i860_function_arg_advance (cumulative_args_t cum_v,
++			   const function_arg_info &arg)
++{
++  CUMULATIVE_ARGS *cum = get_cumulative_args (cum_v);
++  int size = GET_MODE_SIZE (arg.mode);
++
++  switch (i860_arg_class (arg.mode, arg.type))
++    {
++    case ARG_FP:
++      cum->floats = ROUND_UP (cum->floats, size) + ROUND_UP (size, 4);
++      break;
++    case ARG_INT:
++      cum->ints += ROUND_UP (size, 4);
++      break;
++    default:
++      break;
++    }
++}
++
++static unsigned int
++i860_function_arg_boundary (machine_mode mode, const_tree type)
++{
++  unsigned int align = type ? TYPE_ALIGN (type) : GET_MODE_ALIGNMENT (mode);
++
++  return MIN (MAX (align, PARM_BOUNDARY), STACK_BOUNDARY);
++}
++
++static rtx
++i860_function_value (const_tree type, const_tree fn ATTRIBUTE_UNUSED,
++		     bool outgoing ATTRIBUTE_UNUSED)
++{
++  machine_mode mode = TYPE_MODE (type);
++
++  return gen_rtx_REG (mode, GET_MODE_CLASS (mode) == MODE_FLOAT
++			    ? I860_FIRST_FP_ARG : I860_FIRST_INT_ARG);
++}
++
++static rtx
++i860_libcall_value (machine_mode mode, const_rtx fun ATTRIBUTE_UNUSED)
++{
++  return gen_rtx_REG (mode, GET_MODE_CLASS (mode) == MODE_FLOAT
++			    ? I860_FIRST_FP_ARG : I860_FIRST_INT_ARG);
++}
++
++static bool
++i860_function_value_regno_p (const unsigned int regno)
++{
++  return regno == I860_FIRST_INT_ARG || regno == I860_FIRST_FP_ARG;
++}
++
++static rtx
++i860_struct_value_rtx (tree fntype ATTRIBUTE_UNUSED,
++		       int incoming ATTRIBUTE_UNUSED)
++{
++  return gen_rtx_REG (Pmode, I860_STRUCT_VALUE_REGNUM);
++}
++
++/* Varargs.  The SVR4 ABI va_list is
++
++	typedef struct {
++	    unsigned ireg_used;		integer registers consumed
++	    unsigned freg_used;		FP registers (words) consumed
++	    long *reg_base;		8 FP words, then 12 integer words
++	    long *mem_ptr;		next stack argument
++	} va_list;
++
++   The prologue of a stdarg function stores all argument registers in
++   the register save area right above the local variables.  */
++
++static void
++i860_setup_incoming_varargs (cumulative_args_t, const function_arg_info &,
++			     int *, int)
++{
++}
++
++static tree
++i860_build_builtin_va_list (void)
++{
++  tree record = lang_hooks.types.make_type (RECORD_TYPE);
++  tree type_decl = build_decl (BUILTINS_LOCATION, TYPE_DECL,
++			       get_identifier ("__va_list_tag"), record);
++  tree f_gpr = build_decl (BUILTINS_LOCATION, FIELD_DECL,
++			   get_identifier ("__ireg_used"), unsigned_type_node);
++  tree f_fpr = build_decl (BUILTINS_LOCATION, FIELD_DECL,
++			   get_identifier ("__freg_used"), unsigned_type_node);
++  tree f_sav = build_decl (BUILTINS_LOCATION, FIELD_DECL,
++			   get_identifier ("__reg_base"), ptr_type_node);
++  tree f_mem = build_decl (BUILTINS_LOCATION, FIELD_DECL,
++			   get_identifier ("__mem_ptr"), ptr_type_node);
++
++  DECL_FIELD_CONTEXT (f_gpr) = record;
++  DECL_FIELD_CONTEXT (f_fpr) = record;
++  DECL_FIELD_CONTEXT (f_sav) = record;
++  DECL_FIELD_CONTEXT (f_mem) = record;
++
++  TYPE_STUB_DECL (record) = type_decl;
++  TYPE_NAME (record) = type_decl;
++  TYPE_FIELDS (record) = f_gpr;
++  DECL_CHAIN (f_gpr) = f_fpr;
++  DECL_CHAIN (f_fpr) = f_sav;
++  DECL_CHAIN (f_sav) = f_mem;
++
++  layout_type (record);
++  return record;
++}
++
++static void
++i860_va_fields (tree valist, tree *gpr, tree *fpr, tree *sav, tree *mem)
++{
++  tree f_gpr = TYPE_FIELDS (va_list_type_node);
++  tree f_fpr = DECL_CHAIN (f_gpr);
++  tree f_sav = DECL_CHAIN (f_fpr);
++  tree f_mem = DECL_CHAIN (f_sav);
++
++  *gpr = build3 (COMPONENT_REF, TREE_TYPE (f_gpr), unshare_expr (valist),
++		 f_gpr, NULL_TREE);
++  *fpr = build3 (COMPONENT_REF, TREE_TYPE (f_fpr), unshare_expr (valist),
++		 f_fpr, NULL_TREE);
++  *sav = build3 (COMPONENT_REF, TREE_TYPE (f_sav), unshare_expr (valist),
++		 f_sav, NULL_TREE);
++  *mem = build3 (COMPONENT_REF, TREE_TYPE (f_mem), unshare_expr (valist),
++		 f_mem, NULL_TREE);
++}
++
++static void
++i860_va_assign (tree lhs, tree rhs)
++{
++  tree t = build2 (MODIFY_EXPR, TREE_TYPE (lhs), lhs, rhs);
++  TREE_SIDE_EFFECTS (t) = 1;
++  expand_expr (t, const0_rtx, VOIDmode, EXPAND_NORMAL);
++}
++
++static void
++i860_va_start (tree valist, rtx nextarg)
++{
++  tree gpr, fpr, sav, mem;
++
++  i860_va_fields (valist, &gpr, &fpr, &sav, &mem);
++  i860_va_assign (gpr, build_int_cst (TREE_TYPE (gpr),
++				      crtl->args.info.ints / UNITS_PER_WORD));
++  i860_va_assign (fpr, build_int_cst (TREE_TYPE (fpr),
++				      crtl->args.info.floats / UNITS_PER_WORD));
++  /* The save area sits right above the soft frame pointer.  */
++  i860_va_assign (sav, make_tree (TREE_TYPE (sav), virtual_stack_vars_rtx));
++  i860_va_assign (mem, make_tree (TREE_TYPE (mem), nextarg));
++}
++
++static tree
++i860_gimplify_va_arg_expr (tree valist, tree type, gimple_seq *pre_p,
++			   gimple_seq *post_p ATTRIBUTE_UNUSED)
++{
++  tree gpr, fpr, sav, mem, t;
++  machine_mode mode = TYPE_MODE (type);
++  HOST_WIDE_INT size = int_size_in_bytes (type);
++  enum i860_arg_class cls = i860_arg_class (mode, type);
++  tree addr = create_tmp_var (ptr_type_node, "va_addr");
++  tree lab_over = NULL_TREE;
++
++  i860_va_fields (valist, &gpr, &fpr, &sav, &mem);
++
++  if (cls != ARG_MEM && size > 0)
++    {
++      tree reg = cls == ARG_FP ? fpr : gpr;
++      HOST_WIDE_INT nregs = CEIL (size, UNITS_PER_WORD);
++      HOST_WIDE_INT limit = cls == ARG_FP ? I860_NUM_FP_ARGS
++					   : I860_NUM_INT_ARGS;
++      HOST_WIDE_INT base = cls == ARG_FP ? 0
++					  : I860_NUM_FP_ARGS * UNITS_PER_WORD;
++      tree utype = TREE_TYPE (reg);
++      tree lab_mem = create_artificial_label (UNKNOWN_LOCATION);
++
++      lab_over = create_artificial_label (UNKNOWN_LOCATION);
++
++      /* FP register pairs start at an even register, as in function_arg.  */
++      if (nregs > 1 && cls == ARG_FP)
++	{
++	  t = build2 (PLUS_EXPR, utype, reg, build_int_cst (utype, nregs - 1));
++	  t = build2 (BIT_AND_EXPR, utype, t, build_int_cst (utype, -nregs));
++	  gimplify_assign (unshare_expr (reg), t, pre_p);
++	}
++
++      t = build2 (GT_EXPR, boolean_type_node, unshare_expr (reg),
++		  build_int_cst (utype, limit - nregs));
++      t = build3 (COND_EXPR, void_type_node, t,
++		  build1 (GOTO_EXPR, void_type_node, lab_mem), NULL_TREE);
++      gimplify_and_add (t, pre_p);
++
++      t = fold_convert (sizetype, unshare_expr (reg));
++      t = size_binop (MULT_EXPR, t, size_int (UNITS_PER_WORD));
++      t = size_binop (PLUS_EXPR, t, size_int (base));
++      t = fold_build_pointer_plus (unshare_expr (sav), t);
++      gimplify_assign (addr, t, pre_p);
++
++      t = build2 (PLUS_EXPR, utype, unshare_expr (reg),
++		  build_int_cst (utype, nregs));
++      gimplify_assign (unshare_expr (reg), t, pre_p);
++      gimple_seq_add_stmt (pre_p, gimple_build_goto (lab_over));
++      gimple_seq_add_stmt (pre_p, gimple_build_label (lab_mem));
++
++      /* Once in memory, later arguments of this class follow there.  */
++      t = build2 (PLUS_EXPR, utype, unshare_expr (reg),
++		  build_int_cst (utype, nregs));
++      gimplify_assign (unshare_expr (reg), t, pre_p);
++    }
++
++  /* Stack argument, aligned like function_arg_boundary.  */
++  HOST_WIDE_INT align = i860_function_arg_boundary (mode, type)
++			/ BITS_PER_UNIT;
++  t = unshare_expr (mem);
++  if (align > UNITS_PER_WORD)
++    {
++      t = fold_build_pointer_plus_hwi (t, align - 1);
++      t = build2 (BIT_AND_EXPR, TREE_TYPE (mem), t,
++		  build_int_cst (TREE_TYPE (mem), -align));
++    }
++  gimplify_assign (addr, t, pre_p);
++  t = fold_build_pointer_plus_hwi (addr, ROUND_UP (size, UNITS_PER_WORD));
++  gimplify_assign (unshare_expr (mem), t, pre_p);
++
++  if (lab_over)
++    gimple_seq_add_stmt (pre_p, gimple_build_label (lab_over));
++
++  addr = fold_convert (build_pointer_type (type), addr);
++  return build_va_arg_indirect_ref (addr);
++}
++
++/* Addressing.  Valid addresses are reg, reg + 16-bit offset suitably
++   aligned for the access, and constant addresses (output through r31).
++   reg + reg is valid for loads only, see indexed_memory_operand.  */
++
++static bool
++i860_base_reg_p (rtx x, bool strict)
++{
++  if (!REG_P (x))
++    return false;
++  unsigned int regno = REGNO (x);
++  if (strict)
++    return REGNO_OK_FOR_BASE_P (regno);
++  return regno >= FIRST_PSEUDO_REGISTER || I860_BASE_HARD_REGNO_P (regno);
++}
++
++/* True for an address only known at link time.  */
++bool
++i860_symbolic_p (rtx x)
++{
++  return (GET_CODE (x) == SYMBOL_REF || GET_CODE (x) == LABEL_REF
++	  || GET_CODE (x) == CONST);
++}
++
++#ifdef I860_THREAD_POINTER_REGNUM
++#define I860_TP_REGNUM I860_THREAD_POINTER_REGNUM
++#else
++#define I860_TP_REGNUM 30	/* never reached: this target has no TLS */
++#endif
++
++/* True for the address of a thread local symbol, plus maybe an offset.  */
++static bool
++i860_tls_address_p (rtx x)
++{
++  rtx sym, off;
++
++  if (!i860_symbolic_p (x))
++    return false;
++  split_const (x, &sym, &off);
++  return GET_CODE (sym) == SYMBOL_REF && SYMBOL_REF_TLS_MODEL (sym) != TLS_MODEL_NONE;
++}
++
++static bool
++i860_constant_address_p (rtx x)
++{
++  return CONST_INT_P (x)
++	 || (!flag_pic && i860_symbolic_p (x) && !i860_tls_address_p (x));
++}
++
++static bool
++i860_legitimate_constant_p (machine_mode mode ATTRIBUTE_UNUSED, rtx x)
++{
++  return (!flag_pic || !i860_symbolic_p (x)) && !i860_tls_address_p (x);
++}
++
++static bool
++i860_cannot_force_const_mem (machine_mode mode ATTRIBUTE_UNUSED, rtx x)
++{
++  return (flag_pic && i860_symbolic_p (x)) || i860_tls_address_p (x);
++}
++
++/* The address of the thread local X in a new register.  Local dynamic is plain
++   general dynamic; non-PIC code has no r15 and does not need general dynamic.  */
++static rtx
++i860_legitimize_tls_address (rtx x)
++{
++  rtx sym, off_rtx, dest = gen_reg_rtx (Pmode), tmp;
++  HOST_WIDE_INT off;
++  enum tls_model model;
++
++  split_const (x, &sym, &off_rtx);
++  off = INTVAL (off_rtx);
++  model = SYMBOL_REF_TLS_MODEL (sym);
++  if (model == TLS_MODEL_LOCAL_DYNAMIC)
++    model = TLS_MODEL_GLOBAL_DYNAMIC;
++  if (!flag_pic && model == TLS_MODEL_GLOBAL_DYNAMIC)
++    model = TLS_MODEL_INITIAL_EXEC;
++
++  switch (model)
++    {
++    case TLS_MODEL_GLOBAL_DYNAMIC:
++      tmp = gen_reg_rtx (Pmode);
++      crtl->uses_pic_offset_table = 1;
++      emit_insn (gen_i860_tls_gd (tmp, sym));
++      tmp = emit_library_call_value (init_one_libfunc ("__tls_get_addr"),
++				     NULL_RTX, LCT_NORMAL, Pmode, tmp, Pmode);
++      emit_move_insn (dest, tmp);
++      break;
++
++    case TLS_MODEL_INITIAL_EXEC:
++      tmp = gen_reg_rtx (Pmode);
++      if (flag_pic)
++	{
++	  crtl->uses_pic_offset_table = 1;
++	  emit_insn (gen_i860_tls_ie (tmp, sym));
++	}
++      else
++	emit_insn (gen_i860_tls_ie_abs (tmp, sym));
++      emit_insn (gen_addsi3 (dest, tmp, gen_rtx_REG (Pmode, I860_TP_REGNUM)));
++      break;
++
++    case TLS_MODEL_LOCAL_EXEC:
++      emit_insn (gen_i860_tls_le (dest, sym));
++      break;
++
++    default:
++      gcc_unreachable ();
++    }
++
++  if (off != 0)
++    {
++      tmp = expand_simple_binop (Pmode, PLUS, dest, GEN_INT (off), dest, 0,
++				 OPTAB_LIB_WIDEN);
++      if (tmp != dest)
++	emit_move_insn (dest, tmp);
++    }
++  return dest;
++}
++
++/* Load the symbolic address X into REG, or a new register: through a GOT
++   offset if it binds locally, else from its GOT entry.  */
++rtx
++i860_legitimize_pic_address (rtx x, rtx reg)
++{
++  rtx sym, off_rtx;
++  HOST_WIDE_INT off;
++
++  if (reg == NULL_RTX)
++    reg = gen_reg_rtx (Pmode);
++  split_const (x, &sym, &off_rtx);
++  off = INTVAL (off_rtx);
++
++  crtl->uses_pic_offset_table = 1;
++  if (GET_CODE (sym) == LABEL_REF || SYMBOL_REF_LOCAL_P (sym))
++    emit_insn (gen_i860_load_gotoff (reg, x));
++  else
++    {
++      emit_insn (gen_i860_load_got (reg, sym));
++      if (off != 0)
++	{
++	  rtx t = expand_simple_binop (Pmode, PLUS, reg, GEN_INT (off), reg,
++				       0, OPTAB_LIB_WIDEN);
++	  if (t != reg)
++	    emit_move_insn (reg, t);
++	}
++    }
++  return reg;
++}
++
++static bool
++i860_legitimate_address_p (machine_mode mode, rtx x, bool strict,
++			   code_helper = ERROR_MARK)
++{
++  HOST_WIDE_INT size = GET_MODE_SIZE (mode);
++
++  if (i860_base_reg_p (x, strict))
++    return true;
++  if (GET_CODE (x) == PLUS && i860_base_reg_p (XEXP (x, 0), strict)
++      && CONST_INT_P (XEXP (x, 1)))
++    {
++      HOST_WIDE_INT d = INTVAL (XEXP (x, 1));
++      HOST_WIDE_INT unit = size <= 0 ? 1 : MIN (size, UNITS_PER_WORD);
++      HOST_WIDE_INT last = d + MAX (size, 1) - unit;
++
++      return (d % unit) == 0 && IN_RANGE (d, -0x8000, 0x7fff)
++	     && IN_RANGE (last, -0x8000, 0x7fff);
++    }
++  return i860_constant_address_p (x);
++}
++
++bool
++i860_indexed_address_p (rtx x, bool strict)
++{
++  return (GET_CODE (x) == PLUS && i860_base_reg_p (XEXP (x, 0), strict)
++	  && i860_base_reg_p (XEXP (x, 1), strict));
++}
++
++bool
++i860_mem_aligned8_p (rtx mem)
++{
++  return MEM_ALIGN (mem) >= 64;
++}
++
++/* Addresses accepted by the "Q" constraint.  */
++bool
++i860_q_address_p (rtx x, machine_mode mode)
++{
++  /* Non-strict: LRA assigns base registers to the address pseudos.  */
++  if (i860_indexed_address_p (x, false))
++    return true;
++  return (!i860_constant_address_p (x)
++	  && i860_legitimate_address_p (mode, x, false));
++}
++
++/* Call targets: a symbol or an integer register.  STRICT rejects pseudos
++   not (yet) allocated to one, so LRA reloads them into GENERAL_REGS.  */
++bool
++i860_call_address_p (rtx x, bool strict)
++{
++  if (GET_CODE (x) == SYMBOL_REF)
++    return true;
++  if (!REG_P (x))
++    return false;
++  if (HARD_REGISTER_P (x))
++    return GP_REGNO_P (REGNO (x));
++  return !strict || (reg_renumber && GP_REGNO_P (reg_renumber[REGNO (x)]));
++}
++
++static rtx
++i860_legitimize_address (rtx x, rtx oldx ATTRIBUTE_UNUSED, machine_mode mode)
++{
++  if (i860_tls_address_p (x))
++    return i860_legitimize_tls_address (x);
++  if (flag_pic && i860_symbolic_p (x))
++    return i860_legitimize_pic_address (x, NULL_RTX);
++  if (GET_CODE (x) == PLUS)
++    {
++      rtx a = XEXP (x, 0), b = XEXP (x, 1);
++
++      if (!REG_P (a))
++	a = force_reg (Pmode, a);
++      if (!REG_P (b) && !CONST_INT_P (b))
++	b = force_reg (Pmode, b);
++      x = gen_rtx_PLUS (Pmode, a, b);
++      if (!i860_legitimate_address_p (mode, x, false))
++	x = force_reg (Pmode, x);
++    }
++  return x;
++}
++
++/* Division: the Newton-Raphson pattern, and libgcc for what it gets wrong.  */
++void
++i860_expand_fdiv (machine_mode mode, rtx *operands)
++{
++  rtx res = gen_reg_rtx (mode);
++  rtx_code_label *done = gen_label_rtx ();
++  rtx val;
++
++  emit_insn (mode == DFmode
++	     ? gen_i860_divdf3 (res, operands[1], operands[2])
++	     : gen_i860_divsf3 (res, operands[1], operands[2]));
++  if (HONOR_NANS (mode) || HONOR_INFINITIES (mode))
++    {
++      emit_cmp_and_jump_insns (res, res, EQ, NULL_RTX, mode, 0, done);
++      val = emit_library_call_value
++	(init_one_libfunc (mode == DFmode ? "__i860_fdiv_special"
++					  : "__i860_fdivs_special"),
++	 res, LCT_CONST, mode, operands[1], mode, operands[2], mode);
++      if (val != res)
++	emit_move_insn (res, val);
++      emit_label (done);
++    }
++  emit_move_insn (operands[0], res);
++}
++
++/* Registers and modes.  */
++
++/* 0: not in FP registers, otherwise the unit size in words.  */
++static int
++i860_fp_unit_words (machine_mode mode)
++{
++  enum mode_class cls = GET_MODE_CLASS (mode);
++
++  if (cls != MODE_FLOAT && cls != MODE_INT && cls != MODE_COMPLEX_FLOAT)
++    return 0;
++  int unit = GET_MODE_UNIT_SIZE (mode);
++  if ((unit != 4 && unit != 8) || GET_MODE_SIZE (mode) > 16)
++    return 0;
++  return unit / UNITS_PER_WORD;
++}
++
++static bool
++i860_hard_regno_mode_ok (unsigned int regno, machine_mode mode)
++{
++  unsigned int nregs = CEIL (GET_MODE_SIZE (mode), UNITS_PER_WORD);
++
++  if (regno == ARG_POINTER_REGNUM || regno == FRAME_POINTER_REGNUM)
++    return mode == Pmode;
++  if (GP_REGNO_P (regno))
++    return regno + nregs <= 32;
++  int unit = i860_fp_unit_words (mode);
++  return (unit != 0 && (regno - 32) % unit == 0 && regno + nregs <= 64);
++}
++
++static bool
++i860_modes_tieable_p (machine_mode mode1, machine_mode mode2)
++{
++  return (mode1 == mode2 || GET_MODE_CLASS (mode1) == GET_MODE_CLASS (mode2));
++}
++
++static bool
++i860_can_change_mode_class (machine_mode from, machine_mode to,
++			    reg_class_t rclass)
++{
++  if (reg_classes_intersect_p (rclass, FP_REGS)
++      && GET_MODE_SIZE (from) != GET_MODE_SIZE (to))
++    return i860_fp_unit_words (from) && i860_fp_unit_words (to);
++  return true;
++}
++
++static reg_class_t
++i860_preferred_reload_class (rtx x, reg_class_t rclass)
++{
++  machine_mode mode = GET_MODE (x);
++
++  if (rclass == ALL_REGS
++      && (CONST_INT_P (x) || mode == QImode || mode == HImode))
++    return GENERAL_REGS;
++  if (CONST_DOUBLE_P (x) && x != CONST0_RTX (mode))
++    {
++      if (rclass == FP_REGS)
++	return NO_REGS;
++      if (rclass == ALL_REGS)
++	return GENERAL_REGS;
++    }
++  return rclass;
++}
++
++static int
++i860_register_move_cost (machine_mode mode ATTRIBUTE_UNUSED,
++			 reg_class_t from, reg_class_t to)
++{
++  if ((from == FP_REGS) != (to == FP_REGS))
++    return 4;
++  return 2;
++}
++
++/* Moves.  */
++
++void
++i860_expand_move (machine_mode mode, rtx *operands)
++{
++  for (int i = 0; i < 2; i++)
++    if (MEM_P (operands[i]) && i860_tls_address_p (XEXP (operands[i], 0)))
++      operands[i]
++	= replace_equiv_address (operands[i],
++				 i860_legitimize_tls_address (XEXP (operands[i], 0)));
++  if (i860_tls_address_p (operands[1]))
++    operands[1] = i860_legitimize_tls_address (operands[1]);
++
++  if (flag_pic)
++    {
++      for (int i = 0; i < 2; i++)
++	if (MEM_P (operands[i]) && i860_symbolic_p (XEXP (operands[i], 0)))
++	  operands[i]
++	    = replace_equiv_address (operands[i],
++				     i860_legitimize_pic_address
++				       (XEXP (operands[i], 0), NULL_RTX));
++      if (i860_symbolic_p (operands[1]))
++	operands[1]
++	  = i860_legitimize_pic_address (operands[1],
++					 (can_create_pseudo_p ()
++					  || !REG_P (operands[0])
++					  ? NULL_RTX : operands[0]));
++    }
++  if (MEM_P (operands[0]) && !reg_or_0_operand (operands[1], mode))
++    operands[1] = force_reg (mode, operands[1]);
++}
++
++static const char *
++i860_load_mnemonic (machine_mode mode, rtx reg)
++{
++  switch (GET_MODE_SIZE (mode))
++    {
++    case 1:
++      return "ld.b";
++    case 2:
++      return "ld.s";
++    case 4:
++      return FP_REG_P (reg) ? "fld.l" : "ld.l";
++    default:
++      gcc_unreachable ();
++    }
++}
++
++static const char *
++i860_store_mnemonic (machine_mode mode, rtx reg)
++{
++  switch (GET_MODE_SIZE (mode))
++    {
++    case 1:
++      return "st.b";
++    case 2:
++      return "st.s";
++    case 4:
++      return FP_REG_P (reg) ? "fst.l" : "st.l";
++    default:
++      gcc_unreachable ();
++    }
++}
++
++static char i860_template[128];
++
++/* Length of a load or store of a register: a constant address takes an
++   extra orh.  */
++int
++i860_mem_move_length (rtx *operands)
++{
++  rtx mem = MEM_P (operands[0]) ? operands[0] : operands[1];
++
++  return MEM_P (mem) && i860_constant_address_p (XEXP (mem, 0)) ? 8 : 4;
++}
++
++/* Load operands[1] (a MEM) into operands[0].  */
++const char *
++i860_output_load (rtx *operands)
++{
++  rtx mem = operands[1];
++  const char *op = i860_load_mnemonic (GET_MODE (mem), operands[0]);
++
++  if (i860_constant_address_p (XEXP (mem, 0)))
++    {
++      output_asm_insn ("orh %h1,%?r0,%?r31", operands);
++      snprintf (i860_template, sizeof i860_template,
++		"%s %%S1(%%?r31),%%0", op);
++    }
++  else
++    snprintf (i860_template, sizeof i860_template, "%s %%1,%%0", op);
++  return i860_template;
++}
++
++/* Store operands[1] (a register or zero) into operands[0] (a MEM).  */
++const char *
++i860_output_store (rtx *operands)
++{
++  rtx mem = operands[0];
++  const char *op = i860_store_mnemonic (GET_MODE (mem), operands[1]);
++
++  if (i860_constant_address_p (XEXP (mem, 0)))
++    {
++      output_asm_insn ("orh %h0,%?r0,%?r31", operands);
++      snprintf (i860_template, sizeof i860_template,
++		"%s %%r1,%%S0(%%?r31)", op);
++    }
++  else
++    snprintf (i860_template, sizeof i860_template, "%s %%r1,%%0", op);
++  return i860_template;
++}
++
++/* MEM with an address REG or REG + constant, with REG holding the address
++   of SYM: return it with the address replaced by the GOT offset form.  */
++rtx
++i860_gotoff_mem (rtx mem, rtx reg, rtx sym)
++{
++  rtx addr = XEXP (mem, 0);
++  HOST_WIDE_INT off = 0;
++
++  if (GET_CODE (addr) == PLUS && CONST_INT_P (XEXP (addr, 1)))
++    {
++      off = INTVAL (XEXP (addr, 1));
++      addr = XEXP (addr, 0);
++    }
++  if (!rtx_equal_p (addr, reg))
++    return NULL_RTX;
++
++  rtx pic = gen_rtx_REG (Pmode, I860_PIC_REGNUM);
++  rtvec vec = gen_rtvec (2, plus_constant (Pmode, sym, off), pic);
++
++  return replace_equiv_address_nv (mem, gen_rtx_UNSPEC (Pmode, vec,
++							UNSPEC_GOTOFF));
++}
++
++/* Output a *gotoff_load or *gotoff_store.  r31 holds the upper address.  */
++const char *
++i860_output_gotoff_access (rtx *operands, bool load)
++{
++  rtx mem = operands[load ? 1 : 0];
++  rtx xops[2] = { operands[load ? 0 : 1], XVECEXP (XEXP (mem, 0), 0, 0) };
++
++  output_asm_insn ("orh [%G1]@gotoff@ha,%?r0,%?r31\n\t"
++		   "addu %?r15,%?r31,%?r31", xops);
++  if (load)
++    snprintf (i860_template, sizeof i860_template,
++	      "%s [%%G1]@gotoff@l(%%?r31),%%0",
++	      i860_load_mnemonic (GET_MODE (mem), xops[0]));
++  else
++    snprintf (i860_template, sizeof i860_template,
++	      "%s %%r0,[%%G1]@gotoff@l(%%?r31)",
++	      i860_store_mnemonic (GET_MODE (mem), xops[0]));
++  output_asm_insn (i860_template, xops);
++  return "";
++}
++
++/* Load and extend; POST is applied to the loaded register.  */
++const char *
++i860_output_load_ext (rtx *operands, const char *post)
++{
++  output_asm_insn (i860_output_load (operands), operands);
++  return post ? post : "";
++}
++
++const char *
++i860_output_sf_const (rtx *operands)
++{
++  long l;
++
++  REAL_VALUE_TO_TARGET_SINGLE (*CONST_DOUBLE_REAL_VALUE (operands[1]), l);
++  operands[2] = gen_int_mode (l, SImode);
++  if ((l & 0xffff) == 0)
++    return "orh %H2,%?r0,%0";
++  if ((l & 0xffff0000) == 0)
++    return "or %L2,%?r0,%0";
++  return "orh %H2,%?r0,%0\n\tor %L2,%0,%0";
++}
++
++/* Move the SImode constant SRC into register DST.  */
++static void
++i860_output_const_word (rtx dst, rtx src)
++{
++  rtx xops[2] = { dst, src };
++  HOST_WIDE_INT v = INTVAL (src);
++
++  if (satisfies_constraint_I (src))
++    output_asm_insn ("adds %1,%?r0,%0", xops);
++  else if (satisfies_constraint_L (src))
++    output_asm_insn ("or %L1,%?r0,%0", xops);
++  else if ((v & 0xffff) == 0)
++    output_asm_insn ("orh %H1,%?r0,%0", xops);
++  else
++    output_asm_insn ("orh %H1,%?r0,%0\n\tor %L1,%0,%0", xops);
++}
++
++/* Put the address of MEM into r31 and return the r31 based MEMs for both
++   words.  */
++static void
++i860_r31_address (rtx mem, rtx *lo, rtx *hi)
++{
++  rtx r31 = gen_rtx_REG (SImode, I860_TEMP_REGNUM);
++  rtx xops[1] = { XEXP (mem, 0) };
++
++  output_asm_insn ("orh %H0,%?r0,%?r31\n\tor %L0,%?r31,%?r31", xops);
++  *lo = gen_rtx_MEM (SImode, r31);
++  *hi = gen_rtx_MEM (SImode, plus_constant (SImode, r31, 4));
++}
++
++static void
++i860_word_mems (rtx mem, rtx *lo, rtx *hi)
++{
++  if (i860_constant_address_p (XEXP (mem, 0)))
++    i860_r31_address (mem, lo, hi);
++  else
++    {
++      *lo = adjust_address_nv (mem, SImode, 0);
++      *hi = adjust_address_nv (mem, SImode, 4);
++    }
++}
++
++/* True if fld.d/fst.d can access MEM.  */
++static bool
++i860_fp_double_aligned_p (rtx mem)
++{
++  rtx addr = XEXP (mem, 0);
++
++  if (GET_CODE (addr) == PLUS && CONST_INT_P (XEXP (addr, 1))
++      && (INTVAL (XEXP (addr, 1)) & 7) != 0)
++    return false;
++  return MEM_ALIGN (mem) >= 64;
++}
++
++/* FP register pair to or from memory: fld.d/fst.d when the address is
++   known to be 8-byte aligned, two word accesses otherwise.  */
++static const char *
++i860_output_fp_double_mem (rtx reg, rtx mem, bool load)
++{
++  rtx addr = XEXP (mem, 0);
++  rtx xops[3];
++
++  xops[0] = reg;
++  xops[1] = mem;
++  if (i860_fp_double_aligned_p (mem))
++    {
++      if (i860_constant_address_p (addr))
++	{
++	  output_asm_insn ("orh %h1,%?r0,%?r31", xops);
++	  output_asm_insn (load ? "fld.d %S1(%?r31),%0" : "fst.d %0,%S1(%?r31)",
++			   xops);
++	}
++      else
++	output_asm_insn (load ? "fld.d %1,%0" : "fst.d %0,%1", xops);
++      return "";
++    }
++
++  rtx lo, hi;
++  i860_word_mems (mem, &lo, &hi);
++  xops[1] = lo;
++  xops[2] = hi;
++  output_asm_insn (load ? "fld.l %1,%0\n\tfld.l %2,%R0"
++			: "fst.l %0,%1\n\tfst.l %R0,%2", xops);
++  return "";
++}
++
++/* Exact where it is one instruction, otherwise an upper bound.  */
++int
++i860_move_double_length (rtx *operands)
++{
++  rtx dst = operands[0], src = operands[1];
++
++  /* fmov.dd from a register or f0 */
++  if (FP_REG_P (dst) && (FP_REG_P (src) || !(REG_P (src) || MEM_P (src))))
++    return 4;
++  if (FP_REG_P (dst) || FP_REG_P (src))
++    {
++      rtx mem = MEM_P (dst) ? dst : src;
++
++      if (!MEM_P (mem))
++	return 8;
++      if (i860_fp_double_aligned_p (mem)
++	  && !i860_constant_address_p (XEXP (mem, 0)))
++	return 4;
++    }
++  return 16;
++}
++
++const char *
++i860_output_move_double (rtx *operands)
++{
++  rtx dst = operands[0], src = operands[1];
++
++  if (FP_REG_P (dst))
++    {
++      if (FP_REG_P (src))
++	return "fmov.dd %1,%0";
++      if (REG_P (src))
++	return "ixfr %1,%0\n\tixfr %R1,%R0";
++      if (MEM_P (src))
++	return i860_output_fp_double_mem (dst, src, true);
++      return "fmov.dd %?f0,%0";
++    }
++
++  if (FP_REG_P (src))
++    {
++      if (REG_P (dst))
++	return "fxfr %1,%0\n\tfxfr %R1,%R0";
++      return i860_output_fp_double_mem (src, dst, false);
++    }
++
++  if (REG_P (dst))
++    {
++      rtx dlo = gen_rtx_REG (SImode, REGNO (dst));
++      rtx dhi = gen_rtx_REG (SImode, REGNO (dst) + 1);
++
++      if (REG_P (src))
++	{
++	  if (REGNO (dst) == REGNO (src) + 1)
++	    return "mov %R1,%R0\n\tmov %1,%0";
++	  return "mov %1,%0\n\tmov %R1,%R0";
++	}
++      if (MEM_P (src))
++	{
++	  rtx lo, hi, xops[4];
++
++	  i860_word_mems (src, &lo, &hi);
++	  xops[0] = dlo;
++	  xops[1] = dhi;
++	  xops[2] = lo;
++	  xops[3] = hi;
++	  if (reg_overlap_mentioned_p (dlo, XEXP (lo, 0)))
++	    output_asm_insn ("ld.l %3,%1\n\tld.l %2,%0", xops);
++	  else
++	    output_asm_insn ("ld.l %2,%0\n\tld.l %3,%1", xops);
++	  return "";
++	}
++
++      rtx lo, hi;
++      split_double (src, &lo, &hi);
++      i860_output_const_word (dlo, gen_int_mode (INTVAL (lo), SImode));
++      i860_output_const_word (dhi, gen_int_mode (INTVAL (hi), SImode));
++      return "";
++    }
++
++  /* Store of a GPR pair or zero.  */
++  rtx lo, hi, xops[3];
++  i860_word_mems (dst, &lo, &hi);
++  xops[0] = lo;
++  xops[1] = hi;
++  xops[2] = src;
++  if (REG_P (src))
++    output_asm_insn ("st.l %2,%0\n\tst.l %R2,%1", xops);
++  else
++    output_asm_insn ("st.l %?r0,%0\n\tst.l %?r0,%1", xops);
++  return "";
++}
++
++/* Length of i860_output_logic.  */
++int
++i860_logic_length (enum rtx_code code, rtx *operands)
++{
++  if (!CONST_INT_P (operands[2]))
++    return 4;
++
++  unsigned HOST_WIDE_INT u = UINTVAL (operands[2]) & 0xffffffff;
++  unsigned HOST_WIDE_INT n = ~u & 0xffffffff;
++
++  if ((u >> 16) == 0 || (u & 0xffff) == 0)
++    return 4;
++  if (code == AND && ((n >> 16) == 0 || (n & 0xffff) == 0))
++    return 4;
++  return 8;
++}
++
++/* and/ior/xor with a register or any constant.  */
++const char *
++i860_output_logic (enum rtx_code code, rtx *operands)
++{
++  static const char *const ops[3][2] = {
++    { "and", "andh" }, { "or", "orh" }, { "xor", "xorh" }
++  };
++  int k = code == AND ? 0 : code == IOR ? 1 : 2;
++  char buf[96];
++
++  if (!CONST_INT_P (operands[2]))
++    {
++      snprintf (i860_template, sizeof i860_template, "%s %%2,%%1,%%0",
++		ops[k][0]);
++      return i860_template;
++    }
++
++  unsigned HOST_WIDE_INT u = UINTVAL (operands[2]) & 0xffffffff;
++  rtx xops[4] = { operands[0], operands[1], GEN_INT (u & 0xffff),
++		  GEN_INT (u >> 16) };
++
++  if (code == AND)
++    {
++      /* andnot/andnoth clear the bits set in the inverted mask.  */
++      unsigned HOST_WIDE_INT n = ~u & 0xffffffff;
++      const char *tmpl;
++
++      if ((u >> 16) == 0)
++	tmpl = "and %2,%1,%0";
++      else if ((u & 0xffff) == 0)
++	tmpl = "andh %3,%1,%0";
++      else
++	{
++	  xops[2] = GEN_INT (n & 0xffff);
++	  xops[3] = GEN_INT (n >> 16);
++	  if ((n >> 16) == 0)
++	    tmpl = "andnot %2,%1,%0";
++	  else if ((n & 0xffff) == 0)
++	    tmpl = "andnoth %3,%1,%0";
++	  else
++	    tmpl = "andnot %2,%1,%0\n\tandnoth %3,%0,%0";
++	}
++      output_asm_insn (tmpl, xops);
++      return "";
++    }
++
++  if ((u >> 16) == 0)
++    snprintf (buf, sizeof buf, "%s %%2,%%1,%%0", ops[k][0]);
++  else if ((u & 0xffff) == 0)
++    snprintf (buf, sizeof buf, "%s %%3,%%1,%%0", ops[k][1]);
++  else
++    snprintf (buf, sizeof buf, "%s %%2,%%1,%%0\n\t%s %%3,%%0,%%0",
++	      ops[k][0], ops[k][1]);
++  output_asm_insn (buf, xops);
++  return "";
++}
++
++/* Compare and branch.  */
++
++bool
++i860_cbranch_operand_p (enum rtx_code code, rtx op)
++{
++  if (!CONST_INT_P (op))
++    return register_operand (op, SImode);
++  if (code == EQ || code == NE)
++    return satisfies_constraint_L (op);
++  return satisfies_constraint_I (op);
++}
++
++/* Length of a compare and branch that is not in the bte form.  */
++int
++i860_cbranch_length (rtx *operands, bool reversed)
++{
++  enum rtx_code code = GET_CODE (operands[0]);
++
++  if (reversed)
++    code = reverse_condition (code);
++  if (CONST_INT_P (operands[2]) && !i860_cbranch_operand_p (code, operands[2]))
++    return 16;
++  return 8;
++}
++
++bool
++i860_bte_form_p (rtx *operands)
++{
++  enum rtx_code code = GET_CODE (operands[0]);
++
++  return ((code == EQ || code == NE)
++	  && (REG_P (operands[2]) || satisfies_constraint_K (operands[2])));
++}
++
++const char *
++i860_output_cbranch (rtx_insn *insn, rtx *operands, bool reversed)
++{
++  enum rtx_code code = GET_CODE (operands[0]);
++  bool is_const = CONST_INT_P (operands[2]);
++  bool set;			/* branch when CC is set */
++
++  if (reversed)
++    code = reverse_condition (code);
++
++  if (i860_bte_form_p (operands) && get_attr_length (insn) == 4)
++    return code == EQ ? "bte %2,%1,%l3" : "btne %2,%1,%l3";
++
++  /* Constants the compare cannot encode go through r31 (see the length).  */
++  if (is_const && !i860_cbranch_operand_p (code, operands[2]))
++    {
++      rtx xops[2] = { gen_rtx_REG (SImode, I860_TEMP_REGNUM), operands[2] };
++
++      output_asm_insn ("orh %H1,%?r0,%0\n\tor %L1,%0,%0", xops);
++      operands[2] = xops[0];
++      is_const = false;
++    }
++
++  switch (code)
++    {
++    case EQ:
++    case NE:
++      output_asm_insn ("xor %2,%1,%?r0", operands);
++      set = code == EQ;
++      break;
++    case LT:
++    case GE:
++      output_asm_insn (is_const ? "adds %n2,%1,%?r0" : "subs %1,%2,%?r0",
++		       operands);
++      set = code == LT;
++      break;
++    case GT:
++    case LE:
++      output_asm_insn ("subs %2,%1,%?r0", operands);
++      set = code == GT;
++      break;
++    case GEU:
++    case LTU:
++      if (!is_const)
++	output_asm_insn ("subu %1,%2,%?r0", operands);
++      else if (INTVAL (operands[2]) == 0)
++	output_asm_insn ("subu %1,%?r0,%?r0", operands);
++      else
++	output_asm_insn ("addu %n2,%1,%?r0", operands);
++      set = code == GEU;
++      break;
++    case LEU:
++    case GTU:
++      output_asm_insn ("subu %2,%1,%?r0", operands);
++      set = code == LEU;
++      break;
++    default:
++      gcc_unreachable ();
++    }
++  return set ? "bc%* %l3" : "bnc%* %l3";
++}
++
++const char *
++i860_output_bit_cbranch (rtx *operands, bool reversed)
++{
++  enum rtx_code code = GET_CODE (operands[0]);
++
++  if (reversed)
++    code = reverse_condition (code);
++  if (CONST_INT_P (operands[2]) && !satisfies_constraint_L (operands[2]))
++    output_asm_insn ("andh %H2,%1,%?r0", operands);
++  else
++    output_asm_insn ("and %2,%1,%?r0", operands);
++  return code == EQ ? "bc%* %l3" : "bnc%* %l3";
++}
++
++/* pfgt sets CC if a > b, pfle clears CC if a <= b, pfeq sets CC if
++   a == b; unordered operands clear the pfgt/pfeq result and set the
++   pfle one.  */
++const char *
++i860_output_fp_cbranch (rtx *operands, machine_mode mode, bool reversed)
++{
++  enum rtx_code code = GET_CODE (operands[0]);
++  const char *s = mode == SFmode ? "ss" : "dd";
++  char buf[160];
++
++  if (reversed)
++    code = reverse_condition_maybe_unordered (code);
++
++#define FCMP(OP, A, B, BR)						\
++  snprintf (buf, sizeof buf, "pf" OP ".%s %%z" A ",%%z" B ",%%?f0\n\t"	\
++	    BR "%%* %%l3", s)
++
++  switch (code)
++    {
++    case EQ:	FCMP ("eq", "1", "2", "bc"); break;
++    case NE:	FCMP ("eq", "1", "2", "bnc"); break;
++    case GT:	FCMP ("gt", "1", "2", "bc"); break;
++    case LT:	FCMP ("gt", "2", "1", "bc"); break;
++    case LE:	FCMP ("le", "1", "2", "bnc"); break;
++    case GE:	FCMP ("le", "2", "1", "bnc"); break;
++    case UNGT:	FCMP ("le", "1", "2", "bc"); break;
++    case UNLT:	FCMP ("le", "2", "1", "bc"); break;
++    case UNLE:	FCMP ("gt", "1", "2", "bnc"); break;
++    case UNGE:	FCMP ("gt", "2", "1", "bnc"); break;
++    case UNORDERED:
++      snprintf (buf, sizeof buf, "pfeq.%s %%z1,%%z1,%%?f0\n\tbnc %%l3\n\t"
++		"pfeq.%s %%z2,%%z2,%%?f0\n\tbnc %%l3", s, s);
++      break;
++    case ORDERED:
++      snprintf (buf, sizeof buf, "pfeq.%s %%z1,%%z1,%%?f0\n\tbnc .Lfc%%=\n\t"
++		"pfeq.%s %%z2,%%z2,%%?f0\n\tbc %%l3\n.Lfc%%=:", s, s);
++      break;
++    case LTGT:
++      snprintf (buf, sizeof buf, "pfgt.%s %%z2,%%z1,%%?f0\n\tbc %%l3\n\t"
++		"pfgt.%s %%z1,%%z2,%%?f0\n\tbc %%l3", s, s);
++      break;
++    case UNEQ:
++      snprintf (buf, sizeof buf, "pfgt.%s %%z2,%%z1,%%?f0\n\tbc .Lfc%%=\n\t"
++		"pfgt.%s %%z1,%%z2,%%?f0\n\tbnc %%l3\n.Lfc%%=:", s, s);
++      break;
++    default:
++      gcc_unreachable ();
++    }
++#undef FCMP
++  output_asm_insn (buf, operands);
++  return "";
++}
++
++/* One compare and one branch, as opposed to the two pairs of the codes
++   a single FP compare cannot express.  */
++bool
++i860_fp_cbranch_simple_p (rtx *operands, bool reversed)
++{
++  enum rtx_code code = GET_CODE (operands[0]);
++
++  if (reversed)
++    code = reverse_condition_maybe_unordered (code);
++  return !(code == UNORDERED || code == ORDERED || code == LTGT
++	   || code == UNEQ);
++}
++
++/* Taken-branch forms where they cost no code: jumping over one insn, or
++   moving the only way into the target up.  The slot is skipped if not taken,
++   so the latter only for branches predicted taken.  */
++bool
++i860_annul_branch_p (rtx_insn *insn)
++{
++  rtx_insn *label = JUMP_LABEL_AS_INSN (insn);
++  rtx_insn *next = next_active_insn (insn);
++  rtx_insn *prev = prev_nonnote_insn (label);
++  rtx note = find_reg_note (insn, REG_BR_PROB, NULL_RTX);
++
++  if (next && next_active_insn (next) == next_active_insn (label))
++    return true;
++  return (LABEL_NUSES (label) == 1 && prev && BARRIER_P (prev) && note
++	  && (profile_probability::from_reg_br_prob_note (XINT (note, 0))
++	      >= profile_probability::even ()));
++}
++
++const char *
++i860_output_call (rtx *operands, int n)
++{
++  if (MEM_P (operands[n]))
++    operands[n] = XEXP (operands[n], 0);
++  if (REG_P (operands[n]))
++    return n ? "calli %1%#" : "calli %0%#";
++  if (flag_pic && !SYMBOL_REF_LOCAL_P (operands[n]))
++    return n ? "call %1@plt%#" : "call %0@plt%#";
++  return n ? "call %1%#" : "call %0%#";
++}
++
++/* int -> double: the pair (0x43300000, x ^ 0x80000000) is
++   2^52 + 2^31 + x.  */
++void
++i860_expand_floatsidf (rtx target, rtx src)
++{
++  rtx lo = gen_reg_rtx (SImode);
++  rtx hi = force_reg (SImode, gen_int_mode (0x43300000, SImode));
++  rtx d = gen_reg_rtx (DFmode);
++  REAL_VALUE_TYPE r;
++
++  emit_insn (gen_xorsi3 (lo, force_reg (SImode, src),
++			 gen_int_mode (0x80000000, SImode)));
++  emit_clobber (d);
++  emit_move_insn (simplify_gen_subreg (SImode, d, DFmode, 0), lo);
++  emit_move_insn (simplify_gen_subreg (SImode, d, DFmode, 4), hi);
++  real_from_integer (&r, DFmode, HOST_WIDE_INT_C (0x10000080000000), SIGNED);
++  rtx magic = force_reg (DFmode, const_double_from_real_value (r, DFmode));
++  emit_insn (gen_subdf3 (target, d, magic));
++}
++
++/* Operand output.
++
++   %?	register prefix
++   %#	nop in an unfilled delay slot
++   %*	.t on a conditional branch with a filled delay slot
++   %r	zero as r0
++   %z	zero as f0
++   %R	the register following a register (high word of a pair)
++   %H	high 16 bits of a constant, symbol or MEM address
++   %h	high 16 bits adjusted for a following signed low part
++   %L	low 16 bits, unsigned (logical immediates)
++   %S	low 16 bits, signed (displacements)  */
++
++static void
++i860_print_part (FILE *file, rtx x, int code)
++{
++  if (MEM_P (x))
++    x = XEXP (x, 0);
++  if (CONST_DOUBLE_P (x) && GET_MODE (x) == SFmode)
++    {
++      long l;
++      REAL_VALUE_TO_TARGET_SINGLE (*CONST_DOUBLE_REAL_VALUE (x), l);
++      x = gen_int_mode (l, SImode);
++    }
++  if (CONST_INT_P (x))
++    {
++      unsigned HOST_WIDE_INT v = UINTVAL (x) & 0xffffffff;
++      switch (code)
++	{
++	case 'H':
++	  fprintf (file, "0x%x", (unsigned) (v >> 16));
++	  break;
++	case 'h':
++	  fprintf (file, "0x%x", (unsigned) (((v + 0x8000) >> 16) & 0xffff));
++	  break;
++	case 'L':
++	  fprintf (file, "0x%x", (unsigned) (v & 0xffff));
++	  break;
++	default:
++	  fprintf (file, "%d", (int) ((v & 0xffff) ^ 0x8000) - 0x8000);
++	  break;
++	}
++      return;
++    }
++  fputc ('[', file);
++  output_addr_const (file, x);
++  fprintf (file, "]@%s", code == 'H' ? "h" : code == 'h' ? "ha" : "l");
++}
++
++static void
++i860_print_operand (FILE *file, rtx x, int code)
++{
++  switch (code)
++    {
++    case '?':
++      fputs (REGISTER_PREFIX, file);
++      return;
++    case '#':
++      if (dbr_sequence_length () == 0)
++	fputs ("\n\tnop", file);
++      return;
++    case '*':
++      if (dbr_sequence_length () != 0)
++	fputs (".t", file);
++      return;
++    case 'R':
++      fprintf (file, "%s%s", REGISTER_PREFIX, reg_names[REGNO (x) + 1]);
++      return;
++    case 'H':
++    case 'h':
++    case 'L':
++    case 'S':
++      i860_print_part (file, x, code);
++      return;
++    case 'G':
++      output_addr_const (file, x);
++      return;
++    case 'r':
++    case 'z':
++      if (x == CONST0_RTX (GET_MODE (x)))
++	{
++	  fprintf (file, "%s%s", REGISTER_PREFIX, code == 'r' ? "r0" : "f0");
++	  return;
++	}
++      break;
++    case 0:
++      break;
++    default:
++      output_operand_lossage ("invalid operand code '%c'", code);
++      return;
++    }
++
++  if (REG_P (x))
++    fprintf (file, "%s%s", REGISTER_PREFIX, reg_names[REGNO (x)]);
++  else if (MEM_P (x))
++    output_address (GET_MODE (x), XEXP (x, 0));
++  else if (CONST_DOUBLE_P (x) && GET_MODE (x) == SFmode)
++    {
++      long l;
++      REAL_VALUE_TO_TARGET_SINGLE (*CONST_DOUBLE_REAL_VALUE (x), l);
++      fprintf (file, "0x%lx", l & 0xffffffffUL);
++    }
++  else if (CONST_INT_P (x))
++    fprintf (file, HOST_WIDE_INT_PRINT_DEC, INTVAL (x));
++  else
++    output_addr_const (file, x);
++}
++
++static void
++i860_print_operand_address (FILE *file, machine_mode mode ATTRIBUTE_UNUSED,
++			    rtx addr)
++{
++  if (REG_P (addr))
++    fprintf (file, "0(%s%s)", REGISTER_PREFIX, reg_names[REGNO (addr)]);
++  else if (GET_CODE (addr) == PLUS && REG_P (XEXP (addr, 0))
++	   && CONST_INT_P (XEXP (addr, 1)))
++    fprintf (file, HOST_WIDE_INT_PRINT_DEC "(%s%s)", INTVAL (XEXP (addr, 1)),
++	     REGISTER_PREFIX, reg_names[REGNO (XEXP (addr, 0))]);
++  else if (GET_CODE (addr) == PLUS && REG_P (XEXP (addr, 0))
++	   && REG_P (XEXP (addr, 1)))
++    fprintf (file, "%s%s(%s%s)", REGISTER_PREFIX,
++	     reg_names[REGNO (XEXP (addr, 1))], REGISTER_PREFIX,
++	     reg_names[REGNO (XEXP (addr, 0))]);
++  else
++    output_addr_const (file, addr);
++}
++
++static bool
++i860_print_operand_punct_valid_p (unsigned char code)
++{
++  return code == '?' || code == '#' || code == '*';
++}
++
++/* Trampolines.  */
++
++static void
++i860_asm_trampoline_template (FILE *file ATTRIBUTE_UNUSED)
++{
++  assemble_aligned_integer (UNITS_PER_WORD, GEN_INT (0xec1f0000));
++  assemble_aligned_integer (UNITS_PER_WORD, GEN_INT (0xe7ff0000));
++  assemble_aligned_integer (UNITS_PER_WORD, GEN_INT (0xec1d0000));
++  assemble_aligned_integer (UNITS_PER_WORD, GEN_INT (0x4000f800));
++  assemble_aligned_integer (UNITS_PER_WORD, GEN_INT (0xe7bd0000));
++}
++
++/* Patch the 16-bit immediates: fn high/low at +0/+4, chain high/low
++   at +8/+16.  */
++static void
++i860_trampoline_init (rtx m_tramp, tree fndecl, rtx chain)
++{
++  rtx fn = force_reg (Pmode, XEXP (DECL_RTL (fndecl), 0));
++  rtx cxt = force_reg (Pmode, chain);
++  rtx hi_fn = expand_shift (RSHIFT_EXPR, SImode, fn, 16, NULL_RTX, 1);
++  rtx hi_cxt = expand_shift (RSHIFT_EXPR, SImode, cxt, 16, NULL_RTX, 1);
++
++  emit_block_move (m_tramp, assemble_trampoline_template (),
++		   GEN_INT (TRAMPOLINE_SIZE), BLOCK_OP_NORMAL);
++  emit_move_insn (adjust_address (m_tramp, HImode, 0),
++		  gen_lowpart (HImode, hi_fn));
++  emit_move_insn (adjust_address (m_tramp, HImode, 4),
++		  gen_lowpart (HImode, fn));
++  emit_move_insn (adjust_address (m_tramp, HImode, 8),
++		  gen_lowpart (HImode, hi_cxt));
++  emit_move_insn (adjust_address (m_tramp, HImode, 16),
++		  gen_lowpart (HImode, cxt));
++}
++
++/* Costs.  */
++
++static bool
++i860_rtx_costs (rtx x, machine_mode mode, int outer_code ATTRIBUTE_UNUSED,
++		int opno ATTRIBUTE_UNUSED, int *total,
++		bool speed ATTRIBUTE_UNUSED)
++{
++  switch (GET_CODE (x))
++    {
++    case CONST_INT:
++      if (satisfies_constraint_I (x) || satisfies_constraint_L (x)
++	  || satisfies_constraint_M (x))
++	*total = 0;
++      else
++	*total = COSTS_N_INSNS (1);
++      return true;
++    case CONST:
++    case LABEL_REF:
++    case SYMBOL_REF:
++      *total = COSTS_N_INSNS (2);
++      return true;
++    case CONST_DOUBLE:
++      *total = x == CONST0_RTX (mode) ? 0 : COSTS_N_INSNS (3);
++      return true;
++    case MULT:
++      if (mode == SImode)
++	{
++	  *total = COSTS_N_INSNS (5);
++	  return false;
++	}
++      *total = COSTS_N_INSNS (2);
++      return false;
++    case DIV:
++      if (FLOAT_MODE_P (mode))
++	{
++	  *total = COSTS_N_INSNS (mode == SFmode ? 10 : 14);
++	  return false;
++	}
++      return false;
++    default:
++      return false;
++    }
++}
++
++/* Reserve the thread pointer register where the OS ABI has one.  */
++static void
++i860_conditional_register_usage (void)
++{
++#ifdef I860_THREAD_POINTER_REGNUM
++  fixed_regs[I860_THREAD_POINTER_REGNUM] = 1;
++  call_used_regs[I860_THREAD_POINTER_REGNUM] = 1;
++#endif
++  if (flag_pic)
++    {
++      fixed_regs[I860_PIC_REGNUM] = 1;
++      call_used_regs[I860_PIC_REGNUM] = 0;
++    }
++}
++
++static void
++i860_option_override (void)
++{
++#ifndef I860_PIC_SUPPORTED
++  if (flag_pic)
++    {
++      sorry ("position-independent code is not supported for this i860 target");
++      flag_pic = 0;
++    }
++#endif
++}
++
++static void
++i860_init_libfuncs (void)
++{
++#ifdef I860_SVR4_DIVMOD_NAMES
++  /* The SVR4 libc division helpers.  */
++  set_optab_libfunc (sdiv_optab, SImode, "*.div");
++  set_optab_libfunc (udiv_optab, SImode, "*.udiv");
++  set_optab_libfunc (smod_optab, SImode, "*.rem");
++  set_optab_libfunc (umod_optab, SImode, "*.urem");
++#endif
++}
++
++#undef TARGET_CONDITIONAL_REGISTER_USAGE
++#define TARGET_CONDITIONAL_REGISTER_USAGE i860_conditional_register_usage
++#undef TARGET_OPTION_OVERRIDE
++#define TARGET_OPTION_OVERRIDE i860_option_override
++#undef TARGET_INIT_LIBFUNCS
++#define TARGET_INIT_LIBFUNCS i860_init_libfuncs
++
++#undef TARGET_RTX_COSTS
++#define TARGET_RTX_COSTS i860_rtx_costs
++#undef TARGET_REGISTER_MOVE_COST
++#define TARGET_REGISTER_MOVE_COST i860_register_move_cost
++
++#undef TARGET_ASM_FUNCTION_END_PROLOGUE
++#define TARGET_ASM_FUNCTION_END_PROLOGUE i860_function_end_prologue
++#undef TARGET_ASM_ALIGNED_DI_OP
++#define TARGET_ASM_ALIGNED_DI_OP "\t.quad\t"
++
++#undef TARGET_FRAME_POINTER_REQUIRED
++#define TARGET_FRAME_POINTER_REQUIRED i860_frame_pointer_required
++#undef TARGET_CAN_ELIMINATE
++#define TARGET_CAN_ELIMINATE i860_can_eliminate
++
++#undef TARGET_FUNCTION_ARG
++#define TARGET_FUNCTION_ARG i860_function_arg
++#undef TARGET_FUNCTION_ARG_ADVANCE
++#define TARGET_FUNCTION_ARG_ADVANCE i860_function_arg_advance
++#undef TARGET_FUNCTION_ARG_BOUNDARY
++#define TARGET_FUNCTION_ARG_BOUNDARY i860_function_arg_boundary
++#undef TARGET_FUNCTION_VALUE
++#define TARGET_FUNCTION_VALUE i860_function_value
++#undef TARGET_LIBCALL_VALUE
++#define TARGET_LIBCALL_VALUE i860_libcall_value
++#undef TARGET_FUNCTION_VALUE_REGNO_P
++#define TARGET_FUNCTION_VALUE_REGNO_P i860_function_value_regno_p
++#undef TARGET_STRUCT_VALUE_RTX
++#define TARGET_STRUCT_VALUE_RTX i860_struct_value_rtx
++
++#undef TARGET_SETUP_INCOMING_VARARGS
++#define TARGET_SETUP_INCOMING_VARARGS i860_setup_incoming_varargs
++#undef TARGET_BUILD_BUILTIN_VA_LIST
++#define TARGET_BUILD_BUILTIN_VA_LIST i860_build_builtin_va_list
++#undef TARGET_EXPAND_BUILTIN_VA_START
++#define TARGET_EXPAND_BUILTIN_VA_START i860_va_start
++#undef TARGET_GIMPLIFY_VA_ARG_EXPR
++#define TARGET_GIMPLIFY_VA_ARG_EXPR i860_gimplify_va_arg_expr
++
++#undef TARGET_LEGITIMATE_ADDRESS_P
++#define TARGET_LEGITIMATE_ADDRESS_P i860_legitimate_address_p
++#undef TARGET_LEGITIMIZE_ADDRESS
++#define TARGET_LEGITIMIZE_ADDRESS i860_legitimize_address
++#ifdef I860_THREAD_POINTER_REGNUM
++#undef TARGET_HAVE_TLS
++#define TARGET_HAVE_TLS true
++#endif
++
++#undef TARGET_LEGITIMATE_CONSTANT_P
++#define TARGET_LEGITIMATE_CONSTANT_P i860_legitimate_constant_p
++#undef TARGET_CANNOT_FORCE_CONST_MEM
++#define TARGET_CANNOT_FORCE_CONST_MEM i860_cannot_force_const_mem
++
++#undef TARGET_HARD_REGNO_MODE_OK
++#define TARGET_HARD_REGNO_MODE_OK i860_hard_regno_mode_ok
++#undef TARGET_MODES_TIEABLE_P
++#define TARGET_MODES_TIEABLE_P i860_modes_tieable_p
++#undef TARGET_CAN_CHANGE_MODE_CLASS
++#define TARGET_CAN_CHANGE_MODE_CLASS i860_can_change_mode_class
++#undef TARGET_PREFERRED_RELOAD_CLASS
++#define TARGET_PREFERRED_RELOAD_CLASS i860_preferred_reload_class
++
++#undef TARGET_PRINT_OPERAND
++#define TARGET_PRINT_OPERAND i860_print_operand
++#undef TARGET_PRINT_OPERAND_ADDRESS
++#define TARGET_PRINT_OPERAND_ADDRESS i860_print_operand_address
++#undef TARGET_PRINT_OPERAND_PUNCT_VALID_P
++#define TARGET_PRINT_OPERAND_PUNCT_VALID_P i860_print_operand_punct_valid_p
++
++#undef TARGET_ASM_TRAMPOLINE_TEMPLATE
++#define TARGET_ASM_TRAMPOLINE_TEMPLATE i860_asm_trampoline_template
++#undef TARGET_TRAMPOLINE_INIT
++#define TARGET_TRAMPOLINE_INIT i860_trampoline_init
++
++struct gcc_target targetm = TARGET_INITIALIZER;
+diff --git a/gcc/config/i860/i860.h b/gcc/config/i860/i860.h
+new file mode 100644
+index 00000000000..2002735be06
+--- /dev/null
++++ b/gcc/config/i860/i860.h
+@@ -0,0 +1,272 @@
++/* Definitions of target machine for GNU compiler, for Intel 860.
++   Copyright (C) 1989-2005, 2026 Free Software Foundation, Inc.
++   Copyright (C) 2026 René Rebe <rene@exactco.de>
++   Hacked substantially by Ron Guilmette (rfg@monkeys.com) to cater to
++   the whims of the System V Release 4 assembler.
++
++This file is part of GCC.
++
++GCC is free software; you can redistribute it and/or modify
++it under the terms of the GNU General Public License as published by
++the Free Software Foundation; either version 3, or (at your option)
++any later version.
++
++GCC is distributed in the hope that it will be useful,
++but WITHOUT ANY WARRANTY; without even the implied warranty of
++MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++GNU General Public License for more details.
++
++You should have received a copy of the GNU General Public License
++along with GCC; see the file COPYING3.  If not see
++<http://www.gnu.org/licenses/>.  */
++
++#ifndef GCC_I860_H
++#define GCC_I860_H
++
++#define TARGET_CPU_CPP_BUILTINS()		\
++  do						\
++    {						\
++      builtin_define_std ("i860");		\
++      builtin_define ("__i860__");		\
++      builtin_assert ("cpu=i860");		\
++      builtin_assert ("machine=i860");		\
++      if (TARGET_XP)				\
++	builtin_define ("__i860XP__");		\
++    }						\
++  while (0)
++
++/* Storage layout.  The i860 is used little-endian only.  */
++#define BITS_BIG_ENDIAN 0
++#define BYTES_BIG_ENDIAN 0
++#define WORDS_BIG_ENDIAN 0
++
++#define UNITS_PER_WORD 4
++#define PARM_BOUNDARY 32
++/* The SVR4 i860 ABI keeps sp and fp 16-byte aligned.  */
++#define STACK_BOUNDARY 128
++#define FUNCTION_BOUNDARY 64
++#define EMPTY_FIELD_BOUNDARY 32
++#define STRUCTURE_SIZE_BOUNDARY 8
++#define BIGGEST_ALIGNMENT 128
++#define STRICT_ALIGNMENT 1
++#define PCC_BITFIELD_TYPE_MATTERS 1
++
++#define DEFAULT_SIGNED_CHAR 1
++#define SIZE_TYPE "unsigned int"
++#define PTRDIFF_TYPE "int"
++#define WCHAR_TYPE "long int"
++#define WCHAR_TYPE_SIZE 32
++
++/* Registers.  0-31 are the integer registers, 32-63 the floating point
++   registers; 64 and 65 are the eliminated argument and frame pointers.
++   r0 and f0/f1 always read as zero, r1 holds the return address, r31 is
++   reserved as assembler temporary for constant addresses.  */
++#define FIRST_PSEUDO_REGISTER 66
++
++#define FIXED_REGISTERS			\
++ {1, 1, 1, 1, 0, 0, 0, 0,		\
++  0, 0, 0, 0, 0, 0, 0, 0,		\
++  0, 0, 0, 0, 0, 0, 0, 0,		\
++  0, 0, 0, 0, 0, 0, 0, 1,		\
++  1, 1, 0, 0, 0, 0, 0, 0,		\
++  0, 0, 0, 0, 0, 0, 0, 0,		\
++  0, 0, 0, 0, 0, 0, 0, 0,		\
++  0, 0, 0, 0, 0, 0, 0, 0,		\
++  1, 1}
++
++/* r4-r15 and f2-f7 are preserved across calls.  */
++#define CALL_USED_REGISTERS		\
++ {1, 1, 1, 1, 0, 0, 0, 0,		\
++  0, 0, 0, 0, 0, 0, 0, 0,		\
++  1, 1, 1, 1, 1, 1, 1, 1,		\
++  1, 1, 1, 1, 1, 1, 1, 1,		\
++  1, 1, 0, 0, 0, 0, 0, 0,		\
++  1, 1, 1, 1, 1, 1, 1, 1,		\
++  1, 1, 1, 1, 1, 1, 1, 1,		\
++  1, 1, 1, 1, 1, 1, 1, 1,		\
++  1, 1}
++
++#define REG_ALLOC_ORDER				\
++ {30, 29, 28, 27, 26, 25, 24, 23,		\
++  22, 21, 20, 19, 18, 17, 16, 15,		\
++  14, 13, 12, 11, 10,  9,  8,  7,		\
++   6,  5,  4,					\
++  63, 62, 61, 60, 59, 58, 57, 56,		\
++  55, 54, 53, 52, 51, 50, 49, 48,		\
++  47, 46, 45, 44, 43, 42, 41, 40,		\
++  39, 38, 37, 36, 35, 34,			\
++  31,  3,  2,  1,  0, 32, 33, 64, 65}
++
++#define STACK_POINTER_REGNUM 2
++#define HARD_FRAME_POINTER_REGNUM 3
++#define ARG_POINTER_REGNUM 64
++#define FRAME_POINTER_REGNUM 65
++#define STATIC_CHAIN_REGNUM 29
++
++/* r15 points at _GLOBAL_OFFSET_TABLE_ in functions that need it; callers
++   do not rely on it, so calls through the PLT do not load it.  */
++#define I860_PIC_REGNUM 15
++#define PIC_OFFSET_TABLE_REGNUM (flag_pic ? I860_PIC_REGNUM : INVALID_REGNUM)
++#define LEGITIMATE_PIC_OPERAND_P(X) (!i860_symbolic_p (X))
++
++/* A table in .text of label differences needs no relocation.  */
++#define CASE_VECTOR_PC_RELATIVE flag_pic
++#define JUMP_TABLES_IN_TEXT_SECTION flag_pic
++#define I860_RETURN_REGNUM 1
++#define I860_TEMP_REGNUM 31
++#define I860_STRUCT_VALUE_REGNUM 16
++#define F0_REGNUM 32
++#define I860_FIRST_INT_ARG 16
++#define I860_FIRST_FP_ARG 40
++#define I860_NUM_INT_ARGS 12
++#define I860_NUM_FP_ARGS 8
++
++/* Where 64-bit integer arguments go: FP register pairs (the old SVR4
++   port), or consecutive integer registers (Linux, as in its syscall ABI).  */
++#ifndef I860_DIMODE_ARGS_IN_GPRS
++#define I860_DIMODE_ARGS_IN_GPRS 0
++#endif
++
++#define GP_REGNO_P(N) ((unsigned) (N) < 32)
++#define FP_REGNO_P(N) ((unsigned) ((N) - 32) < 32)
++#define FP_REG_P(X) (REG_P (X) && FP_REGNO_P (REGNO (X)))
++
++enum reg_class { NO_REGS, GENERAL_REGS, FP_REGS, ALL_REGS, LIM_REG_CLASSES };
++
++#define N_REG_CLASSES (int) LIM_REG_CLASSES
++#define REG_CLASS_NAMES { "NO_REGS", "GENERAL_REGS", "FP_REGS", "ALL_REGS" }
++#define REG_CLASS_CONTENTS				\
++ { { 0x00000000, 0x00000000, 0x0 },			\
++   { 0xffffffff, 0x00000000, 0x3 },			\
++   { 0x00000000, 0xffffffff, 0x0 },			\
++   { 0xffffffff, 0xffffffff, 0x3 } }
++
++#define REGNO_REG_CLASS(N) (FP_REGNO_P (N) ? FP_REGS : GENERAL_REGS)
++
++#define BASE_REG_CLASS GENERAL_REGS
++/* Indexed addresses are only valid for loads, see indexed_memory_operand;
++   the index class lets LRA keep them for the "Q" constraint.  */
++#define INDEX_REG_CLASS GENERAL_REGS
++#define I860_BASE_HARD_REGNO_P(N) \
++  ((N) < 32 || (N) == ARG_POINTER_REGNUM || (N) == FRAME_POINTER_REGNUM)
++#define REGNO_OK_FOR_BASE_P(N)						\
++  (I860_BASE_HARD_REGNO_P (N)						\
++   || (reg_renumber && (unsigned) reg_renumber[N] < 32))
++#define REGNO_OK_FOR_INDEX_P(N) REGNO_OK_FOR_BASE_P (N)
++
++#define MAX_REGS_PER_ADDRESS 2
++
++/* Frame layout, see i860_compute_frame for the details.  */
++#define STACK_GROWS_DOWNWARD 1
++#define FRAME_GROWS_DOWNWARD 1
++#define FIRST_PARM_OFFSET(FNDECL) 0
++#define ACCUMULATE_OUTGOING_ARGS 1
++#define EXIT_IGNORE_STACK 1
++
++#define ELIMINABLE_REGS					\
++ { { ARG_POINTER_REGNUM, HARD_FRAME_POINTER_REGNUM },	\
++   { ARG_POINTER_REGNUM, STACK_POINTER_REGNUM },	\
++   { FRAME_POINTER_REGNUM, HARD_FRAME_POINTER_REGNUM },	\
++   { FRAME_POINTER_REGNUM, STACK_POINTER_REGNUM } }
++
++#define INITIAL_ELIMINATION_OFFSET(FROM, TO, OFFSET) \
++  ((OFFSET) = i860_initial_elimination_offset ((FROM), (TO)))
++
++#define INCOMING_RETURN_ADDR_RTX gen_rtx_REG (Pmode, I860_RETURN_REGNUM)
++#define DWARF_FRAME_RETURN_COLUMN DWARF_FRAME_REGNUM (I860_RETURN_REGNUM)
++#define RETURN_ADDR_RTX(COUNT, FRAME) i860_return_addr_rtx ((COUNT), (FRAME))
++
++/* Exception data registers must not overlap the r16 return value.  */
++#define EH_RETURN_DATA_REGNO(N) ((N) < 4 ? (N) + 20 : INVALID_REGNUM)
++#define EH_RETURN_STACKADJ_RTX gen_rtx_REG (Pmode, 28)
++#define EH_RETURN_HANDLER_RTX i860_eh_return_handler_rtx ()
++
++/* Argument passing: the first 12 integer words go in r16-r27, the first
++   8 floating point words (and long long) in f8-f15, aggregates on the
++   stack.  */
++struct i860_args { int ints, floats; };
++#define CUMULATIVE_ARGS struct i860_args
++#define INIT_CUMULATIVE_ARGS(CUM, FNTYPE, LIBNAME, INDIRECT, N_NAMED_ARGS) \
++  i860_init_cumulative_args (&(CUM), (FNTYPE))
++
++#define FUNCTION_ARG_REGNO_P(N)					\
++  (((N) >= I860_FIRST_INT_ARG && (N) < I860_FIRST_INT_ARG + I860_NUM_INT_ARGS) \
++   || ((N) >= I860_FIRST_FP_ARG && (N) < I860_FIRST_FP_ARG + I860_NUM_FP_ARGS))
++
++#define DEFAULT_PCC_STRUCT_RETURN 1
++
++#define FUNCTION_PROFILER(FILE, LABELNO) \
++  fprintf ((FILE), "\tcall\tmcount\n\tnop\n")
++
++/* orh hi(fn),r0,r31; or lo(fn),r31,r31; orh hi(cxt),r0,r29;
++   bri r31; or lo(cxt),r29,r29  */
++#define TRAMPOLINE_SIZE 20
++#define TRAMPOLINE_ALIGNMENT 64
++
++#define Pmode SImode
++#define FUNCTION_MODE SImode
++#define CASE_VECTOR_MODE SImode
++#define MOVE_MAX 4
++#define SLOW_BYTE_ACCESS 0
++#define LOAD_EXTEND_OP(MODE) \
++  (((MODE) == QImode || (MODE) == HImode) ? SIGN_EXTEND : UNKNOWN)
++#define NO_FUNCTION_CSE 1
++#define BRANCH_COST(SPEED_P, PREDICTABLE_P) 3
++
++/* Assembler output, AT&T/SVR4 syntax as used by the native assembler and
++   GNU as.  */
++#define ASM_COMMENT_START "#"
++#define ASM_APP_ON ""
++#define ASM_APP_OFF ""
++#define TEXT_SECTION_ASM_OP "\t.text"
++#define DATA_SECTION_ASM_OP "\t.data"
++#undef GLOBAL_ASM_OP
++#define GLOBAL_ASM_OP "\t.globl\t"
++#undef ASM_DOUBLE
++#define ASM_DOUBLE "\t.double"
++
++#define REGISTER_NAMES							\
++{"r0", "r1", "sp", "fp", "r4", "r5", "r6", "r7", "r8", "r9",		\
++ "r10", "r11", "r12", "r13", "r14", "r15", "r16", "r17", "r18", "r19",	\
++ "r20", "r21", "r22", "r23", "r24", "r25", "r26", "r27", "r28", "r29",	\
++ "r30", "r31",								\
++ "f0", "f1", "f2", "f3", "f4", "f5", "f6", "f7", "f8", "f9",		\
++ "f10", "f11", "f12", "f13", "f14", "f15", "f16", "f17", "f18", "f19",	\
++ "f20", "f21", "f22", "f23", "f24", "f25", "f26", "f27", "f28", "f29",	\
++ "f30", "f31", "ap", "sfp" }
++
++#define ADDITIONAL_REGISTER_NAMES { { "r2", 2 }, { "r3", 3 } }
++
++#define REGISTER_PREFIX "%"
++
++/* .align takes a byte count.  */
++#define ASM_OUTPUT_ALIGN(FILE, LOG)				\
++  do								\
++    {								\
++      if ((LOG) != 0)						\
++	fprintf ((FILE), "\t.align\t%d\n", 1 << (LOG));		\
++    }								\
++  while (0)
++
++#define ASM_OUTPUT_ADDR_VEC_ELT(FILE, VALUE) \
++  fprintf ((FILE), "\t.long\t.L%d\n", (VALUE))
++#define ASM_OUTPUT_ADDR_DIFF_ELT(FILE, BODY, VALUE, REL) \
++  fprintf ((FILE), "\t.long\t.L%d-.L%d\n", (VALUE), (REL))
++
++/* Each function is preceded by a word looking like a nop
++   (shr r0,r0,r0 + prologue length) followed by a real nop, as emitted by
++   the native compilers: trap handlers inspect the instruction before the
++   entry point for delayed branches, and the SVR4 debugger reads the
++   prologue length.  */
++#undef ASM_DECLARE_FUNCTION_NAME
++#define ASM_DECLARE_FUNCTION_NAME(FILE, NAME, DECL)		\
++  do								\
++    {								\
++      ASM_OUTPUT_TYPE_DIRECTIVE (FILE, NAME, "function");	\
++      ASM_DECLARE_RESULT (FILE, DECL_RESULT (DECL));		\
++      i860_output_function_prefix (FILE, NAME);			\
++      ASM_OUTPUT_FUNCTION_LABEL (FILE, NAME, DECL);		\
++    }								\
++  while (0)
++
++#endif /* GCC_I860_H */
+diff --git a/gcc/config/i860/i860.md b/gcc/config/i860/i860.md
+new file mode 100644
+index 00000000000..a8903d5f6cc
+--- /dev/null
++++ b/gcc/config/i860/i860.md
+@@ -0,0 +1,998 @@
++;; GCC machine description for the Intel i860 microprocessor
++;; Copyright (C) 1989-2005, 2026 Free Software Foundation, Inc.
++;; Copyright (C) 2026 René Rebe <rene@exactco.de>
++
++;; This file is part of GCC.
++
++;; GCC is free software; you can redistribute it and/or modify
++;; it under the terms of the GNU General Public License as published by
++;; the Free Software Foundation; either version 3, or (at your option)
++;; any later version.
++
++;; GCC is distributed in the hope that it will be useful,
++;; but WITHOUT ANY WARRANTY; without even the implied warranty of
++;; MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++;; GNU General Public License for more details.
++
++;; You should have received a copy of the GNU General Public License
++;; along with GCC; see the file COPYING3.  If not see
++;; <http://www.gnu.org/licenses/>.
++
++;; The i860 has a single condition code bit (PSR.CC), set by compares,
++;; add/subtract and all logical instructions.  It is not modelled as a
++;; register: every insn that tests it also emits the instruction setting
++;; it, so the bit is never live between insns.  r31 is likewise only used
++;; as a scratch register inside the output of a single insn.
++
++(define_constants
++  [(R0_REGNUM	0)
++   (R1_REGNUM	1)
++   (SP_REGNUM	2)
++   (FP_REGNUM	3)
++   (PIC_REGNUM	15)
++   (R31_REGNUM	31)
++   (F0_REGNUM	32)])
++
++(define_c_enum "unspec" [
++  UNSPEC_FMLOW
++  UNSPEC_FTRUNC
++  UNSPEC_GOT
++  UNSPEC_GOTOFF
++  UNSPEC_TLS_GD
++  UNSPEC_TLS_IE
++  UNSPEC_TLS_IE_ABS
++  UNSPEC_TLS_LE
++])
++
++(define_c_enum "unspecv" [
++  UNSPECV_BLOCKAGE
++  UNSPECV_SET_GOT
++])
++
++;; Length 4 means exactly one machine instruction, as delay slots require.
++;; Everything else is an upper bound: only bte/btne need branch distances.
++(define_attr "type"
++  "move,load,store,alu,fpu,branch,cbranch,call,return,nop,trap,multi"
++  (const_string "multi"))
++
++(define_attr "length" ""
++  (cond [(eq_attr "type" "load,store")
++	   (symbol_ref "i860_mem_move_length (operands)")
++	 (eq_attr "type" "move,alu,fpu,nop,trap")
++	   (const_int 4)]
++	(const_int 16)))
++
++;; After a fault in the slot the kernel resumes at the branch, so the slot
++;; must not write what the branch reads: reorg sees that in the RTL of the
++;; branch.  r1 is clobbered by the call patterns, which keeps it out too.
++(define_attr "in_delay_slot" "no,yes"
++  (if_then_else (and (eq_attr "type" "move,load,store,alu,fpu")
++		     (match_test "get_attr_length (insn) == 4"))
++		(const_string "yes")
++		(const_string "no")))
++
++(define_delay (eq_attr "type" "branch,call")
++  [(eq_attr "in_delay_slot" "yes") (nil) (nil)])
++
++;; bc.t and bnc.t run the slot only if taken, and bte/btne have no such form.
++(define_delay (and (eq_attr "type" "cbranch")
++		   (match_test "i860_annul_branch_p (insn)"))
++  [(nil) (nil) (eq_attr "in_delay_slot" "yes")])
++
++(include "predicates.md")
++(include "constraints.md")
++
++(define_mode_iterator MOVE [QI HI SI SF DI DF])
++(define_mode_iterator FMODE [SF DF])
++(define_mode_iterator SISF [SI SF])
++(define_mode_iterator DIDF [DI DF])
++(define_mode_attr fsfx [(SF "ss") (DF "dd")])
++(define_mode_attr ftrunc [(SF "sd") (DF "dd")])
++
++;; ------------------------------------------------------------------------
++;; Moves
++;; ------------------------------------------------------------------------
++
++(define_expand "mov<mode>"
++  [(set (match_operand:MOVE 0 "nonimmediate_operand")
++	(match_operand:MOVE 1 "general_operand"))]
++  ""
++{
++  i860_expand_move (<MODE>mode, operands);
++})
++
++(define_insn "*movqi_insn"
++  [(set (match_operand:QI 0 "nonimmediate_operand" "=r,r,r,m")
++	(match_operand:QI 1 "general_operand"       " r,n,m,rJ"))]
++  "register_operand (operands[0], QImode)
++   || reg_or_0_operand (operands[1], QImode)"
++  "@
++   mov %1,%0
++   or %L1,%?r0,%0
++   * return i860_output_load (operands);
++   * return i860_output_store (operands);"
++  [(set_attr "type" "move,alu,load,store")])
++
++(define_insn "*movhi_insn"
++  [(set (match_operand:HI 0 "nonimmediate_operand" "=r,r,r,m")
++	(match_operand:HI 1 "general_operand"       " r,n,m,rJ"))]
++  "register_operand (operands[0], HImode)
++   || reg_or_0_operand (operands[1], HImode)"
++  "@
++   mov %1,%0
++   or %L1,%?r0,%0
++   * return i860_output_load (operands);
++   * return i860_output_store (operands);"
++  [(set_attr "type" "move,alu,load,store")])
++
++(define_insn "*movsi_insn"
++  [(set (match_operand:SI 0 "nonimmediate_operand"
++			"=r,r,r,r,r,r,m, f,f,r,f,m,f")
++	(match_operand:SI 1 "general_operand"
++			" r,I,L,M,i,m,rJ,f,r,f,m,f,J"))]
++  "register_operand (operands[0], SImode)
++   || reg_or_0_operand (operands[1], SImode)"
++  "@
++   mov %1,%0
++   adds %1,%?r0,%0
++   or %L1,%?r0,%0
++   orh %H1,%?r0,%0
++   orh %H1,%?r0,%0\;or %L1,%0,%0
++   * return i860_output_load (operands);
++   * return i860_output_store (operands);
++   fmov.ss %1,%0
++   ixfr %1,%0
++   fxfr %1,%0
++   * return i860_output_load (operands);
++   * return i860_output_store (operands);
++   fmov.ss %?f0,%0"
++  [(set_attr "type"
++	     "move,alu,alu,alu,multi,load,store,move,move,move,load,store,move")])
++
++(define_insn "*movsf_insn"
++  [(set (match_operand:SF 0 "nonimmediate_operand"
++			"=r,r,r,r,m, f,f,r,f,m,f")
++	(match_operand:SF 1 "general_operand"
++			" r,G,F,m,rG,f,r,f,m,f,G"))]
++  "register_operand (operands[0], SFmode)
++   || reg_or_0_operand (operands[1], SFmode)"
++  "@
++   mov %1,%0
++   mov %?r0,%0
++   * return i860_output_sf_const (operands);
++   * return i860_output_load (operands);
++   * return i860_output_store (operands);
++   fmov.ss %1,%0
++   ixfr %1,%0
++   fxfr %1,%0
++   * return i860_output_load (operands);
++   * return i860_output_store (operands);
++   fmov.ss %?f0,%0"
++  [(set_attr "type"
++	     "move,move,multi,load,store,move,move,move,load,store,move")])
++
++(define_insn "*movdi_insn"
++  [(set (match_operand:DI 0 "nonimmediate_operand" "=r,r,r,m, f,f,r,f,m,f")
++	(match_operand:DI 1 "general_operand"       " r,i,m,rJ,f,r,f,m,f,J"))]
++  "register_operand (operands[0], DImode)
++   || reg_or_0_operand (operands[1], DImode)"
++  "* return i860_output_move_double (operands);"
++  [(set_attr "type" "move")
++   (set (attr "length") (symbol_ref "i860_move_double_length (operands)"))])
++
++(define_insn "*movdf_insn"
++  [(set (match_operand:DF 0 "nonimmediate_operand" "=r,r,r,m, f,f,r,f,m,f")
++	(match_operand:DF 1 "general_operand"       " r,F,m,rG,f,r,f,m,f,G"))]
++  "register_operand (operands[0], DFmode)
++   || reg_or_0_operand (operands[1], DFmode)"
++  "* return i860_output_move_double (operands);"
++  [(set_attr "type" "move")
++   (set (attr "length") (symbol_ref "i860_move_double_length (operands)"))])
++
++;; Loads with reg+reg addresses, made by combine.  Integer stores have no
++;; such addressing mode, so these addresses are not legitimate in general.
++
++(define_insn "*load_indexed_qi"
++  [(set (match_operand:QI 0 "register_operand" "=r")
++	(match_operand:QI 1 "indexed_memory_operand" "Q"))]
++  ""
++  "ld.b %1,%0"
++  [(set_attr "type" "load")])
++
++(define_insn "*load_indexed_hi"
++  [(set (match_operand:HI 0 "register_operand" "=r")
++	(match_operand:HI 1 "indexed_memory_operand" "Q"))]
++  ""
++  "ld.s %1,%0"
++  [(set_attr "type" "load")])
++
++(define_insn "*load_indexed_<mode>"
++  [(set (match_operand:SISF 0 "register_operand" "=r,f")
++	(match_operand:SISF 1 "indexed_memory_operand" "Q,Q"))]
++  ""
++  "@
++   ld.l %1,%0
++   fld.l %1,%0"
++  [(set_attr "type" "load")])
++
++(define_insn "*load_indexed_<mode>_d"
++  [(set (match_operand:DIDF 0 "register_operand" "=f")
++	(match_operand:DIDF 1 "indexed_memory_operand" "Q"))]
++  "i860_mem_aligned8_p (operands[1])"
++  "fld.d %1,%0"
++  [(set_attr "type" "load")])
++
++(define_insn "*store_indexed_<mode>"
++  [(set (match_operand:SISF 0 "indexed_memory_operand" "=Q")
++	(match_operand:SISF 1 "register_operand" "f"))]
++  ""
++  "fst.l %1,%0"
++  [(set_attr "type" "store")])
++
++(define_insn "*store_indexed_<mode>_d"
++  [(set (match_operand:DIDF 0 "indexed_memory_operand" "=Q")
++	(match_operand:DIDF 1 "register_operand" "f"))]
++  "i860_mem_aligned8_p (operands[0])"
++  "fst.d %1,%0"
++  [(set_attr "type" "store")])
++
++;; ------------------------------------------------------------------------
++;; Extensions.  ld.b and ld.s sign-extend.
++;; ------------------------------------------------------------------------
++
++(define_insn "zero_extendqisi2"
++  [(set (match_operand:SI 0 "register_operand" "=r,r")
++	(zero_extend:SI (match_operand:QI 1 "reg_or_load_operand" "r,Qm")))]
++  ""
++  "@
++   and 0xff,%1,%0
++   * return i860_output_load_ext (operands, \"and 0xff,%0,%0\");"
++  [(set_attr "type" "alu,multi")])
++
++(define_insn "zero_extendqihi2"
++  [(set (match_operand:HI 0 "register_operand" "=r,r")
++	(zero_extend:HI (match_operand:QI 1 "reg_or_load_operand" "r,Qm")))]
++  ""
++  "@
++   and 0xff,%1,%0
++   * return i860_output_load_ext (operands, \"and 0xff,%0,%0\");"
++  [(set_attr "type" "alu,multi")])
++
++(define_insn "zero_extendhisi2"
++  [(set (match_operand:SI 0 "register_operand" "=r,r")
++	(zero_extend:SI (match_operand:HI 1 "reg_or_load_operand" "r,Qm")))]
++  ""
++  "@
++   and 0xffff,%1,%0
++   * return i860_output_load_ext (operands, \"and 0xffff,%0,%0\");"
++  [(set_attr "type" "alu,multi")])
++
++(define_insn "extendqisi2"
++  [(set (match_operand:SI 0 "register_operand" "=r,r")
++	(sign_extend:SI (match_operand:QI 1 "reg_or_load_operand" "r,Qm")))]
++  ""
++  "@
++   shl 24,%1,%0\;shra 24,%0,%0
++   * return i860_output_load_ext (operands, NULL);"
++  [(set_attr "type" "multi,load")])
++
++(define_insn "extendqihi2"
++  [(set (match_operand:HI 0 "register_operand" "=r,r")
++	(sign_extend:HI (match_operand:QI 1 "reg_or_load_operand" "r,Qm")))]
++  ""
++  "@
++   shl 24,%1,%0\;shra 24,%0,%0
++   * return i860_output_load_ext (operands, NULL);"
++  [(set_attr "type" "multi,load")])
++
++(define_insn "extendhisi2"
++  [(set (match_operand:SI 0 "register_operand" "=r,r")
++	(sign_extend:SI (match_operand:HI 1 "reg_or_load_operand" "r,Qm")))]
++  ""
++  "@
++   shl 16,%1,%0\;shra 16,%0,%0
++   * return i860_output_load_ext (operands, NULL);"
++  [(set_attr "type" "multi,load")])
++
++;; ------------------------------------------------------------------------
++;; Integer arithmetic
++;; ------------------------------------------------------------------------
++
++;; Constants outside the immediate range are built in r31.
++(define_insn "addsi3"
++  [(set (match_operand:SI 0 "register_operand" "=r,r")
++	(plus:SI (match_operand:SI 1 "register_operand" "%r,r")
++		 (match_operand:SI 2 "nonmemory_operand" "rI,i")))]
++  ""
++  "@
++   addu %2,%1,%0
++   orh %H2,%?r0,%?r31\;or %L2,%?r31,%?r31\;addu %?r31,%1,%0"
++  [(set_attr "type" "alu,multi")])
++
++(define_insn "subsi3"
++  [(set (match_operand:SI 0 "register_operand" "=r,r")
++	(minus:SI (match_operand:SI 1 "arith_operand" "rI,r")
++		  (match_operand:SI 2 "arith_operand" "r,I")))]
++  ""
++  "@
++   subu %1,%2,%0
++   addu %n2,%1,%0"
++  [(set_attr "type" "alu")])
++
++(define_insn "negsi2"
++  [(set (match_operand:SI 0 "register_operand" "=r")
++	(neg:SI (match_operand:SI 1 "register_operand" "r")))]
++  ""
++  "subu %?r0,%1,%0"
++  [(set_attr "type" "alu")])
++
++(define_insn "one_cmplsi2"
++  [(set (match_operand:SI 0 "register_operand" "=r")
++	(not:SI (match_operand:SI 1 "register_operand" "r")))]
++  ""
++  "subu -1,%1,%0"
++  [(set_attr "type" "alu")])
++
++;; 32x32->32 multiply through the FP multiplier (fmlow.dd uses the low
++;; words of two register pairs).
++(define_expand "mulsi3"
++  [(match_operand:SI 0 "register_operand")
++   (match_operand:SI 1 "register_operand")
++   (match_operand:SI 2 "register_operand")]
++  ""
++{
++  rtx a = gen_reg_rtx (DImode);
++  rtx b = gen_reg_rtx (DImode);
++  rtx r = gen_reg_rtx (DImode);
++
++  emit_clobber (a);
++  emit_clobber (b);
++  emit_move_insn (gen_lowpart (SImode, a), operands[1]);
++  emit_move_insn (gen_lowpart (SImode, b), operands[2]);
++  emit_insn (gen_i860_fmlow (r, a, b));
++  emit_move_insn (operands[0], gen_lowpart (SImode, r));
++  DONE;
++})
++
++(define_insn "i860_fmlow"
++  [(set (match_operand:DI 0 "register_operand" "=f")
++	(unspec:DI [(match_operand:DI 1 "register_operand" "f")
++		    (match_operand:DI 2 "register_operand" "f")]
++		   UNSPEC_FMLOW))]
++  ""
++  "fmlow.dd %2,%1,%0"
++  [(set_attr "type" "fpu")])
++
++;; 64-bit integer add/subtract in the graphics unit.
++(define_insn "adddi3"
++  [(set (match_operand:DI 0 "register_operand" "=f")
++	(plus:DI (match_operand:DI 1 "register_operand" "%f")
++		 (match_operand:DI 2 "register_operand" "f")))]
++  ""
++  "fiadd.dd %1,%2,%0"
++  [(set_attr "type" "fpu")])
++
++(define_insn "subdi3"
++  [(set (match_operand:DI 0 "register_operand" "=f")
++	(minus:DI (match_operand:DI 1 "register_operand" "f")
++		  (match_operand:DI 2 "register_operand" "f")))]
++  ""
++  "fisub.dd %1,%2,%0"
++  [(set_attr "type" "fpu")])
++
++;; ------------------------------------------------------------------------
++;; Logical operations.  Any constant takes at most two instructions.
++;; ------------------------------------------------------------------------
++
++(define_insn "andsi3"
++  [(set (match_operand:SI 0 "register_operand" "=r")
++	(and:SI (match_operand:SI 1 "register_operand" "%r")
++		(match_operand:SI 2 "logic_or_const_operand" "rn")))]
++  ""
++  "* return i860_output_logic (AND, operands);"
++  [(set_attr "type" "alu")
++   (set (attr "length") (symbol_ref "i860_logic_length (AND, operands)"))])
++
++(define_insn "iorsi3"
++  [(set (match_operand:SI 0 "register_operand" "=r")
++	(ior:SI (match_operand:SI 1 "register_operand" "%r")
++		(match_operand:SI 2 "logic_or_const_operand" "rn")))]
++  ""
++  "* return i860_output_logic (IOR, operands);"
++  [(set_attr "type" "alu")
++   (set (attr "length") (symbol_ref "i860_logic_length (IOR, operands)"))])
++
++(define_insn "xorsi3"
++  [(set (match_operand:SI 0 "register_operand" "=r")
++	(xor:SI (match_operand:SI 1 "register_operand" "%r")
++		(match_operand:SI 2 "logic_or_const_operand" "rn")))]
++  ""
++  "* return i860_output_logic (XOR, operands);"
++  [(set_attr "type" "alu")
++   (set (attr "length") (symbol_ref "i860_logic_length (XOR, operands)"))])
++
++(define_insn "*andnotsi3"
++  [(set (match_operand:SI 0 "register_operand" "=r")
++	(and:SI (not:SI (match_operand:SI 1 "register_operand" "r"))
++		(match_operand:SI 2 "register_operand" "r")))]
++  ""
++  "andnot %1,%2,%0"
++  [(set_attr "type" "alu")])
++
++;; ------------------------------------------------------------------------
++;; Shifts
++;; ------------------------------------------------------------------------
++
++(define_insn "ashlsi3"
++  [(set (match_operand:SI 0 "register_operand" "=r")
++	(ashift:SI (match_operand:SI 1 "register_operand" "r")
++		   (match_operand:SI 2 "shift_operand" "rK")))]
++  ""
++  "shl %2,%1,%0"
++  [(set_attr "type" "alu")])
++
++(define_insn "ashrsi3"
++  [(set (match_operand:SI 0 "register_operand" "=r")
++	(ashiftrt:SI (match_operand:SI 1 "register_operand" "r")
++		     (match_operand:SI 2 "shift_operand" "rK")))]
++  ""
++  "shra %2,%1,%0"
++  [(set_attr "type" "alu")])
++
++(define_insn "lshrsi3"
++  [(set (match_operand:SI 0 "register_operand" "=r")
++	(lshiftrt:SI (match_operand:SI 1 "register_operand" "r")
++		     (match_operand:SI 2 "shift_operand" "rK")))]
++  ""
++  "shr %2,%1,%0"
++  [(set_attr "type" "alu")])
++
++;; ------------------------------------------------------------------------
++;; Floating point
++;; ------------------------------------------------------------------------
++
++(define_insn "add<mode>3"
++  [(set (match_operand:FMODE 0 "register_operand" "=f")
++	(plus:FMODE (match_operand:FMODE 1 "register_operand" "%f")
++		    (match_operand:FMODE 2 "register_operand" "f")))]
++  ""
++  "fadd.<fsfx> %1,%2,%0"
++  [(set_attr "type" "fpu")])
++
++(define_insn "sub<mode>3"
++  [(set (match_operand:FMODE 0 "register_operand" "=f")
++	(minus:FMODE (match_operand:FMODE 1 "fp_reg_or_0_operand" "fG")
++		     (match_operand:FMODE 2 "register_operand" "f")))]
++  ""
++  "fsub.<fsfx> %z1,%2,%0"
++  [(set_attr "type" "fpu")])
++
++(define_insn "mul<mode>3"
++  [(set (match_operand:FMODE 0 "register_operand" "=f")
++	(mult:FMODE (match_operand:FMODE 1 "register_operand" "%f")
++		    (match_operand:FMODE 2 "register_operand" "f")))]
++  ""
++  "fmul.<fsfx> %1,%2,%0"
++  [(set_attr "type" "fpu")])
++
++;; 0 - x is not a negation for x = +0 or NaN.
++(define_insn "neg<mode>2"
++  [(set (match_operand:FMODE 0 "register_operand" "=f")
++	(neg:FMODE (match_operand:FMODE 1 "register_operand" "f")))]
++  "!HONOR_SIGNED_ZEROS (<MODE>mode) && !HONOR_NANS (<MODE>mode)"
++  "fsub.<fsfx> %?f0,%1,%0"
++  [(set_attr "type" "fpu")])
++
++;; Division by Newton-Raphson refinement of frcp; r31 holds the high
++;; word of 2.0.
++;; The sequence gives a NaN for a zero or infinite divisor, in 2 - y / y with an
++;; infinite reciprocal, while the correct result is not one. So a NaN goes to libgcc:
++;; the normal path only pays for one compare.
++(define_expand "div<mode>3"
++  [(set (match_operand:FMODE 0 "register_operand")
++	(div:FMODE (match_operand:FMODE 1 "register_operand")
++		   (match_operand:FMODE 2 "register_operand")))]
++  ""
++{
++  i860_expand_fdiv (<MODE>mode, operands);
++  DONE;
++})
++
++(define_insn "i860_divdf3"
++  [(set (match_operand:DF 0 "register_operand" "=&f")
++	(div:DF (match_operand:DF 1 "register_operand" "f")
++		(match_operand:DF 2 "register_operand" "f")))
++   (clobber (match_scratch:DF 3 "=&f"))
++   (clobber (match_scratch:DF 4 "=&f"))]
++  ""
++  "frcp.dd %2,%3\;fmul.dd %2,%3,%0\;fmov.dd %?f0,%4\;\
++orh 0x4000,%?r0,%?r31\;ixfr %?r31,%R4\;fsub.dd %4,%0,%0\;\
++fmul.dd %3,%0,%3\;fmul.dd %2,%3,%0\;fsub.dd %4,%0,%0\;\
++fmul.dd %3,%0,%3\;fmul.dd %2,%3,%0\;fsub.dd %4,%0,%0\;\
++fmul.dd %3,%1,%3\;fmul.dd %0,%3,%0"
++  [(set_attr "length" "56")])
++
++(define_insn "i860_divsf3"
++  [(set (match_operand:SF 0 "register_operand" "=&f")
++	(div:SF (match_operand:SF 1 "register_operand" "f")
++		(match_operand:SF 2 "register_operand" "f")))
++   (clobber (match_scratch:SF 3 "=&f"))
++   (clobber (match_scratch:SF 4 "=&f"))]
++  ""
++  "orh 0x4000,%?r0,%?r31\;ixfr %?r31,%4\;frcp.ss %2,%0\;\
++fmul.ss %2,%0,%3\;fsub.ss %4,%3,%3\;fmul.ss %0,%3,%0\;\
++fmul.ss %2,%0,%3\;fsub.ss %4,%3,%3\;\
++fmul.ss %1,%0,%4\;fmul.ss %3,%4,%0"
++  [(set_attr "length" "40")])
++
++(define_insn "extendsfdf2"
++  [(set (match_operand:DF 0 "register_operand" "=f")
++	(float_extend:DF (match_operand:SF 1 "register_operand" "f")))]
++  ""
++  "fmov.sd %1,%0"
++  [(set_attr "type" "fpu")])
++
++(define_insn "truncdfsf2"
++  [(set (match_operand:SF 0 "register_operand" "=f")
++	(float_truncate:SF (match_operand:DF 1 "register_operand" "f")))]
++  ""
++  "fmov.ds %1,%0"
++  [(set_attr "type" "fpu")])
++
++;; int -> double: build 2^52 + 2^31 + x in a register pair and subtract
++;; the magic constant.
++(define_expand "floatsidf2"
++  [(match_operand:DF 0 "register_operand")
++   (match_operand:SI 1 "register_operand")]
++  ""
++{
++  i860_expand_floatsidf (operands[0], operands[1]);
++  DONE;
++})
++
++;; ftrunc leaves the result in the low word of a register pair.
++(define_expand "fix_trunc<mode>si2"
++  [(match_operand:SI 0 "register_operand")
++   (match_operand:FMODE 1 "register_operand")]
++  ""
++{
++  rtx t = gen_reg_rtx (DImode);
++
++  emit_insn (gen_i860_ftrunc<mode> (t, operands[1]));
++  emit_move_insn (operands[0], gen_lowpart (SImode, t));
++  DONE;
++})
++
++(define_insn "i860_ftrunc<mode>"
++  [(set (match_operand:DI 0 "register_operand" "=f")
++	(unspec:DI [(match_operand:FMODE 1 "register_operand" "f")]
++		   UNSPEC_FTRUNC))]
++  ""
++  "ftrunc.<ftrunc> %1,%0"
++  [(set_attr "type" "fpu")])
++
++;; ------------------------------------------------------------------------
++;; Compare and branch
++;; ------------------------------------------------------------------------
++
++(define_expand "cbranchsi4"
++  [(set (pc)
++	(if_then_else (match_operator 0 "ordered_comparison_operator"
++			[(match_operand:SI 1 "register_operand")
++			 (match_operand:SI 2 "nonmemory_operand")])
++		      (label_ref (match_operand 3 ""))
++		      (pc)))]
++  ""
++{
++  if (!i860_cbranch_operand_p (GET_CODE (operands[0]), operands[2]))
++    operands[2] = force_reg (SImode, operands[2]);
++})
++
++(define_insn "*cbranchsi4"
++  [(set (pc)
++	(if_then_else (match_operator 0 "ordered_comparison_operator"
++			[(match_operand:SI 1 "register_operand" "r")
++			 (match_operand:SI 2 "nonmemory_operand" "rn")])
++		      (label_ref (match_operand 3 ""))
++		      (pc)))]
++  "i860_cbranch_operand_p (GET_CODE (operands[0]), operands[2])"
++  "* return i860_output_cbranch (insn, operands, false);"
++  [(set (attr "length")
++	(if_then_else
++	  (and (match_test "i860_bte_form_p (operands)")
++	       (ge (minus (match_dup 3) (pc)) (const_int -131000))
++	       (le (minus (match_dup 3) (pc)) (const_int 131000)))
++	  (const_int 4)
++	  (symbol_ref "i860_cbranch_length (operands, false)")))
++   (set (attr "type")
++	(if_then_else (match_test "i860_bte_form_p (operands)")
++		      (const_string "multi")
++		      (const_string "cbranch")))])
++
++(define_insn "*cbranchsi4_rev"
++  [(set (pc)
++	(if_then_else (match_operator 0 "ordered_comparison_operator"
++			[(match_operand:SI 1 "register_operand" "r")
++			 (match_operand:SI 2 "nonmemory_operand" "rn")])
++		      (pc)
++		      (label_ref (match_operand 3 ""))))]
++  "i860_cbranch_operand_p (reverse_condition (GET_CODE (operands[0])),
++			   operands[2])"
++  "* return i860_output_cbranch (insn, operands, true);"
++  [(set (attr "length")
++	(if_then_else
++	  (and (match_test "i860_bte_form_p (operands)")
++	       (ge (minus (match_dup 3) (pc)) (const_int -131000))
++	       (le (minus (match_dup 3) (pc)) (const_int 131000)))
++	  (const_int 4)
++	  (symbol_ref "i860_cbranch_length (operands, true)")))
++   (set (attr "type")
++	(if_then_else (match_test "i860_bte_form_p (operands)")
++		      (const_string "multi")
++		      (const_string "cbranch")))])
++
++;; Bit tests: logical instructions set CC when the result is zero.
++(define_insn "*cbranch_and"
++  [(set (pc)
++	(if_then_else (match_operator 0 "i860_eqne_operator"
++			[(and:SI (match_operand:SI 1 "register_operand" "r")
++				 (match_operand:SI 2 "logic_or_const_operand" "rn"))
++			 (const_int 0)])
++		      (label_ref (match_operand 3 ""))
++		      (pc)))]
++  "!CONST_INT_P (operands[2]) || satisfies_constraint_L (operands[2])
++   || satisfies_constraint_M (operands[2])"
++  "* return i860_output_bit_cbranch (operands, false);"
++  [(set_attr "type" "cbranch")
++   (set_attr "length" "8")])
++
++(define_insn "*cbranch_and_rev"
++  [(set (pc)
++	(if_then_else (match_operator 0 "i860_eqne_operator"
++			[(and:SI (match_operand:SI 1 "register_operand" "r")
++				 (match_operand:SI 2 "logic_or_const_operand" "rn"))
++			 (const_int 0)])
++		      (pc)
++		      (label_ref (match_operand 3 ""))))]
++  "!CONST_INT_P (operands[2]) || satisfies_constraint_L (operands[2])
++   || satisfies_constraint_M (operands[2])"
++  "* return i860_output_bit_cbranch (operands, true);"
++  [(set_attr "type" "cbranch")
++   (set_attr "length" "8")])
++
++(define_expand "cbranch<mode>4"
++  [(set (pc)
++	(if_then_else (match_operator 0 "i860_fp_comparison_operator"
++			[(match_operand:FMODE 1 "fp_reg_or_0_operand")
++			 (match_operand:FMODE 2 "fp_reg_or_0_operand")])
++		      (label_ref (match_operand 3 ""))
++		      (pc)))]
++  ""
++{
++  if (!fp_reg_or_0_operand (operands[1], <MODE>mode))
++    operands[1] = force_reg (<MODE>mode, operands[1]);
++  if (!fp_reg_or_0_operand (operands[2], <MODE>mode))
++    operands[2] = force_reg (<MODE>mode, operands[2]);
++})
++
++(define_insn "*cbranch<mode>4"
++  [(set (pc)
++	(if_then_else (match_operator 0 "i860_fp_comparison_operator"
++			[(match_operand:FMODE 1 "fp_reg_or_0_operand" "fG")
++			 (match_operand:FMODE 2 "fp_reg_or_0_operand" "fG")])
++		      (label_ref (match_operand 3 ""))
++		      (pc)))]
++  ""
++  "* return i860_output_fp_cbranch (operands, <MODE>mode, false);"
++  [(set (attr "type")
++	(if_then_else (match_test "i860_fp_cbranch_simple_p (operands, false)")
++		      (const_string "cbranch")
++		      (const_string "multi")))])
++
++(define_insn "*cbranch<mode>4_rev"
++  [(set (pc)
++	(if_then_else (match_operator 0 "i860_fp_comparison_operator"
++			[(match_operand:FMODE 1 "fp_reg_or_0_operand" "fG")
++			 (match_operand:FMODE 2 "fp_reg_or_0_operand" "fG")])
++		      (pc)
++		      (label_ref (match_operand 3 ""))))]
++  ""
++  "* return i860_output_fp_cbranch (operands, <MODE>mode, true);"
++  [(set (attr "type")
++	(if_then_else (match_test "i860_fp_cbranch_simple_p (operands, true)")
++		      (const_string "cbranch")
++		      (const_string "multi")))])
++
++;; ------------------------------------------------------------------------
++;; Jumps and calls.  br/bri/call/calli have a delay slot.
++;; ------------------------------------------------------------------------
++
++(define_insn "jump"
++  [(set (pc) (label_ref (match_operand 0 "" "")))]
++  ""
++  "br %l0%#"
++  [(set_attr "type" "branch")
++   (set_attr "length" "8")])
++
++(define_insn "indirect_jump"
++  [(set (pc) (match_operand:SI 0 "register_operand" "r"))]
++  ""
++  "bri %0%#"
++  [(set_attr "type" "branch")
++   (set_attr "length" "8")])
++
++(define_expand "tablejump"
++  [(parallel [(set (pc) (match_operand:SI 0 "register_operand"))
++	      (use (label_ref (match_operand 1 "")))])]
++  ""
++{
++  /* The table holds offsets from its own label.  */
++  if (CASE_VECTOR_PC_RELATIVE)
++    {
++      rtx base = i860_legitimize_pic_address (gen_rtx_LABEL_REF (Pmode,
++								 operands[1]),
++					      NULL_RTX);
++      operands[0] = expand_simple_binop (Pmode, PLUS, base, operands[0],
++					 NULL_RTX, 0, OPTAB_DIRECT);
++    }
++})
++
++(define_insn "*tablejump"
++  [(set (pc) (match_operand:SI 0 "register_operand" "r"))
++   (use (label_ref (match_operand 1 "" "")))]
++  ""
++  "bri %0%#"
++  [(set_attr "type" "branch")
++   (set_attr "length" "8")])
++
++;; ------------------------------------------------------------------------
++;; Position independent code.  r31 is the per-insn temporary.
++
++(define_insn "i860_load_got"
++  [(set (match_operand:SI 0 "register_operand" "=r")
++	(unspec:SI [(match_operand:SI 1 "" "")
++		    (reg:SI PIC_REGNUM)] UNSPEC_GOT))]
++  "flag_pic"
++  "orh [%G1]@got@ha,%?r0,%?r31\;addu %?r15,%?r31,%?r31\;ld.l [%G1]@got@l(%?r31),%0"
++  [(set_attr "length" "12")])
++
++(define_insn "i860_load_gotoff"
++  [(set (match_operand:SI 0 "register_operand" "=r")
++	(unspec:SI [(match_operand:SI 1 "" "")
++		    (reg:SI PIC_REGNUM)] UNSPEC_GOTOFF))]
++  "flag_pic"
++  "orh [%G1]@gotoff@h,%?r0,%?r31\;or [%G1]@gotoff@l,%?r31,%?r31\;addu %?r15,%?r31,%0"
++  [(set_attr "length" "12")])
++
++;; TLS, variant II: the blocks end at the thread pointer in r30.  The address of the
++;; DTPMOD, DTPOFF pair for __tls_get_addr; an offset from the thread pointer from the
++;; GOT, relative to r15 or absolute in non-PIC code; the address itself.
++(define_insn "i860_tls_gd"
++  [(set (match_operand:SI 0 "register_operand" "=r")
++	(unspec:SI [(match_operand:SI 1 "" "")
++		    (reg:SI PIC_REGNUM)] UNSPEC_TLS_GD))]
++  "flag_pic"
++  "orh [%G1]@tlsgd@h,%?r0,%?r31\;or [%G1]@tlsgd@l,%?r31,%?r31\;addu %?r15,%?r31,%0"
++  [(set_attr "length" "12")])
++
++(define_insn "i860_tls_ie"
++  [(set (match_operand:SI 0 "register_operand" "=r")
++	(unspec:SI [(match_operand:SI 1 "" "")
++		    (reg:SI PIC_REGNUM)] UNSPEC_TLS_IE))]
++  "flag_pic"
++  "orh [%G1]@gottpoff@ha,%?r0,%?r31\;addu %?r15,%?r31,%?r31\;ld.l [%G1]@gottpoff@l(%?r31),%0"
++  [(set_attr "length" "12")])
++
++(define_insn "i860_tls_ie_abs"
++  [(set (match_operand:SI 0 "register_operand" "=r")
++	(unspec:SI [(match_operand:SI 1 "" "")] UNSPEC_TLS_IE_ABS))]
++  "!flag_pic"
++  "orh [%G1]@gottpoffabs@ha,%?r0,%?r31\;ld.l [%G1]@gottpoffabs@l(%?r31),%0"
++  [(set_attr "length" "8")])
++
++(define_insn "i860_tls_le"
++  [(set (match_operand:SI 0 "register_operand" "=r")
++	(unspec:SI [(match_operand:SI 1 "" "")] UNSPEC_TLS_LE))]
++  ""
++  "orh [%G1]@tpoff@h,%?r0,%?r31\;or [%G1]@tpoff@l,%?r31,%?r31\;addu %?r30,%?r31,%0"
++  [(set_attr "length" "12")])
++
++;; Access to a local object: the GOT offset goes into the displacement of the
++;; load or store instead of a register, one instruction less.  Only after
++;; reload, these addresses are not legitimate: see the peepholes below.
++(define_mode_iterator GOTOFF_MEM [QI HI SI SF])
++
++(define_insn "*gotoff_load<mode>"
++  [(set (match_operand:GOTOFF_MEM 0 "register_operand" "=rf")
++	(match_operand:GOTOFF_MEM 1 "gotoff_memory_operand" "X"))]
++  "flag_pic && reload_completed"
++  "* return i860_output_gotoff_access (operands, true);"
++  [(set_attr "length" "12")])
++
++(define_insn "*gotoff_store<mode>"
++  [(set (match_operand:GOTOFF_MEM 0 "gotoff_memory_operand" "=X")
++	(match_operand:GOTOFF_MEM 1 "reg_or_0_operand" "rfGJ"))]
++  "flag_pic && reload_completed"
++  "* return i860_output_gotoff_access (operands, false);"
++  [(set_attr "length" "12")])
++
++(define_peephole2
++  [(set (match_operand:SI 0 "register_operand")
++	(unspec:SI [(match_operand:SI 1 "") (reg:SI PIC_REGNUM)] UNSPEC_GOTOFF))
++   (set (match_operand:GOTOFF_MEM 2 "register_operand")
++	(match_operand:GOTOFF_MEM 3 "memory_operand"))]
++  "(REGNO (operands[0]) == REGNO (operands[2])
++    || peep2_reg_dead_p (2, operands[0]))
++   && i860_gotoff_mem (operands[3], operands[0], operands[1])"
++  [(set (match_dup 2) (match_dup 4))]
++{
++  operands[4] = i860_gotoff_mem (operands[3], operands[0], operands[1]);
++})
++
++(define_peephole2
++  [(set (match_operand:SI 0 "register_operand")
++	(unspec:SI [(match_operand:SI 1 "") (reg:SI PIC_REGNUM)] UNSPEC_GOTOFF))
++   (set (match_operand:GOTOFF_MEM 2 "memory_operand")
++	(match_operand:GOTOFF_MEM 3 "reg_or_0_operand"))]
++  "peep2_reg_dead_p (2, operands[0])
++   && !reg_overlap_mentioned_p (operands[0], operands[3])
++   && i860_gotoff_mem (operands[2], operands[0], operands[1])"
++  [(set (match_dup 4) (match_dup 3))]
++{
++  operands[4] = i860_gotoff_mem (operands[2], operands[0], operands[1]);
++})
++
++;; The i860 reads the PC only through a call: r1 is the label after its
++;; delay slot.  The low part relocation sits one word later, thus the +4.
++(define_insn "i860_set_got"
++  [(set (reg:SI PIC_REGNUM)
++	(unspec_volatile:SI [(const_int 0)] UNSPECV_SET_GOT))
++   (clobber (reg:SI R1_REGNUM))]
++  "flag_pic"
++  "call 1f\;nop\n1:\torh [_GLOBAL_OFFSET_TABLE_]@pc@ha,%?r0,%?r15\;adds [_GLOBAL_OFFSET_TABLE_+4]@pc@l,%?r15,%?r15\;addu %?r1,%?r15,%?r15"
++  [(set_attr "length" "20")])
++
++(define_expand "call"
++  [(parallel [(call (match_operand:SI 0 "memory_operand")
++		    (match_operand 1 ""))
++	      (clobber (reg:SI R1_REGNUM))])]
++  ""
++{
++  if (!call_insn_operand (operands[0], SImode))
++    operands[0] = replace_equiv_address (operands[0],
++					 force_reg (Pmode,
++						    XEXP (operands[0], 0)));
++})
++
++;; A bare symbol: LRA must not reload it as the address of a memory operand,
++;; PIC code would then load it from the GOT for an indirect call.
++(define_insn "*call_symbol"
++  [(call (mem:SI (match_operand:SI 0 "symbol_ref_operand" "Z"))
++	 (match_operand 1 "" ""))
++   (clobber (reg:SI R1_REGNUM))]
++  ""
++  "* return i860_output_call (operands, 0);"
++  [(set_attr "type" "call")
++   (set_attr "length" "8")])
++
++(define_insn "*call"
++  [(call (match_operand:SI 0 "call_insn_operand" "Y")
++	 (match_operand 1 "" ""))
++   (clobber (reg:SI R1_REGNUM))]
++  ""
++  "* return i860_output_call (operands, 0);"
++  [(set_attr "type" "call")
++   (set_attr "length" "8")])
++
++(define_expand "call_value"
++  [(parallel [(set (match_operand 0 "")
++		   (call (match_operand:SI 1 "memory_operand")
++			 (match_operand 2 "")))
++	      (clobber (reg:SI R1_REGNUM))])]
++  ""
++{
++  if (!call_insn_operand (operands[1], SImode))
++    operands[1] = replace_equiv_address (operands[1],
++					 force_reg (Pmode,
++						    XEXP (operands[1], 0)));
++})
++
++(define_insn "*call_value_symbol"
++  [(set (match_operand 0 "" "")
++	(call (mem:SI (match_operand:SI 1 "symbol_ref_operand" "Z"))
++	      (match_operand 2 "" "")))
++   (clobber (reg:SI R1_REGNUM))]
++  ""
++  "* return i860_output_call (operands, 1);"
++  [(set_attr "type" "call")
++   (set_attr "length" "8")])
++
++(define_insn "*call_value"
++  [(set (match_operand 0 "" "")
++	(call (match_operand:SI 1 "call_insn_operand" "Y")
++	      (match_operand 2 "" "")))
++   (clobber (reg:SI R1_REGNUM))]
++  ""
++  "* return i860_output_call (operands, 1);"
++  [(set_attr "type" "call")
++   (set_attr "length" "8")])
++
++(define_expand "untyped_call"
++  [(parallel [(call (match_operand 0 "")
++		    (const_int 0))
++	      (match_operand 1 "")
++	      (match_operand 2 "")])]
++  ""
++{
++  emit_call_insn (gen_call (operands[0], const0_rtx));
++
++  for (int i = 0; i < XVECLEN (operands[2], 0); i++)
++    {
++      rtx set = XVECEXP (operands[2], 0, i);
++      emit_move_insn (SET_DEST (set), SET_SRC (set));
++    }
++
++  /* The call sets the value registers stored in the result block.  */
++  emit_insn (gen_blockage ());
++  DONE;
++})
++
++;; ------------------------------------------------------------------------
++;; Prologue, epilogue and miscellaneous
++;; ------------------------------------------------------------------------
++
++(define_expand "prologue"
++  [(const_int 0)]
++  ""
++{
++  i860_expand_prologue ();
++  DONE;
++})
++
++(define_expand "epilogue"
++  [(const_int 0)]
++  ""
++{
++  i860_expand_epilogue ();
++  DONE;
++})
++
++;; The stack pointer is restored in the delay slot of the return.
++(define_insn "i860_return_reg"
++  [(return)
++   (use (reg:SI R1_REGNUM))
++   (set (reg:SI SP_REGNUM) (match_operand:SI 0 "register_operand" "r"))]
++  "reload_completed"
++  "bri %?r1\;mov %0,%?sp"
++  [(set_attr "type" "return")
++   (set_attr "length" "8")])
++
++(define_insn "i860_return_adjust"
++  [(return)
++   (use (reg:SI R1_REGNUM))
++   (set (reg:SI SP_REGNUM)
++	(plus:SI (reg:SI SP_REGNUM)
++		 (match_operand:SI 0 "const_int_operand" "I")))]
++  "reload_completed"
++  "bri %?r1\;addu %0,%?sp,%?sp"
++  [(set_attr "type" "return")
++   (set_attr "length" "8")])
++
++(define_insn "blockage"
++  [(unspec_volatile [(const_int 0)] UNSPECV_BLOCKAGE)]
++  ""
++  ""
++  [(set_attr "type" "nop")
++   (set_attr "length" "0")])
++
++(define_insn "nop"
++  [(const_int 0)]
++  ""
++  "nop"
++  [(set_attr "type" "nop")])
++
++(define_insn "trap"
++  [(trap_if (const_int 1) (const_int 0))]
++  ""
++  "trap %?r0,%?r0,%?r0"
++  [(set_attr "type" "trap")])
+diff --git a/gcc/config/i860/i860.opt b/gcc/config/i860/i860.opt
+new file mode 100644
+index 00000000000..097d4ef9baf
+--- /dev/null
++++ b/gcc/config/i860/i860.opt
+@@ -0,0 +1,28 @@
++; Options for the Intel i860 port of the compiler.
++
++; Copyright (C) 2005-2026 Free Software Foundation, Inc.
++; Copyright (C) 2026 René Rebe <rene@exactco.de>
++;
++; This file is part of GCC.
++;
++; GCC is free software; you can redistribute it and/or modify it under
++; the terms of the GNU General Public License as published by the Free
++; Software Foundation; either version 3, or (at your option) any later
++; version.
++;
++; GCC is distributed in the hope that it will be useful, but WITHOUT ANY
++; WARRANTY; without even the implied warranty of MERCHANTABILITY or
++; FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License
++; for more details.
++;
++; You should have received a copy of the GNU General Public License
++; along with GCC; see the file COPYING3.  If not see
++; <http://www.gnu.org/licenses/>.
++
++mxp
++Target RejectNegative Mask(XP)
++Generate code for the i860XP.
++
++mxr
++Target RejectNegative InverseMask(XP)
++Generate code for the i860XR (default).
+diff --git a/gcc/config/i860/i860.opt.urls b/gcc/config/i860/i860.opt.urls
+new file mode 100644
+index 00000000000..d61dc281b1d
+--- /dev/null
++++ b/gcc/config/i860/i860.opt.urls
+@@ -0,0 +1,8 @@
++; Autogenerated by regenerate-opt-urls.py from gcc/config/i860/i860.opt and generated HTML
++
++mxp
++UrlSuffix(gcc/i860-Options.html#index-mxp)
++
++mxr
++UrlSuffix(gcc/i860-Options.html#index-mxr)
++
+diff --git a/gcc/config/i860/linux.h b/gcc/config/i860/linux.h
+new file mode 100644
+index 00000000000..d1c066406de
+--- /dev/null
++++ b/gcc/config/i860/linux.h
+@@ -0,0 +1,42 @@
++/* Definitions for Intel i860 running GNU/Linux.
++   Copyright (C) 2026 Free Software Foundation, Inc.
++   Copyright (C) 2026 René Rebe <rene@exactco.de>
++
++This file is part of GCC.
++
++GCC is free software; you can redistribute it and/or modify
++it under the terms of the GNU General Public License as published by
++the Free Software Foundation; either version 3, or (at your option)
++any later version.
++
++GCC is distributed in the hope that it will be useful,
++but WITHOUT ANY WARRANTY; without even the implied warranty of
++MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++GNU General Public License for more details.
++
++You should have received a copy of the GNU General Public License
++along with GCC; see the file COPYING3.  If not see
++<http://www.gnu.org/licenses/>.  */
++
++#ifndef GCC_I860_LINUX_H
++#define GCC_I860_LINUX_H
++
++#define TARGET_OS_CPP_BUILTINS() GNU_USER_TARGET_OS_CPP_BUILTINS ()
++
++/* Linux ABI: 64-bit integers in integer register pairs, and r30 is the
++   thread pointer (never allocated, set by the C library and clone).  */
++#define I860_DIMODE_ARGS_IN_GPRS 1
++#define I860_THREAD_POINTER_REGNUM 30
++#define I860_PIC_SUPPORTED 1
++
++#define GLIBC_DYNAMIC_LINKER "/lib/ld-linux-i860.so.1"
++
++#undef LINK_SPEC
++#define LINK_SPEC							\
++  "%{shared:-shared} "							\
++  "%{!shared:%{!static:%{!static-pie:"					\
++  "%{rdynamic:-export-dynamic} "					\
++  "-dynamic-linker " GNU_USER_DYNAMIC_LINKER "}}} "			\
++  "%{static:-static} %{static-pie:-static -pie --no-dynamic-linker}"
++
++#endif /* GCC_I860_LINUX_H */
+diff --git a/gcc/config/i860/predicates.md b/gcc/config/i860/predicates.md
+new file mode 100644
+index 00000000000..44957d17bb8
+--- /dev/null
++++ b/gcc/config/i860/predicates.md
+@@ -0,0 +1,84 @@
++;; Predicate definitions for the Intel i860.
++;; Copyright (C) 2026 Free Software Foundation, Inc.
++;; Copyright (C) 2026 René Rebe <rene@exactco.de>
++;;
++;; This file is part of GCC.
++;;
++;; GCC is free software; you can redistribute it and/or modify it
++;; under the terms of the GNU General Public License as published
++;; by the Free Software Foundation; either version 3, or (at your
++;; option) any later version.
++;;
++;; GCC is distributed in the hope that it will be useful, but WITHOUT
++;; ANY WARRANTY; without even the implied warranty of MERCHANTABILITY
++;; or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public
++;; License for more details.
++;;
++;; You should have received a copy of the GNU General Public License
++;; along with GCC; see the file COPYING3.  If not see
++;; <http://www.gnu.org/licenses/>.
++
++(define_predicate "reg_or_0_operand"
++  (ior (match_operand 0 "register_operand")
++       (and (match_code "const_int,const_double")
++	    (match_test "op == CONST0_RTX (mode)"))))
++
++(define_predicate "arith_operand"
++  (ior (match_operand 0 "register_operand")
++       (and (match_code "const_int")
++	    (match_test "satisfies_constraint_I (op)"))))
++
++(define_predicate "logic_operand"
++  (ior (match_operand 0 "register_operand")
++       (and (match_code "const_int")
++	    (match_test "satisfies_constraint_L (op)"))))
++
++;; Anything an and/or/xor pattern can output in at most two insns.
++(define_predicate "logic_or_const_operand"
++  (ior (match_operand 0 "register_operand")
++       (match_code "const_int")))
++
++(define_predicate "shift_operand"
++  (ior (match_operand 0 "register_operand")
++       (and (match_code "const_int")
++	    (match_test "IN_RANGE (INTVAL (op), 0, 31)"))))
++
++(define_predicate "bte_operand"
++  (ior (match_operand 0 "register_operand")
++       (and (match_code "const_int")
++	    (match_test "satisfies_constraint_K (op)"))))
++
++;; A memory reference with a reg+reg address: valid for loads only.
++(define_predicate "indexed_memory_operand"
++  (and (match_code "mem")
++       (match_test "i860_indexed_address_p (XEXP (op, 0), false)")))
++
++;; An access through a GOT offset in the displacement, see *gotoff_load.
++(define_predicate "gotoff_memory_operand"
++  (and (match_code "mem")
++       (match_test "GET_CODE (XEXP (op, 0)) == UNSPEC
++		    && XINT (XEXP (op, 0), 1) == UNSPEC_GOTOFF")))
++
++;; Any operand a load instruction can read.
++(define_predicate "reg_or_load_operand"
++  (ior (match_operand 0 "nonimmediate_operand")
++       (match_operand 0 "indexed_memory_operand")))
++
++(define_predicate "symbol_ref_operand"
++  (match_code "symbol_ref"))
++
++(define_predicate "call_insn_operand"
++  (and (match_code "mem")
++       (match_test "i860_call_address_p (XEXP (op, 0), false)")))
++
++(define_predicate "fp_reg_or_0_operand"
++  (ior (match_operand 0 "register_operand")
++       (and (match_code "const_double")
++	    (match_test "op == CONST0_RTX (mode)"))))
++
++(define_predicate "i860_fp_comparison_operator"
++  (match_code "eq,ne,lt,gt,le,ge,unlt,ungt,unle,unge,uneq,ltgt,
++	       ordered,unordered"))
++
++(define_predicate "i860_eqne_operator"
++  (match_code "eq,ne"))
+diff --git a/gcc/config/i860/sysv4.h b/gcc/config/i860/sysv4.h
+new file mode 100644
+index 00000000000..148350354e3
+--- /dev/null
++++ b/gcc/config/i860/sysv4.h
+@@ -0,0 +1,63 @@
++/* Target definitions for GCC for Intel 80860 running System V.4
++   Copyright (C) 1991-2005, 2026 Free Software Foundation, Inc.
++   Copyright (C) 2026 René Rebe <rene@exactco.de>
++
++   Written by Ron Guilmette (rfg@netcom.com).
++
++This file is part of GCC.
++
++GCC is free software; you can redistribute it and/or modify
++it under the terms of the GNU General Public License as published by
++the Free Software Foundation; either version 3, or (at your option)
++any later version.
++
++GCC is distributed in the hope that it will be useful,
++but WITHOUT ANY WARRANTY; without even the implied warranty of
++MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++GNU General Public License for more details.
++
++You should have received a copy of the GNU General Public License
++along with GCC; see the file COPYING3.  If not see
++<http://www.gnu.org/licenses/>.  */
++
++#define TARGET_OS_CPP_BUILTINS()		\
++  do						\
++    {						\
++      builtin_define_std ("unix");		\
++      builtin_define ("SVR4");			\
++      builtin_define ("__svr4__");		\
++      builtin_assert ("system=unix");		\
++      builtin_assert ("system=svr4");		\
++    }						\
++  while (0)
++
++/* Integer division comes from the native libc (.div, .udiv, ...).  */
++#define I860_SVR4_DIVMOD_NAMES 1
++
++/* Startup files and libraries of the native /usr/ccs/lib.  */
++#undef STARTFILE_SPEC
++#define STARTFILE_SPEC							\
++  "%{!shared:%{pg:pcrt1.o%s}%{!pg:%{p:mcrt1.o%s}%{!p:crt1.o%s}}} "	\
++  "%{pg:pcrti.o%s}%{!pg:crti.o%s} "					\
++  "%{ansi:values-Xc.o%s} %{!ansi:values-Xa.o%s} crtbegin.o%s"
++
++#undef ENDFILE_SPEC
++#define ENDFILE_SPEC "crtend.o%s %{pg:pcrtn.o%s}%{!pg:crtn.o%s}"
++
++#undef LIB_SPEC
++#define LIB_SPEC "%{!shared:%{!symbolic:-lc}}"
++
++#undef LINK_SPEC
++#define LINK_SPEC							\
++  "%{h*} %{v:-V} %{b} "							\
++  "%{static:-dn -Bstatic} "						\
++  "%{shared:-G -dy -z text} "						\
++  "%{symbolic:-Bsymbolic -G -dy -z text} "				\
++  "%{G:-G} "								\
++  "%{YP,*} "								\
++  "%{!YP,*:%{p:-Y P,/usr/ccs/lib/libp:/usr/lib/libp:/usr/ccs/lib:/usr/lib} " \
++  "%{!p:-Y P,/usr/ccs/lib:/usr/lib}} "					\
++  "%{Qy:} %{!Qn:-Qy}"
++
++#undef MD_STARTFILE_PREFIX
++#define MD_STARTFILE_PREFIX "/usr/ccs/lib/"
+diff --git a/gcc/doc/install.texi b/gcc/doc/install.texi
+index 2be38423c79..93250acf50e 100644
+--- a/gcc/doc/install.texi
++++ b/gcc/doc/install.texi
+@@ -4342,6 +4342,25 @@ If you receive Signal 11 errors when building on GNU/Linux, then it is
+ possible you have a hardware problem.  Further information on this can be
+ found on @uref{https://www.bitwizard.nl/sig11/,,www.bitwizard.nl}.
+ 
++@html
++<hr />
++@end html
++@anchor{i860-x-linux}
++@heading i860-*-linux
++Intel i860 running GNU/Linux.  Requires GNU binutils 2.30 or older,
++the last release supporting the i860.  Only non-PIC code is generated,
++so configure with @option{--disable-shared}.
++
++@html
++<hr />
++@end html
++@anchor{i860-x-sysv4}
++@heading i860-*-sysv4
++Intel i860 running UNIX System V Release 4, e.g.@: Stardent/Kubota
++UNIX System V/i860.  Integer division uses the native @code{.div},
++@code{.udiv}, @code{.rem} and @code{.urem} helpers of the system C
++library.
++
+ @html
+ <hr />
+ @end html
+diff --git a/gcc/doc/invoke.texi b/gcc/doc/invoke.texi
+index 60d7163eee3..5229a868c7b 100644
+--- a/gcc/doc/invoke.texi
++++ b/gcc/doc/invoke.texi
+@@ -1134,6 +1134,9 @@ Objective-C and Objective-C++ Dialects}.
+ -mschedule=@var{cpu-type}  -msoft-mult  -msio  -mwsio
+ -munix=@var{unix-std}  -nolibdld  -static  -threads}
+ 
++@emph{i860 Options} (@ref{i860 Options})
++@gccoptlist{-mxp  -mxr}
++
+ @emph{IA-64 Options} (@ref{IA-64 Options})
+ @gccoptlist{-mbig-endian  -mlittle-endian  -mgnu-as  -mgnu-ld  -mno-pic
+ -mvolatile-asm-stop  -mregister-names  -msdata
+@@ -21416,6 +21419,7 @@ other compilers on the same platform.
+ * GNU/Linux Options::
+ * H8/300 Options::
+ * HPPA Options::
++* i860 Options::
+ * IA-64 Options::
+ * LM32 Options::
+ * LoongArch Options::
+@@ -27554,6 +27558,23 @@ under HP-UX@.  This option sets flags for both the preprocessor and
+ linker.
+ @end table
+ 
++@node i860 Options
++@subsection Intel 860 Options
++@cindex i860 Options
++
++These @samp{-m} options are defined for the Intel i860 processor
++(@samp{i860-*-linux*} and @samp{i860-*-sysv4*} configurations).
++
++@table @gcctabopt
++@opindex mxp
++@item -mxp
++Generate code for the i860XP and define the macro @code{__i860XP__}.
++
++@opindex mxr
++@item -mxr
++Generate code for the i860XR.  This is the default.
++@end table
++
+ @node IA-64 Options
+ @subsection IA-64 Options
+ @cindex IA-64 Options
+diff --git a/libgcc/config.host b/libgcc/config.host
+index 319d6cfe0ef..9b3dbf14be7 100644
+--- a/libgcc/config.host
++++ b/libgcc/config.host
+@@ -1,5 +1,6 @@
+ # libgcc host-specific configuration file.
+ # Copyright (C) 1997-2026 Free Software Foundation, Inc.
++# Copyright (C) 2026 René Rebe <rene@exactco.de>
+ 
+ #This file is part of GCC.
+ 
+@@ -946,6 +947,13 @@ x86_64-*-mingw*)
+ 		extra_parts="$extra_parts vtv_start.o vtv_end.o vtv_start_preinit.o vtv_end_preinit.o"
+ 	fi
+ 	;;
++i860-*-linux*)
++	tmake_file="$tmake_file i860/t-i860"
++	;;
++i860-*-sysv4*)
++	tmake_file="$tmake_file i860/t-i860"
++	extra_parts="$extra_parts crtbegin.o crtend.o"
++	;;
+ ia64*-*-elf*)
+ 	extra_parts="$extra_parts crtbeginS.o crtendS.o crtfastmath.o"
+ 	tmake_file="ia64/t-ia64 ia64/t-ia64-elf ia64/t-eh-ia64 t-crtfm t-softfp-tf ia64/t-softfp t-softfp ia64/t-softfp-compat"
+diff --git a/libgcc/config/i860/fdiv-special.c b/libgcc/config/i860/fdiv-special.c
+new file mode 100644
+index 00000000000..7c2b64a04d4
+--- /dev/null
++++ b/libgcc/config/i860/fdiv-special.c
+@@ -0,0 +1,54 @@
++/* IEEE results of a division where the Newton-Raphson sequence gave a NaN:
++   a NaN operand, a zero or infinite divisor, or a reciprocal that overflowed.
++   Copyright (C) 2026 Free Software Foundation, Inc.
++   Copyright (C) 2026 René Rebe <rene@exactco.de>
++
++This file is part of GCC.
++
++GCC is free software; you can redistribute it and/or modify it under
++the terms of the GNU General Public License as published by the Free
++Software Foundation; either version 3, or (at your option) any later
++version.
++
++GCC is distributed in the hope that it will be useful, but WITHOUT ANY
++WARRANTY; without even the implied warranty of MERCHANTABILITY or
++FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License
++for more details.
++
++Under Section 7 of GPL version 3, you are granted additional
++permissions described in the GCC Runtime Library Exception, version
++3.1, as published by the Free Software Foundation.
++
++You should have received a copy of the GNU General Public License and
++a copy of the GCC Runtime Library Exception along with this program;
++see the files COPYING3 and COPYING.RUNTIME respectively.  If not, see
++<http://www.gnu.org/licenses/>.  */
++
++extern double __i860_fdiv_special (double, double);
++extern float __i860_fdivs_special (float, float);
++
++#define BIG 18446744073709551616.0	/* 2^64 */
++
++double
++__i860_fdiv_special (double x, double y)
++{
++  double inf = __builtin_inf ();
++  double sign = __builtin_copysign (1.0, x) * __builtin_copysign (1.0, y);
++
++  if (x != x)
++    return x;
++  if (y != y)
++    return y;
++  if (y == 0)
++    return x == 0 ? __builtin_nan ("") : __builtin_copysign (inf, sign);
++  if (__builtin_isinf (y))
++    return __builtin_isinf (x) ? __builtin_nan ("") : __builtin_copysign (0.0, sign);
++  /* The divisor is so small that its reciprocal is out of range.  */
++  return (x / (y * BIG)) * BIG;
++}
++
++float
++__i860_fdivs_special (float x, float y)
++{
++  return (float) __i860_fdiv_special (x, y);
++}
+diff --git a/libgcc/config/i860/t-i860 b/libgcc/config/i860/t-i860
+new file mode 100644
+index 00000000000..4fe70bf2d85
+--- /dev/null
++++ b/libgcc/config/i860/t-i860
+@@ -0,0 +1,24 @@
++# Copyright (C) 2026 Free Software Foundation, Inc.
++# Copyright (C) 2026 René Rebe <rene@exactco.de>
++#
++# This file is part of GCC.
++#
++# GCC is free software; you can redistribute it and/or modify it under
++# the terms of the GNU General Public License as published by the Free
++# Software Foundation; either version 3, or (at your option) any later
++# version.
++#
++# GCC is distributed in the hope that it will be useful, but WITHOUT ANY
++# WARRANTY; without even the implied warranty of MERCHANTABILITY or
++# FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License
++# for more details.
++#
++# You should have received a copy of the GNU General Public License
++# along with GCC; see the file COPYING3.  If not see
++# <http://www.gnu.org/licenses/>.
++
++# The i860 has no integer divide instruction.
++LIB2ADD += $(srcdir)/divmod.c \
++	   $(srcdir)/udivmod.c \
++	   $(srcdir)/udivmodsi4.c \
++	   $(srcdir)/config/i860/fdiv-special.c

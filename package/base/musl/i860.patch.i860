@@ -1,0 +1,1517 @@
+# --- T2-COPYRIGHT-BEGIN ---
+# t2/package/*/musl/i860.patch.i860
+# Copyright (C) 2026 The T2 SDE Project
+# SPDX-License-Identifier: GPL-2.0 or patched project license
+# --- T2-COPYRIGHT-END ---
+
+From: René Rebe <rene@exactco.de>
+Subject: [PATCH] add i860 port
+
+Static and dynamic linking, TLS through r30, lock and unlock atomics, optimized memcpy, memmove and memset.
+
+Against upstream commit 7813e9119eb5fe681b6750b8a033a0490bca0941 (regex: avoid int overflow in regcomp).
+Branch i860 at d7b03a2d. Tested in the MAME magicst2 model only, not on real hardware.
+
+Signed-off-by: René Rebe <rene@exactco.de>
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ arch/i860/atomic_arch.h             |  33 +++
+ arch/i860/bits/alltypes.h.in        |  19 ++
+ arch/i860/bits/float.h              |  17 ++
+ arch/i860/bits/ipcstat.h            |   2 +
+ arch/i860/bits/msg.h                |  19 ++
+ arch/i860/bits/sem.h                |  19 ++
+ arch/i860/bits/setjmp.h             |   2 +
+ arch/i860/bits/shm.h                |  32 +++
+ arch/i860/bits/signal.h             |  98 +++++++++
+ arch/i860/bits/syscall.h.in         | 319 ++++++++++++++++++++++++++++
+ arch/i860/bits/user.h               |   1 +
+ arch/i860/crt_arch.h                |  20 ++
+ arch/i860/kstat.h                   |   1 +
+ arch/i860/pthread_arch.h            |  10 +
+ arch/i860/reloc.h                   |  16 ++
+ arch/i860/syscall_arch.h            |  84 ++++++++
+ configure                           |   2 +
+ include/elf.h                       |  11 +
+ src/ldso/i860/dlsym.s               |  10 +
+ src/setjmp/i860/longjmp.s           |  34 +++
+ src/setjmp/i860/setjmp.s            |  35 +++
+ src/signal/i860/restore.s           |  12 ++
+ src/signal/i860/sigsetjmp.s         |  25 +++
+ src/string/i860/memcpy.s            | 209 ++++++++++++++++++
+ src/string/i860/memmove.s           |  93 ++++++++
+ src/string/i860/memset.s            |  66 ++++++
+ src/thread/i860/__set_thread_area.s |   9 +
+ src/thread/i860/__unmapself.s       |   9 +
+ src/thread/i860/clone.s             |  30 +++
+ src/thread/i860/syscall_cp.s        |  32 +++
+ 30 files changed, 1269 insertions(+)
+
+diff --git a/arch/i860/atomic_arch.h b/arch/i860/atomic_arch.h
+new file mode 100644
+index 00000000..ee8c51ec
+--- /dev/null
++++ b/arch/i860/atomic_arch.h
+@@ -0,0 +1,33 @@
++/* Copyright (C) 2026 René Rebe <rene@exactco.de> */
++/*
++ * Compare-and-swap in a lock/unlock interlocked sequence: the bus stays
++ * locked and interrupts are held off from the load until the access after
++ * unlock. A trap inside the sequence makes the kernel restart it at the
++ * lock instruction (EPSR.IL).
++ */
++#define a_cas a_cas
++static inline int a_cas(volatile int *p, int t, int s)
++{
++	int old;
++
++	__asm__ __volatile__ (
++		"lock\n\t"
++		"ld.l 0(%1),%0\n\t"
++		"xor %0,%2,%%r0\n\t"
++		"bnc 1f\n\t"
++		"unlock\n\t"
++		"st.l %3,0(%1)\n\t"
++		"br 2f\n\t"
++		"nop\n"
++		"1:\tunlock\n\t"
++		"ld.l 0(%1),%%r0\n"
++		"2:"
++		: "=&r"(old) : "r"(p), "r"(t), "r"(s) : "memory");
++	return old;
++}
++
++#define a_barrier a_barrier
++static inline void a_barrier()
++{
++	__asm__ __volatile__ ("" : : : "memory");
++}
+diff --git a/arch/i860/bits/alltypes.h.in b/arch/i860/bits/alltypes.h.in
+new file mode 100644
+index 00000000..18bb5f17
+--- /dev/null
++++ b/arch/i860/bits/alltypes.h.in
+@@ -0,0 +1,19 @@
++/* Copyright (C) 2026 René Rebe <rene@exactco.de> */
++#define _Addr int
++#define _Int64 long long
++#define _Reg int
++
++#define __BYTE_ORDER 1234
++#define __LONG_MAX 0x7fffffffL
++
++#ifndef __cplusplus
++TYPEDEF long wchar_t;
++#endif
++
++TYPEDEF int blksize_t;
++TYPEDEF unsigned int nlink_t;
++
++TYPEDEF float float_t;
++TYPEDEF double double_t;
++
++TYPEDEF struct { long long __ll; long double __ld; } max_align_t;
+diff --git a/arch/i860/bits/float.h b/arch/i860/bits/float.h
+new file mode 100644
+index 00000000..2313f5a5
+--- /dev/null
++++ b/arch/i860/bits/float.h
+@@ -0,0 +1,17 @@
++/* Copyright (C) 2026 René Rebe <rene@exactco.de> */
++#define FLT_EVAL_METHOD 0
++
++#define LDBL_TRUE_MIN 4.94065645841246544177e-324L
++#define LDBL_MIN 2.22507385850720138309e-308L
++#define LDBL_MAX 1.79769313486231570815e+308L
++#define LDBL_EPSILON 2.22044604925031308085e-16L
++
++#define LDBL_MANT_DIG 53
++#define LDBL_MIN_EXP (-1021)
++#define LDBL_MAX_EXP 1024
++
++#define LDBL_DIG 15
++#define LDBL_MIN_10_EXP (-307)
++#define LDBL_MAX_10_EXP 308
++
++#define DECIMAL_DIG 17
+diff --git a/arch/i860/bits/ipcstat.h b/arch/i860/bits/ipcstat.h
+new file mode 100644
+index 00000000..50698b03
+--- /dev/null
++++ b/arch/i860/bits/ipcstat.h
+@@ -0,0 +1,2 @@
++/* Copyright (C) 2026 René Rebe <rene@exactco.de> */
++#define IPC_STAT 0x102
+diff --git a/arch/i860/bits/msg.h b/arch/i860/bits/msg.h
+new file mode 100644
+index 00000000..451e18b6
+--- /dev/null
++++ b/arch/i860/bits/msg.h
+@@ -0,0 +1,19 @@
++/* Copyright (C) 2026 René Rebe <rene@exactco.de> */
++struct msqid_ds {
++	struct ipc_perm msg_perm;
++	unsigned long __msg_stime_lo;
++	unsigned long __msg_stime_hi;
++	unsigned long __msg_rtime_lo;
++	unsigned long __msg_rtime_hi;
++	unsigned long __msg_ctime_lo;
++	unsigned long __msg_ctime_hi;
++	unsigned long msg_cbytes;
++	msgqnum_t msg_qnum;
++	msglen_t msg_qbytes;
++	pid_t msg_lspid;
++	pid_t msg_lrpid;
++	unsigned long __unused[2];
++	time_t msg_stime;
++	time_t msg_rtime;
++	time_t msg_ctime;
++};
+diff --git a/arch/i860/bits/sem.h b/arch/i860/bits/sem.h
+new file mode 100644
+index 00000000..3e5d4447
+--- /dev/null
++++ b/arch/i860/bits/sem.h
+@@ -0,0 +1,19 @@
++/* Copyright (C) 2026 René Rebe <rene@exactco.de> */
++struct semid_ds {
++	struct ipc_perm sem_perm;
++	unsigned long __sem_otime_lo;
++	unsigned long __sem_otime_hi;
++	unsigned long __sem_ctime_lo;
++	unsigned long __sem_ctime_hi;
++#if __BYTE_ORDER == __LITTLE_ENDIAN
++	unsigned short sem_nsems;
++	char __sem_nsems_pad[sizeof(long)-sizeof(short)];
++#else
++	char __sem_nsems_pad[sizeof(long)-sizeof(short)];
++	unsigned short sem_nsems;
++#endif
++	long __unused3;
++	long __unused4;
++	time_t sem_otime;
++	time_t sem_ctime;
++};
+diff --git a/arch/i860/bits/setjmp.h b/arch/i860/bits/setjmp.h
+new file mode 100644
+index 00000000..e971250c
+--- /dev/null
++++ b/arch/i860/bits/setjmp.h
+@@ -0,0 +1,2 @@
++/* Copyright (C) 2026 René Rebe <rene@exactco.de> */
++typedef unsigned long __jmp_buf[22];
+diff --git a/arch/i860/bits/shm.h b/arch/i860/bits/shm.h
+new file mode 100644
+index 00000000..b2dfae4e
+--- /dev/null
++++ b/arch/i860/bits/shm.h
+@@ -0,0 +1,32 @@
++/* Copyright (C) 2026 René Rebe <rene@exactco.de> */
++#define SHMLBA 4096
++
++struct shmid_ds {
++	struct ipc_perm shm_perm;
++	size_t shm_segsz;
++	unsigned long __shm_atime_lo;
++	unsigned long __shm_atime_hi;
++	unsigned long __shm_dtime_lo;
++	unsigned long __shm_dtime_hi;
++	unsigned long __shm_ctime_lo;
++	unsigned long __shm_ctime_hi;
++	pid_t shm_cpid;
++	pid_t shm_lpid;
++	unsigned long shm_nattch;
++	unsigned long __pad1;
++	unsigned long __pad2;
++	unsigned long __pad3;
++	time_t shm_atime;
++	time_t shm_dtime;
++	time_t shm_ctime;
++};
++
++struct shminfo {
++	unsigned long shmmax, shmmin, shmmni, shmseg, shmall, __unused[4];
++};
++
++struct shm_info {
++	int __used_ids;
++	unsigned long shm_tot, shm_rss, shm_swp;
++	unsigned long __swap_attempts, __swap_successes;
++};
+diff --git a/arch/i860/bits/signal.h b/arch/i860/bits/signal.h
+new file mode 100644
+index 00000000..6022b2a0
+--- /dev/null
++++ b/arch/i860/bits/signal.h
+@@ -0,0 +1,98 @@
++/* Copyright (C) 2026 René Rebe <rene@exactco.de> */
++#if defined(_POSIX_SOURCE) || defined(_POSIX_C_SOURCE) \
++ || defined(_XOPEN_SOURCE) || defined(_GNU_SOURCE) || defined(_BSD_SOURCE)
++
++#if defined(_XOPEN_SOURCE) || defined(_GNU_SOURCE) || defined(_BSD_SOURCE)
++# define MINSIGSTKSZ 2048
++# define SIGSTKSZ 8192
++#endif
++
++/* layout of the kernel's struct sigcontext (arch/i860 uapi) */
++typedef struct mcontext_t {
++	unsigned long __gregs[32];
++	unsigned long __fpregs[32];
++	unsigned long __psr, __epsr, __fir, __fsr;
++	unsigned long __oldmask;
++} mcontext_t;
++
++#if defined(_GNU_SOURCE)
++#define REG_SP 2
++#define REG_FP 3
++#define REG_TP 30
++#endif
++
++#if defined(_GNU_SOURCE) || defined(_BSD_SOURCE)
++typedef unsigned long greg_t;
++typedef unsigned long gregset_t[32];
++typedef unsigned long fpregset_t[32];
++struct sigcontext {
++	unsigned long gregs[32];
++	unsigned long fpregs[32];
++	unsigned long psr, epsr, fir, fsr;
++	unsigned long oldmask;
++};
++#endif
++
++struct sigaltstack {
++	void *ss_sp;
++	int ss_flags;
++	size_t ss_size;
++};
++
++/* asm-generic order: the machine context comes before the mask */
++typedef struct __ucontext
++{
++	unsigned long uc_flags;
++	struct __ucontext *uc_link;
++	stack_t uc_stack;
++	mcontext_t uc_mcontext;
++	sigset_t uc_sigmask;
++} ucontext_t;
++
++#define SA_NOCLDSTOP 1
++#define SA_NOCLDWAIT 2
++#define SA_SIGINFO   4
++#define SA_ONSTACK   0x08000000
++#define SA_RESTART   0x10000000
++#define SA_NODEFER   0x40000000
++#define SA_RESETHAND 0x80000000
++#define SA_RESTORER  0x04000000
++
++#endif
++
++#define SIGHUP     1
++#define SIGINT     2
++#define SIGQUIT    3
++#define SIGILL     4
++#define SIGTRAP    5
++#define SIGABRT    6
++#define SIGIOT     SIGABRT
++#define SIGBUS     7
++#define SIGFPE     8
++#define SIGKILL    9
++#define SIGUSR1   10
++#define SIGSEGV   11
++#define SIGUSR2   12
++#define SIGPIPE   13
++#define SIGALRM   14
++#define SIGTERM   15
++#define SIGSTKFLT 16
++#define SIGCHLD   17
++#define SIGCONT   18
++#define SIGSTOP   19
++#define SIGTSTP   20
++#define SIGTTIN   21
++#define SIGTTOU   22
++#define SIGURG    23
++#define SIGXCPU   24
++#define SIGXFSZ   25
++#define SIGVTALRM 26
++#define SIGPROF   27
++#define SIGWINCH  28
++#define SIGIO     29
++#define SIGPOLL   SIGIO
++#define SIGPWR    30
++#define SIGSYS    31
++#define SIGUNUSED SIGSYS
++
++#define _NSIG     65
+diff --git a/arch/i860/bits/syscall.h.in b/arch/i860/bits/syscall.h.in
+new file mode 100644
+index 00000000..35f39c74
+--- /dev/null
++++ b/arch/i860/bits/syscall.h.in
+@@ -0,0 +1,319 @@
++/* Copyright (C) 2026 René Rebe <rene@exactco.de> */
++#define __NR_io_setup 0
++#define __NR_io_destroy 1
++#define __NR_io_submit 2
++#define __NR_io_cancel 3
++#define __NR_setxattr 5
++#define __NR_lsetxattr 6
++#define __NR_fsetxattr 7
++#define __NR_getxattr 8
++#define __NR_lgetxattr 9
++#define __NR_fgetxattr 10
++#define __NR_listxattr 11
++#define __NR_llistxattr 12
++#define __NR_flistxattr 13
++#define __NR_removexattr 14
++#define __NR_lremovexattr 15
++#define __NR_fremovexattr 16
++#define __NR_getcwd 17
++#define __NR_lookup_dcookie 18
++#define __NR_eventfd2 19
++#define __NR_epoll_create1 20
++#define __NR_epoll_ctl 21
++#define __NR_epoll_pwait 22
++#define __NR_dup 23
++#define __NR_dup3 24
++#define __NR_fcntl64 25
++#define __NR_inotify_init1 26
++#define __NR_inotify_add_watch 27
++#define __NR_inotify_rm_watch 28
++#define __NR_ioctl 29
++#define __NR_ioprio_set 30
++#define __NR_ioprio_get 31
++#define __NR_flock 32
++#define __NR_mknodat 33
++#define __NR_mkdirat 34
++#define __NR_unlinkat 35
++#define __NR_symlinkat 36
++#define __NR_linkat 37
++#define __NR_umount2 39
++#define __NR_mount 40
++#define __NR_pivot_root 41
++#define __NR_nfsservctl 42
++#define __NR_statfs64 43
++#define __NR_fstatfs64 44
++#define __NR_truncate64 45
++#define __NR_ftruncate64 46
++#define __NR_fallocate 47
++#define __NR_faccessat 48
++#define __NR_chdir 49
++#define __NR_fchdir 50
++#define __NR_chroot 51
++#define __NR_fchmod 52
++#define __NR_fchmodat 53
++#define __NR_fchownat 54
++#define __NR_fchown 55
++#define __NR_openat 56
++#define __NR_close 57
++#define __NR_vhangup 58
++#define __NR_pipe2 59
++#define __NR_quotactl 60
++#define __NR_getdents64 61
++#define __NR_llseek 62
++#define __NR_read 63
++#define __NR_write 64
++#define __NR_readv 65
++#define __NR_writev 66
++#define __NR_pread64 67
++#define __NR_pwrite64 68
++#define __NR_preadv 69
++#define __NR_pwritev 70
++#define __NR_sendfile64 71
++#define __NR_signalfd4 74
++#define __NR_vmsplice 75
++#define __NR_splice 76
++#define __NR_tee 77
++#define __NR_readlinkat 78
++#define __NR_sync 81
++#define __NR_fsync 82
++#define __NR_fdatasync 83
++#define __NR_sync_file_range 84
++#define __NR_timerfd_create 85
++#define __NR_acct 89
++#define __NR_capget 90
++#define __NR_capset 91
++#define __NR_personality 92
++#define __NR_exit 93
++#define __NR_exit_group 94
++#define __NR_waitid 95
++#define __NR_set_tid_address 96
++#define __NR_unshare 97
++#define __NR_set_robust_list 99
++#define __NR_get_robust_list 100
++#define __NR_getitimer 102
++#define __NR_setitimer 103
++#define __NR_kexec_load 104
++#define __NR_init_module 105
++#define __NR_delete_module 106
++#define __NR_timer_create 107
++#define __NR_timer_getoverrun 109
++#define __NR_timer_delete 111
++#define __NR_syslog 116
++#define __NR_ptrace 117
++#define __NR_sched_setparam 118
++#define __NR_sched_setscheduler 119
++#define __NR_sched_getscheduler 120
++#define __NR_sched_getparam 121
++#define __NR_sched_setaffinity 122
++#define __NR_sched_getaffinity 123
++#define __NR_sched_yield 124
++#define __NR_sched_get_priority_max 125
++#define __NR_sched_get_priority_min 126
++#define __NR_restart_syscall 128
++#define __NR_kill 129
++#define __NR_tkill 130
++#define __NR_tgkill 131
++#define __NR_sigaltstack 132
++#define __NR_rt_sigsuspend 133
++#define __NR_rt_sigaction 134
++#define __NR_rt_sigprocmask 135
++#define __NR_rt_sigpending 136
++#define __NR_rt_sigqueueinfo 138
++#define __NR_rt_sigreturn 139
++#define __NR_setpriority 140
++#define __NR_getpriority 141
++#define __NR_reboot 142
++#define __NR_setregid 143
++#define __NR_setgid 144
++#define __NR_setreuid 145
++#define __NR_setuid 146
++#define __NR_setresuid 147
++#define __NR_getresuid 148
++#define __NR_setresgid 149
++#define __NR_getresgid 150
++#define __NR_setfsuid 151
++#define __NR_setfsgid 152
++#define __NR_times 153
++#define __NR_setpgid 154
++#define __NR_getpgid 155
++#define __NR_getsid 156
++#define __NR_setsid 157
++#define __NR_getgroups 158
++#define __NR_setgroups 159
++#define __NR_uname 160
++#define __NR_sethostname 161
++#define __NR_setdomainname 162
++#define __NR_getrusage 165
++#define __NR_umask 166
++#define __NR_prctl 167
++#define __NR_getcpu 168
++#define __NR_getpid 172
++#define __NR_getppid 173
++#define __NR_getuid 174
++#define __NR_geteuid 175
++#define __NR_getgid 176
++#define __NR_getegid 177
++#define __NR_gettid 178
++#define __NR_sysinfo 179
++#define __NR_mq_open 180
++#define __NR_mq_unlink 181
++#define __NR_mq_notify 184
++#define __NR_mq_getsetattr 185
++#define __NR_msgget 186
++#define __NR_msgctl 187
++#define __NR_msgrcv 188
++#define __NR_msgsnd 189
++#define __NR_semget 190
++#define __NR_semctl 191
++#define __NR_semop 193
++#define __NR_shmget 194
++#define __NR_shmctl 195
++#define __NR_shmat 196
++#define __NR_shmdt 197
++#define __NR_socket 198
++#define __NR_socketpair 199
++#define __NR_bind 200
++#define __NR_listen 201
++#define __NR_accept 202
++#define __NR_connect 203
++#define __NR_getsockname 204
++#define __NR_getpeername 205
++#define __NR_sendto 206
++#define __NR_recvfrom 207
++#define __NR_setsockopt 208
++#define __NR_getsockopt 209
++#define __NR_shutdown 210
++#define __NR_sendmsg 211
++#define __NR_recvmsg 212
++#define __NR_readahead 213
++#define __NR_brk 214
++#define __NR_munmap 215
++#define __NR_mremap 216
++#define __NR_add_key 217
++#define __NR_request_key 218
++#define __NR_keyctl 219
++#define __NR_clone 220
++#define __NR_execve 221
++#define __NR_mmap2 222
++#define __NR_fadvise64_64 223
++#define __NR_swapon 224
++#define __NR_swapoff 225
++#define __NR_mprotect 226
++#define __NR_msync 227
++#define __NR_mlock 228
++#define __NR_munlock 229
++#define __NR_mlockall 230
++#define __NR_munlockall 231
++#define __NR_mincore 232
++#define __NR_madvise 233
++#define __NR_remap_file_pages 234
++#define __NR_mbind 235
++#define __NR_get_mempolicy 236
++#define __NR_set_mempolicy 237
++#define __NR_migrate_pages 238
++#define __NR_move_pages 239
++#define __NR_rt_tgsigqueueinfo 240
++#define __NR_perf_event_open 241
++#define __NR_accept4 242
++#define __NR_prlimit64 261
++#define __NR_fanotify_init 262
++#define __NR_fanotify_mark 263
++#define __NR_name_to_handle_at 264
++#define __NR_open_by_handle_at 265
++#define __NR_syncfs 267
++#define __NR_setns 268
++#define __NR_sendmmsg 269
++#define __NR_process_vm_readv 270
++#define __NR_process_vm_writev 271
++#define __NR_kcmp 272
++#define __NR_finit_module 273
++#define __NR_sched_setattr 274
++#define __NR_sched_getattr 275
++#define __NR_renameat2 276
++#define __NR_seccomp 277
++#define __NR_getrandom 278
++#define __NR_memfd_create 279
++#define __NR_bpf 280
++#define __NR_execveat 281
++#define __NR_userfaultfd 282
++#define __NR_membarrier 283
++#define __NR_mlock2 284
++#define __NR_copy_file_range 285
++#define __NR_preadv2 286
++#define __NR_pwritev2 287
++#define __NR_pkey_mprotect 288
++#define __NR_pkey_alloc 289
++#define __NR_pkey_free 290
++#define __NR_statx 291
++#define __NR_rseq 293
++#define __NR_kexec_file_load 294
++#define __NR_clock_gettime64 403
++#define __NR_clock_settime64 404
++#define __NR_clock_adjtime64 405
++#define __NR_clock_getres_time64 406
++#define __NR_clock_nanosleep_time64 407
++#define __NR_timer_gettime64 408
++#define __NR_timer_settime64 409
++#define __NR_timerfd_gettime64 410
++#define __NR_timerfd_settime64 411
++#define __NR_utimensat_time64 412
++#define __NR_pselect6_time64 413
++#define __NR_ppoll_time64 414
++#define __NR_io_pgetevents_time64 416
++#define __NR_recvmmsg_time64 417
++#define __NR_mq_timedsend_time64 418
++#define __NR_mq_timedreceive_time64 419
++#define __NR_semtimedop_time64 420
++#define __NR_rt_sigtimedwait_time64 421
++#define __NR_futex_time64 422
++#define __NR_sched_rr_get_interval_time64 423
++#define __NR_pidfd_send_signal 424
++#define __NR_io_uring_setup 425
++#define __NR_io_uring_enter 426
++#define __NR_io_uring_register 427
++#define __NR_open_tree 428
++#define __NR_move_mount 429
++#define __NR_fsopen 430
++#define __NR_fsconfig 431
++#define __NR_fsmount 432
++#define __NR_fspick 433
++#define __NR_pidfd_open 434
++#define __NR_clone3 435
++#define __NR_close_range 436
++#define __NR_openat2 437
++#define __NR_pidfd_getfd 438
++#define __NR_faccessat2 439
++#define __NR_process_madvise 440
++#define __NR_epoll_pwait2 441
++#define __NR_mount_setattr 442
++#define __NR_quotactl_fd 443
++#define __NR_landlock_create_ruleset 444
++#define __NR_landlock_add_rule 445
++#define __NR_landlock_restrict_self 446
++#define __NR_process_mrelease 448
++#define __NR_futex_waitv 449
++#define __NR_set_mempolicy_home_node 450
++#define __NR_cachestat 451
++#define __NR_fchmodat2 452
++#define __NR_map_shadow_stack 453
++#define __NR_futex_wake 454
++#define __NR_futex_wait 455
++#define __NR_futex_requeue 456
++#define __NR_statmount 457
++#define __NR_listmount 458
++#define __NR_lsm_get_self_attr 459
++#define __NR_lsm_set_self_attr 460
++#define __NR_lsm_list_modules 461
++#define __NR_mseal 462
++#define __NR_setxattrat 463
++#define __NR_getxattrat 464
++#define __NR_listxattrat 465
++#define __NR_removexattrat 466
++#define __NR_open_tree_attr 467
++#define __NR_file_getattr 468
++#define __NR_file_setattr 469
++#define __NR_listns 470
++#define __NR_rseq_slice_yield 471
++#define __NR_fchroot 472
++#define __NR__llseek __NR_llseek
++#define __NR_futex __NR_futex_time64
+diff --git a/arch/i860/bits/user.h b/arch/i860/bits/user.h
+new file mode 100644
+index 00000000..24f0a197
+--- /dev/null
++++ b/arch/i860/bits/user.h
+@@ -0,0 +1 @@
++/* Copyright (C) 2026 René Rebe <rene@exactco.de> */
+diff --git a/arch/i860/crt_arch.h b/arch/i860/crt_arch.h
+new file mode 100644
+index 00000000..99097589
+--- /dev/null
++++ b/arch/i860/crt_arch.h
+@@ -0,0 +1,20 @@
++/* Copyright (C) 2026 René Rebe <rene@exactco.de> */
++__asm__(
++".text\n"
++".global " START "\n"
++".type " START ",@function\n"
++START ":\n"
++"	mov %r0,%fp\n"
++"	mov %sp,%r16\n"
++#ifdef SHARED
++/* Nothing is relocated yet: find _DYNAMIC relative to the PC (r1 after call) */
++"	call 1f\n"
++"	nop\n"
++"1:	orh [_DYNAMIC]@pc@ha,%r0,%r17\n"
++"	adds [_DYNAMIC+4]@pc@l,%r17,%r17\n"
++"	addu %r1,%r17,%r17\n"
++#endif
++"	andnot 15,%sp,%sp\n"
++"	call " START "_c\n"
++"	mov %r0,%r1\n"
++);
+diff --git a/arch/i860/kstat.h b/arch/i860/kstat.h
+new file mode 100644
+index 00000000..24f0a197
+--- /dev/null
++++ b/arch/i860/kstat.h
+@@ -0,0 +1 @@
++/* Copyright (C) 2026 René Rebe <rene@exactco.de> */
+diff --git a/arch/i860/pthread_arch.h b/arch/i860/pthread_arch.h
+new file mode 100644
+index 00000000..8ccf6b62
+--- /dev/null
++++ b/arch/i860/pthread_arch.h
+@@ -0,0 +1,10 @@
++/* Copyright (C) 2026 René Rebe <rene@exactco.de> */
++/* r30 is the thread pointer of the i860 Linux ABI (fixed in the compiler) */
++static inline uintptr_t __get_tp()
++{
++	uintptr_t tp;
++	__asm__ ("mov %%r30,%0" : "=r"(tp));
++	return tp;
++}
++
++#define MC_PC __fir
+diff --git a/arch/i860/reloc.h b/arch/i860/reloc.h
+new file mode 100644
+index 00000000..4c7050bd
+--- /dev/null
++++ b/arch/i860/reloc.h
+@@ -0,0 +1,16 @@
++/* Copyright (C) 2026 René Rebe <rene@exactco.de> */
++#define LDSO_ARCH "i860"
++
++#define TPOFF_K 0
++
++#define REL_SYMBOLIC    R_860_32
++#define REL_GOT         R_860_GLOB_DAT
++#define REL_PLT         R_860_JUMP_SLOT
++#define REL_RELATIVE    R_860_RELATIVE
++#define REL_COPY        R_860_COPY
++#define REL_DTPMOD      R_860_TLS_DTPMOD32
++#define REL_DTPOFF      R_860_TLS_DTPOFF32
++#define REL_TPOFF       R_860_TLS_TPOFF32
++
++#define CRTJMP(pc,sp) __asm__ __volatile__( \
++	"mov %1,%%sp\n\tbri %0\n\tnop" : : "r"(pc), "r"(sp) : "memory" )
+diff --git a/arch/i860/syscall_arch.h b/arch/i860/syscall_arch.h
+new file mode 100644
+index 00000000..d7e02089
+--- /dev/null
++++ b/arch/i860/syscall_arch.h
+@@ -0,0 +1,84 @@
++/* Copyright (C) 2026 René Rebe <rene@exactco.de> */
++/*
++ * i860 Linux syscalls: "trap r0,r0,r0", number in r28, arguments in
++ * r16-r21, result in r16. All other registers are preserved; r28 may be
++ * changed by a restarted syscall. 64-bit arguments occupy two
++ * consecutive registers, low word first, without alignment.
++ */
++#define __SYSCALL_LL_E(x) \
++((union { long long ll; long l[2]; }){ .ll = x }).l[0], \
++((union { long long ll; long l[2]; }){ .ll = x }).l[1]
++#define __SYSCALL_LL_O(x) __SYSCALL_LL_E((x))
++
++#define __asm_syscall(...) \
++	__asm__ __volatile__ ("trap %%r0,%%r0,%%r0" \
++	: "+r"(r16), "+r"(r28) : __VA_ARGS__ : "memory"); \
++	return r16;
++
++static inline long __syscall0(long n)
++{
++	register long r28 __asm__("r28") = n;
++	register long r16 __asm__("r16");
++	__asm__ __volatile__ ("trap %%r0,%%r0,%%r0"
++		: "=r"(r16), "+r"(r28) : : "memory");
++	return r16;
++}
++
++static inline long __syscall1(long n, long a)
++{
++	register long r28 __asm__("r28") = n;
++	register long r16 __asm__("r16") = a;
++	__asm_syscall()
++}
++
++static inline long __syscall2(long n, long a, long b)
++{
++	register long r28 __asm__("r28") = n;
++	register long r16 __asm__("r16") = a;
++	register long r17 __asm__("r17") = b;
++	__asm_syscall("r"(r17))
++}
++
++static inline long __syscall3(long n, long a, long b, long c)
++{
++	register long r28 __asm__("r28") = n;
++	register long r16 __asm__("r16") = a;
++	register long r17 __asm__("r17") = b;
++	register long r18 __asm__("r18") = c;
++	__asm_syscall("r"(r17), "r"(r18))
++}
++
++static inline long __syscall4(long n, long a, long b, long c, long d)
++{
++	register long r28 __asm__("r28") = n;
++	register long r16 __asm__("r16") = a;
++	register long r17 __asm__("r17") = b;
++	register long r18 __asm__("r18") = c;
++	register long r19 __asm__("r19") = d;
++	__asm_syscall("r"(r17), "r"(r18), "r"(r19))
++}
++
++static inline long __syscall5(long n, long a, long b, long c, long d, long e)
++{
++	register long r28 __asm__("r28") = n;
++	register long r16 __asm__("r16") = a;
++	register long r17 __asm__("r17") = b;
++	register long r18 __asm__("r18") = c;
++	register long r19 __asm__("r19") = d;
++	register long r20 __asm__("r20") = e;
++	__asm_syscall("r"(r17), "r"(r18), "r"(r19), "r"(r20))
++}
++
++static inline long __syscall6(long n, long a, long b, long c, long d, long e, long f)
++{
++	register long r28 __asm__("r28") = n;
++	register long r16 __asm__("r16") = a;
++	register long r17 __asm__("r17") = b;
++	register long r18 __asm__("r18") = c;
++	register long r19 __asm__("r19") = d;
++	register long r20 __asm__("r20") = e;
++	register long r21 __asm__("r21") = f;
++	__asm_syscall("r"(r17), "r"(r18), "r"(r19), "r"(r20), "r"(r21))
++}
++
++#define IPC_64 0
+diff --git a/configure b/configure
+index bc9fbe48..4d1330ce 100755
+--- a/configure
++++ b/configure
+@@ -1,4 +1,5 @@
+ #!/bin/sh
++# Copyright (C) 2026 René Rebe <rene@exactco.de>
+ 
+ usage () {
+ cat <<EOF
+@@ -325,6 +326,7 @@ arm*) ARCH=arm ;;
+ aarch64*) ARCH=aarch64 ;;
+ i?86-nt32*) ARCH=nt32 ;;
+ i?86*) ARCH=i386 ;;
++i860*) ARCH=i860 ;;
+ x86_64-x32*|x32*|x86_64*x32) ARCH=x32 ;;
+ x86_64-nt64*) ARCH=nt64 ;;
+ x86_64*) ARCH=x86_64 ;;
+diff --git a/include/elf.h b/include/elf.h
+index 2555b906..da56906c 100644
+--- a/include/elf.h
++++ b/include/elf.h
+@@ -1,3 +1,4 @@
++/* Copyright (C) 2026 René Rebe <rene@exactco.de> */
+ #ifndef _ELF_H
+ #define _ELF_H
+ 
+@@ -2892,6 +2893,16 @@ enum
+ 
+ 
+ 
++#define R_860_NONE		0
++#define R_860_32		1
++#define R_860_COPY		2
++#define R_860_GLOB_DAT		3
++#define R_860_JUMP_SLOT		4
++#define R_860_RELATIVE		5
++#define R_860_TLS_DTPMOD32	6
++#define R_860_TLS_DTPOFF32	7
++#define R_860_TLS_TPOFF32	8
++
+ #define R_390_NONE		0
+ #define R_390_8			1
+ #define R_390_12		2
+diff --git a/src/ldso/i860/dlsym.s b/src/ldso/i860/dlsym.s
+new file mode 100644
+index 00000000..2c4187cf
+--- /dev/null
++++ b/src/ldso/i860/dlsym.s
+@@ -0,0 +1,10 @@
++# Copyright (C) 2026 René Rebe <rene@exactco.de>
++# The caller's address selects the library search scope. A PLT entry has
++# already restored r1 when it gets here.
++.global dlsym
++.hidden __dlsym
++.type dlsym,@function
++.align 8
++dlsym:
++	br	__dlsym
++	mov	%r1,%r18
+diff --git a/src/setjmp/i860/longjmp.s b/src/setjmp/i860/longjmp.s
+new file mode 100644
+index 00000000..481fcb13
+--- /dev/null
++++ b/src/setjmp/i860/longjmp.s
+@@ -0,0 +1,34 @@
++# Copyright (C) 2026 René Rebe <rene@exactco.de>
++.global _longjmp
++.global longjmp
++.type _longjmp,@function
++.type longjmp,@function
++.align 8
++_longjmp:
++longjmp:
++	mov	%r17,%r18
++	btne	0,%r18,1f
++	or	1,%r0,%r18
++1:	ld.l	4(%r16),%sp
++	ld.l	8(%r16),%fp
++	ld.l	12(%r16),%r4
++	ld.l	16(%r16),%r5
++	ld.l	20(%r16),%r6
++	ld.l	24(%r16),%r7
++	ld.l	28(%r16),%r8
++	ld.l	32(%r16),%r9
++	ld.l	36(%r16),%r10
++	ld.l	40(%r16),%r11
++	ld.l	44(%r16),%r12
++	ld.l	48(%r16),%r13
++	ld.l	52(%r16),%r14
++	ld.l	56(%r16),%r15
++	fld.l	60(%r16),%f2
++	fld.l	64(%r16),%f3
++	fld.l	68(%r16),%f4
++	fld.l	72(%r16),%f5
++	fld.l	76(%r16),%f6
++	fld.l	80(%r16),%f7
++	ld.l	0(%r16),%r1
++	bri	%r1
++	mov	%r18,%r16
+diff --git a/src/setjmp/i860/setjmp.s b/src/setjmp/i860/setjmp.s
+new file mode 100644
+index 00000000..0f19c0eb
+--- /dev/null
++++ b/src/setjmp/i860/setjmp.s
+@@ -0,0 +1,35 @@
++# Copyright (C) 2026 René Rebe <rene@exactco.de>
++# jmp_buf: r1, sp, fp, r4-r15, f2-f7 (the callee-saved state)
++.global __setjmp
++.global _setjmp
++.global setjmp
++.type __setjmp,@function
++.type _setjmp,@function
++.type setjmp,@function
++.align 8
++__setjmp:
++_setjmp:
++setjmp:
++	st.l	%r1,0(%r16)
++	st.l	%sp,4(%r16)
++	st.l	%fp,8(%r16)
++	st.l	%r4,12(%r16)
++	st.l	%r5,16(%r16)
++	st.l	%r6,20(%r16)
++	st.l	%r7,24(%r16)
++	st.l	%r8,28(%r16)
++	st.l	%r9,32(%r16)
++	st.l	%r10,36(%r16)
++	st.l	%r11,40(%r16)
++	st.l	%r12,44(%r16)
++	st.l	%r13,48(%r16)
++	st.l	%r14,52(%r16)
++	st.l	%r15,56(%r16)
++	fst.l	%f2,60(%r16)
++	fst.l	%f3,64(%r16)
++	fst.l	%f4,68(%r16)
++	fst.l	%f5,72(%r16)
++	fst.l	%f6,76(%r16)
++	fst.l	%f7,80(%r16)
++	bri	%r1
++	mov	%r0,%r16
+diff --git a/src/signal/i860/restore.s b/src/signal/i860/restore.s
+new file mode 100644
+index 00000000..54dcf07f
+--- /dev/null
++++ b/src/signal/i860/restore.s
+@@ -0,0 +1,12 @@
++# Copyright (C) 2026 René Rebe <rene@exactco.de>
++.global __restore
++.hidden __restore
++.type __restore,@function
++.global __restore_rt
++.hidden __restore_rt
++.type __restore_rt,@function
++.align 8
++__restore:
++__restore_rt:
++	or	139,%r0,%r28		# SYS_rt_sigreturn
++	trap	%r0,%r0,%r0
+diff --git a/src/signal/i860/sigsetjmp.s b/src/signal/i860/sigsetjmp.s
+new file mode 100644
+index 00000000..ba740e84
+--- /dev/null
++++ b/src/signal/i860/sigsetjmp.s
+@@ -0,0 +1,25 @@
++# Copyright (C) 2026 René Rebe <rene@exactco.de>
++# __fl (offset 88) and __ss[2] (offset 100) of the sigjmp_buf hold r1 and r4
++# across setjmp; __sigsetjmp_tail only uses __ss[0..1].
++.global sigsetjmp
++.global __sigsetjmp
++.type sigsetjmp,@function
++.type __sigsetjmp,@function
++.align 8
++sigsetjmp:
++__sigsetjmp:
++	btne	0,%r17,1f
++	br	setjmp
++	nop
++1:	st.l	%r1,88(%r16)
++	st.l	%r4,100(%r16)
++	call	setjmp
++	mov	%r16,%r4
++
++	mov	%r16,%r17
++	mov	%r4,%r16
++	ld.l	100(%r16),%r4
++	ld.l	88(%r16),%r1
++.hidden __sigsetjmp_tail
++	br	__sigsetjmp_tail
++	nop
+diff --git a/src/string/i860/memcpy.s b/src/string/i860/memcpy.s
+new file mode 100644
+index 00000000..049905e4
+--- /dev/null
++++ b/src/string/i860/memcpy.s
+@@ -0,0 +1,209 @@
++# Copyright (C) 2026 René Rebe <rene@exactco.de>
++# Generated by tmp/musl/gen-string.py from the kernel arch/i860/lib.
++.text
++# void *memcpy(void *dst = r16, const void *src = r17, size_t n = r18)
++.global memcpy
++.global __memcpy_fwd
++.hidden __memcpy_fwd
++.type memcpy,@function
++.align 8
++memcpy:
++	mov	%r16,%r19		# r19 = d, r16 is returned
++__memcpy_fwd:
++	xor	%r19,%r17,%r20
++	subu	15,%r18,%r0		# CC = n < 16
++	bc	.Lfsmall
++	and	15,%r20,%r0		# CC = d, s equally aligned mod 16
++	bnc	.Lf8
++
++	# bytes up to a 16-byte boundary
++.Lfhead16:
++	and	15,%r19,%r0
++	bc	.Lfq
++	ld.b	0(%r17),%r20
++	st.b	%r20,0(%r19)
++	addu	1,%r17,%r17
++	addu	1,%r19,%r19
++	br	.Lfhead16
++	adds	-1,%r18,%r18
++
++.Lfq:
++	subu	63,%r18,%r0		# CC = n < 64
++	bc	.Lfq16
++.Lfq64:
++	fld.q	0(%r17),%f8
++	fld.q	16(%r17),%f12
++	fld.q	32(%r17),%f16
++	fld.q	48(%r17),%f20
++	fst.q	%f8,0(%r19)
++	fst.q	%f12,16(%r19)
++	fst.q	%f16,32(%r19)
++	fst.q	%f20,48(%r19)
++	addu	64,%r17,%r17
++	addu	64,%r19,%r19
++	adds	-64,%r18,%r18
++	subu	63,%r18,%r0
++	bnc	.Lfq64
++.Lfq16:
++	subu	15,%r18,%r0
++	bc	.Lfbytes
++	fld.q	0(%r17),%f8
++	fst.q	%f8,0(%r19)
++	addu	16,%r17,%r17
++	addu	16,%r19,%r19
++	br	.Lfq16
++	adds	-16,%r18,%r18
++
++	# doublewords
++.Lf8:
++	and	7,%r20,%r0		# CC = equally aligned mod 8
++	bnc	.Lf4
++.Lfhead8:
++	and	7,%r19,%r0
++	bc	.Lfd32
++	ld.b	0(%r17),%r20
++	st.b	%r20,0(%r19)
++	addu	1,%r17,%r17
++	addu	1,%r19,%r19
++	br	.Lfhead8
++	adds	-1,%r18,%r18
++.Lfd32:
++	subu	31,%r18,%r0		# CC = n < 32
++	bc	.Lfd
++	fld.d	0(%r17),%f8
++	fld.d	8(%r17),%f10
++	fld.d	16(%r17),%f12
++	fld.d	24(%r17),%f14
++	fst.d	%f8,0(%r19)
++	fst.d	%f10,8(%r19)
++	fst.d	%f12,16(%r19)
++	fst.d	%f14,24(%r19)
++	addu	32,%r17,%r17
++	addu	32,%r19,%r19
++	br	.Lfd32
++	adds	-32,%r18,%r18
++.Lfd:
++	subu	7,%r18,%r0		# CC = n < 8
++	bc	.Lfbytes
++	fld.d	0(%r17),%f8
++	fst.d	%f8,0(%r19)
++	addu	8,%r17,%r17
++	addu	8,%r19,%r19
++	br	.Lfd
++	adds	-8,%r18,%r18
++
++	# words
++.Lfsmall:
++	subu	3,%r18,%r0		# CC = n < 4
++	bc	.Lfbytes
++.Lf4:
++	and	3,%r20,%r0		# CC = equally aligned mod 4
++	bnc	.Lfmerge
++.Lfhead4:
++	and	3,%r19,%r0
++	bc	.Lfw32
++	ld.b	0(%r17),%r20
++	st.b	%r20,0(%r19)
++	addu	1,%r17,%r17
++	addu	1,%r19,%r19
++	br	.Lfhead4
++	adds	-1,%r18,%r18
++.Lfw32:
++	subu	31,%r18,%r0		# CC = n < 32
++	bc	.Lfw
++	ld.l	0(%r17),%r20
++	ld.l	4(%r17),%r21
++	ld.l	8(%r17),%r22
++	ld.l	12(%r17),%r23
++	ld.l	16(%r17),%r24
++	ld.l	20(%r17),%r25
++	ld.l	24(%r17),%r26
++	ld.l	28(%r17),%r27
++	st.l	%r20,0(%r19)
++	st.l	%r21,4(%r19)
++	st.l	%r22,8(%r19)
++	st.l	%r23,12(%r19)
++	st.l	%r24,16(%r19)
++	st.l	%r25,20(%r19)
++	st.l	%r26,24(%r19)
++	st.l	%r27,28(%r19)
++	addu	32,%r17,%r17
++	addu	32,%r19,%r19
++	br	.Lfw32
++	adds	-32,%r18,%r18
++.Lfw:
++	subu	3,%r18,%r0		# CC = n < 4
++	bc	.Lfbytes
++	ld.l	0(%r17),%r20
++	st.l	%r20,0(%r19)
++	addu	4,%r17,%r17
++	addu	4,%r19,%r19
++	br	.Lfw
++	adds	-4,%r18,%r18
++
++		# Different alignment mod 4: aligned words of the source, shifted into
++	# place. Only words holding bytes to copy are read, so no fault past
++	# the end of the source.
++.Lfmerge:
++	subu	15,%r18,%r0		# CC = n < 16
++	bc	.Lfbytes
++.Lfmhead:
++	and	3,%r19,%r0
++	bc	.Lfmgo
++	ld.b	0(%r17),%r20
++	st.b	%r20,0(%r19)
++	addu	1,%r17,%r17
++	addu	1,%r19,%r19
++	br	.Lfmhead
++	adds	-1,%r18,%r18
++.Lfmgo:
++	and	3,%r17,%r21
++	shl	3,%r21,%r21		# bits to shift right
++	or	32,%r0,%r22
++	subu	%r22,%r21,%r22		# bits to shift left
++	andnot	3,%r17,%r17
++	ld.l	0(%r17),%r20
++.Lfm16:
++	subu	15,%r18,%r0		# CC = n < 16
++	bc	.Lfmend
++	ld.l	4(%r17),%r23
++	ld.l	8(%r17),%r24
++	ld.l	12(%r17),%r25
++	ld.l	16(%r17),%r26
++	shr	%r21,%r20,%r20
++	shl	%r22,%r23,%r27
++	or	%r27,%r20,%r20
++	st.l	%r20,0(%r19)
++	shr	%r21,%r23,%r23
++	shl	%r22,%r24,%r27
++	or	%r27,%r23,%r23
++	st.l	%r23,4(%r19)
++	shr	%r21,%r24,%r24
++	shl	%r22,%r25,%r27
++	or	%r27,%r24,%r24
++	st.l	%r24,8(%r19)
++	shr	%r21,%r25,%r25
++	shl	%r22,%r26,%r27
++	or	%r27,%r25,%r25
++	st.l	%r25,12(%r19)
++	mov	%r26,%r20
++	addu	16,%r17,%r17
++	addu	16,%r19,%r19
++	br	.Lfm16
++	adds	-16,%r18,%r18
++.Lfmend:
++	shr	3,%r21,%r21
++	addu	%r21,%r17,%r17		# back to the next byte to copy
++
++.Lfbytes:
++	bte	0,%r18,.Ldone
++1:	ld.b	0(%r17),%r20
++	st.b	%r20,0(%r19)
++	addu	1,%r17,%r17
++	addu	1,%r19,%r19
++	adds	-1,%r18,%r18
++	btne	0,%r18,1b
++.Ldone:
++	bri	%r1
++	nop
++
+diff --git a/src/string/i860/memmove.s b/src/string/i860/memmove.s
+new file mode 100644
+index 00000000..daf6de8b
+--- /dev/null
++++ b/src/string/i860/memmove.s
+@@ -0,0 +1,93 @@
++# Copyright (C) 2026 René Rebe <rene@exactco.de>
++# Generated by tmp/musl/gen-string.py from the kernel arch/i860/lib.
++.text
++# void *memmove(void *dst = r16, const void *src = r17, size_t n = r18)
++.global memmove
++.hidden __memcpy_fwd
++.type memmove,@function
++.align 8
++memmove:
++	mov	%r16,%r19
++	subu	%r17,%r16,%r0		# CC = d <= s: forward copy is safe
++	bc	__memcpy_fwd
++	addu	%r18,%r17,%r21		# s + n
++	subu	%r16,%r21,%r0		# CC = s + n <= d: no overlap
++	bc	__memcpy_fwd
++
++	# overlapping with d > s: copy backwards from the end
++	addu	%r18,%r16,%r19		# r19 = d end, r17 = s end
++	mov	%r21,%r17
++	subu	15,%r18,%r0
++	bc	.Lbbytes
++	xor	%r19,%r17,%r20
++	and	15,%r20,%r0
++	bnc	.Lb4
++
++.Lbhead16:
++	and	15,%r19,%r0
++	bc	.Lbq
++	ld.b	-1(%r17),%r20
++	st.b	%r20,-1(%r19)
++	adds	-1,%r17,%r17
++	adds	-1,%r19,%r19
++	br	.Lbhead16
++	adds	-1,%r18,%r18
++.Lbq:
++	subu	63,%r18,%r0
++	bc	.Lbq16
++.Lbq64:
++	fld.q	-16(%r17),%f8
++	fld.q	-32(%r17),%f12
++	fld.q	-48(%r17),%f16
++	fld.q	-64(%r17),%f20
++	fst.q	%f8,-16(%r19)
++	fst.q	%f12,-32(%r19)
++	fst.q	%f16,-48(%r19)
++	fst.q	%f20,-64(%r19)
++	adds	-64,%r17,%r17
++	adds	-64,%r19,%r19
++	adds	-64,%r18,%r18
++	subu	63,%r18,%r0
++	bnc	.Lbq64
++.Lbq16:
++	subu	15,%r18,%r0
++	bc	.Lbbytes
++	fld.q	-16(%r17),%f8
++	fst.q	%f8,-16(%r19)
++	adds	-16,%r17,%r17
++	adds	-16,%r19,%r19
++	br	.Lbq16
++	adds	-16,%r18,%r18
++
++.Lb4:
++	and	3,%r20,%r0
++	bnc	.Lbbytes
++.Lbhead4:
++	and	3,%r19,%r0
++	bc	.Lbw
++	ld.b	-1(%r17),%r20
++	st.b	%r20,-1(%r19)
++	adds	-1,%r17,%r17
++	adds	-1,%r19,%r19
++	br	.Lbhead4
++	adds	-1,%r18,%r18
++.Lbw:
++	subu	3,%r18,%r0
++	bc	.Lbbytes
++	ld.l	-4(%r17),%r20
++	st.l	%r20,-4(%r19)
++	adds	-4,%r17,%r17
++	adds	-4,%r19,%r19
++	br	.Lbw
++	adds	-4,%r18,%r18
++
++.Lbbytes:
++	bte	0,%r18,2f
++1:	ld.b	-1(%r17),%r20
++	st.b	%r20,-1(%r19)
++	adds	-1,%r17,%r17
++	adds	-1,%r19,%r19
++	adds	-1,%r18,%r18
++	btne	0,%r18,1b
++2:	bri	%r1
++	nop
+diff --git a/src/string/i860/memset.s b/src/string/i860/memset.s
+new file mode 100644
+index 00000000..18967be5
+--- /dev/null
++++ b/src/string/i860/memset.s
+@@ -0,0 +1,66 @@
++# Copyright (C) 2026 René Rebe <rene@exactco.de>
++# Generated by tmp/musl/gen-string.py from the kernel arch/i860/lib.
++.text
++# void *memset(void *s = r16, int c = r17, size_t n = r18)
++.global memset
++.type memset,@function
++.align 8
++memset:
++	mov	%r16,%r19		# r19 = cursor, r16 is returned
++	and	0xff,%r17,%r17
++	shl	8,%r17,%r20
++	or	%r20,%r17,%r17
++	shl	16,%r17,%r20
++	or	%r20,%r17,%r17		# byte replicated into a word
++	subu	15,%r18,%r0		# CC = n < 16
++	bc	.Lbytes
++
++.Lhead:
++	and	15,%r19,%r0
++	bc	.Lq
++	st.b	%r17,0(%r19)
++	addu	1,%r19,%r19
++	br	.Lhead
++	adds	-1,%r18,%r18
++
++.Lq:
++	ixfr	%r17,%f8
++	ixfr	%r17,%f9
++	ixfr	%r17,%f10
++	ixfr	%r17,%f11
++	subu	63,%r18,%r0		# CC = n < 64
++	bc	.Lq16
++.Lq64:
++	fst.q	%f8,0(%r19)
++	fst.q	%f8,16(%r19)
++	fst.q	%f8,32(%r19)
++	fst.q	%f8,48(%r19)
++	addu	64,%r19,%r19
++	adds	-64,%r18,%r18
++	subu	63,%r18,%r0
++	bnc	.Lq64
++.Lq16:
++	subu	15,%r18,%r0
++	bc	.Lwords
++	fst.q	%f8,0(%r19)
++	addu	16,%r19,%r19
++	br	.Lq16
++	adds	-16,%r18,%r18
++
++	# the cursor is 16-byte aligned here
++.Lwords:
++	subu	3,%r18,%r0		# CC = n < 4
++	bc	.Lbytes
++	st.l	%r17,0(%r19)
++	addu	4,%r19,%r19
++	br	.Lwords
++	adds	-4,%r18,%r18
++
++.Lbytes:
++	bte	0,%r18,2f
++1:	st.b	%r17,0(%r19)
++	addu	1,%r19,%r19
++	adds	-1,%r18,%r18
++	btne	0,%r18,1b
++2:	bri	%r1
++	nop
+diff --git a/src/thread/i860/__set_thread_area.s b/src/thread/i860/__set_thread_area.s
+new file mode 100644
+index 00000000..b3d075a2
+--- /dev/null
++++ b/src/thread/i860/__set_thread_area.s
+@@ -0,0 +1,9 @@
++# Copyright (C) 2026 René Rebe <rene@exactco.de>
++# r30 is the thread pointer of the i860 Linux ABI
++.global __set_thread_area
++.type __set_thread_area,@function
++.align 8
++__set_thread_area:
++	mov	%r16,%r30
++	bri	%r1
++	mov	%r0,%r16
+diff --git a/src/thread/i860/__unmapself.s b/src/thread/i860/__unmapself.s
+new file mode 100644
+index 00000000..625514b6
+--- /dev/null
++++ b/src/thread/i860/__unmapself.s
+@@ -0,0 +1,9 @@
++# Copyright (C) 2026 René Rebe <rene@exactco.de>
++.global __unmapself
++.type __unmapself,@function
++.align 8
++__unmapself:
++	or	215,%r0,%r28		# SYS_munmap
++	trap	%r0,%r0,%r0
++	or	93,%r0,%r28		# SYS_exit
++	trap	%r0,%r0,%r0
+diff --git a/src/thread/i860/clone.s b/src/thread/i860/clone.s
+new file mode 100644
+index 00000000..90aa7485
+--- /dev/null
++++ b/src/thread/i860/clone.s
+@@ -0,0 +1,30 @@
++# Copyright (C) 2026 René Rebe <rene@exactco.de>
++# __clone(func, stack, flags, arg, ptid, tls, ctid)
++#          r16   r17    r18   r19  r20   r21  r22
++# syscall(SYS_clone, flags, stack, ptid, ctid, tls)
++#             r28    r16    r17    r18   r19   r20
++.global __clone
++.hidden __clone
++.type __clone,@function
++.align 8
++__clone:
++	andnot	15,%r17,%r17
++	adds	-16,%r17,%r17
++	st.l	%r16,0(%r17)		# func and arg for the child
++	st.l	%r19,4(%r17)
++	mov	%r18,%r16
++	mov	%r20,%r18
++	mov	%r22,%r19
++	mov	%r21,%r20
++	or	220,%r0,%r28		# SYS_clone
++	trap	%r0,%r0,%r0
++	bte	0,%r16,1f
++	bri	%r1			# parent
++	nop
++1:	ld.l	0(%sp),%r20
++	ld.l	4(%sp),%r16
++	mov	%r0,%fp
++	calli	%r20
++	nop
++	or	93,%r0,%r28		# SYS_exit
++	trap	%r0,%r0,%r0
+diff --git a/src/thread/i860/syscall_cp.s b/src/thread/i860/syscall_cp.s
+new file mode 100644
+index 00000000..432d5b2d
+--- /dev/null
++++ b/src/thread/i860/syscall_cp.s
+@@ -0,0 +1,32 @@
++# Copyright (C) 2026 René Rebe <rene@exactco.de>
++# __syscall_cp_asm(&self->cancel, nr, u, v, w, x, y, z)
++#                   r16           r17 r18 ...       r23
++.global __cp_begin
++.hidden __cp_begin
++.global __cp_end
++.hidden __cp_end
++.global __cp_cancel
++.hidden __cp_cancel
++.hidden __cancel
++.global __syscall_cp_asm
++.hidden __syscall_cp_asm
++.type __syscall_cp_asm,@function
++.align 8
++__syscall_cp_asm:
++__cp_begin:
++	ld.l	0(%r16),%r28
++	btne	0,%r28,__cp_cancel
++	mov	%r17,%r28
++	mov	%r18,%r16
++	mov	%r19,%r17
++	mov	%r20,%r18
++	mov	%r21,%r19
++	mov	%r22,%r20
++	mov	%r23,%r21
++	trap	%r0,%r0,%r0
++__cp_end:
++	bri	%r1
++	nop
++__cp_cancel:
++	br	__cancel
++	nop
