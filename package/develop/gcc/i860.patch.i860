@@ -10,32 +10,36 @@ Subject: [PATCH] i860: restore the backend, port to current GCC, add Linux targe
 Restores the backend removed from GCC: no cc0, LRA, RTL prologue and epilogue, i860-*-sysv4* and i860-*-linux*. PIC and shared libraries, TLS, IEEE division through libgcc, filled delay slots.
 
 Against upstream commit ada5b8f08739b26bf76558c9d5157cbbdd16c205 (tree-optimization/128322 - amend PR127377 fix).
-Branch i860 at 2e6b2767043. Tested in the MAME magicst2 model only, not on real hardware.
+Branch i860 at 4e4cc2b0c52. Tested in the MAME magicst2 model only, not on real hardware.
 
 Signed-off-by: René Rebe <rene@exactco.de>
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 ---
- gcc/config.gcc                     |   11 +
- gcc/config/i860/constraints.md     |   68 +
- gcc/config/i860/i860-protos.h      |   68 +
- gcc/config/i860/i860.cc            | 1959 ++++++++++++++++++++++++++++
- gcc/config/i860/i860.h             |  278 ++++
- gcc/config/i860/i860.md            | 1122 ++++++++++++++++
- gcc/config/i860/i860.opt           |   28 +
- gcc/config/i860/i860.opt.urls      |    8 +
- gcc/config/i860/linux.h            |   61 +
- gcc/config/i860/predicates.md      |   84 ++
- gcc/config/i860/sysv4.h            |   63 +
- gcc/doc/install.texi               |   19 +
- gcc/doc/invoke.texi                |   21 +
- libgcc/config.host                 |    8 +
- libgcc/config/i860/fdiv-special.c  |   54 +
- libgcc/config/i860/libgcc-i860.ver |   24 +
- libgcc/config/i860/t-i860          |   27 +
- 17 files changed, 3903 insertions(+)
+ gcc/config.gcc                                |   14 +
+ gcc/config/i860/constraints.md                |   68 +
+ gcc/config/i860/i860-passes.def               |   20 +
+ gcc/config/i860/i860-pipe.cc                  | 1294 ++++++++++
+ gcc/config/i860/i860-protos.h                 |   78 +
+ gcc/config/i860/i860.cc                       | 2167 +++++++++++++++++
+ gcc/config/i860/i860.h                        |  288 +++
+ gcc/config/i860/i860.md                       | 1271 ++++++++++
+ gcc/config/i860/i860.opt                      |   44 +
+ gcc/config/i860/i860.opt.urls                 |   19 +
+ gcc/config/i860/linux.h                       |   67 +
+ gcc/config/i860/predicates.md                 |   94 +
+ gcc/config/i860/sysv4.h                       |   65 +
+ gcc/config/i860/t-i860                        |   23 +
+ gcc/doc/install.texi                          |   19 +
+ gcc/doc/invoke.texi                           |   48 +
+ .../gcc.c-torture/execute/20101011-1.c        |    3 +
+ libgcc/config.host                            |    8 +
+ libgcc/config/i860/fdiv-special.c             |   54 +
+ libgcc/config/i860/libgcc-i860.ver            |   24 +
+ libgcc/config/i860/t-i860                     |   27 +
+ 21 files changed, 5695 insertions(+)
 
 diff --git a/gcc/config.gcc b/gcc/config.gcc
-index 01750947c4d..9b8b1fa4f6a 100644
+index 01750947c4d..a80d0749af1 100644
 --- a/gcc/config.gcc
 +++ b/gcc/config.gcc
 @@ -289,6 +289,7 @@ esac
@@ -46,25 +50,28 @@ index 01750947c4d..9b8b1fa4f6a 100644
   )
  	;;
     arm*-wince-pe*			\
-@@ -436,6 +437,9 @@ ft32*)	cpu_type=ft32
+@@ -436,6 +437,10 @@ ft32*)	cpu_type=ft32
  moxie*)	cpu_type=moxie
  	target_has_targetm_common=no
  	;;
 +i860*)	cpu_type=i860
 +	target_has_targetm_common=no
++	extra_objs="i860-pipe.o"
 +	;;
  fido-*-*)
  	cpu_type=m68k
  	extra_headers=math-68881.h
-@@ -2352,6 +2356,13 @@ x86_64-*-fuchsia*)
+@@ -2352,6 +2357,15 @@ x86_64-*-fuchsia*)
  	tmake_file="${tmake_file} i386/t-x86_64-elf"
  	tm_file="${tm_file} i386/unix.h i386/att.h elfos.h newlib-stdint.h i386/i386elf.h i386/x86-64.h fuchsia.h"
  	;;
 +i860-*-linux*)
 +	tm_file="elfos.h ${tm_file} gnu-user.h linux.h glibc-stdint.h i860/linux.h"
++	tmake_file="${tmake_file} i860/t-i860"
 +	;;
 +i860-*-sysv4*)
 +	tm_file="elfos.h newlib-stdint.h ${tm_file} i860/sysv4.h"
++	tmake_file="${tmake_file} i860/t-i860"
 +	use_gcc_stdint=wrap
 +	;;
  ia64*-*-elf*)
@@ -144,12 +151,1338 @@ index 00000000000..57bbe51b94c
 +(define_constraint "Z"
 +  "A symbol as a direct call target, also valid in PIC code."
 +  (match_code "symbol_ref"))
+diff --git a/gcc/config/i860/i860-passes.def b/gcc/config/i860/i860-passes.def
+new file mode 100644
+index 00000000000..6afc8284a09
+--- /dev/null
++++ b/gcc/config/i860/i860-passes.def
+@@ -0,0 +1,20 @@
++/* Target specific passes of the i860.
++   Copyright (C) 2026 René Rebe <rene@exactco.de>
++
++This file is part of GCC.
++
++GCC is free software; you can redistribute it and/or modify
++it under the terms of the GNU General Public License as published by
++the Free Software Foundation; either version 3, or (at your option)
++any later version.
++
++GCC is distributed in the hope that it will be useful,
++but WITHOUT ANY WARRANTY; without even the implied warranty of
++MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++GNU General Public License for more details.
++
++You should have received a copy of the GNU General Public License
++along with GCC; see the file COPYING3.  If not see
++<http://www.gnu.org/licenses/>.  */
++
++INSERT_PASS_BEFORE (pass_reorder_blocks, 1, pass_i860_pipeline);
+diff --git a/gcc/config/i860/i860-pipe.cc b/gcc/config/i860/i860-pipe.cc
+new file mode 100644
+index 00000000000..ec362839945
+--- /dev/null
++++ b/gcc/config/i860/i860-pipe.cc
+@@ -0,0 +1,1294 @@
++/* Pipelined floating point loops for the i860.
++   Copyright (C) 2026 René Rebe <rene@exactco.de>
++
++This file is part of GCC.
++
++GCC is free software; you can redistribute it and/or modify
++it under the terms of the GNU General Public License as published by
++the Free Software Foundation; either version 3, or (at your option)
++any later version.
++
++GCC is distributed in the hope that it will be useful,
++but WITHOUT ANY WARRANTY; without even the implied warranty of
++MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++GNU General Public License for more details.
++
++You should have received a copy of the GNU General Public License
++along with GCC; see the file COPYING3.  If not see
++<http://www.gnu.org/licenses/>.  */
++
++/* A pipelined instruction writes to its destination the result of the instruction that
++   entered its unit some pushes ago.  So a whole iteration cannot run at once: each insn of a
++   counted loop gets a stage, and the data of iteration I is handled by it in the run I + stage
++   of the loop.  With N iterations and D the largest stage there are D prologue runs, N - D of
++   the loop itself and D more to drain the pipes.  Runs in which an operation has no data
++   push f0 instead, which keeps a unit advancing.
++
++   The accesses of an iteration are spread over runs, which is valid if no two of them can
++   overlap in a way that changes their order: known for one base register, asked of the alias
++   oracle or else tested at run time for two.  The original loop stays for what fails these
++   tests and for N <= D.  A recurrence stays scalar as its result is needed by the next run.  */
++
++#define IN_TARGET_CODE 1
++
++#include "config.h"
++#include "system.h"
++#include "coretypes.h"
++#include "backend.h"
++#include "target.h"
++#include "rtl.h"
++#include "tree.h"
++#include "df.h"
++#include "memmodel.h"
++#include "tm_p.h"
++#include "insn-config.h"
++#include "regs.h"
++#include "emit-rtl.h"
++#include "recog.h"
++#include "insn-attr.h"
++#include "cfghooks.h"
++#include "cfgrtl.h"
++#include "cfganal.h"
++#include "cfgbuild.h"
++#include "alias.h"
++#include "explow.h"
++#include "optabs.h"
++#include "expr.h"
++#include "predict.h"
++#include "tree-pass.h"
++#include "rtl-iter.h"
++#include "output.h"
++
++namespace {
++
++const int FP0 = 32;
++const int MAX_STAGE = 16;
++const int MAX_EMITTED = 64;
++
++enum pipe_kind { PIPE_LOAD, PIPE_STORE, PIPE_OP, PIPE_INCR };
++
++struct pipe_insn
++{
++  rtx_insn *insn;
++  enum pipe_kind kind;
++  machine_mode mode;
++  rtx mem;
++  int stream;
++  HOST_WIDE_INT disp;
++  enum rtx_code code;
++  int unit;			/* 0 multiplier, 1 adder, 2 pipelined loads */
++  bool scalar;
++  int dest;
++  int src[2];			/* the registers read */
++  int val[2];			/* the insns defining them here, or -1 */
++  int nsrc;
++  int pop_to, pop_runs;		/* where and how many runs later the result arrives */
++  int stage;
++  int newreg;
++  bool field_used;
++};
++
++struct pipe_stream
++{
++  int reg;
++  HOST_WIDE_INT stride;
++  bool autoinc;
++  int incr_pos;
++  bool store;
++  HOST_WIDE_INT maxdisp;
++};
++
++class pipe_loop
++{
++public:
++  pipe_loop (basic_block, bool);
++  bool analyze ();
++  void transform (pipe_loop *);
++
++  int depth;
++
++private:
++  bool scan_body ();
++  bool scan_mem (rtx, int);
++  bool find_values ();
++  bool map_units ();
++  bool solve_stages ();
++  int ready (int, int);
++  bool check_memory ();
++  bool check_displacements ();
++  bool allocate ();
++  HOST_WIDE_INT access_disp (int, bool, int);
++  void emit_run (bool, int);
++  void emit_flush ();
++  bool piped (const pipe_insn &p) const
++    { return (p.kind == PIPE_OP && !p.scalar) || (p.kind == PIPE_LOAD && use_pfld); }
++  void emit_path (basic_block, int, rtx, basic_block);
++  rtx real_pattern (int, bool, int);
++  void item_regs (int, auto_vec<int> &, auto_vec<int> &);
++  bool items_conflict (int, int);
++  bool plan_pairs ();
++  rtx dual_kernel ();
++  rtx_insn *branch_to_scalar (enum rtx_code, rtx, rtx);
++  bool after_incr (int i)
++    { const pipe_stream &s = streams[body[i].stream]; return s.incr_pos >= 0 && i > s.incr_pos; }
++  int value_reg (int);
++  HOST_WIDE_INT test_margin (const pipe_stream &a, const pipe_stream &b)
++    { return (depth + 2) * abs_hwi (a.stride) + 2 * MAX (a.maxdisp, b.maxdisp) + 32; }
++
++  basic_block loop, pre, exit_bb;
++  rtx_insn *jump, *prime;
++  rtx count, step;
++  auto_vec<pipe_insn> body;
++  auto_vec<pipe_stream> streams;
++  auto_vec<std::pair<int, int> > tests;
++  bool use_pfld;
++  int minstage[3];
++  int lastpop[3];		/* the last drain run in which a unit delivers something */
++  struct pair { int fp, core; bool bla; };
++  auto_vec<pair> pairs;
++  rtx scalar_label;
++  int tmp_reg;
++};
++
++pipe_loop::pipe_loop (basic_block bb, bool pfld)
++  : depth (0), loop (bb), pre (NULL), exit_bb (NULL), jump (NULL), prime (NULL), count (NULL),
++    step (NULL), use_pfld (pfld), scalar_label (NULL), tmp_reg (-1)
++{
++  for (int u = 0; u < 3; u++)
++    {
++      minstage[u] = 0;
++      lastpop[u] = -1;
++    }
++}
++
++/* A memory reference of insn I: one stream per base register.  */
++
++bool
++pipe_loop::scan_mem (rtx mem, int i)
++{
++  rtx addr = XEXP (mem, 0);
++  pipe_insn &p = body[i];
++  HOST_WIDE_INT size = GET_MODE_SIZE (GET_MODE (mem));
++  HOST_WIDE_INT disp = 0;
++  bool autoinc = false;
++  rtx base;
++
++  if (MEM_VOLATILE_P (mem) || MEM_ALIGN (mem) < size * BITS_PER_UNIT)
++    return false;
++  if (REG_P (addr))
++    base = addr;
++  else if (GET_CODE (addr) == PLUS && REG_P (XEXP (addr, 0)) && CONST_INT_P (XEXP (addr, 1)))
++    {
++      base = XEXP (addr, 0);
++      disp = INTVAL (XEXP (addr, 1));
++    }
++  else if (GET_CODE (addr) == PRE_INC || GET_CODE (addr) == PRE_DEC)
++    {
++      base = XEXP (addr, 0);
++      autoinc = true;
++    }
++  else
++    return false;
++  if (disp % size != 0 || rtx_equal_p (base, count) || rtx_equal_p (base, step))
++    return false;
++
++  p.mem = mem;
++  p.disp = disp;
++  unsigned s;
++  for (s = 0; s < streams.length (); s++)
++    if (streams[s].reg == (int) REGNO (base))
++      break;
++  if (s == streams.length ())
++    {
++      pipe_stream n = { (int) REGNO (base), 0, false, -1, false, 0 };
++      streams.safe_push (n);
++    }
++  else if (autoinc || streams[s].autoinc)
++    return false;
++  if (autoinc)
++    {
++      streams[s].autoinc = true;
++      streams[s].stride = GET_CODE (addr) == PRE_INC ? size : -size;
++    }
++  streams[s].store |= p.kind == PIPE_STORE;
++  streams[s].maxdisp = MAX (streams[s].maxdisp, abs_hwi (disp));
++  p.stream = s;
++  return true;
++}
++
++/* Only FP loads, stores and arithmetic, and increments of the base registers.  */
++
++bool
++pipe_loop::scan_body ()
++{
++  rtx_insn *insn;
++
++  FOR_BB_INSNS (loop, insn)
++    {
++      if (!NONDEBUG_INSN_P (insn) || insn == jump)
++	continue;
++      rtx set = single_set (insn);
++      if (!set || GET_CODE (PATTERN (insn)) != SET || volatile_insn_p (PATTERN (insn)))
++	return false;
++      rtx dst = SET_DEST (set), src = SET_SRC (set);
++      pipe_insn p = {};
++      p.insn = insn;
++      p.stream = p.dest = p.pop_to = -1;
++      p.val[0] = p.val[1] = -1;
++      p.newreg = -1;
++      p.mode = GET_MODE (dst);
++      int i = body.length ();
++
++      if (MEM_P (src) || MEM_P (dst))
++	if (p.mode != SFmode && p.mode != DFmode)
++	  return false;
++      if (FP_REG_P (dst) && MEM_P (src))
++	{
++	  p.kind = PIPE_LOAD;
++	  p.unit = 2;
++	  p.dest = REGNO (dst);
++	  body.safe_push (p);
++	  if (!scan_mem (src, i))
++	    return false;
++	}
++      else if (MEM_P (dst) && FP_REG_P (src))
++	{
++	  p.kind = PIPE_STORE;
++	  p.src[0] = REGNO (src);
++	  p.nsrc = 1;
++	  body.safe_push (p);
++	  if (!scan_mem (dst, i))
++	    return false;
++	}
++      else if (FP_REG_P (dst)
++	       && (GET_CODE (src) == PLUS || GET_CODE (src) == MINUS || GET_CODE (src) == MULT)
++	       && FP_REG_P (XEXP (src, 0)) && FP_REG_P (XEXP (src, 1))
++	       && GET_MODE (src) == p.mode
++	       && GET_MODE (XEXP (src, 0)) == p.mode && GET_MODE (XEXP (src, 1)) == p.mode)
++	{
++	  p.kind = PIPE_OP;
++	  p.code = GET_CODE (src);
++	  p.unit = p.code == MULT ? 0 : 1;
++	  p.dest = REGNO (dst);
++	  p.src[0] = REGNO (XEXP (src, 0));
++	  p.src[1] = REGNO (XEXP (src, 1));
++	  p.nsrc = 2;
++	  body.safe_push (p);
++	}
++      else if (REG_P (dst) && GP_REGNO_P (REGNO (dst)) && GET_CODE (src) == PLUS
++	       && rtx_equal_p (XEXP (src, 0), dst) && CONST_INT_P (XEXP (src, 1))
++	       && !rtx_equal_p (dst, count) && !rtx_equal_p (dst, step))
++	{
++	  p.kind = PIPE_INCR;
++	  p.dest = REGNO (dst);
++	  p.disp = INTVAL (XEXP (src, 1));
++	  body.safe_push (p);
++	}
++      else
++	return false;
++    }
++
++  for (unsigned i = 0; i < body.length (); i++)
++    if (body[i].kind == PIPE_INCR)
++      {
++	bool found = false;
++	for (unsigned s = 0; s < streams.length (); s++)
++	  if (streams[s].reg == body[i].dest)
++	    {
++	      if (streams[s].autoinc || streams[s].incr_pos >= 0)
++		return false;
++	      streams[s].stride = body[i].disp;
++	      streams[s].incr_pos = i;
++	      found = true;
++	    }
++	/* a counter nothing here uses: not worth a special case */
++	if (!found)
++	  return false;
++      }
++  return true;
++}
++
++/* Who defines what each insn reads.  */
++
++bool
++pipe_loop::find_values ()
++{
++  auto_vec<int> def, defs;
++  def.safe_grow_cleared (FIRST_PSEUDO_REGISTER);
++  defs.safe_grow_cleared (FIRST_PSEUDO_REGISTER);
++  for (int r = 0; r < FIRST_PSEUDO_REGISTER; r++)
++    def[r] = -1;
++
++  for (unsigned i = 0; i < body.length (); i++)
++    if (body[i].kind == PIPE_LOAD || body[i].kind == PIPE_OP)
++      {
++	int words = GET_MODE_SIZE (body[i].mode) / UNITS_PER_WORD;
++	for (int w = 0; w < words; w++)
++	  defs[body[i].dest + w]++;
++      }
++
++  bool accum[2] = { false, false };
++  bitmap live_out = df_get_live_in (exit_bb);
++
++  for (unsigned i = 0; i < body.length (); i++)
++    {
++      pipe_insn &p = body[i];
++      if (p.kind == PIPE_INCR)
++	continue;
++      int words = GET_MODE_SIZE (p.mode) / UNITS_PER_WORD;
++      for (int n = 0; n < p.nsrc; n++)
++	{
++	  int r = p.src[n];
++	  int d = def[r];
++	  if (words == 2 && def[r + 1] != d)
++	    return false;
++	  if (d >= 0 && body[d].mode != p.mode)
++	    return false;
++	  if (d >= 0)
++	    p.val[n] = d;
++	  else if (defs[r] || (words == 2 && defs[r + 1]))
++	    {
++	      /* only the update of an accumulator reads an older value */
++	      if (p.kind != PIPE_OP || p.dest != r || defs[r] != 1
++		  || (words == 2 && defs[r + 1] != 1))
++		return false;
++	      p.scalar = true;
++	      accum[p.unit] = true;
++	    }
++	}
++      if (p.kind == PIPE_STORE)
++	continue;
++      for (int w = 0; w < words; w++)
++	def[p.dest + w] = i;
++      /* the temporaries get other registers */
++      if (!p.scalar
++	  && (REGNO_REG_SET_P (live_out, p.dest)
++	      || REGNO_REG_SET_P (live_out, p.dest + words - 1)))
++	return false;
++    }
++
++  /* a scalar and a pipelined instruction do not share a unit */
++  for (unsigned i = 0; i < body.length (); i++)
++    if (body[i].kind == PIPE_OP && accum[body[i].unit])
++      body[i].scalar = true;
++  return true;
++}
++
++/* With K pipelined insns on a unit of L stages, each pops the result of L pushes ago.  */
++
++bool
++pipe_loop::map_units ()
++{
++  bool any = false;
++
++  for (int unit = 0; unit < 3; unit++)
++    {
++      auto_vec<int> ops;
++      machine_mode mode = VOIDmode;
++
++      for (unsigned i = 0; i < body.length (); i++)
++	if (body[i].kind != PIPE_STORE && body[i].kind != PIPE_INCR
++	    && body[i].unit == unit && piped (body[i]))
++	  {
++	    if (mode != VOIDmode && mode != body[i].mode)
++	      return false;
++	    mode = body[i].mode;
++	    ops.safe_push (i);
++	  }
++      if (ops.is_empty ())
++	continue;
++      any |= unit < 2;
++      int stages = unit == 0 && mode == DFmode ? 2 : 3;
++      int k = ops.length ();
++      for (int j = 0; j < k; j++)
++	{
++	  body[ops[j]].pop_to = ops[(j + stages) % k];
++	  body[ops[j]].pop_runs = (j + stages) / k;
++	}
++    }
++  return any;
++}
++
++/* The stage in which insn C can read the value of insn V.  */
++
++int
++pipe_loop::ready (int v, int c)
++{
++  const pipe_insn &p = body[v];
++
++  if (piped (p))
++    return p.stage + p.pop_runs + (c < p.pop_to ? 1 : 0);
++  return p.stage;
++}
++
++bool
++pipe_loop::solve_stages ()
++{
++  int n = body.length ();
++  bool changed = true;
++
++  for (int round = 0; changed; round++)
++    {
++      changed = false;
++      if (round > 8 * MAX_STAGE)
++	return false;
++      for (int c = 0; c < n; c++)
++	for (int s = 0; s < body[c].nsrc; s++)
++	  {
++	    int v = body[c].val[s];
++	    if (v < 0)
++	      continue;
++	    int r = ready (v, c);
++	    if (r > body[c].stage)
++	      {
++		body[c].stage = r;
++		changed = true;
++	      }
++	  }
++      for (int c = n - 1; c >= 0; c--)
++	for (int s = 0; s < body[c].nsrc; s++)
++	  {
++	    int v = body[c].val[s];
++	    if (v < 0)
++	      continue;
++	    int r = ready (v, c);
++	    if (r < body[c].stage)
++	      {
++		body[v].stage += body[c].stage - r;
++		changed = true;
++	      }
++	  }
++      for (int i = 0; i < n; i++)
++	if (body[i].stage > MAX_STAGE)
++	  return false;
++    }
++
++  /* a pipelined insn must not read the destination it writes */
++  depth = 0;
++  for (int u = 0; u < 3; u++)
++    {
++      lastpop[u] = -1;
++      minstage[u] = MAX_STAGE;
++    }
++  for (int c = 0; c < n; c++)
++    {
++      pipe_insn &p = body[c];
++      for (int s = 0; s < p.nsrc; s++)
++	if (p.val[s] >= 0)
++	  {
++	    if (ready (p.val[s], c) != p.stage)
++	      return false;
++	    const pipe_insn &d = body[p.val[s]];
++	    if (piped (d))
++	      {
++		if (d.pop_to == c)
++		  return false;
++		body[d.pop_to].field_used = true;
++		lastpop[d.unit] = MAX (lastpop[d.unit], d.stage - 1 + d.pop_runs);
++	      }
++	  }
++      if (p.kind != PIPE_INCR)
++	depth = MAX (depth, p.stage);
++      if (piped (p))
++	minstage[p.unit] = MIN (minstage[p.unit], p.stage);
++    }
++  return depth > 0 && depth * n <= MAX_EMITTED;
++}
++
++/* Whether accesses in iterations DELTA apart reorder.  Different base registers go to
++   the alias oracle, what may alias is tested at run time.  */
++
++bool
++pipe_loop::check_memory ()
++{
++  int n = body.length ();
++  bool any_store = false;
++
++  for (unsigned s = 0; s < streams.length (); s++)
++    any_store |= streams[s].store;
++  for (unsigned s = 0; s < streams.length (); s++)
++    if (any_store && streams[s].stride == 0)
++      return false;
++
++  for (int a = 0; a < n; a++)
++    for (int b = a + 1; b < n; b++)
++      {
++	const pipe_insn &pa = body[a], &pb = body[b];
++
++	if (pa.stream < 0 || pb.stream < 0
++	    || (pa.kind != PIPE_STORE && pb.kind != PIPE_STORE))
++	  continue;
++	const pipe_stream &sa = streams[pa.stream], &sb = streams[pb.stream];
++	if (pa.stream == pb.stream)
++	  {
++	    HOST_WIDE_INT oa = pa.disp + (after_incr (a) ? sa.stride : 0);
++	    HOST_WIDE_INT ob = pb.disp + (after_incr (b) ? sa.stride : 0);
++	    HOST_WIDE_INT la = GET_MODE_SIZE (pa.mode), lb = GET_MODE_SIZE (pb.mode);
++
++	    for (int d = -depth - 2; d <= depth + 2; d++)
++	      {
++		HOST_WIDE_INT addr = ob + d * sa.stride;
++
++		if (addr >= oa + la || oa >= addr + lb)
++		  continue;
++		/* A is before B in the same iteration */
++		bool before = d >= 0;
++		bool after = pa.stage < d + pb.stage || (pa.stage == d + pb.stage);
++		if (before != after)
++		  return false;
++	      }
++	    continue;
++	  }
++	if (!may_alias_p (pa.mem, pb.mem))
++	  continue;
++	if (abs_hwi (sa.stride) != abs_hwi (sb.stride) || sa.stride == 0
++	    || test_margin (sa, sb) > 0x3fff)
++	  return false;
++	std::pair<int, int> t (MIN (pa.stream, pb.stream), MAX (pa.stream, pb.stream));
++	bool dup = false;
++	for (unsigned i = 0; i < tests.length (); i++)
++	  dup |= tests[i] == t;
++	if (!dup)
++	  tests.safe_push (t);
++      }
++  return tests.length () <= 6;
++}
++
++/* The displacement of the load or store I.  In the prologue and the loop the base register
++   advances every run; in the drain it stands at the value after the last iteration.  */
++
++HOST_WIDE_INT
++pipe_loop::access_disp (int i, bool drain, int run)
++{
++  const pipe_insn &p = body[i];
++  const pipe_stream &s = streams[p.stream];
++
++  if (!drain)
++    return p.disp - p.stage * s.stride;
++  return p.disp + (run - p.stage) * s.stride + (after_incr (i) ? s.stride : 0);
++}
++
++bool
++pipe_loop::check_displacements ()
++{
++  for (unsigned i = 0; i < body.length (); i++)
++    if (body[i].stream >= 0 && !streams[body[i].stream].autoinc)
++      {
++	HOST_WIDE_INT size = GET_MODE_SIZE (body[i].mode);
++
++	for (int run = -1; run < body[i].stage; run++)
++	  {
++	    HOST_WIDE_INT d = access_disp (i, run >= 0, run);
++	    if (d % size != 0 || !IN_RANGE (d, -0x8000, 0x7fff - size))
++	      return false;
++	  }
++      }
++  return true;
++}
++
++/* One register for each value: the temporaries of the scalar loop are free here.  */
++
++bool
++pipe_loop::allocate ()
++{
++  HARD_REG_SET taken;
++  bitmap in = df_get_live_in (loop), out = df_get_live_in (exit_bb);
++
++  CLEAR_HARD_REG_SET (taken);
++  for (int r = FP0; r < FP0 + 32; r++)
++    if (REGNO_REG_SET_P (in, r) || REGNO_REG_SET_P (out, r) || fixed_regs[r]
++	|| !call_used_or_fixed_reg_p (r))
++      SET_HARD_REG_BIT (taken, r);
++
++  for (unsigned i = 0; i < body.length (); i++)
++    for (int s = 0; s < body[i].nsrc; s++)
++      if (body[i].val[s] < 0)
++	{
++	  int words = GET_MODE_SIZE (body[i].mode) / UNITS_PER_WORD;
++	  for (int w = 0; w < words; w++)
++	    SET_HARD_REG_BIT (taken, body[i].src[s] + w);
++	}
++  for (unsigned i = 0; i < body.length (); i++)
++    if (body[i].kind == PIPE_OP && body[i].scalar)
++      {
++	int words = GET_MODE_SIZE (body[i].mode) / UNITS_PER_WORD;
++	for (int s = 0; s < 2; s++)
++	  if (body[i].val[s] < 0 && body[i].src[s] == body[i].dest)
++	    {
++	      body[i].newreg = body[i].dest;
++	      for (int w = 0; w < words; w++)
++		SET_HARD_REG_BIT (taken, body[i].dest + w);
++	    }
++      }
++
++  for (unsigned i = 0; i < body.length (); i++)
++    {
++      pipe_insn &p = body[i];
++
++      if (p.kind != PIPE_LOAD && p.kind != PIPE_OP)
++	continue;
++      if (p.newreg >= 0)
++	continue;
++      if (piped (p) && !p.field_used)
++	{
++	  p.newreg = FP0;
++	  continue;
++	}
++      int words = GET_MODE_SIZE (p.mode) / UNITS_PER_WORD, r;
++      for (r = FP0 + 32 - words; r > FP0; r -= words)
++	if (!TEST_HARD_REG_BIT (taken, r) && (words == 1 || !TEST_HARD_REG_BIT (taken, r + 1)))
++	  break;
++      if (r <= FP0)
++	return false;
++      p.newreg = r;
++      for (int w = 0; w < words; w++)
++	SET_HARD_REG_BIT (taken, r + w);
++    }
++
++  if (!tests.is_empty ())
++    {
++      for (int r = 16; r < 30 && tmp_reg < 0; r++)
++	if (!REGNO_REG_SET_P (in, r) && !fixed_regs[r] && call_used_or_fixed_reg_p (r)
++	    && r != (int) REGNO (count) && r != (int) REGNO (step))
++	  tmp_reg = r;
++      if (tmp_reg < 0)
++	return false;
++    }
++  return true;
++}
++
++bool
++pipe_loop::analyze ()
++{
++  jump = BB_END (loop);
++  if (!JUMP_P (jump) || recog_memoized (jump) != CODE_FOR_i860_bla_loop
++      || !optimize_bb_for_speed_p (loop) || EDGE_COUNT (loop->succs) != 2
++      || EDGE_COUNT (loop->preds) != 2)
++    return false;
++
++  edge e;
++  edge_iterator ei;
++  FOR_EACH_EDGE (e, ei, loop->succs)
++    if (e->dest != loop)
++      exit_bb = e->dest;
++  FOR_EACH_EDGE (e, ei, loop->preds)
++    if (e->src != loop)
++      pre = e->src;
++  if (!exit_bb || !pre || !find_edge (loop, loop) || exit_bb == EXIT_BLOCK_PTR_FOR_FN (cfun)
++      || pre == ENTRY_BLOCK_PTR_FOR_FN (cfun) || !single_succ_p (pre))
++    return false;
++
++  rtx pat = PATTERN (jump);
++  count = SET_DEST (XVECEXP (pat, 0, 1));
++  step = XEXP (XVECEXP (pat, 0, 2), 0);
++  if (!REG_P (count) || !REG_P (step))
++    return false;
++
++  prime = BB_END (pre);
++  while (prime != BB_HEAD (pre) && !NONDEBUG_INSN_P (prime))
++    prime = PREV_INSN (prime);
++  if (!NONDEBUG_INSN_P (prime) || recog_memoized (prime) != CODE_FOR_i860_bla_prime
++      || !rtx_equal_p (SET_DEST (PATTERN (prime)), count)
++      || prime == BB_HEAD (pre))
++    return false;
++
++  if (!(scan_body () && find_values () && map_units () && solve_stages ()
++	&& check_memory () && check_displacements () && allocate ()))
++    return false;
++  if (TARGET_DUAL_FP && !plan_pairs ())
++    pairs.truncate (0);
++  return true;
++}
++
++int
++pipe_loop::value_reg (int v)
++{
++  const pipe_insn &p = body[v];
++
++  if (piped (p))
++    return body[p.pop_to].newreg;
++  return p.newreg;
++}
++
++rtx
++pipe_loop::real_pattern (int i, bool drain, int run)
++{
++  const pipe_insn &p = body[i];
++
++  if (p.kind == PIPE_INCR)
++    {
++      rtx r = gen_rtx_REG (SImode, p.dest);
++      return gen_rtx_SET (r, plus_constant (SImode, r, p.disp));
++    }
++  if (p.kind == PIPE_OP)
++    {
++      rtx a = gen_rtx_REG (p.mode, p.val[0] >= 0 ? value_reg (p.val[0]) : p.src[0]);
++      rtx b = gen_rtx_REG (p.mode, p.val[1] >= 0 ? value_reg (p.val[1]) : p.src[1]);
++      rtx d = gen_rtx_REG (p.mode, p.newreg);
++
++      if (p.scalar)
++	return gen_rtx_SET (d, gen_rtx_fmt_ee (p.code, p.mode, a, b));
++      if (p.mode == DFmode)
++	return (p.code == MULT ? gen_i860_pfmuldf (d, a, b)
++		: p.code == PLUS ? gen_i860_pfadddf (d, a, b)
++		: gen_i860_pfsubdf (d, a, b));
++      return (p.code == MULT ? gen_i860_pfmulsf (d, a, b)
++	      : p.code == PLUS ? gen_i860_pfaddsf (d, a, b)
++	      : gen_i860_pfsubsf (d, a, b));
++    }
++
++  rtx mem = copy_rtx (p.mem);
++  if (!streams[p.stream].autoinc)
++    {
++      rtx base = gen_rtx_REG (SImode, streams[p.stream].reg);
++      XEXP (mem, 0) = plus_constant (SImode, base, access_disp (i, drain, run));
++    }
++  set_mem_expr (mem, NULL_TREE);
++  clear_mem_offset (mem);
++  if (p.kind == PIPE_LOAD && use_pfld)
++    return (p.mode == DFmode ? gen_i860_pflddf (gen_rtx_REG (DFmode, p.newreg), mem)
++	    : gen_i860_pfldsf (gen_rtx_REG (SFmode, p.newreg), mem));
++  if (p.kind == PIPE_LOAD)
++    return gen_rtx_SET (gen_rtx_REG (p.mode, p.newreg), mem);
++  return gen_rtx_SET (mem, gen_rtx_REG (p.mode, p.val[0] >= 0 ? value_reg (p.val[0]) : p.src[0]));
++}
++
++/* The FP registers insn I reads and writes.  */
++
++void
++pipe_loop::item_regs (int i, auto_vec<int> &reads, auto_vec<int> &writes)
++{
++  const pipe_insn &p = body[i];
++  int words = p.kind == PIPE_INCR ? 1 : GET_MODE_SIZE (p.mode) / UNITS_PER_WORD;
++
++  for (int s = 0; s < p.nsrc; s++)
++    for (int w = 0; w < words; w++)
++      reads.safe_push ((p.val[s] >= 0 ? value_reg (p.val[s]) : p.src[s]) + w);
++  if (p.kind == PIPE_LOAD || p.kind == PIPE_OP)
++    for (int w = 0; w < words; w++)
++      writes.safe_push (p.newreg + w);
++}
++
++bool
++pipe_loop::items_conflict (int a, int b)
++{
++  auto_vec<int> ra, wa, rb, wb;
++
++  item_regs (a, ra, wa);
++  item_regs (b, rb, wb);
++  for (unsigned i = 0; i < wa.length (); i++)
++    {
++      if (wa[i] == FP0 || wa[i] == FP0 + 1)
++	continue;
++      for (unsigned j = 0; j < rb.length (); j++)
++	if (wa[i] == rb[j])
++	  return true;
++      for (unsigned j = 0; j < wb.length (); j++)
++	if (wa[i] == wb[j])
++	  return true;
++    }
++  for (unsigned i = 0; i < wb.length (); i++)
++    {
++      if (wb[i] == FP0 || wb[i] == FP0 + 1)
++	continue;
++      for (unsigned j = 0; j < ra.length (); j++)
++	if (wb[i] == ra[j])
++	  return true;
++    }
++  return false;
++}
++
++/* FP and core halves of the loop as pairs, each after what it depends on and not in one pair with
++   it: which half of a pair sees the other's result is not known.  The slot of bla holds fnop, as
++   a real FP half could not run again after a trap there.  False if this saves nothing.  */
++
++bool
++pipe_loop::plan_pairs ()
++{
++  auto_vec<int> fps, cores, placed;
++  int n = body.length ();
++
++  placed.safe_grow_cleared (n);
++  for (int i = 0; i < n; i++)
++    {
++      placed[i] = -1;
++      if (body[i].kind == PIPE_OP)
++	fps.safe_push (i);
++      else
++	cores.safe_push (i);
++    }
++
++  unsigned nf = 0, nc = 0;
++  while (nf < fps.length () || nc < cores.length ())
++    {
++      int f = nf < fps.length () ? fps[nf] : -1;
++      int c = nc < cores.length () ? cores[nc] : -1;
++      int now = pairs.length ();
++      auto ready = [&] (int x)
++	{
++	  if (x < 0)
++	    return false;
++	  for (int e = 0; e < x; e++)
++	    if ((placed[e] < 0 || placed[e] == now) && items_conflict (e, x))
++	      return false;
++	  return true;
++	};
++      bool fok = ready (f), cok = ready (c);
++
++      if (fok && cok && items_conflict (f, c))
++	{
++	  if (f < c)
++	    cok = false;
++	  else
++	    fok = false;
++	}
++      if (!fok && !cok)
++	return false;
++      pair p = { fok ? f : -1, cok ? c : -1, false };
++      pairs.safe_push (p);
++      if (fok)
++	{
++	  placed[f] = now;
++	  nf++;
++	}
++      if (cok)
++	{
++	  placed[c] = now;
++	  nc++;
++	}
++    }
++
++  /* bla and its slot at the end */
++  pair last = pairs.last ();
++  if (last.fp >= 0)
++    {
++      pairs.last ().core = -1;
++      pairs.last ().bla = true;
++      pair slot = { -1, last.core, false };
++      pairs.safe_push (slot);
++    }
++  else
++    {
++      unsigned m = pairs.length ();
++      if (m >= 2 && pairs[m - 2].core < 0)
++	pairs[m - 2].bla = true;
++      else
++	{
++	  pair b = { -1, -1, true };
++	  pairs.safe_insert (m - 1, b);
++	}
++    }
++  return (int) pairs.length () < n + 1;
++}
++
++/* The loop as one insn: the first element marks it, then an FP and a core half per pair.  */
++
++rtx
++pipe_loop::dual_kernel ()
++{
++  int m = pairs.length ();
++  rtvec v = rtvec_alloc (1 + 2 * m);
++
++  RTVEC_ELT (v, 0) = gen_rtx_UNSPEC_VOLATILE (VOIDmode, gen_rtvec (1, const0_rtx),
++					      UNSPECV_DUAL_KERNEL);
++  for (int i = 0; i < m; i++)
++    {
++      const pair &p = pairs[i];
++
++      RTVEC_ELT (v, 1 + 2 * i) = (p.fp >= 0 ? real_pattern (p.fp, false, 0)
++				  : gen_rtx_USE (VOIDmode, const0_rtx));
++      if (p.bla)
++	RTVEC_ELT (v, 2 + 2 * i)
++	  = gen_rtx_SET (count, gen_rtx_UNSPEC_VOLATILE (SImode, gen_rtvec (2, count, step),
++							 UNSPECV_DUAL_BLA));
++      else
++	RTVEC_ELT (v, 2 + 2 * i) = (p.core >= 0 ? real_pattern (p.core, false, 0)
++				    : gen_rtx_USE (VOIDmode, const0_rtx));
++    }
++  return gen_rtx_PARALLEL (VOIDmode, v);
++}
++
++/* One run outside of the loop.  RUN counts from zero in the prologue and in the drain.  */
++
++void
++pipe_loop::emit_run (bool drain, int run)
++{
++  for (unsigned i = 0; i < body.length (); i++)
++    {
++      const pipe_insn &p = body[i];
++      bool active = drain ? run < p.stage : run >= p.stage;
++
++      if (p.kind == PIPE_INCR)
++	active = !drain;
++      if (active)
++	emit_insn (real_pattern (i, drain, run));
++      else if (piped (p)
++	       && (drain ? run <= lastpop[p.unit] : run >= minstage[p.unit]))
++	{
++	  rtx z = gen_rtx_REG (p.mode, FP0);
++	  rtx d = gen_rtx_REG (p.mode, p.newreg);
++
++	  /* the stack is always there to read */
++	  if (p.unit == 2)
++	    {
++	      rtx m = gen_frame_mem (p.mode, stack_pointer_rtx);
++	      emit_insn (p.mode == DFmode ? gen_i860_pflddf (d, m) : gen_i860_pfldsf (d, m));
++	    }
++	  else if (p.mode == DFmode)
++	    emit_insn (p.unit == 0 ? gen_i860_pfmuldf (d, z, z) : gen_i860_pfadddf (d, z, z));
++	  else
++	    emit_insn (p.unit == 0 ? gen_i860_pfmulsf (d, z, z) : gen_i860_pfaddsf (d, z, z));
++	}
++    }
++}
++
++/* A pop writes what the stage holds in its own precision: a double left by earlier code would
++   overwrite the neighbour of a single destination.  So the old contents go to f0 first.  With
++   double destinations a stale value stays within the register it is meant for.  */
++
++void
++pipe_loop::emit_flush ()
++{
++  for (int unit = 0; unit < 3; unit++)
++    for (unsigned i = 0; i < body.length (); i++)
++      if (body[i].kind != PIPE_STORE && body[i].kind != PIPE_INCR
++	  && body[i].unit == unit && piped (body[i]))
++	{
++	  rtx z = gen_rtx_REG (SFmode, FP0);
++
++	  if (body[i].mode == SFmode)
++	    for (int n = 0; n < 3; n++)
++	      emit_insn (unit == 2 ? gen_i860_pfldsf (z, gen_frame_mem (SFmode, stack_pointer_rtx))
++			 : unit == 0 ? gen_i860_pfmulsf (z, z, z) : gen_i860_pfaddsf (z, z, z));
++	  break;
++	}
++}
++
++rtx_insn *
++pipe_loop::branch_to_scalar (enum rtx_code code, rtx a, rtx b)
++{
++  rtx cond = gen_rtx_fmt_ee (code, VOIDmode, a, b);
++  rtx ref = gen_rtx_LABEL_REF (Pmode, scalar_label);
++  rtx_insn *j = emit_jump_insn (gen_rtx_SET (pc_rtx,
++					     gen_rtx_IF_THEN_ELSE (VOIDmode, cond, ref, pc_rtx)));
++  JUMP_LABEL (j) = scalar_label;
++  LABEL_NUSES (scalar_label)++;
++  return j;
++}
++
++/* What was emitted before the block NEXT since FIRST becomes a block after PREV.  */
++
++static basic_block
++new_block (rtx_insn *seq, basic_block prev, basic_block next, profile_count cnt)
++{
++  rtx_insn *first = seq, *last = seq;
++
++  emit_insn_before_noloc (seq, BB_HEAD (next), NULL);
++  for (rtx_insn *i = first; i != BB_HEAD (next); i = NEXT_INSN (i))
++    if (!BARRIER_P (i))
++      last = i;
++  basic_block bb = create_basic_block (first, last, prev);
++  BB_COPY_PARTITION (bb, prev);
++  bb->count = cnt;
++  return bb;
++}
++
++/* One way through the loop, from the block PREV with FLAGS on the edge, up to a jump to the exit.
++   Its blocks go in front of the scalar loop.  */
++
++void
++pipe_loop::emit_path (basic_block prev, int flags, rtx entry, basic_block scalar)
++{
++  profile_count cnt = pre->count;
++  rtx_insn *seq;
++  edge e;
++
++  start_sequence ();
++  if (entry)
++    emit_label (entry);
++  emit_insn (gen_rtx_SET (count, plus_constant (SImode, count, -depth)));
++  emit_flush ();
++  for (int run = 0; run < depth; run++)
++    emit_run (false, run);
++  emit_insn (gen_i860_bla_prime (count, step));
++  rtx exit_label = block_label (exit_bb);
++  if (!pairs.is_empty ())
++    {
++      emit_insn (dual_kernel ());
++      for (int run = 0; run < depth; run++)
++	emit_run (true, run);
++      rtx_insn *dj = emit_jump_insn (gen_jump (exit_label));
++      JUMP_LABEL (dj) = exit_label;
++      LABEL_NUSES (exit_label)++;
++      emit_barrier ();
++    }
++  seq = get_insns ();
++  end_sequence ();
++  basic_block setup = new_block (seq, scalar->prev_bb, scalar, cnt);
++  e = make_edge (prev, setup, flags);
++  e->probability = profile_probability::likely ();
++  if (entry)
++    LABEL_NUSES (entry)++;
++  if (!pairs.is_empty ())
++    {
++      e = make_edge (setup, exit_bb, 0);
++      e->probability = profile_probability::always ();
++      return;
++    }
++
++  rtx label = gen_label_rtx ();
++  start_sequence ();
++  emit_label (label);
++  for (unsigned i = 0; i < body.length (); i++)
++    emit_insn (real_pattern (i, false, 0));
++  rtx_insn *lj = emit_jump_insn (gen_i860_bla_loop (count, label, step));
++  JUMP_LABEL (lj) = label;
++  LABEL_NUSES (label)++;
++  seq = get_insns ();
++  end_sequence ();
++  basic_block kernel = new_block (seq, setup, scalar, loop->count);
++  e = make_edge (setup, kernel, EDGE_FALLTHRU);
++  e->probability = profile_probability::always ();
++  e = make_edge (kernel, kernel, 0);
++  e->probability = find_edge (loop, loop)->probability;
++
++  start_sequence ();
++  for (int run = 0; run < depth; run++)
++    emit_run (true, run);
++  rtx_insn *ej = emit_jump_insn (gen_jump (exit_label));
++  JUMP_LABEL (ej) = exit_label;
++  LABEL_NUSES (exit_label)++;
++  emit_barrier ();
++  seq = get_insns ();
++  end_sequence ();
++  basic_block drain = new_block (seq, kernel, scalar, cnt);
++  e = make_edge (kernel, drain, EDGE_FALLTHRU);
++  e->probability = find_edge (loop, loop)->probability.invert ();
++  e = make_edge (drain, exit_bb, 0);
++  e->probability = profile_probability::always ();
++}
++
++/* The tests, then the ways through the loop.  With BIG, this variant with pipelined loads is for
++   what does not fit the data cache: pfld does not replace its lines.  */
++
++void
++pipe_loop::transform (pipe_loop *big)
++{
++  pipe_loop *t = big ? big : this;
++  edge se = split_block (pre, PREV_INSN (prime));
++  basic_block scalar = se->dest;
++  basic_block last = pre;
++  profile_count cnt = pre->count;
++  profile_probability likely = profile_probability::likely ();
++
++  scalar_label = block_label (scalar);
++  t->scalar_label = scalar_label;
++
++  start_sequence ();
++  branch_to_scalar (LE, count, GEN_INT (MAX (depth, t->depth)));
++  rtx_insn *seq = get_insns ();
++  end_sequence ();
++  rtx_insn *j = emit_insn_after_noloc (seq, BB_END (pre), pre);
++  gcc_assert (JUMP_P (j));
++  se->flags &= ~EDGE_FALLTHRU;
++  se->probability = likely.invert ();
++
++  /* every test: if the bases are closer than a reordering can matter, the scalar loop */
++  for (unsigned n = 0; n < t->tests.length (); n++)
++    {
++      const pipe_stream &a = t->streams[t->tests[n].first], &b = t->streams[t->tests[n].second];
++      HOST_WIDE_INT margin = t->test_margin (a, b);
++      rtx tmp = gen_rtx_REG (SImode, t->tmp_reg);
++
++      start_sequence ();
++      emit_insn (gen_rtx_SET (tmp, gen_rtx_MINUS (SImode, gen_rtx_REG (SImode, a.reg),
++						  gen_rtx_REG (SImode, b.reg))));
++      emit_insn (gen_rtx_SET (tmp, plus_constant (SImode, tmp, margin)));
++      branch_to_scalar (LTU, tmp, GEN_INT (2 * margin));
++      seq = get_insns ();
++      end_sequence ();
++      basic_block bb = new_block (seq, last, scalar, cnt);
++      edge e = make_edge (last, bb, EDGE_FALLTHRU);
++      e->probability = likely;
++      e = make_edge (bb, scalar, 0);
++      e->probability = likely.invert ();
++      last = bb;
++    }
++
++  if (!big)
++    {
++      emit_path (last, EDGE_FALLTHRU, NULL_RTX, scalar);
++      return;
++    }
++
++  /* the bytes all loads of the loop read */
++  HOST_WIDE_INT bytes = 0;
++  for (unsigned n = 0; n < big->body.length (); n++)
++    if (big->body[n].kind == PIPE_LOAD)
++      bytes += abs_hwi (big->streams[big->body[n].stream].stride);
++  HOST_WIDE_INT limit = bytes ? (i860_pfld_min_bytes + bytes - 1) / bytes : 0;
++
++  rtx small = gen_label_rtx ();
++  start_sequence ();
++  rtx ref = gen_rtx_LABEL_REF (Pmode, small);
++  rtx_insn *sj = emit_jump_insn (gen_rtx_SET (pc_rtx,
++					      gen_rtx_IF_THEN_ELSE (VOIDmode,
++								    gen_rtx_fmt_ee (LT, VOIDmode, count,
++										    GEN_INT (limit)),
++								    ref, pc_rtx)));
++  JUMP_LABEL (sj) = small;
++  seq = get_insns ();
++  end_sequence ();
++  basic_block choose = new_block (seq, last, scalar, cnt);
++  edge e = make_edge (last, choose, EDGE_FALLTHRU);
++  e->probability = likely;
++
++  big->emit_path (choose, EDGE_FALLTHRU, NULL_RTX, scalar);
++  emit_path (choose, 0, small, scalar);
++}
++
++} // anon namespace
++
++/* The insn made by dual_kernel.  */
++
++const char *
++i860_output_dual_kernel (rtx par)
++{
++  /* The D bit acts one instruction later: dual mode starts after the entry pair and ends one pair
++     after the first without it, as in the code of the SVR4 libm.  */
++  fputs ("\t.balignl 8,0xa0000000\n\td.fnop\n\tnop\n1:\n", asm_out_file);
++  for (int i = 1; i < XVECLEN (par, 0); i++)
++    {
++      rtx x = XVECEXP (par, 0, i);
++      rtx ops[3];
++      char t[64];
++
++      if (GET_CODE (x) == USE)
++	{
++	  output_asm_insn (i & 1 ? "d.fnop" : "nop", ops);
++	  continue;
++	}
++      rtx dst = SET_DEST (x), src = SET_SRC (x);
++      ops[0] = dst;
++      if (MEM_P (dst))
++	{
++	  ops[1] = src;
++	  output_asm_insn (GET_MODE (dst) == DFmode ? "fst.d %1,%0" : "fst.l %1,%0", ops);
++	}
++      else if (MEM_P (src))
++	{
++	  ops[1] = src;
++	  output_asm_insn (GET_MODE (src) == DFmode ? "fld.d %1,%0" : "fld.l %1,%0", ops);
++	}
++      else if (GET_CODE (src) == UNSPEC_VOLATILE && XINT (src, 1) == UNSPECV_PFLD)
++	{
++	  ops[1] = XVECEXP (src, 0, 0);
++	  output_asm_insn (GET_MODE (dst) == DFmode ? "pfld.d %1,%0" : "pfld.l %1,%0", ops);
++	}
++      else if (GET_CODE (src) == UNSPEC_VOLATILE && XINT (src, 1) == UNSPECV_DUAL_BLA)
++	{
++	  ops[1] = XVECEXP (src, 0, 1);
++	  output_asm_insn ("bla %1,%0,1b", ops);
++	}
++      else if (GP_REGNO_P (REGNO (dst)))
++	{
++	  ops[1] = XEXP (src, 1);
++	  output_asm_insn ("addu %1,%0,%0", ops);
++	}
++      else
++	{
++	  const char *sfx = GET_MODE (dst) == DFmode ? "dd" : "ss";
++	  const char *name;
++
++	  if (GET_CODE (src) == UNSPEC_VOLATILE)
++	    {
++	      name = (XINT (src, 1) == UNSPECV_PFADD ? "pfadd"
++		      : XINT (src, 1) == UNSPECV_PFSUB ? "pfsub" : "pfmul");
++	      ops[1] = XVECEXP (src, 0, 0);
++	      ops[2] = XVECEXP (src, 0, 1);
++	    }
++	  else
++	    {
++	      name = (GET_CODE (src) == PLUS ? "fadd"
++		      : GET_CODE (src) == MINUS ? "fsub" : "fmul");
++	      ops[1] = XEXP (src, 0);
++	      ops[2] = XEXP (src, 1);
++	    }
++	  snprintf (t, sizeof t, "d.%s.%s %%1,%%2,%%0", name, sfx);
++	  output_asm_insn (t, ops);
++	}
++    }
++  fputs ("\tfnop\n\tnop\n\tfnop\n\tnop\n", asm_out_file);
++  return "";
++}
++
++namespace {
++
++const pass_data pass_data_i860_pipeline =
++{
++  RTL_PASS,
++  "i860_pipeline",
++  OPTGROUP_NONE,
++  TV_MACH_DEP,
++  0, 0, 0, 0,
++  TODO_df_finish,
++};
++
++class pass_i860_pipeline : public rtl_opt_pass
++{
++public:
++  pass_i860_pipeline (gcc::context *ctxt)
++    : rtl_opt_pass (pass_data_i860_pipeline, ctxt)
++  {}
++
++  bool gate (function *) final override
++  {
++    return ((i860_pipelined_fp > 0 || (i860_pipelined_fp < 0 && optimize >= 3))
++	    && optimize >= 2 && !optimize_size);
++  }
++
++  unsigned int execute (function *) final override;
++};
++
++unsigned int
++pass_i860_pipeline::execute (function *fun)
++{
++  auto_vec<basic_block> loops;
++  basic_block bb;
++
++  df_analyze ();
++  FOR_EACH_BB_FN (bb, fun)
++    if (JUMP_P (BB_END (bb)) && recog_memoized (BB_END (bb)) == CODE_FOR_i860_bla_loop)
++      loops.safe_push (bb);
++
++  /* the analysis needs the liveness of the unchanged function */
++  bool changed = false;
++  for (unsigned i = 0; i < loops.length (); i++)
++    {
++      pipe_loop l (loops[i], false);
++      pipe_loop big (loops[i], true);
++      bool pfld = i860_pfld > 0 || (i860_pfld < 0 && optimize >= 3);
++
++      if (changed)
++	df_analyze ();
++      if (!l.analyze ())
++	{
++	  if (dump_file)
++	    fprintf (dump_file, "loop in bb %d stays scalar\n", loops[i]->index);
++	  continue;
++	}
++      if (dump_file)
++	fprintf (dump_file, "loop in bb %d pipelined, %d stages\n", loops[i]->index, l.depth);
++      l.transform (pfld && big.analyze () ? &big : NULL);
++      changed = true;
++    }
++  return 0;
++}
++
++} // anon namespace
++
++rtl_opt_pass *
++make_pass_i860_pipeline (gcc::context *ctxt)
++{
++  return new pass_i860_pipeline (ctxt);
++}
 diff --git a/gcc/config/i860/i860-protos.h b/gcc/config/i860/i860-protos.h
 new file mode 100644
-index 00000000000..34747256eb2
+index 00000000000..6698d16e65c
 --- /dev/null
 +++ b/gcc/config/i860/i860-protos.h
-@@ -0,0 +1,68 @@
+@@ -0,0 +1,78 @@
 +/* Prototypes for i860.cc functions used in the md file & elsewhere.
 +   Copyright (C) 2000-2026 Free Software Foundation, Inc.
 +   Copyright (C) 2026 René Rebe <rene@exactco.de>
@@ -200,6 +1533,7 @@ index 00000000000..34747256eb2
 +extern const char *i860_output_move_double (rtx *);
 +extern const char *i860_output_logic (enum rtx_code, rtx *);
 +extern bool i860_cbranch_operand_p (enum rtx_code, rtx);
++extern const char *i860_output_bla (rtx_insn *, rtx *, int);
 +extern void i860_expand_fdiv (machine_mode, rtx *);
 +extern bool i860_bte_form_p (rtx *);
 +extern bool i860_symbolic_p (rtx);
@@ -217,13 +1551,22 @@ index 00000000000..34747256eb2
 +extern void i860_init_cumulative_args (CUMULATIVE_ARGS *, tree);
 +#endif
 +
++#ifdef RTX_CODE
++extern int i860_sched_class (rtx_insn *);
++extern const char *i860_output_dual_kernel (rtx);
++#endif
++
++namespace gcc { class context; }
++class rtl_opt_pass;
++extern rtl_opt_pass *make_pass_i860_pipeline (gcc::context *);
++
 +#endif /* GCC_I860_PROTOS_H */
 diff --git a/gcc/config/i860/i860.cc b/gcc/config/i860/i860.cc
 new file mode 100644
-index 00000000000..5795c0c0155
+index 00000000000..4bdf35f96c5
 --- /dev/null
 +++ b/gcc/config/i860/i860.cc
-@@ -0,0 +1,1959 @@
+@@ -0,0 +1,2167 @@
 +/* Subroutines for insn-output.cc for Intel i860.
 +   Copyright (C) 1989-2005, 2026 Free Software Foundation, Inc.
 +   Copyright (C) 2026 René Rebe <rene@exactco.de>
@@ -287,6 +1630,8 @@ index 00000000000..5795c0c0155
 +#include "tm-constrs.h"
 +
 +/* This file should be included last.  */
++#include "cfgloop.h"
++#include "tree-cfg.h"
 +#include "target-def.h"
 +
 +/* Frame layout, high to low addresses:
@@ -327,6 +1672,9 @@ index 00000000000..5795c0c0155
 +  /* The PIC register is fixed, but callee saved.  */
 +  if (regno == PIC_OFFSET_TABLE_REGNUM)
 +    return crtl->uses_pic_offset_table;
++  /* has a slot of its own */
++  if (regno == HARD_FRAME_POINTER_REGNUM && frame_pointer_needed)
++    return false;
 +  return df_regs_ever_live_p (regno) && !call_used_or_fixed_reg_p (regno);
 +}
 +
@@ -367,10 +1715,13 @@ index 00000000000..5795c0c0155
 +  gcc_unreachable ();
 +}
 +
++/* What refers to the frame in ways the stack pointer cannot serve.  */
 +static bool
 +i860_frame_pointer_required (void)
 +{
-+  return true;
++  return (I860_SVR4_FUNCTION_PREFIX || cfun->stdarg || cfun->calls_alloca
++	  || cfun->has_nonlocal_label || crtl->calls_eh_return || crtl->accesses_prior_frames
++	  || crtl->profile);
 +}
 +
 +static bool
@@ -402,11 +1753,17 @@ index 00000000000..5795c0c0155
 +  return insn;
 +}
 +
++/* Without a frame pointer the slots of the registers are this far from the stack pointer, with
++   the top of the frame as the frame pointer would show it.  */
++static HOST_WIDE_INT i860_slot_base;
++
 +static rtx
 +fp_slot (machine_mode mode, HOST_WIDE_INT offset)
 +{
-+  return gen_frame_mem (mode, plus_constant (Pmode, hard_frame_pointer_rtx,
-+					     offset));
++  rtx base = (frame_pointer_needed ? hard_frame_pointer_rtx
++	      : plus_constant (Pmode, stack_pointer_rtx, i860_slot_base));
++
++  return gen_frame_mem (mode, plus_constant (Pmode, base, offset));
 +}
 +
 +/* Save mode for a callee-saved register.  */
@@ -418,15 +1775,98 @@ index 00000000000..5795c0c0155
 +  return SImode;
 +}
 +
++/* What the scheduler has to know of INSN.  */
++int
++i860_sched_class (rtx_insn *insn)
++{
++  if (JUMP_P (insn) || CALL_P (insn))
++    return SCLASS_BRANCH;
++  if (INSN_CODE (insn) == CODE_FOR_i860_fmlow)
++    return SCLASS_FMULD;
++
++  rtx set = single_set (insn);
++  if (!set)
++    return SCLASS_ALU;
++
++  rtx dst = SET_DEST (set), src = SET_SRC (set);
++  machine_mode mode = GET_MODE (dst);
++  bool fp = FLOAT_MODE_P (mode) || FP_REG_P (dst) || FP_REG_P (src);
++
++  if (MEM_P (dst))
++    return SCLASS_STORE;
++  if ((GET_CODE (src) == SIGN_EXTEND || GET_CODE (src) == ZERO_EXTEND)
++      && MEM_P (XEXP (src, 0)))
++    return SCLASS_ILOAD;
++  if (MEM_P (src))
++    return fp ? SCLASS_FLOAD : SCLASS_ILOAD;
++  if (FLOAT_MODE_P (mode))
++    switch (GET_CODE (src))
++      {
++      case PLUS:
++      case MINUS:
++	return SCLASS_FADD;
++      case MULT:
++	return mode == DFmode ? SCLASS_FMULD : SCLASS_FMULS;
++      case DIV:
++      case SQRT:
++	return SCLASS_LONG;
++      default:
++	break;
++      }
++  return fp ? SCLASS_FPMISC : SCLASS_ALU;
++}
++
++/* A leaf with nothing to save and nothing in memory needs no frame.  Decided once, when the
++   prologue is made: after that the prologue itself would mention the frame pointer.  */
++static bool
++i860_frameless_p (void)
++{
++  static int decided_no = -1;
++  static bool frameless;
++
++  if (decided_no != cfun->funcdef_no)
++    {
++      struct i860_frame_info f;
++
++      decided_no = cfun->funcdef_no;
++      i860_compute_frame (&f);
++      frameless = (flag_omit_frame_pointer
++		   && f.total == 16 && !f.save_r1 && crtl->is_leaf && !crtl->profile
++		   && !cfun->calls_alloca && !cfun->has_nonlocal_label && !crtl->calls_eh_return
++		   && !crtl->accesses_prior_frames && !cfun->stdarg
++		   && !crtl->uses_pic_offset_table);
++      /* the expander of the prologue runs in a sequence of its own */
++      push_topmost_sequence ();
++      rtx_insn *first = get_insns ();
++      pop_topmost_sequence ();
++      for (rtx_insn *insn = first; frameless && insn; insn = NEXT_INSN (insn))
++	if (NONDEBUG_INSN_P (insn)
++	    && (reg_mentioned_p (hard_frame_pointer_rtx, PATTERN (insn))
++		|| reg_mentioned_p (stack_pointer_rtx, PATTERN (insn))))
++	  frameless = false;
++    }
++  return frameless;
++}
++
 +void
 +i860_expand_prologue (void)
 +{
 +  struct i860_frame_info f;
 +  rtx sp = stack_pointer_rtx, fp = hard_frame_pointer_rtx;
 +
++  if (i860_frameless_p ())
++    return;
++
 +  i860_compute_frame (&f);
 +
-+  if (f.total <= 0x7fff)
++  /* a large frame: the register slots first, within reach of a displacement */
++  HOST_WIDE_INT head = f.total <= 0x7fff ? f.total : 16 + f.regs;
++  if (!frame_pointer_needed)
++    {
++      emit_frame_insn (gen_addsi3 (sp, sp, GEN_INT (-head)));
++      i860_slot_base = head - 16;
++    }
++  else if (f.total <= 0x7fff)
 +    {
 +      emit_frame_insn (gen_addsi3 (sp, sp, GEN_INT (-f.total)));
 +      emit_frame_insn (gen_rtx_SET (gen_frame_mem (SImode,
@@ -458,6 +1898,12 @@ index 00000000000..5795c0c0155
 +				      gen_rtx_REG (mode, r)));
 +      }
 +
++  if (!frame_pointer_needed && head != f.total)
++    {
++      emit_frame_insn (gen_addsi3 (sp, sp, GEN_INT (-(f.total - head))));
++      i860_slot_base = f.total - 16;
++    }
++
 +  if (f.va)
 +    {
 +      HOST_WIDE_INT base = -(f.regs + f.va);
@@ -481,6 +1927,9 @@ index 00000000000..5795c0c0155
 +	emit_move_insn (gen_rtx_REG (SImode, I860_RETURN_REGNUM),
 +			fp_slot (SImode, 4));
 +    }
++
++  /* below the stack pointer a signal handler would overwrite the frame */
++  emit_insn (gen_blockage ());
 +}
 +
 +/* SIBCALL: restore all but leave the jump to the sibcall pattern, whose delay
@@ -494,8 +1943,26 @@ index 00000000000..5795c0c0155
 +  bool sp_from_fp = (cfun->calls_alloca || cfun->has_nonlocal_label
 +		     || crtl->calls_eh_return);
 +
++  if (i860_frameless_p ())
++    {
++      if (!sibcall)
++	emit_jump_insn (gen_i860_return_leaf ());
++      return;
++    }
++
++  emit_insn (gen_blockage ());
 +  i860_compute_frame (&f);
-+  if (f.total > 0x7fff)
++  HOST_WIDE_INT rest = f.total;
++  if (!frame_pointer_needed)
++    {
++      if (f.total > 0x7fff)
++	{
++	  rest = 16 + f.regs;
++	  emit_insn (gen_addsi3 (stack_pointer_rtx, stack_pointer_rtx, GEN_INT (f.total - rest)));
++	}
++      i860_slot_base = rest - 16;
++    }
++  else if (f.total > 0x7fff)
 +    sp_from_fp = true;
 +
 +  HOST_WIDE_INT off = 0;
@@ -517,7 +1984,8 @@ index 00000000000..5795c0c0155
 +  if (f.save_r1)
 +    emit_move_insn (gen_rtx_REG (SImode, I860_RETURN_REGNUM),
 +		    fp_slot (SImode, 4));
-+  emit_move_insn (fp, fp_slot (SImode, 0));
++  if (frame_pointer_needed)
++    emit_move_insn (fp, fp_slot (SImode, 0));
 +
 +  if (sibcall)
 +    {
@@ -525,12 +1993,12 @@ index 00000000000..5795c0c0155
 +	emit_move_insn (stack_pointer_rtx, r31);
 +      else
 +	emit_insn (gen_addsi3 (stack_pointer_rtx, stack_pointer_rtx,
-+			       GEN_INT (f.total)));
++			       GEN_INT (rest)));
 +    }
 +  else if (sp_from_fp)
 +    emit_jump_insn (gen_i860_return_reg (r31));
 +  else
-+    emit_jump_insn (gen_i860_return_adjust (GEN_INT (f.total)));
++    emit_jump_insn (gen_i860_return_adjust (GEN_INT (rest)));
 +}
 +
 +/* The word in front of each function: a nop that also carries the
@@ -550,6 +2018,8 @@ index 00000000000..5795c0c0155
 +{
 +  const char *name = XSTR (XEXP (DECL_RTL (current_function_decl), 0), 0);
 +
++  if (!I860_SVR4_FUNCTION_PREFIX)
++    return;
 +  fputs (".ep.", file);
 +  assemble_name (file, name);
 +  fputs (":\n", file);
@@ -764,6 +2234,10 @@ index 00000000000..5795c0c0155
 +			   gimple_seq *post_p ATTRIBUTE_UNUSED)
 +{
 +  tree gpr, fpr, sav, mem, t;
++  /* variable sized types arrive as a pointer */
++  bool indirect = pass_va_arg_by_reference (type);
++  if (indirect)
++    type = build_pointer_type (type);
 +  machine_mode mode = TYPE_MODE (type);
 +  HOST_WIDE_INT size = int_size_in_bytes (type);
 +  enum i860_arg_class cls = i860_arg_class (mode, type);
@@ -835,7 +2309,8 @@ index 00000000000..5795c0c0155
 +    gimple_seq_add_stmt (pre_p, gimple_build_label (lab_over));
 +
 +  addr = fold_convert (build_pointer_type (type), addr);
-+  return build_va_arg_indirect_ref (addr);
++  addr = build_va_arg_indirect_ref (addr);
++  return indirect ? build_va_arg_indirect_ref (addr) : addr;
 +}
 +
 +/* Addressing.  Valid addresses are reg, reg + 16-bit offset suitably
@@ -993,6 +2468,11 @@ index 00000000000..5795c0c0155
 +  HOST_WIDE_INT size = GET_MODE_SIZE (mode);
 +
 +  if (i860_base_reg_p (x, strict))
++    return true;
++  /* fld and fst only: the integer alternatives of the moves take offsettable memory */
++  if ((GET_CODE (x) == PRE_INC || GET_CODE (x) == PRE_DEC)
++      && (mode == SFmode || mode == DFmode)
++      && i860_base_reg_p (XEXP (x, 0), strict))
 +    return true;
 +  if (GET_CODE (x) == PLUS && i860_base_reg_p (XEXP (x, 0), strict)
 +      && CONST_INT_P (XEXP (x, 1)))
@@ -1419,6 +2899,15 @@ index 00000000000..5795c0c0155
 +      return "";
 +    }
 +
++  if (GET_CODE (addr) == PRE_INC || GET_CODE (addr) == PRE_DEC)
++    {
++      xops[2] = XEXP (addr, 0);
++      xops[1] = GEN_INT (GET_CODE (addr) == PRE_INC ? 8 : -8);
++      output_asm_insn (load ? "fld.l %1(%2)++,%0\n\tfld.l 4(%2),%R0"
++			    : "fst.l %0,%1(%2)++\n\tfst.l %R0,4(%2)", xops);
++      return "";
++    }
++
 +  rtx lo, hi;
 +  i860_word_mems (mem, &lo, &hi);
 +  xops[1] = lo;
@@ -1770,6 +3259,53 @@ index 00000000000..5795c0c0155
 +	   || code == UNEQ);
 +}
 +
++/* bla compares as signed, and there is one LCC.  */
++static bool
++i860_can_use_doloop_p (const widest_int &, const widest_int &iterations_max,
++		       unsigned int loop_depth, bool entered_at_top)
++{
++  if (loop_depth > 1 || !entered_at_top)
++    return false;
++  return iterations_max != 0 && wi::ltu_p (iterations_max, widest_int (0x7ffffff0));
++}
++
++static bool
++i860_predict_doloop_p (class loop *loop)
++{
++  return !loop->inner && single_exit (loop) && optimize_loop_for_speed_p (loop);
++}
++
++static const char *
++i860_invalid_within_doloop (const rtx_insn *insn)
++{
++  if (CALL_P (insn))
++    return "function call in the loop";
++  if (tablejump_p (insn, NULL, NULL) || computed_jump_p (insn))
++    return "computed branch in the loop";
++  if (NONJUMP_INSN_P (insn)
++      && (GET_CODE (PATTERN (insn)) == ASM_INPUT || asm_noperands (PATTERN (insn)) >= 0))
++    return "asm in the loop, it could use bla";
++  return NULL;
++}
++
++const char *
++i860_output_bla (rtx_insn *insn, rtx *operands, int alternative)
++{
++  if (alternative == 1)
++    {
++      /* the signed test of bla: the count before the add, taken from zero on */
++      /* without LCC: on while the count before the add was not negative */
++      output_asm_insn ("ld.l %0,%?r31\n\tadds -1,%?r31,%?r31\n\tst.l %?r31,%0\n\t"
++		       "subs -2,%?r31,%?r0\n\tbnc 1f\n\tbr %l1\n\tnop\n1:", operands);
++      return "";
++    }
++  if (get_attr_length (insn) <= 8)
++    return "bla %2,%0,%l1%#";
++  /* bla comes last for the slot that final prints after this */
++  output_asm_insn ("br 2f\n\tnop\n1:\tbr %l1\n\tnop\n2:", operands);
++  return "bla %2,%0,1b%#";
++}
++
 +/* Taken-branch forms where they cost no code: jumping over one insn, or
 +   moving the only way into the target up.  The slot is skipped if not taken,
 +   so the latter only for branches predicted taken.  */
@@ -1929,11 +3465,16 @@ index 00000000000..5795c0c0155
 +}
 +
 +static void
-+i860_print_operand_address (FILE *file, machine_mode mode ATTRIBUTE_UNUSED,
++i860_print_operand_address (FILE *file, machine_mode mode,
 +			    rtx addr)
 +{
 +  if (REG_P (addr))
 +    fprintf (file, "0(%s%s)", REGISTER_PREFIX, reg_names[REGNO (addr)]);
++  else if (GET_CODE (addr) == PRE_INC || GET_CODE (addr) == PRE_DEC)
++    fprintf (file, "%d(%s%s)++",
++	     GET_CODE (addr) == PRE_INC ? (int) GET_MODE_SIZE (mode)
++					: -(int) GET_MODE_SIZE (mode),
++	     REGISTER_PREFIX, reg_names[REGNO (XEXP (addr, 0))]);
 +  else if (GET_CODE (addr) == PLUS && REG_P (XEXP (addr, 0))
 +	   && CONST_INT_P (XEXP (addr, 1)))
 +    fprintf (file, HOST_WIDE_INT_PRINT_DEC "(%s%s)", INTVAL (XEXP (addr, 1)),
@@ -2064,6 +3605,9 @@ index 00000000000..5795c0c0155
 +static void
 +i860_conditional_register_usage (void)
 +{
++  /* r3 is free where a function does not need it, not in the SVR4 ABI */
++  if (I860_SVR4_FUNCTION_PREFIX)
++    fixed_regs[HARD_FRAME_POINTER_REGNUM] = 1;
 +#ifdef I860_THREAD_POINTER_REGNUM
 +  fixed_regs[I860_THREAD_POINTER_REGNUM] = 1;
 +  call_used_regs[I860_THREAD_POINTER_REGNUM] = 1;
@@ -2101,6 +3645,13 @@ index 00000000000..5795c0c0155
 +
 +#undef TARGET_CONDITIONAL_REGISTER_USAGE
 +#define TARGET_CONDITIONAL_REGISTER_USAGE i860_conditional_register_usage
++#undef TARGET_PREDICT_DOLOOP_P
++#define TARGET_PREDICT_DOLOOP_P i860_predict_doloop_p
++#undef TARGET_CAN_USE_DOLOOP_P
++#define TARGET_CAN_USE_DOLOOP_P i860_can_use_doloop_p
++#undef TARGET_INVALID_WITHIN_DOLOOP
++#define TARGET_INVALID_WITHIN_DOLOOP i860_invalid_within_doloop
++
 +#undef TARGET_OPTION_OVERRIDE
 +#define TARGET_OPTION_OVERRIDE i860_option_override
 +#undef TARGET_INIT_LIBFUNCS
@@ -2185,10 +3736,10 @@ index 00000000000..5795c0c0155
 +struct gcc_target targetm = TARGET_INITIALIZER;
 diff --git a/gcc/config/i860/i860.h b/gcc/config/i860/i860.h
 new file mode 100644
-index 00000000000..86f490ad00c
+index 00000000000..d49c417781b
 --- /dev/null
 +++ b/gcc/config/i860/i860.h
-@@ -0,0 +1,278 @@
+@@ -0,0 +1,288 @@
 +/* Definitions of target machine for GNU compiler, for Intel 860.
 +   Copyright (C) 1989-2005, 2026 Free Software Foundation, Inc.
 +   Copyright (C) 2026 René Rebe <rene@exactco.de>
@@ -2219,6 +3770,7 @@ index 00000000000..86f490ad00c
 +    {						\
 +      builtin_define_std ("i860");		\
 +      builtin_define ("__i860__");		\
++      builtin_define ("__LITTLE_ENDIAN__");	\
 +      builtin_assert ("cpu=i860");		\
 +      builtin_assert ("machine=i860");		\
 +      if (TARGET_XP)				\
@@ -2267,7 +3819,7 @@ index 00000000000..86f490ad00c
 +
 +/* r4-r15 and f2-f7 are preserved across calls.  */
 +#define CALL_USED_REGISTERS		\
-+ {1, 1, 1, 1, 0, 0, 0, 0,		\
++ {1, 1, 1, 0, 0, 0, 0, 0,		\
 +  0, 0, 0, 0, 0, 0, 0, 0,		\
 +  1, 1, 1, 1, 1, 1, 1, 1,		\
 +  1, 1, 1, 1, 1, 1, 1, 1,		\
@@ -2281,14 +3833,22 @@ index 00000000000..86f490ad00c
 + {30, 29, 28, 27, 26, 25, 24, 23,		\
 +  22, 21, 20, 19, 18, 17, 16, 15,		\
 +  14, 13, 12, 11, 10,  9,  8,  7,		\
-+   6,  5,  4,					\
++   6,  5,  4,  3,				\
 +  63, 62, 61, 60, 59, 58, 57, 56,		\
 +  55, 54, 53, 52, 51, 50, 49, 48,		\
 +  47, 46, 45, 44, 43, 42, 41, 40,		\
 +  39, 38, 37, 36, 35, 34,			\
-+  31,  3,  2,  1,  0, 32, 33, 64, 65}
++  31,  2,  1,  0, 32, 33, 64, 65}
 +
 +#define STACK_POINTER_REGNUM 2
++/* fld.y and fst.y with "size(reg)++".  */
++#define HAVE_PRE_INCREMENT 1
++#define HAVE_PRE_DECREMENT 1
++#define USE_LOAD_PRE_INCREMENT(MODE) ((MODE) == SFmode || (MODE) == DFmode)
++#define USE_LOAD_PRE_DECREMENT(MODE) ((MODE) == SFmode || (MODE) == DFmode)
++#define USE_STORE_PRE_INCREMENT(MODE) ((MODE) == SFmode || (MODE) == DFmode)
++#define USE_STORE_PRE_DECREMENT(MODE) ((MODE) == SFmode || (MODE) == DFmode)
++
 +#define HARD_FRAME_POINTER_REGNUM 3
 +#define ARG_POINTER_REGNUM 64
 +#define FRAME_POINTER_REGNUM 65
@@ -2361,10 +3921,10 @@ index 00000000000..86f490ad00c
 +#define EPILOGUE_USES(REGNO) (epilogue_completed && (REGNO) == I860_RETURN_REGNUM)
 +
 +#define ELIMINABLE_REGS					\
-+ { { ARG_POINTER_REGNUM, HARD_FRAME_POINTER_REGNUM },	\
-+   { ARG_POINTER_REGNUM, STACK_POINTER_REGNUM },	\
-+   { FRAME_POINTER_REGNUM, HARD_FRAME_POINTER_REGNUM },	\
-+   { FRAME_POINTER_REGNUM, STACK_POINTER_REGNUM } }
++ { { ARG_POINTER_REGNUM, STACK_POINTER_REGNUM },	\
++   { ARG_POINTER_REGNUM, HARD_FRAME_POINTER_REGNUM },	\
++   { FRAME_POINTER_REGNUM, STACK_POINTER_REGNUM },	\
++   { FRAME_POINTER_REGNUM, HARD_FRAME_POINTER_REGNUM } }
 +
 +#define INITIAL_ELIMINATION_OFFSET(FROM, TO, OFFSET) \
 +  ((OFFSET) = i860_initial_elimination_offset ((FROM), (TO)))
@@ -2461,7 +4021,8 @@ index 00000000000..86f490ad00c
 +    {								\
 +      ASM_OUTPUT_TYPE_DIRECTIVE (FILE, NAME, "function");	\
 +      ASM_DECLARE_RESULT (FILE, DECL_RESULT (DECL));		\
-+      i860_output_function_prefix (FILE, NAME);			\
++      if (I860_SVR4_FUNCTION_PREFIX)				\
++	i860_output_function_prefix (FILE, NAME);		\
 +      ASM_OUTPUT_FUNCTION_LABEL (FILE, NAME, DECL);		\
 +    }								\
 +  while (0)
@@ -2469,10 +4030,10 @@ index 00000000000..86f490ad00c
 +#endif /* GCC_I860_H */
 diff --git a/gcc/config/i860/i860.md b/gcc/config/i860/i860.md
 new file mode 100644
-index 00000000000..a5d21bbe197
+index 00000000000..9108fb5a6d2
 --- /dev/null
 +++ b/gcc/config/i860/i860.md
-@@ -0,0 +1,1122 @@
+@@ -0,0 +1,1271 @@
 +;; GCC machine description for the Intel i860 microprocessor
 +;; Copyright (C) 1989-2005, 2026 Free Software Foundation, Inc.
 +;; Copyright (C) 2026 René Rebe <rene@exactco.de>
@@ -2524,13 +4085,45 @@ index 00000000000..a5d21bbe197
 +  UNSPECV_BLOCKAGE
 +  UNSPECV_SET_GOT
 +  UNSPECV_CAS
++  UNSPECV_BLA_PRIME
++  UNSPECV_PFADD
++  UNSPECV_PFSUB
++  UNSPECV_PFMUL
++  UNSPECV_DUAL_KERNEL
++  UNSPECV_DUAL_BLA
++  UNSPECV_PFLD
 +])
 +
 +;; Length 4 means exactly one machine instruction, as delay slots require.
 +;; Everything else is an upper bound: only bte/btne need branch distances.
 +(define_attr "type"
-+  "move,load,store,alu,fpu,branch,cbranch,call,return,nop,trap,multi"
++  "move,load,store,alu,fpu,branch,cbranch,bla,call,return,nop,trap,multi"
 +  (const_string "multi"))
++
++;; For the scheduler, see i860_sched_class.  Independent of the alternatives, as these do not
++;; yet decide anything before register allocation.
++(define_attr "sclass" "alu,iload,fload,store,fadd,fmuls,fmuld,fpmisc,long,branch"
++  (symbol_ref "(enum attr_sclass) i860_sched_class (insn)"))
++
++;; No manual is at hand.  The load latencies follow the distances to the first use in the SVR4
++;; libraries (tmp/gcc/perf/latency.py), the FP ones are from memory: unverified, as long as
++;; they are, they can only cost speed, not correctness.  Scalar FP blocks its unit.
++(define_automaton "i860")
++(define_cpu_unit "i860_issue,i860_fadd,i860_fmul" "i860")
++
++(define_insn_reservation "i860_alu" 1 (eq_attr "sclass" "alu,branch,store") "i860_issue")
++(define_insn_reservation "i860_iload" 2 (eq_attr "sclass" "iload") "i860_issue")
++(define_insn_reservation "i860_fload" 3 (eq_attr "sclass" "fload") "i860_issue")
++(define_insn_reservation "i860_fpmisc" 2 (eq_attr "sclass" "fpmisc") "i860_issue")
++(define_insn_reservation "i860_fadd" 3 (eq_attr "sclass" "fadd")
++  "i860_issue+i860_fadd,i860_fadd*2")
++(define_insn_reservation "i860_fmuls" 3 (eq_attr "sclass" "fmuls")
++  "i860_issue+i860_fmul,i860_fmul*2")
++(define_insn_reservation "i860_fmuld" 4 (eq_attr "sclass" "fmuld")
++  "i860_issue+i860_fmul,i860_fmul*3")
++;; Division is a Newton-Raphson sequence in one insn.
++(define_insn_reservation "i860_long" 24 (eq_attr "sclass" "long")
++  "i860_issue+i860_fmul+i860_fadd,(i860_fmul+i860_fadd)*23")
 +
 +(define_attr "length" ""
 +  (cond [(eq_attr "type" "load,store")
@@ -2548,7 +4141,7 @@ index 00000000000..a5d21bbe197
 +		(const_string "yes")
 +		(const_string "no")))
 +
-+(define_delay (eq_attr "type" "branch,call")
++(define_delay (eq_attr "type" "branch,call,bla")
 +  [(eq_attr "in_delay_slot" "yes") (nil) (nil)])
 +
 +;; bc.t and bnc.t run the slot only if taken, and bte/btne have no such form.
@@ -2563,6 +4156,7 @@ index 00000000000..a5d21bbe197
 +(define_mode_iterator FMODE [SF DF])
 +(define_mode_iterator SISF [SI SF])
 +(define_mode_iterator DIDF [DI DF])
++(define_mode_attr fldsfx [(SF "l") (DF "d")])
 +(define_mode_attr fsfx [(SF "ss") (DF "dd")])
 +(define_mode_attr ftrunc [(SF "sd") (DF "dd")])
 +
@@ -2628,9 +4222,9 @@ index 00000000000..a5d21bbe197
 +
 +(define_insn "*movsf_insn"
 +  [(set (match_operand:SF 0 "nonimmediate_operand"
-+			"=r,r,r,r,m, f,f,r,f,m,f")
++			"=r,r,r,r,o, f,f,r,f,m,f")
 +	(match_operand:SF 1 "general_operand"
-+			" r,G,F,m,rG,f,r,f,m,f,G"))]
++			" r,G,F,o,rG,f,r,f,m,f,G"))]
 +  "register_operand (operands[0], SFmode)
 +   || reg_or_0_operand (operands[1], SFmode)"
 +  "@
@@ -2658,8 +4252,8 @@ index 00000000000..a5d21bbe197
 +   (set (attr "length") (symbol_ref "i860_move_double_length (operands)"))])
 +
 +(define_insn "*movdf_insn"
-+  [(set (match_operand:DF 0 "nonimmediate_operand" "=r,r,r,m, f,f,r,f,m,f")
-+	(match_operand:DF 1 "general_operand"       " r,F,m,rG,f,r,f,m,f,G"))]
++  [(set (match_operand:DF 0 "nonimmediate_operand" "=r,r,r,o, f,f,r,f,m,f")
++	(match_operand:DF 1 "general_operand"       " r,F,o,rG,f,r,f,m,f,G"))]
 +  "register_operand (operands[0], DFmode)
 +   || reg_or_0_operand (operands[1], DFmode)"
 +  "* return i860_output_move_double (operands);"
@@ -3511,6 +5105,15 @@ index 00000000000..a5d21bbe197
 +  DONE;
 +})
 +
++;; A leaf without a frame.
++(define_insn "i860_return_leaf"
++  [(return)
++   (use (reg:SI R1_REGNUM))]
++  "reload_completed"
++  "bri %?r1%#"
++  [(set_attr "type" "branch")
++   (set_attr "length" "8")])
++
 +;; The stack pointer is restored in the delay slot of the return.
 +(define_insn "i860_return_reg"
 +  [(return)
@@ -3595,12 +5198,119 @@ index 00000000000..a5d21bbe197
 +  "lock\;ld.<lsfx> 0(%1),%0\;xor %0,%2,%?r0\;bnc 1f\;unlock\;st.<lsfx> %3,0(%1)\;br 2f\;nop\;1:\;unlock\;ld.<lsfx> 0(%1),%?r0\;2:"
 +  [(set_attr "type" "multi")
 +   (set_attr "length" "40")])
++
++;; Counted loops.  bla tests the flag LCC from its previous execution and sets it from the
++;; count before adding: so the count is two below the iterations left, and the first
++;; bla, branching to the next instruction, sets LCC.  As RTL the loop is the usual
++;; test against 1: the priming hides what the count really holds.  A single LCC: only
++;; innermost loops without calls and asm, see i860_can_use_doloop_p.
++(define_expand "doloop_end"
++  [(use (match_operand 0 "" ""))
++   (use (label_ref (match_operand 1 "" "")))]
++  "optimize"
++{
++  /* setting it up takes more than it saves */
++  if (GET_MODE (operands[0]) != SImode || !optimize_function_for_speed_p (cfun))
++    FAIL;
++  emit_jump_insn (gen_i860_bla_loop (operands[0], operands[1], gen_reg_rtx (SImode)));
++  DONE;
++})
++
++(define_expand "doloop_begin"
++  [(use (match_operand 0 "" ""))
++   (use (match_operand 1 "" ""))]
++  "optimize"
++{
++  rtx step = XEXP (XVECEXP (PATTERN (operands[1]), 0, 2), 0);
++
++  emit_move_insn (step, constm1_rtx);
++  emit_insn (gen_i860_bla_prime (operands[0], step));
++  DONE;
++})
++
++(define_insn "i860_bla_prime"
++  [(set (match_operand:SI 0 "register_operand" "+r")
++	(unspec_volatile:SI [(match_dup 0)
++			     (match_operand:SI 1 "register_operand" "r")]
++			    UNSPECV_BLA_PRIME))]
++  ""
++  "adds -1,%0,%0\;bla %1,%0,1f\;nop\;1:"
++  [(set_attr "type" "multi")
++   (set_attr "length" "12")])
++
++;; A count in memory cannot be reloaded around a jump: then r31 does it all.
++(define_insn "i860_bla_loop"
++  [(set (pc)
++	(if_then_else (ne (match_operand:SI 0 "nonimmediate_operand" "+r,*m")
++			  (const_int 1))
++		      (label_ref (match_operand 1 "" ""))
++		      (pc)))
++   (set (match_dup 0) (plus:SI (match_dup 0) (const_int -1)))
++   (use (match_operand:SI 2 "register_operand" "r,X"))
++   (clobber (reg:SI R31_REGNUM))]
++  ""
++  "* return i860_output_bla (insn, operands, which_alternative);"
++  [(set_attr "type" "bla,multi")
++   (set (attr "length")
++	(if_then_else
++	  (and (eq_attr "alternative" "0")
++	       (ge (minus (match_dup 1) (pc)) (const_int -131000))
++	       (le (minus (match_dup 1) (pc)) (const_int 131000)))
++	  (const_int 8)
++	  (const_int 28)))])
++
++;; Made by i860-pipe.cc.  The result is that of an earlier instruction of the unit.
++(define_insn "i860_pfadd<mode>"
++  [(set (match_operand:FMODE 0 "register_operand" "=f")
++	(unspec_volatile:FMODE [(match_operand:FMODE 1 "register_operand" "f")
++				(match_operand:FMODE 2 "register_operand" "f")]
++			       UNSPECV_PFADD))]
++  ""
++  "pfadd.<fsfx> %1,%2,%0"
++  [(set_attr "type" "fpu")])
++
++(define_insn "i860_pfsub<mode>"
++  [(set (match_operand:FMODE 0 "register_operand" "=f")
++	(unspec_volatile:FMODE [(match_operand:FMODE 1 "register_operand" "f")
++				(match_operand:FMODE 2 "register_operand" "f")]
++			       UNSPECV_PFSUB))]
++  ""
++  "pfsub.<fsfx> %1,%2,%0"
++  [(set_attr "type" "fpu")])
++
++(define_insn "i860_pfmul<mode>"
++  [(set (match_operand:FMODE 0 "register_operand" "=f")
++	(unspec_volatile:FMODE [(match_operand:FMODE 1 "register_operand" "f")
++				(match_operand:FMODE 2 "register_operand" "f")]
++			       UNSPECV_PFMUL))]
++  ""
++  "pfmul.<fsfx> %1,%2,%0"
++  [(set_attr "type" "fpu")])
++
++(define_insn "i860_pfld<mode>"
++  [(set (match_operand:FMODE 0 "register_operand" "=f")
++	(unspec_volatile:FMODE [(match_operand:FMODE 1 "memory_operand" "m")] UNSPECV_PFLD))]
++  ""
++  "pfld.<fldsfx> %1,%0"
++  [(set_attr "type" "fpu")])
++
++;; A pipelined loop in dual-instruction mode as one insn: alignment and pairing must survive,
++;; and no delay slot filling or block reordering may split it.  The body holds an FP and a core
++;; half per pair, see i860-pipe.cc.
++(define_insn "i860_dual_kernel"
++  [(match_parallel 0 "i860_dual_kernel_operation"
++     [(unspec_volatile [(const_int 0)] UNSPECV_DUAL_KERNEL)])]
++  ""
++  "* return i860_output_dual_kernel (operands[0]);"
++  [(set_attr "type" "multi")
++   (set (attr "length") (symbol_ref "4 * XVECLEN (PATTERN (insn), 0) + 28"))])
++
 diff --git a/gcc/config/i860/i860.opt b/gcc/config/i860/i860.opt
 new file mode 100644
-index 00000000000..097d4ef9baf
+index 00000000000..2433741e2b0
 --- /dev/null
 +++ b/gcc/config/i860/i860.opt
-@@ -0,0 +1,28 @@
+@@ -0,0 +1,44 @@
 +; Options for the Intel i860 port of the compiler.
 +
 +; Copyright (C) 2005-2026 Free Software Foundation, Inc.
@@ -3629,12 +5339,28 @@ index 00000000000..097d4ef9baf
 +mxr
 +Target RejectNegative InverseMask(XP)
 +Generate code for the i860XR (default).
++
++mpipelined-fp
++Target Var(i860_pipelined_fp) Init(-1)
++Use the pipelined floating point instructions in counted loops; on at -O3, needs -O2.
++
++mdual-fp
++Target Var(TARGET_DUAL_FP) Init(1)
++Run pipelined floating point loops in dual-instruction mode.
++
++mpfld
++Target Var(i860_pfld) Init(-1)
++Use pipelined loads in the loops of -mpipelined-fp for arrays larger than the data cache; on at -O3.
++
++mpfld-min-bytes=
++Target RejectNegative Joined UInteger Var(i860_pfld_min_bytes) Init(8192)
++Read at least this many bytes in a loop to use pipelined loads.
 diff --git a/gcc/config/i860/i860.opt.urls b/gcc/config/i860/i860.opt.urls
 new file mode 100644
-index 00000000000..d61dc281b1d
+index 00000000000..f0068cab850
 --- /dev/null
 +++ b/gcc/config/i860/i860.opt.urls
-@@ -0,0 +1,8 @@
+@@ -0,0 +1,19 @@
 +; Autogenerated by regenerate-opt-urls.py from gcc/config/i860/i860.opt and generated HTML
 +
 +mxp
@@ -3643,12 +5369,23 @@ index 00000000000..d61dc281b1d
 +mxr
 +UrlSuffix(gcc/i860-Options.html#index-mxr)
 +
++mpipelined-fp
++UrlSuffix(gcc/i860-Options.html#index-mpipelined-fp)
++
++mdual-fp
++UrlSuffix(gcc/i860-Options.html#index-mdual-fp)
++
++mpfld
++UrlSuffix(gcc/i860-Options.html#index-mpfld)
++
++mpfld-min-bytes=
++UrlSuffix(gcc/i860-Options.html#index-mpfld-min-bytes)
 diff --git a/gcc/config/i860/linux.h b/gcc/config/i860/linux.h
 new file mode 100644
-index 00000000000..347f07609b2
+index 00000000000..371d5107c9a
 --- /dev/null
 +++ b/gcc/config/i860/linux.h
-@@ -0,0 +1,61 @@
+@@ -0,0 +1,67 @@
 +/* Definitions for Intel i860 running GNU/Linux.
 +   Copyright (C) 2026 Free Software Foundation, Inc.
 +   Copyright (C) 2026 René Rebe <rene@exactco.de>
@@ -3701,6 +5438,9 @@ index 00000000000..347f07609b2
 +#undef MUSL_DYNAMIC_LINKER
 +#define MUSL_DYNAMIC_LINKER "/lib/ld-musl-i860.so.1"
 +
++#undef CPP_SPEC
++#define CPP_SPEC "%{posix:-D_POSIX_SOURCE} %{pthread:-D_REENTRANT}"
++
 +#undef LINK_SPEC
 +#define LINK_SPEC							\
 +  "%{shared:-shared} "							\
@@ -3710,12 +5450,15 @@ index 00000000000..347f07609b2
 +  "%{static:-static} %{static-pie:-static -pie --no-dynamic-linker}"
 +
 +#endif /* GCC_I860_LINUX_H */
++
++/* Nothing on Linux reads it, and the word before an entry point is never a delayed branch.  */
++#define I860_SVR4_FUNCTION_PREFIX 0
 diff --git a/gcc/config/i860/predicates.md b/gcc/config/i860/predicates.md
 new file mode 100644
-index 00000000000..44957d17bb8
+index 00000000000..a944c091c27
 --- /dev/null
 +++ b/gcc/config/i860/predicates.md
-@@ -0,0 +1,84 @@
+@@ -0,0 +1,94 @@
 +;; Predicate definitions for the Intel i860.
 +;; Copyright (C) 2026 Free Software Foundation, Inc.
 +;; Copyright (C) 2026 René Rebe <rene@exactco.de>
@@ -3800,12 +5543,22 @@ index 00000000000..44957d17bb8
 +
 +(define_predicate "i860_eqne_operator"
 +  (match_code "eq,ne"))
++
++(define_special_predicate "i860_dual_kernel_operation"
++  (match_code "parallel")
++{
++  rtx first = XVECEXP (op, 0, 0);
++
++  return (GET_CODE (first) == UNSPEC_VOLATILE
++	  && XINT (first, 1) == UNSPECV_DUAL_KERNEL);
++})
++
 diff --git a/gcc/config/i860/sysv4.h b/gcc/config/i860/sysv4.h
 new file mode 100644
-index 00000000000..148350354e3
+index 00000000000..f25bc09af3b
 --- /dev/null
 +++ b/gcc/config/i860/sysv4.h
-@@ -0,0 +1,63 @@
+@@ -0,0 +1,65 @@
 +/* Target definitions for GCC for Intel 80860 running System V.4
 +   Copyright (C) 1991-2005, 2026 Free Software Foundation, Inc.
 +   Copyright (C) 2026 René Rebe <rene@exactco.de>
@@ -3869,6 +5622,37 @@ index 00000000000..148350354e3
 +
 +#undef MD_STARTFILE_PREFIX
 +#define MD_STARTFILE_PREFIX "/usr/ccs/lib/"
++
++#define I860_SVR4_FUNCTION_PREFIX 1
+diff --git a/gcc/config/i860/t-i860 b/gcc/config/i860/t-i860
+new file mode 100644
+index 00000000000..cf987c5fdb5
+--- /dev/null
++++ b/gcc/config/i860/t-i860
+@@ -0,0 +1,23 @@
++# Copyright (C) 2026 René Rebe <rene@exactco.de>
++#
++# This file is part of GCC.
++#
++# GCC is free software; you can redistribute it and/or modify
++# it under the terms of the GNU General Public License as published by
++# the Free Software Foundation; either version 3, or (at your option)
++# any later version.
++#
++# GCC is distributed in the hope that it will be useful,
++# but WITHOUT ANY WARRANTY; without even the implied warranty of
++# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++# GNU General Public License for more details.
++#
++# You should have received a copy of the GNU General Public License
++# along with GCC; see the file COPYING3.  If not see
++# <http://www.gnu.org/licenses/>.
++
++PASSES_EXTRA += $(srcdir)/config/i860/i860-passes.def
++
++i860-pipe.o: $(srcdir)/config/i860/i860-pipe.cc
++	$(COMPILE) $<
++	$(POSTCOMPILE)
 diff --git a/gcc/doc/install.texi b/gcc/doc/install.texi
 index 2be38423c79..93250acf50e 100644
 --- a/gcc/doc/install.texi
@@ -3900,7 +5684,7 @@ index 2be38423c79..93250acf50e 100644
  <hr />
  @end html
 diff --git a/gcc/doc/invoke.texi b/gcc/doc/invoke.texi
-index 60d7163eee3..5229a868c7b 100644
+index 60d7163eee3..3d946a66767 100644
 --- a/gcc/doc/invoke.texi
 +++ b/gcc/doc/invoke.texi
 @@ -1134,6 +1134,9 @@ Objective-C and Objective-C++ Dialects}.
@@ -3908,7 +5692,7 @@ index 60d7163eee3..5229a868c7b 100644
  -munix=@var{unix-std}  -nolibdld  -static  -threads}
  
 +@emph{i860 Options} (@ref{i860 Options})
-+@gccoptlist{-mxp  -mxr}
++@gccoptlist{-mxp  -mxr  -mpipelined-fp  -mdual-fp  -mpfld  -mpfld-min-bytes=@var{n}}
 +
  @emph{IA-64 Options} (@ref{IA-64 Options})
  @gccoptlist{-mbig-endian  -mlittle-endian  -mgnu-as  -mgnu-ld  -mno-pic
@@ -3921,7 +5705,7 @@ index 60d7163eee3..5229a868c7b 100644
  * IA-64 Options::
  * LM32 Options::
  * LoongArch Options::
-@@ -27554,6 +27558,23 @@ under HP-UX@.  This option sets flags for both the preprocessor and
+@@ -27554,6 +27558,50 @@ under HP-UX@.  This option sets flags for both the preprocessor and
  linker.
  @end table
  
@@ -3940,11 +5724,52 @@ index 60d7163eee3..5229a868c7b 100644
 +@opindex mxr
 +@item -mxr
 +Generate code for the i860XR.  This is the default.
++
++@opindex mpipelined-fp
++@opindex mno-pipelined-fp
++@item -mpipelined-fp
++@itemx -mno-pipelined-fp
++Use the pipelined floating point instructions in counted loops.  This is
++enabled at @option{-O3}, and needs @option{-O2} when given explicitly; it grows
++these loops about threefold.  It does not apply when optimizing for size.  The loops
++keep their scalar form for short iteration counts and for arrays found at
++run time to overlap.
++
++@opindex mdual-fp
++@opindex mno-dual-fp
++@item -mdual-fp
++@itemx -mno-dual-fp
++Run the loops of @option{-mpipelined-fp} in dual-instruction mode where this
++takes fewer pairs than instructions.  Enabled by default.
++
++@opindex mpfld
++@opindex mno-pfld
++@opindex mpfld-min-bytes
++@item -mpfld
++@itemx -mno-pfld
++@itemx -mpfld-min-bytes=@var{n}
++Give the loops of @option{-mpipelined-fp} another form with pipelined loads,
++for iteration counts that read at least @var{n} bytes (default 8192, the size
++of the data cache).  Enabled at @option{-O3}.
 +@end table
 +
  @node IA-64 Options
  @subsection IA-64 Options
  @cindex IA-64 Options
+diff --git a/gcc/testsuite/gcc.c-torture/execute/20101011-1.c b/gcc/testsuite/gcc.c-torture/execute/20101011-1.c
+index 9fdfb5265be..47c0efd0a77 100644
+--- a/gcc/testsuite/gcc.c-torture/execute/20101011-1.c
++++ b/gcc/testsuite/gcc.c-torture/execute/20101011-1.c
+@@ -97,6 +97,9 @@ __aeabi_idiv0 (int return_value)
+ #elif defined (__moxie__)
+   /* Not all moxie configurations may raise exceptions.  */
+ # define DO_TEST 0
++#elif defined (__i860__)
++  /* No divide instruction, and __divsi3 does not trap.  */
++# define DO_TEST 0
+ #elif defined (__or1k__)
+   /* On OpenRISC division by zero does not trap.  */
+ # define DO_TEST 0
 diff --git a/libgcc/config.host b/libgcc/config.host
 index 319d6cfe0ef..9b3dbf14be7 100644
 --- a/libgcc/config.host

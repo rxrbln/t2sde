@@ -10,7 +10,7 @@ Subject: [PATCH] i860: add port for the Samsung MAGIC Station II
 arch/i860, SCSI, LAN and other drivers, FP traps with IEEE results, gdb support and kernel modules.
 
 Against upstream commit 36aad21d50d1af3f6954bb0c988257a908202477 (Merge tag 'ksmbd-for-7.4-rc1-part2' of git://git.kernel.org/pub/scm/linux/kernel/git/linkinjeon/smb).
-Branch i860 at 4593be322f90. Tested in the MAME magicst2 model only, not on real hardware.
+Branch i860 at 54649bf6006b. Tested in the MAME magicst2 model only, not on real hardware.
 
 Signed-off-by: René Rebe <rene@exactco.de>
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
@@ -18,7 +18,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
  arch/i860/Kbuild                             |   5 +
  arch/i860/Kconfig                            |  96 +++
  arch/i860/Kconfig.debug                      |   1 +
- arch/i860/Makefile                           |  43 ++
+ arch/i860/Makefile                           |  46 ++
  arch/i860/boot/Makefile                      |  42 ++
  arch/i860/boot/bootblock.S                   |  88 +++
  arch/i860/configs/magicst2_defconfig         |  77 +++
@@ -32,7 +32,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
  arch/i860/include/asm/entry-common.h         |  15 +
  arch/i860/include/asm/floppy.h               |  77 +++
  arch/i860/include/asm/i860-dma.h             |  29 +
- arch/i860/include/asm/i860.h                 |  99 +++
+ arch/i860/include/asm/i860.h                 | 103 +++
  arch/i860/include/asm/io.h                   |  18 +
  arch/i860/include/asm/irq.h                  |  11 +
  arch/i860/include/asm/irqflags.h             |  48 ++
@@ -77,19 +77,19 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
  arch/i860/kernel/asm-offsets.c               |  35 +
  arch/i860/kernel/dma.c                       | 171 +++++
  arch/i860/kernel/early_printk.c              |  68 ++
- arch/i860/kernel/entry.S                     | 460 ++++++++++++++
- arch/i860/kernel/fpemu.c                     | 555 ++++++++++++++++
+ arch/i860/kernel/entry.S                     | 462 ++++++++++++++
+ arch/i860/kernel/fpemu.c                     | 593 +++++++++++++++++
  arch/i860/kernel/head.S                      |  42 ++
  arch/i860/kernel/i860_ksyms.c                |  32 +
  arch/i860/kernel/irq.c                       | 137 ++++
  arch/i860/kernel/module.c                    | 176 +++++
  arch/i860/kernel/process.c                   | 138 ++++
- arch/i860/kernel/ptrace.c                    | 112 ++++
- arch/i860/kernel/setup.c                     | 263 ++++++++
+ arch/i860/kernel/ptrace.c                    | 117 ++++
+ arch/i860/kernel/setup.c                     | 260 ++++++++
  arch/i860/kernel/signal.c                    | 167 +++++
  arch/i860/kernel/syscall_table.c             |  17 +
  arch/i860/kernel/time.c                      | 131 ++++
- arch/i860/kernel/traps.c                     | 551 ++++++++++++++++
+ arch/i860/kernel/traps.c                     | 553 ++++++++++++++++
  arch/i860/kernel/vdso.c                      | 113 ++++
  arch/i860/kernel/vdso/Makefile               |  35 +
  arch/i860/kernel/vdso/gen_vdso_offsets.sh    |   5 +
@@ -97,7 +97,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
  arch/i860/kernel/vdso/vdso.S                 |  16 +
  arch/i860/kernel/vdso/vdso.lds.S             |  50 ++
  arch/i860/kernel/vdso/vgettimeofday.c        |  17 +
- arch/i860/kernel/vmlinux.lds.S               |  56 ++
+ arch/i860/kernel/vmlinux.lds.S               |  58 ++
  arch/i860/lib/Makefile                       |   6 +
  arch/i860/lib/delay.c                        |  35 +
  arch/i860/lib/memcpy.S                       | 309 +++++++++
@@ -127,7 +127,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
  tools/include/nolibc/Makefile                |   2 +
  tools/include/nolibc/arch-i860.h             | 159 +++++
  tools/include/nolibc/arch.h                  |   3 +
- 112 files changed, 7474 insertions(+), 3 deletions(-)
+ 112 files changed, 7527 insertions(+), 3 deletions(-)
 
 diff --git a/arch/i860/Kbuild b/arch/i860/Kbuild
 new file mode 100644
@@ -251,10 +251,10 @@ index 000000000000..f66554cd5c45
 +# SPDX-License-Identifier: GPL-2.0
 diff --git a/arch/i860/Makefile b/arch/i860/Makefile
 new file mode 100644
-index 000000000000..154349a249f3
+index 000000000000..c95c1f645272
 --- /dev/null
 +++ b/arch/i860/Makefile
-@@ -0,0 +1,43 @@
+@@ -0,0 +1,46 @@
 +# SPDX-License-Identifier: GPL-2.0
 +#
 +# Intel i860 architecture Makefile
@@ -266,6 +266,9 @@ index 000000000000..154349a249f3
 +LIBGCC		:= $(shell $(CC) $(KBUILD_CFLAGS) -print-libgcc-file-name)
 +
 +KBUILD_CFLAGS	+= -pipe -D__linux__ -fno-pic
++# show_stack walks the frame pointers; these come after the -fomit-frame-pointer of the top Makefile
++KBUILD_CFLAGS_KERNEL	+= -fno-omit-frame-pointer
++KBUILD_CFLAGS_MODULE	+= -fno-omit-frame-pointer
 +KBUILD_AFLAGS	+= -fno-pic
 +LDFLAGS_vmlinux	+= -N
 +
@@ -856,10 +859,10 @@ index 000000000000..1a223df167b3
 +#endif
 diff --git a/arch/i860/include/asm/i860.h b/arch/i860/include/asm/i860.h
 new file mode 100644
-index 000000000000..3f8b83b344cc
+index 000000000000..2de2544d83f3
 --- /dev/null
 +++ b/arch/i860/include/asm/i860.h
-@@ -0,0 +1,99 @@
+@@ -0,0 +1,103 @@
 +/* SPDX-License-Identifier: GPL-2.0 */
 +/*
 + * Intel i860 control registers and fixed kernel layout.
@@ -924,6 +927,10 @@ index 000000000000..3f8b83b344cc
 + * reaches as negative offsets from r0.
 + */
 +#define I860_TRAP_PAGE		_AC(0xfffff000, UL)
++/* Firmware page tables, data, stack and code; unused once we own the MMU. */
++#define I860_FW_START		_AC(0xfffae000, UL)
++/* paging_init allocates from what lies between: 64 MB of page tables and the directory */
++#define I860_EARLY_ALLOC	_AC(0x14000, UL)
 +#define I860_TRAP_VECTOR	_AC(0xffffff00, UL)
 +#define I860_TRAP_VECTOR_MAX	0xb0
 +#define SCR_KSP		-4	/* top of the current kernel stack */
@@ -2565,10 +2572,10 @@ index 000000000000..f1f1c6f4fded
 +}
 diff --git a/arch/i860/kernel/entry.S b/arch/i860/kernel/entry.S
 new file mode 100644
-index 000000000000..32f95dbc39b2
+index 000000000000..60cf39866277
 --- /dev/null
 +++ b/arch/i860/kernel/entry.S
-@@ -0,0 +1,460 @@
+@@ -0,0 +1,462 @@
 +/* SPDX-License-Identifier: GPL-2.0 */
 +/*
 + * i860 trap entry/exit and context switch.
@@ -2704,6 +2711,8 @@ index 000000000000..32f95dbc39b2
 +	nop
 +1:
 +	ld.l	PT_FSR(%r2),%r4
++	/* U would load the first stages, whose status the restore has set */
++	andnot	FSR_U,%r4,%r4
 +	fld.q	FPR(0)(%r2),%f0
 +	fld.q	FPR(4)(%r2),%f4
 +	fld.q	FPR(8)(%r2),%f8
@@ -3031,10 +3040,10 @@ index 000000000000..32f95dbc39b2
 +
 diff --git a/arch/i860/kernel/fpemu.c b/arch/i860/kernel/fpemu.c
 new file mode 100644
-index 000000000000..71c7edd9fae8
+index 000000000000..4fdbc7db80fc
 --- /dev/null
 +++ b/arch/i860/kernel/fpemu.c
-@@ -0,0 +1,555 @@
+@@ -0,0 +1,593 @@
 +// SPDX-License-Identifier: GPL-2.0
 +/*
 + * Floating-point traps, after the protocol of the Stardent SVR4 kernel handler
@@ -3076,6 +3085,7 @@ index 000000000000..71c7edd9fae8
 +#define FSR_RR_SHIFT	17
 +#define FSR_RR		0x003e0000
 +#define FSR_AE_SHIFT	22
++#define FSR_AE		(7UL << FSR_AE_SHIFT)
 +#define FSR_MRP		0x10000000
 +#define FSR_ARP		0x20000000
 +
@@ -3494,6 +3504,9 @@ index 000000000000..71c7edd9fae8
 +	return pack(sign, e - (dbl ? 1023 : 127), m, dbl, rm, false);
 +}
 +
++#define FSR_MSTAT	(FSR_MU | FSR_MO | FSR_MI | FSR_MA)
++#define FSR_ASTAT	(FSR_AU | FSR_AO | FSR_AI | FSR_AA | FSR_AE)
++
 +void i860_fp_result(struct pt_regs *regs)
 +{
 +	unsigned long fsr = regs->user.fsr;
@@ -3504,20 +3517,51 @@ index 000000000000..71c7edd9fae8
 +	bool mdbl = fsr & FSR_MRP, adbl = fsr & FSR_ARP;
 +
 +	if (fsr & FSR_MO)
-+		set_reg(regs, rr, mdbl, overflow_value(mdbl ? m3 >> 63 : (m3 >> 31) & 1, mdbl, rm));
++		m3 = overflow_value(mdbl ? m3 >> 63 : (m3 >> 31) & 1, mdbl, rm);
 +	else if (fsr & FSR_MU)
-+		set_reg(regs, rr, mdbl, denormalize(m3, mdbl, false, fsr, rm));
++		m3 = denormalize(m3, mdbl, false, fsr, rm);
++	if (fsr & (FSR_MO | FSR_MU))
++		set_reg(regs, rr, mdbl, m3);
 +	if (fsr & FSR_AO)
-+		set_reg(regs, rr, adbl, overflow_value(adbl ? a3 >> 63 : (a3 >> 31) & 1, adbl, rm));
++		a3 = overflow_value(adbl ? a3 >> 63 : (a3 >> 31) & 1, adbl, rm);
 +	else if (fsr & FSR_AU)
-+		set_reg(regs, rr, adbl, denormalize(a3, adbl, true, fsr, rm));
++		a3 = denormalize(a3, adbl, true, fsr, rm);
++	if (fsr & (FSR_AO | FSR_AU))
++		set_reg(regs, rr, adbl, a3);
 +
-+	/* the status must leave the pipes: scalar code has nothing else in them */
-+	regs->pipe.used = 0;
++	/* as SVR4: the result goes on through the last stage, for a pipelined pop; only RR is set */
++	regs->pipe.m[0][0] = (u32)m3;
++	regs->pipe.m[0][1] = m3 >> 32;
++	regs->pipe.a[0][0] = (u32)a3;
++	regs->pipe.a[0][1] = a3 >> 32;
++	regs->pipe.fsr[0] &= ~(FSR_MSTAT | FSR_ASTAT);
 +
 +	/* an inexact result is only recorded once: TI off, as for a masked one */
 +	regs->user.fsr = fsr & ~(FSR_TI | FSR_MU | FSR_MO | FSR_MI | FSR_MA | FSR_AU | FSR_AO |
 +				 FSR_AI | FSR_AA | FSR_MRP | FSR_ARP | FSR_RR);
++}
++
++/* What the instruction would do to its pipe: last stage to FDEST, RES into the first. */
++static void fp_pipe_advance(struct pt_regs *regs, bool mul, unsigned int stages,
++			    unsigned int fdest, u64 res, bool r)
++{
++	unsigned long (*st)[2] = mul ? regs->pipe.m : regs->pipe.a;
++	unsigned long prec = mul ? FSR_MRP : FSR_ARP;
++	unsigned long mask = (mul ? FSR_MSTAT : FSR_ASTAT) | prec;
++	bool last_dbl = regs->pipe.fsr[0] & prec;
++	unsigned int i;
++
++	set_reg(regs, fdest, last_dbl, st[0][0] | ((u64)st[0][1] << 32));
++	for (i = 0; i + 1 < stages; i++) {
++		st[i][0] = st[i + 1][0];
++		st[i][1] = st[i + 1][1];
++		regs->pipe.fsr[i] = (regs->pipe.fsr[i] & ~mask) | (regs->pipe.fsr[i + 1] & mask);
++	}
++	st[i][0] = (u32)res;
++	st[i][1] = res >> 32;
++	regs->pipe.fsr[i] = (regs->pipe.fsr[i] & ~mask) | (r ? prec : 0);
++	/* RR of an earlier scalar result would get the value of a pending pipelined one */
++	regs->user.fsr &= ~FSR_RR;
 +}
 +
 +/* Source exception on the instruction INSN: result in the registers or CC */
@@ -3533,7 +3577,7 @@ index 000000000000..71c7edd9fae8
 +	u64 res;
 +
 +	/* the compares have only a pipelined format */
-+	if ((insn & 0x400) && op != 0x34 && op != 0x35)
++	if ((insn & 0x400) && op != 0x20 && op != 0x30 && op != 0x31 && op != 0x34 && op != 0x35)
 +		return -EOPNOTSUPP;
 +
 +	switch (op) {
@@ -3587,7 +3631,10 @@ index 000000000000..71c7edd9fae8
 +	default:
 +		return -EOPNOTSUPP;
 +	}
-+	set_reg(regs, fdest, r, res);
++	if (insn & 0x400)
++		fp_pipe_advance(regs, op == 0x20, op == 0x20 && s ? 2 : 3, fdest, res, r);
++	else
++		set_reg(regs, fdest, r, res);
 +	return 0;
 +}
 diff --git a/arch/i860/kernel/head.S b/arch/i860/kernel/head.S
@@ -4147,10 +4194,10 @@ index 000000000000..e06f64318a77
 +}
 diff --git a/arch/i860/kernel/ptrace.c b/arch/i860/kernel/ptrace.c
 new file mode 100644
-index 000000000000..ba1141b95013
+index 000000000000..bd7ef8acd8e3
 --- /dev/null
 +++ b/arch/i860/kernel/ptrace.c
-@@ -0,0 +1,112 @@
+@@ -0,0 +1,117 @@
 +// SPDX-License-Identifier: GPL-2.0
 +/* Copyright (C) 2026 René Rebe <rene@exactco.de> */
 +
@@ -4159,6 +4206,7 @@ index 000000000000..ba1141b95013
 +#include <linux/sched.h>
 +#include <linux/sched/task_stack.h>
 +#include <linux/elf.h>
++#include <asm/syscall.h>
 +
 +enum i860_regset {
 +	REGSET_GPR,
@@ -4186,6 +4234,10 @@ index 000000000000..ba1141b95013
 +	/* the trap state in psr stays under kernel control, the mode goes with fir */
 +	regs->user.psr = (regs->user.psr & ~(PSR_DS | PSR_DIM | PSR_KNF)) |
 +			 (uregs.psr & (PSR_DS | PSR_DIM | PSR_KNF));
++	/* in a system call stop: the number the entry code rereads */
++	if (regs->syscallno >= 0 &&
++	    uregs.gpr[I860_SYSCALL_NR_REG] != regs->user.gpr[I860_SYSCALL_NR_REG])
++		regs->syscallno = uregs.gpr[I860_SYSCALL_NR_REG];
 +	memcpy(regs->user.gpr, uregs.gpr, sizeof(uregs.gpr));
 +	memcpy(regs->user.fpr, uregs.fpr, sizeof(uregs.fpr));
 +	regs->user.gpr[0] = 0;
@@ -4265,10 +4317,10 @@ index 000000000000..ba1141b95013
 +}
 diff --git a/arch/i860/kernel/setup.c b/arch/i860/kernel/setup.c
 new file mode 100644
-index 000000000000..8b5ca3214a20
+index 000000000000..d6a5c0ac4c8b
 --- /dev/null
 +++ b/arch/i860/kernel/setup.c
-@@ -0,0 +1,263 @@
+@@ -0,0 +1,260 @@
 +// SPDX-License-Identifier: GPL-2.0
 +/*
 + * Samsung i860 MAGIC Station II setup.
@@ -4296,9 +4348,6 @@ index 000000000000..8b5ca3214a20
 +
 +unsigned long i860_pfn_offset;
 +EXPORT_SYMBOL(i860_pfn_offset);
-+
-+/* Firmware page tables, data, stack and code; unused once we own the MMU. */
-+#define I860_FW_START	0xfffae000UL
 +
 +#define NVRAM_MEMSIZE	0x1f000000UL	/* reset code: 1/2/4/8 = 8/16/32/64 MB */
 +
@@ -4867,10 +4916,10 @@ index 000000000000..b87094143c59
 +}
 diff --git a/arch/i860/kernel/traps.c b/arch/i860/kernel/traps.c
 new file mode 100644
-index 000000000000..291176b1ad1c
+index 000000000000..3e93ff266a2a
 --- /dev/null
 +++ b/arch/i860/kernel/traps.c
-@@ -0,0 +1,551 @@
+@@ -0,0 +1,553 @@
 +// SPDX-License-Identifier: GPL-2.0
 +/*
 + * i860 trap dispatch. The CPU has a single trap vector; the cause is in
@@ -5133,16 +5182,20 @@ index 000000000000..291176b1ad1c
 +		i860_syscall_dim(regs);
 +	regs->orig_r16 = regs->user.gpr[16];
 +	regs->syscallno = nr;
-+	regs->user.gpr[16] = -ENOSYS;
++	/* A tracer sees the arguments at the entry stop, and can skip the call with number -1. */
++	if (likely(syscall_enter_from_user_mode_randomize_stack(regs, &nr))) {
++		if (nr >= 0 && nr < NR_syscalls) {
++			syscall_fn_t fn;
 +
-+	if (likely(syscall_enter_from_user_mode_randomize_stack(regs, &nr)) &&
-+	    nr >= 0 && nr < NR_syscalls) {
-+		syscall_fn_t fn;
-+
-+		fn = sys_call_table[array_index_nospec(nr, NR_syscalls)];
-+		regs->user.gpr[16] = fn(regs->orig_r16, regs->user.gpr[17],
-+					regs->user.gpr[18], regs->user.gpr[19],
-+					regs->user.gpr[20], regs->user.gpr[21]);
++			regs->orig_r16 = regs->user.gpr[16];
++			fn = sys_call_table[array_index_nospec(nr, NR_syscalls)];
++			regs->user.gpr[16] = fn(regs->orig_r16, regs->user.gpr[17],
++						regs->user.gpr[18], regs->user.gpr[19],
++						regs->user.gpr[20], regs->user.gpr[21]);
++		} else if (regs->user.gpr[16] == regs->orig_r16) {
++			/* no result set by a tracer */
++			regs->user.gpr[16] = -ENOSYS;
++		}
 +	}
 +	syscall_exit_to_user_mode(regs);
 +}
@@ -5305,8 +5358,6 @@ index 000000000000..291176b1ad1c
 +		force_sig_fault(SIGFPE, FPE_FLTINV, (void __user *)fir);
 +	} else if (insn >> 26 != 0x12) {
 +		regs->user.fsr &= ~FSR_SE;	/* stale */
-+	} else if (regs->user.psr & PSR_DIM) {
-+		force_sig_fault(SIGFPE, FPE_FLTINV, (void __user *)fir);
 +	} else if (i860_fp_source(regs, insn)) {
 +		force_sig_fault(SIGFPE, FPE_FLTINV, (void __user *)fir);
 +	} else {
@@ -5712,15 +5763,16 @@ index 000000000000..ea7bd1181674
 +}
 diff --git a/arch/i860/kernel/vmlinux.lds.S b/arch/i860/kernel/vmlinux.lds.S
 new file mode 100644
-index 000000000000..fa586436f5d8
+index 000000000000..e58612e65ce9
 --- /dev/null
 +++ b/arch/i860/kernel/vmlinux.lds.S
-@@ -0,0 +1,56 @@
+@@ -0,0 +1,58 @@
 +/* SPDX-License-Identifier: GPL-2.0 */
 +/* Copyright (C) 2026 René Rebe <rene@exactco.de> */
 +
 +#include <asm/page.h>
 +#include <asm-generic/vmlinux.lds.h>
++#include <asm/i860.h>
 +#include <asm/cache.h>
 +#include <asm/thread_info.h>
 +
@@ -5764,6 +5816,7 @@ index 000000000000..fa586436f5d8
 +
 +	BSS_SECTION(0, PAGE_SIZE, 4)
 +	_end = .;
++	ASSERT(_end <= I860_FW_START - I860_EARLY_ALLOC, "the image leaves no room below the firmware area")
 +
 +	STABS_DEBUG
 +	DWARF_DEBUG
@@ -8198,208 +8251,3 @@ index 0ab531605120..08d50673ec17 100644
  245	arc	arc_settls			sys_arc_settls
  246	arc	arc_gettls			sys_arc_gettls
  247	arc	sysfs				sys_sysfs
-diff --git a/tools/include/nolibc/Makefile b/tools/include/nolibc/Makefile
-index 0880be0f6ef5..a4ed0ea617fb 100644
---- a/tools/include/nolibc/Makefile
-+++ b/tools/include/nolibc/Makefile
-@@ -1,5 +1,6 @@
- # SPDX-License-Identifier: GPL-2.0
- # Makefile for nolibc installation and tests
-+# Copyright (C) 2026 René Rebe <rene@exactco.de>
- include ../../scripts/Makefile.include
- 
- # we're in ".../tools/include/nolibc"
-@@ -22,6 +23,7 @@ architectures := \
- 		arm \
- 		arm64 \
- 		hexagon \
-+		i860 \
- 		loongarch \
- 		m68k \
- 		mips \
-diff --git a/tools/include/nolibc/arch-i860.h b/tools/include/nolibc/arch-i860.h
-new file mode 100644
-index 000000000000..66837301b213
---- /dev/null
-+++ b/tools/include/nolibc/arch-i860.h
-@@ -0,0 +1,159 @@
-+/* SPDX-License-Identifier: LGPL-2.1 OR MIT */
-+/*
-+ * Intel i860 specific definitions for NOLIBC
-+ * Copyright (C) 2026 René Rebe <rene@exactco.de>
-+ */
-+
-+#ifndef _NOLIBC_ARCH_I860_H
-+#define _NOLIBC_ARCH_I860_H
-+
-+#include "compiler.h"
-+#include "crt.h"
-+
-+/*
-+ * Syscalls for i860:
-+ *   - the system call is performed by "trap r0,r0,r0"
-+ *   - syscall number is passed in r28 (changed by restart_syscall)
-+ *   - arguments are in r16-r21
-+ *   - the return value is in r16
-+ *   - all other registers are preserved
-+ */
-+
-+#define _NOLIBC_SYSCALL_CLOBBERLIST "memory"
-+
-+#define __nolibc_syscall0(num)                                                \
-+({                                                                            \
-+	register long _num __asm__ ("r28") = (num);                           \
-+	register long _ret __asm__ ("r16");                                   \
-+									      \
-+	__asm__ volatile (                                                    \
-+		"trap %%r0,%%r0,%%r0\n"                                       \
-+		: "=r"(_ret), "+r"(_num)                                      \
-+		:                                                             \
-+		: _NOLIBC_SYSCALL_CLOBBERLIST                                 \
-+	);                                                                    \
-+	_ret;                                                                 \
-+})
-+
-+#define __nolibc_syscall1(num, arg1)                                          \
-+({                                                                            \
-+	register long _num __asm__ ("r28") = (num);                           \
-+	register long _arg1 __asm__ ("r16") = (long)(arg1);                   \
-+									      \
-+	__asm__ volatile (                                                    \
-+		"trap %%r0,%%r0,%%r0\n"                                       \
-+		: "+r"(_arg1), "+r"(_num)                                     \
-+		:                                                             \
-+		: _NOLIBC_SYSCALL_CLOBBERLIST                                 \
-+	);                                                                    \
-+	_arg1;                                                                \
-+})
-+
-+#define __nolibc_syscall2(num, arg1, arg2)                                    \
-+({                                                                            \
-+	register long _num __asm__ ("r28") = (num);                           \
-+	register long _arg1 __asm__ ("r16") = (long)(arg1);                   \
-+	register long _arg2 __asm__ ("r17") = (long)(arg2);                   \
-+									      \
-+	__asm__ volatile (                                                    \
-+		"trap %%r0,%%r0,%%r0\n"                                       \
-+		: "+r"(_arg1), "+r"(_num)                                     \
-+		: "r"(_arg2)                                                  \
-+		: _NOLIBC_SYSCALL_CLOBBERLIST                                 \
-+	);                                                                    \
-+	_arg1;                                                                \
-+})
-+
-+#define __nolibc_syscall3(num, arg1, arg2, arg3)                              \
-+({                                                                            \
-+	register long _num __asm__ ("r28") = (num);                           \
-+	register long _arg1 __asm__ ("r16") = (long)(arg1);                   \
-+	register long _arg2 __asm__ ("r17") = (long)(arg2);                   \
-+	register long _arg3 __asm__ ("r18") = (long)(arg3);                   \
-+									      \
-+	__asm__ volatile (                                                    \
-+		"trap %%r0,%%r0,%%r0\n"                                       \
-+		: "+r"(_arg1), "+r"(_num)                                     \
-+		: "r"(_arg2), "r"(_arg3)                                      \
-+		: _NOLIBC_SYSCALL_CLOBBERLIST                                 \
-+	);                                                                    \
-+	_arg1;                                                                \
-+})
-+
-+#define __nolibc_syscall4(num, arg1, arg2, arg3, arg4)                        \
-+({                                                                            \
-+	register long _num __asm__ ("r28") = (num);                           \
-+	register long _arg1 __asm__ ("r16") = (long)(arg1);                   \
-+	register long _arg2 __asm__ ("r17") = (long)(arg2);                   \
-+	register long _arg3 __asm__ ("r18") = (long)(arg3);                   \
-+	register long _arg4 __asm__ ("r19") = (long)(arg4);                   \
-+									      \
-+	__asm__ volatile (                                                    \
-+		"trap %%r0,%%r0,%%r0\n"                                       \
-+		: "+r"(_arg1), "+r"(_num)                                     \
-+		: "r"(_arg2), "r"(_arg3), "r"(_arg4)                          \
-+		: _NOLIBC_SYSCALL_CLOBBERLIST                                 \
-+	);                                                                    \
-+	_arg1;                                                                \
-+})
-+
-+#define __nolibc_syscall5(num, arg1, arg2, arg3, arg4, arg5)                  \
-+({                                                                            \
-+	register long _num __asm__ ("r28") = (num);                           \
-+	register long _arg1 __asm__ ("r16") = (long)(arg1);                   \
-+	register long _arg2 __asm__ ("r17") = (long)(arg2);                   \
-+	register long _arg3 __asm__ ("r18") = (long)(arg3);                   \
-+	register long _arg4 __asm__ ("r19") = (long)(arg4);                   \
-+	register long _arg5 __asm__ ("r20") = (long)(arg5);                   \
-+									      \
-+	__asm__ volatile (                                                    \
-+		"trap %%r0,%%r0,%%r0\n"                                       \
-+		: "+r"(_arg1), "+r"(_num)                                     \
-+		: "r"(_arg2), "r"(_arg3), "r"(_arg4), "r"(_arg5)              \
-+		: _NOLIBC_SYSCALL_CLOBBERLIST                                 \
-+	);                                                                    \
-+	_arg1;                                                                \
-+})
-+
-+#define __nolibc_syscall6(num, arg1, arg2, arg3, arg4, arg5, arg6)            \
-+({                                                                            \
-+	register long _num __asm__ ("r28") = (num);                           \
-+	register long _arg1 __asm__ ("r16") = (long)(arg1);                   \
-+	register long _arg2 __asm__ ("r17") = (long)(arg2);                   \
-+	register long _arg3 __asm__ ("r18") = (long)(arg3);                   \
-+	register long _arg4 __asm__ ("r19") = (long)(arg4);                   \
-+	register long _arg5 __asm__ ("r20") = (long)(arg5);                   \
-+	register long _arg6 __asm__ ("r21") = (long)(arg6);                   \
-+									      \
-+	__asm__ volatile (                                                    \
-+		"trap %%r0,%%r0,%%r0\n"                                       \
-+		: "+r"(_arg1), "+r"(_num)                                     \
-+		: "r"(_arg2), "r"(_arg3), "r"(_arg4), "r"(_arg5),             \
-+		  "r"(_arg6)                                                  \
-+		: _NOLIBC_SYSCALL_CLOBBERLIST                                 \
-+	);                                                                    \
-+	_arg1;                                                                \
-+})
-+
-+#ifndef NOLIBC_NO_RUNTIME
-+/* startup code */
-+void _start_wrapper(void);
-+void __attribute__((weak,noreturn))
-+__nolibc_entrypoint __nolibc_no_stack_protector
-+_start_wrapper(void)
-+{
-+	__asm__ volatile (
-+		".global _start\n"           /* The C function will have a prologue, */
-+		".type _start, @function\n"  /* corrupting "sp"                      */
-+		".weak _start\n"
-+		"_start:\n"
-+		"mov %r0,%fp\n"              /* terminate frame pointer chains       */
-+		"call _start_c\n"            /* transfer to c runtime                */
-+		"mov %sp,%r16\n"             /* delay slot: sp is arg1 of _start_c   */
-+		".size _start, .-_start\n"
-+	);
-+	__nolibc_entrypoint_epilogue();
-+}
-+#endif /* NOLIBC_NO_RUNTIME */
-+
-+#endif /* _NOLIBC_ARCH_I860_H */
-diff --git a/tools/include/nolibc/arch.h b/tools/include/nolibc/arch.h
-index 79ed5900f2a7..bb3173077e0e 100644
---- a/tools/include/nolibc/arch.h
-+++ b/tools/include/nolibc/arch.h
-@@ -1,6 +1,7 @@
- /* SPDX-License-Identifier: LGPL-2.1 OR MIT */
- /*
-  * Copyright (C) 2017-2022 Willy Tarreau <w@1wt.eu>
-+ * Copyright (C) 2026 René Rebe <rene@exactco.de>
-  */
- 
- #ifndef _NOLIBC_ARCH_H
-@@ -36,6 +37,8 @@
- #include "arch-alpha.h"
- #elif defined(__hexagon__)
- #include "arch-hexagon.h"
-+#elif defined(__i860__)
-+#include "arch-i860.h"
- #else
- #error Unsupported Architecture
- #endif
