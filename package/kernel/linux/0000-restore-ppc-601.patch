@@ -1,0 +1,1052 @@
+# --- T2-COPYRIGHT-BEGIN ---
+# t2/package/*/linux/0000-restore-ppc-601.patch
+# Copyright (C) 2026 The T2 SDE Project
+# SPDX-License-Identifier: GPL-2.0 or patched project license
+# --- T2-COPYRIGHT-END ---
+
+From 2b96dbc4c94c0f99e75b3289b230241261025c25 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Ren=C3=A9=20Rebe?= <rene@exactco.de>
+Date: Mon, 2 Nov 2026 13:49:58 +0100
+Subject: [PATCH 2/3] powerpc: Restore PowerPC 601 support
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Bring back the PowerPC 601 removed in v5.10 by f0ed73f3fa2c ("powerpc:
+Remove PowerPC 601"), 8b14e1dff067 ("powerpc: Remove support for PowerPC
+601"), e42a64002a50 ("powerpc: Remove CONFIG_PPC601_SYNC_FIX"),
+d2a5cd83ee98 ("powerpc: Drop SYNC_601() ISYNC_601() and SYNC()"),
+a4c5a3554229 ("powerpc: Remove __USE_RTC()") and follow ups, for the NuBus
+Power Macintosh (PDM) and 601 PReP machines.
+
+As before, a 601 kernel is a separate, uniprocessor build:
+
+ - CONFIG_PPC_BOOK3S_601 with the 601 cpu_spec, excluding the 603 TLB
+   and the other book3s/32 cpu_specs
+ - 601 unified BATs at the IBAT SPRs, 8M maximum, valid bit in the lower
+   BAT: initial 24M mapping, setbat, btext display BAT, ptdump, no
+   strict RWX BAT updates, 16M initial memblock limit
+ - the RTC instead of the timebase: get_tb()/mftb() return the RTC in
+   nanoseconds and the decrementer counts nanoseconds, so the generic
+   time code and the vDSO work at a 1 GHz "timebase"
+ - no MSR[RI], no branch trace block step, TEA machine check without
+   SRR1 bits, no KUEP (no segment N bit), no hibernation (no DBATs)
+ - CONFIG_PPC601_SYNC_FIX sync/isync around MSR changes and rfi
+ - bootwrapper udelay spin loop, no psurge SMP
+ - a link time check that the kernel fits the initial 24 MB mapping, and
+   a flat device tree beyond it is moved behind the kernel in real mode,
+   as early_init_devtree() reads it through that mapping
+
+Signed-off-by: René Rebe <rene@exactco.de>
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ arch/powerpc/Kconfig                      |  3 +-
+ arch/powerpc/boot/util.S                  | 14 ++++
+ arch/powerpc/include/asm/cputable.h       |  9 ++-
+ arch/powerpc/include/asm/ppc_asm.h        | 11 +++
+ arch/powerpc/include/asm/ptrace.h         |  5 +-
+ arch/powerpc/include/asm/reg.h            |  2 +
+ arch/powerpc/include/asm/vdso/timebase.h  | 30 +++++++-
+ arch/powerpc/kernel/btext.c               | 16 +++-
+ arch/powerpc/kernel/cpu_specs_book3s_32.h | 17 ++++-
+ arch/powerpc/kernel/entry_32.S            |  7 +-
+ arch/powerpc/kernel/head_32.h             |  3 +
+ arch/powerpc/kernel/head_book3s_32.S      | 92 ++++++++++++++++++++++-
+ arch/powerpc/kernel/time.c                |  4 +
+ arch/powerpc/kernel/traps.c               |  1 +
+ arch/powerpc/kernel/vmlinux.lds.S         |  4 +
+ arch/powerpc/mm/book3s32/hash_low.S       | 11 ++-
+ arch/powerpc/mm/book3s32/mmu.c            | 62 ++++++++++-----
+ arch/powerpc/mm/ptdump/bats.c             | 55 ++++++++++++++
+ arch/powerpc/platforms/Kconfig.cputype    | 30 +++++++-
+ arch/powerpc/platforms/powermac/smp.c     |  4 +
+ 20 files changed, 346 insertions(+), 34 deletions(-)
+
+diff --git a/arch/powerpc/Kconfig b/arch/powerpc/Kconfig
+index 9761c266ae8f..93d07d216970 100644
+--- a/arch/powerpc/Kconfig
++++ b/arch/powerpc/Kconfig
+@@ -396,7 +396,8 @@ config DEFAULT_UIMAGE
+ 
+ config ARCH_HIBERNATION_POSSIBLE
+ 	bool
+-	default y
++	# swsusp_32.S saves DBATs the 601 does not have
++	default y if !PPC_BOOK3S_601
+ 
+ config ARCH_SUSPEND_POSSIBLE
+ 	def_bool y
+diff --git a/arch/powerpc/boot/util.S b/arch/powerpc/boot/util.S
+index 6a92376daf3f..6e963532fde1 100644
+--- a/arch/powerpc/boot/util.S
++++ b/arch/powerpc/boot/util.S
+@@ -37,6 +37,20 @@ timebase_period_ns:
+  */
+ 	.globl	udelay
+ udelay:
++	/* the 601 has no timebase, spin instead */
++	mfspr	r4,SPRN_PVR
++	srwi	r4,r4,16
++	cmpwi	0,r4,1		/* 601 ? */
++	bne	.Ludelay_not_601
++91:	li	r0,86	/* Instructions / microsecond? */
++	mtctr	r0
++92:	addi	r0,r0,0 /* NOP */
++	bdnz	92b
++	subic.	r3,r3,1
++	bne	91b
++	blr
++
++.Ludelay_not_601:
+ 	mulli	r4,r3,1000	/* nanoseconds */
+ 	/*  Change r4 to be the number of ticks using:
+ 	 *	(nanoseconds + (timebase_period_ns - 1 )) / timebase_period_ns
+diff --git a/arch/powerpc/include/asm/cputable.h b/arch/powerpc/include/asm/cputable.h
+index a3be81c47df3..f053504a6fb1 100644
+--- a/arch/powerpc/include/asm/cputable.h
++++ b/arch/powerpc/include/asm/cputable.h
+@@ -275,6 +275,7 @@ static inline void cpu_feature_keys_init(void) { }
+ #define CPU_FTRS_603	(CPU_FTR_COMMON | CPU_FTR_MAYBE_CAN_DOZE | \
+ 	    CPU_FTR_MAYBE_CAN_NAP | CPU_FTR_PPC_LE | CPU_FTR_NOEXECUTE)
+ #define CPU_FTRS_604	(CPU_FTR_COMMON | CPU_FTR_PPC_LE)
++#define CPU_FTRS_PPC601	(CPU_FTR_COMMON | CPU_FTR_COHERENT_ICACHE)
+ #define CPU_FTRS_740_NOTAU	(CPU_FTR_COMMON | \
+ 	    CPU_FTR_MAYBE_CAN_DOZE | CPU_FTR_L2CR | \
+ 	    CPU_FTR_MAYBE_CAN_NAP | CPU_FTR_PPC_LE)
+@@ -503,7 +504,9 @@ static inline void cpu_feature_keys_init(void) { }
+ #else
+ enum {
+ 	CPU_FTRS_POSSIBLE =
+-#ifdef CONFIG_PPC_BOOK3S_604
++#ifdef CONFIG_PPC_BOOK3S_601
++	    CPU_FTRS_PPC601 |
++#elif defined(CONFIG_PPC_BOOK3S_604)
+ 	    CPU_FTRS_604 | CPU_FTRS_740_NOTAU |
+ 	    CPU_FTRS_740 | CPU_FTRS_750 | CPU_FTRS_750FX1 |
+ 	    CPU_FTRS_750FX2 | CPU_FTRS_750FX | CPU_FTRS_750GX |
+@@ -575,7 +578,9 @@ enum {
+ #else
+ enum {
+ 	CPU_FTRS_ALWAYS =
+-#ifdef CONFIG_PPC_BOOK3S_604
++#ifdef CONFIG_PPC_BOOK3S_601
++	    CPU_FTRS_PPC601 &
++#elif defined(CONFIG_PPC_BOOK3S_604)
+ 	    CPU_FTRS_604 & CPU_FTRS_740_NOTAU &
+ 	    CPU_FTRS_740 & CPU_FTRS_750 & CPU_FTRS_750FX1 &
+ 	    CPU_FTRS_750FX2 & CPU_FTRS_750FX & CPU_FTRS_750GX &
+diff --git a/arch/powerpc/include/asm/ppc_asm.h b/arch/powerpc/include/asm/ppc_asm.h
+index 46947c82a712..c51c707ecc5f 100644
+--- a/arch/powerpc/include/asm/ppc_asm.h
++++ b/arch/powerpc/include/asm/ppc_asm.h
+@@ -441,6 +441,17 @@ GLUE(.,name):
+ #endif
+ 
+ /* various errata or part fixups */
++/* 601 errata: synchronize around MSR changes and rfi */
++#ifdef CONFIG_PPC601_SYNC_FIX
++#define SYNC		sync; isync
++#define SYNC_601	sync
++#define ISYNC_601	isync
++#else
++#define SYNC
++#define SYNC_601
++#define ISYNC_601
++#endif
++
+ #if defined(CONFIG_PPC_CELL) || defined(CONFIG_PPC_E500)
+ #define MFTB(dest)			\
+ 90:	mfspr dest, SPRN_TBRL;		\
+diff --git a/arch/powerpc/include/asm/ptrace.h b/arch/powerpc/include/asm/ptrace.h
+index d53c4dd4d8b6..c60282b082e3 100644
+--- a/arch/powerpc/include/asm/ptrace.h
++++ b/arch/powerpc/include/asm/ptrace.h
+@@ -307,7 +307,8 @@ static inline void regs_set_return_value(struct pt_regs *regs, unsigned long rc)
+ 
+ static inline bool cpu_has_msr_ri(void)
+ {
+-	return !IS_ENABLED(CONFIG_BOOKE);
++	/* the 601 does not implement MSR[RI] */
++	return !IS_ENABLED(CONFIG_BOOKE) && !IS_ENABLED(CONFIG_PPC_BOOK3S_601);
+ }
+ 
+ static inline bool regs_is_unrecoverable(struct pt_regs *regs)
+@@ -328,7 +329,7 @@ static inline void regs_set_unrecoverable(struct pt_regs *regs)
+ }
+ 
+ #define arch_has_single_step()	(1)
+-#define arch_has_block_step()	(true)
++#define arch_has_block_step()	(!IS_ENABLED(CONFIG_PPC_BOOK3S_601))
+ #define ARCH_HAS_USER_SINGLE_STEP_REPORT
+ 
+ /*
+diff --git a/arch/powerpc/include/asm/reg.h b/arch/powerpc/include/asm/reg.h
+index 541a493e13bf..96f4a8654b33 100644
+--- a/arch/powerpc/include/asm/reg.h
++++ b/arch/powerpc/include/asm/reg.h
+@@ -363,6 +363,8 @@
+ 				 DSISR_SET_RC		| \
+ 				 DSISR_PRTABLE_FAULT)
+ 
++#define SPRN_RTCU	0x004	/* 601 RTC Upper, seconds (user, R/O) */
++#define SPRN_RTCL	0x005	/* 601 RTC Lower, nanoseconds (user, R/O) */
+ #define SPRN_TBRL	0x10C	/* Time Base Read Lower Register (user, R/O) */
+ #define SPRN_TBRU	0x10D	/* Time Base Read Upper Register (user, R/O) */
+ #define SPRN_CIR	0x11B	/* Chip Information Register (hyper, R/0) */
+diff --git a/arch/powerpc/include/asm/vdso/timebase.h b/arch/powerpc/include/asm/vdso/timebase.h
+index e9245f86a46c..133e39e57bec 100644
+--- a/arch/powerpc/include/asm/vdso/timebase.h
++++ b/arch/powerpc/include/asm/vdso/timebase.h
+@@ -12,7 +12,28 @@
+  * We use __powerpc64__ here because we want the compat VDSO to use the 32-bit
+  * version below in the else case of the ifdef.
+  */
+-#if defined(__powerpc64__) && (defined(CONFIG_PPC_CELL) || defined(CONFIG_PPC_E500))
++#ifdef CONFIG_PPC_BOOK3S_601
++/*
++ * The 601 has an RTC instead of a timebase, RTCU counts seconds and RTCL
++ * nanoseconds.  Provide it as a 64-bit nanosecond "timebase" counting at
++ * 1 GHz, as the 601 decrementer also counts in nanoseconds.
++ */
++static __always_inline u64 get_rtc(void)
++{
++	unsigned int hi, lo, hi2;
++
++	do {
++		asm volatile("mfspr %0, %3; mfspr %1, %4; mfspr %2, %3"
++			     : "=r" (hi), "=r" (lo), "=r" (hi2)
++			     : "i" (SPRN_RTCU), "i" (SPRN_RTCL));
++	} while (hi2 != hi);
++	return (u64)hi * 1000000000 + lo;
++}
++
++#define mftb()		((unsigned long)get_rtc())
++#define mftbu()		((unsigned long)(get_rtc() >> 32))
++
++#elif defined(__powerpc64__) && (defined(CONFIG_PPC_CELL) || defined(CONFIG_PPC_E500))
+ #define mftb()		({unsigned long rval;				\
+ 			asm volatile(					\
+ 				"90:	mfspr %0, %2;\n"		\
+@@ -31,7 +52,8 @@
+ 				     "=r" (rval) : "i" (SPRN_TBRL)); rval;})
+ #endif /* !CONFIG_PPC_CELL */
+ 
+-#if defined(CONFIG_PPC_8xx)
++#if defined(CONFIG_PPC_BOOK3S_601)
++#elif defined(CONFIG_PPC_8xx)
+ #define mftbu()		({unsigned long rval;	\
+ 			asm volatile("mftbu %0" : "=r" (rval)); rval;})
+ #else
+@@ -47,6 +69,10 @@ static __always_inline u64 get_tb(void)
+ {
+ 	unsigned int tbhi, tblo, tbhi2;
+ 
++#ifdef CONFIG_PPC_BOOK3S_601
++	return get_rtc();
++#endif
++
+ 	/*
+ 	 * We use __powerpc64__ here not CONFIG_PPC64 because we want the compat
+ 	 * VDSO to use the 32-bit compatible version in the while loop below.
+diff --git a/arch/powerpc/kernel/btext.c b/arch/powerpc/kernel/btext.c
+index b23dddfce26d..bbee9f2d40d5 100644
+--- a/arch/powerpc/kernel/btext.c
++++ b/arch/powerpc/kernel/btext.c
+@@ -93,10 +93,18 @@ void __init btext_prepare_BAT(void)
+ 		boot_text_mapped = 0;
+ 		return;
+ 	}
+-	lowbits = addr & ~0xFF000000UL;
+-	addr &= 0xFF000000UL;
+-	disp_BAT[0] = vaddr | (BL_16M<<2) | 2;
+-	disp_BAT[1] = addr | (_PAGE_NO_CACHE | _PAGE_GUARDED | BPP_RW);
++	if (IS_ENABLED(CONFIG_PPC_BOOK3S_601)) {
++		/* unified 601 BAT, 8M maximum, valid bit in the lower half */
++		lowbits = addr & ~0xFF800000UL;
++		addr &= 0xFF800000UL;
++		disp_BAT[0] = vaddr | (_PAGE_NO_CACHE | PP_RWXX) | 4;
++		disp_BAT[1] = addr | BL_8M | 0x40;
++	} else {
++		lowbits = addr & ~0xFF000000UL;
++		addr &= 0xFF000000UL;
++		disp_BAT[0] = vaddr | (BL_16M<<2) | 2;
++		disp_BAT[1] = addr | (_PAGE_NO_CACHE | _PAGE_GUARDED | BPP_RW);
++	}
+ 	logicalDisplayBase = (void *) (vaddr + lowbits);
+ }
+ #endif
+diff --git a/arch/powerpc/kernel/cpu_specs_book3s_32.h b/arch/powerpc/kernel/cpu_specs_book3s_32.h
+index 3714634d194a..97aadd472ac3 100644
+--- a/arch/powerpc/kernel/cpu_specs_book3s_32.h
++++ b/arch/powerpc/kernel/cpu_specs_book3s_32.h
+@@ -7,6 +7,21 @@
+ 			 PPC_FEATURE_HAS_MMU)
+ 
+ static struct cpu_spec cpu_specs[] __initdata = {
++#ifdef CONFIG_PPC_BOOK3S_601
++	{	/* 601 */
++		.pvr_mask		= 0xffff0000,
++		.pvr_value		= 0x00010000,
++		.cpu_name		= "601",
++		.cpu_features		= CPU_FTRS_PPC601,
++		.cpu_user_features	= COMMON_USER | PPC_FEATURE_601_INSTR |
++			PPC_FEATURE_UNIFIED_CACHE | PPC_FEATURE_NO_TB,
++		.mmu_features		= MMU_FTR_HPTE_TABLE,
++		.icache_bsize		= 32,
++		.dcache_bsize		= 32,
++		.machine_check		= machine_check_generic,
++		.platform		= "ppc601",
++	},
++#endif /* CONFIG_PPC_BOOK3S_601 */
+ #ifdef CONFIG_PPC_BOOK3S_603
+ 	{	/* 603 */
+ 		.pvr_mask		= 0xffff0000,
+@@ -130,7 +145,7 @@ static struct cpu_spec cpu_specs[] __initdata = {
+ 	},
+ #endif
+ #endif /* CONFIG_PPC_BOOK3S_603 */
+-#ifdef CONFIG_PPC_BOOK3S_604
++#if defined(CONFIG_PPC_BOOK3S_604) && !defined(CONFIG_PPC_BOOK3S_601)
+ 	{	/* 604 */
+ 		.pvr_mask		= 0xffff0000,
+ 		.pvr_value		= 0x00040000,
+diff --git a/arch/powerpc/kernel/entry_32.S b/arch/powerpc/kernel/entry_32.S
+index d8426251b1cd..1d52916fe794 100644
+--- a/arch/powerpc/kernel/entry_32.S
++++ b/arch/powerpc/kernel/entry_32.S
+@@ -157,6 +157,7 @@ syscall_exit_finish:
+ 
+ 1:	REST_GPR(2, r1)
+ 	REST_GPR(1, r1)
++	SYNC
+ 	rfi
+ 
+ 3:	mtcr	r5
+@@ -212,7 +213,7 @@ start_kernel_thread:
+ 
+ 	.globl	fast_exception_return
+ fast_exception_return:
+-#ifndef CONFIG_BOOKE
++#if !defined(CONFIG_BOOKE) && !defined(CONFIG_PPC_BOOK3S_601)
+ 	andi.	r10,r9,MSR_RI		/* check for recoverable interrupt */
+ 	beq	3f			/* if not, we've got problems */
+ #endif
+@@ -231,6 +232,7 @@ fast_exception_return:
+ 	REST_GPR(10, r11)
+ 	REST_GPR(12, r11)
+ 	REST_GPR(11, r11)
++	SYNC
+ 	rfi
+ _ASM_NOKPROBE_SYMBOL(fast_exception_return)
+ 
+@@ -286,6 +288,7 @@ END_FTR_SECTION_IFSET(CPU_FTR_NEED_PAIRED_STWCX)
+ 	REST_GPRS(2, 6, r1)
+ 	REST_GPR(0, r1)
+ 	REST_GPR(1, r1)
++	SYNC
+ 	rfi
+ 
+ .Lrestore_nvgprs:
+@@ -332,6 +335,7 @@ END_FTR_SECTION_IFSET(CPU_FTR_NEED_PAIRED_STWCX)
+ 	REST_GPR(6, r1)
+ 	REST_GPR(0, r1)
+ 	REST_GPR(1, r1)
++	SYNC
+ 	rfi
+ 
+ 1:	/*
+@@ -358,6 +362,7 @@ END_FTR_SECTION_IFSET(CPU_FTR_NEED_PAIRED_STWCX)
+ #else
+ 	mfspr	r9, SPRN_SPRG_SCRATCH0
+ #endif
++	SYNC
+ 	rfi
+ _ASM_NOKPROBE_SYMBOL(interrupt_return)
+ 
+diff --git a/arch/powerpc/kernel/head_32.h b/arch/powerpc/kernel/head_32.h
+index 9cba7dbf58dd..fa2bc6d38638 100644
+--- a/arch/powerpc/kernel/head_32.h
++++ b/arch/powerpc/kernel/head_32.h
+@@ -61,6 +61,7 @@
+ 	ori	r11, r11, 1f@l
+ 	mtspr	SPRN_SRR0, r11
+ 	mfspr	r11, SPRN_SPRG_SCRATCH2
++	SYNC
+ 	rfi
+ 
+ 	.text
+@@ -92,6 +93,7 @@
+ 	mtspr	SPRN_EID, r2		/* Set MSR_RI */
+ #else
+ 	li	r10, MSR_KERNEL		/* can take exceptions */
++	SYNC
+ 	mtmsr	r10			/* (except for mach check in rtas) */
+ #endif
+ 	COMMON_EXCEPTION_PROLOG_END \trapno
+@@ -148,6 +150,7 @@ _ASM_NOKPROBE_SYMBOL(\name\()_virt)
+ 	lwz	r1,TASK_STACK-THREAD(r10)
+ 	tovirt(r10, r10)
+ 	addi	r1, r1, THREAD_SIZE - INT_FRAME_SIZE
++	SYNC
+ 	rfi
+ 1:
+ 	stw	r12,_NIP(r1)
+diff --git a/arch/powerpc/kernel/head_book3s_32.S b/arch/powerpc/kernel/head_book3s_32.S
+index c1779455ea32..e83a2ed39b78 100644
+--- a/arch/powerpc/kernel/head_book3s_32.S
++++ b/arch/powerpc/kernel/head_book3s_32.S
+@@ -36,6 +36,16 @@
+ 
+ #include "head_32.h"
+ 
++#ifdef CONFIG_PPC_BOOK3S_601
++/* 601 only has unified BATs, at the IBAT SPR numbers */
++#define LOAD_BAT(n, reg, RA, RB)	\
++	li	RA,0;			\
++	mtspr	SPRN_IBAT##n##U,RA;	\
++	lwz	RA,(n*16)+0(reg);	\
++	lwz	RB,(n*16)+4(reg);	\
++	mtspr	SPRN_IBAT##n##U,RA;	\
++	mtspr	SPRN_IBAT##n##L,RB
++#else
+ #define LOAD_BAT(n, reg, RA, RB)	\
+ 	/* see the comment for clear_bats() -- Cort */ \
+ 	li	RA,0;			\
+@@ -49,6 +59,7 @@
+ 	lwz	RB,(n*16)+12(reg);	\
+ 	mtspr	SPRN_DBAT##n##U,RA;	\
+ 	mtspr	SPRN_DBAT##n##L,RB
++#endif
+ 
+ 	__HEAD
+ _GLOBAL(_stext);
+@@ -198,12 +209,16 @@ __after_mmu_off:
+  * off, and in other cases, we now turn it off before changing BATs above.
+  */
+ turn_on_mmu:
++#ifdef CONFIG_PPC_BOOK3S_601
++	bl	move_fdt_601
++#endif
+ 	mfmsr	r0
+ 	ori	r0,r0,MSR_DR|MSR_IR|MSR_RI
+ 	mtspr	SPRN_SRR1,r0
+ 	lis	r0,start_here@h
+ 	ori	r0,r0,start_here@l
+ 	mtspr	SPRN_SRR0,r0
++	SYNC
+ 	rfi				/* enables MMU */
+ 
+ /*
+@@ -441,6 +456,7 @@ END_FTR_SECTION_IFCLR(CPU_FTR_NEED_COHERENT)
+ 	tlbli	r0
+ 	mfspr	r3,SPRN_SRR1		/* Need to restore CR0 */
+ 	mtcrf	0x80,r3
++	SYNC
+ 	rfi
+ InstructionAddressInvalid:
+ 	mfspr	r3,SPRN_SRR1
+@@ -459,6 +475,7 @@ InstructionAddressInvalid:
+ 	mfmsr	r0		/* Restore "normal" registers */
+ 	xoris	r0,r0,MSR_TGPR>>16
+ 	mtcrf	0x80,r3		/* Restore CR0 */
++	SYNC
+ 	mtmsr	r0
+ 	b	InstructionAccess
+ 
+@@ -506,11 +523,13 @@ BEGIN_MMU_FTR_SECTION
+ 	mtspr   SPRN_SRR1,r2
+ 	mtcrf	0x80,r2
+ 	tlbld	r0
++	SYNC
+ 	rfi
+ MMU_FTR_SECTION_ELSE
+ 	mfspr	r2,SPRN_SRR1		/* Need to restore CR0 */
+ 	mtcrf	0x80,r2
+ 	tlbld	r0
++	SYNC
+ 	rfi
+ ALT_MMU_FTR_SECTION_END_IFSET(MMU_FTR_NEED_DTLB_SW_LRU)
+ 
+@@ -538,6 +557,7 @@ DataAddressInvalid:
+ 	mfmsr	r0		/* Restore "normal" registers */
+ 	xoris	r0,r0,MSR_TGPR>>16
+ 	mtcrf	0x80,r3		/* Restore CR0 */
++	SYNC
+ 	mtmsr	r0
+ 	b	DataAccess
+ 
+@@ -585,11 +605,13 @@ BEGIN_MMU_FTR_SECTION
+ 	mtspr   SPRN_SRR1,r2
+ 	mtcrf	0x80,r2
+ 	tlbld	r0
++	SYNC
+ 	rfi
+ MMU_FTR_SECTION_ELSE
+ 	mfspr	r2,SPRN_SRR1		/* Need to restore CR0 */
+ 	mtcrf	0x80,r2
+ 	tlbld	r0
++	SYNC
+ 	rfi
+ ALT_MMU_FTR_SECTION_END_IFSET(MMU_FTR_NEED_DTLB_SW_LRU)
+ 
+@@ -710,12 +732,14 @@ fast_hash_page_return:
+ 	mtcr	r11
+ 	lwz	r11, THR11(r10)
+ 	mfspr	r10, SPRN_SPRG_SCRATCH2
++	SYNC
+ 	rfi
+ 
+ 1:	/* ISI */
+ 	mtcr	r11
+ 	mfspr	r11, SPRN_SPRG_SCRATCH1
+ 	mfspr	r10, SPRN_SPRG_SCRATCH0
++	SYNC
+ 	rfi
+ #endif /* CONFIG_PPC_BOOK3S_604 */
+ 
+@@ -761,6 +785,38 @@ relocate_kernel:
+ 	bl	copy_and_flush		/* copy the rest */
+ 	b	turn_on_mmu
+ 
++#ifdef CONFIG_PPC_BOOK3S_601
++/*
++ * The 601 BATs initially map only 24 MB: move a flat device tree (r31) that
++ * is not completely inside to the first page after the kernel.
++ */
++SYM_FUNC_START_LOCAL(move_fdt_601)
++	cmpwi	r31,0
++	beqlr
++	lwz	r5,4(r31)		/* totalsize */
++	add	r6,r31,r5
++	lis	r7,0x1800000@h
++	cmplw	r6,r7
++	blelr
++	lis	r3,(_end - PAGE_OFFSET + 0xfff)@ha
++	addi	r3,r3,(_end - PAGE_OFFSET + 0xfff)@l
++	rlwinm	r3,r3,0,0,19
++	add	r6,r3,r5
++	cmplw	r6,r7
++	bgtlr				/* does not fit there either */
++	addi	r5,r5,3
++	srwi	r5,r5,2
++	mtctr	r5
++	addi	r4,r31,-4
++	addi	r6,r3,-4
++1:	lwzu	r0,4(r4)
++	stwu	r0,4(r6)
++	bdnz	1b
++	mr	r31,r3
++	blr
++SYM_FUNC_END(move_fdt_601)
++#endif
++
+ /*
+  * Copy routine used to copy the kernel to start at physical address 0
+  * and flush and invalidate the caches as needed.
+@@ -810,6 +866,7 @@ __secondary_start_pmac_0:
+ 	   set to map the 0xf0000000 - 0xffffffff region */
+ 	mfmsr	r0
+ 	rlwinm	r0,r0,0,28,26		/* clear DR (0x10) */
++	SYNC
+ 	mtmsr	r0
+ 	isync
+ 
+@@ -858,6 +915,7 @@ END_MMU_FTR_SECTION_IFCLR(MMU_FTR_HPTE_TABLE)
+ 	ori	r3,r3,start_secondary@l
+ 	mtspr	SPRN_SRR0,r3
+ 	mtspr	SPRN_SRR1,r4
++	SYNC
+ 	rfi
+ #endif /* CONFIG_SMP */
+ 
+@@ -988,6 +1046,7 @@ END_MMU_FTR_SECTION_IFCLR(MMU_FTR_HPTE_TABLE)
+ 	.align	4
+ 	mtspr	SPRN_SRR0,r4
+ 	mtspr	SPRN_SRR1,r3
++	SYNC
+ 	rfi
+ /* Load up the kernel context */
+ 2:	bl	load_up_mmu
+@@ -1012,6 +1071,7 @@ END_MMU_FTR_SECTION_IFCLR(MMU_FTR_HPTE_TABLE)
+ 	ori	r3,r3,start_kernel@l
+ 	mtspr	SPRN_SRR0,r3
+ 	mtspr	SPRN_SRR1,r4
++	SYNC
+ 	rfi
+ 
+ /*
+@@ -1025,6 +1085,7 @@ END_MMU_FTR_SECTION_IFCLR(MMU_FTR_HPTE_TABLE)
+ SYM_FUNC_START_LOCAL(clear_bats)
+ 	li	r10,0
+ 
++#ifndef CONFIG_PPC_BOOK3S_601
+ 	mtspr	SPRN_DBAT0U,r10
+ 	mtspr	SPRN_DBAT0L,r10
+ 	mtspr	SPRN_DBAT1U,r10
+@@ -1033,6 +1094,7 @@ SYM_FUNC_START_LOCAL(clear_bats)
+ 	mtspr	SPRN_DBAT2L,r10
+ 	mtspr	SPRN_DBAT3U,r10
+ 	mtspr	SPRN_DBAT3L,r10
++#endif
+ 	mtspr	SPRN_IBAT0U,r10
+ 	mtspr	SPRN_IBAT0L,r10
+ 	mtspr	SPRN_IBAT1U,r10
+@@ -1077,11 +1139,13 @@ _GLOBAL(update_bats)
+ 	li	r3, MSR_KERNEL & ~(MSR_IR | MSR_DR)
+ 	rlwinm	r0, r6, 0, ~MSR_RI
+ 	rlwinm	r0, r0, 0, ~MSR_EE
++	SYNC
+ 	mtmsr	r0
+ 
+ 	.align	4
+ 	mtspr	SPRN_SRR0, r4
+ 	mtspr	SPRN_SRR1, r3
++	SYNC
+ 	rfi
+ 1:	bl	clear_bats
+ 	lis	r3, BATS@ha
+@@ -1098,9 +1162,11 @@ BEGIN_MMU_FTR_SECTION
+ 	LOAD_BAT(7, r3, r4, r5)
+ END_MMU_FTR_SECTION_IFSET(MMU_FTR_USE_HIGH_BATS)
+ 	li	r3, MSR_KERNEL & ~(MSR_IR | MSR_DR | MSR_RI)
++	SYNC
+ 	mtmsr	r3
+ 	mtspr	SPRN_SRR0, r7
+ 	mtspr	SPRN_SRR1, r6
++	SYNC
+ 	rfi
+ 
+ SYM_FUNC_START_LOCAL(flush_tlbs)
+@@ -1123,12 +1189,30 @@ SYM_FUNC_START_LOCAL(mmu_off)
+ 	mtspr	SPRN_SRR0,r4
+ 	mtspr	SPRN_SRR1,r3
+ 	sync
++	SYNC
+ 	rfi
+ SYM_FUNC_END(mmu_off)
+ 
+-/* We use one BAT to map up to 256M of RAM at _PAGE_OFFSET */
++/*
++ * On 601, we use 3 BATs to map up to 24M of RAM at _PAGE_OFFSET
++ * (we keep one for debugging) and on others, we use one 256M BAT.
++ */
+ SYM_FUNC_START_LOCAL(initial_bats)
+ 	lis	r11,PAGE_OFFSET@h
++#ifdef CONFIG_PPC_BOOK3S_601
++	ori	r11,r11,4		/* set up BAT registers for 601 */
++	li	r8,0x7f			/* valid, block length = 8MB */
++	mtspr	SPRN_IBAT0U,r11		/* N.B. 601 has valid bit in */
++	mtspr	SPRN_IBAT0L,r8		/* lower BAT register */
++	addis	r11,r11,0x800000@h
++	addis	r8,r8,0x800000@h
++	mtspr	SPRN_IBAT1U,r11
++	mtspr	SPRN_IBAT1L,r8
++	addis	r11,r11,0x800000@h
++	addis	r8,r8,0x800000@h
++	mtspr	SPRN_IBAT2U,r11
++	mtspr	SPRN_IBAT2L,r8
++#else
+ 	tophys(r8,r11)
+ #ifdef CONFIG_SMP
+ 	ori	r8,r8,0x12		/* R/W access, M=1 */
+@@ -1141,6 +1225,7 @@ SYM_FUNC_START_LOCAL(initial_bats)
+ 	mtspr	SPRN_DBAT0U,r11		/* bit in upper BAT register */
+ 	mtspr	SPRN_IBAT0L,r8
+ 	mtspr	SPRN_IBAT0U,r11
++#endif
+ 	isync
+ 	blr
+ SYM_FUNC_END(initial_bats)
+@@ -1159,8 +1244,13 @@ SYM_FUNC_START_LOCAL(setup_disp_bat)
+ 	beqlr
+ 	lwz	r11,0(r8)
+ 	lwz	r8,4(r8)
++#ifdef CONFIG_PPC_BOOK3S_601
++	mtspr	SPRN_IBAT3L,r8
++	mtspr	SPRN_IBAT3U,r11
++#else
+ 	mtspr	SPRN_DBAT3L,r8
+ 	mtspr	SPRN_DBAT3U,r11
++#endif
+ 	blr
+ SYM_FUNC_END(setup_disp_bat)
+ #endif /* CONFIG_BOOTX_TEXT */
+diff --git a/arch/powerpc/kernel/time.c b/arch/powerpc/kernel/time.c
+index e00dcda8240b..5b08cb2fe763 100644
+--- a/arch/powerpc/kernel/time.c
++++ b/arch/powerpc/kernel/time.c
+@@ -997,6 +997,10 @@ void __init time_init(void)
+ 	else
+ 		generic_calibrate_decr();
+ 
++	/* the 601 RTC and decrementer count nanoseconds */
++	if (IS_ENABLED(CONFIG_PPC_BOOK3S_601))
++		ppc_tb_freq = NSEC_PER_SEC;
++
+ 	printk(KERN_DEBUG "time_init: decrementer frequency = %lu.%.6lu MHz\n",
+ 	       ppc_tb_freq / 1000000, ppc_tb_freq % 1000000);
+ 	printk(KERN_DEBUG "time_init: processor frequency   = %lu.%.6lu MHz\n",
+diff --git a/arch/powerpc/kernel/traps.c b/arch/powerpc/kernel/traps.c
+index 3a8f5416e3f6..31bb2e9e0e0c 100644
+--- a/arch/powerpc/kernel/traps.c
++++ b/arch/powerpc/kernel/traps.c
+@@ -764,6 +764,7 @@ int machine_check_generic(struct pt_regs *regs)
+ 	case 0x80000:
+ 		pr_cont("Machine check signal\n");
+ 		break;
++	case 0:		/* for 601, no SRR1 bits on TEA */
+ 	case 0x40000:
+ 	case 0x140000:	/* 7450 MSS error and TEA */
+ 		pr_cont("Transfer error ack signal\n");
+diff --git a/arch/powerpc/kernel/vmlinux.lds.S b/arch/powerpc/kernel/vmlinux.lds.S
+index 8fc11d6565bf..45e3c2a3d544 100644
+--- a/arch/powerpc/kernel/vmlinux.lds.S
++++ b/arch/powerpc/kernel/vmlinux.lds.S
+@@ -396,6 +396,10 @@ SECTIONS
+ 	. = ALIGN(PAGE_SIZE);
+ 	_end = . ;
+ 
++#ifdef CONFIG_PPC_BOOK3S_601
++	ASSERT(_end - PAGE_OFFSET <= 0x1800000, "kernel exceeds the initial 24 MB 601 BAT mapping")
++#endif
++
+ 	DWARF_DEBUG
+ 	MODINFO
+ 	ELF_DETAILS
+diff --git a/arch/powerpc/mm/book3s32/hash_low.S b/arch/powerpc/mm/book3s32/hash_low.S
+index 4ed0efd03db5..3d1e49d24e19 100644
+--- a/arch/powerpc/mm/book3s32/hash_low.S
++++ b/arch/powerpc/mm/book3s32/hash_low.S
+@@ -92,6 +92,7 @@ _GLOBAL(hash_page)
+ 	beq-	.Lhash_page_out		/* return if no mapping */
+ #else
+ 	/* XXX it seems like the 601 will give a machine fault on the
++	SYNC
+ 	   rfi if its alignment is wrong (bottom 4 bits of address are
+ 	   8 or 0xc) and we have had a not-taken conditional branch
+ 	   to the address following the rfi. */
+@@ -197,7 +198,9 @@ _GLOBAL(add_hash_page)
+ 	mfmsr	r9
+ 	rlwinm	r0,r9,0,17,15		/* clear bit 16 (MSR_EE) */
+ 	rlwinm	r0,r0,0,28,26		/* clear MSR_DR */
++	SYNC
+ 	mtmsr	r0
++	SYNC_601
+ 	isync
+ 
+ #ifdef CONFIG_SMP
+@@ -261,7 +264,9 @@ _GLOBAL(add_hash_page)
+ #endif
+ 
+ 	/* reenable interrupts and DR */
++	SYNC
+ 	mtmsr	r9
++	SYNC_601
+ 	isync
+ 
+ 	lwz	r0,4(r1)
+@@ -482,7 +487,9 @@ _GLOBAL(flush_hash_pages)
+ 	mfmsr	r10
+ 	rlwinm	r0,r10,0,17,15		/* clear bit 16 (MSR_EE) */
+ 	rlwinm	r0,r0,0,28,26		/* clear MSR_DR */
++	SYNC
+ 	mtmsr	r0
++	SYNC_601
+ 	isync
+ 
+ 	/* First find a PTE in the range that has _PAGE_HASHPTE set */
+@@ -598,7 +605,9 @@ _GLOBAL(flush_hash_pages)
+ 	stw	r0,0(r9)		/* clear mmu_hash_lock */
+ #endif
+ 
+-19:	mtmsr	r10
++19:	SYNC
++	mtmsr	r10
++	SYNC_601
+ 	isync
+ 	blr
+ 	.previous
+diff --git a/arch/powerpc/mm/book3s32/mmu.c b/arch/powerpc/mm/book3s32/mmu.c
+index 07660e8badbd..e20997fa6a43 100644
+--- a/arch/powerpc/mm/book3s32/mmu.c
++++ b/arch/powerpc/mm/book3s32/mmu.c
+@@ -15,6 +15,8 @@
+  *
+  *  Derived from "arch/i386/mm/init.c"
+  *    Copyright (C) 1991, 1992, 1993, 1994  Linus Torvalds
++ *
++ *  Copyright (C) 2026 René Rebe <rene@exactco.de>
+  */
+ 
+ #include <linux/kernel.h>
+@@ -83,7 +85,9 @@ int __init find_free_bat(void)
+ 	for (b = 0; b < n; b++) {
+ 		struct ppc_bat *bat = BATS[b];
+ 
+-		if (!(bat[1].batu & 3))
++		/* the 601 has its valid bit in the lower BAT */
++		if (IS_ENABLED(CONFIG_PPC_BOOK3S_601) ?
++		    !(bat[0].batl & 0x40) : !(bat[1].batu & 3))
+ 			return b;
+ 	}
+ 	return -1;
+@@ -92,7 +96,7 @@ int __init find_free_bat(void)
+ /*
+  * This function calculates the size of the larger block usable to map the
+  * beginning of an area based on the start address and size of that area:
+- * - max block size is 256 on 6xx.
++ * - max block size is 8M on 601 and 256M on other 6xx.
+  * - base address must be aligned to the block size. So the maximum block size
+  *   is identified by the lowest bit set to 1 in the base address (for instance
+  *   if base is 0x16000000, max size is 0x02000000).
+@@ -101,7 +105,7 @@ int __init find_free_bat(void)
+  */
+ unsigned int bat_block_size(unsigned long base, unsigned long top)
+ {
+-	unsigned int max_size = SZ_256M;
++	unsigned int max_size = IS_ENABLED(CONFIG_PPC_BOOK3S_601) ? SZ_8M : SZ_256M;
+ 	unsigned int base_shift = (ffs(base) - 1) & 31;
+ 	unsigned int block_shift = (fls(top - base) - 1) & 31;
+ 
+@@ -161,8 +165,11 @@ unsigned long __init mmu_mapin_ram(unsigned long base, unsigned long top)
+ 	unsigned long border = (unsigned long)__srwx_boundary - PAGE_OFFSET;
+ 	unsigned long size;
+ 
+-	size = roundup_pow_of_two((unsigned long)_einittext - PAGE_OFFSET);
+-	setibat(0, PAGE_OFFSET, 0, size, PAGE_KERNEL_X);
++	/* the unified 601 BATs of the RAM mapping cover the text as well */
++	if (!IS_ENABLED(CONFIG_PPC_BOOK3S_601)) {
++		size = roundup_pow_of_two((unsigned long)_einittext - PAGE_OFFSET);
++		setibat(0, PAGE_OFFSET, 0, size, PAGE_KERNEL_X);
++	}
+ 
+ 	if (debug_pagealloc_enabled_or_kfence()) {
+ 		pr_debug_once("Read-Write memory mapped without BATs\n");
+@@ -202,6 +209,10 @@ int mmu_mark_initmem_nx(void)
+ 	unsigned long border = (unsigned long)__init_begin - PAGE_OFFSET;
+ 	unsigned long size;
+ 
++	/* unified BATs and no segment N bit */
++	if (IS_ENABLED(CONFIG_PPC_BOOK3S_601))
++		return 0;
++
+ 	for (i = 0; i < nb - 1 && base < top;) {
+ 		size = bat_block_size(base, top);
+ 		setibat(i++, PAGE_OFFSET + base, base, size, PAGE_KERNEL_X);
+@@ -238,6 +249,9 @@ int mmu_mark_rodata_ro(void)
+ 	int nb = mmu_has_feature(MMU_FTR_USE_HIGH_BATS) ? 8 : 4;
+ 	int i;
+ 
++	if (IS_ENABLED(CONFIG_PPC_BOOK3S_601))
++		return 0;
++
+ 	for (i = 0; i < nb; i++) {
+ 		struct ppc_bat *bat = BATS[i];
+ 
+@@ -277,17 +291,29 @@ void __init setbat(int index, unsigned long virt, phys_addr_t phys,
+ 		flags &= ~_PAGE_COHERENT;
+ 
+ 	bl = (size >> 17) - 1;
+-	/* Do DBAT first */
+-	wimgxpp = flags & (_PAGE_WRITETHRU | _PAGE_NO_CACHE
+-			   | _PAGE_COHERENT | _PAGE_GUARDED);
+-	wimgxpp |= (flags & _PAGE_WRITE) ? BPP_RW : BPP_RX;
+-	bat[1].batu = virt | (bl << 2) | 2; /* Vs=1, Vp=0 */
+-	bat[1].batl = BAT_PHYS_ADDR(phys) | wimgxpp;
+-	if (!is_kernel_addr(virt))
+-		bat[1].batu |= 1; 	/* Vp = 1 */
+-	if (flags & _PAGE_GUARDED) {
+-		/* G bit must be zero in IBATs */
+-		flags &= ~_PAGE_EXEC;
++	if (IS_ENABLED(CONFIG_PPC_BOOK3S_601)) {
++		/* unified BAT, 8M maximum, no G bit */
++		if (bl > BL_8M)
++			bl = BL_8M;
++		wimgxpp = flags & (_PAGE_WRITETHRU | _PAGE_NO_CACHE
++				   | _PAGE_COHERENT);
++		wimgxpp |= (flags & _PAGE_WRITE) ?
++			(is_kernel_addr(virt) ? PP_RWXX : PP_RWRW) : PP_RXRX;
++		bat[0].batu = virt | wimgxpp | 4;	/* Ks=0, Ku=1 */
++		bat[0].batl = phys | bl | 0x40;		/* V=1 */
++	} else {
++		/* Do DBAT first */
++		wimgxpp = flags & (_PAGE_WRITETHRU | _PAGE_NO_CACHE
++				   | _PAGE_COHERENT | _PAGE_GUARDED);
++		wimgxpp |= (flags & _PAGE_WRITE) ? BPP_RW : BPP_RX;
++		bat[1].batu = virt | (bl << 2) | 2; /* Vs=1, Vp=0 */
++		bat[1].batl = BAT_PHYS_ADDR(phys) | wimgxpp;
++		if (!is_kernel_addr(virt))
++			bat[1].batu |= 1; 	/* Vp = 1 */
++		if (flags & _PAGE_GUARDED) {
++			/* G bit must be zero in IBATs */
++			flags &= ~_PAGE_EXEC;
++		}
+ 	}
+ 
+ 	bat_addrs[index].start = virt;
+@@ -429,7 +455,9 @@ void setup_initial_memory_limit(phys_addr_t first_memblock_base,
+ 	 */
+ 	BUG_ON(first_memblock_base != 0);
+ 
+-	memblock_set_current_limit(min_t(u64, first_memblock_size, SZ_256M));
++	/* the 601 initial BATs map 24M, others 256M */
++	memblock_set_current_limit(min_t(u64, first_memblock_size,
++					 IS_ENABLED(CONFIG_PPC_BOOK3S_601) ? SZ_16M : SZ_256M));
+ }
+ 
+ void __init print_system_hash_info(void)
+diff --git a/arch/powerpc/mm/ptdump/bats.c b/arch/powerpc/mm/ptdump/bats.c
+index 820c119013e4..5fa0d6502b5e 100644
+--- a/arch/powerpc/mm/ptdump/bats.c
++++ b/arch/powerpc/mm/ptdump/bats.c
+@@ -2,6 +2,7 @@
+ /*
+  * Copyright 2018, Christophe Leroy CS S.I.
+  * <christophe.leroy@c-s.fr>
++ * Copyright (C) 2026 René Rebe <rene@exactco.de>
+  *
+  * This dumps the content of BATS
+  */
+@@ -12,6 +13,50 @@
+ 
+ #include "ptdump.h"
+ 
++static char *pp_601(int k, int pp)
++{
++	if (pp == 0)
++		return k ? "   " : "rwx";
++	if (pp == 1)
++		return k ? "r x" : "rwx";
++	if (pp == 2)
++		return "rwx";
++	return "r x";
++}
++
++static void bat_show_601(struct seq_file *m, int idx, u32 lower, u32 upper)
++{
++	u32 blpi = upper & 0xfffe0000;
++	u32 k = (upper >> 2) & 3;
++	u32 pp = upper & 3;
++	phys_addr_t pbn = PHYS_BAT_ADDR(lower);
++	u32 bsm = lower & 0x3f;
++	u32 size = (bsm + 1) << 17;
++
++	seq_printf(m, "%d: ", idx);
++	if (!(lower & 0x40)) {
++		seq_puts(m, "        -\n");
++		return;
++	}
++
++	seq_printf(m, "0x%08x-0x%08x ", blpi, blpi + size - 1);
++#ifdef CONFIG_PHYS_64BIT
++	seq_printf(m, "0x%016llx ", pbn);
++#else
++	seq_printf(m, "0x%08x ", pbn);
++#endif
++	pt_dump_size(m, size);
++
++	seq_printf(m, "Kernel %s User %s", pp_601(k & 2, pp), pp_601(k & 1, pp));
++
++	seq_puts(m, upper & _PAGE_WRITETHRU ? "w " : "  ");
++	seq_puts(m, upper & _PAGE_NO_CACHE ? "i " : "  ");
++	seq_puts(m, upper & _PAGE_COHERENT ? "m " : "  ");
++	seq_puts(m, "\n");
++}
++
++#define BAT_SHOW_601(_m, _n, _l, _u) bat_show_601(_m, _n, mfspr(_l), mfspr(_u))
++
+ static void bat_show_603(struct seq_file *m, int idx, u32 lower, u32 upper, bool is_d)
+ {
+ 	u32 bepi = upper & 0xfffe0000;
+@@ -59,6 +104,16 @@ static void bat_show_603(struct seq_file *m, int idx, u32 lower, u32 upper, bool
+ 
+ static int bats_show(struct seq_file *m, void *v)
+ {
++	/* unified BATs at the IBAT SPR numbers, no DBATs */
++	if (IS_ENABLED(CONFIG_PPC_BOOK3S_601)) {
++		seq_puts(m, "---[ Block Address Translation ]---\n");
++		BAT_SHOW_601(m, 0, SPRN_IBAT0L, SPRN_IBAT0U);
++		BAT_SHOW_601(m, 1, SPRN_IBAT1L, SPRN_IBAT1U);
++		BAT_SHOW_601(m, 2, SPRN_IBAT2L, SPRN_IBAT2U);
++		BAT_SHOW_601(m, 3, SPRN_IBAT3L, SPRN_IBAT3U);
++		return 0;
++	}
++
+ 	seq_puts(m, "---[ Instruction Block Address Translation ]---\n");
+ 
+ 	BAT_SHOW_603(m, 0, SPRN_IBAT0L, SPRN_IBAT0U, false);
+diff --git a/arch/powerpc/platforms/Kconfig.cputype b/arch/powerpc/platforms/Kconfig.cputype
+index f0adbf7ecb7f..a76877458d20 100644
+--- a/arch/powerpc/platforms/Kconfig.cputype
++++ b/arch/powerpc/platforms/Kconfig.cputype
+@@ -16,7 +16,7 @@ choice
+ 	depends on PPC32
+ 	help
+ 	  There are five families of 32 bit PowerPC chips supported.
+-	  The most common ones are the desktop and server CPUs (603,
++	  The most common ones are the desktop and server CPUs (601, 603,
+ 	  604, 740, 750, 74xx) CPUs from Freescale and IBM, with their
+ 	  embedded 512x/52xx/82xx/83xx/86xx counterparts.
+ 	  The other embedded parts, namely 4xx, 8xx and e500
+@@ -53,9 +53,33 @@ config 44x
+ 
+ endchoice
+ 
++config PPC_BOOK3S_601
++	bool "PowerPC 601 only kernel"
++	depends on PPC_BOOK3S_32 && !SMP
++	help
++	  Build a kernel for the PowerPC 601 of the first Power Macintosh
++	  (NuBus PDM 6100/7100/8100) and PReP machines.  The 601 has an RTC
++	  instead of a timebase and different BATs, such a kernel only runs
++	  on the 601.
++
++config PPC601_SYNC_FIX
++	bool "Workarounds for PPC601 bugs"
++	depends on PPC_BOOK3S_601
++	default y
++	help
++	  Some versions of the PPC601 (the first PowerPC chip) have bugs which
++	  mean that extra synchronization instructions are required near
++	  certain instructions, typically those that make major changes to the
++	  CPU state.  These extra instructions reduce performance slightly.
++	  If you say N here, these extra instructions will not be included,
++	  resulting in a kernel which will run faster but may not run at all
++	  on some systems with the PPC601 chip.
++
++	  If in doubt, say Y here.
++
+ config PPC_BOOK3S_603
+ 	bool "Support for 603 SW loaded TLB"
+-	depends on PPC_BOOK3S_32
++	depends on PPC_BOOK3S_32 && !PPC_BOOK3S_601
+ 	default y
+ 	help
+ 	  Provide support for processors based on the 603 cores. Those
+@@ -490,6 +514,8 @@ config PPC_KERNEL_PCREL
+ 
+ config PPC_KUEP
+ 	bool "Kernel Userspace Execution Prevention"
++	# no segment register N bit
++	depends on !PPC_BOOK3S_601
+ 	default y
+ 	help
+ 	  Enable support for Kernel Userspace Execution Prevention (KUEP)
+diff --git a/arch/powerpc/platforms/powermac/smp.c b/arch/powerpc/platforms/powermac/smp.c
+index 88e92af8acf9..5a9cb63650e0 100644
+--- a/arch/powerpc/platforms/powermac/smp.c
++++ b/arch/powerpc/platforms/powermac/smp.c
+@@ -271,6 +271,10 @@ static void __init smp_psurge_probe(void)
+ 	int i, ncpus;
+ 	struct device_node *dn;
+ 
++	/* We don't do SMP on the PPC601 -- paulus */
++	if (PVR_VER(mfspr(SPRN_PVR)) == 1)
++		return;
++
+ 	/*
+ 	 * The powersurge cpu board can be used in the generation
+ 	 * of powermacs that have a socket for an upgradeable cpu card,
+-- 
+2.54.0
+

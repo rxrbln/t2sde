@@ -1,0 +1,2689 @@
+# --- T2-COPYRIGHT-BEGIN ---
+# t2/package/*/linux/0000-restore-ppc-0-prep.patch
+# Copyright (C) 2026 The T2 SDE Project
+# SPDX-License-Identifier: GPL-2.0 or patched project license
+# --- T2-COPYRIGHT-END ---
+
+From e3c88fb2ca1c09f649006af99af39496242dfc0a Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Ren=C3=A9=20Rebe?= <rene@exactco.de>
+Date: Mon, 2 Nov 2026 13:49:46 +0100
+Subject: [PATCH 1/3] powerpc: Restore the PReP platform
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Revert 933ee7119fb1 ("powerpc: remove PReP platform") and b858a97bf053
+("vga16fb: drop powerpc support") and port the PowerPC Reference Platform
+support of the former arch/ppc to arch/powerpc, primarily for the Motorola
+PowerStack (Blackhawk).
+
+Bootwrapper, dtbImage.prep:
+ - the firmware loads the image anywhere and enters it with r3 pointing to
+   the residual data; prep-head.S copies that while still in the firmware's
+   MMU state (OpenBIOS enters translated), drops to real mode with the data
+   cache off, so ISA I/O at 0x80000000 is not cached, and moves the image to
+   its link address, kept above the kernel including its bss
+ - prep.c sizes memory from the MPC105/106/107 or the residual data, sets the
+   CPU clocks and timebase, passes the residual data as /prep,residual-data
+   and takes bootargs from the PReP NVRAM
+ - mkprep writes the bootable 0x41 partition image
+
+Platform:
+ - residual data from the device tree, bounds checked by its length, for the
+   PCI config method, PCI interrupts, IRQ sense and the 8259 interrupt
+   acknowledge address, exported as /proc/residual
+ - PCI host bridge at discover_phbs time, the legacy ISA ports are mapped
+   early from the device tree ranges for i8259 and board setup
+ - Motorola and IBM board PCI IRQ tables and SIO PIRQ/ELCR programming
+ - timebase from the device tree, or calibrated against the RTC
+ - M48T59 (Motorola) or MC146818 (IBM) RTC platform devices
+ - L2 enable, restart via port 92, IBM Signetics 87c750 power off
+
+Adapted to the current tree: 6xx is PPC_BOOK3S_32 and PPC_NATIVE is
+PPC_HASH_MMU_NATIVE, Documentation/powerpc moved to Documentation/arch/powerpc,
+maple is not re-added.  The powerpc screen_info global, the TASK_SIZE default
+and the cirrusfb PReP address hack are not restored; the latter two relied on
+the arch/ppc fixed I/O block mappings.
+
+Motorola Raven/Hawk boards with OpenPIC and SMP are not supported.
+
+Tested with QEMU -M 40p through the OpenBIOS PReP boot.  The Motorola board
+paths have not run yet.
+
+Signed-off-by: René Rebe <rene@exactco.de>
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ Documentation/arch/powerpc/sound.txt         |  81 ++++
+ Documentation/arch/powerpc/zImage_layout.txt |  47 ++
+ arch/powerpc/Kconfig                         |   6 +-
+ arch/powerpc/boot/.gitignore                 |   1 +
+ arch/powerpc/boot/Makefile                   |   7 +-
+ arch/powerpc/boot/dts/prep.dts               | 111 +++++
+ arch/powerpc/boot/mkprep.c                   | 107 +++++
+ arch/powerpc/boot/prep-head.S                | 205 +++++++++
+ arch/powerpc/boot/prep.c                     | 229 ++++++++++
+ arch/powerpc/boot/wrapper                    |  19 +
+ arch/powerpc/include/asm/dma.h               |   5 +
+ arch/powerpc/include/asm/io.h                |   4 +
+ arch/powerpc/include/asm/prep-residual.h     | 201 +++++++++
+ arch/powerpc/include/asm/processor.h         |   9 +-
+ arch/powerpc/kernel/setup-common.c           |   6 +
+ arch/powerpc/platforms/Kconfig               |   1 +
+ arch/powerpc/platforms/Makefile              |   1 +
+ arch/powerpc/platforms/prep/Kconfig          |  16 +
+ arch/powerpc/platforms/prep/Makefile         |   2 +
+ arch/powerpc/platforms/prep/pci.c            | 450 +++++++++++++++++++
+ arch/powerpc/platforms/prep/prep.h           |  34 ++
+ arch/powerpc/platforms/prep/residual.c       | 285 ++++++++++++
+ arch/powerpc/platforms/prep/setup.c          | 391 ++++++++++++++++
+ drivers/pnp/pnpbios/core.c                   |   9 +-
+ drivers/video/fbdev/Kconfig                  |   2 +-
+ drivers/video/fbdev/cirrusfb.c               |  30 +-
+ drivers/video/fbdev/vga16fb.c                |   9 +-
+ 27 files changed, 2253 insertions(+), 15 deletions(-)
+ create mode 100644 Documentation/arch/powerpc/sound.txt
+ create mode 100644 Documentation/arch/powerpc/zImage_layout.txt
+ create mode 100644 arch/powerpc/boot/dts/prep.dts
+ create mode 100644 arch/powerpc/boot/mkprep.c
+ create mode 100644 arch/powerpc/boot/prep-head.S
+ create mode 100644 arch/powerpc/boot/prep.c
+ create mode 100644 arch/powerpc/include/asm/prep-residual.h
+ create mode 100644 arch/powerpc/platforms/prep/Kconfig
+ create mode 100644 arch/powerpc/platforms/prep/Makefile
+ create mode 100644 arch/powerpc/platforms/prep/pci.c
+ create mode 100644 arch/powerpc/platforms/prep/prep.h
+ create mode 100644 arch/powerpc/platforms/prep/residual.c
+ create mode 100644 arch/powerpc/platforms/prep/setup.c
+
+diff --git a/Documentation/arch/powerpc/sound.txt b/Documentation/arch/powerpc/sound.txt
+new file mode 100644
+index 000000000000..df23d95e03a0
+--- /dev/null
++++ b/Documentation/arch/powerpc/sound.txt
+@@ -0,0 +1,81 @@
++            Information about PowerPC Sound support
++=====================================================================
++
++Please mail me (Cort Dougan, cort@fsmlabs.com) if you have questions,
++comments or corrections.
++
++Last Change: 6.16.99
++
++This just covers sound on the PReP and CHRP systems for now and later
++will contain information on the PowerMac's.
++
++Sound on PReP has been tested and is working with the PowerStack and IBM
++Power Series onboard sound systems which are based on the cs4231(2) chip.
++The sound options when doing the make config are a bit different from
++the default, though.
++
++The I/O base, irq and dma lines that you enter during the make config
++are ignored and are set when booting according to the machine type.
++This is so that one binary can be used for Motorola and IBM machines
++which use different values and isn't allowed by the driver, so things
++are hacked together in such a way as to allow this information to be
++set automatically on boot.
++
++1. Motorola PowerStack PReP machines
++
++  Enable support for "Crystal CS4232 based (PnP) cards" and for the
++  Microsoft Sound System.  The MSS isn't used, but some of the routines
++  that the CS4232 driver uses are in it.
++
++  Although the options you set are ignored and determined automatically
++  on boot these are included for information only:
++
++  (830) CS4232 audio I/O base 530, 604, E80 or F40
++  (10) CS4232 audio IRQ 5, 7, 9, 11, 12 or 15
++  (6) CS4232 audio DMA 0, 1 or 3
++  (7) CS4232 second (duplex) DMA 0, 1 or 3
++
++  This will allow simultaneous record and playback, as 2 different dma
++  channels are used.
++
++  The sound will be all left channel and very low volume since the
++  auxiliary input isn't muted by default.  I had the changes necessary
++  for this in the kernel but the sound driver maintainer didn't want
++  to include them since it wasn't common in other machines.  To fix this
++  you need to mute it using a mixer utility of some sort (if you find one
++  please let me know) or by patching the driver yourself and recompiling.
++
++  There is a problem on the PowerStack 2's (PowerStack Pro's) using a
++  different irq/drq than the kernel expects.  Unfortunately, I don't know
++  which irq/drq it is so if anyone knows please email me.
++
++  Midi is not supported since the cs4232 driver doesn't support midi yet.
++
++2. IBM PowerPersonal PReP machines
++
++  I've only tested sound on the Power Personal Series of IBM workstations
++  so if you try it on others please let me know the result.  I'm especially
++  interested in the 43p's sound system, which I know nothing about.
++
++  Enable support for "Crystal CS4232 based (PnP) cards" and for the
++  Microsoft Sound System.  The MSS isn't used, but some of the routines
++  that the CS4232 driver uses are in it.
++
++  Although the options you set are ignored and determined automatically
++  on boot these are included for information only:
++
++  (530) CS4232 audio I/O base 530, 604, E80 or F40
++  (5) CS4232 audio IRQ 5, 7, 9, 11, 12 or 15
++  (1) CS4232 audio DMA 0, 1 or 3
++  (7) CS4232 second (duplex) DMA 0, 1 or 3
++  (330) CS4232 MIDI I/O base 330, 370, 3B0 or 3F0
++  (9) CS4232 MIDI IRQ 5, 7, 9, 11, 12 or 15
++
++  This setup does _NOT_ allow for recording yet.
++
++  Midi is not supported since the cs4232 driver doesn't support midi yet.
++
++2. IBM CHRP
++
++  I have only tested this on the 43P-150.  Build the kernel with the cs4232
++  set as a module and load the module with irq=9 dma=1 dma2=2 io=0x550
+diff --git a/Documentation/arch/powerpc/zImage_layout.txt b/Documentation/arch/powerpc/zImage_layout.txt
+new file mode 100644
+index 000000000000..048e0150f571
+--- /dev/null
++++ b/Documentation/arch/powerpc/zImage_layout.txt
+@@ -0,0 +1,47 @@
++          Information about the Linux/PPC kernel images
++=====================================================================
++
++Please mail me (Cort Dougan, cort@fsmlabs.com) if you have questions,
++comments or corrections.
++
++This document is meant to answer several questions I've had about how
++the PReP system boots and how Linux/PPC interacts with that mechanism.
++It would be nice if we could have information on how other architectures
++boot here as well.  If you have anything to contribute, please
++let me know.
++
++
++1. PReP boot file
++
++  This is the file necessary to boot PReP systems from floppy or
++  hard drive.  The firmware reads the PReP partition table entry
++  and will load the image accordingly.
++
++  To boot the zImage, copy it onto a floppy with dd if=zImage of=/dev/fd0h1440
++  or onto a PReP hard drive partition with dd if=zImage of=/dev/sda4
++  assuming you've created a PReP partition (type 0x41) with fdisk on
++  /dev/sda4.
++
++  The layout of the image format is:
++
++  0x0     +------------+
++          |            | PReP partition table entry
++          |            |
++  0x400   +------------+
++          |            | Bootstrap program code + data
++          |            |
++          |            |
++          +------------+
++          |            | compressed kernel, elf header removed
++          +------------+
++          |            | initrd (if loaded)
++          +------------+
++          |            | Elf section table for bootstrap program
++          +------------+
++
++
++2. MBX boot file
++
++  The MBX boards can load an elf image, and relocate it to the
++  proper location in memory - it copies the image to the location it was
++  linked at.
+diff --git a/arch/powerpc/Kconfig b/arch/powerpc/Kconfig
+index c3b6cd655606..9761c266ae8f 100644
+--- a/arch/powerpc/Kconfig
++++ b/arch/powerpc/Kconfig
+@@ -1086,14 +1086,14 @@ menu "Bus options"
+ 
+ config ISA
+ 	bool "Support for ISA-bus hardware"
+-	depends on PPC_CHRP
++	depends on PPC_PREP || PPC_CHRP
+ 	select PPC_I8259
+ 	help
+ 	  Find out whether you have ISA slots on your motherboard.  ISA is the
+ 	  name of a bus system, i.e. the way the CPU talks to the other stuff
+ 	  inside your box.  If you have an Apple machine, say N here; if you
+-	  have an IBM RS/6000 or pSeries machine, say Y.  If you have an
+-	  embedded board, consult your board documentation.
++	  have an IBM RS/6000 or pSeries machine or a PReP machine, say Y.  If
++	  you have an embedded board, consult your board documentation.
+ 
+ config GENERIC_ISA_DMA
+ 	bool
+diff --git a/arch/powerpc/boot/.gitignore b/arch/powerpc/boot/.gitignore
+index 5a867f23fe7f..538cc49ff85f 100644
+--- a/arch/powerpc/boot/.gitignore
++++ b/arch/powerpc/boot/.gitignore
+@@ -14,6 +14,7 @@ infutil.c
+ infutil.h
+ kernel-vmlinux.strip.c
+ kernel-vmlinux.strip.gz
++mkprep
+ mktree
+ otheros.bld
+ otheros-too-big.bld
+diff --git a/arch/powerpc/boot/Makefile b/arch/powerpc/boot/Makefile
+index 7ee0fa2d3371..ded50e698d4f 100644
+--- a/arch/powerpc/boot/Makefile
++++ b/arch/powerpc/boot/Makefile
+@@ -177,6 +177,7 @@ src-plat-$(CONFIG_PPC_POWERNV) += pseries-head.S
+ src-plat-$(CONFIG_MVME7100) += motload-head.S mvme7100.c
+ 
+ src-plat-$(CONFIG_PPC_MICROWATT) += fixed-head.S microwatt.c
++src-plat-$(CONFIG_PPC_PREP) += prep-head.S prep.c
+ 
+ src-wlib := $(sort $(src-wlib-y))
+ src-plat := $(sort $(src-plat-y))
+@@ -240,7 +241,7 @@ $(patsubst %.S,%.o, $(filter %.S, $(src-boot))): %.o: %.S FORCE
+ $(obj)/wrapper.a: $(obj-wlib) FORCE
+ 	$(call if_changed,bootar)
+ 
+-hostprogs	:= addnote hack-coff mktree
++hostprogs	:= addnote hack-coff mkprep mktree
+ 
+ targets		+= $(patsubst $(obj)/%,%,$(obj-boot) wrapper.a) zImage.lds
+ always-y	:= $(obj)/wrapper.a $(obj-plat) $(obj)/empty.o \
+@@ -249,7 +250,7 @@ always-y	:= $(obj)/wrapper.a $(obj-plat) $(obj)/empty.o \
+ dtstree		:= $(src)/dts
+ 
+ wrapper		:= $(src)/wrapper
+-wrapperbits	:= $(always-y) $(addprefix $(obj)/,addnote hack-coff mktree) \
++wrapperbits	:= $(always-y) $(addprefix $(obj)/,addnote hack-coff mkprep mktree) \
+ 			$(wrapper) FORCE
+ 
+ #############
+@@ -353,6 +354,8 @@ image-$(CONFIG_AMIGAONE)		+= cuImage.amigaone
+ 
+ image-$(CONFIG_PPC_MICROWATT)		+= dtbImage.microwatt
+ 
++image-$(CONFIG_PPC_PREP)		+= dtbImage.prep
++
+ # For 32-bit powermacs, build the COFF and miboot images
+ # as well as the ELF images.
+ ifdef CONFIG_PPC32
+diff --git a/arch/powerpc/boot/dts/prep.dts b/arch/powerpc/boot/dts/prep.dts
+new file mode 100644
+index 000000000000..53d7608f7f19
+--- /dev/null
++++ b/arch/powerpc/boot/dts/prep.dts
+@@ -0,0 +1,111 @@
++// SPDX-License-Identifier: GPL-2.0
++/*
++ * PReP (PowerPC Reference Platform) machines with i8259, PReP memory map.
++ *
++ * Memory, CPU clocks, the model and the firmware residual data are filled
++ * in by the dtbImage.prep bootwrapper.
++ *
++ * Copyright (C) 2026 René Rebe <rene@exactco.de>
++ */
++
++/dts-v1/;
++
++/ {
++	model = "PReP";
++	compatible = "prep";
++	#address-cells = <1>;
++	#size-cells = <1>;
++
++	aliases {
++		serial0 = &serial0;
++		serial1 = &serial1;
++		pci0 = &pci0;
++	};
++
++	cpus {
++		#address-cells = <1>;
++		#size-cells = <0>;
++
++		cpu@0 {
++			device_type = "cpu";
++			reg = <0>;
++		};
++	};
++
++	memory@0 {
++		device_type = "memory";
++		reg = <0 0>;
++	};
++
++	chosen {
++		stdout-path = &serial0;
++	};
++
++	pci0: pci@80000cf8 {
++		compatible = "prep-pci";
++		device_type = "pci";
++		#address-cells = <3>;
++		#size-cells = <2>;
++		/* indirect config address/data, may be overridden by residual data */
++		reg = <0x80000cf8 4 0x80000cfc 4>;
++		bus-range = <0 255>;
++		/* I/O at 0x80000000, memory at 0xc0000000, see PReP spec 6.1 */
++		ranges = <0x01000000 0 0x00000000 0x80000000 0 0x00800000
++			  0x02000000 0 0x00000000 0xc0000000 0 0x3f000000>;
++
++		isa {
++			compatible = "isa";
++			device_type = "isa";
++			#address-cells = <2>;
++			#size-cells = <1>;
++			ranges = <1 0 0x01000000 0 0 0x00010000
++				  0 0 0x02000000 0 0 0x01000000>;
++			interrupt-parent = <&i8259>;
++
++			i8259: interrupt-controller@i20 {
++				compatible = "pnpPNP,000", "chrp,iic";
++				device_type = "interrupt-controller";
++				reg = <1 0x20 2 1 0xa0 2 1 0x4d0 2>;
++				interrupt-controller;
++				#address-cells = <0>;
++				#interrupt-cells = <2>;
++			};
++
++			speaker@i61 {
++				compatible = "pnpPNP,100";
++				reg = <1 0x61 1>;
++			};
++
++			8042@i60 {
++				device_type = "8042";
++				reg = <1 0x60 1 1 0x64 1>;
++				interrupts = <1 3 12 3>;
++			};
++
++			serial0: serial@i3f8 {
++				device_type = "serial";
++				compatible = "pnpPNP,501", "ns16550";
++				reg = <1 0x3f8 8>;
++				virtual-reg = <0x800003f8>;
++				clock-frequency = <1843200>;
++				interrupts = <4 3>;
++			};
++
++			serial1: serial@i2f8 {
++				device_type = "serial";
++				compatible = "pnpPNP,501", "ns16550";
++				reg = <1 0x2f8 8>;
++				virtual-reg = <0x800002f8>;
++				clock-frequency = <1843200>;
++				interrupts = <3 3>;
++			};
++
++			fdc@i3f0 {
++				device_type = "fdc";
++				compatible = "pnpPNP,700";
++				reg = <1 0x3f0 8>;
++				interrupts = <6 3>;
++			};
++		};
++	};
++};
+diff --git a/arch/powerpc/boot/mkprep.c b/arch/powerpc/boot/mkprep.c
+new file mode 100644
+index 000000000000..b4a6d0b0d1db
+--- /dev/null
++++ b/arch/powerpc/boot/mkprep.c
+@@ -0,0 +1,107 @@
++// SPDX-License-Identifier: GPL-2.0
++/*
++ * Make a PReP boot partition image from a raw binary bootwrapper, to be
++ * dd'd onto a type 0x41 PReP boot partition, a disk or a floppy.
++ *
++ * Based on the former arch/ppc/boot/utils/mkprep.c by Cort Dougan,
++ * Matt Porter and Peter Wahl.
++ *
++ * Copyright (C) 2026 René Rebe <rene@exactco.de>
++ */
++
++#include <stdio.h>
++#include <stdlib.h>
++#include <string.h>
++
++#define PREP_IMAGE_OFFSET	0x400
++#define PREP_PART_TABLE		0x1be
++#define PREP_BOOT_ACTIVE	0x80
++#define PREP_SYSTEM_PREP	0x41
++
++static void store_le32(unsigned int v, unsigned char *p)
++{
++	p[0] = v;
++	p[1] = v >> 8;
++	p[2] = v >> 16;
++	p[3] = v >> 24;
++}
++
++int main(int argc, char *argv[])
++{
++	unsigned char hdr[PREP_IMAGE_OFFSET], *pe = hdr + PREP_PART_TABLE;
++	unsigned char buf[4096];
++	FILE *in, *out;
++	long size;
++	size_t n;
++
++	if (argc != 3) {
++		fprintf(stderr, "usage: %s <binary> <prep-image>\n", argv[0]);
++		return 1;
++	}
++
++	in = fopen(argv[1], "rb");
++	if (!in || fseek(in, 0, SEEK_END)) {
++		perror(argv[1]);
++		return 1;
++	}
++	size = ftell(in);
++	if (size < 0 || fseek(in, 0, SEEK_SET)) {
++		perror(argv[1]);
++		return 1;
++	}
++	if (size > 0xffffffffL - PREP_IMAGE_OFFSET) {
++		fprintf(stderr, "%s: image too large\n", argv[1]);
++		return 1;
++	}
++
++	memset(hdr, 0, sizeof(hdr));
++
++	/* entry point and load image size, in the boot record ... */
++	store_le32(PREP_IMAGE_OFFSET, hdr);
++	store_le32(size + PREP_IMAGE_OFFSET, hdr + 4);
++
++	/* a single active PReP partition, CHS as for a 1.44MB floppy */
++	pe[0] = PREP_BOOT_ACTIVE;
++	pe[1] = 0;
++	pe[2] = 2;
++	pe[3] = 0;
++	pe[4] = PREP_SYSTEM_PREP;
++	pe[5] = 1;
++	pe[6] = 18;
++	pe[7] = 79;
++	/* the PowerStack requires the partition to start at sector 0 */
++	store_le32(0, pe + 8);
++	/* firmware may only read the image within the partition */
++	store_le32((size + PREP_IMAGE_OFFSET + 511) / 512, pe + 12);
++
++	hdr[510] = 0x55;
++	hdr[511] = 0xaa;
++
++	/* ... and again in the second sector */
++	memcpy(hdr + 512, hdr, 8);
++
++	out = fopen(argv[2], "wb");
++	if (!out) {
++		perror(argv[2]);
++		return 1;
++	}
++	if (fwrite(hdr, sizeof(hdr), 1, out) != 1)
++		goto write_error;
++
++	while ((n = fread(buf, 1, sizeof(buf), in)) > 0)
++		if (fwrite(buf, 1, n, out) != n)
++			goto write_error;
++	if (ferror(in)) {
++		perror(argv[1]);
++		return 1;
++	}
++
++	fclose(in);
++	if (fclose(out))
++		goto write_error;
++	return 0;
++
++write_error:
++	perror(argv[2]);
++	return 1;
++}
+diff --git a/arch/powerpc/boot/prep-head.S b/arch/powerpc/boot/prep-head.S
+new file mode 100644
+index 000000000000..692dd6ad1555
+--- /dev/null
++++ b/arch/powerpc/boot/prep-head.S
+@@ -0,0 +1,205 @@
++/* SPDX-License-Identifier: GPL-2.0 */
++/*
++ * PReP boot image entry.
++ *
++ * The firmware loads the image at an arbitrary address and enters it with
++ * r3 pointing to the residual data, usually in real mode.  Like the former
++ * arch/ppc/boot/simple/head.S and relocate.S we run with the data cache
++ * disabled, so ISA I/O at 0x80000000 is not cached in real mode.  The
++ * residual data is copied above the image and the wrapper, then the image
++ * is moved to its link address by a stub copied above both, and we enter
++ * the generic crt0 with r3 = residual copy (or 0) and r4 = first free byte.
++ *
++ * Copyright (C) 2026 René Rebe <rene@exactco.de>
++ */
++
++#include "ppc_asm.h"
++
++#define MSR_FP		0x2000
++#define MSR_IP		0x0040
++#define SPRN_HID0	1008
++#define HID0_ICE	0x8000
++#define HID0_DCE	0x4000
++#define HID0_ICFI	0x0800
++#define HID0_DCI	0x0400
++#define L1_LINE		32
++#define RES_MAX		0x00100000	/* sanity limit of the residual length */
++
++	.text
++	.globl	_zimage_start
++_zimage_start:
++	mr	r31,r3
++
++	/* r30 = runtime - link offset */
++	bcl	20,31,1f
++1:	mflr	r30
++	lis	r8,1b@ha
++	addi	r8,r8,1b@l
++	subf	r30,r8,r30
++
++	lis	r29,_start@ha		/* r29 = destination (link address) */
++	addi	r29,r29,_start@l
++	add	r28,r29,r30		/* r28 = source (load address) */
++	lis	r27,__bss_start@ha	/* r27 = image size, word aligned */
++	addi	r27,r27,__bss_start@l
++	subf	r27,r29,r27
++	addi	r27,r27,3
++	rlwinm	r27,r27,0,0,29
++
++	/* r26 = residual length, r31 = 0 if there is no usable residual data */
++	li	r26,0
++	cmpwi	r31,0
++	beq	2f
++	lwz	r26,0(r31)
++	cmpwi	r26,0
++	beq	2f
++	lis	r8,RES_MAX@h
++	cmplw	r26,r8
++	ble	3f
++2:	li	r31,0
++	li	r26,0
++3:
++	/* r25 = max(load end, link _end), page aligned */
++	add	r25,r28,r27
++	lis	r8,_end@ha
++	addi	r8,r8,_end@l
++	cmplw	r8,r25
++	ble	4f
++	mr	r25,r8
++4:	addi	r25,r25,4095
++	rlwinm	r25,r25,0,0,19
++
++	/* move behind the residual data only if it overlaps the copies */
++	add	r8,r31,r26
++	cmplw	r8,r25
++	ble	5f
++	add	r9,r25,r26
++	addi	r9,r9,4096
++	cmplw	r31,r9
++	bge	5f
++	addi	r25,r8,4095
++	rlwinm	r25,r25,0,0,19
++5:
++
++	/* r24 = residual copy */
++	li	r24,0
++	cmpwi	r26,0
++	beq	7f
++	mr	r24,r25
++	mtctr	r26
++	addi	r3,r31,-1
++	addi	r4,r24,-1
++6:	lbzu	r0,1(r3)
++	stbu	r0,1(r4)
++	bdnz	6b
++7:
++	/*
++	 * Real mode from here.  Open Firmware (e.g. OpenBIOS on the 40p)
++	 * enters with the MMU on and the residual data in its virtually
++	 * mapped heap, so it was copied above while still translated.
++	 */
++	li	r8,MSR_IP|MSR_FP
++	mtmsr	r8
++	isync
++
++	/* write back what may still be in the data cache */
++	mr	r3,r28
++	mr	r4,r27
++	bl	dflush
++	mr	r3,r24
++	mr	r4,r26
++	bl	dflush
++
++	/* invalidate and disable the L1 caches */
++	li	r11,0
++	ori	r11,r11,HID0_ICE|HID0_DCE|HID0_ICFI|HID0_DCI
++	mfspr	r8,SPRN_HID0
++	or	r9,r8,r11
++	andc	r10,r8,r11
++	sync
++	isync
++	mtspr	SPRN_HID0,r9
++	sync
++	isync
++	mtspr	SPRN_HID0,r10
++	sync
++	isync
++
++	/* r23 = mover stub copy, behind the residual copy */
++	add	r23,r25,r26
++	addi	r23,r23,L1_LINE-1
++	rlwinm	r23,r23,0,0,31-5
++	lis	r3,move_start@ha
++	addi	r3,r3,move_start@l
++	lis	r4,move_end@ha
++	addi	r4,r4,move_end@l
++	subf	r4,r3,r4
++	add	r3,r3,r30
++	srwi	r4,r4,2
++	mtctr	r4
++	addi	r3,r3,-4
++	addi	r4,r23,-4
++8:	lwzu	r0,4(r3)
++	stwu	r0,4(r4)
++	bdnz	8b
++	addi	r22,r4,4		/* r22 = first free byte */
++
++	/* the stub was written by data stores */
++	sync
++	isync
++	mtctr	r23
++	bctr
++
++/* r3 = start, r4 = length */
++dflush:
++	cmpwi	r4,0
++	beqlr
++	add	r4,r3,r4
++	rlwinm	r3,r3,0,0,31-5
++1:	dcbf	0,r3
++	addi	r3,r3,L1_LINE
++	cmplw	r3,r4
++	blt	1b
++	sync
++	blr
++
++/* Position independent: copy r27 bytes from r28 to r29, memmove style. */
++	.balign	4
++move_start:
++	cmplw	r28,r29
++	beq	3f
++	srwi	r0,r27,2
++	mtctr	r0
++	blt	2f
++	addi	r3,r28,-4
++	addi	r4,r29,-4
++1:	lwzu	r0,4(r3)
++	stwu	r0,4(r4)
++	bdnz	1b
++	b	3f
++2:	add	r3,r28,r27
++	add	r4,r29,r27
++1:	lwzu	r0,-4(r3)
++	stwu	r0,-4(r4)
++	bdnz	1b
++3:	/* enable the instruction cache, the data cache stays off */
++	mfspr	r8,SPRN_HID0
++	ori	r9,r8,HID0_ICE|HID0_ICFI
++	sync
++	isync
++	mtspr	SPRN_HID0,r9
++	isync
++	li	r10,HID0_ICFI
++	andc	r9,r9,r10
++	mtspr	SPRN_HID0,r9
++	isync
++
++	mr	r3,r24
++	mr	r4,r22
++	li	r5,0
++	lis	r8,_zimage_start_lib@ha
++	addi	r8,r8,_zimage_start_lib@l
++	mtctr	r8
++	bctr
++	.balign	4
++move_end:
+diff --git a/arch/powerpc/boot/prep.c b/arch/powerpc/boot/prep.c
+new file mode 100644
+index 000000000000..72def965badb
+--- /dev/null
++++ b/arch/powerpc/boot/prep.c
+@@ -0,0 +1,229 @@
++// SPDX-License-Identifier: GPL-2.0
++/*
++ * PReP (PowerPC Reference Platform) bootwrapper.
++ *
++ * Based on the former arch/ppc/boot/simple/misc-prep.c, mpc10x_memory.c
++ * and arch/ppc/syslib/prep_nvram.c (Gary Thomas, Cort Dougan, Tom Rini,
++ * Mark A. Greer, Corey Minyard).
++ *
++ * Copyright (C) 2026 René Rebe <rene@exactco.de>
++ */
++
++#include "types.h"
++#include "ops.h"
++#include "io.h"
++#include "stdio.h"
++#include "../include/asm/prep-residual.h"
++
++BSS_STACK(8192);
++
++static struct prep_residual *res;
++static u32 res_len;
++static unsigned long mem_size;
++
++/* PReP NVRAM header, see the former include/asm-ppc/prep_nvram.h */
++struct prep_nvram_header {
++	u16	size;
++	u8	version;
++	u8	revision;
++	u16	crc1;
++	u16	crc2;
++	u8	last_os;
++	u8	endian;
++	u8	os_area_usage;
++	u8	pm_mode;
++	u8	restart_block[32];
++	u8	security[72];
++	u8	error_log[2][40];
++	u32	ge_address;
++	u32	ge_length;
++};
++
++#define PREP_NVRAM_MAX		0x8000
++
++static u8 isa_inb(unsigned int port)
++{
++	return in_8((u8 *)(PREP_ISA_IO_BASE + port));
++}
++
++static void isa_outb(unsigned int port, u8 val)
++{
++	out_8((u8 *)(PREP_ISA_IO_BASE + port), val);
++}
++
++static u32 pci_cfg_read32(u8 devfn, u8 off)
++{
++	out_le32((u32 *)PREP_PCI_CFG_ADDR, 0x80000000 | (devfn << 8) | (off & 0xfc));
++	return in_le32((u32 *)PREP_PCI_CFG_DATA);
++}
++
++/* Sum up the enabled MPC105/106/107 memory banks. */
++static unsigned long mpc10x_mem_size(void)
++{
++	u32 id = pci_cfg_read32(0, 0);
++	unsigned long total = 0;
++	u8 enables;
++	int i;
++
++	/* MPC105, MPC106, MPC107 */
++	if ((id & 0xffff) != 0x1057 ||
++	    ((id >> 16) != 1 && (id >> 16) != 2 && (id >> 16) != 4))
++		return 0;
++
++	enables = pci_cfg_read32(0, 0xa0) & 0xff;
++	for (i = 0; i < 8; i++) {
++		int bank = 4 * (i > 3), shift = (i & 3) * 8;
++		unsigned long start, end;
++
++		if (!(enables & (1 << i)))
++			continue;
++
++		start = (pci_cfg_read32(0, 0x80 + bank) >> shift) & 0xff;
++		start |= ((pci_cfg_read32(0, 0x88 + bank) >> shift) & 0x03) << 8;
++		end = (pci_cfg_read32(0, 0x90 + bank) >> shift) & 0xff;
++		end |= ((pci_cfg_read32(0, 0x98 + bank) >> shift) & 0x03) << 8;
++		total += ((end - start) + 1) << 20;
++	}
++
++	return total;
++}
++
++static u8 nvram_read(unsigned int addr)
++{
++	isa_outb(PREP_NVRAM_AS0, addr);
++	isa_outb(PREP_NVRAM_AS1, addr >> 8);
++	return isa_inb(PREP_NVRAM_DATA);
++}
++
++/* Look up a variable in the NVRAM global environment area. */
++static char *prep_nvram_get_var(const char *name)
++{
++	struct prep_nvram_header hdr;
++	unsigned int size, namelen = strlen(name), i;
++	u8 *p = (u8 *)&hdr;
++	char *ge, *cp;
++
++	for (i = 0; i < sizeof(hdr); i++)
++		p[i] = nvram_read(i);
++
++	size = res && res->vpd.nvram_size ? res->vpd.nvram_size : PREP_NVRAM_MAX;
++	if (!hdr.ge_length || hdr.ge_address < sizeof(hdr) ||
++	    hdr.ge_length > size || hdr.ge_address > size - hdr.ge_length)
++		return NULL;
++
++	ge = malloc(hdr.ge_length + 1);
++	if (!ge)
++		return NULL;
++	for (i = 0; i < hdr.ge_length; i++)
++		ge[i] = nvram_read(hdr.ge_address + i);
++	ge[hdr.ge_length] = '\0';
++
++	/* NUL separated name=value strings */
++	for (cp = ge; cp < ge + hdr.ge_length; cp += strlen(cp) + 1) {
++		if (!strncmp(cp, name, namelen) && cp[namelen] == '=')
++			return cp + namelen + 1;
++	}
++
++	free(ge);
++	return NULL;
++}
++
++/* Stop the onboard 21x4x of Motorola PPCBug, it may still DMA from netboot. */
++static void prep_mot_reset_tulip(void)
++{
++	u32 id = pci_cfg_read32(0x70, 0), bar;
++	u16 dev = id >> 16;
++
++	if ((id & 0xffff) != 0x1011 ||
++	    (dev != 0x0002 && dev != 0x0009 && dev != 0x0014 && dev != 0x0019))
++		return;
++
++	bar = pci_cfg_read32(0x70, 0x10);
++	if (!(bar & 1))
++		return;
++	out_le32((u32 *)(PREP_ISA_IO_BASE + (bar & ~3)), 1);
++}
++
++extern u32 __div64_32(u64 *dividend, u32 divisor);
++
++static u32 hz(u32 val)
++{
++	/* some firmware reports MHz */
++	return val && val <= 1024 ? val * 1000000 : val;
++}
++
++static void prep_fixups(void)
++{
++	void *root = finddevice("/");
++	void *chosen;
++	char *bootargs;
++
++	dt_fixup_memory(0, mem_size);
++
++	if (res) {
++		u32 cpu = hz(res->vpd.processor_hz);
++		u32 bus = hz(res->vpd.processor_bus_hz);
++		char model[sizeof(res->vpd.printable_model) + 1];
++
++		memcpy(model, res->vpd.printable_model, sizeof(model) - 1);
++		model[sizeof(model) - 1] = '\0';
++		printf("PReP residual data: %s, %d bytes\n\r", model, res_len);
++		if (model[0])
++			setprop_str(root, "model", model);
++
++		/* bus clocks per timebase tick * 1000, 0: assume 4 */
++		if (bus) {
++			u64 tb = (u64)bus * 1000;
++			u32 div = res->vpd.time_base_divisor ?: 4000;
++
++			__div64_32(&tb, div);
++			dt_fixup_cpu_clocks(cpu, tb, bus);
++		}
++
++		if (res->actual_num_cpus > 1)
++			printf("PReP: %d CPUs, SMP is not supported, using CPU 0\n\r",
++			       res->actual_num_cpus);
++
++		setprop(root, "prep,residual-data", res, res_len);
++	}
++
++	/* node offsets change with the properties added above */
++	chosen = finddevice("/chosen");
++	if (chosen && getprop(chosen, "bootargs", NULL, 0) <= 1) {
++		bootargs = prep_nvram_get_var("bootargs");
++		if (bootargs && bootargs[0])
++			setprop_str(chosen, "bootargs", bootargs);
++	}
++}
++
++void platform_init(unsigned long r3, unsigned long r4, unsigned long r5)
++{
++	unsigned long heap = (unsigned long)_end;
++
++	if (r3) {
++		res = (struct prep_residual *)r3;
++		res_len = res->residual_length;
++	}
++	if (r4 > heap)
++		heap = r4;
++	heap = (heap + 4095) & ~4095UL;
++
++	mem_size = mpc10x_mem_size();
++	if (!mem_size && res)
++		mem_size = res->total_memory;
++	if (!mem_size)
++		mem_size = 32 << 20;
++
++	if (res && res->vpd.firmware_supplier == PREP_FW_MOTOROLA &&
++	    (res->vpd.firmware_supports & PREP_FW_CONVENTIONAL))
++		prep_mot_reset_tulip();
++
++	/* no console yet, nothing sane to continue with */
++	if (heap >= mem_size)
++		exit();
++
++	simple_alloc_init((char *)heap, mem_size - heap, 32, 64);
++	fdt_init(_dtb_start);
++	platform_ops.fixups = prep_fixups;
++	serial_console_init();
++}
+diff --git a/arch/powerpc/boot/wrapper b/arch/powerpc/boot/wrapper
+index 25321ce262e8..f7616fd05093 100755
+--- a/arch/powerpc/boot/wrapper
++++ b/arch/powerpc/boot/wrapper
+@@ -376,6 +376,10 @@ mvme5100)
+     platformo="$object/fixed-head.o $object/mvme5100.o"
+     binary=y
+     ;;
++prep)
++    platformo="$object/prep-head.o $object/prep.o"
++    binary=y
++    ;;
+ mvme7100)
+     platformo="$object/motload-head.o $object/mvme7100.o"
+     link_address='0x4000000'
+@@ -437,6 +441,16 @@ if [ "$make_space" = "y" ]; then
+ 	fi
+ fi
+ 
++# The PReP wrapper moves itself to its link address, keep it above the kernel bss
++if [ "$platform" = "prep" ]; then
++    kend=0x$(${CROSS}nm "$kernel" | grep ' _end$' | cut -d' ' -f1)
++    kbase=$(${CROSS}objdump -p "$kernel" | grep -m 1 LOAD | awk '{print $5}')
++    kmem=$(((kend - kbase + 0xfffff) & ~0xfffff))
++    if [ $(printf "%d" $link_address) -lt $kmem ]; then
++	link_address=0x$(printf "%x" $kmem)
++    fi
++fi
++
+ # Extract kernel version information, some platforms want to include
+ # it in the image header
+ version=`${CROSS}strings "$kernel" | grep '^Linux version [-0-9.]' | \
+@@ -519,6 +533,11 @@ cuboot*)
+     ${MKIMAGE} -A ppc -O linux -T kernel -C gzip -a "$base" -e "$entry" \
+             $uboot_version -d "$ofile".gz "$ofile"
+     ;;
++prep)
++    mv "$ofile" "$ofile.bin"
++    $objbin/mkprep "$ofile.bin" "$ofile"
++    rm -f "$ofile.bin"
++    ;;
+ treeboot*)
+     mv "$ofile" "$ofile.elf"
+     $objbin/mktree "$ofile.elf" "$ofile" "$base" "$entry"
+diff --git a/arch/powerpc/include/asm/dma.h b/arch/powerpc/include/asm/dma.h
+index d97c66d9ae34..51868b91419c 100644
+--- a/arch/powerpc/include/asm/dma.h
++++ b/arch/powerpc/include/asm/dma.h
+@@ -17,6 +17,10 @@
+  *
+  * None of this really applies for Power Macintoshes.  There is
+  * basically just enough here to get kernel/dma.c to compile.
++ *
++ * There may be some comments or restrictions made here which are
++ * not valid for the PReP platform.  Take what you read
++ * with a grain of salt.
+  */
+ 
+ #include <asm/io.h>
+@@ -54,6 +58,7 @@
+  *  - page registers for 5-7 don't use data bit 0, represent 128K pages
+  *  - page registers for 0-3 use bit 0, represent 64K pages
+  *
++ * On PReP, DMA transfers are limited to the lower 16MB of _physical_ memory.
+  * On CHRP, the W83C553F (and VLSI Tollgate?) support full 32 bit addressing.
+  * Note that addresses loaded into registers must be _physical_ addresses,
+  * not logical addresses (which may differ if paging is active).
+diff --git a/arch/powerpc/include/asm/io.h b/arch/powerpc/include/asm/io.h
+index 7a89754842d6..5abea85e5542 100644
+--- a/arch/powerpc/include/asm/io.h
++++ b/arch/powerpc/include/asm/io.h
+@@ -10,6 +10,10 @@
+ extern int check_legacy_ioport(unsigned long base_port);
+ #define I8042_DATA_REG	0x60
+ #define FDC_BASE	0x3f0
++/* only relevant for PReP */
++#define _PIDXR		0x279
++#define _PNPWRP		0xa79
++#define PNPBIOS_BASE	0xf000
+ 
+ #if defined(CONFIG_PPC64) && defined(CONFIG_PCI)
+ extern struct pci_dev *isa_bridge_pcidev;
+diff --git a/arch/powerpc/include/asm/prep-residual.h b/arch/powerpc/include/asm/prep-residual.h
+new file mode 100644
+index 000000000000..e9a6d4a4df35
+--- /dev/null
++++ b/arch/powerpc/include/asm/prep-residual.h
+@@ -0,0 +1,201 @@
++/* SPDX-License-Identifier: GPL-2.0 */
++/*
++ * PReP residual data, passed by the firmware in r3 to the boot image.
++ *
++ * Layout per "IBM Power Personal Systems Architecture, Residual Data"
++ * (PPS-AR-FW0001), as used by the former arch/ppc PReP support.  Structure
++ * fields are in CPU byte order, PnP heap packets are little-endian.
++ *
++ * Shared by the bootwrapper and the kernel, so only uint*_t types are used.
++ *
++ * Copyright (C) 2026 René Rebe <rene@exactco.de>
++ */
++#ifndef _ASM_POWERPC_PREP_RESIDUAL_H
++#define _ASM_POWERPC_PREP_RESIDUAL_H
++
++#define PREP_RES_MAX_CPUS		32
++#define PREP_RES_MAX_MEMS		64
++#define PREP_RES_MAX_DEVICES		256
++#define PREP_RES_MAX_MEM_SEGS		64
++#define PREP_RES_PNP_HEAP_SIZE		(2 * PREP_RES_MAX_DEVICES * 32)
++
++/* struct prep_vpd firmware_supplier */
++#define PREP_FW_IBM			0x00
++#define PREP_FW_MOTOROLA		0x01
++#define PREP_FW_FIRMWORKS		0x02
++#define PREP_FW_BULL			0x03
++
++/* struct prep_vpd firmware_supports */
++#define PREP_FW_CONVENTIONAL		0x0001
++#define PREP_FW_OPENFIRMWARE		0x0002
++
++/* struct prep_device_id bus_id */
++#define PREP_BUS_ISA			0x0001
++#define PREP_BUS_EISA			0x0002
++#define PREP_BUS_PCI			0x0004
++#define PREP_BUS_PCMCIA			0x0008
++#define PREP_BUS_PNPISA			0x0010
++#define PREP_BUS_MCA			0x0020
++#define PREP_BUS_MX			0x0040
++#define PREP_BUS_PROCESSOR		0x0080
++#define PREP_BUS_VME			0x0100
++
++/* struct prep_device_id base_type, sub_type and interface */
++#define PREP_BASE_DISPLAY		0x03
++#define PREP_BASE_BRIDGE		0x06
++#define PREP_BASE_SYSTEM		0x08
++
++#define PREP_SUB_SVGA			0x01
++#define PREP_SUB_PCI_BRIDGE		0x04
++#define PREP_SUB_PIC			0x00
++#define PREP_SUB_OPERATOR_PANEL		0x08
++
++#define PREP_IF_PCI_DIRECT		0x00
++#define PREP_IF_PCI_INDIRECT		0x01
++#define PREP_IF_PCI_RS6K		0x02
++#define PREP_IF_ISA_PIC			0x01
++#define PREP_IF_MPIC			0x03
++#define PREP_IF_STATUS_LED		0x06
++
++/* PnP heap packet tags */
++#define PNP_TAG_LARGE			0x80
++#define PNP_SMALL_NAME(t)		(((t) >> 3) & 0x0f)
++#define PNP_SMALL_LEN(t)		((t) & 0x07)
++#define PNP_SMALL_IRQ			0x04
++#define PNP_SMALL_IO			0x08
++#define PNP_SMALL_VENDOR		0x0e
++#define PNP_SMALL_END			0x0f
++#define PNP_LARGE_VENDOR		0x84
++
++/* PReP specific large vendor packet types */
++#define PREP_PKT_L2_CACHE		2
++#define PREP_PKT_PCI_BRIDGE		3
++#define PREP_PKT_BRIDGE_XLATE		5
++#define PREP_PKT_BUS_SPEED		6
++#define PREP_PKT_SCSI			7
++#define PREP_PKT_ADDRESS		9
++#define PREP_PKT_ISA_ROUTING		10
++
++struct prep_vpd {
++	uint8_t  printable_model[32];
++	uint8_t  serial[16];
++	uint8_t  reserved[48];
++	uint32_t firmware_supplier;
++	uint32_t firmware_supports;
++	uint32_t nvram_size;
++	uint32_t num_simm_slots;
++	uint16_t endian_switch_method;
++	uint16_t spread_io_method;
++	uint32_t smp_iar;
++	uint32_t ram_err_log_offset;
++	uint32_t reserved5;
++	uint32_t reserved6;
++	uint32_t processor_hz;
++	uint32_t processor_bus_hz;
++	uint32_t reserved7;
++	uint32_t time_base_divisor;	/* bus clocks per timebase tick * 1000 */
++	uint32_t word_width;
++	uint32_t page_size;
++	uint32_t coherence_block_size;
++	uint32_t granule_size;
++	uint32_t cache_size;		/* L1 total, in KB */
++	uint32_t cache_attrib;
++	uint32_t cache_assoc;
++	uint32_t cache_line_size;
++	uint32_t i_cache_size;
++	uint32_t i_cache_assoc;
++	uint32_t i_cache_line_size;
++	uint32_t d_cache_size;
++	uint32_t d_cache_assoc;
++	uint32_t d_cache_line_size;
++	uint32_t tlb_size;
++	uint32_t tlb_attrib;
++	uint32_t tlb_assoc;
++	uint32_t i_tlb_size;
++	uint32_t i_tlb_assoc;
++	uint32_t d_tlb_size;
++	uint32_t d_tlb_assoc;
++	uint32_t extended_vpd;
++};
++
++struct prep_cpu {
++	uint32_t cpu_type;		/* PVR */
++	uint8_t  cpu_number;
++	uint8_t  cpu_state;
++	uint16_t reserved;
++};
++
++struct prep_mem_map {
++	uint32_t usage;
++	uint32_t base_page;
++	uint32_t page_count;
++};
++
++struct prep_device_id {
++	uint32_t bus_id;
++	uint32_t dev_id;		/* compressed EISA id, big-endian */
++	uint32_t serial_num;
++	uint32_t flags;
++	uint8_t  base_type;
++	uint8_t  sub_type;
++	uint8_t  interface;
++	uint8_t  spare;
++};
++
++/* PCI: bus number and devfn, ISA: slot and logical device */
++struct prep_bus_access {
++	uint8_t  bus;
++	uint8_t  devfn;
++	uint16_t reserved;
++};
++
++struct prep_device {
++	struct prep_device_id	id;
++	struct prep_bus_access	access;
++	/* offsets into pnp_heap */
++	uint32_t allocated_offset;
++	uint32_t possible_offset;
++	uint32_t compatible_offset;
++};
++
++struct prep_residual {
++	uint32_t		residual_length;
++	uint8_t			version;
++	uint8_t			revision;
++	uint16_t		ec;
++	struct prep_vpd		vpd;
++	uint16_t		max_num_cpus;
++	uint16_t		actual_num_cpus;
++	struct prep_cpu		cpus[PREP_RES_MAX_CPUS];
++	uint32_t		total_memory;
++	uint32_t		good_memory;
++	uint32_t		actual_num_mem_segs;
++	struct prep_mem_map	segs[PREP_RES_MAX_MEM_SEGS];
++	uint32_t		actual_num_memories;
++	uint32_t		simm_size[PREP_RES_MAX_MEMS];
++	uint32_t		actual_num_devices;
++	struct prep_device	devices[PREP_RES_MAX_DEVICES];
++	uint8_t			pnp_heap[PREP_RES_PNP_HEAP_SIZE];
++};
++
++/* PReP ISA I/O, ISA memory and PCI DMA windows */
++#define PREP_ISA_IO_BASE		0x80000000
++#define PREP_ISA_MEM_BASE		0xc0000000
++#define PREP_PCI_DRAM_OFFSET		0x80000000
++
++/* MPC105/106 address map A, PReP section 6.1.8 */
++#define PREP_PCI_CFG_ADDR		0x80000cf8
++#define PREP_PCI_CFG_DATA		0x80000cfc
++#define PREP_PCI_INTACK			0xbffffff0
++
++/* PReP NVRAM (MK48T59 on Motorola) index and data ports */
++#define PREP_NVRAM_AS0			0x74
++#define PREP_NVRAM_AS1			0x75
++#define PREP_NVRAM_DATA			0x77
++
++/* Motorola board identification ports */
++#define PREP_MOT_CPUTYPE_REG		0x800
++#define PREP_MOT_BOARDTYPE_REG		0x801
++#define PREP_MOT_BASETYPE_REG		0x803
++
++#endif /* _ASM_POWERPC_PREP_RESIDUAL_H */
+diff --git a/arch/powerpc/include/asm/processor.h b/arch/powerpc/include/asm/processor.h
+index f156bdb43e2b..5d577bdccf6b 100644
+--- a/arch/powerpc/include/asm/processor.h
++++ b/arch/powerpc/include/asm/processor.h
+@@ -47,7 +47,7 @@
+  * -- BenH.
+  */
+ 
+-/* PREP sub-platform types. Unused */
++/* PREP sub-platform types see residual.h for these */
+ #define _PREP_Motorola	0x01	/* motorola prep */
+ #define _PREP_Firm	0x02	/* firmworks prep */
+ #define _PREP_IBM	0x00	/* ibm prep */
+@@ -63,6 +63,13 @@
+ 
+ extern int _chrp_type;
+ 
++#ifdef CONFIG_PPC_PREP
++
++/* what kind of prep workstation we are */
++extern int _prep_type;
++
++#endif /* CONFIG_PPC_PREP */
++
+ #endif /* defined(__KERNEL__) && defined(CONFIG_PPC32) */
+ 
+ #ifdef __KERNEL__
+diff --git a/arch/powerpc/kernel/setup-common.c b/arch/powerpc/kernel/setup-common.c
+index 4afaba19b586..ee1c980b5ed2 100644
+--- a/arch/powerpc/kernel/setup-common.c
++++ b/arch/powerpc/kernel/setup-common.c
+@@ -700,6 +700,12 @@ int check_legacy_ioport(unsigned long base_port)
+ 	case FDC_BASE: /* FDC1 */
+ 		np = of_find_node_by_type(NULL, "fdc");
+ 		break;
++#ifdef CONFIG_PPC_PREP
++	case _PIDXR:
++	case _PNPWRP:
++	case PNPBIOS_BASE:
++		/* implement me */
++#endif
+ 	default:
+ 		/* ipmi is supposed to fail here */
+ 		break;
+diff --git a/arch/powerpc/platforms/Kconfig b/arch/powerpc/platforms/Kconfig
+index 2f797ac6f1b3..5495a82479d7 100644
+--- a/arch/powerpc/platforms/Kconfig
++++ b/arch/powerpc/platforms/Kconfig
+@@ -7,6 +7,7 @@ source "arch/powerpc/platforms/chrp/Kconfig"
+ source "arch/powerpc/platforms/512x/Kconfig"
+ source "arch/powerpc/platforms/52xx/Kconfig"
+ source "arch/powerpc/platforms/powermac/Kconfig"
++source "arch/powerpc/platforms/prep/Kconfig"
+ source "arch/powerpc/platforms/pasemi/Kconfig"
+ source "arch/powerpc/platforms/ps3/Kconfig"
+ source "arch/powerpc/platforms/cell/Kconfig"
+diff --git a/arch/powerpc/platforms/Makefile b/arch/powerpc/platforms/Makefile
+index 3cee4a842736..c21a92b87cf3 100644
+--- a/arch/powerpc/platforms/Makefile
++++ b/arch/powerpc/platforms/Makefile
+@@ -4,6 +4,7 @@ obj-$(CONFIG_FSL_ULI1575)	+= fsl_uli1575.o
+ 
+ obj-$(CONFIG_PPC_PMAC)		+= powermac/
+ obj-$(CONFIG_PPC_CHRP)		+= chrp/
++obj-$(CONFIG_PPC_PREP)		+= prep/
+ obj-$(CONFIG_44x)		+= 44x/
+ obj-$(CONFIG_PPC_MPC512x)	+= 512x/
+ obj-$(CONFIG_PPC_MPC52xx)	+= 52xx/
+diff --git a/arch/powerpc/platforms/prep/Kconfig b/arch/powerpc/platforms/prep/Kconfig
+new file mode 100644
+index 000000000000..79cf6e3d7643
+--- /dev/null
++++ b/arch/powerpc/platforms/prep/Kconfig
+@@ -0,0 +1,16 @@
++# SPDX-License-Identifier: GPL-2.0
++config PPC_PREP
++	bool "PowerPC Reference Platform (PReP) based machines"
++	depends on PPC_BOOK3S_32 && CPU_BIG_ENDIAN
++	select FORCE_PCI
++	select HAVE_PCSPKR_PLATFORM
++	select PPC_HASH_MMU_NATIVE
++	select PPC_I8259
++	select PPC_INDIRECT_PCI
++	select PPC_UDBG_16550
++	help
++	  Support for PowerPC Reference Platform (PReP) machines such as the
++	  Motorola PowerStack and IBM RS/6000 4x/7xxx models with i8259
++	  interrupt controller.  The firmware residual data is passed to the
++	  kernel by the dtbImage.prep bootwrapper.  Motorola Raven/Hawk boards
++	  with OpenPIC and SMP are not supported.
+diff --git a/arch/powerpc/platforms/prep/Makefile b/arch/powerpc/platforms/prep/Makefile
+new file mode 100644
+index 000000000000..c6d463e24a33
+--- /dev/null
++++ b/arch/powerpc/platforms/prep/Makefile
+@@ -0,0 +1,2 @@
++# SPDX-License-Identifier: GPL-2.0
++obj-y	+= setup.o pci.o residual.o
+diff --git a/arch/powerpc/platforms/prep/pci.c b/arch/powerpc/platforms/prep/pci.c
+new file mode 100644
+index 000000000000..d52e48290bfd
+--- /dev/null
++++ b/arch/powerpc/platforms/prep/pci.c
+@@ -0,0 +1,450 @@
++// SPDX-License-Identifier: GPL-2.0
++/*
++ * PReP PCI host bridge setup and PCI interrupt routing.
++ *
++ * Based on the former arch/ppc/platforms/prep_pci.c by Gary Thomas,
++ * Cort Dougan and Troy Benjegerdes.
++ *
++ * Copyright (C) 2026 René Rebe <rene@exactco.de>
++ */
++
++#include <linux/init.h>
++#include <linux/irq.h>
++#include <linux/irqdomain.h>
++#include <linux/kernel.h>
++#include <linux/of.h>
++#include <linux/of_address.h>
++#include <linux/of_pci.h>
++#include <linux/pci.h>
++#include <linux/sizes.h>
++
++#include <asm/io.h>
++#include <asm/pci-bridge.h>
++#include <asm/processor.h>
++
++#include "prep.h"
++
++#define ISA8259_M_ELCR		0x4d0
++#define ISA8259_S_ELCR		0x4d1
++
++/* Intel 82378 SIO PCI-ISA bridge registers */
++#define SIO_PCICON		0x40
++#define SIO_PCICON_IACK_EN	0x20
++#define SIO_PIRQ_ROUTE		0x60
++
++/*
++ * Boards with i8259 only: per PCI slot interrupt line, routed by the SIO
++ * PIRQ registers to an ISA IRQ.  Motorola boards are identified by their
++ * CPU type register, IBM boards by the planar ID.
++ */
++struct prep_board {
++	u8		id;
++	const char	*name;
++	const u8	*map;
++	unsigned int	map_len;
++	const u8	*routes;
++	unsigned int	routes_len;
++	u16		level;		/* level IRQs, 0: those routed */
++};
++
++/* Motorola PowerStack Series E */
++static const u8 comet_map[] = {
++	0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
++	3,	/* slot 12 - SCSI */
++	0,
++	1,	/* slot 14 - Ethernet */
++	0,
++	1,	/* slot 16 - PCI slot 1 */
++	2,	/* slot 17 - PCI slot 2 */
++	3,	/* slot 18 - PCI slot 3 */
++	4,	/* slot 19 - PCI bridge */
++};
++static const u8 comet_routes[] = { 0, 10, 11, 14, 15 };
++
++/* Motorola PowerStack (Blackhawk) */
++static const u8 blackhawk_map[] = {
++	0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
++	3,	/* slot 12 - SCSI */
++	0,
++	1,	/* slot 14 - Ethernet */
++	0,
++	1,	/* slot P7 */
++	2,	/* slot P6 */
++	3,	/* slot P5 */
++};
++static const u8 blackhawk_routes[] = { 0, 9, 11, 15, 15 };
++
++/* Motorola PowerStack II Pro3000 (Omaha), no integrated SCSI or Ethernet */
++static const u8 omaha_map[] = {
++	0, 0,
++	3,	/* slot 2 - Winbond EIDE */
++	0, 0, 0,
++	1,	/* slot 6 - PCI slot 1 */
++	2,	/* slot 7 - PCI slot 2 */
++	3,	/* slot 8 - PCI slot 3 */
++	4,	/* slot 9 - PCI slot 4 */
++	0, 0, 0, 0, 0, 0,
++	1,	/* slot 16 - PCI slot 1 */
++	2,	/* slot 17 - PCI slot 2 */
++	3,	/* slot 18 - PCI slot 3 */
++	4,	/* slot 19 - PCI slot 4 */
++};
++static const u8 omaha_routes[] = { 0, 9, 11, 14, 15 };
++
++/* Motorola PowerStack II Pro4000 (Utah) */
++static const u8 utah_map[] = {
++	0, 0,
++	5,	/* slot 2 - SCSI - NCR825A */
++	0,
++	3,	/* slot 4 - Ethernet - DEC2114x */
++	0,
++	2,	/* slot 6 - PCI slot 1 */
++	3,	/* slot 7 - PCI slot 2 */
++	5,	/* slot 8 - PCI slot 3 */
++	5,	/* slot 9 - PCI bridge */
++	0, 0,
++	5,	/* slot 12 - SCSI - NCR825A */
++	0,
++	3,	/* slot 14 - Ethernet */
++	0,
++	2, 3, 5,
++};
++static const u8 utah_routes[] = { 0, 9, 10, 11, 14, 15 };
++
++/* Motorola PowerStack Series EX */
++static const u8 comet2_map[] = {
++	0, 0,
++	3,	/* slot 2 - SCSI - NCR825A */
++	0,
++	1,	/* slot 4 - Ethernet - DEC2104X */
++	0,
++	1,	/* slot 6 - PCI slot 1 */
++	2,	/* slot 7 - PCI slot 2 */
++	3,	/* slot 8 - PCI slot 3 */
++	4,	/* slot 9 - PCI bridge */
++	0, 0,
++	3,	/* slot 12 - SCSI - NCR825A */
++	0,
++	1,	/* slot 14 - Ethernet - DEC2104X */
++	0,
++	1,	/* slot 16 - PCI slot 1 */
++	2,	/* slot 17 - PCI slot 2 */
++	3,	/* slot 18 - PCI slot 3 */
++	4,	/* slot 19 - PCI bridge */
++};
++static const u8 comet2_routes[] = { 0, 10, 11, 14, 15 };
++
++/* IBM 6015/7020 (Sandalfoot/Sandalbow) */
++static const u8 ibm6015_map[] = {
++	0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
++	1, 2, 2, 1, 1, 0, 2, 0, 0, 0, 2,
++};
++static const u8 ibm6015_routes[] = { 0, 13, 15, 15, 15 };
++
++/* IBM Thinkpad 850/860 (Nobis) */
++static const u8 nobis_map[] = {
++	0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
++	3,	/* slot 12 */
++};
++static const u8 nobis_routes[] = { 0, 13, 13, 13, 13 };
++
++/* IBM 7248, PowerSeries 830/850 (Carolina) */
++static const u8 ibm8xx_map[] = {
++	0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
++	0,	/* slot 11 - FireCoral */
++	4,	/* slot 12 - Ethernet */
++	2,	/* slot 13 - PCI slot 2 */
++	2,	/* slot 14 - S3 video */
++	0,	/* slot 15 - onboard SCSI */
++	3,	/* slot 16 - NCR 53C810, RS/6000 only */
++	0,
++	2,	/* slot 18 - PCI slot 2 */
++	0, 0, 0,
++	2,	/* slot 22 - PCI slot 1 */
++};
++static const u8 ibm8xx_routes[] = { 0, 15, 15, 15, 15 };
++
++#define PREP_BOARD(i, n, m, r, l) \
++	{ i, n, m, ARRAY_SIZE(m), r, ARRAY_SIZE(r), l }
++
++static const struct prep_board prep_mot_boards[] = {
++	PREP_BOARD(0x20, "Powerstack (Series E)", comet_map, comet_routes, 0),
++	PREP_BOARD(0x40, "Blackhawk (Powerstack)", blackhawk_map, blackhawk_routes, 0),
++	PREP_BOARD(0x50, "Omaha (PowerStack II Pro3000)", omaha_map, omaha_routes, 0),
++	PREP_BOARD(0x60, "Utah (Powerstack II Pro4000)", utah_map, utah_routes, 0),
++	PREP_BOARD(0xa0, "Powerstack (Series EX)", comet2_map, comet2_routes, 0),
++};
++
++/* IRQs 13 and 15 level, Carolina also 10, rest edge */
++static const struct prep_board prep_ibm_boards[] = {
++	PREP_BOARD(0xfc, "IBM 6015/7020 (Sandalfoot/Sandalbow)",
++		   ibm6015_map, ibm6015_routes, 0xa000),
++	PREP_BOARD(0xff, "IBM Thinkpad 850/860", nobis_map, nobis_routes, 0xa000),
++	PREP_BOARD(0xf0, "IBM 7248, PowerSeries 830/850 (Carolina)",
++		   ibm8xx_map, ibm8xx_routes, 0xa400),
++};
++
++static const struct prep_board *prep_board;
++u8 prep_ibm_planar;
++static struct pci_controller *prep_hose;
++const char *prep_board_name;
++
++static struct device_node * __init prep_pci_node(u32 *cfg_addr, u32 *cfg_data)
++{
++	struct device_node *np;
++	struct resource r;
++
++	np = of_find_compatible_node(NULL, "pci", "prep-pci");
++	if (!np) {
++		pr_err("PReP: no PCI host bridge in the device tree\n");
++		return NULL;
++	}
++
++	/* config address/data from the device tree, residual data overrides */
++	*cfg_addr = PREP_PCI_CFG_ADDR;
++	*cfg_data = PREP_PCI_CFG_DATA;
++	if (!of_address_to_resource(np, 0, &r))
++		*cfg_addr = r.start;
++	if (!of_address_to_resource(np, 1, &r))
++		*cfg_data = r.start;
++	prep_residual_pci_cfg(cfg_addr, cfg_data);
++
++	return np;
++}
++
++/*
++ * The legacy ISA ports are needed before the host bridge is set up at
++ * discover_phbs time, i.e. before slab, which re-maps them with the PCI
++ * I/O window.
++ */
++void __init prep_map_isa_io(void)
++{
++	struct of_pci_range_parser parser;
++	struct of_pci_range range;
++	struct device_node *np;
++	u32 cfg_addr, cfg_data;
++
++	np = prep_pci_node(&cfg_addr, &cfg_data);
++	if (!np)
++		return;
++
++	if (!of_pci_range_parser_init(&parser, np)) {
++		for_each_of_pci_range(&parser, &range) {
++			if ((range.flags & IORESOURCE_TYPE_BITS) != IORESOURCE_IO ||
++			    range.cpu_addr == OF_BAD_ADDR || range.pci_addr)
++				continue;
++			isa_io_base = (unsigned long)ioremap(range.cpu_addr,
++							     min_t(u64, range.size, SZ_64K));
++			break;
++		}
++	}
++	of_node_put(np);
++}
++
++/* Host bridge vendor/device ID by raw indirect config access. */
++u32 __init prep_pci_host_id(void)
++{
++	void __iomem *addr, *data;
++	struct device_node *np;
++	u32 cfg_addr, cfg_data, id = 0xffffffff;
++
++	np = prep_pci_node(&cfg_addr, &cfg_data);
++	if (!np)
++		return id;
++	of_node_put(np);
++
++	addr = ioremap(cfg_addr, 4);
++	data = ioremap(cfg_data, 4);
++	if (addr && data) {
++		out_le32(addr, 0x80000000);
++		id = in_le32(data);
++	}
++	if (data)
++		iounmap(data);
++	if (addr)
++		iounmap(addr);
++	return id;
++}
++
++static void __init prep_find_bridge(void)
++{
++	struct pci_controller *hose;
++	struct device_node *np;
++	u32 cfg_addr, cfg_data;
++	const u32 *bus_range;
++	int len;
++
++	np = prep_pci_node(&cfg_addr, &cfg_data);
++	if (!np)
++		return;
++
++	hose = pcibios_alloc_controller(np);
++	if (!hose) {
++		of_node_put(np);
++		return;
++	}
++
++	bus_range = of_get_property(np, "bus-range", &len);
++	hose->first_busno = bus_range && len >= 8 ? be32_to_cpu(bus_range[0]) : 0;
++	hose->last_busno = bus_range && len >= 8 ? be32_to_cpu(bus_range[1]) : 0xff;
++
++	setup_indirect_pci(hose, cfg_addr, cfg_data, 0);
++	pci_process_bridge_OF_ranges(hose, np, 1);
++
++	/* PCI bus masters see system memory at 0x80000000 */
++	pci_dram_offset = PREP_PCI_DRAM_OFFSET;
++	prep_hose = hose;
++
++	pr_info("PReP: PCI host bridge %pOF, config at 0x%08x/0x%08x\n",
++		np, cfg_addr, cfg_data);
++}
++
++static int __init prep_find_sio(void)
++{
++	int slot;
++	u32 id;
++
++	for (slot = 0; slot < 32; slot++) {
++		if (early_read_config_dword(prep_hose, 0, PCI_DEVFN(slot, 0),
++					    PCI_VENDOR_ID, &id))
++			continue;
++		if (id == (PCI_VENDOR_ID_INTEL | PCI_DEVICE_ID_INTEL_82378 << 16))
++			return PCI_DEVFN(slot, 0);
++	}
++
++	return -1;
++}
++
++static void __init prep_route_board_irqs(u16 level)
++{
++	unsigned int i;
++	int sio;
++	u8 val;
++
++	prep_board_name = prep_board->name;
++
++	if (!level)
++		for (i = 1; i < prep_board->routes_len && i <= 4; i++)
++			level |= 1 << prep_board->routes[i];
++	outb(level & 0xff, ISA8259_M_ELCR);
++	outb(level >> 8, ISA8259_S_ELCR);
++
++	sio = prep_find_sio();
++	if (sio < 0) {
++		pr_warn("PReP: no 82378 SIO found, PCI interrupt routing left as is\n");
++		return;
++	}
++
++	for (i = 1; i < prep_board->routes_len && i <= 4; i++)
++		early_write_config_byte(prep_hose, 0, sio, SIO_PIRQ_ROUTE + i - 1,
++					prep_board->routes[i]);
++	early_read_config_byte(prep_hose, 0, sio, SIO_PCICON, &val);
++	early_write_config_byte(prep_hose, 0, sio, SIO_PCICON,
++				val | SIO_PCICON_IACK_EN);
++}
++
++static const struct prep_board * __init
++prep_match_board(const struct prep_board *boards, unsigned int n, u8 id)
++{
++	unsigned int i;
++
++	for (i = 0; i < n; i++)
++		if (boards[i].id == id)
++			return &boards[i];
++	return NULL;
++}
++
++void __init prep_discover_phbs(void)
++{
++	u8 type, planar = prep_ibm_planar;
++	u16 level;
++
++	prep_find_bridge();
++	if (!prep_hose)
++		return;
++
++	if (_prep_type == _PREP_Motorola) {
++		type = inb(PREP_MOT_CPUTYPE_REG) & 0xf0;
++		prep_board = prep_match_board(prep_mot_boards,
++					      ARRAY_SIZE(prep_mot_boards), type);
++		if (!prep_board) {
++			/* as before, assume Blackhawk for unknown boards */
++			pr_warn("PReP: unknown Motorola board type 0x%02x, assuming Blackhawk\n",
++				type);
++			prep_board = &prep_mot_boards[1];
++		}
++		prep_route_board_irqs(prep_board->level);
++	} else {
++		/* all Carolina variants share the routing */
++		if (planar >= 0xf0 && planar <= 0xf7)
++			planar = 0xf0;
++		prep_board = prep_match_board(prep_ibm_boards,
++					      ARRAY_SIZE(prep_ibm_boards), planar);
++
++		if (prep_board) {
++			prep_route_board_irqs(prep_board->level);
++		} else if (prep_res) {
++			/* the residual data describes other IBM boards */
++			level = prep_residual_irq_level_mask();
++			outb(inb(ISA8259_M_ELCR) | (level & 0xff), ISA8259_M_ELCR);
++			outb(inb(ISA8259_S_ELCR) | (level >> 8), ISA8259_S_ELCR);
++		} else {
++			pr_warn("PReP: no PCI interrupt routing for IBM planar 0x%02x\n",
++				prep_ibm_planar);
++			return;
++		}
++	}
++
++	pr_info("PReP: setting PCI interrupts for \"%s\"\n",
++		prep_board_name ?: "residual data");
++}
++
++/* Interrupt line of the board table, using the bus 0 slot behind bridges. */
++static int prep_board_pci_irq(struct pci_dev *dev)
++{
++	unsigned int line;
++	u8 pin;
++	int slot;
++
++	if (!prep_board)
++		return -1;
++
++	pci_read_config_byte(dev, PCI_INTERRUPT_PIN, &pin);
++	slot = pci_common_swizzle(dev, &pin);
++	if (slot < 0 || slot >= prep_board->map_len)
++		return -1;
++
++	/* no table entry, keep the firmware assignment */
++	line = prep_board->map[slot];
++	if (!line || line >= prep_board->routes_len)
++		return -1;
++	return prep_board->routes[line];
++}
++
++void prep_pci_irq_fixup(struct pci_dev *dev)
++{
++	int irq = -1;
++	u8 pin;
++
++	pci_read_config_byte(dev, PCI_INTERRUPT_PIN, &pin);
++	if (!pin)
++		return;
++
++	if (prep_res)
++		irq = prep_residual_pci_irq(dev);
++	if (irq < 0)
++		irq = prep_board_pci_irq(dev);
++	if (irq < 0)
++		return;
++
++	if (!irq || irq >= NR_IRQS_LEGACY) {
++		dev->irq = 0;
++		pci_write_config_byte(dev, PCI_INTERRUPT_LINE, 0xff);
++		return;
++	}
++
++	dev->irq = irq_create_mapping(NULL, irq);
++	irq_set_irq_type(dev->irq, IRQ_TYPE_LEVEL_LOW);
++	pci_write_config_byte(dev, PCI_INTERRUPT_LINE, irq);
++	pci_dbg(dev, "PReP: IRQ %d\n", irq);
++}
+diff --git a/arch/powerpc/platforms/prep/prep.h b/arch/powerpc/platforms/prep/prep.h
+new file mode 100644
+index 000000000000..0cb8fc65e963
+--- /dev/null
++++ b/arch/powerpc/platforms/prep/prep.h
+@@ -0,0 +1,34 @@
++/* SPDX-License-Identifier: GPL-2.0 */
++/*
++ * PReP (PowerPC Reference Platform) internal declarations.
++ *
++ * Copyright (C) 2026 René Rebe <rene@exactco.de>
++ */
++#ifndef _PREP_H
++#define _PREP_H
++
++#include <linux/types.h>
++#include <asm/prep-residual.h>
++
++struct pci_dev;
++
++/* residual.c */
++extern const struct prep_residual *prep_res;
++void prep_residual_init(void);
++const struct prep_device *prep_residual_find_device(u32 bus_mask, int base,
++						    int sub, int iface, int n);
++bool prep_residual_pci_cfg(u32 *addr, u32 *data);
++int prep_residual_pci_irq(struct pci_dev *dev);
++u16 prep_residual_irq_level_mask(void);
++u32 prep_residual_isapic_addr(void);
++unsigned int prep_residual_num_memories(void);
++
++/* pci.c */
++extern const char *prep_board_name;
++extern u8 prep_ibm_planar;
++void prep_map_isa_io(void);
++u32 prep_pci_host_id(void);
++void prep_discover_phbs(void);
++void prep_pci_irq_fixup(struct pci_dev *dev);
++
++#endif /* _PREP_H */
+diff --git a/arch/powerpc/platforms/prep/residual.c b/arch/powerpc/platforms/prep/residual.c
+new file mode 100644
+index 000000000000..a2c26b485952
+--- /dev/null
++++ b/arch/powerpc/platforms/prep/residual.c
+@@ -0,0 +1,285 @@
++// SPDX-License-Identifier: GPL-2.0
++/*
++ * PReP residual data handling.
++ *
++ * The bootwrapper passes the firmware residual data in the device tree
++ * property /prep,residual-data, its length bounds all accesses here.
++ *
++ * Based on the former arch/ppc/platforms/residual.c by Cort Dougan and
++ * Gabriel Paubert.
++ *
++ * Copyright (C) 2026 René Rebe <rene@exactco.de>
++ */
++
++#include <linux/init.h>
++#include <linux/kernel.h>
++#include <linux/of.h>
++#include <linux/pci.h>
++#include <linux/proc_fs.h>
++#include <linux/seq_file.h>
++#include <linux/unaligned.h>
++
++#include <asm/machdep.h>
++
++#include "prep.h"
++
++static_assert(offsetof(struct prep_residual, total_memory) == 504);
++static_assert(offsetof(struct prep_residual, pnp_heap) == 10764);
++static_assert(sizeof(struct prep_residual) == 27148);
++
++const struct prep_residual *prep_res;
++static u32 prep_res_len;
++static bool prep_noresidual __initdata;
++
++static int __init prep_noresidual_setup(char *str)
++{
++	prep_noresidual = true;
++	return 0;
++}
++early_param("noresidual", prep_noresidual_setup);
++
++void __init prep_residual_init(void)
++{
++	const void *p;
++	int len;
++
++	p = of_get_property(of_root, "prep,residual-data", &len);
++	if (!p || prep_noresidual)
++		return;
++
++	if (len < offsetof(struct prep_residual, devices)) {
++		pr_warn("PReP: residual data too short (%d bytes), ignored\n", len);
++		return;
++	}
++
++	prep_res = p;
++	prep_res_len = len;
++	pr_info("PReP: residual data v%u.%u, %u bytes, %u devices\n",
++		prep_res->version, prep_res->revision, len,
++		prep_res->actual_num_devices);
++}
++
++static u32 prep_residual_num_devices(void)
++{
++	u32 avail = (prep_res_len - offsetof(struct prep_residual, devices)) /
++		    sizeof(struct prep_device);
++
++	return min3(prep_res->actual_num_devices, avail,
++		    (u32)PREP_RES_MAX_DEVICES);
++}
++
++unsigned int prep_residual_num_memories(void)
++{
++	u32 avail;
++
++	if (!prep_res)
++		return 0;
++	avail = (prep_res_len - offsetof(struct prep_residual, simm_size)) /
++		sizeof(u32);
++	return min3(prep_res->actual_num_memories, avail,
++		    (u32)PREP_RES_MAX_MEMS);
++}
++
++static u32 prep_heap_size(void)
++{
++	u32 start = offsetof(struct prep_residual, pnp_heap);
++
++	return prep_res_len > start ? prep_res_len - start : 0;
++}
++
++/* Bounds checked length of the PnP packet at heap offset, 0 at the end. */
++static u32 prep_pnp_len(u32 offset)
++{
++	const u8 *p = prep_res->pnp_heap + offset;
++	u32 size = prep_heap_size(), len;
++
++	if (offset >= size)
++		return 0;
++	if (*p & PNP_TAG_LARGE) {
++		if (size - offset < 3)
++			return 0;
++		len = get_unaligned_le16(p + 1) + 3;
++	} else {
++		if (PNP_SMALL_NAME(*p) == PNP_SMALL_END)
++			return 0;
++		len = PNP_SMALL_LEN(*p) + 1;
++	}
++
++	return len <= size - offset ? len : 0;
++}
++
++/* n-th small packet with item name, or large vendor packet of PReP type */
++static const u8 *prep_pnp_find(u32 offset, bool large, u8 what, int n)
++{
++	u32 len;
++
++	for (; (len = prep_pnp_len(offset)); offset += len) {
++		const u8 *p = prep_res->pnp_heap + offset;
++
++		if (large) {
++			if (*p != PNP_LARGE_VENDOR || len < 4 || p[3] != what)
++				continue;
++		} else if ((*p & PNP_TAG_LARGE) || PNP_SMALL_NAME(*p) != what) {
++			continue;
++		}
++		if (!n--)
++			return p;
++	}
++
++	return NULL;
++}
++
++const struct prep_device *prep_residual_find_device(u32 bus_mask, int base,
++						    int sub, int iface, int n)
++{
++	u32 i, num;
++
++	if (!prep_res)
++		return NULL;
++
++	num = prep_residual_num_devices();
++	for (i = 0; i < num; i++) {
++		const struct prep_device_id *id = &prep_res->devices[i].id;
++
++		if ((id->bus_id & bus_mask) &&
++		    (base < 0 || id->base_type == base) &&
++		    (sub < 0 || id->sub_type == sub) &&
++		    (iface < 0 || id->interface == iface) &&
++		    !n--)
++			return &prep_res->devices[i];
++	}
++
++	return NULL;
++}
++
++/* Large vendor packet of the device's allocated resources, with length. */
++static const u8 *prep_device_vendor_pkt(const struct prep_device *dev, u8 type,
++					u32 *len)
++{
++	const u8 *pkt;
++
++	if (!dev || !dev->allocated_offset)
++		return NULL;
++	pkt = prep_pnp_find(dev->allocated_offset, true, type, 0);
++	if (pkt)
++		*len = get_unaligned_le16(pkt + 1) + 3;
++	return pkt;
++}
++
++bool __init prep_residual_pci_cfg(u32 *addr, u32 *data)
++{
++	const struct prep_device *hb;
++	const u8 *pkt;
++	u32 len;
++
++	hb = prep_residual_find_device(PREP_BUS_PROCESSOR, PREP_BASE_BRIDGE,
++				       PREP_SUB_PCI_BRIDGE, -1, 0);
++	if (!hb || (hb->id.interface != PREP_IF_PCI_INDIRECT &&
++		    hb->id.interface != PREP_IF_PCI_RS6K))
++		return false;
++
++	pkt = prep_device_vendor_pkt(hb, PREP_PKT_PCI_BRIDGE, &len);
++	if (!pkt || len < 4 + 12)
++		return false;
++
++	*addr = get_unaligned_le32(pkt + 4);
++	*data = get_unaligned_le32(pkt + 4 + 8);
++	return true;
++}
++
++/* ISA IRQ of a PCI device, 0 for none, -1 if not described. */
++int prep_residual_pci_irq(struct pci_dev *dev)
++{
++	const struct prep_device *bridge;
++	int i = 0;
++
++	while ((bridge = prep_residual_find_device(~0, PREP_BASE_BRIDGE,
++						   PREP_SUB_PCI_BRIDGE, -1, i++))) {
++		const u8 *pkt, *d;
++		u32 len, j;
++		u16 line;
++		u8 pin;
++
++		pkt = prep_device_vendor_pkt(bridge, PREP_PKT_PCI_BRIDGE, &len);
++		if (!pkt || len < 4 + 20)
++			continue;
++
++		d = pkt + 4;
++		if (d[16] != dev->bus->number)
++			continue;
++
++		/* 12 byte entries: slot, devfn, controller, buid, INTA-D */
++		for (j = 20; 4 + j + 12 <= len; j += 12) {
++			if (d[j + 1] != dev->devfn)
++				continue;
++
++			pci_read_config_byte(dev, PCI_INTERRUPT_PIN, &pin);
++			if (!pin || pin > 4)
++				return 0;
++			if (d[j + 2] != 1) {
++				pci_warn(dev, "PReP: interrupt controller type %u not supported\n",
++					 d[j + 2]);
++				return 0;
++			}
++			line = get_unaligned_le16(d + j + 4 + 2 * (pin - 1));
++			return line == 0xffff ? 0 : line & 0x7fff;
++		}
++	}
++
++	return -1;
++}
++
++/* Level triggered ISA IRQs requested by the allocated device resources. */
++u16 __init prep_residual_irq_level_mask(void)
++{
++	const struct prep_device *dev;
++	u16 mask = 0;
++	int i = 0;
++
++	while ((dev = prep_residual_find_device(~0, -1, -1, -1, i++))) {
++		const u8 *pkt;
++
++		if (!dev->allocated_offset)
++			continue;
++		pkt = prep_pnp_find(dev->allocated_offset, false, PNP_SMALL_IRQ, 0);
++		/* optional info byte: bit 2/3 high/low level sensitive */
++		if (pkt && PNP_SMALL_LEN(*pkt) >= 3 && (pkt[3] & 0x0c))
++			mask |= get_unaligned_le16(pkt + 1);
++	}
++
++	return mask;
++}
++
++/* PCI interrupt acknowledge address of the 8259, 0 to poll. */
++u32 __init prep_residual_isapic_addr(void)
++{
++	const struct prep_device *pic;
++	const u8 *pkt;
++	u32 len;
++
++	pic = prep_residual_find_device(~0, PREP_BASE_SYSTEM, PREP_SUB_PIC,
++					PREP_IF_ISA_PIC, 0);
++	pkt = prep_device_vendor_pkt(pic, PREP_PKT_ADDRESS, &len);
++	if (!pkt || len < 4 + 16)
++		return 0;
++
++	/* 32-bit system address of length 1 */
++	if (pkt[4] != 3 || pkt[5] != 32 || get_unaligned_le32(pkt + 4 + 12) != 1)
++		return 0;
++
++	return get_unaligned_le32(pkt + 4 + 4);
++}
++
++static int prep_residual_show(struct seq_file *m, void *v)
++{
++	seq_write(m, prep_res, prep_res_len);
++	return 0;
++}
++
++static int __init prep_residual_proc_init(void)
++{
++	if (prep_res)
++		proc_create_single("residual", 0444, NULL, prep_residual_show);
++	return 0;
++}
++machine_device_initcall(prep, prep_residual_proc_init);
+diff --git a/arch/powerpc/platforms/prep/setup.c b/arch/powerpc/platforms/prep/setup.c
+new file mode 100644
+index 000000000000..d21681550f44
+--- /dev/null
++++ b/arch/powerpc/platforms/prep/setup.c
+@@ -0,0 +1,391 @@
++// SPDX-License-Identifier: GPL-2.0
++/*
++ * PReP (PowerPC Reference Platform) board setup.
++ *
++ * Based on the former arch/ppc/platforms/prep_setup.c (Linus Torvalds,
++ * Gary Thomas, Cort Dougan, Troy Benjegerdes, Hollis Blanchard) and
++ * arch/ppc/syslib/todc_time.c.
++ *
++ * Copyright (C) 2026 René Rebe <rene@exactco.de>
++ */
++
++#include <linux/delay.h>
++#include <linux/init.h>
++#include <linux/interrupt.h>
++#include <linux/ioport.h>
++#include <linux/irqdomain.h>
++#include <linux/kernel.h>
++#include <linux/of.h>
++#include <linux/platform_device.h>
++#include <linux/reboot.h>
++#include <linux/rtc/m48t59.h>
++#include <linux/seq_file.h>
++
++#include <asm/i8259.h>
++#include <asm/io.h>
++#include <asm/machdep.h>
++#include <asm/pci-bridge.h>
++#include <asm/processor.h>
++#include <asm/reg.h>
++#include <asm/time.h>
++#include <asm/udbg.h>
++
++#include "prep.h"
++
++int _prep_type;
++EXPORT_SYMBOL(_prep_type);
++
++/* the residual model is not necessarily NUL terminated */
++static char prep_model[sizeof(((struct prep_vpd *)0)->printable_model) + 1];
++
++/* useful ISA ports */
++#define PREP_SP92		0x92	/* system control port A */
++#define PREP_SYSCTL		0x81c
++#define PREP_MOT_L2_REG		0x823
++#define SIO_CONFIG_RA		0x398	/* PC87332 Super I/O index/data */
++#define SIO_CONFIG_RD		0x399
++
++/* IBM reference design */
++#define PREP_IBM_EQUIPMENT	0x80c
++#define PREP_IBM_PM1		0x82a	/* power management register 1 */
++#define PREP_IBM_PLANAR		0x852	/* planar ID */
++
++#define PREP_IBM_EQUIPMENT_SCSIFUSE	0x40
++#define PREP_IBM_EQUIPMENT_CPU		0x02
++
++/* planar IDs */
++#define PREP_IBM_SANDALFOOT	0xfc
++#define PREP_IBM_THINKPAD	0xff
++#define PREP_IBM_CAROLINA_FIRST	0xf0
++#define PREP_IBM_CAROLINA_LAST	0xf7
++#define PREP_IBM_TIGER1_FIRST	0xd1
++#define PREP_IBM_TIGER1_LAST	0xd5
++
++#define MK48T59_RTC_SECONDS	0x1ff9
++#define MC146818_RTC_SECONDS	0x00
++
++static void __noreturn prep_halt(void)
++{
++	local_irq_disable();
++	/* exceptions to the firmware */
++	mtmsr(mfmsr() | MSR_IP);
++	for (;;)
++		;
++}
++
++static void __noreturn prep_restart(char *cmd)
++{
++	local_irq_disable();
++	mtmsr(mfmsr() | MSR_IP);
++
++	/* soft reset through system control port A */
++	outb(inb(PREP_SP92) & ~1, PREP_SP92);
++	outb(inb(PREP_SP92) | 1, PREP_SP92);
++	for (;;)
++		;
++}
++
++/*
++ * On most IBM PReP the power management is a Signetics 87c750 behind the
++ * Utah component, written as a pair of nibbles to port 0x82a, see the IBM
++ * Carolina Technical Specification.
++ */
++static void utah_sig87c750_setbit(unsigned int bytenum, unsigned int bitnum,
++				  int value)
++{
++	u8 byte1 = 0x10, byte2 = 0x10;
++
++	/* the 750's '20.0' is accessed as '0.0' through Utah */
++	bytenum -= 20;
++
++	byte1 |= (!!value) << 2;
++	byte1 |= (bytenum >> 1) & 0x3;
++	byte2 |= (bytenum & 0x1) << 3;
++	byte2 |= bitnum & 0x7;
++
++	/* the controller needs time to recover after each nibble */
++	outb(byte1, PREP_IBM_PM1);
++	mb(); /* complete the write before the delay */
++	udelay(100);
++	outb(byte2, PREP_IBM_PM1);
++	mb(); /* complete the write before the delay */
++	udelay(100);
++}
++
++static int prep_sig750_power_off(struct sys_off_data *data)
++{
++	local_irq_disable();
++	mtmsr(mfmsr() | MSR_IP);
++	/* bit 21.5, "PMEXEC_OFF" */
++	utah_sig87c750_setbit(21, 5, 1);
++	for (;;)
++		;
++	return NOTIFY_DONE;
++}
++
++static void __init prep_ibm_setup(void)
++{
++	u8 planar = inb(PREP_IBM_PLANAR);
++
++	prep_ibm_planar = planar;
++	bool sig750 = true;
++	u8 l2 = 0x03;
++
++	pr_info("PReP: IBM planar ID %02x\n", planar);
++
++	if ((planar >= PREP_IBM_CAROLINA_FIRST && planar <= PREP_IBM_CAROLINA_LAST) ||
++	    (planar >= PREP_IBM_TIGER1_FIRST && planar <= PREP_IBM_TIGER1_LAST))
++		l2 = 0xc0;
++	else if (planar == PREP_IBM_THINKPAD)
++		sig750 = false;
++	else if (planar != PREP_IBM_SANDALFOOT && !prep_res)
++		l2 = 0xc0;	/* unknown without residual data, assume Carolina */
++	else if (planar != PREP_IBM_SANDALFOOT)
++		sig750 = false;
++
++	outb(inb(PREP_SYSCTL) | l2, PREP_SYSCTL);
++	if (sig750)
++		register_sys_off_handler(SYS_OFF_MODE_POWER_OFF,
++					 SYS_OFF_PRIO_PLATFORM,
++					 prep_sig750_power_off, NULL);
++}
++
++static void __init prep_setup_arch(void)
++{
++	u8 reg;
++
++	prep_residual_init();
++
++	/* assume Motorola without residual data, as for netboot */
++	if (prep_res && !strncmp(prep_res->vpd.printable_model, "IBM", 3))
++		_prep_type = _PREP_IBM;
++	else
++		_prep_type = _PREP_Motorola;
++
++	prep_map_isa_io();
++	if (!isa_io_base) {
++		pr_err("PReP: no ISA I/O space\n");
++		return;
++	}
++
++	/* floppy in PS/2 mode, written twice to take effect */
++	outb(0x09, SIO_CONFIG_RA);
++	reg = (inb(SIO_CONFIG_RD) & 0x3f) | 0x40;
++	outb(reg, SIO_CONFIG_RD);
++	outb(reg, SIO_CONFIG_RD);
++
++	if (_prep_type == _PREP_IBM) {
++		prep_ibm_setup();
++		if (prep_res) {
++			memcpy(prep_model, prep_res->vpd.printable_model,
++			       sizeof(prep_model) - 1);
++			prep_board_name = prep_model;
++		}
++	} else {
++		/* L2 enable as in the PReP reference implementation */
++		outb(inb(PREP_SYSCTL) | 0x3, PREP_SYSCTL);
++	}
++}
++
++static void __init prep_init_IRQ(void)
++{
++	struct device_node *np;
++	unsigned long intack;
++	u32 id;
++
++	np = of_find_compatible_node(NULL, NULL, "chrp,iic");
++	if (!np) {
++		pr_err("PReP: no i8259 in the device tree\n");
++		return;
++	}
++
++	if (prep_res) {
++		intack = prep_residual_isapic_addr();
++	} else {
++		/* Raven and Hawk have a different int-ack address, poll them */
++		id = prep_pci_host_id();
++		if (id == (PCI_VENDOR_ID_MOTOROLA | PCI_DEVICE_ID_MOTOROLA_RAVEN << 16) ||
++		    id == (PCI_VENDOR_ID_MOTOROLA | PCI_DEVICE_ID_MOTOROLA_HAWK << 16))
++			intack = 0;
++		else
++			intack = PREP_PCI_INTACK;
++	}
++
++	i8259_init(np, intack);
++	of_node_put(np);
++	/* PCI interrupt lines are mapped through the i8259 */
++	irq_set_default_domain(i8259_get_host());
++}
++
++static u8 prep_nvram_read(u32 addr)
++{
++	outb(addr, PREP_NVRAM_AS0);
++	outb(addr >> 8, PREP_NVRAM_AS1);
++	return inb(PREP_NVRAM_DATA);
++}
++
++static void prep_nvram_write(u32 addr, u8 val)
++{
++	outb(addr, PREP_NVRAM_AS0);
++	outb(addr >> 8, PREP_NVRAM_AS1);
++	outb(val, PREP_NVRAM_DATA);
++}
++
++static u8 prep_rtc_seconds(void)
++{
++	if (_prep_type == _PREP_IBM) {
++		outb(MC146818_RTC_SECONDS, 0x70);
++		return inb(0x71);
++	}
++	return prep_nvram_read(MK48T59_RTC_SECONDS) & 0x7f;
++}
++
++/* Count timebase ticks over one RTC second, 0 if the RTC does not tick. */
++static unsigned long __init prep_measure_tb_freq(void)
++{
++	u64 start;
++	long i;
++	u8 sec;
++
++	sec = prep_rtc_seconds();
++	for (i = 0; i < 10000000 && prep_rtc_seconds() == sec; i++)
++		;
++	if (i == 10000000)
++		return 0;
++	start = get_tb();
++	sec = prep_rtc_seconds();
++	for (i = 0; i < 10000000 && prep_rtc_seconds() == sec; i++)
++		;
++	if (i == 10000000)
++		return 0;
++
++	return get_tb() - start;
++}
++
++static void __init prep_calibrate_decr(void)
++{
++	struct device_node *cpu = of_find_node_by_type(NULL, "cpu");
++	bool have_tb = cpu && of_property_present(cpu, "timebase-frequency");
++	unsigned long freq;
++
++	of_node_put(cpu);
++	generic_calibrate_decr();
++	if (have_tb || !isa_io_base)
++		return;
++
++	freq = prep_measure_tb_freq();
++	if (freq) {
++		ppc_tb_freq = freq;
++		pr_info("PReP: timebase frequency %lu.%06lu MHz from RTC\n",
++			freq / 1000000, freq % 1000000);
++	}
++}
++
++static void prep_show_cpuinfo(struct seq_file *m)
++{
++	unsigned int i, n;
++
++	seq_printf(m, "machine\t\t: PReP %s\n", prep_board_name ?: "");
++
++	if (_prep_type == _PREP_IBM) {
++		u8 equip = inb(PREP_IBM_EQUIPMENT);
++
++		seq_printf(m, "upgrade cpu\t: %spresent\n",
++			   equip & PREP_IBM_EQUIPMENT_CPU ? "not " : "");
++		seq_printf(m, "scsi fuse\t: %s\n",
++			   equip & PREP_IBM_EQUIPMENT_SCSIFUSE ? "ok" : "bad");
++	} else {
++		static const char * const sizes[] = {
++			"512KiB", "256KiB", "1MiB", "none" };
++		static const char * const srams[] = {
++			"synchronous, pipelined, no parity",
++			"synchronous, parity, flow-through",
++			"asynchronous, no parity",
++			"asynchronous, parity" };
++		u8 l2 = inb(PREP_MOT_L2_REG);
++
++		seq_printf(m, "l2 cache\t: %s", sizes[l2 & 0x3]);
++		if ((l2 & 0x3) != 0x3)
++			seq_printf(m, ", parity %s SRAM: %s",
++				   l2 & 0x08 ? "enabled" : "disabled",
++				   srams[(l2 >> 6) & 0x3]);
++		seq_putc(m, '\n');
++	}
++
++	n = prep_residual_num_memories();
++	if (n) {
++		seq_puts(m, "simms\t\t:");
++		for (i = 0; i < n; i++) {
++			u32 size = prep_res->simm_size[i];
++
++			if (size)
++				seq_printf(m, " %u:%uM", i,
++					   size > 1024 ? size >> 20 : size);
++		}
++		seq_putc(m, '\n');
++	}
++}
++
++static u8 prep_m48t59_read(struct device *dev, u32 ofs)
++{
++	return prep_nvram_read(ofs);
++}
++
++static void prep_m48t59_write(struct device *dev, u32 ofs, u8 val)
++{
++	prep_nvram_write(ofs, val);
++}
++
++static struct m48t59_plat_data prep_m48t59_data = {
++	.read_byte	= prep_m48t59_read,
++	.write_byte	= prep_m48t59_write,
++	.type		= M48T59RTC_TYPE_M48T59,
++	/* the firmware keeps two year digits, as TODC we use 2000-2099 */
++	.yy_offset	= 100,
++};
++
++static int __init prep_add_devices(void)
++{
++	static const struct resource nvram_res =
++		DEFINE_RES_IO_NAMED(PREP_NVRAM_AS0, 4, "nvram");
++	struct resource rtc_res[] = {
++		DEFINE_RES_IO_NAMED(0x70, 2, "rtc"),
++		DEFINE_RES_IRQ(8),
++	};
++	struct platform_device *pd;
++
++	request_region(0x00, 0x20, "dma1");
++	request_region(0x40, 0x20, "timer");
++	request_region(0x80, 0x10, "dma page reg");
++	request_region(0xc0, 0x20, "dma2");
++
++	if (_prep_type == _PREP_IBM) {
++		pd = platform_device_register_simple("rtc_cmos", -1, rtc_res,
++						     ARRAY_SIZE(rtc_res));
++	} else {
++		/* the driver needs a mapping, the accessors use I/O ports */
++		prep_m48t59_data.ioaddr = ioport_map(PREP_NVRAM_AS0, 4);
++		pd = platform_device_register_resndata(NULL, "rtc-m48t59", -1,
++						       &nvram_res, 1,
++						       &prep_m48t59_data,
++						       sizeof(prep_m48t59_data));
++	}
++
++	return PTR_ERR_OR_ZERO(pd);
++}
++machine_device_initcall(prep, prep_add_devices);
++
++define_machine(prep) {
++	.name			= "PReP",
++	.compatible		= "prep",
++	.setup_arch		= prep_setup_arch,
++	.discover_phbs		= prep_discover_phbs,
++	.show_cpuinfo		= prep_show_cpuinfo,
++	.init_IRQ		= prep_init_IRQ,
++	.get_irq		= i8259_irq,
++	.pci_irq_fixup		= prep_pci_irq_fixup,
++	.calibrate_decr		= prep_calibrate_decr,
++	.restart		= prep_restart,
++	.halt			= prep_halt,
++	.progress		= udbg_progress,
++};
+diff --git a/drivers/pnp/pnpbios/core.c b/drivers/pnp/pnpbios/core.c
+index 46af1f549337..6bc593131af4 100644
+--- a/drivers/pnp/pnpbios/core.c
++++ b/drivers/pnp/pnpbios/core.c
+@@ -506,6 +506,10 @@ static int __init pnpbios_init(void)
+ {
+ 	int ret;
+ 
++#if defined(CONFIG_PPC)
++	if (check_legacy_ioport(PNPBIOS_BASE))
++		return -ENODEV;
++#endif
+ 	if (pnpbios_disabled || dmi_check_system(pnpbios_dmi_table) ||
+ 	    arch_pnpbios_disabled()) {
+ 		printk(KERN_INFO "PnPBIOS: Disabled\n");
+@@ -560,7 +564,10 @@ fs_initcall(pnpbios_init);
+ static int __init pnpbios_thread_init(void)
+ {
+ 	struct task_struct *task;
+-
++#if defined(CONFIG_PPC)
++	if (check_legacy_ioport(PNPBIOS_BASE))
++		return 0;
++#endif
+ 	if (pnpbios_disabled)
+ 		return 0;
+ 
+diff --git a/drivers/video/fbdev/Kconfig b/drivers/video/fbdev/Kconfig
+index e8cd8cb76874..ad5edbe58a23 100644
+--- a/drivers/video/fbdev/Kconfig
++++ b/drivers/video/fbdev/Kconfig
+@@ -332,7 +332,7 @@ config FB_IMSTT
+ 
+ config FB_VGA16
+ 	tristate "VGA 16-color graphics support"
+-	depends on FB && X86
++	depends on FB && (X86 || PPC)
+ 	select APERTURE_HELPERS
+ 	select FB_CFB_FILLRECT
+ 	select FB_CFB_COPYAREA
+diff --git a/drivers/video/fbdev/cirrusfb.c b/drivers/video/fbdev/cirrusfb.c
+index 2693b5cc053f..1a0af262948d 100644
+--- a/drivers/video/fbdev/cirrusfb.c
++++ b/drivers/video/fbdev/cirrusfb.c
+@@ -53,6 +53,12 @@
+ #ifdef CONFIG_AMIGA
+ #include <asm/amigahw.h>
+ #endif
++#ifdef CONFIG_PPC_PREP
++#include <asm/machdep.h>
++#define isPReP machine_is(prep)
++#else
++#define isPReP 0
++#endif
+ 
+ #include <video/vga.h>
+ #include <video/cirrus.h>
+@@ -551,18 +557,30 @@ static int cirrusfb_check_var(struct fb_var_screeninfo *var,
+ 		break;
+ 
+ 	case 16:
+-		var->red.offset = 11;
+-		var->green.offset = 5;
+-		var->blue.offset = 0;
++		if (isPReP) {
++			var->red.offset = 2;
++			var->green.offset = -3;
++			var->blue.offset = 8;
++		} else {
++			var->red.offset = 11;
++			var->green.offset = 5;
++			var->blue.offset = 0;
++		}
+ 		var->red.length = 5;
+ 		var->green.length = 6;
+ 		var->blue.length = 5;
+ 		break;
+ 
+ 	case 24:
+-		var->red.offset = 16;
+-		var->green.offset = 8;
+-		var->blue.offset = 0;
++		if (isPReP) {
++			var->red.offset = 0;
++			var->green.offset = 8;
++			var->blue.offset = 16;
++		} else {
++			var->red.offset = 16;
++			var->green.offset = 8;
++			var->blue.offset = 0;
++		}
+ 		var->red.length = 8;
+ 		var->green.length = 8;
+ 		var->blue.length = 8;
+diff --git a/drivers/video/fbdev/vga16fb.c b/drivers/video/fbdev/vga16fb.c
+index cdd6b8de0ceb..560a1faf82e9 100644
+--- a/drivers/video/fbdev/vga16fb.c
++++ b/drivers/video/fbdev/vga16fb.c
+@@ -185,6 +185,8 @@ static inline void setindex(int index)
+ /* Check if the video mode is supported by the driver */
+ static inline int check_mode_supported(const struct screen_info *si)
+ {
++	/* non-x86 architectures treat orig_video_isVGA as a boolean flag */
++#if defined(CONFIG_X86)
+ 	unsigned int type = screen_info_video_type(si);
+ 
+ 	/* only EGA and VGA in 16 color graphic mode are supported */
+@@ -196,7 +198,7 @@ static inline int check_mode_supported(const struct screen_info *si)
+ 	    si->orig_video_mode != 0x10 &&	/* 640x350/4 (EGA) */
+ 	    si->orig_video_mode != 0x12)	/* 640x480/4 (VGA) */
+ 		return -ENODEV;
+-
++#endif
+ 	return 0;
+ }
+ 
+@@ -1346,7 +1348,12 @@ static int vga16fb_probe(struct platform_device *dev)
+ 	dev_info(&dev->dev, "mapped to 0x%p\n", info->screen_base);
+ 	par = info->par;
+ 
++#if defined(CONFIG_X86)
+ 	par->isVGA = screen_info_video_type(si) == VIDEO_TYPE_VGAC;
++#else
++	/* non-x86 architectures treat orig_video_isVGA as a boolean flag */
++	par->isVGA = si->orig_video_isVGA;
++#endif
+ 	par->palette_blanked = 0;
+ 	par->vesa_blanked = 0;
+ 
+-- 
+2.54.0
+
