@@ -10,28 +10,29 @@ Subject: [PATCH] i860: restore the backend, port to current GCC, add Linux targe
 Restores the backend removed from GCC: no cc0, LRA, RTL prologue and epilogue, i860-*-sysv4* and i860-*-linux*. PIC and shared libraries, TLS, IEEE division through libgcc, filled delay slots.
 
 Against upstream commit ada5b8f08739b26bf76558c9d5157cbbdd16c205 (tree-optimization/128322 - amend PR127377 fix).
-Branch i860 at d9abbf7da6c. Tested in the MAME magicst2 model only, not on real hardware.
+Branch i860 at 2e6b2767043. Tested in the MAME magicst2 model only, not on real hardware.
 
 Signed-off-by: René Rebe <rene@exactco.de>
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 ---
- gcc/config.gcc                    |   11 +
- gcc/config/i860/constraints.md    |   68 +
- gcc/config/i860/i860-protos.h     |   67 +
- gcc/config/i860/i860.cc           | 1918 +++++++++++++++++++++++++++++
- gcc/config/i860/i860.h            |  272 ++++
- gcc/config/i860/i860.md           |  998 +++++++++++++++
- gcc/config/i860/i860.opt          |   28 +
- gcc/config/i860/i860.opt.urls     |    8 +
- gcc/config/i860/linux.h           |   42 +
- gcc/config/i860/predicates.md     |   84 ++
- gcc/config/i860/sysv4.h           |   63 +
- gcc/doc/install.texi              |   19 +
- gcc/doc/invoke.texi               |   21 +
- libgcc/config.host                |    8 +
- libgcc/config/i860/fdiv-special.c |   54 +
- libgcc/config/i860/t-i860         |   24 +
- 16 files changed, 3685 insertions(+)
+ gcc/config.gcc                     |   11 +
+ gcc/config/i860/constraints.md     |   68 +
+ gcc/config/i860/i860-protos.h      |   68 +
+ gcc/config/i860/i860.cc            | 1959 ++++++++++++++++++++++++++++
+ gcc/config/i860/i860.h             |  278 ++++
+ gcc/config/i860/i860.md            | 1122 ++++++++++++++++
+ gcc/config/i860/i860.opt           |   28 +
+ gcc/config/i860/i860.opt.urls      |    8 +
+ gcc/config/i860/linux.h            |   61 +
+ gcc/config/i860/predicates.md      |   84 ++
+ gcc/config/i860/sysv4.h            |   63 +
+ gcc/doc/install.texi               |   19 +
+ gcc/doc/invoke.texi                |   21 +
+ libgcc/config.host                 |    8 +
+ libgcc/config/i860/fdiv-special.c  |   54 +
+ libgcc/config/i860/libgcc-i860.ver |   24 +
+ libgcc/config/i860/t-i860          |   27 +
+ 17 files changed, 3903 insertions(+)
 
 diff --git a/gcc/config.gcc b/gcc/config.gcc
 index 01750947c4d..9b8b1fa4f6a 100644
@@ -145,10 +146,10 @@ index 00000000000..57bbe51b94c
 +  (match_code "symbol_ref"))
 diff --git a/gcc/config/i860/i860-protos.h b/gcc/config/i860/i860-protos.h
 new file mode 100644
-index 00000000000..9cc7c4e4d78
+index 00000000000..34747256eb2
 --- /dev/null
 +++ b/gcc/config/i860/i860-protos.h
-@@ -0,0 +1,67 @@
+@@ -0,0 +1,68 @@
 +/* Prototypes for i860.cc functions used in the md file & elsewhere.
 +   Copyright (C) 2000-2026 Free Software Foundation, Inc.
 +   Copyright (C) 2026 René Rebe <rene@exactco.de>
@@ -174,7 +175,8 @@ index 00000000000..9cc7c4e4d78
 +
 +extern HOST_WIDE_INT i860_initial_elimination_offset (int, int);
 +extern void i860_expand_prologue (void);
-+extern void i860_expand_epilogue (void);
++extern void i860_expand_epilogue (bool);
++extern rtx i860_sibcall_mem (rtx);
 +extern void i860_output_function_prefix (FILE *, const char *);
 +
 +#ifdef RTX_CODE
@@ -218,10 +220,10 @@ index 00000000000..9cc7c4e4d78
 +#endif /* GCC_I860_PROTOS_H */
 diff --git a/gcc/config/i860/i860.cc b/gcc/config/i860/i860.cc
 new file mode 100644
-index 00000000000..b78b687303d
+index 00000000000..5795c0c0155
 --- /dev/null
 +++ b/gcc/config/i860/i860.cc
-@@ -0,0 +1,1918 @@
+@@ -0,0 +1,1959 @@
 +/* Subroutines for insn-output.cc for Intel i860.
 +   Copyright (C) 1989-2005, 2026 Free Software Foundation, Inc.
 +   Copyright (C) 2026 René Rebe <rene@exactco.de>
@@ -481,8 +483,10 @@ index 00000000000..b78b687303d
 +    }
 +}
 +
++/* SIBCALL: restore all but leave the jump to the sibcall pattern, whose delay
++   slot takes the sp restore.  */
 +void
-+i860_expand_epilogue (void)
++i860_expand_epilogue (bool sibcall)
 +{
 +  struct i860_frame_info f;
 +  rtx fp = hard_frame_pointer_rtx;
@@ -515,7 +519,15 @@ index 00000000000..b78b687303d
 +		    fp_slot (SImode, 4));
 +  emit_move_insn (fp, fp_slot (SImode, 0));
 +
-+  if (sp_from_fp)
++  if (sibcall)
++    {
++      if (sp_from_fp)
++	emit_move_insn (stack_pointer_rtx, r31);
++      else
++	emit_insn (gen_addsi3 (stack_pointer_rtx, stack_pointer_rtx,
++			       GEN_INT (f.total)));
++    }
++  else if (sp_from_fp)
 +    emit_jump_insn (gen_i860_return_reg (r31));
 +  else
 +    emit_jump_insn (gen_i860_return_adjust (GEN_INT (f.total)));
@@ -1973,6 +1985,35 @@ index 00000000000..b78b687303d
 +		  gen_lowpart (HImode, hi_cxt));
 +  emit_move_insn (adjust_address (m_tramp, HImode, 16),
 +		  gen_lowpart (HImode, cxt));
++
++  /* Fetches read memory, and the new code is still in the data cache.  */
++  rtx addr = force_reg (Pmode, XEXP (m_tramp, 0));
++  maybe_emit_call_builtin___clear_cache (addr,
++					 plus_constant (Pmode, addr,
++							TRAMPOLINE_SIZE));
++}
++
++/* The target of a sibcall MEM in r28, if not a symbol.  */
++rtx
++i860_sibcall_mem (rtx mem)
++{
++  rtx addr = XEXP (mem, 0);
++
++  if (GET_CODE (addr) == SYMBOL_REF)
++    return mem;
++  rtx reg = gen_rtx_REG (Pmode, I860_SIBCALL_REGNUM);
++  emit_move_insn (reg, addr);
++  return replace_equiv_address (mem, reg);
++}
++
++/* Any call may be a sibcall: the target is a symbol or in r28, and the generic
++   code checks the stack arguments.  An epilogue with an EH stack
++   adjustment never gets here, tree-tailcall skips __builtin_eh_return users.  */
++static bool
++i860_function_ok_for_sibcall (tree decl ATTRIBUTE_UNUSED,
++			      tree exp ATTRIBUTE_UNUSED)
++{
++  return true;
 +}
 +
 +/* Costs.  */
@@ -2080,6 +2121,8 @@ index 00000000000..b78b687303d
 +#undef TARGET_CAN_ELIMINATE
 +#define TARGET_CAN_ELIMINATE i860_can_eliminate
 +
++#undef TARGET_FUNCTION_OK_FOR_SIBCALL
++#define TARGET_FUNCTION_OK_FOR_SIBCALL i860_function_ok_for_sibcall
 +#undef TARGET_FUNCTION_ARG
 +#define TARGET_FUNCTION_ARG i860_function_arg
 +#undef TARGET_FUNCTION_ARG_ADVANCE
@@ -2142,10 +2185,10 @@ index 00000000000..b78b687303d
 +struct gcc_target targetm = TARGET_INITIALIZER;
 diff --git a/gcc/config/i860/i860.h b/gcc/config/i860/i860.h
 new file mode 100644
-index 00000000000..2002735be06
+index 00000000000..86f490ad00c
 --- /dev/null
 +++ b/gcc/config/i860/i860.h
-@@ -0,0 +1,272 @@
+@@ -0,0 +1,278 @@
 +/* Definitions of target machine for GNU compiler, for Intel 860.
 +   Copyright (C) 1989-2005, 2026 Free Software Foundation, Inc.
 +   Copyright (C) 2026 René Rebe <rene@exactco.de>
@@ -2261,6 +2304,10 @@ index 00000000000..2002735be06
 +#define CASE_VECTOR_PC_RELATIVE flag_pic
 +#define JUMP_TABLES_IN_TEXT_SECTION flag_pic
 +#define I860_RETURN_REGNUM 1
++/* Holds an indirect sibcall target: no argument, not the static chain or the
++   sp in r31, not restored by the epilogue.  A PLT entry clobbers it after the
++   jump.  */
++#define I860_SIBCALL_REGNUM 28
 +#define I860_TEMP_REGNUM 31
 +#define I860_STRUCT_VALUE_REGNUM 16
 +#define F0_REGNUM 32
@@ -2310,6 +2357,8 @@ index 00000000000..2002735be06
 +#define FIRST_PARM_OFFSET(FNDECL) 0
 +#define ACCUMULATE_OUTGOING_ARGS 1
 +#define EXIT_IGNORE_STACK 1
++/* A sibcall passes on the return address the epilogue restored.  */
++#define EPILOGUE_USES(REGNO) (epilogue_completed && (REGNO) == I860_RETURN_REGNUM)
 +
 +#define ELIMINABLE_REGS					\
 + { { ARG_POINTER_REGNUM, HARD_FRAME_POINTER_REGNUM },	\
@@ -2420,10 +2469,10 @@ index 00000000000..2002735be06
 +#endif /* GCC_I860_H */
 diff --git a/gcc/config/i860/i860.md b/gcc/config/i860/i860.md
 new file mode 100644
-index 00000000000..a8903d5f6cc
+index 00000000000..a5d21bbe197
 --- /dev/null
 +++ b/gcc/config/i860/i860.md
-@@ -0,0 +1,998 @@
+@@ -0,0 +1,1122 @@
 +;; GCC machine description for the Intel i860 microprocessor
 +;; Copyright (C) 1989-2005, 2026 Free Software Foundation, Inc.
 +;; Copyright (C) 2026 René Rebe <rene@exactco.de>
@@ -2456,6 +2505,7 @@ index 00000000000..a8903d5f6cc
 +   (SP_REGNUM	2)
 +   (FP_REGNUM	3)
 +   (PIC_REGNUM	15)
++   (SIBCALL_REGNUM	28)
 +   (R31_REGNUM	31)
 +   (F0_REGNUM	32)])
 +
@@ -2473,6 +2523,7 @@ index 00000000000..a8903d5f6cc
 +(define_c_enum "unspecv" [
 +  UNSPECV_BLOCKAGE
 +  UNSPECV_SET_GOT
++  UNSPECV_CAS
 +])
 +
 +;; Length 4 means exactly one machine instruction, as delay slots require.
@@ -3021,7 +3072,8 @@ index 00000000000..a8903d5f6cc
 +			 (match_operand:SI 2 "nonmemory_operand" "rn")])
 +		      (label_ref (match_operand 3 ""))
 +		      (pc)))]
-+  "i860_cbranch_operand_p (GET_CODE (operands[0]), operands[2])"
++  "lra_in_progress || reload_completed
++   || i860_cbranch_operand_p (GET_CODE (operands[0]), operands[2])"
 +  "* return i860_output_cbranch (insn, operands, false);"
 +  [(set (attr "length")
 +	(if_then_else
@@ -3042,8 +3094,9 @@ index 00000000000..a8903d5f6cc
 +			 (match_operand:SI 2 "nonmemory_operand" "rn")])
 +		      (pc)
 +		      (label_ref (match_operand 3 ""))))]
-+  "i860_cbranch_operand_p (reverse_condition (GET_CODE (operands[0])),
-+			   operands[2])"
++  "lra_in_progress || reload_completed
++   || i860_cbranch_operand_p (reverse_condition (GET_CODE (operands[0])),
++			      operands[2])"
 +  "* return i860_output_cbranch (insn, operands, true);"
 +  [(set (attr "length")
 +	(if_then_else
@@ -3343,6 +3396,73 @@ index 00000000000..a8903d5f6cc
 +  [(set_attr "type" "call")
 +   (set_attr "length" "8")])
 +
++;; Sibling calls: entered with the epilogue done and sp restored by the slot.
++;; The PLT keeps r1 for the callee and neither form needs r15.  After a fault in
++;; the slot the kernel resumes at the br or bri, so the jump is repeated.  The
++;; return address stays live through EPILOGUE_USES.
++(define_expand "sibcall"
++  [(parallel [(call (match_operand:SI 0 "memory_operand")
++		    (match_operand 1 ""))
++	      (return)])]
++  ""
++{
++  operands[0] = i860_sibcall_mem (operands[0]);
++})
++
++(define_insn "*sibcall_symbol"
++  [(call (mem:SI (match_operand:SI 0 "symbol_ref_operand" "Z"))
++	 (match_operand 1 "" ""))
++   (return)]
++  "SIBLING_CALL_P (insn)"
++{
++  return (flag_pic && !SYMBOL_REF_LOCAL_P (operands[0])
++	  ? "br %0@plt%#" : "br %0%#");
++}
++  [(set_attr "type" "branch")
++   (set_attr "length" "8")])
++
++(define_insn "*sibcall"
++  [(call (mem:SI (reg:SI SIBCALL_REGNUM))
++	 (match_operand 0 "" ""))
++   (return)]
++  "SIBLING_CALL_P (insn)"
++  "bri %?r28%#"
++  [(set_attr "type" "branch")
++   (set_attr "length" "8")])
++
++(define_expand "sibcall_value"
++  [(parallel [(set (match_operand 0 "")
++		   (call (match_operand:SI 1 "memory_operand")
++			 (match_operand 2 "")))
++	      (return)])]
++  ""
++{
++  operands[1] = i860_sibcall_mem (operands[1]);
++})
++
++(define_insn "*sibcall_value_symbol"
++  [(set (match_operand 0 "" "")
++	(call (mem:SI (match_operand:SI 1 "symbol_ref_operand" "Z"))
++	      (match_operand 2 "" "")))
++   (return)]
++  "SIBLING_CALL_P (insn)"
++{
++  return (flag_pic && !SYMBOL_REF_LOCAL_P (operands[1])
++	  ? "br %1@plt%#" : "br %1%#");
++}
++  [(set_attr "type" "branch")
++   (set_attr "length" "8")])
++
++(define_insn "*sibcall_value"
++  [(set (match_operand 0 "" "")
++	(call (mem:SI (reg:SI SIBCALL_REGNUM))
++	      (match_operand 1 "" "")))
++   (return)]
++  "SIBLING_CALL_P (insn)"
++  "bri %?r28%#"
++  [(set_attr "type" "branch")
++   (set_attr "length" "8")])
++
 +(define_expand "untyped_call"
 +  [(parallel [(call (match_operand 0 "")
 +		    (const_int 0))
@@ -3379,7 +3499,15 @@ index 00000000000..a8903d5f6cc
 +  [(const_int 0)]
 +  ""
 +{
-+  i860_expand_epilogue ();
++  i860_expand_epilogue (false);
++  DONE;
++})
++
++(define_expand "sibcall_epilogue"
++  [(const_int 0)]
++  ""
++{
++  i860_expand_epilogue (true);
 +  DONE;
 +})
 +
@@ -3422,6 +3550,51 @@ index 00000000000..a8903d5f6cc
 +  ""
 +  "trap %?r0,%?r0,%?r0"
 +  [(set_attr "type" "trap")])
++
++;; Atomics: everything else derives from this.  The bus stays locked and interrupts are held
++;; off up to the access after unlock; a trap inside makes the kernel restart at the lock, so
++;; the operands must survive: old is earlyclobber.  In user mode at most 32 instructions.
++(define_mode_iterator ATOMIC [QI HI SI])
++(define_mode_attr lsfx [(QI "b") (HI "s") (SI "l")])
++
++(define_expand "atomic_compare_and_swap<mode>"
++  [(match_operand:SI 0 "register_operand")
++   (match_operand:ATOMIC 1 "register_operand")
++   (match_operand:ATOMIC 2 "memory_operand")
++   (match_operand:ATOMIC 3 "general_operand")
++   (match_operand:ATOMIC 4 "general_operand")
++   (match_operand:SI 5 "const_int_operand")
++   (match_operand:SI 6 "const_int_operand")
++   (match_operand:SI 7 "const_int_operand")]
++  ""
++{
++  rtx old = gen_reg_rtx (SImode);
++  rtx addr = force_reg (Pmode, XEXP (operands[2], 0));
++  /* ld.b and ld.s sign extend */
++  rtx expected = force_reg (SImode, convert_modes (SImode, <MODE>mode, operands[3], 0));
++  rtx desired = force_reg (SImode, convert_modes (SImode, <MODE>mode, operands[4], 0));
++  rtx ok;
++
++  emit_insn (gen_i860_cas<mode> (old, addr, expected, desired));
++  emit_move_insn (operands[1], gen_lowpart (<MODE>mode, old));
++  ok = emit_store_flag_force (operands[0], EQ, old, expected, SImode, 0, 1);
++  if (ok != operands[0])
++    emit_move_insn (operands[0], ok);
++  DONE;
++})
++
++(define_insn "i860_cas<mode>"
++  [(set (match_operand:SI 0 "register_operand" "=&r")
++	(unspec_volatile:SI [(mem:ATOMIC (match_operand:SI 1 "register_operand" "r"))
++			     (match_operand:SI 2 "register_operand" "r")
++			     (match_operand:SI 3 "register_operand" "r")] UNSPECV_CAS))
++   (set (mem:ATOMIC (match_dup 1))
++	(unspec_volatile:ATOMIC [(const_int 0)] UNSPECV_CAS))
++   (clobber (mem:BLK (scratch)))]
++  ""
++  "lock\;ld.<lsfx> 0(%1),%0\;xor %0,%2,%?r0\;bnc 1f\;unlock\;st.<lsfx> %3,0(%1)\;br 2f\;nop\;1:\;unlock\;ld.<lsfx> 0(%1),%?r0\;2:"
++  [(set_attr "type" "multi")
++   (set_attr "length" "40")])
 diff --git a/gcc/config/i860/i860.opt b/gcc/config/i860/i860.opt
 new file mode 100644
 index 00000000000..097d4ef9baf
@@ -3472,10 +3645,10 @@ index 00000000000..d61dc281b1d
 +
 diff --git a/gcc/config/i860/linux.h b/gcc/config/i860/linux.h
 new file mode 100644
-index 00000000000..d1c066406de
+index 00000000000..347f07609b2
 --- /dev/null
 +++ b/gcc/config/i860/linux.h
-@@ -0,0 +1,42 @@
+@@ -0,0 +1,61 @@
 +/* Definitions for Intel i860 running GNU/Linux.
 +   Copyright (C) 2026 Free Software Foundation, Inc.
 +   Copyright (C) 2026 René Rebe <rene@exactco.de>
@@ -3507,7 +3680,26 @@ index 00000000000..d1c066406de
 +#define I860_THREAD_POINTER_REGNUM 30
 +#define I860_PIC_SUPPORTED 1
 +
++/* The caches are only reachable through dirbase, so this takes the kernel's
++   cacheflush syscall.  It flushes everything, the range is only checked.  */
++#define I860_NR_CACHEFLUSH 244
++#define CLEAR_INSN_CACHE(BEG, END)					\
++  do									\
++    {									\
++      register long r28_ __asm__ ("r28") = I860_NR_CACHEFLUSH;		\
++      register long r16_ __asm__ ("r16") = (long) (BEG);		\
++      register long r17_ __asm__ ("r17") = (long) (END) - (long) (BEG);	\
++      register long r18_ __asm__ ("r18") = 0;				\
++      __asm__ __volatile__ ("trap %%r0,%%r0,%%r0"			\
++			    : "+r" (r28_), "+r" (r16_)			\
++			    : "r" (r17_), "r" (r18_)			\
++			    : "memory");				\
++    }									\
++  while (0)
++
 +#define GLIBC_DYNAMIC_LINKER "/lib/ld-linux-i860.so.1"
++#undef MUSL_DYNAMIC_LINKER
++#define MUSL_DYNAMIC_LINKER "/lib/ld-musl-i860.so.1"
 +
 +#undef LINK_SPEC
 +#define LINK_SPEC							\
@@ -3838,12 +4030,42 @@ index 00000000000..7c2b64a04d4
 +{
 +  return (float) __i860_fdiv_special (x, y);
 +}
+diff --git a/libgcc/config/i860/libgcc-i860.ver b/libgcc/config/i860/libgcc-i860.ver
+new file mode 100644
+index 00000000000..c5ebf98de0d
+--- /dev/null
++++ b/libgcc/config/i860/libgcc-i860.ver
+@@ -0,0 +1,24 @@
++# Copyright (C) 2026 Free Software Foundation, Inc.
++# Copyright (C) 2026 René Rebe <rene@exactco.de>
++#
++# This file is part of GCC.
++#
++# GCC is free software; you can redistribute it and/or modify it under
++# the terms of the GNU General Public License as published by the Free
++# Software Foundation; either version 3, or (at your option) any later
++# version.
++#
++# GCC is distributed in the hope that it will be useful, but WITHOUT ANY
++# WARRANTY; without even the implied warranty of MERCHANTABILITY or
++# FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License
++# for more details.
++#
++# You should have received a copy of the GNU General Public License
++# along with GCC; see the file COPYING3.  If not see
++# <http://www.gnu.org/licenses/>.
++
++# Division calls these, also from shared libraries.
++GCC_4.0.0 {
++  __i860_fdiv_special
++  __i860_fdivs_special
++}
 diff --git a/libgcc/config/i860/t-i860 b/libgcc/config/i860/t-i860
 new file mode 100644
-index 00000000000..4fe70bf2d85
+index 00000000000..b078f037e30
 --- /dev/null
 +++ b/libgcc/config/i860/t-i860
-@@ -0,0 +1,24 @@
+@@ -0,0 +1,27 @@
 +# Copyright (C) 2026 Free Software Foundation, Inc.
 +# Copyright (C) 2026 René Rebe <rene@exactco.de>
 +#
@@ -3868,3 +4090,6 @@ index 00000000000..4fe70bf2d85
 +	   $(srcdir)/udivmod.c \
 +	   $(srcdir)/udivmodsi4.c \
 +	   $(srcdir)/config/i860/fdiv-special.c
++
++# Division calls these, also from shared libraries.
++SHLIB_MAPFILES += $(srcdir)/config/i860/libgcc-i860.ver

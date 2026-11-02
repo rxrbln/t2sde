@@ -1,0 +1,728 @@
+# --- T2-COPYRIGHT-BEGIN ---
+# t2/package/*/libffi/i860.patch
+# Copyright (C) 2026 The T2 SDE Project
+# SPDX-License-Identifier: GPL-2.0 or patched project license
+# --- T2-COPYRIGHT-END ---
+
+libffi: i860-linux port, work in progress snapshot
+
+Against upstream d02afc25. Taken while the port is being worked on.
+
+Signed-off-by: René Rebe <rene@exactco.de>
+
+ Makefile.am                        |   4 +-
+ README.md                          |   1 +
+ configure.ac                       |   2 +-
+ configure.host                     |   5 +
+ src/i860/ffi.c                     | 337 +++++++++++++++++++++++++++++++++++++
+ src/i860/ffitarget.h               |  54 ++++++
+ src/i860/internal.h                |  45 +++++
+ src/i860/sysv.S                    | 169 +++++++++++++++++++
+ testsuite/libffi.go/static-chain.h |   2 +
+ 9 files changed, 617 insertions(+), 2 deletions(-)
+
+diff --git a/Makefile.am b/Makefile.am
+index 9b01777a..1eece0d8 100644
+--- a/Makefile.am
++++ b/Makefile.am
+@@ -59,6 +59,7 @@ noinst_HEADERS = src/aarch64/ffitarget.h src/aarch64/internal.h		\
+ 	src/arc/ffitarget.h src/arm/ffitarget.h src/arm/internal.h	\
+ 	src/avr32/ffitarget.h src/bfin/ffitarget.h			\
+ 	src/cris/ffitarget.h src/csky/ffitarget.h src/frv/ffitarget.h	\
++	src/i860/ffitarget.h src/i860/internal.h			\
+ 	src/ia64/ffitarget.h src/ia64/ia64_flags.h			\
+ 	src/m32r/ffitarget.h src/m68k/ffitarget.h			\
+ 	src/m88k/ffitarget.h src/metag/ffitarget.h			\
+@@ -83,7 +84,8 @@ EXTRA_libffi_la_SOURCES = src/aarch64/ffi.c src/aarch64/sysv.S		\
+ 	src/arm/sysv.S src/arm/ffi.c src/arm/sysv_msvc_arm32.S		\
+ 	src/avr32/ffi.c src/avr32/sysv.S src/bfin/ffi.c			\
+ 	src/bfin/sysv.S src/cris/ffi.c src/cris/sysv.S src/frv/ffi.c	\
+-	src/csky/ffi.c src/csky/sysv.S src/frv/eabi.S src/ia64/ffi.c	\
++	src/csky/ffi.c src/csky/sysv.S src/frv/eabi.S src/i860/ffi.c	\
++	src/i860/sysv.S src/ia64/ffi.c					\
+ 	src/ia64/unix.S src/m32r/ffi.c src/m32r/sysv.S src/m68k/ffi.c	\
+ 	src/m68k/sysv.S src/m88k/ffi.c src/m88k/obsd.S			\
+ 	src/metag/ffi.c src/metag/sysv.S src/microblaze/ffi.c		\
+diff --git a/README.md b/README.md
+index 64f9d6a0..363b2e73 100644
+--- a/README.md
++++ b/README.md
+@@ -62,6 +62,7 @@ tested:
+ | HPPA            | HPUX             | GCC                     |
+ | HPPA64          | HPUX             | GCC                     |
+ | KVX             | Linux            | GCC                     |
++| i860            | Linux            | GCC                     |
+ | IA-64           | Linux            | GCC                     |
+ | LoongArch32     | Linux            | GCC                     |
+ | LoongArch64     | Linux            | GCC                     |
+diff --git a/configure.ac b/configure.ac
+index 7e07ffca..db08a680 100644
+--- a/configure.ac
++++ b/configure.ac
+@@ -410,7 +410,7 @@ case "$target" in
+      ;;
+      *arm*-*-linux-* | aarch64*-*-linux-* | i*86-*-linux-* | x86_64-*-linux-* \
+      | loongarch*-*-linux-* | s390x*-linux-* | powerpc*-linux-* \
+-     | riscv*-linux-*)
++     | riscv*-linux-* | i860-*-linux*)
+        AC_DEFINE(FFI_EXEC_STATIC_TRAMP, 1,
+                  [Define this if you want statically defined trampolines])
+      ;;
+diff --git a/configure.host b/configure.host
+index 3c304827..f79cf849 100644
+--- a/configure.host
++++ b/configure.host
+@@ -80,6 +80,11 @@ case "${host}" in
+ 	SOURCES="ffi.c hpux32.S"
+ 	;;
+ 
++  i860-*-linux*)
++	TARGET=I860; TARGETDIR=i860
++	SOURCES="ffi.c sysv.S"
++	;;
++
+   i?86-*-freebsd* | i?86-*-openbsd*)
+ 	TARGET=X86_FREEBSD; TARGETDIR=x86
+ 	;;
+diff --git a/src/i860/ffi.c b/src/i860/ffi.c
+new file mode 100644
+index 00000000..66c6a2fc
+--- /dev/null
++++ b/src/i860/ffi.c
+@@ -0,0 +1,337 @@
++/* -----------------------------------------------------------------------
++   ffi.c - Copyright (C) 2026 René Rebe <rene@exactco.de>
++
++   Intel i860 Foreign Function Interface
++
++   Permission is hereby granted, free of charge, to any person obtaining
++   a copy of this software and associated documentation files (the
++   ``Software''), to deal in the Software without restriction, including
++   without limitation the rights to use, copy, modify, merge, publish,
++   distribute, sublicense, and/or sell copies of the Software, and to
++   permit persons to whom the Software is furnished to do so, subject to
++   the following conditions:
++
++   The above copyright notice and this permission notice shall be included
++   in all copies or substantial portions of the Software.
++
++   THE SOFTWARE IS PROVIDED ``AS IS'', WITHOUT WARRANTY OF ANY KIND,
++   EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
++   MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
++   NONINFRINGEMENT.  IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT
++   HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY,
++   WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
++   OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
++   DEALINGS IN THE SOFTWARE.
++   ----------------------------------------------------------------------- */
++
++
++#include <ffi.h>
++#include <ffi_common.h>
++#include <stddef.h>
++#include <stdint.h>
++#include <stdlib.h>
++#include <string.h>
++#include <tramp.h>
++#include "internal.h"
++
++struct i860_regs
++{
++  uint32_t gpr[I860_INT_ARG_BYTES / 4];
++  uint32_t fpr[I860_FP_ARG_BYTES / 4];
++  uint32_t ret[4];
++  uint32_t fret[2];
++} __attribute__ ((aligned (16)));
++
++struct i860_call_frame
++{
++  struct i860_regs regs;
++  void *saved_fp, *saved_r1, *saved_sp;
++} __attribute__ ((aligned (16)));
++
++_Static_assert (offsetof (struct i860_regs, fpr) == I860_REGS_FPR, "regs");
++_Static_assert (offsetof (struct i860_regs, ret) == I860_REGS_RET, "regs");
++_Static_assert (offsetof (struct i860_regs, fret) == I860_REGS_FRET, "regs");
++_Static_assert (sizeof (struct i860_regs) == I860_REGS_SIZE, "regs");
++_Static_assert (offsetof (struct i860_call_frame, saved_fp) == I860_CALL_FP, "frame");
++_Static_assert (offsetof (struct i860_call_frame, saved_r1) == I860_CALL_R1, "frame");
++_Static_assert (offsetof (struct i860_call_frame, saved_sp) == I860_CALL_SP, "frame");
++_Static_assert (sizeof (struct i860_call_frame) == I860_CALL_SIZE, "frame");
++_Static_assert (I860_TRAMP_COUNT * I860_TRAMP_SIZE == I860_TRAMP_MAP_SIZE, "tramp");
++
++extern void ffi_call_i860 (struct i860_call_frame *frame, void *stack,
++			   void (*fn) (void), void *chain) FFI_HIDDEN;
++extern void ffi_closure_i860 (void) FFI_HIDDEN;
++extern void ffi_go_closure_i860 (void) FFI_HIDDEN;
++
++/* Follows GCC's i860_function_arg: a count keeps growing when an argument did
++   not fit, so a register left free is not used by a later argument.  */
++struct arg_walk
++{
++  unsigned int gp, fp, stack;
++};
++
++enum arg_where { ARG_GPR, ARG_FPR, ARG_STACK };
++
++static void
++arg_walk_init (struct arg_walk *w, const ffi_cif *cif)
++{
++  w->gp = cif->rtype->type == FFI_TYPE_STRUCT ? 4 : 0;
++  w->fp = 0;
++  w->stack = 0;
++}
++
++static enum arg_where
++arg_next (struct arg_walk *w, const ffi_type *ty, unsigned int *off)
++{
++  unsigned int size = FFI_ALIGN (ty->size, 4);
++  unsigned int align;
++
++  switch (ty->type)
++    {
++    case FFI_TYPE_STRUCT:
++    case FFI_TYPE_COMPLEX:
++      break;
++
++    case FFI_TYPE_FLOAT:
++    case FFI_TYPE_DOUBLE:
++      *off = FFI_ALIGN (w->fp, size);
++      w->fp = *off + size;
++      if (w->fp <= I860_FP_ARG_BYTES)
++	return ARG_FPR;
++      break;
++
++    default:
++      *off = w->gp;
++      w->gp = *off + size;
++      if (w->gp <= I860_INT_ARG_BYTES)
++	return ARG_GPR;
++      break;
++    }
++
++  align = ty->alignment < 4 ? 4 : ty->alignment > 16 ? 16 : ty->alignment;
++  *off = FFI_ALIGN (w->stack, align);
++  w->stack = *off + size;
++  return ARG_STACK;
++}
++
++static void *
++arg_slot (struct arg_walk *w, const ffi_type *ty, struct i860_regs *regs,
++	  char *stack)
++{
++  unsigned int off;
++
++  switch (arg_next (w, ty, &off))
++    {
++    case ARG_GPR:
++      return (char *) regs->gpr + off;
++    case ARG_FPR:
++      return (char *) regs->fpr + off;
++    default:
++      return stack + off;
++    }
++}
++
++ffi_status FFI_HIDDEN
++ffi_prep_cif_machdep (ffi_cif *cif)
++{
++  struct arg_walk w;
++  unsigned int i, off;
++
++  arg_walk_init (&w, cif);
++  for (i = 0; i < cif->nargs; i++)
++    arg_next (&w, cif->arg_types[i], &off);
++  cif->bytes = FFI_ALIGN (w.stack, 16);
++  return FFI_OK;
++}
++
++static void
++ffi_call_int (ffi_cif *cif, void (*fn) (void), void *rvalue, void **avalue,
++	      void *chain)
++{
++  ffi_type *rtype = cif->rtype;
++  size_t rtemp = !rvalue && rtype->type == FFI_TYPE_STRUCT ? rtype->size : 0;
++  char *stack = alloca (cif->bytes + sizeof (struct i860_call_frame) + rtemp);
++  struct i860_call_frame *frame = (void *) (stack + cif->bytes);
++  struct arg_walk w;
++  unsigned int i;
++
++  arg_walk_init (&w, cif);
++  if (rtype->type == FFI_TYPE_STRUCT)
++    {
++      if (!rvalue)
++	rvalue = frame + 1;
++      frame->regs.gpr[0] = (uintptr_t) rvalue;
++    }
++
++  for (i = 0; i < cif->nargs; i++)
++    {
++      ffi_type *ty = cif->arg_types[i];
++      void *slot = arg_slot (&w, ty, &frame->regs, stack);
++
++      switch (ty->type)
++	{
++	case FFI_TYPE_SINT8:
++	  *(ffi_sarg *) slot = *(int8_t *) avalue[i];
++	  break;
++	case FFI_TYPE_UINT8:
++	  *(ffi_arg *) slot = *(uint8_t *) avalue[i];
++	  break;
++	case FFI_TYPE_SINT16:
++	  *(ffi_sarg *) slot = *(int16_t *) avalue[i];
++	  break;
++	case FFI_TYPE_UINT16:
++	  *(ffi_arg *) slot = *(uint16_t *) avalue[i];
++	  break;
++	default:
++	  memcpy (slot, avalue[i], ty->size);
++	  break;
++	}
++    }
++
++  ffi_call_i860 (frame, stack, fn, chain);
++
++  if (!rvalue)
++    return;
++  switch (rtype->type)
++    {
++    case FFI_TYPE_VOID:
++    case FFI_TYPE_STRUCT:
++      break;
++    case FFI_TYPE_SINT8:
++      *(ffi_sarg *) rvalue = (int8_t) frame->regs.ret[0];
++      break;
++    case FFI_TYPE_UINT8:
++      *(ffi_arg *) rvalue = (uint8_t) frame->regs.ret[0];
++      break;
++    case FFI_TYPE_SINT16:
++      *(ffi_sarg *) rvalue = (int16_t) frame->regs.ret[0];
++      break;
++    case FFI_TYPE_UINT16:
++      *(ffi_arg *) rvalue = (uint16_t) frame->regs.ret[0];
++      break;
++    case FFI_TYPE_FLOAT:
++    case FFI_TYPE_DOUBLE:
++      memcpy (rvalue, frame->regs.fret, rtype->size);
++      break;
++    default:
++      /* Complex values come back in r16-r19 as well, not in FP registers.  */
++      memcpy (rvalue, frame->regs.ret, rtype->size);
++      break;
++    }
++}
++
++void
++ffi_call (ffi_cif *cif, void (*fn) (void), void *rvalue, void **avalue)
++{
++  ffi_call_int (cif, fn, rvalue, avalue, NULL);
++}
++
++void
++ffi_call_go (ffi_cif *cif, void (*fn) (void), void *rvalue, void **avalue,
++	     void *closure)
++{
++  ffi_call_int (cif, fn, rvalue, avalue, closure);
++}
++
++/* Called from sysv.S with the argument registers saved in REGS; returns with
++   the values for r16-r19 and f8/f9 stored there.  */
++void FFI_HIDDEN
++ffi_closure_inner_i860 (ffi_cif *cif,
++			void (*fun) (ffi_cif *, void *, void **, void *),
++			void *user_data, struct i860_regs *regs, char *stack)
++{
++  void **avalue = alloca (cif->nargs * sizeof (void *));
++  ffi_type *rtype = cif->rtype;
++  struct arg_walk w;
++  unsigned int i;
++  void *rvalue;
++
++  arg_walk_init (&w, cif);
++  if (rtype->type == FFI_TYPE_STRUCT)
++    {
++      rvalue = (void *) (uintptr_t) regs->gpr[0];
++      regs->ret[0] = regs->gpr[0];
++    }
++  else if (rtype->type == FFI_TYPE_FLOAT || rtype->type == FFI_TYPE_DOUBLE)
++    rvalue = regs->fret;
++  else
++    rvalue = regs->ret;
++
++  for (i = 0; i < cif->nargs; i++)
++    {
++      ffi_type *ty = cif->arg_types[i];
++
++      avalue[i] = arg_slot (&w, ty, regs, stack);
++      /* Register pairs are not aligned, and fld.d traps on a misaligned word.  */
++      if (((uintptr_t) avalue[i] & (ty->alignment - 1)) != 0)
++	{
++	  void *copy = alloca (ty->size);
++
++	  avalue[i] = memcpy (copy, avalue[i], ty->size);
++	}
++    }
++
++  fun (cif, rvalue, avalue, user_data);
++}
++
++ffi_status
++ffi_prep_closure_loc (ffi_closure *closure, ffi_cif *cif,
++		      void (*fun) (ffi_cif *, void *, void **, void *),
++		      void *user_data, void *codeloc)
++{
++  uint32_t *tramp = (uint32_t *) closure->tramp;
++  uint32_t target = (uintptr_t) ffi_closure_i860;
++  uint32_t chain = (uintptr_t) codeloc;
++
++  if (cif->abi != FFI_SYSV)
++    return FFI_BAD_ABI;
++
++  closure->cif = cif;
++  closure->fun = fun;
++  closure->user_data = user_data;
++
++#ifdef FFI_EXEC_STATIC_TRAMP
++  if (ffi_tramp_is_present (closure))
++    {
++      ffi_tramp_set_parms (closure->ftramp, ffi_closure_i860, closure);
++      return FFI_OK;
++    }
++#endif
++
++  tramp[0] = 0xec1f0000 | (target >> 16);	/* orh hi(target),r0,r31 */
++  tramp[1] = 0xe7ff0000 | (target & 0xffff);	/* or lo(target),r31,r31 */
++  tramp[2] = 0xec1d0000 | (chain >> 16);	/* orh hi(chain),r0,r29 */
++  tramp[3] = 0x4000f800;			/* bri r31 */
++  tramp[4] = 0xe7bd0000 | (chain & 0xffff);	/* or lo(chain),r29,r29 */
++
++  /* After the fields: a second mapping must see them too, as the data cache
++     is tagged by virtual address.  */
++  __builtin___clear_cache ((char *) codeloc,
++			   (char *) codeloc + FFI_TRAMPOLINE_SIZE);
++  return FFI_OK;
++}
++
++ffi_status
++ffi_prep_go_closure (ffi_go_closure *closure, ffi_cif *cif,
++		     void (*fun) (ffi_cif *, void *, void **, void *))
++{
++  if (cif->abi != FFI_SYSV)
++    return FFI_BAD_ABI;
++
++  closure->tramp = ffi_go_closure_i860;
++  closure->cif = cif;
++  closure->fun = fun;
++  return FFI_OK;
++}
++
++#ifdef FFI_EXEC_STATIC_TRAMP
++void *
++ffi_tramp_arch (size_t *tramp_size, size_t *map_size)
++{
++  extern void *trampoline_code_table;
++
++  *tramp_size = I860_TRAMP_SIZE;
++  *map_size = I860_TRAMP_MAP_SIZE;
++  return &trampoline_code_table;
++}
++#endif
+diff --git a/src/i860/ffitarget.h b/src/i860/ffitarget.h
+new file mode 100644
+index 00000000..b4ccdf8b
+--- /dev/null
++++ b/src/i860/ffitarget.h
+@@ -0,0 +1,54 @@
++/* -----------------------------------------------------------------------
++   ffitarget.h - Copyright (C) 2026 René Rebe <rene@exactco.de>
++
++   Target configuration macros for Intel i860.
++
++   Permission is hereby granted, free of charge, to any person obtaining
++   a copy of this software and associated documentation files (the
++   ``Software''), to deal in the Software without restriction, including
++   without limitation the rights to use, copy, modify, merge, publish,
++   distribute, sublicense, and/or sell copies of the Software, and to
++   permit persons to whom the Software is furnished to do so, subject to
++   the following conditions:
++
++   The above copyright notice and this permission notice shall be included
++   in all copies or substantial portions of the Software.
++
++   THE SOFTWARE IS PROVIDED ``AS IS'', WITHOUT WARRANTY OF ANY KIND,
++   EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
++   MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
++   NONINFRINGEMENT.  IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT
++   HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY,
++   WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
++   OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
++   DEALINGS IN THE SOFTWARE.
++   ----------------------------------------------------------------------- */
++
++#ifndef LIBFFI_TARGET_H
++#define LIBFFI_TARGET_H
++
++#ifndef LIBFFI_H
++#error "Please do not include ffitarget.h directly into your source.  Use ffi.h instead."
++#endif
++
++#ifndef LIBFFI_ASM
++typedef unsigned long ffi_arg;
++typedef signed long ffi_sarg;
++
++typedef enum ffi_abi {
++  FFI_FIRST_ABI = 0,
++  FFI_SYSV,
++  FFI_LAST_ABI,
++  FFI_DEFAULT_ABI = FFI_SYSV
++} ffi_abi;
++#endif
++
++#define FFI_TARGET_SPECIFIC_STACK_SPACE_ALLOCATION 1
++#define FFI_TARGET_HAS_COMPLEX_TYPE 1
++
++#define FFI_CLOSURES 1
++#define FFI_GO_CLOSURES 1
++#define FFI_NATIVE_RAW_API 0
++#define FFI_TRAMPOLINE_SIZE 20
++
++#endif
+diff --git a/src/i860/internal.h b/src/i860/internal.h
+new file mode 100644
+index 00000000..fd680a81
+--- /dev/null
++++ b/src/i860/internal.h
+@@ -0,0 +1,45 @@
++/* -----------------------------------------------------------------------
++   internal.h - Copyright (C) 2026 René Rebe <rene@exactco.de>
++
++   Layout shared by ffi.c and sysv.S for Intel i860.
++
++   Permission is hereby granted, free of charge, to any person obtaining
++   a copy of this software and associated documentation files (the
++   ``Software''), to deal in the Software without restriction, including
++   without limitation the rights to use, copy, modify, merge, publish,
++   distribute, sublicense, and/or sell copies of the Software, and to
++   permit persons to whom the Software is furnished to do so, subject to
++   the following conditions:
++
++   The above copyright notice and this permission notice shall be included
++   in all copies or substantial portions of the Software.
++
++   THE SOFTWARE IS PROVIDED ``AS IS'', WITHOUT WARRANTY OF ANY KIND,
++   EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
++   MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
++   NONINFRINGEMENT.  IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT
++   HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY,
++   WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
++   OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
++   DEALINGS IN THE SOFTWARE.
++   ----------------------------------------------------------------------- */
++
++#define I860_INT_ARG_BYTES	48
++#define I860_FP_ARG_BYTES	32
++
++/* struct i860_regs: argument registers, then the return registers.  */
++#define I860_REGS_GPR		0
++#define I860_REGS_FPR		48
++#define I860_REGS_RET		80
++#define I860_REGS_FRET		96
++#define I860_REGS_SIZE		112
++
++/* struct i860_call_frame continues struct i860_regs.  */
++#define I860_CALL_FP		112
++#define I860_CALL_R1		116
++#define I860_CALL_SP		120
++#define I860_CALL_SIZE		128
++
++#define I860_TRAMP_SIZE		32
++#define I860_TRAMP_MAP_SIZE	4096
++#define I860_TRAMP_COUNT	128
+diff --git a/src/i860/sysv.S b/src/i860/sysv.S
+new file mode 100644
+index 00000000..1560bfc0
+--- /dev/null
++++ b/src/i860/sysv.S
+@@ -0,0 +1,169 @@
++/* -----------------------------------------------------------------------
++   sysv.S - Copyright (C) 2026 René Rebe <rene@exactco.de>
++
++   Foreign Function Interface assembly for Intel i860
++
++   Permission is hereby granted, free of charge, to any person obtaining
++   a copy of this software and associated documentation files (the
++   ``Software''), to deal in the Software without restriction, including
++   without limitation the rights to use, copy, modify, merge, publish,
++   distribute, sublicense, and/or sell copies of the Software, and to
++   permit persons to whom the Software is furnished to do so, subject to
++   the following conditions:
++
++   The above copyright notice and this permission notice shall be included
++   in all copies or substantial portions of the Software.
++
++   THE SOFTWARE IS PROVIDED ``AS IS'', WITHOUT WARRANTY OF ANY KIND,
++   EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
++   MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
++   NONINFRINGEMENT.  IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT
++   HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY,
++   WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
++   OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
++   DEALINGS IN THE SOFTWARE.
++   ----------------------------------------------------------------------- */
++
++
++#define LIBFFI_ASM
++#include <fficonfig.h>
++#include <ffi.h>
++#include "internal.h"
++
++	.text
++
++/* void ffi_call_i860 (frame, stack, fn, chain)
++   The caller's alloca holds stack, directly followed by frame.  sp moves up
++   to it, so the saved registers must be in there and not below sp.  */
++	.globl	ffi_call_i860
++	FFI_HIDDEN(ffi_call_i860)
++	.type	ffi_call_i860,@function
++	.align	8
++ffi_call_i860:
++	st.l	%fp,I860_CALL_FP(%r16)
++	st.l	%r1,I860_CALL_R1(%r16)
++	st.l	%sp,I860_CALL_SP(%r16)
++	mov	%r16,%fp
++	mov	%r17,%sp
++	mov	%r18,%r28
++	mov	%r19,%r29
++	fld.d	I860_REGS_FPR+0(%fp),%f8
++	fld.d	I860_REGS_FPR+8(%fp),%f10
++	fld.d	I860_REGS_FPR+16(%fp),%f12
++	fld.d	I860_REGS_FPR+24(%fp),%f14
++	ld.l	I860_REGS_GPR+0(%fp),%r16
++	ld.l	I860_REGS_GPR+4(%fp),%r17
++	ld.l	I860_REGS_GPR+8(%fp),%r18
++	ld.l	I860_REGS_GPR+12(%fp),%r19
++	ld.l	I860_REGS_GPR+16(%fp),%r20
++	ld.l	I860_REGS_GPR+20(%fp),%r21
++	ld.l	I860_REGS_GPR+24(%fp),%r22
++	ld.l	I860_REGS_GPR+28(%fp),%r23
++	ld.l	I860_REGS_GPR+32(%fp),%r24
++	ld.l	I860_REGS_GPR+36(%fp),%r25
++	ld.l	I860_REGS_GPR+40(%fp),%r26
++	ld.l	I860_REGS_GPR+44(%fp),%r27
++	calli	%r28
++	nop
++	st.l	%r16,I860_REGS_RET+0(%fp)
++	st.l	%r17,I860_REGS_RET+4(%fp)
++	st.l	%r18,I860_REGS_RET+8(%fp)
++	st.l	%r19,I860_REGS_RET+12(%fp)
++	fst.d	%f8,I860_REGS_FRET(%fp)
++	ld.l	I860_CALL_R1(%fp),%r1
++	ld.l	I860_CALL_SP(%fp),%r31
++	ld.l	I860_CALL_FP(%fp),%fp
++	bri	%r1
++	mov	%r31,%sp
++	.size	ffi_call_i860,.-ffi_call_i860
++
++/* Entered with r29 = the closure.  The argument registers are saved, and the
++   return registers loaded, unconditionally.  r28, r29 and r31 carry no
++   arguments.  */
++#define CLOSURE_FRAME	(I860_REGS_SIZE + 16)
++
++	.globl	ffi_go_closure_i860
++	FFI_HIDDEN(ffi_go_closure_i860)
++	.type	ffi_go_closure_i860,@function
++	.align	8
++ffi_go_closure_i860:
++	ld.l	4(%r29),%r28		/* cif */
++	br	1f
++	ld.l	8(%r29),%r31		/* fun; r29 is the user data */
++	.size	ffi_go_closure_i860,.-ffi_go_closure_i860
++
++	.globl	ffi_closure_i860
++	FFI_HIDDEN(ffi_closure_i860)
++	.type	ffi_closure_i860,@function
++	.align	8
++ffi_closure_i860:
++	ld.l	FFI_TRAMPOLINE_SIZE(%r29),%r28		/* cif */
++	ld.l	FFI_TRAMPOLINE_SIZE+4(%r29),%r31	/* fun */
++	ld.l	FFI_TRAMPOLINE_SIZE+8(%r29),%r29	/* user_data */
++1:	addu	-CLOSURE_FRAME,%sp,%sp
++	st.l	%fp,I860_REGS_SIZE(%sp)
++	addu	I860_REGS_SIZE,%sp,%fp
++	st.l	%r1,4(%fp)
++	st.l	%r16,I860_REGS_GPR+0(%sp)
++	st.l	%r17,I860_REGS_GPR+4(%sp)
++	st.l	%r18,I860_REGS_GPR+8(%sp)
++	st.l	%r19,I860_REGS_GPR+12(%sp)
++	st.l	%r20,I860_REGS_GPR+16(%sp)
++	st.l	%r21,I860_REGS_GPR+20(%sp)
++	st.l	%r22,I860_REGS_GPR+24(%sp)
++	st.l	%r23,I860_REGS_GPR+28(%sp)
++	st.l	%r24,I860_REGS_GPR+32(%sp)
++	st.l	%r25,I860_REGS_GPR+36(%sp)
++	st.l	%r26,I860_REGS_GPR+40(%sp)
++	st.l	%r27,I860_REGS_GPR+44(%sp)
++	fst.d	%f8,I860_REGS_FPR+0(%sp)
++	fst.d	%f10,I860_REGS_FPR+8(%sp)
++	fst.d	%f12,I860_REGS_FPR+16(%sp)
++	fst.d	%f14,I860_REGS_FPR+24(%sp)
++	mov	%r28,%r16
++	mov	%r31,%r17
++	mov	%r29,%r18
++	mov	%sp,%r19
++	addu	16,%fp,%r20		/* the caller's stack arguments */
++	call	ffi_closure_inner_i860
++	nop
++	ld.l	I860_REGS_RET+0(%sp),%r16
++	ld.l	I860_REGS_RET+4(%sp),%r17
++	ld.l	I860_REGS_RET+8(%sp),%r18
++	ld.l	I860_REGS_RET+12(%sp),%r19
++	fld.d	I860_REGS_FRET(%sp),%f8
++	ld.l	4(%fp),%r1
++	ld.l	0(%fp),%fp
++	bri	%r1
++	addu	CLOSURE_FRAME,%sp,%sp
++	.size	ffi_closure_i860,.-ffi_closure_i860
++
++#ifdef FFI_EXEC_STATIC_TRAMP
++/* A page of trampolines, each finding its struct tramp_parm one page above
++   itself: call is the only way to read the PC.  r1 is back in the last slot.
++   In its own section: a page aligned .text as the first section of a static
++   link would leave the ELF headers unmapped, with AT_PHDR = 0, which crashes
++   musl's static_init_tls.  */
++	.section .text_ffi_tramp,"ax",@progbits
++	.globl	trampoline_code_table
++	FFI_HIDDEN(trampoline_code_table)
++	.type	trampoline_code_table,@function
++	.align	I860_TRAMP_MAP_SIZE
++trampoline_code_table:
++	.rept	I860_TRAMP_COUNT
++	mov	%r1,%r28
++	call	.+8
++	nop
++	ld.l	I860_TRAMP_MAP_SIZE-12(%r1),%r29	/* data */
++	ld.l	I860_TRAMP_MAP_SIZE-8(%r1),%r31		/* target */
++	bri	%r31
++	mov	%r28,%r1
++	nop
++	.endr
++	.size	trampoline_code_table,.-trampoline_code_table
++	.text
++#endif
++
++#if defined __ELF__ && defined __linux__
++	.section .note.GNU-stack,"",@progbits
++#endif
+diff --git a/testsuite/libffi.go/static-chain.h b/testsuite/libffi.go/static-chain.h
+index 3675b40a..9f3a68fa 100644
+--- a/testsuite/libffi.go/static-chain.h
++++ b/testsuite/libffi.go/static-chain.h
+@@ -4,6 +4,8 @@
+ # define STATIC_CHAIN_REG  "$1"
+ #elif defined(__arm__)
+ # define STATIC_CHAIN_REG  "ip"
++#elif defined(__i860__)
++# define STATIC_CHAIN_REG  "r29"
+ #elif defined(__sparc__)
+ # if defined(__arch64__) || defined(__sparcv9)
+ #  define STATIC_CHAIN_REG "g5"
