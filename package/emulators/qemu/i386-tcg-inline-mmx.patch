@@ -1,0 +1,243 @@
+# --- T2-COPYRIGHT-BEGIN ---
+# t2/package/*/qemu/i386-tcg-inline-mmx.patch
+# Copyright (C) 2026 The T2 SDE Project
+# SPDX-License-Identifier: GPL-2.0 or patched project license
+# --- T2-COPYRIGHT-END ---
+
+From 27ba22cedae097472985385e181ae94414b79186 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Ren=C3=A9=20Rebe?= <rene@exactco.de>
+Date: Tue, 3 Nov 2026 12:59:09 +0100
+Subject: [PATCH 2/3] target/i386/tcg: Inline and deduplicate entering MMX mode
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Every MMX instruction called helper_enter_mmx.  As a helper without
+call flags it forces all TCG globals to be synced to env and reloaded,
+which made it the top host function for MMX code, e.g. 19% of OpenSSL
+sha512 on i686.
+
+Emit the fpstt/fptags stores inline instead, once per TB.  Only x87
+instructions, EMMS, FXRSTOR and XRSTOR change fpstt/fptags within a
+TB, so they reset the tracking.  Inline EMMS as well and drop the now
+unused enter_mmx and emms helpers.
+
+Signed-off-by: René Rebe <rene@exactco.de>
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ target/i386/helper.h             |  2 --
+ target/i386/tcg/decode-new.c.inc |  3 ++-
+ target/i386/tcg/emit.c.inc       | 19 +++++++++++++------
+ target/i386/tcg/fpu_helper.c     | 14 --------------
+ target/i386/tcg/translate.c      | 22 ++++++++++++++++++++++
+ 5 files changed, 37 insertions(+), 23 deletions(-)
+
+diff --git a/target/i386/helper.h b/target/i386/helper.h
+index 3f67098f11..11878d53ee 100644
+--- a/target/i386/helper.h
++++ b/target/i386/helper.h
+@@ -199,8 +199,6 @@ DEF_HELPER_FLAGS_2(pext, TCG_CALL_NO_RWG_SE, tl, tl, tl)
+ 
+ DEF_HELPER_2(ldmxcsr, void, env, i32)
+ DEF_HELPER_1(update_mxcsr, void, env)
+-DEF_HELPER_1(enter_mmx, void, env)
+-DEF_HELPER_1(emms, void, env)
+ 
+ #define SHIFT 0
+ #include "tcg/ops_sse_header.h.inc"
+diff --git a/target/i386/tcg/decode-new.c.inc b/target/i386/tcg/decode-new.c.inc
+index ebd2905cf4..24199eff56 100644
+--- a/target/i386/tcg/decode-new.c.inc
++++ b/target/i386/tcg/decode-new.c.inc
+@@ -2,6 +2,7 @@
+  * New-style decoder for i386 instructions
+  *
+  *  Copyright (c) 2022 Red Hat, Inc.
++ *  Copyright (c) 2026 René Rebe <rene@exactco.de>
+  *
+  * Author: Paolo Bonzini <pbonzini@redhat.com>
+  *
+@@ -3102,7 +3103,7 @@ static void disas_insn(DisasContext *s, CPUState *cpu)
+ 
+     if (decode.e.special == X86_SPECIAL_MMX &&
+         !(s->prefix & (PREFIX_REPZ | PREFIX_REPNZ | PREFIX_DATA))) {
+-        gen_helper_enter_mmx(tcg_env);
++        gen_enter_mmx(s);
+     }
+ 
+     if (decode.e.special != X86_SPECIAL_NoLoadEA &&
+diff --git a/target/i386/tcg/emit.c.inc b/target/i386/tcg/emit.c.inc
+index cf0e71bbc3..6254f2120b 100644
+--- a/target/i386/tcg/emit.c.inc
++++ b/target/i386/tcg/emit.c.inc
+@@ -2,6 +2,7 @@
+  * New-style TCG opcode generator for i386 instructions
+  *
+  *  Copyright (c) 2022 Red Hat, Inc.
++ *  Copyright (c) 2026 René Rebe <rene@exactco.de>
+  *
+  * Author: Paolo Bonzini <pbonzini@redhat.com>
+  *
+@@ -519,7 +520,7 @@ static void gen_3dnow(DisasContext *s, X86DecodedInsn *decode)
+         return;
+     }
+ 
+-    gen_helper_enter_mmx(tcg_env);
++    gen_enter_mmx(s);
+     if (fn == FN_3DNOW_MOVE) {
+         TCGv_i64 t = tcg_temp_new_i64();
+ 
+@@ -1921,7 +1922,7 @@ static void gen_CRC32(DisasContext *s, X86DecodedInsn *decode)
+ 
+ static void gen_CVTPI2Px(DisasContext *s, X86DecodedInsn *decode)
+ {
+-    gen_helper_enter_mmx(tcg_env);
++    gen_enter_mmx(s);
+     if (s->prefix & PREFIX_DATA) {
+         gen_helper_cvtpi2pd(tcg_env, OP_PTR0, OP_PTR2);
+     } else {
+@@ -1931,7 +1932,7 @@ static void gen_CVTPI2Px(DisasContext *s, X86DecodedInsn *decode)
+ 
+ static void gen_CVTPx2PI(DisasContext *s, X86DecodedInsn *decode)
+ {
+-    gen_helper_enter_mmx(tcg_env);
++    gen_enter_mmx(s);
+     if (s->prefix & PREFIX_DATA) {
+         gen_helper_cvtpd2pi(tcg_env, OP_PTR0, OP_PTR2);
+     } else {
+@@ -1941,7 +1942,7 @@ static void gen_CVTPx2PI(DisasContext *s, X86DecodedInsn *decode)
+ 
+ static void gen_CVTTPx2PI(DisasContext *s, X86DecodedInsn *decode)
+ {
+-    gen_helper_enter_mmx(tcg_env);
++    gen_enter_mmx(s);
+     if (s->prefix & PREFIX_DATA) {
+         gen_helper_cvttpd2pi(tcg_env, OP_PTR0, OP_PTR2);
+     } else {
+@@ -2010,7 +2011,11 @@ static void gen_DIV(DisasContext *s, X86DecodedInsn *decode)
+ 
+ static void gen_EMMS(DisasContext *s, X86DecodedInsn *decode)
+ {
+-    gen_helper_emms(tcg_env);
++    TCGv_i32 empty = tcg_constant_i32(0x01010101);
++
++    tcg_gen_st_i32(empty, tcg_env, offsetof(CPUX86State, fptags));
++    tcg_gen_st_i32(empty, tcg_env, offsetof(CPUX86State, fptags) + 4);
++    s->mmx_entered = false;
+ }
+ 
+ static void gen_ENTER(DisasContext *s, X86DecodedInsn *decode)
+@@ -2037,6 +2042,7 @@ static void gen_FXRSTOR(DisasContext *s, X86DecodedInsn *decode)
+         gen_NM_exception(s);
+     } else {
+         gen_helper_fxrstor(tcg_env, s->A0);
++        s->mmx_entered = false;
+     }
+ }
+ 
+@@ -2626,7 +2632,7 @@ static void gen_MOVQ(DisasContext *s, X86DecodedInsn *decode)
+ 
+ static void gen_MOVq_dq(DisasContext *s, X86DecodedInsn *decode)
+ {
+-    gen_helper_enter_mmx(tcg_env);
++    gen_enter_mmx(s);
+     /* Otherwise the same as any other movq.  */
+     return gen_MOVQ(s, decode);
+ }
+@@ -4816,6 +4822,7 @@ static void gen_XRSTOR(DisasContext *s, X86DecodedInsn *decode)
+ 
+     tcg_gen_concat_tl_i64(features, cpu_regs[R_EAX], cpu_regs[R_EDX]);
+     gen_helper_xrstor(tcg_env, s->A0, features);
++    s->mmx_entered = false;
+     if (s->cpuid_7_0_ebx_features & CPUID_7_0_EBX_MPX) {
+         /*
+          * XRSTOR is how MPX is enabled, which changes how
+diff --git a/target/i386/tcg/fpu_helper.c b/target/i386/tcg/fpu_helper.c
+index 470061e2c4..caf809b814 100644
+--- a/target/i386/tcg/fpu_helper.c
++++ b/target/i386/tcg/fpu_helper.c
+@@ -3309,20 +3309,6 @@ void helper_ldmxcsr(CPUX86State *env, uint32_t val)
+     cpu_set_mxcsr(env, val);
+ }
+ 
+-void helper_enter_mmx(CPUX86State *env)
+-{
+-    env->fpstt = 0;
+-    *(uint32_t *)(env->fptags) = 0;
+-    *(uint32_t *)(env->fptags + 4) = 0;
+-}
+-
+-void helper_emms(CPUX86State *env)
+-{
+-    /* set to empty state */
+-    *(uint32_t *)(env->fptags) = 0x01010101;
+-    *(uint32_t *)(env->fptags + 4) = 0x01010101;
+-}
+-
+ #define SHIFT 0
+ #include "ops_sse.h"
+ 
+diff --git a/target/i386/tcg/translate.c b/target/i386/tcg/translate.c
+index 2115c5cd24..49f3f99e27 100644
+--- a/target/i386/tcg/translate.c
++++ b/target/i386/tcg/translate.c
+@@ -2,6 +2,7 @@
+  *  i386 translation
+  *
+  *  Copyright (c) 2003 Fabrice Bellard
++ *  Copyright (c) 2026 René Rebe <rene@exactco.de>
+  *
+  * This library is free software; you can redistribute it and/or
+  * modify it under the terms of the GNU Lesser General Public
+@@ -114,6 +115,7 @@ typedef struct DisasContext {
+ #endif
+     bool vex_w; /* used by AVX even on 32-bit processors */
+     bool jmp_opt; /* use direct block chaining for direct jumps */
++    bool mmx_entered; /* fpstt/fptags already reset for MMX in this TB */
+     bool cc_op_dirty;
+ 
+     CCOp cc_op;  /* current CC operation */
+@@ -2094,6 +2096,23 @@ static inline void gen_stq_env_A0(DisasContext *s, int offset)
+     tcg_gen_qemu_st_i64(t, s->A0, s->mem_index, MO_LEUQ);
+ }
+ 
++/*
++ * Enter MMX mode inline, and skip it when nothing since the last one in this
++ * TB could have changed the x87 tags: only x87, EMMS, FXRSTOR and XRSTOR can.
++ */
++static void gen_enter_mmx(DisasContext *s)
++{
++    TCGv_i32 zero = tcg_constant_i32(0);
++
++    if (s->mmx_entered) {
++        return;
++    }
++    tcg_gen_st_i32(zero, tcg_env, offsetof(CPUX86State, fpstt));
++    tcg_gen_st_i32(zero, tcg_env, offsetof(CPUX86State, fptags));
++    tcg_gen_st_i32(zero, tcg_env, offsetof(CPUX86State, fptags) + 4);
++    s->mmx_entered = true;
++}
++
+ static inline void gen_ldo_env_A0(DisasContext *s, int offset, bool align)
+ {
+     MemOp atom = (s->cpuid_ext_features & CPUID_EXT_AVX
+@@ -2157,6 +2176,8 @@ static void gen_x87(DisasContext *s, X86DecodedInsn *decode)
+     int modrm = s->modrm;
+     int mod, rm, op;
+ 
++    s->mmx_entered = false;
++
+     if (s->flags & (HF_EM_MASK | HF_TS_MASK)) {
+         /* if CR0.EM or CR0.TS are set, generate an FPU exception */
+         /* XXX: what to do if illegal op ? */
+@@ -3447,6 +3468,7 @@ static void i386_tr_init_disas_context(DisasContextBase *dcbase, CPUState *cpu)
+     dc->cs_base = dc->base.tb->cs_base;
+     dc->pc_save = dc->base.pc_next;
+     dc->flags = flags;
++    dc->mmx_entered = false;
+ #ifndef CONFIG_USER_ONLY
+     dc->cpl = cpl;
+     dc->iopl = iopl;
+-- 
+2.54.0
+

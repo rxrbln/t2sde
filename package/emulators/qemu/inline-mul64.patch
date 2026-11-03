@@ -1,0 +1,160 @@
+# --- T2-COPYRIGHT-BEGIN ---
+# t2/package/*/qemu/inline-mul64.patch
+# Copyright (C) 2026 The T2 SDE Project
+# SPDX-License-Identifier: GPL-2.0 or patched project license
+# --- T2-COPYRIGHT-END ---
+
+From e946cced27a0998d3467879d50f1a31fc5a0f3f5 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Ren=C3=A9=20Rebe?= <rene@exactco.de>
+Date: Tue, 3 Nov 2026 12:59:09 +0100
+Subject: [PATCH 3/3] host-utils: Inline mulu64 and muls64 without __int128
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+On hosts without CONFIG_INT128, such as 32-bit hosts, mulu64 and
+muls64 were out-of-line calls, and mulu64 was 7% of guest x87
+floating point work in softfloat on i686.
+
+Make them static inline, built from four 32x32->64 partial products.
+
+Signed-off-by: René Rebe <rene@exactco.de>
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ include/qemu/host-utils.h | 34 ++++++++++++++++++++--
+ util/host-utils.c         | 60 +--------------------------------------
+ 2 files changed, 33 insertions(+), 61 deletions(-)
+
+diff --git a/include/qemu/host-utils.h b/include/qemu/host-utils.h
+index 1db9dbb138..9dc3e8d0c8 100644
+--- a/include/qemu/host-utils.h
++++ b/include/qemu/host-utils.h
+@@ -3,6 +3,7 @@
+  *
+  * Copyright (c) 2007 Thiemo Seufer
+  * Copyright (c) 2007 Jocelyn Mayer
++ * Copyright (c) 2026 René Rebe <rene@exactco.de>
+  *
+  * Permission is hereby granted, free of charge, to any person obtaining a copy
+  * of this software and associated documentation files (the "Software"), to deal
+@@ -82,8 +83,37 @@ static inline int64_t divs128(uint64_t *plow, int64_t *phigh,
+     return dividend % divisor;
+ }
+ #else
+-void muls64(uint64_t *plow, uint64_t *phigh, int64_t a, int64_t b);
+-void mulu64(uint64_t *plow, uint64_t *phigh, uint64_t a, uint64_t b);
++/* Inline for 32-bit hosts: hot in softfloat; four 32x32->64 partial products. */
++static inline void mulu64(uint64_t *plow, uint64_t *phigh,
++                          uint64_t a, uint64_t b)
++{
++    uint32_t al = a, ah = a >> 32, bl = b, bh = b >> 32;
++    uint64_t ll = (uint64_t)al * bl;
++    uint64_t lh = (uint64_t)al * bh;
++    uint64_t hl = (uint64_t)ah * bl;
++    uint64_t hh = (uint64_t)ah * bh;
++    uint64_t mid = (ll >> 32) + (uint32_t)lh + (uint32_t)hl;
++
++    *plow = (mid << 32) | (uint32_t)ll;
++    *phigh = hh + (lh >> 32) + (hl >> 32) + (mid >> 32);
++}
++
++static inline void muls64(uint64_t *plow, uint64_t *phigh,
++                          int64_t a, int64_t b)
++{
++    uint64_t rh;
++
++    mulu64(plow, &rh, a, b);
++    /* Adjust for signs. */
++    if (b < 0) {
++        rh -= a;
++    }
++    if (a < 0) {
++        rh -= b;
++    }
++    *phigh = rh;
++}
++
+ uint64_t divu128(uint64_t *plow, uint64_t *phigh, uint64_t divisor);
+ int64_t divs128(uint64_t *plow, int64_t *phigh, int64_t divisor);
+ 
+diff --git a/util/host-utils.c b/util/host-utils.c
+index fb91bcba82..6ac64d3032 100644
+--- a/util/host-utils.c
++++ b/util/host-utils.c
+@@ -3,6 +3,7 @@
+  *
+  * Copyright (c) 2003 Fabrice Bellard
+  * Copyright (c) 2007 Aurelien Jarno
++ * Copyright (c) 2026 René Rebe <rene@exactco.de>
+  *
+  * Permission is hereby granted, free of charge, to any person obtaining a copy
+  * of this software and associated documentation files (the "Software"), to deal
+@@ -27,65 +28,6 @@
+ #include "qemu/host-utils.h"
+ 
+ #ifndef CONFIG_INT128
+-/* Long integer helpers */
+-static inline void mul64(uint64_t *plow, uint64_t *phigh,
+-                         uint64_t a, uint64_t b)
+-{
+-    typedef union {
+-        uint64_t ll;
+-        struct {
+-#if HOST_BIG_ENDIAN
+-            uint32_t high, low;
+-#else
+-            uint32_t low, high;
+-#endif
+-        } l;
+-    } LL;
+-    LL rl, rm, rn, rh, a0, b0;
+-    uint64_t c;
+-
+-    a0.ll = a;
+-    b0.ll = b;
+-
+-    rl.ll = (uint64_t)a0.l.low * b0.l.low;
+-    rm.ll = (uint64_t)a0.l.low * b0.l.high;
+-    rn.ll = (uint64_t)a0.l.high * b0.l.low;
+-    rh.ll = (uint64_t)a0.l.high * b0.l.high;
+-
+-    c = (uint64_t)rl.l.high + rm.l.low + rn.l.low;
+-    rl.l.high = c;
+-    c >>= 32;
+-    c = c + rm.l.high + rn.l.high + rh.l.low;
+-    rh.l.low = c;
+-    rh.l.high += (uint32_t)(c >> 32);
+-
+-    *plow = rl.ll;
+-    *phigh = rh.ll;
+-}
+-
+-/* Unsigned 64x64 -> 128 multiplication */
+-void mulu64 (uint64_t *plow, uint64_t *phigh, uint64_t a, uint64_t b)
+-{
+-    mul64(plow, phigh, a, b);
+-}
+-
+-/* Signed 64x64 -> 128 multiplication */
+-void muls64 (uint64_t *plow, uint64_t *phigh, int64_t a, int64_t b)
+-{
+-    uint64_t rh;
+-
+-    mul64(plow, &rh, a, b);
+-
+-    /* Adjust for signs.  */
+-    if (b < 0) {
+-        rh -= a;
+-    }
+-    if (a < 0) {
+-        rh -= b;
+-    }
+-    *phigh = rh;
+-}
+-
+ /*
+  * Unsigned 128-by-64 division.
+  * Returns the remainder.
+-- 
+2.54.0
+
