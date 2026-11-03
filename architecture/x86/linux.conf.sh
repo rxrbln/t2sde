@@ -97,16 +97,14 @@ EOT
 
 	cat <<- 'EOT'
 		CONFIG_X86_ANCIENT_MCE=y
-		# CONFIG_HYPERVISOR_GUEST is not set
 		# CONFIG_IOMMU_SUPPORT is not set
 		# CONFIG_SFI is not set
 		# CONFIG_ACPI_APEI is not set
 		# CONFIG_FAULT_INJECTION is not set
 		# CONFIG_ATA_VERBOSE_ERROR is not set
 		# CONFIG_FS_ENCRYPTION is not set
-		# CONFIG_MICROCODE
+		# CONFIG_MICROCODE is not set
 		# CONFIG_COMPACTION is not set
-		# CONFIG_FTRACE is not set
 		# CONFIG_DEBUG_KERNEL is not set
 	EOT
 } | m4 -I $base/architecture/$arch -I $base/architecture/share
