@@ -1,0 +1,364 @@
+# --- T2-COPYRIGHT-BEGIN ---
+# t2/package/*/linux/m68k-uaccess-opt.patch
+# Copyright (C) 2026 The T2 SDE Project
+# SPDX-License-Identifier: GPL-2.0 or patched project license
+# --- T2-COPYRIGHT-END ---
+
+From 746bca1b4148885f05a65bcf52a2909b210ae25e Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Ren=C3=A9=20Rebe?= <rene@exactco.de>
+Date: Tue, 3 Nov 2026 19:43:26 +0100
+Subject: [PATCH] m68k: uaccess: Copy bytewise after a fault and unroll the
+ copy loops
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+__generic_copy_from_user() reports nothing copied when the first word or
+longword of a buffer crosses into an unmapped page, although the bytes
+before the boundary are accessible.  generic_perform_write() then faults
+the buffer in, finds it partially readable and retries the same copy
+forever, so a two byte write() from a buffer one byte before an unmapped
+page never returns.  The usercopy functions must make progress whenever
+the first byte is accessible.
+
+After a fault, retry bytewise from the first byte not copied.  The kernel
+side pointer only advances after a successful user access, so it tells
+where to restart.  __clear_user() has no kernel pointer and restarts
+from the start of the current block instead, zeroing some bytes twice.
+Instructions behind a store keep their exception table entries for the
+68040 and 68060, which may report a store fault on the next instruction.
+
+Copy and clear 32 bytes per loop iteration instead of four.  On MAME's
+X68030 this speeds up 4 MB through a pipe by 26%, reading from the page
+cache by 16% and writing to tmpfs by 16%, one byte system calls are
+0.8% slower.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Signed-off-by: René Rebe <rene@exactco.de>
+---
+ arch/m68k/lib/uaccess.c | 268 ++++++++++++++++++++++++++--------------
+ 1 file changed, 174 insertions(+), 94 deletions(-)
+
+diff --git a/arch/m68k/lib/uaccess.c b/arch/m68k/lib/uaccess.c
+index 7646e461aa62..b24750b906d0 100644
+--- a/arch/m68k/lib/uaccess.c
++++ b/arch/m68k/lib/uaccess.c
+@@ -2,141 +2,221 @@
+  * This file is subject to the terms and conditions of the GNU General Public
+  * License.  See the file COPYING in the main directory of this archive
+  * for more details.
++ *
++ * Copyright (C) 2026 René Rebe <rene@exactco.de>
+  */
+ 
+ #include <linux/module.h>
+ #include <linux/uaccess.h>
+ 
++/* Exception table entry for the instruction at the preceding local label 9 */
++#define EX(fixup)	"	.pushsection __ex_table,\"a\"\n	.align	4\n	.long	9b," #fixup "\n	.popsection\n"
++
++/*
++ * 32 bytes per iteration, the kernel pointer stays at the first byte not copied, a fault
++ * retries bytewise from there, callers need progress whenever the first byte is accessible
++ */
+ unsigned long __generic_copy_from_user(void *to, const void __user *from,
+ 				       unsigned long n)
+ {
+-	unsigned long tmp, res;
++	void *end = to + n;
++	unsigned long tmp, cnt;
+ 
+ 	asm volatile ("\n"
+-		"	tst.l	%0\n"
++		"	move.l	%[n],%[cnt]\n"
++		"	lsr.l	#5,%[cnt]\n"
+ 		"	jeq	2f\n"
+-		"1:	"MOVES".l	(%1)+,%3\n"
+-		"	move.l	%3,(%2)+\n"
+-		"	subq.l	#1,%0\n"
++		"1:\n"
++		"9:	"MOVES".l	(%[from])+,%[tmp]\n"	EX(30f)
++		"	move.l	%[tmp],(%[to])+\n"
++		"9:	"MOVES".l	(%[from])+,%[tmp]\n"	EX(30f)
++		"	move.l	%[tmp],(%[to])+\n"
++		"9:	"MOVES".l	(%[from])+,%[tmp]\n"	EX(30f)
++		"	move.l	%[tmp],(%[to])+\n"
++		"9:	"MOVES".l	(%[from])+,%[tmp]\n"	EX(30f)
++		"	move.l	%[tmp],(%[to])+\n"
++		"9:	"MOVES".l	(%[from])+,%[tmp]\n"	EX(30f)
++		"	move.l	%[tmp],(%[to])+\n"
++		"9:	"MOVES".l	(%[from])+,%[tmp]\n"	EX(30f)
++		"	move.l	%[tmp],(%[to])+\n"
++		"9:	"MOVES".l	(%[from])+,%[tmp]\n"	EX(30f)
++		"	move.l	%[tmp],(%[to])+\n"
++		"9:	"MOVES".l	(%[from])+,%[tmp]\n"	EX(30f)
++		"	move.l	%[tmp],(%[to])+\n"
++		"	subq.l	#1,%[cnt]\n"
+ 		"	jne	1b\n"
+-		"2:	btst	#1,%5\n"
++		"2:	moveq	#28,%[cnt]\n"
++		"	and.l	%[n],%[cnt]\n"
++		"	lsr.l	#2,%[cnt]\n"
+ 		"	jeq	4f\n"
+-		"3:	"MOVES".w	(%1)+,%3\n"
+-		"	move.w	%3,(%2)+\n"
+-		"4:	btst	#0,%5\n"
+-		"	jeq	6f\n"
+-		"5:	"MOVES".b	(%1)+,%3\n"
+-		"	move.b  %3,(%2)+\n"
+-		"6:\n"
+-		"	.section .fixup,\"ax\"\n"
++		"3:\n"
++		"9:	"MOVES".l	(%[from])+,%[tmp]\n"	EX(30f)
++		"	move.l	%[tmp],(%[to])+\n"
++		"	subq.l	#1,%[cnt]\n"
++		"	jne	3b\n"
++		"4:	btst	#1,%[n]\n"
++		"	jeq	5f\n"
++		"9:	"MOVES".w	(%[from])+,%[tmp]\n"	EX(30f)
++		"	move.w	%[tmp],(%[to])+\n"
++		"5:	btst	#0,%[n]\n"
++		"	jeq	7f\n"
++		"9:	"MOVES".b	(%[from])+,%[tmp]\n"	EX(30f)
++		"	move.b	%[tmp],(%[to])+\n"
++		"7:\n"
++		"	.pushsection .fixup,\"ax\"\n"
+ 		"	.even\n"
+-		"10:	lsl.l	#2,%0\n"
+-		"	btst	#1,%5\n"
+-		"	jeq	8f\n"
+-		"30:	addq.l	#2,%0\n"
+-		"8:	btst	#0,%5\n"
+-		"	jeq	6b\n"
+-		"50:	addq.l	#1,%0\n"
+-		"	jra	6b\n"
+-		"	.previous\n"
+-		"\n"
+-		"	.section __ex_table,\"a\"\n"
+-		"	.align	4\n"
+-		"	.long	1b,10b\n"
+-		"	.long	3b,30b\n"
+-		"	.long	5b,50b\n"
+-		"	.previous"
+-		: "=d" (res), "+a" (from), "+a" (to), "=&d" (tmp)
+-		: "0" (n / 4), "d" (n & 3));
++		"30:	move.l	%[to],%[from]\n"
++		"	sub.l	%[end],%[from]\n"
++		"	add.l	%[n],%[from]\n"
++		"	add.l	%[from0],%[from]\n"
++		"31:	cmp.l	%[end],%[to]\n"
++		"	jeq	7b\n"
++		"9:	"MOVES".b	(%[from])+,%[tmp]\n"	EX(7b)
++		"	move.b	%[tmp],(%[to])+\n"
++		"	jra	31b\n"
++		"	.popsection\n"
++		: [from] "+&a" (from), [to] "+&a" (to), [tmp] "=&d" (tmp), [cnt] "=&d" (cnt)
++		: [n] "d" (n), [end] "r" (end), [from0] "r" (from)
++		: "memory");
+ 
+-	return res;
++	return end - to;
+ }
+ EXPORT_SYMBOL(__generic_copy_from_user);
+ 
++/* The kernel pointer is past the item a store faults on, the fixups step back and retry bytewise */
+ unsigned long __generic_copy_to_user(void __user *to, const void *from,
+ 				     unsigned long n)
+ {
+-	unsigned long tmp, res;
++	const void *end = from + n;
++	unsigned long tmp, cnt;
+ 
+ 	asm volatile ("\n"
+-		"	tst.l	%0\n"
+-		"	jeq	4f\n"
+-		"1:	move.l	(%1)+,%3\n"
+-		"2:	"MOVES".l	%3,(%2)+\n"
+-		"3:	subq.l	#1,%0\n"
++		"	move.l	%[n],%[cnt]\n"
++		"	lsr.l	#5,%[cnt]\n"
++		"	jeq	2f\n"
++		"1:	move.l	(%[from])+,%[tmp]\n"
++		"9:	"MOVES".l	%[tmp],(%[to])+\n"	EX(20f)
++		"9:	move.l	(%[from])+,%[tmp]\n"	EX(20f)
++		"9:	"MOVES".l	%[tmp],(%[to])+\n"	EX(20f)
++		"9:	move.l	(%[from])+,%[tmp]\n"	EX(20f)
++		"9:	"MOVES".l	%[tmp],(%[to])+\n"	EX(20f)
++		"9:	move.l	(%[from])+,%[tmp]\n"	EX(20f)
++		"9:	"MOVES".l	%[tmp],(%[to])+\n"	EX(20f)
++		"9:	move.l	(%[from])+,%[tmp]\n"	EX(20f)
++		"9:	"MOVES".l	%[tmp],(%[to])+\n"	EX(20f)
++		"9:	move.l	(%[from])+,%[tmp]\n"	EX(20f)
++		"9:	"MOVES".l	%[tmp],(%[to])+\n"	EX(20f)
++		"9:	move.l	(%[from])+,%[tmp]\n"	EX(20f)
++		"9:	"MOVES".l	%[tmp],(%[to])+\n"	EX(20f)
++		"9:	move.l	(%[from])+,%[tmp]\n"	EX(20f)
++		"9:	"MOVES".l	%[tmp],(%[to])+\n"	EX(20f)
++		"9:	subq.l	#1,%[cnt]\n"	EX(20f)
+ 		"	jne	1b\n"
+-		"4:	btst	#1,%5\n"
+-		"	jeq	6f\n"
+-		"	move.w	(%1)+,%3\n"
+-		"5:	"MOVES".w	%3,(%2)+\n"
+-		"6:	btst	#0,%5\n"
+-		"	jeq	8f\n"
+-		"	move.b	(%1)+,%3\n"
+-		"7:	"MOVES".b  %3,(%2)+\n"
+-		"8:\n"
+-		"	.section .fixup,\"ax\"\n"
++		"2:	moveq	#28,%[cnt]\n"
++		"	and.l	%[n],%[cnt]\n"
++		"	lsr.l	#2,%[cnt]\n"
++		"	jeq	4f\n"
++		"3:	move.l	(%[from])+,%[tmp]\n"
++		"9:	"MOVES".l	%[tmp],(%[to])+\n"	EX(20f)
++		"9:	subq.l	#1,%[cnt]\n"	EX(20f)
++		"	jne	3b\n"
++		"4:\n"
++		"	btst	#1,%[n]\n"
++		"	jeq	5f\n"
++		"	move.w	(%[from])+,%[tmp]\n"
++		"9:	"MOVES".w	%[tmp],(%[to])+\n"	EX(21f)
++		"5:\n"
++		"9:	btst	#0,%[n]\n"	EX(21f)
++		"	jeq	7f\n"
++		"	move.b	(%[from])+,%[tmp]\n"
++		"9:	"MOVES".b	%[tmp],(%[to])+\n"	EX(22f)
++		"7:\n"
++		"9:\n"
++		EX(22f)
++		"	.pushsection .fixup,\"ax\"\n"
+ 		"	.even\n"
+-		"20:	lsl.l	#2,%0\n"
+-		"50:	add.l	%5,%0\n"
+-		"	jra	8b\n"
+-		"	.previous\n"
+-		"\n"
+-		"	.section __ex_table,\"a\"\n"
+-		"	.align	4\n"
+-		"	.long	2b,20b\n"
+-		"	.long	3b,20b\n"
+-		"	.long	5b,50b\n"
+-		"	.long	6b,50b\n"
+-		"	.long	7b,50b\n"
+-		"	.long	8b,50b\n"
+-		"	.previous"
+-		: "=d" (res), "+a" (from), "+a" (to), "=&d" (tmp)
+-		: "0" (n / 4), "d" (n & 3));
++		"20:	subq.l	#2,%[from]\n"
++		"21:	subq.l	#1,%[from]\n"
++		"22:	subq.l	#1,%[from]\n"
++		"	move.l	%[from],%[to]\n"
++		"	sub.l	%[end],%[to]\n"
++		"	add.l	%[n],%[to]\n"
++		"	add.l	%[to0],%[to]\n"
++		"23:	cmp.l	%[end],%[from]\n"
++		"	jeq	7b\n"
++		"	move.b	(%[from])+,%[tmp]\n"
++		"9:	"MOVES".b	%[tmp],(%[to])+\n"	EX(24f)
++		"9:	jra	23b\n"	EX(24f)
++		"24:	subq.l	#1,%[from]\n"
++		"	jra	7b\n"
++		"	.popsection\n"
++		: [from] "+&a" (from), [to] "+&a" (to), [tmp] "=&d" (tmp), [cnt] "=&d" (cnt)
++		: [n] "d" (n), [end] "r" (end), [to0] "r" (to)
++		: "memory");
+ 
+-	return res;
++	return end - from;
+ }
+ EXPORT_SYMBOL(__generic_copy_to_user);
+ 
+ /*
+- * Zero Userspace
++ * Zero userspace 32 bytes per iteration, a fault restarts bytewise from the start of the
++ * current block, as the user pointer is unknown after a fault
+  */
+-
+ unsigned long __clear_user(void __user *to, unsigned long n)
+ {
+-	unsigned long res;
++	void __user *end = to + n;
++	unsigned long cnt;
++	void __user *pos;
+ 
+ 	asm volatile ("\n"
+-		"	tst.l	%0\n"
+-		"	jeq	3f\n"
+-		"1:	"MOVES".l	%2,(%1)+\n"
+-		"2:	subq.l	#1,%0\n"
++		"	move.l	%[n],%[cnt]\n"
++		"	lsr.l	#5,%[cnt]\n"
++		"	jeq	2f\n"
++		"1:	move.l	%[to],%[pos]\n"
++		"9:	"MOVES".l	%[zero],(%[to])+\n"	EX(40f)
++		"9:	"MOVES".l	%[zero],(%[to])+\n"	EX(40f)
++		"9:	"MOVES".l	%[zero],(%[to])+\n"	EX(40f)
++		"9:	"MOVES".l	%[zero],(%[to])+\n"	EX(40f)
++		"9:	"MOVES".l	%[zero],(%[to])+\n"	EX(40f)
++		"9:	"MOVES".l	%[zero],(%[to])+\n"	EX(40f)
++		"9:	"MOVES".l	%[zero],(%[to])+\n"	EX(40f)
++		"9:	"MOVES".l	%[zero],(%[to])+\n"	EX(40f)
++		"9:	subq.l	#1,%[cnt]\n"	EX(40f)
+ 		"	jne	1b\n"
+-		"3:	btst	#1,%4\n"
++		"2:	move.l	%[to],%[pos]\n"
++		"	moveq	#28,%[cnt]\n"
++		"	and.l	%[n],%[cnt]\n"
++		"	lsr.l	#2,%[cnt]\n"
++		"	jeq	4f\n"
++		"3:\n"
++		"9:	"MOVES".l	%[zero],(%[to])+\n"	EX(40f)
++		"9:	subq.l	#1,%[cnt]\n"	EX(40f)
++		"	jne	3b\n"
++		"4:	btst	#1,%[n]\n"
+ 		"	jeq	5f\n"
+-		"4:	"MOVES".w	%2,(%1)+\n"
+-		"5:	btst	#0,%4\n"
++		"9:	"MOVES".w	%[zero],(%[to])+\n"	EX(40f)
++		"5:\n"
++		"9:	btst	#0,%[n]\n"	EX(40f)
+ 		"	jeq	7f\n"
+-		"6:	"MOVES".b	%2,(%1)\n"
++		"9:	"MOVES".b	%[zero],(%[to])+\n"	EX(40f)
+ 		"7:\n"
+-		"	.section .fixup,\"ax\"\n"
++		"9:\n"
++		EX(40f)
++		"	.pushsection .fixup,\"ax\"\n"
+ 		"	.even\n"
+-		"10:	lsl.l	#2,%0\n"
+-		"40:	add.l	%4,%0\n"
++		"40:	move.l	%[pos],%[to]\n"
++		"41:	cmp.l	%[end],%[to]\n"
++		"	jeq	7b\n"
++		"	move.l	%[to],%[pos]\n"
++		"9:	"MOVES".b	%[zero],(%[to])+\n"	EX(42f)
++		"9:	jra	41b\n"	EX(42f)
++		"42:	move.l	%[pos],%[to]\n"
+ 		"	jra	7b\n"
+-		"	.previous\n"
+-		"\n"
+-		"	.section __ex_table,\"a\"\n"
+-		"	.align	4\n"
+-		"	.long	1b,10b\n"
+-		"	.long	2b,10b\n"
+-		"	.long	4b,40b\n"
+-		"	.long	5b,40b\n"
+-		"	.long	6b,40b\n"
+-		"	.long	7b,40b\n"
+-		"	.previous"
+-		: "=d" (res), "+a" (to)
+-		: "d" (0), "0" (n / 4), "d" (n & 3));
++		"	.popsection\n"
++		: [to] "+&a" (to), [pos] "=&r" (pos), [cnt] "=&d" (cnt)
++		: [n] "d" (n), [end] "r" (end), [zero] "d" (0)
++		: "memory");
+ 
+-    return res;
++	return end - to;
+ }
+ EXPORT_SYMBOL(__clear_user);
+-- 
+2.54.0
+
