@@ -9,6 +9,8 @@ CONFIG_CONSOLE_LOGLEVEL_DEFAULT=5
 dnl CONFIG_SECURITY_DMESG_RESTRICT is not
 CONFIG_DEFAULT_HOSTNAME="t2"
 
+# CONFIG_STACKPROTECTOR_STRONG is not set
+
 dnl Don't waste precious binary space, don't include kconfig
 # CONFIG_IKCONFIG is not set
 
@@ -18,6 +20,8 @@ CONFIG_EXPERIMENTAL=y
 CONFIG_STAGING=y
 # CONFIG_STAGING_EXCLUDE_BUILD is not set
 # CONFIG_IKHEADERS is not set
+
+# CONFIG_TEST_KALLSYMS is not set
 
 dnl Default to thin LTO if the configured target supports it
 CONFIG_LTO_CLANG_THIN=y
@@ -85,7 +89,6 @@ CONFIG_TRANSPARENT_HUGEPAGE=y
 CONFIG_TRANSPARENT_HUGEPAGE_ALWAYS=y
 CONFIG_HUGETLBFS=y
 
-CONFIG_FTRACE=y
 CONFIG_MMIOTRACE=y
 
 dnl For sandboxing, e.g. Chrome
@@ -110,6 +113,9 @@ CONFIG_RD_ZSTD=y
 dnl Memory
 dnl
 CONFIG_MEMCG=y
+CONFIG_BLK_CGROUP=y
+CONFIG_PSI=y
+CONFIG_USERFAULTFD=y
 CONFIG_MEMORY_HOTPLUG=y
 CONFIG_MEMORY_HOTREMOVE=y
 CONFIG_ZONE_DEVICE=y
@@ -149,6 +155,7 @@ CONFIG_PARAVIRT_SPINLOCKS=y
 CONFIG_KVM=y
 CONFIG_KVM=m
 CONFIG_KVM_GUEST=y
+CONFIG_PARAVIRT_TIME_ACCOUNTING=y
 CONFIG_KVM_AMD_SEV=y
 CONFIG_XEN=y
 CONFIG_VFIO_PCI_VGA=y
@@ -156,6 +163,21 @@ CONFIG_IRQ_REMAP=y
 CONFIG_BPF_JIT=y
 CONFIG_CGROUP_BPF=y
 CONFIG_BPF_UNPRIV_DEFAULT_OFF=y
+
+dnl Per-task delay and I/O accounting, e.g. iotop
+dnl
+CONFIG_TASKSTATS=y
+CONFIG_TASK_DELAY_ACCT=y
+CONFIG_TASK_XACCT=y
+CONFIG_TASK_IO_ACCOUNTING=y
+
+CONFIG_FANOTIFY=y
+
+dnl Unprivileged sandboxing and ptrace scope
+dnl
+CONFIG_SECURITY=y
+CONFIG_SECURITY_YAMA=y
+CONFIG_SECURITY_LANDLOCK=y
 
 dnl Power Management
 dnl
@@ -455,10 +477,9 @@ dnl The 2.6 kernel has several debugging options enabled
 dnl
 # CONFIG_FRAME_POINTER is not set
 
-dnl Enable kernel profiling support (oprofile)
+dnl Enable kernel profiling support
 dnl
 CONFIG_PROFILING=y
-CONFIG_OPROFILE=m
 
 dnl Other stuff normally needed
 dnl
@@ -469,19 +490,10 @@ dnl Language stuff, code pages, ... (needed for vfat mounts)
 dnl
 CONFIG_NLS=m
 
-dnl Some commonly useful debugging
-dnl
-# CONFIG_DEBUG_KERNEL is not set
-# CONFIG_RUNTIME_TESTING_MENU is not set
-# CONFIG_DEBUG_LIST is not set
-# CONFIG_DEBUG_MAPLE_TREE is no set
-
-dnl Intel PowerTop
-CONFIG_TIMER_STATS=y
+CONFIG_SCHEDSTATS=y
 
 dnl some Binary-only kmod compatibility
 dnl CONFIG_DEBUG_LIST=y
-dnl CONFIG_FUNCTION_TRACER=y
 
 dnl RTC time keeping
 dnl
