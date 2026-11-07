@@ -1,0 +1,116 @@
+# --- T2-COPYRIGHT-BEGIN ---
+# t2/package/*/tinycompress/cplay-flac.patch
+# Copyright (C) 2026 The T2 SDE Project
+# SPDX-License-Identifier: GPL-2.0 or patched project license
+# --- T2-COPYRIGHT-END ---
+
+--- a/src/utils/cplay.c
++++ b/src/utils/cplay.c
+@@ -213,7 +213,7 @@ static void usage(void)
+ 	fprintf(stderr, "usage: cplay [OPTIONS] filename\n"
+ 		"-c\tcard number\n"
+ 		"-d\tdevice node\n"
+-		"-I\tspecify codec ID (default is mp3)\n"
++		"-I\tspecify codec ID (default is mp3, FLAC for a \"fLaC\" file)\n"
+ 		"-b\tbuffer size\n"
+ 		"-f\tfragments\n\n"
+ 		"-v\tverbose mode\n"
+@@ -221,7 +221,8 @@ static void usage(void)
+ 		"-h\tPrints this help list\n\n"
+ 		"Example:\n"
+ 		"\tcplay -c 1 -d 2 test.mp3\n"
+-		"\tcplay -f 5 test.mp3\n\n"
++		"\tcplay -f 5 test.mp3\n"
++		"\tcplay -I FLAC test.flac\n\n"
+ 		"Valid codec IDs:\n");
+ 
+ 	for (i = 0; i < CPLAY_NUM_CODEC_IDS; ++i)
+@@ -466,6 +467,7 @@ int main(int argc, char **argv)
+ 	int c, i;
+ 	unsigned int card = 0, device = 0, frag = 0;
+ 	unsigned int codec_id = SND_AUDIOCODEC_MP3;
++	int codec_set = 0;
+ 
+ 	if (argc < 2)
+ 		usage();
+@@ -489,6 +491,7 @@ int main(int argc, char **argv)
+ 			device = strtol(optarg, NULL, 10);
+ 			break;
+ 		case 'I':
++			codec_set = 1;
+ 			if (optarg[0] == '0') {
+ 				codec_id = strtol(optarg, NULL, 0);
+ 			} else {
+@@ -522,6 +525,15 @@ int main(int argc, char **argv)
+ 		usage();
+ 
+ 	file = argv[optind];
++	if (!codec_set) {
++		FILE *f = fopen(file, "rb");
++		char magic[4];
++
++		if (f && fread(magic, 1, 4, f) == 4 && !memcmp(magic, "fLaC", 4))
++			codec_id = SND_AUDIOCODEC_FLAC;
++		if (f)
++			fclose(f);
++	}
+ 
+ 	play_samples(file, card, device, buffer_size, frag, codec_id);
+ 
+@@ -721,6 +733,46 @@ void get_codec_mp3(FILE *file, struct co
+ 	}
+ }
+ 
++/* FLAC: "fLaC" and the STREAMINFO block; the stream is sent from offset 0 */
++void get_codec_flac(FILE *file, struct compr_config *config,
++		struct snd_codec *codec)
++{
++	unsigned char d[42];
++	unsigned int min_frame, max_frame;
++
++	if (fread(d, 1, sizeof(d), file) != sizeof(d) ||
++	    memcmp(d, "fLaC", 4) || (d[4] & 0x7f) != 0) {
++		fprintf(stderr, "Error: no FLAC STREAMINFO\n");
++		fclose(file);
++		exit(EXIT_FAILURE);
++	}
++	memset(codec, 0, sizeof(*codec));
++	codec->id = SND_AUDIOCODEC_FLAC;
++	codec->sample_rate = (unsigned int)d[18] << 12 | d[19] << 4 | d[20] >> 4;
++	codec->ch_in = codec->ch_out = (d[20] >> 1 & 7) + 1;
++	codec->format = SND_AUDIOSTREAMFORMAT_FLAC;
++	codec->options.flac_d.sample_size = ((d[20] & 1) << 4 | d[21] >> 4) + 1;
++	codec->options.flac_d.min_blk_size = d[8] << 8 | d[9];
++	codec->options.flac_d.max_blk_size = d[10] << 8 | d[11];
++	/* 24 bit fields in STREAMINFO, 16 bit in snd_dec_flac */
++	min_frame = d[12] << 16 | d[13] << 8 | d[14];
++	max_frame = d[15] << 16 | d[16] << 8 | d[17];
++	codec->options.flac_d.min_frame_size = min_frame > 0xffff ? 0xffff : min_frame;
++	codec->options.flac_d.max_frame_size = max_frame > 0xffff ? 0xffff : max_frame;
++	if (!codec->sample_rate) {
++		fprintf(stderr, "invalid sample rate 0\n");
++		fclose(file);
++		exit(EXIT_FAILURE);
++	}
++	if (verbose)
++		printf("FLAC: %u Hz, %u ch, %u bit, blocks %u..%u\n",
++		       codec->sample_rate, codec->ch_in,
++		       codec->options.flac_d.sample_size,
++		       codec->options.flac_d.min_blk_size,
++		       codec->options.flac_d.max_blk_size);
++	fseek(file, 0, SEEK_SET);
++}
++
+ void get_codec_iec(FILE *file, struct compr_config *config,
+ 		struct snd_codec *codec)
+ {
+@@ -794,6 +846,9 @@ void play_samples(char *name, unsigned i
+ 	case SND_AUDIOCODEC_MP3:
+ 		get_codec_mp3(file, &config, &codec);
+ 		break;
++	case SND_AUDIOCODEC_FLAC:
++		get_codec_flac(file, &config, &codec);
++		break;
+ 	case SND_AUDIOCODEC_IEC61937:
+ 		get_codec_iec(file, &config, &codec);
+ 		break;
