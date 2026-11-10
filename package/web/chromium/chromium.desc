@@ -20,13 +20,12 @@
 [E] add lld nodejs rust-bindgen
 
 [L] BSD
-[V] 154.0.8037.92
+[V] 157.0.8103.50
 
 [CV-URL] https://chromium.googlesource.com/chromium/src/+refs
-[D] 70c678f1bf0cb228f505b6f54226ec1847f1e42f792b23de009ee6cb chromium-154.0.8037.92-linux.tar.xz https://github.com/chromium-linux-tarballs/chromium-tarballs/releases/download/154.0.8037.92/
-[D] 623cb6dcb02e8bea2c033702ab5660d25d1329449ffcd2ad6b81eb24 copium-154.1.tar.gz !https://codeberg.org/selfisekai/copium/archive/154.1.tar.gz
-[D] 688fcf4e2919ddf7d4e94c416fca658a2b3018a7952a8f72d13028dc wasm-node-4.22.4.tgz https://registry.npmjs.org/@rollup/wasm-node/-/
-[D] b6f8841073eefb22a5b8898b10ec4dcbe451cf816583ba722c32e315 crubit-69b85cba43f85a6439dc0be86a6fe424bb07a100.tar.gz https://github.com/google/crubit/archive/69b85cba43f85a6439dc0be86a6fe424bb07a100/
+[D] d9031a2d40752ded1500d5afa212d1add0b65582765f3bb770146969 chromium-157.0.8103.50-linux.tar.xz https://github.com/chromium-linux-tarballs/chromium-tarballs/releases/download/157.0.8103.50/
+[D] fc8649dcc2eaaeb5857a2ddd480d69f4654e3330f341f487f14f439d copium-157.1.tar.gz !https://codeberg.org/selfisekai/copium/archive/157.1.tar.gz
+[D] a045075a27218627fddcec56a6f529781401e199e1a31c47fff2ea7e crubit-40fbac34597084a0863256d633889eac2c23b91b.tar.gz https://github.com/google/crubit/archive/40fbac34597084a0863256d633889eac2c23b91b/
 
 
 runmake=0
@@ -34,12 +33,15 @@ prefix=opt/chromium
 
 var_append copium_patches ' ' cr138-node-version-check.patch
 var_append copium_patches ' ' cr148-rust-1.95-bytemuck.patch
-var_append copium_patches ' ' cr148-v8-no-san-trap.patch
 var_append copium_patches ' ' cr149-rust-toolchain-var.patch
-var_append copium_patches ' ' cr152-ffmpeg-no-agtm.patch
-var_append copium_patches ' ' cr153-no-python-vendoring.patch
 var_append copium_patches ' ' cr153-typescript-break-definitions.patch
 var_append copium_patches ' ' cr153-unbundle-opus-iamf.patch
+var_append copium_patches ' ' cr155-no-python-vendoring.patch
+var_append copium_patches ' ' cr156-unbundle-icu-remoting.patch
+var_append copium_patches ' ' cr156-v8-no-san-trap.patch
+var_append copium_patches ' ' cr157-crubit-fix-rs_bindings_from_cc-breakages.patch
+var_append copium_patches ' ' cr157-ffmpeg-no-agtm.patch
+var_append copium_patches ' ' cr157-unbundle-brotli-pdfium.patch
 
 chromium_prepare_source() {
 	tar $taropt `match_source_file -p crubit` -C ./..
@@ -141,6 +143,8 @@ chromium_flags="
 	use_thin_lto=false
 	use_unofficial_version_number=false
 	use_vaapi=true
+	v8_metagen_libclang_so=\"$(dirname "$(find /usr/lib* -name 'libclang.so*' -print -quit)")/libclang.so\"
+	v8_metagen_libclang_bindings_dir=\"//third_party/llvm-libclang/bindings/python\"
 "
 
 if pkginstalled qt6base; then
@@ -241,16 +245,11 @@ chromium_premake() {
 	ln -sv $t2_rust_sysroot/lib/rustlib $T/lib/
 	ln -sv $t2_rust_sysroot/lib*/librustc_driver-*.so $T/lib/
 	ln -sv ../../../crubit ${T}-intermediate/crubit
-	env -u CARGO_PROFILE_RELEASE_PANIC python3 tools/rust/build_crubit.py --skip-checkout
+	env -u CARGO_PROFILE_RELEASE_PANIC LD="$BUILDCC" python3 tools/rust/build_crubit.py --skip-checkout
 	ln -sv ../../../../../crubit $T/lib/third_party/crubit
 	rustc -V | tee $T/VERSION > $T/INSTALLED_VERSION
 	(cd tools/crates/gnrt && env -u RUSTFLAGS cargo build --locked --release)
 	./tools/crates/gnrt/target/release/gnrt gen --for-std $T/lib/rustlib/src/rust
-
-	# rollup wasm
-	rm -rv third_party/devtools-frontend/src/node_modules/rollup
-	mkdir third_party/devtools-frontend/src/node_modules/rollup
-	tar xf `match_source_file -p wasm-node` --strip-components=1 -C third_party/devtools-frontend/src/node_modules/rollup
 
 	# system esbuild
 	rm -vf third_party/devtools-frontend/src/third_party/esbuild/esbuild
@@ -264,6 +263,9 @@ chromium_premake() {
 
 	# system clang-format
 	ln -sfv /usr/bin/clang-format buildtools/linux64-format/clang-format
+
+	# system gn
+	ln -sfv /usr/bin/gn buildtools/linux64/gn
 
 	# system go
 	case $HOSTTYPE in
