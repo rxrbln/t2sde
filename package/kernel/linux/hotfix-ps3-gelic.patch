@@ -1,0 +1,77 @@
+# --- T2-COPYRIGHT-BEGIN ---
+# t2/package/*/linux/hotfix-ps3-gelic.patch
+# Copyright (C) 2026 The T2 SDE Project
+# SPDX-License-Identifier: GPL-2.0 or patched project license
+# --- T2-COPYRIGHT-END ---
+
+--- a/drivers/net/ethernet/toshiba/ps3_gelic_net.c
++++ b/drivers/net/ethernet/toshiba/ps3_gelic_net.c
+@@ -145,7 +145,7 @@
+  * gelic_card_enable_rxdmac enables the DMA controller by setting RX_DMA_EN
+  * in the GDADMACCNTR register
+  */
+-static void gelic_card_enable_rxdmac(struct gelic_card *card)
++static int gelic_card_enable_rxdmac(struct gelic_card *card)
+ {
+ 	int status;
+ 
+@@ -162,9 +162,10 @@
+ #endif
+ 	status = lv1_net_start_rx_dma(bus_id(card), dev_id(card),
+ 				card->rx_chain.head->link.cpu_addr, 0);
+-	if (status)
++	if (status && status != LV1_BUSY)
+ 		dev_info(ctodev(card),
+ 			 "lv1_net_start_rx_dma failed, status=%d\n", status);
++	return status;
+ }
+ 
+ /**
+@@ -1093,7 +1094,8 @@
+ 	 */
+ 
+ 	if (dmac_chain_ended)
+-		gelic_card_enable_rxdmac(card);
++		card->rx_dma_restart_pending =
++			gelic_card_enable_rxdmac(card) == LV1_BUSY;
+ 
+ 	return 1;
+ }
+@@ -1133,9 +1135,25 @@
+ 		return packets_done;
+ 	}
+ 
+-	if (packets_done < budget) {
+-		napi_complete_done(napi, packets_done);
++	if (card->rx_dma_restart_pending) {
++		if (gelic_card_enable_rxdmac(card) != LV1_BUSY) {
++			card->rx_dma_restart_pending = false;
++		} else if (packets_done < budget) {
++			napi_complete_done(napi, packets_done);
++			mod_timer(&card->rx_oom_timer, jiffies + 1);
++			return packets_done;
++		}
++	}
++
++	if (packets_done < budget &&
++	    napi_complete_done(napi, packets_done)) {
+ 		gelic_card_rx_irq_on(card);
++		mb();
++		if (gelic_descr_get_status(card->rx_chain.head) !=
++		    GELIC_DESCR_DMA_CARDOWNED && napi_schedule_prep(napi)) {
++			gelic_card_rx_irq_off(card);
++			__napi_schedule(napi);
++		}
+ 	}
+ 	return packets_done;
+ }
+--- a/drivers/net/ethernet/toshiba/ps3_gelic_net.h
++++ b/drivers/net/ethernet/toshiba/ps3_gelic_net.h
+@@ -269,6 +269,7 @@
+ 	struct napi_struct napi;
+ 	struct net_device *netdev[GELIC_PORT_MAX];
+ 	struct timer_list rx_oom_timer;
++	bool rx_dma_restart_pending;
+ 	/*
+ 	 * hypervisor requires irq_status should be
+ 	 * 8 bytes aligned, but u64 member is
