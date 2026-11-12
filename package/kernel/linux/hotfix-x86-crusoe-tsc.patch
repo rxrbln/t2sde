@@ -1,0 +1,45 @@
+# --- T2-COPYRIGHT-BEGIN ---
+# t2/package/*/linux/hotfix-x86-crusoe-tsc.patch
+# Copyright (C) 2026 The T2 SDE Project
+# SPDX-License-Identifier: GPL-2.0 or patched project license
+# --- T2-COPYRIGHT-END ---
+
+Crusoe TSC does not halt in idle
+
+Crusoe machines run on the acpi_pm clocksource since the 2006 timekeeping
+rework: entering ACPI C2 marks the TSC unstable unless the CPU has
+X86_FEATURE_NONSTOP_TSC, and tsc_check_state() only honours that for a few
+vendors.  The TM5800 TSC keeps 800.0 MHz in C1/C2 and across LongRun
+(measured against acpi_pm, and as a watchdog verified clocksource), so set
+NONSTOP_TSC for Crusoe and honour it for Transmeta.  clock_gettime drops
+from 2 us to 0.27 us (vDSO).
+
+Signed-off-by: René Rebe <rene@exactco.de>
+
+diff --git a/arch/x86/kernel/cpu/transmeta.c b/arch/x86/kernel/cpu/transmeta.c
+index 3e04b5d01bf8..a3d2da8bd67c 100644
+--- a/arch/x86/kernel/cpu/transmeta.c
++++ b/arch/x86/kernel/cpu/transmeta.c
+@@ -96,6 +96,10 @@ static void init_transmeta(struct cpuinfo_x86 *c)
+ 	/* All Transmeta CPUs have a constant TSC */
+ 	set_cpu_cap(c, X86_FEATURE_CONSTANT_TSC);
+ 
++	/* Crusoe: TSC keeps its rate in C1/C2 and across LongRun (TM5800) */
++	if (c->x86 == 5)
++		set_cpu_cap(c, X86_FEATURE_NONSTOP_TSC);
++
+ #ifdef CONFIG_SYSCTL
+ 	/*
+ 	 * randomize_va_space slows us down enormously;
+diff --git a/drivers/acpi/processor_idle.c b/drivers/acpi/processor_idle.c
+index e113bcbbb882..f1ac91b53eff 100644
+--- a/drivers/acpi/processor_idle.c
++++ b/drivers/acpi/processor_idle.c
+@@ -198,6 +198,7 @@ static void tsc_check_state(int state)
+ 	case X86_VENDOR_INTEL:
+ 	case X86_VENDOR_CENTAUR:
+ 	case X86_VENDOR_ZHAOXIN:
++	case X86_VENDOR_TRANSMETA:
+ 		/*
+ 		 * AMD Fam10h TSC will tick in all
+ 		 * C/P/S0/S1 states when this bit is set.
