@@ -16,13 +16,44 @@
 [M] Sebastian Czech <t2_@arcor.de>
 
 [C] extra/emulator
+[F] CROSS
 
 [L] GPL
 [V] 3.2.35
 
 [D] b11250233498e285ac5c30f8851faed63c1787950166e3a6d2fd8c33 fs-uae-3.2.35.tar.xz https://github.com/FrodeSolheim/fs-uae/releases/download/v3.2.35/
 
-atstage cross && export ac_cv_func_realloc_0_nonnull=yes # TODO: pre-built gen/*
+fs_uae_hostgen() {
+	local gb=gen-build x
+	local f="-DHAVE_CONFIG_H -I. -DLINUX -DUAE -DFSUAE -I./gen -I./src -I./src/jit
+		 -I./src/include -I./src/od-fs -I./src/od-fs/include -I./src/od-win32
+		 -I./libfsemu/include -I./softfloat -O2"
+	mkdir -p $gb gen
+
+	$BUILDCXX $f -o $gb/build68k src/build68k.cpp src/writelog.cpp
+	$gb/build68k < src/table68k > gen/cpudefs.cpp
+
+	$BUILDCXX $f -o $gb/genblitter src/{blitops,genblitter,writelog}.cpp
+	for x in i:blit.h f:blitfunc.cpp h:blitfunc.h t:blittable.cpp; do
+		$gb/genblitter ${x%%:*} > gen/${x#*:}
+	done
+
+	$BUILDCXX $f -o $gb/gencpu src/{gencpu,missing,readcpu}.cpp gen/cpudefs.cpp
+	(cd gen && ../$gb/gencpu --optimized-flags)
+
+	$BUILDCXX $f -o $gb/gencomp src/jit/gencomp.cpp src/{missing,readcpu}.cpp gen/cpudefs.cpp
+	$gb/gencomp
+
+	$BUILDCXX $f -o $gb/genlinetoscr src/genlinetoscr.cpp
+	$gb/genlinetoscr > gen/linetoscr.cpp
+}
+
+if atstage cross; then
+	export ac_cv_func_realloc_0_nonnull=yes
+	var_append confopt ' ' --disable-codegen
+	hook_add premake 5 fs_uae_hostgen
+fi
+
 [[ $arch = x86* ]] || var_append confopt ' ' --disable-jit
 var_append GCC_WRAPPER_INSERT ' ' "-I$root`pkgprefix includedir libx11`"
 var_append GCC_WRAPPER_APPEND ' ' "-L$root`pkgprefix libdir libx11`"
