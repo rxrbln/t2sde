@@ -1,0 +1,178 @@
+# --- T2-COPYRIGHT-BEGIN ---
+# t2/package/*/xorg-server/restore-z-xaa-big-endian.patch
+# Copyright (C) 2026 The T2 SDE Project
+# SPDX-License-Identifier: GPL-2.0 or patched project license
+# --- T2-COPYRIGHT-END ---
+
+XAA Complex polygons with crossing edges:
+
+XAAIsEasyPolygon accepts every polygon with one top and one bottom vertex,
+Complex ones included, and the fills walk its two edge chains.  The
+trapezoid path hands SubsequentSolidFillTrap / the stippled and tiled trap
+helpers one left and one right edge for up to h rows, the right one minus
+a pixel; when the edges of a self-intersecting Complex polygon cross inside
+those rows, the trapezoid's left and right swap mid-way and the rows past
+the crossing come out wrong (x11-poly-probe: 3 and 12 pixels of two
+polygons against fb).  Complex polygons now take the row path, which
+orders the two edges per row; Convex and Nonconvex ones keep the
+trapezoids.
+
+Signed-off-by: René Rebe <rene@exactco.de>
+
+--- a/hw/xfree86/xaa/xaaFillPoly.c
++++ b/hw/xfree86/xaa/xaaFillPoly.c
+@@ -280,7 +280,8 @@ XAAFillPolygonSolid(DrawablePtr pDraw,
+ 
+         /* fill spans for this segment */
+         if (DX1 | DX2) {
+-            if (infoRec->SubsequentSolidFillTrap && (h > 6)) {
++            if (infoRec->SubsequentSolidFillTrap && (h > 6) &&
++                shape != Complex) {
+                 if (x1 == x2) {
+                     while (x1 == x2) {
+                         y++;
+@@ -832,6 +833,10 @@ XAAFillPolygonStippled(DrawablePtr pDraw
+             return;
+         }
+ 
++    /* the edges of a Complex polygon may cross within a trapezoid */
++    if (shape == Complex)
++        TrapFunc = NULL;
++
+     XAAFillPolygonHelper(infoRec->pScrn, ptsIn, count, topPoint,
+                          y, maxy, origin, RectFunc, TrapFunc, xorg, yorg,
+                          pCache);
+@@ -983,6 +988,10 @@ XAAFillPolygonTiled(DrawablePtr pDraw,
+         return;
+     }
+ 
++    /* the edges of a Complex polygon may cross within a trapezoid */
++    if (shape == Complex)
++        TrapFunc = NULL;
++
+     XAAFillPolygonHelper(infoRec->pScrn, ptsIn, count, topPoint,
+                          y, maxy, origin, RectFunc, TrapFunc, xorg, yorg,
+                          pCache);
+XAA dash patterns on big-endian and for odd dash lists:
+
+XAAComputeDash masked each dash with XAAShiftMasks, which are in bitmap
+bit order (their bits at the top on MSBFirst / big-endian builds), so
+the shift pushed them out and every dash pattern became 0: OnOffDash
+lines drew nothing, DoubleDash lines all background.  A numeric mask now.
+The second pass of an odd dash list in the MSB-first direction started
+one entry past the end of the list.
+
+Signed-off-by: René Rebe <rene@exactco.de>
+
+--- a/hw/xfree86/xaa/xaaLineMisc.c
++++ b/hw/xfree86/xaa/xaaLineMisc.c
+@@ -118,8 +118,10 @@ XAAComputeDash(GCPtr pGC)
+         DashPtr += direction;
+         while (value) {
+             if (value < (32 - shift)) {
++                /* a numeric mask: XAAShiftMasks are in bitmap bit
++                   order (the high bits on MSBFirst, big endian) */
+                 if (set)
+-                    *ptr |= XAAShiftMasks[value] << shift;
++                    *ptr |= ((1U << value) - 1) << shift;
+                 shift += value;
+                 break;
+             }
+@@ -143,7 +145,7 @@ XAAComputeDash(GCPtr pGC)
+                                         LINE_PATTERN_LSBFIRST_LSBJUSTIFIED))
+             DashPtr = (unsigned char *) pGC->dash;
+         else
+-            DashPtr = (unsigned char *) pGC->dash + pGC->numInDashList;
++            DashPtr = (unsigned char *) pGC->dash + pGC->numInDashList - 1;
+         goto CONCATENATE;
+     }
+ }
+XAA 8x8 mono patterns on big-endian:
+
+XAACheckStippleReducibility packs a stipple in the server's bitmap layout,
+on big endian rows 0-3 from the top byte of pattern0 and the pixels MSB
+first.  XAACheckTileReducibility packed the two-colour tiles LSB first from
+the low byte on every byte order, so on big endian an opaque stipple and a
+two-colour tile of the same bits handed SetupForMono8x8PatternFill
+different words: the four rows of each word in reverse order and every
+row mirrored.  The tiles are now bit reversed into the stipples' layout, and
+their 24 bpp pixels read bytewise in big-endian order: the masked,
+misaligned 32-bit load took the wrong three bytes there.
+
+XAARotateMonoPattern, used for drivers without
+HARDWARE_PATTERN_PROGRAMMED_ORIGIN and for the pattern cache, rotated in
+the little-endian layout only: on big endian rows and columns rotated the
+wrong way.  It now rotates the byte swapped words with the bit order flag
+inverted.
+
+Little-endian results are unchanged.
+
+Signed-off-by: René Rebe <rene@exactco.de>
+
+--- a/hw/xfree86/xaa/xaaPCache.c
++++ b/hw/xfree86/xaa/xaaPCache.c
+@@ -1284,6 +1284,12 @@ XAACheckStippleReducibility(PixmapPtr pP
+     return TRUE;
+ }
+ 
++#if X_BYTE_ORDER == X_BIG_ENDIAN
++#define PIXEL24(p) (((p)[0] << 16) | ((p)[1] << 8) | (p)[2])
++#else
++#define PIXEL24(p) (*((CARD32 *) (p)) & 0x00FFFFFF)
++#endif
++
+ Bool
+ XAACheckTileReducibility(PixmapPtr pPixmap, Bool checkMono)
+ {
+@@ -1433,13 +1439,13 @@ XAACheckTileReducibility(PixmapPtr pPixm
+             CARD32 val;
+             unsigned char *srcp = pPixmap->devPrivate.ptr;
+ 
+-            fg = *((CARD32 *) srcp) & 0x00FFFFFF;
++            fg = PIXEL24(srcp);
+             pitch = pPixmap->devKind;
+             j *= 3;
+             for (y = 0; y < i; y++) {
+                 bits[y] = 0;
+                 for (x = 0; x < j; x += 3) {
+-                    val = *((CARD32 *) (srcp + x)) & 0x00FFFFFF;
++                    val = PIXEL24(srcp + x);
+                     if (val != fg) {
+                         if (bg == -1)
+                             bg = val;
+@@ -1513,6 +1519,11 @@ XAACheckTileReducibility(PixmapPtr pPixm
+                 pPriv->pattern1 |= (pPriv->pattern1 << 4);
+             }
+         }
++#if X_BYTE_ORDER == X_BIG_ENDIAN
++        /* the stipples' layout: rows in memory order, MSB first */
++        pPriv->pattern0 = bswap_32(SWAP_BITS_IN_BYTES(pPriv->pattern0));
++        pPriv->pattern1 = bswap_32(SWAP_BITS_IN_BYTES(pPriv->pattern1));
++#endif
+         pPriv->flags |= REDUCIBLE_TO_2_COLOR;
+ 
+         if (infoRec->Mono8x8PatternFillFlags & BIT_ORDER_IN_BYTE_MSBFIRST) {
+@@ -2479,6 +2490,12 @@ XAARotateMonoPattern(int *pat0, int *pat
+ {
+     int tmp, mask;
+ 
++#if X_BYTE_ORDER == X_BIG_ENDIAN
++    /* rows from the top byte, the bit order mirrored: as little endian */
++    *pat0 = bswap_32(*pat0);
++    *pat1 = bswap_32(*pat1);
++    msbfirst = !msbfirst;
++#endif
+     if (xorg) {
+         if (msbfirst)
+             xorg = 8 - xorg;
+@@ -2499,6 +2516,10 @@ XAARotateMonoPattern(int *pat0, int *pat
+         *pat0 = ((*pat0 >> yorg) & mask) | ((*pat1 << (32 - yorg)) & ~mask);
+         *pat1 = ((*pat1 >> yorg) & mask) | ((tmp << (32 - yorg)) & ~mask);
+     }
++#if X_BYTE_ORDER == X_BIG_ENDIAN
++    *pat0 = bswap_32(*pat0);
++    *pat1 = bswap_32(*pat1);
++#endif
+ }
+ 
+ void
