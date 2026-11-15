@@ -1,0 +1,88 @@
+# --- T2-COPYRIGHT-BEGIN ---
+# t2/package/*/libgpg-error/hotfix-lock-align.patch
+# Copyright (C) 2026 The T2 SDE Project
+# SPDX-License-Identifier: GPL-2.0 or patched project license
+# --- T2-COPYRIGHT-END ---
+
+gen-lock-obj.sh only probed the pthread_mutex_t size when cross compiling,
+not its alignment. On hppa the mutex is 16 byte aligned, the generated
+gpgrt_lock_t thus was smaller than _gpgrt_lock_t and every user aborted
+with "gpgrt fatal: sizeof lock obj". Probe the alignment as well and fail
+loudly if the probe does not work.
+
+Signed-off-by: René Rebe <rene@exactco.de>
+
+--- libgpg-error-1.61/src/gen-lock-obj.sh
++++ libgpg-error-1.61/src/gen-lock-obj.sh
+@@ -67,21 +68,41 @@ if test -n "$AWK_VERSION_OUTPUT"; then
+     AWK_OPTION=--non-decimal-data
+ fi
+ 
++# Initialized arrays, as objdump prints the alignment for COMMON symbols.
+ cat <<'EOF' >conftest.$ac_ext
+ #include <pthread.h>
+ pthread_mutex_t mtx = PTHREAD_MUTEX_INITIALIZER;
++char mtx_align[_Alignof (pthread_mutex_t)] = { 1 };
++char long_align[_Alignof (long) > _Alignof (long *)
++                ? _Alignof (long) : _Alignof (long *)] = { 1 };
+ EOF
+ 
++sym_size () {
++  echo "$ac_syms" | $AWK $AWK_OPTION -v sym="$1" '
++$NF == sym { size = int("0x" $5) }
++END { print size }'
++}
++
+ if $CC -c conftest.$ac_ext; then :
+-  ac_mtx_size=$($OBJDUMP -t conftest.$ac_objext \
+-         | $AWK $AWK_OPTION '
+-/mtx$/ { mtx_size = int("0x" $5) }
+-END { print mtx_size }')
+-else
+-    echo "Can't determine mutex size"
+-    exit 1
++  ac_syms=$($OBJDUMP -t conftest.$ac_objext)
++  ac_mtx_size=$(sym_size mtx)
++  ac_mtx_align=$(sym_size mtx_align)
++  ac_long_align=$(sym_size long_align)
+ fi
+ rm -f core conftest.err conftest.$ac_objext conftest.$ac_ext
++if test -z "$ac_mtx_size" || test "$ac_mtx_size" -le 0 \
++   || test -z "$ac_mtx_align" || test "$ac_mtx_align" -le 0 \
++   || test -z "$ac_long_align" || test "$ac_long_align" -le 0; then
++    echo "Can't determine mutex size and alignment" >&2
++    exit 1
++fi
++
++# Enforce a mutex alignment stricter than long, e.g. 16 bytes on hppa.
++ac_align_member=
++if test "$ac_mtx_align" -gt "$ac_long_align"; then
++    ac_align_member="
++    int _x${ac_mtx_align}_align __attribute__ ((aligned ($ac_mtx_align)));"
++fi
+ 
+ cat <<EOF
+ ## lock-obj-pub.$host.h
+@@ -92,7 +113,7 @@ typedef struct
+ {
+   long _vers;
+   union {
+-    volatile char _priv[$ac_mtx_size];
++    volatile char _priv[$ac_mtx_size];$ac_align_member
+     long _x_align;
+     long *_xp_align;
+   } u;
+@@ -100,13 +121,6 @@ typedef struct
+ 
+ EOF
+ 
+-# FIXME: Support different alignment conditions of:
+-#
+-#     USE_16BYTE_ALIGNMENT
+-#     USE_DOUBLE_FOR_ALIGNMENT
+-#     USE_LONG_DOUBLE_FOR_ALIGNMENT
+-#
+-
+ echo ${ECHO_N} "#define GPGRT_LOCK_INITIALIZER {$LOCK_ABI_VERSION,{{${ECHO_C}"
+ 
+ i=0
