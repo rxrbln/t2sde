@@ -1,0 +1,139 @@
+# --- T2-COPYRIGHT-BEGIN ---
+# t2/package/*/mesa/hotfix-bigendian-scanout-format.patch
+# Copyright (C) 2026 The T2 SDE Project
+# SPDX-License-Identifier: GPL-2.0 or patched project license
+# --- T2-COPYRIGHT-END ---
+
+Fix big-endian radeon scanout fourcc mapping.
+
+Maps the byte-swapped fourccs to the host-order pipe formats in
+dri_helpers.c (dri2_format_table, dri_format and pipe_format),
+loader_dri_helper.c (pipe_format_to_fourcc) and gbm_dri.c
+(gbm_dri_visuals_table).  The gbm table keeps the literal mapping,
+because gbm allocates in the pipe format itself.  The DRI image
+table's dri_format field must carry the host-order format as well,
+it is compared against the texture's pipe format in the FOURCC and
+map queries.
+
+diff -Nur a/src/gallium/frontends/dri/dri_helpers.c b/src/gallium/frontends/dri/dri_helpers.c
+--- a/src/gallium/frontends/dri/dri_helpers.c  2026-11-14 05:46:56.643144896 +0100
++++ b/src/gallium/frontends/dri/dri_helpers.c  2026-11-14 05:46:56.652346324 +0100
+@@ -22,6 +22,7 @@
+ 
+ #include <dlfcn.h>
+ #include "drm-uapi/drm_fourcc.h"
++#include "util/u_endian.h"
+ #include "util/u_memory.h"
+ #include "pipe/p_screen.h"
+ #include "state_tracker/st_texture.h"
+@@ -425,20 +426,36 @@
+         PIPE_FORMAT_R10G10B10A2_UNORM, 1, },
+       { DRM_FORMAT_XBGR2101010,   __DRI_IMAGE_FORMAT_XBGR2101010,
+         PIPE_FORMAT_R10G10B10X2_UNORM, 1, },
++#if UTIL_ARCH_BIG_ENDIAN
++      /* The scanout byte swap makes the fourccs describe host byte order,
++       * and dri_format is matched against the texture's pipe format. */
++      { DRM_FORMAT_ARGB8888,      PIPE_FORMAT_A8R8G8B8_UNORM,
++        PIPE_FORMAT_A8R8G8B8_UNORM, 1, },
++      { DRM_FORMAT_BGRA8888,      PIPE_FORMAT_A8R8G8B8_UNORM,
++        PIPE_FORMAT_A8R8G8B8_UNORM, 1, },
++#else
+       { DRM_FORMAT_ARGB8888,      __DRI_IMAGE_FORMAT_ARGB8888,
+         PIPE_FORMAT_B8G8R8A8_UNORM, 1, },
+       { DRM_FORMAT_BGRA8888,      PIPE_FORMAT_A8R8G8B8_UNORM,
+         PIPE_FORMAT_A8R8G8B8_UNORM, 1, },
++#endif
+       { DRM_FORMAT_ABGR8888,      __DRI_IMAGE_FORMAT_ABGR8888,
+         PIPE_FORMAT_R8G8B8A8_UNORM, 1, },
+       { DRM_FORMAT_RGBA8888,      PIPE_FORMAT_A8B8G8R8_UNORM,
+         PIPE_FORMAT_A8B8G8R8_UNORM, 1, },
+       { __DRI_IMAGE_FOURCC_SARGB8888,     __DRI_IMAGE_FORMAT_SARGB8,
+         PIPE_FORMAT_B8G8R8A8_SRGB, 1, },
++#if UTIL_ARCH_BIG_ENDIAN
++      { DRM_FORMAT_XRGB8888,      PIPE_FORMAT_X8R8G8B8_UNORM,
++        PIPE_FORMAT_X8R8G8B8_UNORM, 1, },
++      { DRM_FORMAT_BGRX8888,      PIPE_FORMAT_X8R8G8B8_UNORM,
++        PIPE_FORMAT_X8R8G8B8_UNORM, 1, },
++#else
+       { DRM_FORMAT_XRGB8888,      __DRI_IMAGE_FORMAT_XRGB8888,
+         PIPE_FORMAT_B8G8R8X8_UNORM, 1, },
+       { DRM_FORMAT_BGRX8888,      PIPE_FORMAT_X8R8G8B8_UNORM,
+         PIPE_FORMAT_X8R8G8B8_UNORM, 1, },
++#endif
+       { DRM_FORMAT_RGB888,        __DRI_IMAGE_FORMAT_RGB888,
+         PIPE_FORMAT_B8G8R8_UNORM, 1, },
+       { DRM_FORMAT_XBGR8888,      __DRI_IMAGE_FORMAT_XBGR8888,
+diff -Nur a/src/gbm/backends/dri/gbm_dri.c b/src/gbm/backends/dri/gbm_dri.c
+--- a/src/gbm/backends/dri/gbm_dri.c   2026-11-14 05:46:56.643913629 +0100
++++ b/src/gbm/backends/dri/gbm_dri.c   2026-11-14 05:46:56.652966345 +0100
+@@ -49,6 +49,7 @@
+ #include "loader.h"
+ #include "util/u_debug.h"
+ #include "util/macros.h"
++#include "util/u_endian.h"
+ #include "dri_util.h"
+ #include "pipe/p_screen.h"
+ #include "dri_screen.h"
+@@ -327,13 +328,24 @@
+    { GBM_FORMAT_GR1616, PIPE_FORMAT_R16G16_UNORM },
+    { GBM_FORMAT_ARGB1555, PIPE_FORMAT_B5G5R5A1_UNORM },
+    { GBM_FORMAT_RGB565, PIPE_FORMAT_B5G6R5_UNORM },
++#if UTIL_ARCH_BIG_ENDIAN
++   { GBM_FORMAT_BGRX8888, PIPE_FORMAT_B8G8R8X8_UNORM },
++   { GBM_FORMAT_BGRA8888, PIPE_FORMAT_B8G8R8A8_UNORM },
++#else
+    { GBM_FORMAT_BGRX8888, PIPE_FORMAT_X8R8G8B8_UNORM },
+    { GBM_FORMAT_BGRA8888, PIPE_FORMAT_A8R8G8B8_UNORM },
++#endif
+    { GBM_FORMAT_RGBX8888, PIPE_FORMAT_X8B8G8R8_UNORM },
+    { GBM_FORMAT_RGBA8888, PIPE_FORMAT_A8B8G8R8_UNORM },
+    { GBM_FORMAT_RGB888, PIPE_FORMAT_B8G8R8_UNORM },
++#if UTIL_ARCH_BIG_ENDIAN
++   /* Same host byte order quirk as in the DRI image format table. */
++   { GBM_FORMAT_XRGB8888, PIPE_FORMAT_X8R8G8B8_UNORM },
++   { GBM_FORMAT_ARGB8888, PIPE_FORMAT_A8R8G8B8_UNORM },
++#else
+    { GBM_FORMAT_XRGB8888, PIPE_FORMAT_B8G8R8X8_UNORM },
+    { GBM_FORMAT_ARGB8888, PIPE_FORMAT_B8G8R8A8_UNORM },
++#endif
+    { GBM_FORMAT_BGR888, PIPE_FORMAT_R8G8B8_UNORM },
+    { GBM_FORMAT_XBGR8888, PIPE_FORMAT_R8G8B8X8_UNORM },
+    { GBM_FORMAT_ABGR8888, PIPE_FORMAT_R8G8B8A8_UNORM },
+diff -Nur a/src/loader/loader_dri_helper.c b/src/loader/loader_dri_helper.c
+--- a/src/loader/loader_dri_helper.c   2026-11-14 05:46:56.644284106 +0100
++++ b/src/loader/loader_dri_helper.c   2026-11-14 05:46:56.653268180 +0100
+@@ -29,6 +29,7 @@
+ #include "drm-uapi/drm_fourcc.h"
+ #include "loader_dri_helper.h"
+ #include "util/driconf.h"
++#include "util/u_endian.h"
+ 
+ 
+ /* Creating a DRIImage accepts a pipe_format, whilst DRM-based platforms
+@@ -52,6 +53,18 @@
+    { PIPE_FORMAT_B8G8R8X8_SRGB, __DRI_IMAGE_FOURCC_SXRGB8888 },
+    { PIPE_FORMAT_B8G8R8A8_SRGB, __DRI_IMAGE_FOURCC_SARGB8888 },
+    { PIPE_FORMAT_R8G8B8A8_SRGB, __DRI_IMAGE_FOURCC_SABGR8888 },
++#if UTIL_ARCH_BIG_ENDIAN
++   /* The scanout byte swap makes the fourccs describe host byte order,
++    * so both byte orders of a fourcc resolve to the host-order format. */
++   { PIPE_FORMAT_X8B8G8R8_UNORM, DRM_FORMAT_RGBX8888 },
++   { PIPE_FORMAT_A8B8G8R8_UNORM, DRM_FORMAT_RGBA8888 },
++   { PIPE_FORMAT_X8R8G8B8_UNORM, DRM_FORMAT_BGRX8888 },
++   { PIPE_FORMAT_A8R8G8B8_UNORM, DRM_FORMAT_BGRA8888 },
++   { PIPE_FORMAT_X8R8G8B8_UNORM, DRM_FORMAT_XRGB8888 },
++   { PIPE_FORMAT_A8R8G8B8_UNORM, DRM_FORMAT_ARGB8888 },
++   { PIPE_FORMAT_R8G8B8X8_UNORM, DRM_FORMAT_XBGR8888 },
++   { PIPE_FORMAT_R8G8B8A8_UNORM, DRM_FORMAT_ABGR8888 },
++#else
+    { PIPE_FORMAT_X8B8G8R8_UNORM, DRM_FORMAT_RGBX8888 },
+    { PIPE_FORMAT_A8B8G8R8_UNORM, DRM_FORMAT_RGBA8888 },
+    { PIPE_FORMAT_X8R8G8B8_UNORM, DRM_FORMAT_BGRX8888 },
+@@ -60,6 +73,7 @@
+    { PIPE_FORMAT_B8G8R8A8_UNORM, DRM_FORMAT_ARGB8888 },
+    { PIPE_FORMAT_R8G8B8X8_UNORM, DRM_FORMAT_XBGR8888 },
+    { PIPE_FORMAT_R8G8B8A8_UNORM, DRM_FORMAT_ABGR8888 },
++#endif
+    { PIPE_FORMAT_B10G10R10X2_UNORM, DRM_FORMAT_XRGB2101010 },
+    { PIPE_FORMAT_B10G10R10A2_UNORM, DRM_FORMAT_ARGB2101010 },
+    { PIPE_FORMAT_R10G10B10X2_UNORM, DRM_FORMAT_XBGR2101010 },
