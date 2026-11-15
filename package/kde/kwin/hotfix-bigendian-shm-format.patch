@@ -1,0 +1,62 @@
+# --- T2-COPYRIGHT-BEGIN ---
+# t2/package/*/kwin/hotfix-bigendian-shm-format.patch
+# Copyright (C) 2026 The T2 SDE Project
+# SPDX-License-Identifier: GPL-2.0 or patched project license
+# --- T2-COPYRIGHT-END ---
+
+Use byte-swapped DRM fourccs for native-order shm buffers on big-endian.
+
+wl_shm pixel data is in native byte order, so on big-endian the
+ARGB8888/XRGB8888 (and RGB888/BGR888) buffers have to be handed to
+DRM/mesa as BGRA8888/BGRX8888 (BGR888/RGB888), and
+graphicsbufferview.cpp has to map those fourccs back to the matching
+QImage formats.
+
+--- kwin-6.7.3/src/core/graphicsbufferview.cpp
++++ kwin-6.7.3/src/core/graphicsbufferview.cpp
+@@ -41,6 +41,12 @@ static QImage::Format drmFormatToQImageFormat(uint32_t drmFormat)
+         return QImage::Format_RGB888;
+     case DRM_FORMAT_RGB888:
+         return QImage::Format_BGR888;
++#if Q_BYTE_ORDER == Q_BIG_ENDIAN
++    case DRM_FORMAT_BGRA8888:
++        return QImage::Format_ARGB32_Premultiplied;
++    case DRM_FORMAT_BGRX8888:
++        return QImage::Format_RGB32;
++#endif
+     default:
+         return QImage::Format_Invalid;
+     }
+--- kwin-6.7.3/src/wayland/shmclientbuffer.cpp
++++ kwin-6.7.3/src/wayland/shmclientbuffer.cpp
+@@ -52,9 +52,30 @@ static uint32_t shmFormatToDrmFormat(uint32_t shmFormat)
+ {
+     switch (shmFormat) {
+     case WL_SHM_FORMAT_ARGB8888:
++#if Q_BYTE_ORDER == Q_BIG_ENDIAN
++        // wl_shm pixel data is in native byte order, DRM fourccs are little-endian.
++        return DRM_FORMAT_BGRA8888;
++#else
+         return DRM_FORMAT_ARGB8888;
++#endif
+     case WL_SHM_FORMAT_XRGB8888:
++#if Q_BYTE_ORDER == Q_BIG_ENDIAN
++        return DRM_FORMAT_BGRX8888;
++#else
+         return DRM_FORMAT_XRGB8888;
++#endif
++    case WL_SHM_FORMAT_RGB888:
++#if Q_BYTE_ORDER == Q_BIG_ENDIAN
++        return DRM_FORMAT_BGR888;
++#else
++        return DRM_FORMAT_RGB888;
++#endif
++    case WL_SHM_FORMAT_BGR888:
++#if Q_BYTE_ORDER == Q_BIG_ENDIAN
++        return DRM_FORMAT_RGB888;
++#else
++        return DRM_FORMAT_BGR888;
++#endif
+     default:
+         return shmFormat; // other wl_shm formats match the drm formats
+     }
