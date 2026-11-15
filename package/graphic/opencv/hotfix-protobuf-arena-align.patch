@@ -1,0 +1,105 @@
+# --- T2-COPYRIGHT-BEGIN ---
+# t2/package/*/opencv/hotfix-protobuf-arena-align.patch
+# Copyright (C) 2026 The T2 SDE Project
+# SPDX-License-Identifier: GPL-2.0 or patched project license
+# --- T2-COPYRIGHT-END ---
+
+Generalize the bundled protobuf TableArena alignment, it hardcoded 8 bytes
+and failed the static_assert on hppa where std::mutex is 16 byte aligned.
+
+Signed-off-by: René Rebe <rene@exactco.de>
+
+--- opencv-5.1.0/3rdparty/protobuf/src/google/protobuf/descriptor.cc	2026-11-15 17:04:02.328481168 +0100
++++ opencv-5.1.0/3rdparty/protobuf/src/google/protobuf/descriptor.cc	2026-11-15 17:04:02.347481345 +0100
+@@ -40,6 +40,7 @@
+ #include <limits>
+ #include <map>
+ #include <memory>
++#include <new>
+ #include <set>
+ #include <string>
+ #include <unordered_map>
+@@ -704,7 +705,7 @@ class TableArena {
+   // The object is registered for destruction, if its destructor is not trivial.
+   template <typename T, typename... Args>
+   T* Create(Args&&... args) {
+-    static_assert(alignof(T) <= 8, "");
++    static_assert(alignof(T) <= kAlignment, "");
+     return ::new (AllocRawInternal(sizeof(T), TypeTag<T>(KnownTypes{})))
+         T(std::forward<Args>(args)...);
+   }
+@@ -808,7 +809,31 @@ class TableArena {
+   }
+ 
+  private:
+-  static constexpr size_t RoundUp(size_t n) { return (n + 7) & ~7; }
++  // At least 8, larger where locks need it (e.g. 16 byte on hppa).
++  static constexpr size_t kAlignment =
++      alignof(internal::WrappedMutex) > 8 ? alignof(internal::WrappedMutex) : 8;
++
++  static constexpr size_t RoundUp(size_t n) {
++    return (n + kAlignment - 1) & ~(kAlignment - 1);
++  }
++
++  static void* BlockNew(size_t n) {
++#if defined(__cpp_aligned_new) && defined(__STDCPP_DEFAULT_NEW_ALIGNMENT__)
++    if (kAlignment > __STDCPP_DEFAULT_NEW_ALIGNMENT__)
++      return ::operator new(n, std::align_val_t(kAlignment));
++#endif
++    return ::operator new(n);
++  }
++
++  static void BlockDelete(void* p, size_t s) {
++#if defined(__cpp_aligned_new) && defined(__STDCPP_DEFAULT_NEW_ALIGNMENT__)
++    if (kAlignment > __STDCPP_DEFAULT_NEW_ALIGNMENT__) {
++      ::operator delete(p, std::align_val_t(kAlignment));
++      return;
++    }
++#endif
++    OperatorDelete(p, s);
++  }
+ 
+   using Tag = unsigned char;
+ 
+@@ -837,7 +862,7 @@ class TableArena {
+       // allocate in the block according to the limits of Tag is less than 2k,
+       // so this can fit anything that Tag can represent.
+       constexpr size_t kBlockSize = 4096;
+-      to_use = current_ = ::new (::operator new(kBlockSize)) Block(kBlockSize);
++      to_use = current_ = ::new (BlockNew(kBlockSize)) Block(kBlockSize);
+       GOOGLE_DCHECK_GE(current_->space_left(), size + 1);
+     }
+ 
+@@ -935,11 +960,13 @@ class TableArena {
+     void operator()(OutOfLineAlloc* p) { OperatorDelete(p->ptr, p->size); }
+   };
+ 
+-  static uint32_t SizeToRawTag(size_t n) { return (RoundUp(n) / 8) - 1; }
++  static uint32_t SizeToRawTag(size_t n) {
++    return (RoundUp(n) / kAlignment) - 1;
++  }
+ 
+   static uint32_t TagToSize(Tag tag) {
+     GOOGLE_DCHECK_GE(tag, kFirstRawTag);
+-    return static_cast<uint32_t>(tag - kFirstRawTag + 1) * 8;
++    return static_cast<uint32_t>(tag - kFirstRawTag + 1) * kAlignment;
+   }
+ 
+   struct Block {
+@@ -975,7 +1002,7 @@ class TableArena {
+       return p;
+     }
+ 
+-    void Destroy() { OperatorDelete(this, memory_used()); }
++    void Destroy() { BlockDelete(this, memory_used()); }
+ 
+     void PrependTo(Block*& list) {
+       next = list;
+@@ -1045,6 +1072,7 @@ class TableArena {
+ };
+ 
+ constexpr std::array<uint8_t, 6> TableArena::kSmallSizes;
++constexpr size_t TableArena::kAlignment;
+ 
+ }  // anonymous namespace
+ 
