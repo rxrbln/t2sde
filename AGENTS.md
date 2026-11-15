@@ -95,6 +95,11 @@ cross-compilation, not just look plausible. Never:
 13. When a CMake build is incomplete or ignores options the autotools build
     honors (e.g. pcre2 16/32 bit libraries), use `runcmake=0` and the
     configure build instead of duplicating every option as `cmakeopt`.
+14. Do not use or fix bundled/vendored copies of libraries or their headers
+    (e.g. ioquake3 ships zlib, jpeg, ogg, vorbis, opus, opusfile, curl, OpenAL
+    and SDL2 copies). Build against the system packages (`USE_INTERNAL_LIBS=0`,
+    `--with-system-*`, `-DUSE_SYSTEM_*=ON`, ...) and conditionalize the
+    features of optional ones with `pkginstalled`.
 
 ## Generic fixes already in `scripts/functions.in`
 
