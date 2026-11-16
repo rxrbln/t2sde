@@ -1,0 +1,46 @@
+# --- T2-COPYRIGHT-BEGIN ---
+# t2/package/*/grub2/hotfix-ppc-chrp-detect.patch
+# Copyright (C) 2026 The T2 SDE Project
+# SPDX-License-Identifier: GPL-2.0 or patched project license
+# --- T2-COPYRIGHT-END ---
+
+ieee1275: only flag PowerVM on LPARs with hypervisor calls
+
+Any root compatible starting with "IBM," set POWER_VM and
+CAN_TRY_CAS_FOR_MORE_MEMORY, which also matches pre-PAPR CHRP RS/6000
+machines such as the 43P-150 (compatible "IBM,7043-150", OF TCP99210)
+with rmo_top < 512MB (384MB RAM) GRUB calls the non existent method:
+
+  Calling ibm,client-architecture-support from grub...
+
+and uses the PowerVM restricted kernel and initrd claim path. Require
+/rtas/ibm,hypertas-functions like Linux prom_init PLATFORM_PSERIES_LPAR.
+
+Signed-off-by: René Rebe <rene@exactco.de>
+
+--- a/grub-core/kern/ieee1275/cmain.c
++++ b/grub-core/kern/ieee1275/cmain.c
+@@ -49,6 +49,9 @@ grub_ieee1275_find_options (void)
+   grub_ieee1275_phandle_t root;
+   grub_ieee1275_phandle_t options;
+   grub_ieee1275_phandle_t openprom;
++#if defined(__powerpc__)
++  grub_ieee1275_phandle_t rtas;
++#endif
+   int rc;
+   grub_uint32_t realmode = 0;
+   char tmp[256];
+@@ -125,7 +128,12 @@ grub_ieee1275_find_options (void)
+ 	}
+ 
+ #if defined(__powerpc__)
+-      if (grub_strncmp (tmp, "IBM,", 4) == 0)
++      /* "IBM," alone also matches pre-PAPR CHRP RS/6000 (e.g. 7043-150), only
++	 PowerVM LPARs have hypervisor calls, as checked by Linux prom_init.  */
++      if (grub_strncmp (tmp, "IBM,", 4) == 0
++	  && grub_ieee1275_finddevice ("/rtas", &rtas) == 0
++	  && grub_ieee1275_get_property_length (rtas, "ibm,hypertas-functions",
++						&actual) == 0)
+ 	{
+ 	  grub_ieee1275_set_flag (GRUB_IEEE1275_FLAG_CAN_TRY_CAS_FOR_MORE_MEMORY);
+ 	  grub_ieee1275_set_flag (GRUB_IEEE1275_FLAG_POWER_VM);
