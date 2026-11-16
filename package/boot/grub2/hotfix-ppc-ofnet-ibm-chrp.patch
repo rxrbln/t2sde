@@ -1,0 +1,163 @@
+# --- T2-COPYRIGHT-BEGIN ---
+# t2/package/*/grub2/hotfix-ppc-ofnet-ibm-chrp.patch
+# Copyright (C) 2026 The T2 SDE Project
+# SPDX-License-Identifier: GPL-2.0 or patched project license
+# --- T2-COPYRIGHT-END ---
+
+ieee1275/ofnet: fix network boot on old IBM CHRP Open Firmware (7043-150)
+
+GRUB loaded via BOOTP/TFTP on an IBM RS/6000 43P-150 (OF TCP99210) can
+not use the firmware network device afterwards:
+
+  error: Couldn't open network card.
+
+The firmware obp-tftp open parses only six args
+(server,file,client,gateway,bootp-retries,tftp-retries) and passes the
+remaining "5,1.1.1.1,512" of GRUB's PAPR suffix to $number, which fails,
+so the am79C971 open returns false. MacRISC machines are unaffected as
+they set NO_OFNET_SUFFIX. Retry the open without suffix and keep it.
+
+Also:
+ - parse_bootpath read past the end of /chosen/bootpath when it is an
+   alias ("net", as set by "boot net") or carries no args.
+ - locate the BOOTP payload in bootpreply-packet from the frame headers
+   instead of a fixed 0x2a, in 802.3 mode the firmware stores LLC/SNAP
+   frames with a 22 byte MAC header, free the buffer on error.
+ - canon returns the length, NUL terminate the result.
+
+Signed-off-by: René Rebe <rene@exactco.de>
+
+--- a/grub-core/net/drivers/ieee1275/ofnet.c
++++ b/grub-core/net/drivers/ieee1275/ofnet.c
+@@ -41,6 +41,16 @@ card_open (struct grub_net_card *dev)
+ 
+   status = grub_ieee1275_open (data->path, &(data->handle));
+ 
++  /* Older IBM CHRP obp-tftp (e.g. 7043-150) only takes six args and refuses
++     the open with the long PAPR suffix, retry and keep the plain path.  */
++  if (status && *data->suffix)
++    {
++      grub_dprintf ("ofnet", "open %s failed, retrying without suffix\n",
++		    data->path);
++      *data->suffix = '\0';
++      status = grub_ieee1275_open (data->path, &(data->handle));
++    }
++
+   if (status)
+     return grub_error (GRUB_ERR_IO, "Couldn't open network card.");
+ 
+@@ -158,7 +168,11 @@ grub_ieee1275_parse_bootpath (const char
+ 
+   hw_addr.type = GRUB_NET_LINK_LEVEL_PROTOCOL_ETHERNET;
+ 
+-  args = bootpath + grub_strlen (devpath) + 1;
++  /* bootpath may be an alias ("net") or carry no args at all.  */
++  args = grub_strchr (bootpath, ':');
++  if (!args)
++    return 0;
++  args++;
+   do
+     {
+       comma_char = grub_strchr (args, ',');
+@@ -238,6 +252,37 @@ grub_ieee1275_parse_bootpath (const char
+   return 0;
+ }
+ 
++/* IBM bootpreply-packet holds the whole received frame, locate the BOOTP
++   payload behind Ethernet II or 802.3 LLC/SNAP, IPv4 and UDP headers.  */
++static grub_ssize_t
++bootp_frame_offset (const grub_uint8_t *pkt, grub_ssize_t size,
++		    grub_ssize_t fallback)
++{
++  grub_ssize_t off = 12;
++  grub_uint16_t type;
++  unsigned int ihl;
++
++  if (size < off + 2)
++    return fallback;
++  type = grub_be_to_cpu16 (grub_get_unaligned16 (pkt + off));
++  off += 2;
++  if (type <= 1500)
++    {
++      if (size < off + 8 || pkt[off] != 0xaa || pkt[off + 1] != 0xaa)
++	return fallback;
++      type = grub_be_to_cpu16 (grub_get_unaligned16 (pkt + off + 6));
++      off += 8;
++    }
++  if (type != 0x0800 || size < off + 20 || (pkt[off] >> 4) != 4
++      || pkt[off + 9] != 17)
++    return fallback;
++  ihl = (pkt[off] & 0xf) * 4;
++  if (ihl < 20)
++    return fallback;
++  off += ihl + 8;
++  return off < size ? off : fallback;
++}
++
+ static void
+ grub_ieee1275_net_config_real (const char *devpath, char **device, char **path,
+                                char *bootpath)
+@@ -252,7 +297,7 @@ grub_ieee1275_net_config_real (const cha
+     char c;
+     struct grub_ofnetcard_data *data;
+ 
+-    grub_ssize_t size = -1;
++    grub_ssize_t size = -1, offset;
+     unsigned int i;
+ 
+     if (card->driver != &ofdriver)
+@@ -290,14 +335,25 @@ grub_ieee1275_net_config_real (const cha
+     if (grub_ieee1275_get_property (grub_ieee1275_chosen,
+ 				    bootp_response_properties[i].name,
+ 				    bootp_response, size, 0) < 0)
+-      return;
++      {
++	grub_free (bootp_response);
++	return;
++      }
++
++    offset = bootp_response_properties[i].offset;
++    if (offset)
++      offset = bootp_frame_offset ((grub_uint8_t *) bootp_response, size,
++				   offset);
++    if (offset >= size)
++      {
++	grub_free (bootp_response);
++	return;
++      }
+ 
+     grub_net_configure_by_dhcp_ack (card->name, card, 0,
+ 				    (struct grub_net_bootp_packet *)
+-				    (bootp_response
+-				     + bootp_response_properties[i].offset),
+-				    size - bootp_response_properties[i].offset,
+-				    1, device, path);
++				    (bootp_response + offset),
++				    size - offset, 1, device, path);
+     grub_free (bootp_response);
+     return;
+   }
+--- a/grub-core/kern/ieee1275/openfw.c
++++ b/grub-core/kern/ieee1275/openfw.c
+@@ -574,13 +574,19 @@ grub_ieee1275_canonicalise_devname (cons
+       args.buf = (grub_ieee1275_cell_t) buf;
+       args.inlen = (grub_ieee1275_cell_t) (bufsize - 1);
+ 
+-      if (IEEE1275_CALL_ENTRY_FN (&args) == -1)
+-	return 0;
++      if (IEEE1275_CALL_ENTRY_FN (&args) == -1
++	  || args.outlen == (grub_ieee1275_cell_t) -1)
++	{
++	  grub_free (buf);
++	  return 0;
++	}
+       if (args.outlen > bufsize - 1)
+ 	{
+ 	  bufsize = args.outlen + 2;
+ 	  continue;
+ 	}
++      /* canon returns the length, not all firmware copies the NUL.  */
++      buf[args.outlen] = '\0';
+       return buf;
+     }
+   /* Shouldn't reach here.  */
