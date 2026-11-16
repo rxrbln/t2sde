@@ -1,0 +1,321 @@
+# --- T2-COPYRIGHT-BEGIN ---
+# t2/package/*/linux/ppc-chrp-cs4231-of.patch
+# Copyright (C) 2026 The T2 SDE Project
+# SPDX-License-Identifier: GPL-2.0 or patched project license
+# --- T2-COPYRIGHT-END ---
+
+  # modprobe snd-cs4231
+  cs4231 cs4231.0: please specify port
+
+Create platform devices for the CHRP ISA sound nodes and bind snd-cs4231
+to them, e.g. on the IBM 7043-150:
+
+  /pci@80000000/isa@b/sound@i534: compatible "CRUS,CS4236B", "IBM0017",
+  "pnpPNP,b007", reg <1 0x534 8 ...>, interrupts <5 3>, dma 0 and 1
+
+Port and interrupt come from the node, the DMA channels from its ISA "dma"
+property (5 cells per channel), which lists the capture channel first.
+This gives port 0x534, irq 5, playback dma 1 and capture dma 0, measured
+to work for playback and capture; irq 9 gets no interrupts and capture on
+dma 2 fails.  With Open Firmware the ISA driver is registered only when a
+port parameter is given.
+
+The internal speaker stays silent, only line/headphone out play. The
+firmware sound package audio-init-setup programs I26 = 0x80 (mono
+output MOUT unmuted) and ends with
+
+  au-pin-ctl-reg au-iar!  au-idr aud@ 0x40 or au-idr!  0x96 ms
+
+raising the I10 external control pin XCTL0 and waiting 150ms for the
+speaker amplifier. The CS4236B data sheet describes MOUT as the drive
+for the PC-internal mono speaker, while wss_lib keeps I10 at 0 apart
+from IEN and mutes MOUT (I26 0xcf). Raise XCTL0 and unmute MOUT for
+IBM0017 sound nodes and expose XCTL0 as "Speaker Playback Switch".
+
+The XCTL0/XCTL1 definitions were swapped against the CS4231A and
+CS4236B data sheets (I10 D6 = XCTL0, D7 = XCTL1), correct them and add
+the I26 mono control bits.
+
+Signed-off-by: René Rebe <rene@exactco.de>
+
+diff --git linux-7.3/arch/powerpc/platforms/chrp/setup.c linux-7.3/arch/powerpc/platforms/chrp/setup.c
+index 5d933f27261e..afe3d1bd6606 100644
+--- linux-7.3/arch/powerpc/platforms/chrp/setup.c
++++ linux-7.3/arch/powerpc/platforms/chrp/setup.c
+@@ -35,6 +35,7 @@
+ #include <linux/of_address.h>
+ #include <linux/of_fdt.h>
+ #include <linux/of_irq.h>
++#include <linux/of_platform.h>
+ 
+ #include <asm/io.h>
+ #include <asm/pci-bridge.h>
+@@ -553,6 +554,19 @@ chrp_init2(void)
+ 		ppc_md.progress("  Have fun!    ", 0x7777);
+ }
+ 
++/* devices for the drivers of ISA sound nodes, which have no legacy probing */
++static int __init chrp_isa_sound_devices(void)
++{
++	struct device_node *isa, *np;
++
++	for_each_node_by_type(isa, "isa")
++		for_each_child_of_node(isa, np)
++			if (of_node_is_type(np, "sound"))
++				of_platform_device_create(np, NULL, NULL);
++	return 0;
++}
++machine_device_initcall(chrp, chrp_isa_sound_devices);
++
+ static int __init chrp_probe(void)
+ {
+ 	const char *dtype = of_get_flat_dt_prop(of_get_flat_dt_root(),
+diff --git linux-7.3/include/sound/cs4231-regs.h linux-7.3/include/sound/cs4231-regs.h
+--- linux-7.3/include/sound/cs4231-regs.h
++++ linux-7.3/include/sound/cs4231-regs.h
+@@ -116,8 +116,8 @@
+ /* definitions for pin control register - CS4231_PIN_CTRL */
+ 
+ #define CS4231_IRQ_ENABLE	0x02	/* enable IRQ */
+-#define CS4231_XCTL1		0x40	/* external control #1 */
+-#define CS4231_XCTL0		0x80	/* external control #0 */
++#define CS4231_XCTL0		0x40	/* external control #0 */
++#define CS4231_XCTL1		0x80	/* external control #1 */
+ 
+ /* definitions for test and init register - CS4231_TEST_INIT */
+ 
+@@ -136,6 +136,12 @@
+ #define CS4231_TIMER_ENABLE	0x40	/* codec timer enable */
+ #define CS4231_OLB		0x80	/* output level bit */
+ 
++/* definitions for mono input/output control register - CS4231_MONO_CTRL */
++
++#define CS4231_MONO_BYPASS	0x20	/* MIN directly to MOUT */
++#define CS4231_MONO_OUT_MUTE	0x40	/* line out to MOUT mute */
++#define CS4231_MONO_IN_MUTE	0x80	/* MIN to output mixer mute */
++
+ /* definitions for Extended Registers - CS4236+ */
+ 
+ #define CS4236_REG(i23val)	(((i23val << 2) & 0x10) | ((i23val >> 4) & 0x0f))
+diff --git linux-7.3/sound/isa/cs423x/cs4231.c linux-7.3/sound/isa/cs423x/cs4231.c
+--- linux-7.3/sound/isa/cs423x/cs4231.c
++++ linux-7.3/sound/isa/cs423x/cs4231.c
+@@ -4,6 +4,7 @@
+  *  Copyright (c) by Jaroslav Kysela <perex@perex.cz>
+  *  Originally the CS4232/CS4232A driver, modified for use on CS4231 by
+  *  Tugrul Galatali <galatalt@stuy.edu>
++ *  Open Firmware binding: Copyright (C) 2026 René Rebe <rene@exactco.de>
+  */
+ 
+ #include <linux/init.h>
+@@ -12,6 +13,8 @@
+ #include <linux/time.h>
+ #include <linux/wait.h>
+ #include <linux/module.h>
++#include <linux/of.h>
++#include <linux/platform_device.h>
+ #include <sound/core.h>
+ #include <sound/wss.h>
+ #include <sound/mpu401.h>
+@@ -73,17 +76,49 @@ static int snd_cs4231_match(struct devic
+ 	return 1;
+ }
+ 
+-static int snd_cs4231_probe(struct device *dev, unsigned int n)
++/* IBM CHRP RS/6000 43P CS4236B: like the firmware audio init, raise XCTL0
++   for the internal speaker amplifier and unmute MOUT driving it.  */
++static const struct snd_kcontrol_new snd_cs4231_ibm_speaker =
++	WSS_SINGLE("Speaker Playback Switch", 0, CS4231_PIN_CTRL, 6, 1, 0);
++
++static int snd_cs4231_ibm_speaker_init(struct device *dev,
++				       struct snd_wss *chip)
++{
++	struct device_node *np = of_node_get(dev->of_node);
++	bool ibm;
++
++	/* ISA probing by module parameters has no node of its own */
++	if (!np)
++		np = of_find_compatible_node(NULL, "sound", "IBM0017");
++	ibm = of_device_is_compatible(np, "IBM0017");
++	of_node_put(np);
++	if (!ibm)
++		return 0;
++
++	scoped_guard(spinlock_irqsave, &chip->reg_lock) {
++		snd_wss_out(chip, CS4231_PIN_CTRL,
++			    chip->image[CS4231_PIN_CTRL] | CS4231_XCTL0);
++		snd_wss_out(chip, CS4231_MONO_CTRL,
++			    chip->image[CS4231_MONO_CTRL] & ~CS4231_MONO_OUT_MUTE);
++	}
++
++	return snd_ctl_add(chip->card,
++			   snd_ctl_new1(&snd_cs4231_ibm_speaker, chip));
++}
++
++static int snd_cs4231_create(struct device *dev, int idx, const char *xid,
++			     long port, long mpu_port, int irq, int mpu_irq,
++			     int dma1, int dma2)
+ {
+ 	struct snd_card *card;
+ 	struct snd_wss *chip;
+ 	int error;
+ 
+-	error = snd_devm_card_new(dev, index[n], id[n], THIS_MODULE, 0, &card);
++	error = snd_devm_card_new(dev, idx, xid, THIS_MODULE, 0, &card);
+ 	if (error < 0)
+ 		return error;
+ 
+-	error = snd_wss_create(card, port[n], -1, irq[n], dma1[n], dma2[n],
++	error = snd_wss_create(card, port, -1, irq, dma1, dma2,
+ 			WSS_HW_DETECT, 0, &chip);
+ 	if (error < 0)
+ 		return error;
+@@ -97,29 +132,32 @@ static int snd_cs4231_probe(struct devic
+ 	strscpy(card->driver, "CS4231", sizeof(card->driver));
+ 	strscpy(card->shortname, chip->pcm->name, sizeof(card->shortname));
+ 
+-	if (dma2[n] < 0)
++	if (dma2 < 0)
+ 		scnprintf(card->longname, sizeof(card->longname),
+ 			  "%s at 0x%lx, irq %d, dma %d",
+-			  chip->pcm->name, chip->port, irq[n], dma1[n]);
++			  chip->pcm->name, chip->port, irq, dma1);
+ 	else
+ 		scnprintf(card->longname, sizeof(card->longname),
+ 			  "%s at 0x%lx, irq %d, dma %d&%d",
+-			  chip->pcm->name, chip->port, irq[n], dma1[n], dma2[n]);
++			  chip->pcm->name, chip->port, irq, dma1, dma2);
+ 
+ 	error = snd_wss_mixer(chip);
+ 	if (error < 0)
+ 		return error;
+ 
++	error = snd_cs4231_ibm_speaker_init(dev, chip);
++	if (error < 0)
++		return error;
++
+ 	error = snd_wss_timer(chip, 0);
+ 	if (error < 0)
+ 		return error;
+ 
+-	if (mpu_port[n] > 0 && mpu_port[n] != SNDRV_AUTO_PORT) {
+-		if (mpu_irq[n] == SNDRV_AUTO_IRQ)
+-			mpu_irq[n] = -1;
++	if (mpu_port > 0 && mpu_port != SNDRV_AUTO_PORT) {
++		if (mpu_irq == SNDRV_AUTO_IRQ)
++			mpu_irq = -1;
+ 		if (snd_mpu401_uart_new(card, 0, MPU401_HW_CS4232,
+-					mpu_port[n], 0, mpu_irq[n],
+-					NULL) < 0)
++					mpu_port, 0, mpu_irq, NULL) < 0)
+ 			dev_warn(dev, "MPU401 not detected\n");
+ 	}
+ 
+@@ -131,6 +169,12 @@ static int snd_cs4231_probe(struct devic
+ 	return 0;
+ }
+ 
++static int snd_cs4231_probe(struct device *dev, unsigned int n)
++{
++	return snd_cs4231_create(dev, index[n], id[n], port[n], mpu_port[n],
++				 irq[n], mpu_irq[n], dma1[n], dma2[n]);
++}
++
+ #ifdef CONFIG_PM
+ static int snd_cs4231_suspend(struct device *dev, unsigned int n, pm_message_t state)
+ {
+@@ -165,4 +209,93 @@ static struct isa_driver snd_cs4231_driv
+ 	}
+ };
+ 
+-module_isa_driver(snd_cs4231_driver, SNDRV_CARDS);
++#ifdef CONFIG_OF
++/* the ISA "dma" property has 5 cells per channel, the channel first */
++#define OF_ISA_DMA_CELLS	5
++
++static int snd_cs4231_of_probe(struct platform_device *pdev)
++{
++	struct device_node *np = pdev->dev.of_node;
++	int irq, n, play, capt = -1;
++	struct resource *res;
++	u32 chan[2];
++
++	res = platform_get_resource(pdev, IORESOURCE_IO, 0);
++	if (!res)
++		return -ENODEV;
++	irq = platform_get_irq(pdev, 0);
++	if (irq < 0)
++		return irq;
++
++	n = of_property_count_u32_elems(np, "dma");
++	if (n < OF_ISA_DMA_CELLS || n % OF_ISA_DMA_CELLS)
++		return dev_err_probe(&pdev->dev, -EINVAL, "invalid dma property\n");
++	n /= OF_ISA_DMA_CELLS;
++	for (int i = 0; i < min(n, 2); i++)
++		of_property_read_u32_index(np, "dma", i * OF_ISA_DMA_CELLS,
++					   &chan[i]);
++	/* IBM CHRP firmware lists the capture channel first (7043-150) */
++	if (n > 1) {
++		capt = chan[0];
++		play = chan[1];
++	} else {
++		play = chan[0];
++	}
++
++	return snd_cs4231_create(&pdev->dev, SNDRV_DEFAULT_IDX1,
++				 SNDRV_DEFAULT_STR1, res->start,
++				 SNDRV_AUTO_PORT, irq, SNDRV_AUTO_IRQ,
++				 play, capt);
++}
++
++static const struct of_device_id snd_cs4231_of_match[] = {
++	{ .compatible = "pnpPNP,b007" },	/* Windows Sound System */
++	{ .compatible = "CRUS,CS4236B" },
++	{ }
++};
++MODULE_DEVICE_TABLE(of, snd_cs4231_of_match);
++
++static struct platform_driver snd_cs4231_of_driver = {
++	.probe		= snd_cs4231_of_probe,
++	.driver		= {
++		.name		= DEV_NAME "-of",
++		.of_match_table	= snd_cs4231_of_match,
++	},
++};
++#endif
++
++static bool snd_cs4231_isa_registered;
++
++static int __init alsa_card_cs4231_init(void)
++{
++	bool isa = !IS_ENABLED(CONFIG_OF);
++	int err = 0;
++
++	/* with Open Firmware, ISA cards are only probed when given a port */
++	for (int i = 0; i < SNDRV_CARDS && !isa; i++)
++		isa = port[i] != SNDRV_AUTO_PORT;
++	if (isa) {
++		err = isa_register_driver(&snd_cs4231_driver, SNDRV_CARDS);
++		if (err < 0)
++			return err;
++		snd_cs4231_isa_registered = true;
++	}
++#ifdef CONFIG_OF
++	err = platform_driver_register(&snd_cs4231_of_driver);
++	if (err < 0 && snd_cs4231_isa_registered)
++		isa_unregister_driver(&snd_cs4231_driver);
++#endif
++	return err;
++}
++
++static void __exit alsa_card_cs4231_exit(void)
++{
++#ifdef CONFIG_OF
++	platform_driver_unregister(&snd_cs4231_of_driver);
++#endif
++	if (snd_cs4231_isa_registered)
++		isa_unregister_driver(&snd_cs4231_driver);
++}
++
++module_init(alsa_card_cs4231_init);
++module_exit(alsa_card_cs4231_exit);
