@@ -6,17 +6,31 @@
 
 Make the perf Rust support cross-compile aware.
 
-The Rust test workload was compiled without a --target, producing host
-objects that break the final ld -r merge in cross builds. Derive the Rust
-target triple from $(CC) -dumpmachine and pass it via rust_flags, and turn
-the rustc feature check into a metadata-only compilation so a missing
-target standard library correctly disables the Rust test workloads.
+The Rust test workload was compiled for the build host in cross builds:
+upstream only adds --target with CROSS_COMPILE set, uses a fixed per-ARCH
+triple (powerpc64le for all powerpc), and the feature check only tests for
+rustc presence. Derive the rustc target from $(CC) -dumpmachine (with an
+"unknown" vendor and the per-ARCH table as fallbacks, RUST_TARGET overrides),
+add it to RUST_FLAGS before the feature check, and turn the check into a
+metadata-only compilation so a missing target standard library disables the
+Rust test workloads.
 
 Signed-off-by: René Rebe <rene@exactco.de>
 
---- a/tools/build/feature/Makefile	2026-02-23 17:31:55.000000000 +0100
-+++ b/tools/build/feature/Makefile	2026-08-28 10:49:45.200977920 +0200
-@@ -390,13 +390,13 @@ $(OUTPUT)test-bpftool-skeletons.bin:
+--- a/tools/build/Makefile.feature	2026-07-17 21:08:32.000000000 +0200
++++ b/tools/build/Makefile.feature	2026-11-16 14:36:41.396185449 +0100
+@@ -8,7 +8,7 @@ endif
+ 
+ feature_check = $(eval $(feature_check_code))
+ define feature_check_code
+-  feature-$(1) := $(shell $(MAKE) OUTPUT=$(OUTPUT_FEATURES) CC="$(CC)" CXX="$(CXX)" CFLAGS="$(EXTRA_CFLAGS) $(FEATURE_CHECK_CFLAGS-$(1))" CXXFLAGS="$(EXTRA_CXXFLAGS) $(FEATURE_CHECK_CXXFLAGS-$(1))" LDFLAGS="$(LDFLAGS) $(FEATURE_CHECK_LDFLAGS-$(1))" -C $(feature_dir) $(OUTPUT_FEATURES)test-$1.bin >/dev/null 2>/dev/null && echo 1 || echo 0)
++  feature-$(1) := $(shell $(MAKE) OUTPUT=$(OUTPUT_FEATURES) CC="$(CC)" CXX="$(CXX)" CFLAGS="$(EXTRA_CFLAGS) $(FEATURE_CHECK_CFLAGS-$(1))" CXXFLAGS="$(EXTRA_CXXFLAGS) $(FEATURE_CHECK_CXXFLAGS-$(1))" LDFLAGS="$(LDFLAGS) $(FEATURE_CHECK_LDFLAGS-$(1))" RUST_FLAGS="$(RUST_FLAGS)" -C $(feature_dir) $(OUTPUT_FEATURES)test-$1.bin >/dev/null 2>/dev/null && echo 1 || echo 0)
+ endef
+ 
+ feature_set = $(eval $(feature_set_code))
+--- a/tools/build/feature/Makefile	2026-07-17 21:08:32.000000000 +0200
++++ b/tools/build/feature/Makefile	2026-11-16 14:36:41.395988780 +0100
+@@ -400,13 +400,12 @@ $(OUTPUT)test-bpftool-skeletons.bin:
  	$(SYSTEM_BPFTOOL) version | grep '^features:.*skeletons' \
  		> $(@:.bin=.make.output) 2>&1
  
@@ -25,35 +39,87 @@ Signed-off-by: René Rebe <rene@exactco.de>
 -# because Rust will emit a dependency file without any external references,
 -# meaning that if rustc will be removed the build process will still think it's
 -# there.
-+# Testing Rust needs an actual compilation so a missing standard library for
-+# the (possibly cross) target is detected. A metadata-only build verifies the
-+# compiler and the target libraries without linking and without emitting a
-+# dependency file.
++# Testing Rust needs an actual compilation to detect a missing standard library
++# for the (cross) target. A metadata-only build of a library crate does not
++# link and emits no dependency file referencing rustc.
  $(OUTPUT)test-rust.bin:
 -	$(RUSTC) --version > /dev/null 2>&1
-+	echo 'fn main() {}' | $(RUSTC) $(rust_flags) --crate-type lib \
-+		--emit=metadata=$@ - > /dev/null 2>&1
++	echo 'pub fn f() {}' | $(RUSTC) $(RUST_FLAGS) --crate-type lib \
++		--crate-name test_rust --emit=metadata=$@ - > /dev/null 2>&1
  
  ###############################
  
---- a/tools/perf/Makefile.config	2026-02-23 17:31:55.000000000 +0100
-+++ b/tools/perf/Makefile.config	2026-08-28 10:51:02.766202780 +0200
-@@ -1154,6 +1154,18 @@ ifneq ($(NO_LIBTRACEEVENT),1)
+--- a/tools/perf/Makefile.config	2026-07-17 21:08:32.000000000 +0200
++++ b/tools/perf/Makefile.config	2026-11-16 14:36:41.395542489 +0100
+@@ -1155,6 +1155,46 @@ ifneq ($(NO_LIBTRACEEVENT),1)
  endif
  
  ifndef NO_RUST
-+  # For cross builds pass a matching --target to rustc, falling back to a
-+  # vendor-neutral triple if rustc does not know the toolchain vendor.
-+  CC_TARGET := $(shell $(CC) -dumpmachine 2>/dev/null)
++  RUST_TARGET_FLAGS_arm		:= arm-unknown-linux-gnueabi
++  RUST_TARGET_FLAGS_arm64	:= aarch64-unknown-linux-gnu
++  RUST_TARGET_FLAGS_m68k	:= m68k-unknown-linux-gnu
++  RUST_TARGET_FLAGS_mips	:= mipsel-unknown-linux-gnu
++  RUST_TARGET_FLAGS_powerpc	:= powerpc64le-unknown-linux-gnu
++  RUST_TARGET_FLAGS_riscv	:= riscv64gc-unknown-linux-gnu
++  RUST_TARGET_FLAGS_s390	:= s390x-unknown-linux-gnu
++  RUST_TARGET_FLAGS_x86		:= x86_64-unknown-linux-gnu
++  RUST_TARGET_FLAGS_x86_64	:= x86_64-unknown-linux-gnu
++
++  # Derive the rustc target from $(CC), retry with an "unknown" vendor and
++  # fall back to the per-ARCH default; RUST_TARGET overrides.
 +  RUSTC_HOST := $(shell $(RUSTC) -vV 2>/dev/null | sed -n 's/^host: //p')
-+  ifneq ($(CC_TARGET),$(RUSTC_HOST))
-+    RUST_TARGET ?= $(CC_TARGET)
-+    ifeq ($(findstring $(RUST_TARGET),$(shell $(RUSTC) --print target-list 2>/dev/null)),)
-+      RUST_TARGET := $(shell echo $(RUST_TARGET) | sed -E 's/^([^-]+)-[^-]+-(linux-.*)/\1-unknown-\2/')
++  ifndef RUST_TARGET
++    CC_TARGET := $(shell $(CC) -dumpmachine 2>/dev/null)
++    ifneq ($(CC_TARGET),$(RUSTC_HOST))
++      RUSTC_TARGETS := $(shell $(RUSTC) --print target-list 2>/dev/null)
++      RUST_TARGET := $(filter $(CC_TARGET),$(RUSTC_TARGETS))
++      ifeq ($(RUST_TARGET),)
++        RUST_TARGET := $(filter $(shell echo $(CC_TARGET) | sed -E 's/^([^-]+)(-[^-]+)?-linux-/\1-unknown-linux-/'),$(RUSTC_TARGETS))
++      endif
++      ifeq ($(RUST_TARGET),)
++        ifneq ($(CROSS_COMPILE),)
++          RUST_TARGET := $(RUST_TARGET_FLAGS_$(ARCH))
++        endif
++      endif
++      ifeq ($(RUST_TARGET),)
++        $(warning No rustc target for $(CC_TARGET), set RUST_TARGET. Test workloads with rust are disabled.)
++        NO_RUST := 1
++      endif
 +    endif
-+    rust_flags += --target=$(RUST_TARGET)
-+    export rust_flags
 +  endif
++  ifneq ($(RUST_TARGET),)
++    ifneq ($(RUST_TARGET),$(RUSTC_HOST))
++      RUST_FLAGS += --target=$(RUST_TARGET)
++    endif
++  endif
++endif
++
++ifndef NO_RUST
    $(call feature_check,rust)
    ifneq ($(feature-rust), 1)
      $(warning Rust is not found. Test workloads with rust are disabled.)
+@@ -1164,24 +1204,6 @@ ifndef NO_RUST
+     CFLAGS += -DHAVE_RUST_SUPPORT
+     $(call detected,CONFIG_RUST_SUPPORT)
+   endif
+-
+-  ifneq ($(CROSS_COMPILE),)
+-    RUST_TARGET_FLAGS_arm	:= arm-unknown-linux-gnueabi
+-    RUST_TARGET_FLAGS_arm64	:= aarch64-unknown-linux-gnu
+-    RUST_TARGET_FLAGS_m68k	:= m68k-unknown-linux-gnu
+-    RUST_TARGET_FLAGS_mips	:= mipsel-unknown-linux-gnu
+-    RUST_TARGET_FLAGS_powerpc	:= powerpc64le-unknown-linux-gnu
+-    RUST_TARGET_FLAGS_riscv	:= riscv64gc-unknown-linux-gnu
+-    RUST_TARGET_FLAGS_s390	:= s390x-unknown-linux-gnu
+-    RUST_TARGET_FLAGS_x86	:= x86_64-unknown-linux-gnu
+-    RUST_TARGET_FLAGS_x86_64	:= x86_64-unknown-linux-gnu
+-
+-    ifeq ($(RUST_TARGET_FLAGS_$(ARCH)),)
+-      $(error Unknown rust cross compilation architecture $(ARCH))
+-    endif
+-
+-    RUST_FLAGS += --target=$(RUST_TARGET_FLAGS_$(ARCH))
+-  endif
+ endif
+ 
+ # Among the variables below, these:
