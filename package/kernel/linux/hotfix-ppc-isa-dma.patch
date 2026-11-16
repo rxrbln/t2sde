@@ -1,0 +1,91 @@
+# --- T2-COPYRIGHT-BEGIN ---
+# t2/package/*/linux/hotfix-ppc-isa-dma.patch
+# Copyright (C) 2026 The T2 SDE Project
+# SPDX-License-Identifier: GPL-2.0 or patched project license
+# --- T2-COPYRIGHT-END ---
+
+ALSA pcmC0D0p,0:CS4236: cannot preallocate for size 65536
+ALSA pcmC0D0c,0:CS4236: cannot preallocate for size 65536
+
+ISA DMA reaches only the first 16 MB, but ppc32 ZONE_DMA is 30-bit for the
+PowerMac Broadcom wifi.  Size ZONE_DMA per machine at boot instead of adding
+ZONE_DMA32, which together with HIGHMEM needs too many zones on ppc32:
+24-bit on CHRP with its ISA DMA controller, as x86-32 does, 30-bit
+elsewhere.  30-bit devices on CHRP are still served from lowmem below 1 GB.
+
+Signed-off-by: René Rebe <rene@exactco.de>
+
+diff --git linux-7.3/arch/powerpc/include/asm/setup.h linux-7.3/arch/powerpc/include/asm/setup.h
+index 6d60ea4868ab..7816ae1e384b 100644
+--- linux-7.3/arch/powerpc/include/asm/setup.h
++++ linux-7.3/arch/powerpc/include/asm/setup.h
+@@ -8,6 +8,7 @@
+ extern void ppc_printk_progress(char *s, unsigned short hex);
+ 
+ extern unsigned long long memory_limit;
++extern bool ppc_isa_dma_zone;
+ 
+ struct device_node;
+ 
+diff --git linux-7.3/arch/powerpc/mm/mem.c linux-7.3/arch/powerpc/mm/mem.c
+index b617b69452cd..2b644cd8f03b 100644
+--- linux-7.3/arch/powerpc/mm/mem.c
++++ linux-7.3/arch/powerpc/mm/mem.c
+@@ -217,7 +217,13 @@ static int __init mark_nonram_nosave(void)
+  * generic DMA mapping code.  32-bit only devices (if not handled by an IOMMU
+  * anyway) will take a first dip into ZONE_NORMAL and get otherwise served by
+  * ZONE_DMA.
++ *
++ * 32-bit machines with an ISA DMA controller limit ZONE_DMA to the 16 MB it
++ * reaches instead, as x86-32 does, so it works together with ZONE_HIGHMEM.
+  */
++/* set by platform setup_arch: ZONE_DMA for the 24-bit ISA DMA controller */
++bool ppc_isa_dma_zone __initdata;
++
+ void __init arch_zone_limits_init(unsigned long *max_zone_pfns)
+ {
+ #ifdef CONFIG_ZONE_DMA
+@@ -256,10 +262,10 @@ void __init paging_init(void)
+ 
+ 	/*
+ 	 * Allow 30-bit DMA for very limited Broadcom wifi chips on many
+-	 * powerbooks.
++	 * powerbooks; with ISA DMA, lowmem below 1 GB still serves those.
+ 	 */
+ 	if (IS_ENABLED(CONFIG_PPC32))
+-		zone_dma_bits = 30;
++		zone_dma_bits = ppc_isa_dma_zone ? 24 : 30;
+ 	else
+ 		zone_dma_bits = 31;
+ 
+diff --git linux-7.3/arch/powerpc/platforms/chrp/Kconfig linux-7.3/arch/powerpc/platforms/chrp/Kconfig
+index ff30ed579a39..916b65979c84 100644
+--- linux-7.3/arch/powerpc/platforms/chrp/Kconfig
++++ linux-7.3/arch/powerpc/platforms/chrp/Kconfig
+@@ -13,4 +13,5 @@ config PPC_CHRP
+ 	select PPC_UDBG_16550
+ 	select PPC_HASH_MMU_NATIVE
+ 	select FORCE_PCI
++	select ZONE_DMA
+ 	default y
+diff --git linux-7.3/arch/powerpc/platforms/chrp/setup.c linux-7.3/arch/powerpc/platforms/chrp/setup.c
+index c1bfa4c3444c..5d933f27261e 100644
+--- linux-7.3/arch/powerpc/platforms/chrp/setup.c
++++ linux-7.3/arch/powerpc/platforms/chrp/setup.c
+@@ -47,6 +47,7 @@
+ #include <asm/i8259.h>
+ #include <asm/mpic.h>
+ #include <asm/rtas.h>
++#include <asm/setup.h>
+ #include <asm/xmon.h>
+ 
+ #include "chrp.h"
+@@ -302,6 +303,8 @@ static void __init chrp_setup_arch(void)
+ 	/* init to some ~sane value until calibrate_delay() runs */
+ 	loops_per_jiffy = 50000000/HZ;
+ 
++	ppc_isa_dma_zone = true;
++
+ 	if (root)
+ 		machine = of_get_property(root, "model", NULL);
+ 	if (machine && strncmp(machine, "Pegasos", 7) == 0) {
