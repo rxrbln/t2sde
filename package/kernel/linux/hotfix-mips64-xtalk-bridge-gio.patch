@@ -1,0 +1,45 @@
+# --- T2-COPYRIGHT-BEGIN ---
+# t2/package/*/linux/hotfix-mips64-xtalk-bridge-gio.patch
+# Copyright (C) 2026 The T2 SDE Project
+# SPDX-License-Identifier: GPL-2.0 or patched project license
+# --- T2-COPYRIGHT-END ---
+
+Do not probe a Bridge widget strapped for GIO mode as PCI host bridge.
+
+The Octane EVO personal video board (PROM: "adapter GIO EVO key 11")
+uses a Bridge ASIC in GIO mode. Treating it as PCI host bridge and
+scanning type 0 config space ended in a HEART widget error or locked up
+the deferred probe, so the BaseIO Bridge was never probed either.
+
+Skip Bridge widgets with BRIDGE_STAT_PCI_GIO_N cleared and log their
+widget status.
+
+Signed-off-by: René Rebe <rene@exactco.de>
+
+--- a/arch/mips/sgi-ip30/ip30-xtalk.c	2026-11-17 20:52:22.004485202 +0100
++++ b/arch/mips/sgi-ip30/ip30-xtalk.c	2026-11-17 20:52:22.012374940 +0100
+@@ -212,7 +212,7 @@ static void __init xtalk_init_widget(s8
+ 	xwidget_part_num_t partnum;
+ 	xwidget_rev_num_t rev;
+ 	
+-	widgetreg_t widget_id;
++	widgetreg_t widget_id, status;
+ 
+ 	if (!xbow_widget_active(wid))
+ 		return;
+@@ -225,6 +225,15 @@ static void __init xtalk_init_widget(s8
+ 	switch (partnum) {
+ 	case BRIDGE_WIDGET_PART_NUM:
+ 	case XBRIDGE_WIDGET_PART_NUM:
++		status = xtalk_read((void *)(IP30_RAW_SWIN_BASE(wid) +
++					     WIDGET_STATUS));
++		/* A Bridge strapped for GIO, e.g. the EVO video board, has no PCI bus */
++		if (partnum == BRIDGE_WIDGET_PART_NUM &&
++		    !(status & BRIDGE_STAT_PCI_GIO_N)) {
++			pr_info("xtalk:%x bridge widget in GIO mode (status 0x%08x)\n",
++				wid, status);
++			break;
++		}
+ 		bridge_platform_create(wid, masterwid);
+ 		break;
+ 	default:

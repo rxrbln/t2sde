@@ -1,0 +1,85 @@
+# --- T2-COPYRIGHT-BEGIN ---
+# t2/package/*/linux/hotfix-mips64-ip30-console-devio.patch
+# Copyright (C) 2026 The T2 SDE Project
+# SPDX-License-Identifier: GPL-2.0 or patched project license
+# --- T2-COPYRIGHT-END ---
+
+Locate the IP30 early console UART via the current Bridge DevIO windows.
+
+prom_putchar() used the fixed address of the BaseIO IOC3 as decoded by
+the PROM's slot indexed DevIO window 2. Once the Bridge PCI driver
+reprograms the DevIO windows 1:1, that address decodes to the RAD1 BAR
+and early console output waits forever on the wrong LSR.
+
+Read the IOC3 BAR once and look up the MEM DevIO window decoding it on
+each character, dropping output instead of hanging if none does.
+
+Signed-off-by: René Rebe <rene@exactco.de>
+
+--- a/arch/mips/sgi-ip30/ip30-console.c	2026-11-17 20:56:29.276435245 +0100
++++ b/arch/mips/sgi-ip30/ip30-console.c	2026-11-17 20:56:29.276853124 +0100
+@@ -1,23 +1,60 @@
+ // SPDX-License-Identifier: GPL-2.0
++/*
++ * Copyright (C) 2026 René Rebe <rene@exactco.de>
++ */
+ 
+ #include <linux/io.h>
++#include <linux/pci_regs.h>
+ #include <linux/processor.h>
++#include <linux/stddef.h>
+ 
++#include <asm/pci/bridge.h>
+ #include <asm/sn/ioc3.h>
+ #include <asm/setup.h>
+ 
+-static inline struct ioc3_uartregs *console_uart(void)
++/* BaseIO Bridge is widget 0xf, the IOC3 is in its PCI slot 2 */
++#define IP30_BASEIO_BRIDGE	((struct bridge_regs *)(IO_BASE + 0x1f000000UL))
++#define IP30_BASEIO_IOC3_SLOT	2
++
++static u32 ioc3_pci_base;
++
++/*
++ * Use the DevIO window currently decoding the IOC3 BAR: the PROM maps them
++ * slot indexed, the Bridge PCI driver reprograms them to 1:1 later.
++ */
++static struct ioc3_uartregs *console_uart(void)
+ {
+-	struct ioc3 *ioc3;
++	struct bridge_regs *bridge = IP30_BASEIO_BRIDGE;
++	u32 pci, reg, off, size;
++	int x;
++
++	if (!ioc3_pci_base)
++		ioc3_pci_base = __raw_readl(&bridge->b_type0_cfg_dev
++				[IP30_BASEIO_IOC3_SLOT].f[0].l[PCI_BASE_ADDRESS_0 / 4]) &
++				PCI_BASE_ADDRESS_MEM_MASK;
++
++	pci = ioc3_pci_base + offsetof(struct ioc3, sregs.uarta);
++	for (x = 0; x < BRIDGE_DEV_CNT; x++) {
++		reg = __raw_readl(&bridge->b_device[x].reg);
++		if (!(reg & BRIDGE_DEV_DEV_IO_MEM))
++			continue;
++
++		off = (reg & BRIDGE_DEV_OFF_MASK) << BRIDGE_DEV_OFF_ADDR_SHFT;
++		size = x <= 1 ? BRIDGE_DEVIO_2MB : BRIDGE_DEVIO_1MB;
++		if (pci >= off && pci - off < size)
++			return (void *)bridge + BRIDGE_DEVIO(x) + (pci - off);
++	}
+ 
+-	ioc3 = (struct ioc3 *)((void *)(0x900000001f600000));
+-	return &ioc3->sregs.uarta;
++	return NULL;
+ }
+ 
+ void prom_putchar(char c)
+ {
+ 	struct ioc3_uartregs *uart = console_uart();
+ 
++	if (!uart)
++		return;
++
+ 	while ((readb(&uart->iu_lsr) & 0x20) == 0)
+ 		cpu_relax();
+ 
