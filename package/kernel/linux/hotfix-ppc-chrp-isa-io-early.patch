@@ -1,0 +1,79 @@
+# --- T2-COPYRIGHT-BEGIN ---
+# t2/package/*/linux/hotfix-ppc-chrp-isa-io-early.patch
+# Copyright (C) 2026 The T2 SDE Project
+# SPDX-License-Identifier: GPL-2.0 or patched project license
+# --- T2-COPYRIGHT-END ---
+
+powerpc/chrp: map the ISA I/O space before the first port accesses
+
+Since the PHB discovery moved to a core_initcall (407d418f2fd4
+"powerpc/chrp: Move PHB discovery") isa_io_base is still 0 when
+chrp_init_IRQ() initializes the 8259, so its outb() go to the user
+address 0xa1 and fault, with KUAP on the IBM 7043-150:
+
+  Bug: Write fault blocked by KUAP!
+  WARNING: arch/powerpc/mm/fault.c:231 at do_page_fault+0x808/0x978,
+  CPU#0: swapper/0/0
+
+The fault is silently fixed up by the in/out exception table entries,
+so the 8259 init sequence never reached the chip since 5.13. Map the
+first 64K of the primary PHB I/O space early in chrp_setup_arch(),
+selected like chrp_find_bridges() does, the later PHB setup replaces
+isa_io_base with the full mapping.
+
+Signed-off-by: René Rebe <rene@exactco.de>
+
+diff --git linux-7.2/arch/powerpc/platforms/chrp/setup.c linux-7.2/arch/powerpc/platforms/chrp/setup.c
+--- linux-7.2/arch/powerpc/platforms/chrp/setup.c
++++ linux-7.2/arch/powerpc/platforms/chrp/setup.c
+@@ -27,6 +27,7 @@
+ #include <linux/adb.h>
+ #include <linux/module.h>
+ #include <linux/delay.h>
++#include <linux/sizes.h>
+ #include <linux/console.h>
+ #include <linux/seq_file.h>
+ #include <linux/root_dev.h>
+@@ -294,11 +295,42 @@ out_put:
+ 	of_node_put(node);
+ }
+ 
++/*
++ * The PHBs are only discovered in a core_initcall, but the 8259, Super I/O
++ * and RTC are accessed through ISA ports before. Map the ISA part of the
++ * primary PHB I/O space, as chrp_find_bridges() selects it, early.
++ */
++static void __init chrp_map_isa_io_early(void)
++{
++	struct of_pci_range_parser parser;
++	struct of_pci_range range;
++	struct device_node *dev;
++
++	for_each_child_of_node(of_root, dev) {
++		if (!of_node_is_type(dev, "pci"))
++			continue;
++		if (of_pci_range_parser_init(&parser, dev))
++			break;
++		for_each_of_pci_range(&parser, &range) {
++			if ((range.flags & IORESOURCE_TYPE_BITS) != IORESOURCE_IO ||
++			    range.pci_addr != 0)
++				continue;
++			isa_io_base = (unsigned long)ioremap(range.cpu_addr,
++						min_t(u64, range.size, SZ_64K));
++			break;
++		}
++		break;
++	}
++	of_node_put(dev);
++}
++
+ static void __init chrp_setup_arch(void)
+ {
+ 	struct device_node *root = of_find_node_by_path("/");
+ 	const char *machine = NULL;
+ 
++	chrp_map_isa_io_early();
++
+ 	/* init to some ~sane value until calibrate_delay() runs */
+ 	loops_per_jiffy = 50000000/HZ;
+ 
