@@ -1,0 +1,1245 @@
+# --- T2-COPYRIGHT-BEGIN ---
+# t2/package/*/linux/x86-transmeta-ptt.patch
+# Copyright (C) 2026 The T2 SDE Project
+# SPDX-License-Identifier: GPL-2.0 or patched project license
+# --- T2-COPYRIGHT-END ---
+
+From 36553ac6c730ffbdcbb5b839d561ee4f108c0a65 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Ren=C3=A9=20Rebe?= <rene@exactco.de>
+Date: Wed, 11 Nov 2026 15:18:26 +0100
+Subject: [PATCH 1/2] x86/msr-index: Add the Transmeta Crusoe PTT MSRs
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+The Code Morphing Software of Transmeta Crusoe processors implements
+Persistent Translation Technology (PTT) behind two private MSRs:
+0x80868040 carries the commands and the state of the translation
+database transfer, 0x80868042 the control functions (version, CR3
+filter, statistics, start, abort).
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Signed-off-by: René Rebe <rene@exactco.de>
+---
+ arch/x86/include/asm/msr-index.h | 2 ++
+ 1 file changed, 2 insertions(+)
+
+diff --git a/arch/x86/include/asm/msr-index.h b/arch/x86/include/asm/msr-index.h
+index 51b0af8..2b93849 100644
+--- a/arch/x86/include/asm/msr-index.h
++++ b/arch/x86/include/asm/msr-index.h
+@@ -941,6 +941,8 @@
+ #define MSR_TMTA_LONGRUN_FLAGS		0x80868011
+ #define MSR_TMTA_LRTI_READOUT		0x80868018
+ #define MSR_TMTA_LRTI_VOLT_MHZ		0x8086801a
++#define MSR_TMTA_PTT_KM			0x80868040
++#define MSR_TMTA_PTT_CTL		0x80868042
+ 
+ /* Intel defined MSRs. */
+ #define MSR_IA32_P5_MC_ADDR		0x00000000
+-- 
+2.54.0
+
+From 15187cf9df341cfd6dcbdeaf40616b8562ddd814 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Ren=C3=A9=20Rebe?= <rene@exactco.de>
+Date: Wed, 11 Nov 2026 15:18:26 +0100
+Subject: [PATCH 2/2] platform/x86: transmeta-ptt: Add Crusoe Persistent
+ Translation Technology
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+The Code Morphing Software (CMS) of Transmeta Crusoe processors can
+export its x86 translations as a database and import them again, so
+code does not have to be translated anew after a reboot. CMS identifies
+a guest code page by the SHA-1 of its contents and installs the saved
+translations of a page on its first translation miss. The database is
+bound to the processor by a PTT key in the boot ROM and protected by a
+keyed SHA-1; CMS rejects modified or foreign databases. CMS holds one
+database at a time: a load replaces the previous one, a save exports
+the translations live at that moment, and recording for a save starts
+with the end of a load.
+
+Transmeta shipped this for Windows (CrusoePTT 2.0.13); this driver
+implements the same CMS protocol (PTT 2.0, CMS 4.4.0) as mechanisms
+only, user space decides when to use them:
+
+ - /dev/transmeta-ptt: opened read-only it streams a save, opened
+   write-only it loads a database (empty: start recording), close()
+   reports a rejected one;
+ - sysfs: state, version, stats (the CMS PTT counters), last_load,
+   abort, filter_pid (CR3 filter: export only the translations of one
+   address space);
+ - keygen, which makes CMS program a new key into the boot ROM, only
+   exists with allow_keygen=1 and needs a magic value; the driver never
+   generates a key by itself, without a key it only reports "nokey";
+ - start_recording=1 ends an empty load at probe if the boot loader
+   loaded nothing; off by default.
+
+The system database is meant to be loaded by the boot loader before the
+kernel (a separate GRUB module) and saved by init scripts.
+
+The protocol was reverse engineered from the Windows driver and CMS
+4.4.0 and tested in a CMS simulator; it has not run on real hardware.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Signed-off-by: René Rebe <rene@exactco.de>
+---
+ .../ABI/testing/sysfs-driver-transmeta-ptt    |  79 ++
+ Documentation/arch/x86/i386/index.rst         |   1 +
+ Documentation/arch/x86/i386/transmeta-ptt.rst |  96 +++
+ MAINTAINERS                                   |   8 +
+ drivers/platform/x86/Kconfig                  |  13 +
+ drivers/platform/x86/Makefile                 |   1 +
+ drivers/platform/x86/transmeta-ptt.c          | 708 ++++++++++++++++++
+ 7 files changed, 906 insertions(+)
+ create mode 100644 Documentation/ABI/testing/sysfs-driver-transmeta-ptt
+ create mode 100644 Documentation/arch/x86/i386/transmeta-ptt.rst
+ create mode 100644 drivers/platform/x86/transmeta-ptt.c
+
+diff --git a/Documentation/ABI/testing/sysfs-driver-transmeta-ptt b/Documentation/ABI/testing/sysfs-driver-transmeta-ptt
+new file mode 100644
+index 0000000..311cb23
+--- /dev/null
++++ b/Documentation/ABI/testing/sysfs-driver-transmeta-ptt
+@@ -0,0 +1,79 @@
++What:		/sys/class/misc/transmeta-ptt/state
++Date:		November 2026
++KernelVersion:	7.2
++Contact:	René Rebe <rene@exactco.de>
++Description:
++		(RO) State of the Persistent Translation Technology (PTT)
++		service of the Transmeta Crusoe Code Morphing Software: load,
++		save, saveok, saved, error, idle, off, keygen, nokey or unknown.
++		nokey means the boot ROM holds no valid PTT key for this
++		processor, PTT is then not usable.
++
++What:		/sys/class/misc/transmeta-ptt/version
++Date:		November 2026
++KernelVersion:	7.2
++Contact:	René Rebe <rene@exactco.de>
++Description:
++		(RO) PTT version CMS implements, "2.0" for CMS 4.4.0.
++
++What:		/sys/class/misc/transmeta-ptt/stats
++Date:		November 2026
++KernelVersion:	7.2
++Contact:	René Rebe <rene@exactco.de>
++Description:
++		(RO) CMS PTT counters since the last load, one "name value" line
++		each:
++
++		=================== ==========================================
++		installed           translations installed from the database
++		installed_discarded installed translations discarded again
++		new                 new translations that a save exports
++		new_discarded       exportable translations discarded again
++		new_unfiltered      new translations outside filter_pid
++		other_discarded     other discarded translations
++		loaded              translations in the loaded database
++		=================== ==========================================
++
++What:		/sys/class/misc/transmeta-ptt/last_load
++Date:		November 2026
++KernelVersion:	7.2
++Contact:	René Rebe <rene@exactco.de>
++Description:
++		(RO) 0 when the last load through /dev/transmeta-ptt succeeded,
++		otherwise its negative errno, e.g. -74 (EBADMSG) for a database
++		CMS rejected.
++
++What:		/sys/class/misc/transmeta-ptt/abort
++Date:		November 2026
++KernelVersion:	7.2
++Contact:	René Rebe <rene@exactco.de>
++Description:
++		(WO, root only) Writing 1 abandons a save or load CMS still
++		holds and returns it to the idle state; -EBUSY while
++		/dev/transmeta-ptt is open.
++
++What:		/sys/class/misc/transmeta-ptt/filter_pid
++Date:		November 2026
++KernelVersion:	7.2
++Contact:	René Rebe <rene@exactco.de>
++Description:
++		(RW, root only) Writing a process id makes CMS mark only the
++		translations made while that process's address space runs as
++		exportable, so the next save holds the code of that program.
++		The filter is the page table base of the address space at the
++		time of the write and does not follow an exec. 0 exports all
++		translations (default).
++
++What:		/sys/class/misc/transmeta-ptt/keygen
++Date:		November 2026
++KernelVersion:	7.2
++Contact:	René Rebe <rene@exactco.de>
++Description:
++		(WO, root only) Present only with the module parameter
++		allow_keygen=1 (default off). Writing the value
++		"program-boot-rom" makes CMS generate a new PTT key and
++		PROGRAM IT INTO THE BOOT ROM; any other value is rejected
++		with -EINVAL. The driver never generates a key by itself,
++		also not in state nokey. A failed ROM write can leave the
++		system unbootable; databases saved with an older key are no
++		longer accepted.
+diff --git a/Documentation/arch/x86/i386/index.rst b/Documentation/arch/x86/i386/index.rst
+index 8747cf5..04ca23c 100644
+--- a/Documentation/arch/x86/i386/index.rst
++++ b/Documentation/arch/x86/i386/index.rst
+@@ -8,3 +8,4 @@ i386 Support
+    :maxdepth: 2
+ 
+    IO-APIC
++   transmeta-ptt
+diff --git a/Documentation/arch/x86/i386/transmeta-ptt.rst b/Documentation/arch/x86/i386/transmeta-ptt.rst
+new file mode 100644
+index 0000000..b637feb
+--- /dev/null
++++ b/Documentation/arch/x86/i386/transmeta-ptt.rst
+@@ -0,0 +1,96 @@
++.. SPDX-License-Identifier: GPL-2.0
++
++==================================================
++Transmeta Crusoe Persistent Translation Technology
++==================================================
++
++The Code Morphing Software (CMS) of Transmeta Crusoe processors translates
++x86 code into native VLIW code at run time. Persistent Translation
++Technology (PTT) lets CMS export these translations as a database and import
++them again, so that code which ran before a reboot does not have to be
++translated anew. The ``transmeta-ptt`` driver (``CONFIG_TRANSMETA_PTT``)
++gives user space access to it; CMS 4.4.0 implements PTT 2.0.
++
++How CMS uses a database
++=======================
++
++CMS identifies a guest code page by the SHA-1 of its 4 KiB contents. On the
++first translation miss in a page whose hash is in the loaded database, CMS
++installs all saved translations of that page. Translations therefore match
++by page contents, independent of the process, the virtual address or the
++file the code came from; a changed page simply does not match. Saved
++translations do not contain chained exits; CMS links them again on use.
++
++CMS holds one database: a load replaces the previous one. A save exports
++the translations CMS holds at that moment (including installed ones), not
++the parts of a loaded database that were never used, and CMS only records
++translations for a save after a load has ended, which may be an empty one.
++
++The database is bound to the processor: CMS only enables PTT when the boot
++ROM holds a PTT key that matches the processor identification, and it
++protects the database with a SHA-1 keyed with it. CMS rejects a database
++that was modified or saved on another processor. Without a key the state is
++``nokey`` and the driver does nothing but report it.
++
++Interface
++=========
++
++The driver provides mechanisms only; it does not load or save by itself.
++
++``/dev/transmeta-ptt`` (mode 0600) serves one session at a time and streams
++the database in chunks of up to 64 KiB per CMS call:
++
++- Opened read-only, it streams a save of the current translations; the end
++  of the data is end of file. CMS may take a while before the first byte.
++  Closing before the end aborts the save.
++- Opened write-only, it loads a database. CMS checks the database when the
++  file is closed; ``close()`` then returns ``-EBADMSG`` for a rejected
++  database, and ``last_load`` shows the result of the last load. Opening and
++  closing without data is an empty load, which starts the recording of new
++  translations without a database.
++
++The attributes in ``/sys/class/misc/transmeta-ptt/`` are documented in
++``Documentation/ABI/testing/sysfs-driver-transmeta-ptt``:
++
++``state``, ``version``, ``stats``, ``last_load``
++	CMS PTT state (``idle``, ``load``, ``save``, ``error``, ``nokey``,
++	...), the PTT version, the CMS counters and the last load result.
++``abort``
++	Writing 1 abandons a transfer CMS still holds.
++``filter_pid``
++	Limit what CMS marks for a save to the translations made while the
++	address space of this process runs (0 = all).
++``keygen``
++	Only present with the module parameter ``allow_keygen=1``. Writing
++	``program-boot-rom`` makes CMS generate a new key and **program it
++	into the boot ROM**. The driver never does this on its own, also not
++	in state ``nokey``. A failed ROM write can leave the system
++	unbootable; databases saved with an older key are no longer
++	accepted.
++
++Module parameters: ``start_recording=1`` ends an empty load at probe when
++nothing was loaded, so a save later in the boot has data; ``allow_keygen``
++as above. Both default to off.
++
++Use
++===
++
++When to load and save is a policy of the init scripts. The intended setup is
++one system database:
++
++- The boot loader loads it before the kernel starts (GRUB module
++  ``transmeta_ptt``: ``insmod transmeta_ptt`` and ``transmeta_ptt_load
++  /boot/transmeta-ptt.db`` before ``linux``), so the kernel and early user
++  space run from it. A later load from Linux would replace it.
++- Without a boot loader load, an empty load starts the recording::
++
++	: > /dev/transmeta-ptt
++
++- A save exports what is live: early in the boot it still holds the boot
++  path, at shutdown the working set of the session::
++
++	cat /dev/transmeta-ptt > /boot/transmeta-ptt.db.new &&
++		mv /boot/transmeta-ptt.db.new /boot/transmeta-ptt.db
++
++Per-program databases, as the Windows driver loads them on process start,
++evict the boot database at each load and are not recommended.
+diff --git a/MAINTAINERS b/MAINTAINERS
+index fa9eaff..02f168c 100644
+--- a/MAINTAINERS
++++ b/MAINTAINERS
+@@ -27476,6 +27476,14 @@ W:	https://github.com/srcres258/linux-doc
+ T:	git https://github.com/srcres258/linux-doc.git doc-zh-tw
+ F:	Documentation/translations/zh_TW/
+ 
++TRANSMETA CRUSOE PERSISTENT TRANSLATION TECHNOLOGY DRIVER
++M:	René Rebe <rene@exactco.de>
++L:	platform-driver-x86@vger.kernel.org
++S:	Maintained
++F:	Documentation/ABI/testing/sysfs-driver-transmeta-ptt
++F:	Documentation/arch/x86/i386/transmeta-ptt.rst
++F:	drivers/platform/x86/transmeta-ptt.c
++
+ TRIGGER SOURCE
+ M:	David Lechner <dlechner@baylibre.com>
+ S:	Maintained
+diff --git a/drivers/platform/x86/Kconfig b/drivers/platform/x86/Kconfig
+index a74991c..fdbb592 100644
+--- a/drivers/platform/x86/Kconfig
++++ b/drivers/platform/x86/Kconfig
+@@ -1075,6 +1075,19 @@ config TRANSMETA_CMS
+ 	  To compile this driver as a module, choose M here: the module
+ 	  will be called transmeta-cms.
+ 
++config TRANSMETA_PTT
++	tristate "Transmeta Crusoe Persistent Translation Technology"
++	depends on CPU_SUP_TRANSMETA_32
++	help
++	  Save the translations of the Code Morphing Software (CMS) of
++	  Transmeta Crusoe processors and load them again after a reboot,
++	  through /dev/transmeta-ptt (CMS PTT 2.0). The driver provides save
++	  and load; init scripts decide when, and the boot loader (GRUB
++	  module transmeta_ptt) can load the database before the kernel.
++
++	  To compile this driver as a module, choose M here: the module
++	  will be called transmeta-ptt.
++
+ source "drivers/platform/x86/tuxedo/Kconfig"
+ 
+ endif # X86_PLATFORM_DEVICES
+diff --git a/drivers/platform/x86/Makefile b/drivers/platform/x86/Makefile
+index 6eeb9b9..43489ef 100644
+--- a/drivers/platform/x86/Makefile
++++ b/drivers/platform/x86/Makefile
+@@ -170,6 +170,7 @@ obj-$(CONFIG_SEL3350_PLATFORM)		+= sel3350-platform.o
+ 
+ # Transmeta
+ obj-$(CONFIG_TRANSMETA_CMS)		+= transmeta-cms.o
++obj-$(CONFIG_TRANSMETA_PTT)		+= transmeta-ptt.o
+ 
+ # OneXPlayer
+ obj-$(CONFIG_OXP_EC)			+= oxpec.o
+diff --git a/drivers/platform/x86/transmeta-ptt.c b/drivers/platform/x86/transmeta-ptt.c
+new file mode 100644
+index 0000000..06645ac
+--- /dev/null
++++ b/drivers/platform/x86/transmeta-ptt.c
+@@ -0,0 +1,708 @@
++// SPDX-License-Identifier: GPL-2.0-only
++/*
++ * Transmeta Crusoe Persistent Translation Technology (PTT)
++ *
++ * Copyright (C) 2026 René Rebe <rene@exactco.de>
++ *
++ * The Code Morphing Software (CMS) of the Crusoe exports its translations
++ * as a database and imports them again, so translated x86 code survives a
++ * reboot. CMS identifies a guest code page by the SHA-1 of its contents and
++ * installs the saved translations of a page on its first translation miss;
++ * the database is bound to the processor by a key in the boot ROM and
++ * protected by a keyed SHA-1.
++ *
++ * Interface (CMS 4.4.0, PTT 2.0, CPUID 0x80860001 EDX bit 8):
++ *  wrmsr 0x80868040: EDX[31:28] command, EDX[27:0] byte count, EAX buffer
++ *	0 load data (count 0: load end), 1 save data, 2 begin save,
++ *	5 force idle, 14 key generation
++ *  rdmsr 0x80868040: EDX[31:28] state, EDX[17:0] bytes of the last command
++ *  wrmsr 0x80868042: EDX[23:16] control, EAX argument
++ *	1 CR3 filter, 2 statistics (EDX[15:0] bytes to EAX), 3 start,
++ *	0x14 abort, 0x64 version (rdmsr EAX = major << 16 | minor)
++ * Buffers are x86 linear addresses.
++ *
++ * CMS holds one database: a load replaces the previous one; a save exports
++ * the translations live at that moment. The driver only provides the
++ * mechanisms, user space decides when: /dev/transmeta-ptt opened read-only
++ * streams a save, opened write-only it loads a database (an empty one starts
++ * CMS recording); close() of a load reports a rejected database. The boot
++ * loader normally loads the system database before the kernel runs.
++ * Without a key (state nokey) the driver only reports the state; the key
++ * generation, which writes the boot ROM, is never issued implicitly.
++ */
++
++#define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
++
++#include <linux/cleanup.h>
++#include <linux/cpufeature.h>
++#include <linux/fs.h>
++#include <linux/miscdevice.h>
++#include <linux/module.h>
++#include <linux/mutex.h>
++#include <linux/pid.h>
++#include <linux/sched/mm.h>
++#include <linux/sched/signal.h>
++#include <linux/sizes.h>
++#include <linux/slab.h>
++#include <linux/sysfs.h>
++#include <linux/uaccess.h>
++
++#include <asm/cpu_device_id.h>
++#include <asm/cpuid/api.h>
++#include <asm/msr.h>
++
++#define TMTA_CPUID_INFO		0x80860001
++#define TMTA_CPUID_PTT2		BIT(8)
++
++#define PTT_CMD(c)		((u32)(c) << 28)
++#define PTT_CMD_LOAD		PTT_CMD(0)
++#define PTT_CMD_SAVE		PTT_CMD(1)
++#define PTT_CMD_BEGIN_SAVE	PTT_CMD(2)
++#define PTT_CMD_IDLE		PTT_CMD(5)
++#define PTT_CMD_KEYGEN		PTT_CMD(14)
++#define PTT_COUNT_MASK		GENMASK(27, 0)
++
++#define PTT_CTL(c)		((u32)(c) << 16)
++#define PTT_CTL_CR3		PTT_CTL(0x01)
++#define PTT_CTL_STATS		PTT_CTL(0x02)
++#define PTT_CTL_START		PTT_CTL(0x03)
++#define PTT_CTL_ABORT		PTT_CTL(0x14)
++#define PTT_CTL_VERSION		PTT_CTL(0x64)
++
++enum ptt_state {
++	PTT_LOAD, PTT_SAVE, PTT_SAVEOK, PTT_SAVED, PTT_ERROR, PTT_IDLE,
++	PTT_OFF = 13, PTT_KEYGEN, PTT_NOKEY
++};
++
++static const char * const ptt_state_names[16] = {
++	[PTT_LOAD] = "load", [PTT_SAVE] = "save", [PTT_SAVEOK] = "saveok",
++	[PTT_SAVED] = "saved", [PTT_ERROR] = "error", [PTT_IDLE] = "idle",
++	[PTT_OFF] = "off", [PTT_KEYGEN] = "keygen", [PTT_NOKEY] = "nokey",
++};
++
++#define PTT_STATS_WORDS		8
++#define PTT_STAT_LOADED		7
++static const char * const ptt_stat_names[PTT_STATS_WORDS] = {
++	NULL, "installed", "installed_discarded", "new", "new_discarded",
++	"new_unfiltered", "other_discarded", "loaded",
++};
++
++/* 32-bit PTI runs user space with the page directory one page above */
++#define PTT_PTI_USER_CR3	BIT(PAGE_SHIFT)
++
++/* transfer buffer; CMS needs a linear address, no particular size */
++#define PTT_BUF_SIZE		SZ_64K
++
++#define PTT_KEYGEN_MAGIC	"program-boot-rom"
++
++static bool allow_keygen;
++module_param(allow_keygen, bool, 0444);
++MODULE_PARM_DESC(allow_keygen,
++		 "create the keygen attribute, which makes CMS program a new PTT key into the boot ROM (default: off)");
++
++enum ptt_mode { PTT_CLOSED, PTT_READING, PTT_WRITING };
++
++struct ptt {
++	struct mutex lock;	/* serializes CMS PTT requests and the session */
++	enum ptt_mode mode;
++	bool started, done, failed;
++	u8 *buf;
++	size_t buf_size;
++	size_t pending, pos;	/* save: unread bytes; load: buffered bytes */
++	size_t total;		/* bytes of this session */
++	u32 *stats;
++	int last_load;		/* 0, or the errno of the last load */
++	pid_t filter_pid;
++};
++
++static struct ptt ptt;
++
++/* command, then the state register, both on the same CPU */
++static int ptt_cmd(u32 msr, u32 eax, u32 edx, u32 *res_eax, u32 *res_edx)
++{
++	u32 lo, hi;
++	int ret;
++
++	preempt_disable();
++	ret = wrmsr_safe(msr, eax, edx);
++	if (!ret)
++		ret = rdmsr_safe(msr, &lo, &hi);
++	preempt_enable();
++	if (ret)
++		return -EIO;
++	if (res_eax)
++		*res_eax = lo;
++	if (res_edx)
++		*res_edx = hi;
++	return 0;
++}
++
++static int ptt_km(u32 cmd, void *buf, u32 count, u32 *res)
++{
++	return ptt_cmd(MSR_TMTA_PTT_KM, (u32)(unsigned long)buf, cmd | count,
++		       NULL, res);
++}
++
++static int ptt_ctl(u32 ctl, u32 arg, u32 *res)
++{
++	return ptt_cmd(MSR_TMTA_PTT_CTL, arg, ctl, res, NULL);
++}
++
++static int ptt_read_state(u32 *edx)
++{
++	u32 lo;
++
++	return rdmsr_safe(MSR_TMTA_PTT_KM, &lo, edx) ? -EIO : 0;
++}
++
++static unsigned int ptt_state_of(u32 edx)
++{
++	return edx >> 28;
++}
++
++static const char *ptt_state_name(unsigned int s)
++{
++	return ptt_state_names[s] ?: "unknown";
++}
++
++static int ptt_force_idle(void)
++{
++	u32 res;
++	int ret;
++
++	ret = ptt_km(PTT_CMD_IDLE, NULL, 0, &res);
++	if (ret)
++		return ret;
++	if (ptt_state_of(res) != PTT_IDLE) {
++		pr_warn_ratelimited("CMS stays in state %s, not idle\n",
++				    ptt_state_name(ptt_state_of(res)));
++		return ptt_state_of(res) == PTT_NOKEY ? -ENOKEY : -EBUSY;
++	}
++	return 0;
++}
++
++/* save: let CMS fill the transfer buffer once */
++static int ptt_save_chunk(void)
++{
++	u32 res;
++	int ret;
++
++	ret = ptt_km(PTT_CMD_SAVE, ptt.buf, ptt.buf_size, &res);
++	if (ret)
++		return ret;
++
++	switch (ptt_state_of(res)) {
++	case PTT_SAVED:
++		ptt.done = true;
++		fallthrough;
++	case PTT_SAVE:
++		ptt.pending = min_t(size_t, res & PTT_COUNT_MASK, ptt.buf_size);
++		ptt.pos = 0;
++		return 0;
++	default:
++		pr_err("save failed in state %s\n",
++		       ptt_state_name(ptt_state_of(res)));
++		return -EIO;
++	}
++}
++
++static ssize_t ptt_read(struct file *file, char __user *ubuf, size_t count,
++			loff_t *ppos)
++{
++	ssize_t ret;
++
++	guard(mutex)(&ptt.lock);
++	if (ptt.failed)
++		return -EIO;
++
++	if (!ptt.started) {
++		u32 res;
++
++		ret = ptt_force_idle();
++		if (!ret)
++			ret = ptt_km(PTT_CMD_BEGIN_SAVE, NULL, 0, &res);
++		if (!ret && ptt_state_of(res) != PTT_IDLE) {
++			pr_err("CMS is not ready to save: state %s\n",
++			       ptt_state_name(ptt_state_of(res)));
++			ret = -EBUSY;
++		}
++		if (ret)
++			return ret;
++		ptt.started = true;
++	}
++
++	/* CMS walks its pages first and may return several empty chunks */
++	while (!ptt.pending && !ptt.done) {
++		if (fatal_signal_pending(current))
++			return -EINTR;
++		ret = ptt_save_chunk();
++		if (ret) {
++			ptt.failed = true;
++			return ret;
++		}
++		cond_resched();
++	}
++	if (!ptt.pending)
++		return 0;
++
++	count = min(count, ptt.pending);
++	if (copy_to_user(ubuf, ptt.buf + ptt.pos, count))
++		return -EFAULT;
++	ptt.pos += count;
++	ptt.pending -= count;
++	*ppos += count;
++	return count;
++}
++
++/* load: hand the buffered whole dwords to CMS */
++static int ptt_load_flush(void)
++{
++	size_t len = ALIGN_DOWN(ptt.pending, 4), done = 0;
++	u32 res;
++	int ret;
++
++	while (done < len) {
++		ret = ptt_km(PTT_CMD_LOAD, ptt.buf + done, len - done, &res);
++		if (ret)
++			return ret;
++		if (ptt_state_of(res) != PTT_LOAD || !(res & PTT_COUNT_MASK)) {
++			pr_err("database rejected in state %s\n",
++			       ptt_state_name(ptt_state_of(res)));
++			return -EBADMSG;
++		}
++		done += min_t(size_t, res & PTT_COUNT_MASK, len - done);
++	}
++	memmove(ptt.buf, ptt.buf + len, ptt.pending - len);
++	ptt.pending -= len;
++	return 0;
++}
++
++static ssize_t ptt_write(struct file *file, const char __user *ubuf,
++			 size_t count, loff_t *ppos)
++{
++	size_t room;
++	int ret;
++
++	guard(mutex)(&ptt.lock);
++	if (ptt.failed)
++		return -EIO;
++
++	room = ptt.buf_size - ptt.pending;
++	count = min(count, room);
++	if (copy_from_user(ptt.buf + ptt.pending, ubuf, count))
++		return -EFAULT;
++	ptt.pending += count;
++	ptt.total += count;
++
++	if (ptt.pending == ptt.buf_size) {
++		ret = ptt_load_flush();
++		if (ret) {
++			ptt.failed = true;
++			ptt.last_load = ret;
++			return ret;
++		}
++	}
++	*ppos += count;
++	return count;
++}
++
++/* end of the load: CMS checks the database and indexes it */
++static int ptt_load_end(void)
++{
++	u32 res;
++	int ret;
++
++	if (ptt.pending & 3) {
++		pr_err("database is not a multiple of 4 bytes\n");
++		return -EINVAL;
++	}
++	ret = ptt_load_flush();
++	if (ret)
++		return ret;
++	ret = ptt_km(PTT_CMD_LOAD, NULL, 0, &res);
++	if (ret)
++		return ret;
++	if (ptt_state_of(res) != PTT_IDLE) {
++		pr_err("database rejected: state %s\n",
++		       ptt_state_name(ptt_state_of(res)));
++		return -EBADMSG;
++	}
++	return 0;
++}
++
++static bool start_recording;
++module_param(start_recording, bool, 0444);
++MODULE_PARM_DESC(start_recording,
++		 "at probe, end an empty load when nothing is loaded, so CMS records translations (default: off)");
++
++/*
++ * CMS records translations for a save only after a finished load. The boot
++ * loader normally loaded the system database; if asked to and nothing was
++ * loaded, end an empty load, as CrusoePTT.sys does without a file. A load
++ * would evict what the boot loader installed, so it is skipped then.
++ */
++static void ptt_probe_arm(void)
++{
++	u32 res;
++	int ret;
++
++	guard(mutex)(&ptt.lock);
++	memset(ptt.stats, 0, PTT_STATS_WORDS * 4);
++	if (ptt_ctl(PTT_CTL_STATS | PTT_STATS_WORDS * 4,
++		    (u32)(unsigned long)ptt.stats, NULL))
++		return;
++	if (ptt.stats[PTT_STAT_LOADED]) {
++		pr_info("%u translations loaded by the boot loader\n",
++			ptt.stats[PTT_STAT_LOADED]);
++		return;
++	}
++
++	ret = ptt_force_idle();
++	if (!ret)
++		ret = ptt_ctl(PTT_CTL_START, 0, NULL);
++	if (!ret)
++		ret = ptt_km(PTT_CMD_LOAD, NULL, 0, &res);
++	if (!ret && ptt_state_of(res) != PTT_IDLE)
++		ret = -EIO;
++	if (ret && ret != -ENOKEY)
++		pr_warn("cannot start recording: %d\n", ret);
++}
++
++static int ptt_open(struct inode *inode, struct file *file)
++{
++	enum ptt_mode mode;
++	int ret;
++
++	switch (file->f_flags & O_ACCMODE) {
++	case O_RDONLY:
++		mode = PTT_READING;
++		break;
++	case O_WRONLY:
++		mode = PTT_WRITING;
++		break;
++	default:
++		return -EINVAL;
++	}
++
++	guard(mutex)(&ptt.lock);
++	if (ptt.mode != PTT_CLOSED)
++		return -EBUSY;
++
++	if (mode == PTT_WRITING) {
++		/* the start clears the statistics, as CrusoePTT.sys does */
++		ret = ptt_force_idle();
++		if (!ret)
++			ret = ptt_ctl(PTT_CTL_START, 0, NULL);
++		if (ret)
++			return ret;
++	}
++
++	ptt.mode = mode;
++	ptt.started = false;
++	ptt.done = false;
++	ptt.failed = false;
++	ptt.pending = 0;
++	ptt.pos = 0;
++	ptt.total = 0;
++	return nonseekable_open(inode, file);
++}
++
++static int ptt_flush(struct file *file, fl_owner_t id)
++{
++	int ret = 0;
++
++	guard(mutex)(&ptt.lock);
++	if (ptt.mode != PTT_WRITING || ptt.done)
++		return 0;
++
++	if (!ptt.failed)
++		ret = ptt_load_end();
++	else
++		ret = ptt.last_load ?: -EIO;
++	ptt.done = true;
++	ptt.last_load = ret;
++	if (ret)
++		ptt_force_idle();
++	else if (ptt.total)
++		pr_info("database of %zu bytes loaded\n", ptt.total);
++	return ret;
++}
++
++static int ptt_release(struct inode *inode, struct file *file)
++{
++	guard(mutex)(&ptt.lock);
++	if (ptt.mode == PTT_READING && ptt.started && !ptt.done)
++		ptt_ctl(PTT_CTL_ABORT, 0, NULL);
++	if (ptt.mode != PTT_CLOSED)
++		ptt_force_idle();
++	ptt.mode = PTT_CLOSED;
++	return 0;
++}
++
++static const struct file_operations ptt_fops = {
++	.owner = THIS_MODULE,
++	.open = ptt_open,
++	.read = ptt_read,
++	.write = ptt_write,
++	.flush = ptt_flush,
++	.release = ptt_release,
++};
++
++static ssize_t state_show(struct device *dev, struct device_attribute *attr,
++			  char *buf)
++{
++	u32 edx;
++
++	guard(mutex)(&ptt.lock);
++	if (ptt_read_state(&edx))
++		return -EIO;
++	return sysfs_emit(buf, "%s\n", ptt_state_name(ptt_state_of(edx)));
++}
++static DEVICE_ATTR_RO(state);
++
++static ssize_t version_show(struct device *dev, struct device_attribute *attr,
++			    char *buf)
++{
++	u32 v;
++
++	guard(mutex)(&ptt.lock);
++	if (ptt_ctl(PTT_CTL_VERSION, 0, &v))
++		return -EIO;
++	return sysfs_emit(buf, "%u.%u\n", v >> 16, v & 0xfff);
++}
++static DEVICE_ATTR_RO(version);
++
++static ssize_t stats_show(struct device *dev, struct device_attribute *attr,
++			  char *buf)
++{
++	int i, len = 0;
++
++	guard(mutex)(&ptt.lock);
++	memset(ptt.stats, 0, PTT_STATS_WORDS * 4);
++	if (ptt_ctl(PTT_CTL_STATS | PTT_STATS_WORDS * 4,
++		    (u32)(unsigned long)ptt.stats, NULL))
++		return -EIO;
++	for (i = 1; i < PTT_STATS_WORDS; i++)
++		len += sysfs_emit_at(buf, len, "%s %u\n", ptt_stat_names[i],
++				     ptt.stats[i]);
++	return len;
++}
++static DEVICE_ATTR_RO(stats);
++
++static ssize_t last_load_show(struct device *dev,
++			      struct device_attribute *attr, char *buf)
++{
++	guard(mutex)(&ptt.lock);
++	return sysfs_emit(buf, "%d\n", ptt.last_load);
++}
++static DEVICE_ATTR_RO(last_load);
++
++/* CR3 a task's user code runs with */
++static int ptt_task_cr3(pid_t nr, u32 *cr3)
++{
++	struct task_struct *task;
++	struct mm_struct *mm;
++	struct pid *pid;
++
++	pid = find_get_pid(nr);
++	task = get_pid_task(pid, PIDTYPE_PID);
++	put_pid(pid);
++	if (!task)
++		return -ESRCH;
++	mm = get_task_mm(task);
++	put_task_struct(task);
++	if (!mm)
++		return -EINVAL;
++	*cr3 = __pa(mm->pgd);
++	if (boot_cpu_has(X86_FEATURE_PTI))
++		*cr3 |= PTT_PTI_USER_CR3;
++	mmput(mm);
++	return 0;
++}
++
++static ssize_t filter_pid_show(struct device *dev,
++			       struct device_attribute *attr, char *buf)
++{
++	guard(mutex)(&ptt.lock);
++	return sysfs_emit(buf, "%d\n", ptt.filter_pid);
++}
++
++static ssize_t filter_pid_store(struct device *dev,
++				struct device_attribute *attr,
++				const char *buf, size_t count)
++{
++	u32 cr3 = 0;
++	pid_t nr;
++	int ret;
++
++	ret = kstrtoint(buf, 0, &nr);
++	if (ret)
++		return ret;
++	if (nr < 0)
++		return -EINVAL;
++	if (nr) {
++		ret = ptt_task_cr3(nr, &cr3);
++		if (ret)
++			return ret;
++	}
++
++	guard(mutex)(&ptt.lock);
++	if (ptt_ctl(PTT_CTL_CR3, cr3, NULL))
++		return -EIO;
++	ptt.filter_pid = nr;
++	return count;
++}
++static DEVICE_ATTR_RW(filter_pid);
++
++/*
++ * Key generation writes the boot ROM: only on explicit request, with the
++ * module parameter set and the magic value written, never implicitly.
++ */
++static ssize_t keygen_store(struct device *dev, struct device_attribute *attr,
++			    const char *buf, size_t count)
++{
++	u32 res;
++	int ret;
++
++	if (!sysfs_streq(buf, PTT_KEYGEN_MAGIC))
++		return -EINVAL;
++
++	guard(mutex)(&ptt.lock);
++	if (ptt.mode != PTT_CLOSED)
++		return -EBUSY;
++	pr_warn("generating a PTT key, CMS programs it into the boot ROM\n");
++	ret = ptt_km(PTT_CMD_KEYGEN, NULL, 0, &res);
++	if (ret)
++		return ret;
++	pr_info("key generation done, state %s\n",
++		ptt_state_name(ptt_state_of(res)));
++	return count;
++}
++static DEVICE_ATTR_WO(keygen);
++
++/* abandon a transfer CMS still holds, e.g. after a crashed saver */
++static ssize_t abort_store(struct device *dev, struct device_attribute *attr,
++			   const char *buf, size_t count)
++{
++	bool yes;
++	int ret;
++
++	ret = kstrtobool(buf, &yes);
++	if (ret)
++		return ret;
++	if (!yes)
++		return count;
++
++	guard(mutex)(&ptt.lock);
++	if (ptt.mode != PTT_CLOSED)
++		return -EBUSY;
++	ret = ptt_ctl(PTT_CTL_ABORT, 0, NULL);
++	if (!ret)
++		ret = ptt_force_idle();
++	return ret ?: count;
++}
++static DEVICE_ATTR_WO(abort);
++
++static struct attribute *ptt_attrs[] = {
++	&dev_attr_state.attr,
++	&dev_attr_version.attr,
++	&dev_attr_stats.attr,
++	&dev_attr_last_load.attr,
++	&dev_attr_filter_pid.attr,
++	&dev_attr_keygen.attr,
++	&dev_attr_abort.attr,
++	NULL
++};
++
++static umode_t ptt_attr_visible(struct kobject *kobj, struct attribute *attr,
++				int n)
++{
++	if (attr == &dev_attr_keygen.attr && !allow_keygen)
++		return 0;
++	return attr->mode;
++}
++
++static const struct attribute_group ptt_group = {
++	.attrs = ptt_attrs,
++	.is_visible = ptt_attr_visible,
++};
++
++static const struct attribute_group *ptt_groups[] = {
++	&ptt_group,
++	NULL
++};
++
++static struct miscdevice ptt_misc = {
++	.minor = MISC_DYNAMIC_MINOR,
++	.name = "transmeta-ptt",
++	.fops = &ptt_fops,
++	.groups = ptt_groups,
++	.mode = 0600,
++};
++
++static const struct x86_cpu_id ptt_ids[] = {
++	X86_MATCH_VENDOR_FAM(TRANSMETA, X86_FAMILY_ANY, NULL),
++	{}
++};
++MODULE_DEVICE_TABLE(x86cpu, ptt_ids);
++
++static int __init ptt_init(void)
++{
++	u32 edx, v;
++	int ret;
++
++	if (!x86_match_cpu(ptt_ids) || cpuid_eax(0x80860000) < TMTA_CPUID_INFO)
++		return -ENODEV;
++	if (!(cpuid_edx(TMTA_CPUID_INFO) & TMTA_CPUID_PTT2))
++		return -ENODEV;
++
++	if (ptt_ctl(PTT_CTL_VERSION, 0, &v))
++		return -ENODEV;
++	if (v >> 16 != 2) {
++		pr_info("PTT version %u.%u not supported\n", v >> 16, v & 0xfff);
++		return -ENODEV;
++	}
++
++	ptt.buf_size = PTT_BUF_SIZE;
++	ptt.buf = kmalloc(ptt.buf_size, GFP_KERNEL | __GFP_NOWARN);
++	if (!ptt.buf) {
++		ptt.buf_size = PAGE_SIZE;
++		ptt.buf = kmalloc(ptt.buf_size, GFP_KERNEL);
++	}
++	ptt.stats = kzalloc(PTT_STATS_WORDS * 4, GFP_KERNEL);
++	if (!ptt.buf || !ptt.stats) {
++		ret = -ENOMEM;
++		goto err;
++	}
++	mutex_init(&ptt.lock);
++
++	ret = misc_register(&ptt_misc);
++	if (ret)
++		goto err;
++
++	if (!ptt_read_state(&edx))
++		pr_info("PTT %u.%u, state %s\n", v >> 16, v & 0xfff,
++			ptt_state_name(ptt_state_of(edx)));
++	if (start_recording)
++		ptt_probe_arm();
++	return 0;
++
++err:
++	kfree(ptt.stats);
++	kfree(ptt.buf);
++	return ret;
++}
++module_init(ptt_init);
++
++static void __exit ptt_exit(void)
++{
++	misc_deregister(&ptt_misc);
++	mutex_destroy(&ptt.lock);
++	kfree(ptt.stats);
++	kfree(ptt.buf);
++}
++module_exit(ptt_exit);
++
++MODULE_AUTHOR("René Rebe <rene@exactco.de>");
++MODULE_DESCRIPTION("Transmeta Crusoe Persistent Translation Technology");
++MODULE_LICENSE("GPL");
+-- 
+2.54.0
+
+From 0ecb7ce4b936345eadd854cde1ab215cb24cd9d8 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Ren=C3=A9=20Rebe?= <rene@exactco.de>
+Date: Thu, 12 Nov 2026 13:19:54 +0100
+Subject: [PATCH] platform/x86: transmeta-ptt: keygen as a boolean switch that
+ reads the key state
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Machines with a BIOS option for persistent translation (the OQO 01+) let the
+user enable PTT; other boards, e.g. the Fujitsu Futro S, have no such option
+and leave CMS in state nokey. Make the keygen attribute behave like that
+switch:
+
+ - always present; reading it gives 1 when CMS has left state nokey (a valid
+   PTT key in the boot ROM), else 0
+ - writing takes the standard boolean input (kstrtobool); true makes CMS
+   generate a key and program it into the boot ROM (command 0xe), false is
+   rejected with -EINVAL, as CMS has no command to remove a key; with a
+   valid key a write does nothing
+ - writes still need the module parameter allow_keygen=1, else -EPERM
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Signed-off-by: René Rebe <rene@exactco.de>
+---
+ .../ABI/testing/sysfs-driver-transmeta-ptt    | 20 ++++----
+ Documentation/arch/x86/i386/transmeta-ptt.rst |  8 ++--
+ drivers/platform/x86/transmeta-ptt.c          | 47 +++++++++++++------
+ 3 files changed, 49 insertions(+), 26 deletions(-)
+
+diff --git a/Documentation/ABI/testing/sysfs-driver-transmeta-ptt b/Documentation/ABI/testing/sysfs-driver-transmeta-ptt
+index 311cb23..847cc3e 100644
+--- a/Documentation/ABI/testing/sysfs-driver-transmeta-ptt
++++ b/Documentation/ABI/testing/sysfs-driver-transmeta-ptt
+@@ -69,11 +69,15 @@ Date:		November 2026
+ KernelVersion:	7.2
+ Contact:	René Rebe <rene@exactco.de>
+ Description:
+-		(WO, root only) Present only with the module parameter
+-		allow_keygen=1 (default off). Writing the value
+-		"program-boot-rom" makes CMS generate a new PTT key and
+-		PROGRAM IT INTO THE BOOT ROM; any other value is rejected
+-		with -EINVAL. The driver never generates a key by itself,
+-		also not in state nokey. A failed ROM write can leave the
+-		system unbootable; databases saved with an older key are no
+-		longer accepted.
++		(RW, write root only) Reads 1 when the boot ROM holds a valid
++		PTT key (CMS left state nokey), else 0. Writing a true
++		boolean (kstrtobool: 1, y, on) makes CMS generate a new PTT
++		key and PROGRAM IT INTO THE BOOT ROM; this is the switch a
++		BIOS "persistent translation" option would set. Writes need
++		the module parameter allow_keygen=1 (default off, else
++		-EPERM); false is rejected with -EINVAL, as CMS has no
++		command to remove a key; with a valid key the write does
++		nothing. The driver never generates a key by itself, also not
++		in state nokey. A failed ROM write can leave the system
++		unbootable; databases saved with an older key are no longer
++		accepted.
+diff --git a/Documentation/arch/x86/i386/transmeta-ptt.rst b/Documentation/arch/x86/i386/transmeta-ptt.rst
+index b637feb..ba05c46 100644
+--- a/Documentation/arch/x86/i386/transmeta-ptt.rst
++++ b/Documentation/arch/x86/i386/transmeta-ptt.rst
+@@ -61,9 +61,11 @@ The attributes in ``/sys/class/misc/transmeta-ptt/`` are documented in
+ 	Limit what CMS marks for a save to the translations made while the
+ 	address space of this process runs (0 = all).
+ ``keygen``
+-	Only present with the module parameter ``allow_keygen=1``. Writing
+-	``program-boot-rom`` makes CMS generate a new key and **program it
+-	into the boot ROM**. The driver never does this on its own, also not
++	Reads 1 when the boot ROM holds a valid PTT key, else 0. Writing 1
++	(needs the module parameter ``allow_keygen=1``) makes CMS generate a
++	new key and **program it into the boot ROM**, the switch a BIOS
++	"persistent translation" option would set; 0 is rejected, a key
++	cannot be removed. The driver never does this on its own, also not
+ 	in state ``nokey``. A failed ROM write can leave the system
+ 	unbootable; databases saved with an older key are no longer
+ 	accepted.
+diff --git a/drivers/platform/x86/transmeta-ptt.c b/drivers/platform/x86/transmeta-ptt.c
+index 06645ac..ab318ba 100644
+--- a/drivers/platform/x86/transmeta-ptt.c
++++ b/drivers/platform/x86/transmeta-ptt.c
+@@ -93,12 +93,11 @@ static const char * const ptt_stat_names[PTT_STATS_WORDS] = {
+ /* transfer buffer; CMS needs a linear address, no particular size */
+ #define PTT_BUF_SIZE		SZ_64K
+ 
+-#define PTT_KEYGEN_MAGIC	"program-boot-rom"
+ 
+ static bool allow_keygen;
+ module_param(allow_keygen, bool, 0444);
+ MODULE_PARM_DESC(allow_keygen,
+-		 "create the keygen attribute, which makes CMS program a new PTT key into the boot ROM (default: off)");
++		 "allow writing 1 to the keygen attribute, which makes CMS program a new PTT key into the boot ROM (default: off)");
+ 
+ enum ptt_mode { PTT_CLOSED, PTT_READING, PTT_WRITING };
+ 
+@@ -554,22 +553,49 @@ static ssize_t filter_pid_store(struct device *dev,
+ }
+ static DEVICE_ATTR_RW(filter_pid);
+ 
++/* a valid key: CMS left nokey (keygen pending counts as none) */
++static ssize_t keygen_show(struct device *dev, struct device_attribute *attr,
++			   char *buf)
++{
++	unsigned int st;
++	u32 edx;
++
++	guard(mutex)(&ptt.lock);
++	if (ptt_read_state(&edx))
++		return -EIO;
++	st = ptt_state_of(edx);
++	return sysfs_emit(buf, "%d\n", st != PTT_NOKEY && st != PTT_KEYGEN);
++}
++
+ /*
+- * Key generation writes the boot ROM: only on explicit request, with the
+- * module parameter set and the magic value written, never implicitly.
++ * Key generation writes the boot ROM: only on an explicit 1, with the module
++ * parameter set, never implicitly; a key cannot be removed again.
+  */
+ static ssize_t keygen_store(struct device *dev, struct device_attribute *attr,
+ 			    const char *buf, size_t count)
+ {
++	unsigned int st;
++	bool yes;
+ 	u32 res;
+ 	int ret;
+ 
+-	if (!sysfs_streq(buf, PTT_KEYGEN_MAGIC))
++	ret = kstrtobool(buf, &yes);
++	if (ret)
++		return ret;
++	if (!yes)
+ 		return -EINVAL;
++	if (!allow_keygen)
++		return -EPERM;
+ 
+ 	guard(mutex)(&ptt.lock);
+ 	if (ptt.mode != PTT_CLOSED)
+ 		return -EBUSY;
++	ret = ptt_read_state(&res);
++	if (ret)
++		return ret;
++	st = ptt_state_of(res);
++	if (st != PTT_NOKEY && st != PTT_KEYGEN)
++		return count;
+ 	pr_warn("generating a PTT key, CMS programs it into the boot ROM\n");
+ 	ret = ptt_km(PTT_CMD_KEYGEN, NULL, 0, &res);
+ 	if (ret)
+@@ -578,7 +604,7 @@ static ssize_t keygen_store(struct device *dev, struct device_attribute *attr,
+ 		ptt_state_name(ptt_state_of(res)));
+ 	return count;
+ }
+-static DEVICE_ATTR_WO(keygen);
++static DEVICE_ATTR_RW(keygen);
+ 
+ /* abandon a transfer CMS still holds, e.g. after a crashed saver */
+ static ssize_t abort_store(struct device *dev, struct device_attribute *attr,
+@@ -614,17 +640,8 @@ static struct attribute *ptt_attrs[] = {
+ 	NULL
+ };
+ 
+-static umode_t ptt_attr_visible(struct kobject *kobj, struct attribute *attr,
+-				int n)
+-{
+-	if (attr == &dev_attr_keygen.attr && !allow_keygen)
+-		return 0;
+-	return attr->mode;
+-}
+-
+ static const struct attribute_group ptt_group = {
+ 	.attrs = ptt_attrs,
+-	.is_visible = ptt_attr_visible,
+ };
+ 
+ static const struct attribute_group *ptt_groups[] = {
+-- 
+2.54.0
+
