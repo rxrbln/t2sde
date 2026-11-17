@@ -35,12 +35,28 @@ Also:
      ofnet_net:local 192.168.2.0/24 ofnet_net
 
    Rewrite the cookie to the RFC 1048 magic.
+ - closing the card before booting the kernel hangs in the firmware
+   obp-tftp close, which closes the global deblocker ihandle of the
+   firmware's own load a second time:
+
+     loader: ofnet: closing /pci@80000000/ethernet@c ihandle 0xf70680
+
+   On this firmware, detected by the retry without suffix, only stop the
+   chip with the NIC reset method.
 
 Signed-off-by: René Rebe <rene@exactco.de>
 
 --- a/grub-core/net/drivers/ieee1275/ofnet.c
 +++ b/grub-core/net/drivers/ieee1275/ofnet.c
-@@ -41,6 +41,16 @@ card_open (struct grub_net_card *dev)
+@@ -31,6 +31,7 @@ struct grub_ofnetcard_data
+   char *path;
+   char *suffix;
+   grub_ieee1275_ihandle_t handle;
++  int old_obp_tftp;
+ };
+ 
+ static grub_err_t
+@@ -41,6 +42,17 @@ card_open (struct grub_net_card *dev)
  
    status = grub_ieee1275_open (data->path, &(data->handle));
  
@@ -51,13 +67,47 @@ Signed-off-by: René Rebe <rene@exactco.de>
 +      grub_dprintf ("ofnet", "open %s failed, retrying without suffix\n",
 +		    data->path);
 +      *data->suffix = '\0';
++      data->old_obp_tftp = 1;
 +      status = grub_ieee1275_open (data->path, &(data->handle));
 +    }
 +
    if (status)
      return grub_error (GRUB_ERR_IO, "Couldn't open network card.");
  
-@@ -158,7 +168,11 @@ grub_ieee1275_parse_bootpath (const char
+@@ -52,8 +64,31 @@ card_close (struct grub_net_card *dev)
+ {
+   struct grub_ofnetcard_data *data = dev->data;
+ 
+-  if (data->handle)
++  if (!data->handle)
++    return;
++
++  /* The old obp-tftp close re-closes the stale global deblocker ihandle of
++     the firmware's own load and hangs, only stop the chip with reset.  */
++  if (data->old_obp_tftp)
++    {
++      struct reset_args
++      {
++	struct grub_ieee1275_common_hdr common;
++	grub_ieee1275_cell_t method;
++	grub_ieee1275_cell_t ihandle;
++	grub_ieee1275_cell_t catch_result;
++      }
++      args;
++
++      INIT_IEEE1275_COMMON (&args.common, "call-method", 2, 1);
++      args.method = (grub_ieee1275_cell_t) "reset";
++      args.ihandle = data->handle;
++      args.catch_result = 1;
++      IEEE1275_CALL_ENTRY_FN (&args);
++    }
++  else
+     grub_ieee1275_close (data->handle);
++  data->handle = 0;
+ }
+ 
+ static grub_err_t
+@@ -158,7 +193,11 @@ grub_ieee1275_parse_bootpath (const char
  
    hw_addr.type = GRUB_NET_LINK_LEVEL_PROTOCOL_ETHERNET;
  
@@ -70,7 +120,7 @@ Signed-off-by: René Rebe <rene@exactco.de>
    do
      {
        comma_char = grub_strchr (args, ',');
-@@ -238,6 +252,37 @@ grub_ieee1275_parse_bootpath (const char
+@@ -238,6 +277,37 @@ grub_ieee1275_parse_bootpath (const char
    return 0;
  }
  
@@ -108,7 +158,7 @@ Signed-off-by: René Rebe <rene@exactco.de>
  static void
  grub_ieee1275_net_config_real (const char *devpath, char **device, char **path,
                                 char *bootpath)
-@@ -252,7 +297,7 @@ grub_ieee1275_net_config_real (const cha
+@@ -252,7 +322,7 @@ grub_ieee1275_net_config_real (const cha
      char c;
      struct grub_ofnetcard_data *data;
  
@@ -117,7 +167,7 @@ Signed-off-by: René Rebe <rene@exactco.de>
      unsigned int i;
  
      if (card->driver != &ofdriver)
-@@ -290,14 +335,42 @@ grub_ieee1275_net_config_real (const cha
+@@ -290,14 +360,42 @@ grub_ieee1275_net_config_real (const cha
      if (grub_ieee1275_get_property (grub_ieee1275_chosen,
  				    bootp_response_properties[i].name,
  				    bootp_response, size, 0) < 0)
@@ -165,9 +215,18 @@ Signed-off-by: René Rebe <rene@exactco.de>
      grub_free (bootp_response);
      return;
    }
+@@ -393,7 +491,7 @@ search_net_devices (struct grub_ieee1275
+   if (grub_strcmp (alias->type, "network") != 0)
+     return 0;
+ 
+-  ofdata = grub_malloc (sizeof (struct grub_ofnetcard_data));
++  ofdata = grub_zalloc (sizeof (struct grub_ofnetcard_data));
+   if (!ofdata)
+     {
+       grub_print_error ();
 --- a/grub-core/kern/ieee1275/openfw.c
 +++ b/grub-core/kern/ieee1275/openfw.c
-@@ -574,13 +574,19 @@ grub_ieee1275_canonicalise_devname (cons
+@@ -589,13 +589,19 @@ grub_ieee1275_canonicalise_devname (cons
        args.buf = (grub_ieee1275_cell_t) buf;
        args.inlen = (grub_ieee1275_cell_t) (bufsize - 1);
  
