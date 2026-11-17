@@ -6,10 +6,10 @@
 
 PCI: Disable Matrox interrupts left enabled by CHRP firmware
 
-The IBM RS/6000 7043-150 Open Firmware leaves the vertical line interrupt
-of the Matrox G200 enabled and pending. It shares the level triggered
-MPIC input 1 with the USB OHCI controllers, which storms as soon as the
-first OHCI enables it, long before mgag200 clears IEN:
+The IBM RS/6000 7043-150 Open Firmware leaves the VGA vertical retrace
+interrupt of the Matrox G200 enabled (CRTC11 bit 5 clear). It shares the
+level triggered MPIC input 1 with the USB OHCI controllers, which storms
+as soon as the first OHCI enables it, long before mgag200 sets a mode:
 
   irq 19: nobody cared (try booting with the "irqpoll" option)
   handlers:
@@ -18,34 +18,41 @@ first OHCI enables it, long before mgag200 clears IEN:
 
    19:     300000   MPIC        1 Level     ohci_hcd:usb2, ohci_hcd:usb3, ohci_hcd:usb4
 
-and the USB 1.1 buses lose their interrupts. Like disable_igfx_irq(),
-disable the interrupts and acknowledge the pending first head vertical
-line one in a final fixup on CHRP, for the G100, G200 and G400 with the
-registers in BAR 1.
+and the USB 1.1 buses lose their interrupts. Clearing CRTC11 bit 5 again
+at runtime reproduces another 100000 unhandled interrupts. Like
+disable_igfx_irq(), disable the VGA vertical and the IEN interrupts in a
+final fixup on CHRP, for the G100, G200 and G400 with the registers and
+VGA CRTC ports in BAR 1.
 
 Signed-off-by: René Rebe <rene@exactco.de>
 
 diff --git linux-7.2/drivers/pci/quirks.c linux-7.2/drivers/pci/quirks.c
 --- linux-7.2/drivers/pci/quirks.c
 +++ linux-7.2/drivers/pci/quirks.c
-@@ -3568,6 +3568,46 @@ DECLARE_PCI_FIXUP_FINAL(PCI_VENDOR_ID_IN
+@@ -3568,6 +3568,61 @@ DECLARE_PCI_FIXUP_FINAL(PCI_VENDOR_ID_IN
  DECLARE_PCI_FIXUP_FINAL(PCI_VENDOR_ID_INTEL, 0x010a, disable_igfx_irq);
  DECLARE_PCI_FIXUP_FINAL(PCI_VENDOR_ID_INTEL, 0x0152, disable_igfx_irq);
  
 +#ifdef CONFIG_PPC_CHRP
 +/*
-+ * CHRP firmware, e.g. of the IBM RS/6000 7043-150, may leave the vertical
-+ * line interrupt of a Matrox G100/G200/G400 enabled and pending. On a shared,
-+ * level triggered line this storms until a Matrox driver is loaded, so the
-+ * kernel disables the line and other devices on it, like USB host
-+ * controllers, lose theirs. These parts have the registers in BAR 1.
++ * CHRP firmware, e.g. of the IBM RS/6000 7043-150, may leave the VGA
++ * vertical retrace or the vertical line interrupt of a Matrox G100/G200/G400
++ * enabled and pending. On a shared, level triggered line this storms until a
++ * Matrox driver sets a mode, so the kernel disables the line and other
++ * devices on it, like USB host controllers, lose theirs. These parts have
++ * the registers, including the VGA CRTC ports, in BAR 1.
 + */
 +#define MGA_ICLEAR_REG		0x1e18
 +#define MGA_ICLEAR_VLINEICLR	BIT(5)
 +#define MGA_IEN_REG		0x1e1c
++#define MGA_CRTC_INDEX		0x1fd4
++#define MGA_CRTC_DATA		0x1fd5
++#define MGA_CRTC11_VINTCLR	BIT(4)
++#define MGA_CRTC11_VINTDIS	BIT(5)
 +static void disable_matrox_irq(struct pci_dev *dev)
 +{
 +	void __iomem *regs = pci_iomap(dev, 1, 0);
++	u8 crtc11;
 +
 +	if (!regs) {
 +		pci_warn(dev, "Matrox quirk: Can't iomap PCI device\n");
@@ -56,6 +63,15 @@ diff --git linux-7.2/drivers/pci/quirks.c linux-7.2/drivers/pci/quirks.c
 +		pci_warn(dev, "Firmware left Matrox interrupts enabled; disabling\n");
 +		writel(0, regs + MGA_IEN_REG);
 +		writel(MGA_ICLEAR_VLINEICLR, regs + MGA_ICLEAR_REG);
++	}
++
++	/* VGA CRTC11: bit 5 clear enables the vertical retrace interrupt */
++	writeb(0x11, regs + MGA_CRTC_INDEX);
++	crtc11 = readb(regs + MGA_CRTC_DATA);
++	if (!(crtc11 & MGA_CRTC11_VINTDIS)) {
++		pci_warn(dev, "Firmware left Matrox VGA vertical interrupt enabled; disabling\n");
++		writeb((crtc11 | MGA_CRTC11_VINTDIS) & ~MGA_CRTC11_VINTCLR,
++		       regs + MGA_CRTC_DATA);
 +	}
 +
 +	pci_iounmap(dev, regs);
