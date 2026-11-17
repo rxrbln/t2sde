@@ -1,0 +1,77 @@
+# --- T2-COPYRIGHT-BEGIN ---
+# t2/package/*/linux/hotfix-pci-early-mga-irq.patch
+# Copyright (C) 2026 The T2 SDE Project
+# SPDX-License-Identifier: GPL-2.0 or patched project license
+# --- T2-COPYRIGHT-END ---
+
+PCI: Disable Matrox interrupts left enabled by CHRP firmware
+
+The IBM RS/6000 7043-150 Open Firmware leaves the vertical line interrupt
+of the Matrox G200 enabled and pending. It shares the level triggered
+MPIC input 1 with the USB OHCI controllers, which storms as soon as the
+first OHCI enables it, long before mgag200 clears IEN:
+
+  irq 19: nobody cared (try booting with the "irqpoll" option)
+  handlers:
+  [<(ptrval)>] usb_hcd_irq [usbcore]
+  Disabling IRQ #19
+
+   19:     300000   MPIC        1 Level     ohci_hcd:usb2, ohci_hcd:usb3, ohci_hcd:usb4
+
+and the USB 1.1 buses lose their interrupts. Like disable_igfx_irq(),
+disable the interrupts and acknowledge the pending first head vertical
+line one in a final fixup on CHRP, for the G100, G200 and G400 with the
+registers in BAR 1.
+
+Signed-off-by: René Rebe <rene@exactco.de>
+
+diff --git linux-7.2/drivers/pci/quirks.c linux-7.2/drivers/pci/quirks.c
+--- linux-7.2/drivers/pci/quirks.c
++++ linux-7.2/drivers/pci/quirks.c
+@@ -3568,6 +3568,46 @@ DECLARE_PCI_FIXUP_FINAL(PCI_VENDOR_ID_IN
+ DECLARE_PCI_FIXUP_FINAL(PCI_VENDOR_ID_INTEL, 0x010a, disable_igfx_irq);
+ DECLARE_PCI_FIXUP_FINAL(PCI_VENDOR_ID_INTEL, 0x0152, disable_igfx_irq);
+ 
++#ifdef CONFIG_PPC_CHRP
++/*
++ * CHRP firmware, e.g. of the IBM RS/6000 7043-150, may leave the vertical
++ * line interrupt of a Matrox G100/G200/G400 enabled and pending. On a shared,
++ * level triggered line this storms until a Matrox driver is loaded, so the
++ * kernel disables the line and other devices on it, like USB host
++ * controllers, lose theirs. These parts have the registers in BAR 1.
++ */
++#define MGA_ICLEAR_REG		0x1e18
++#define MGA_ICLEAR_VLINEICLR	BIT(5)
++#define MGA_IEN_REG		0x1e1c
++static void disable_matrox_irq(struct pci_dev *dev)
++{
++	void __iomem *regs = pci_iomap(dev, 1, 0);
++
++	if (!regs) {
++		pci_warn(dev, "Matrox quirk: Can't iomap PCI device\n");
++		return;
++	}
++
++	if (readl(regs + MGA_IEN_REG) != 0) {
++		pci_warn(dev, "Firmware left Matrox interrupts enabled; disabling\n");
++		writel(0, regs + MGA_IEN_REG);
++		writel(MGA_ICLEAR_VLINEICLR, regs + MGA_ICLEAR_REG);
++	}
++
++	pci_iounmap(dev, regs);
++}
++DECLARE_PCI_FIXUP_FINAL(PCI_VENDOR_ID_MATROX, PCI_DEVICE_ID_MATROX_G100_MM,
++			disable_matrox_irq);
++DECLARE_PCI_FIXUP_FINAL(PCI_VENDOR_ID_MATROX, PCI_DEVICE_ID_MATROX_G100_AGP,
++			disable_matrox_irq);
++DECLARE_PCI_FIXUP_FINAL(PCI_VENDOR_ID_MATROX, PCI_DEVICE_ID_MATROX_G200_PCI,
++			disable_matrox_irq);
++DECLARE_PCI_FIXUP_FINAL(PCI_VENDOR_ID_MATROX, PCI_DEVICE_ID_MATROX_G200_AGP,
++			disable_matrox_irq);
++DECLARE_PCI_FIXUP_FINAL(PCI_VENDOR_ID_MATROX, PCI_DEVICE_ID_MATROX_G400,
++			disable_matrox_irq);
++#endif
++
+ /*
+  * PCI devices which are on Intel chips can skip the 10ms delay
+  * before entering D3 mode.
