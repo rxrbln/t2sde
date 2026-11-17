@@ -1,0 +1,83 @@
+# --- T2-COPYRIGHT-BEGIN ---
+# t2/package/*/linux/hotfix-highmem-folio.patch
+# Copyright (C) 2026 The T2 SDE Project
+# SPDX-License-Identifier: GPL-2.0 or patched project license
+# --- T2-COPYRIGHT-END ---
+
+lib/buildid: map highmem folios page by page
+
+kmap_local_folio() maps only a single page of a highmem folio, but
+freader_fetch() returned pointers anywhere within the folio. With large
+folios on 32-bit HIGHMEM kernels, reading an ELF build-id note beyond the
+first page faults, e.g. in perf_event_mmap() on exec while perf records:
+
+  BUG: unable to handle page fault for address: fffc0394
+  EIP: parse_build_id+0x8e/0x138
+   build_id_parse_nofault
+   perf_event_mmap
+   mmap_region ... load_elf_binary
+
+Map the page containing the requested offset on highmem and handle the
+folio page by page, the existing copy loop already covers reads crossing
+the mapped range.
+
+Signed-off-by: René Rebe <rene@exactco.de>
+
+--- a/lib/buildid.c
++++ b/lib/buildid.c
+@@ -38,11 +38,22 @@ static void freader_put_folio(struct fre
+ 	r->folio = NULL;
+ }
+ 
++/*
++ * kmap_local_folio() only maps a single page of a highmem folio, so these
++ * are accessed page by page; r->folio_off is the file offset of the mapping
++ */
++static size_t freader_map_size(struct freader *r)
++{
++	return folio_test_highmem(r->folio) ? PAGE_SIZE : folio_size(r->folio);
++}
++
+ static int freader_get_folio(struct freader *r, loff_t file_off)
+ {
+-	/* check if we can just reuse current folio */
++	size_t map_off = 0;
++
++	/* check if we can just reuse current mapping */
+ 	if (r->folio && file_off >= r->folio_off &&
+-	    file_off < r->folio_off + folio_size(r->folio))
++	    file_off < r->folio_off + freader_map_size(r))
+ 		return 0;
+ 
+ 	freader_put_folio(r);
+@@ -57,8 +68,10 @@ static int freader_get_folio(struct frea
+ 		return -EFAULT;
+ 	}
+ 
+-	r->folio_off = folio_pos(r->folio);
+-	r->addr = kmap_local_folio(r->folio, 0);
++	if (folio_test_highmem(r->folio))
++		map_off = offset_in_folio(r->folio, file_off) & PAGE_MASK;
++	r->folio_off = folio_pos(r->folio) + map_off;
++	r->addr = kmap_local_folio(r->folio, map_off);
+ 
+ 	return 0;
+ }
+@@ -114,7 +127,7 @@ const void *freader_fetch(struct freader
+ 	 * everything into our local buffer to keep a simple linear memory
+ 	 * access interface
+ 	 */
+-	folio_sz = folio_size(r->folio);
++	folio_sz = freader_map_size(r);
+ 	if (file_off + sz > r->folio_off + folio_sz) {
+ 		u64 part_sz = r->folio_off + folio_sz - file_off, off;
+ 
+@@ -126,7 +139,7 @@ const void *freader_fetch(struct freader
+ 			r->err = freader_get_folio(r, r->folio_off + folio_sz);
+ 			if (r->err)
+ 				return NULL;
+-			folio_sz = folio_size(r->folio);
++			folio_sz = freader_map_size(r);
+ 			part_sz = min_t(u64, sz - off, folio_sz);
+ 			memcpy(r->buf + off, r->addr, part_sz);
+ 			off += part_sz;
