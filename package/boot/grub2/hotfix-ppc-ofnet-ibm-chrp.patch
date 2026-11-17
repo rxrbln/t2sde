@@ -24,6 +24,17 @@ Also:
    instead of a fixed 0x2a, in 802.3 mode the firmware stores LLC/SNAP
    frames with a 22 byte MAC header, free the buffer on error.
  - canon returns the length, NUL terminate the result.
+ - the firmware BOOTP request uses the vendor cookie "ibmc", the server
+   echoes it in front of RFC 1048 options, which GRUB ignored, falling
+   back to a class C /24 without router, so a server on another /24 was
+   unreachable unless net_bootp was run manually:
+
+     bootpreply-packet vendor area: 69 62 6d 63 01 04 ff ff 00 00 ...
+       03 04 c0 a8 00 01   ("ibmc", mask 255.255.0.0, router)
+     grub> net_ls_routes
+     ofnet_net:local 192.168.2.0/24 ofnet_net
+
+   Rewrite the cookie to the RFC 1048 magic.
 
 Signed-off-by: René Rebe <rene@exactco.de>
 
@@ -106,7 +117,7 @@ Signed-off-by: René Rebe <rene@exactco.de>
      unsigned int i;
  
      if (card->driver != &ofdriver)
-@@ -290,14 +335,25 @@ grub_ieee1275_net_config_real (const cha
+@@ -290,14 +335,42 @@ grub_ieee1275_net_config_real (const cha
      if (grub_ieee1275_get_property (grub_ieee1275_chosen,
  				    bootp_response_properties[i].name,
  				    bootp_response, size, 0) < 0)
@@ -124,6 +135,23 @@ Signed-off-by: René Rebe <rene@exactco.de>
 +      {
 +	grub_free (bootp_response);
 +	return;
++      }
++
++    /* IBM CHRP OF BOOTP requests use the vendor cookie "ibmc", the server
++       echoes it in front of RFC 1048 options (mask, router) GRUB ignores.  */
++    if ((grub_size_t) (size - offset)
++	>= sizeof (struct grub_net_bootp_packet) + 4)
++      {
++	grub_uint8_t *vend = (grub_uint8_t *) bootp_response + offset
++			     + sizeof (struct grub_net_bootp_packet);
++
++	if (grub_memcmp (vend, "ibmc", 4) == 0)
++	  {
++	    vend[0] = GRUB_NET_BOOTP_RFC1048_MAGIC_0;
++	    vend[1] = GRUB_NET_BOOTP_RFC1048_MAGIC_1;
++	    vend[2] = GRUB_NET_BOOTP_RFC1048_MAGIC_2;
++	    vend[3] = GRUB_NET_BOOTP_RFC1048_MAGIC_3;
++	  }
 +      }
  
      grub_net_configure_by_dhcp_ack (card->name, card, 0,
