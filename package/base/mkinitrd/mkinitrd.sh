@@ -26,6 +26,7 @@ vitalmods[tg3.ko]=1	# Sun Fire
 vitalmods[xhci-pci.ko]=1 # probably every modern machine
 vitalmods[r8152.ko]=1
 vitalmods[r8169.ko]=1
+vitalmods[realtek.ko]=1
 
 # firmware only needed for rare / embedded variants
 declare -A fwopt
@@ -33,7 +34,7 @@ fwopt[e100.ko]=1	# popular vintage
 
 
 # TODO: defauls for vintage vs. latest, usb, pata, etc.
-filter="-e /loop -e ext2 -e ext4 -e /xfs -e isofs -e zram -e pata_legacy
+filter="-e /loop -e ext2 -e ext4 -e /xfs -e isofs -e squashfs -e zram -e pata_legacy
 -e pata_.*platform -e pata_macio -e mac_esp -e sym53c8xx -e /aic7xxx -e qla1280
 -e s[rd]_mod -e /ahci.ko -e [uo]hci-[ph][c][id] -e usbhid -e /offb -e ps3fb"
 
