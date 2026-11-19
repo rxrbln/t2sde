@@ -1,10 +1,4 @@
 #!/bin/sh
-# --- T2-COPYRIGHT-BEGIN ---
-# t2/package/*/mkinitrd/initrdinit.sh
-# Copyright (C) 2026 The T2 SDE Project
-# SPDX-License-Identifier: GPL-2.0
-# --- T2-COPYRIGHT-END ---
-
 
 PATH=/sbin:/bin:/usr/bin:/usr/sbin
 
@@ -34,6 +28,15 @@ mapper2lvm() {
 	echo $x
 }
 
+actdev() {
+	if [[ ! -e "$1" && "$1" = /dev/*/* && -e /sbin/lvm ]]; then
+		if lvs $(mapper2lvm ${1#/dev/}) >/dev/null 2>&1; then
+			echo "${n}Activating LVM $1"; n=
+			lvchange -a ay $(mapper2lvm ${1#/dev/})
+		fi
+	fi
+}
+
 boot() {
 	mount -t none -o move {,/mnt}/dev
 	mount -t none -o move {,/mnt}/proc
@@ -60,9 +63,13 @@ overlayfs() {
 	_IFS="$IFS" IFS=':'
 	set -- $o
 	IFS="$_IFS"
-	o=$1 fs=$2 fsopt="$3"
+	o="$(getdev "$1")" fs=$2 fsopt="$3"
 	
-	if [ ! "$2" ]; then
+	# real /dev or relative file?
+	if [[ "$o" = /* ]]; then
+	    actdev $o
+	    fs=$(detectfs $o)
+	elif [ ! "$2" ]; then
 	    if [ ! -e $mnt/$o ]; then
 		echo "No $mnt/$o to overlay."
 		return 1
@@ -203,12 +210,7 @@ while [[ -n "$root" && ($((i++)) -le 15 || "$cmdline" = *rootwait*) ]]; do
   
   # maybe resume from disk?
   if [ "$resume" ]; then
-	if [[ ! -e $resume && "${resume}" = /dev/*/* && -e /sbin/lvm ]]; then
-		if lvs $(mapper2lvm ${resume#/dev/}) >/dev/null 2>&1; then
-			echo "${n}Activating LVM $resume"; n=
-			lvchange -a ay $(mapper2lvm ${resume#/dev/})
-		fi
-	fi
+	actdev "$resume"
 	
 	# only try to resume if the device does not have a swap signature
 	if [ -e $resume ]; then
@@ -230,6 +232,7 @@ while [[ -n "$root" && ($((i++)) -le 15 || "$cmdline" = *rootwait*) ]]; do
   fi
 
   if [ "$swap" ]; then
+	actdev "$swap"
 	echo "${n}Activating swap"; n=
 	swapon $swap && swap=
   fi
@@ -240,11 +243,7 @@ while [[ -n "$root" && ($((i++)) -le 15 || "$cmdline" = *rootwait*) ]]; do
 		mdadm --assemble --scan
 	fi
 	# TODO: scripter not match /dev/disk/by-uuid/e561ecfc-1358-49e4-84b6-93a357900df3
-	if [[ "${root}" = /dev/*/* && -e /sbin/lvm ]]; then
-		lvs $(mapper2lvm ${root#/dev/}) >/dev/null 2>&1 || continue
-		echo "${n}Activating LVM $root"; n=
-		lvchange -a ay $(mapper2lvm ${root#/dev/})
-	fi
+	actdev "$root"
   fi
 
   if [ -e "$root" ]; then
