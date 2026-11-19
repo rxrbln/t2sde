@@ -1,0 +1,596 @@
+# --- T2-COPYRIGHT-BEGIN ---
+# t2/package/*/linux/x86-transmeta-cms-update.patch
+# Copyright (C) 2026 The T2 SDE Project
+# SPDX-License-Identifier: GPL-2.0 or patched project license
+# --- T2-COPYRIGHT-END ---
+
+Add a driver for the Transmeta Code Morphing Software ROM update service
+(MSR 0x80868000-0x80868005): fw_upload for the CMS, recovery CMS, OEM
+configuration table, boot code and write cycle components, and sysfs
+read-back of the ROM components.
+
+Signed-off-by: René Rebe <rene@exactco.de>
+
+diff -urNp a/Documentation/ABI/testing/sysfs-driver-transmeta-cms b/Documentation/ABI/testing/sysfs-driver-transmeta-cms
+--- a/Documentation/ABI/testing/sysfs-driver-transmeta-cms	1970-01-01 01:00:00.000000000 +0100
++++ b/Documentation/ABI/testing/sysfs-driver-transmeta-cms	2026-11-11 08:09:09.034050865 +0100
+@@ -0,0 +1,24 @@
++What:		/sys/devices/faux/transmeta_cms/rom/<component>
++Date:		November 2026
++KernelVersion:	7.2
++Contact:	René Rebe <rene@exactco.de>
++Description:
++		(RO, root only) Contents of a boot ROM component of a Transmeta
++		Crusoe or Efficeon processor, read through the Code Morphing
++		Software (CMS) ROM update service (MSR 0x80868000-0x80868005).
++		<component> is one of cms, recovery-cms, oem-config, boot-code
++		and write-cycle; only components CMS reports are present. The
++		ROM is read again whenever the file is read from offset 0.
++
++What:		/sys/class/firmware/tmta-<component>/
++Date:		November 2026
++KernelVersion:	7.2
++Contact:	René Rebe <rene@exactco.de>
++Description:
++		Firmware upload interface (see sysfs-class-firmware) for each
++		present ROM component: tmta-cms, tmta-recovery-cms,
++		tmta-oem-config, tmta-boot-code and tmta-write-cycle. The image
++		is a signed CMS upgrade envelope (.cru); CMS checks the
++		envelope, vendor, processor and compatibility fields and the
++		DSA signature before it programs the ROM. CMS error codes are
++		logged with the SoftPatch error text.
+diff -urNp a/arch/x86/include/asm/msr-index.h b/arch/x86/include/asm/msr-index.h
+--- a/arch/x86/include/asm/msr-index.h	2026-11-11 08:09:09.049114540 +0100
++++ b/arch/x86/include/asm/msr-index.h	2026-11-11 08:09:09.028050798 +0100
+@@ -935,6 +935,8 @@
+ #define MSR_VIA_BCR2			0x00001147
+ 
+ /* Transmeta defined MSRs */
++#define MSR_TMTA_ROM_SERVICE		0x80868000
++#define MSR_TMTA_ROM_COMPONENT(k)	(0x80868001 + (k))
+ #define MSR_TMTA_LONGRUN_CTRL		0x80868010
+ #define MSR_TMTA_LONGRUN_FLAGS		0x80868011
+ #define MSR_TMTA_LRTI_READOUT		0x80868018
+diff -urNp a/drivers/platform/x86/Kconfig b/drivers/platform/x86/Kconfig
+--- a/drivers/platform/x86/Kconfig	2026-11-11 08:09:09.059973797 +0100
++++ b/drivers/platform/x86/Kconfig	2026-11-11 08:09:09.030050820 +0100
+@@ -1061,6 +1061,20 @@ config OXP_EC
+ 		handheld devices. This includes fan speed, fan controls, and
+ 		disabling the default TDP behavior of the device.
+ 
++config TRANSMETA_CMS
++	tristate "Transmeta Code Morphing Software ROM update"
++	depends on CPU_SUP_TRANSMETA_32
++	select FW_LOADER
++	select FW_UPLOAD
++	help
++	  Read and update the boot ROM components of Transmeta Crusoe and
++	  Efficeon processors (CMS, recovery CMS, OEM configuration table,
++	  boot code) through the ROM update service of the Code Morphing
++	  Software. Updates are signed images, verified by CMS.
++
++	  To compile this driver as a module, choose M here: the module
++	  will be called transmeta-cms.
++
+ source "drivers/platform/x86/tuxedo/Kconfig"
+ 
+ endif # X86_PLATFORM_DEVICES
+diff -urNp a/drivers/platform/x86/Makefile b/drivers/platform/x86/Makefile
+--- a/drivers/platform/x86/Makefile	2026-11-11 08:09:09.060179387 +0100
++++ b/drivers/platform/x86/Makefile	2026-11-11 08:09:09.031050831 +0100
+@@ -168,5 +168,8 @@ obj-$(CONFIG_WINMATE_FM07_KEYS)		+= winm
+ # SEL
+ obj-$(CONFIG_SEL3350_PLATFORM)		+= sel3350-platform.o
+ 
++# Transmeta
++obj-$(CONFIG_TRANSMETA_CMS)		+= transmeta-cms.o
++
+ # OneXPlayer
+ obj-$(CONFIG_OXP_EC)			+= oxpec.o
+diff -urNp a/drivers/platform/x86/transmeta-cms.c b/drivers/platform/x86/transmeta-cms.c
+--- a/drivers/platform/x86/transmeta-cms.c	1970-01-01 01:00:00.000000000 +0100
++++ b/drivers/platform/x86/transmeta-cms.c	2026-11-11 08:09:09.032050842 +0100
+@@ -0,0 +1,503 @@
++// SPDX-License-Identifier: GPL-2.0-only
++/*
++ * Transmeta Code Morphing Software (CMS) ROM update service
++ *
++ * Copyright (C) 2026 René Rebe <rene@exactco.de>
++ *
++ * CMS programs its own boot ROM behind Transmeta private MSRs:
++ *  rdmsr 0x80868001 + k:  EDX = size of component k in dwords
++ *  wrmsr 0x80868000:      read component, EAX = buffer, EDX = 0x80868001 + k
++ *  wrmsr 0x80868001 + k:  program component, EAX = buffer, EDX = dwords
++ *  rdmsr 0x80868000:      EAX = status of the last request, 0 = success
++ * The buffer is an x86 linear address. Uploads are signed images with an
++ * envelope header (.cru); CMS checks it and the DSA signature before writing.
++ */
++
++#define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
++
++#include <linux/cleanup.h>
++#include <linux/device.h>
++#include <linux/device/faux.h>
++#include <linux/firmware.h>
++#include <linux/module.h>
++#include <linux/mutex.h>
++#include <linux/slab.h>
++#include <linux/string.h>
++#include <linux/sysfs.h>
++
++#include <asm/cpu_device_id.h>
++#include <asm/msr.h>
++
++#define TMTA_ENV_MAGIC		0x795b6151
++#define TMTA_ENV_HDR_SIZE	0x80
++#define TMTA_ENV_SIZE		3	/* header word: image size in bytes */
++#define TMTA_ENV_TYPES		17	/* header word: allowed component types */
++
++enum {
++	TMTA_CMS,
++	TMTA_RECOVERY_CMS,
++	TMTA_OEM_CONFIG,
++	TMTA_BOOT_CODE,
++	TMTA_WRITE_CYCLE,
++	TMTA_COMPONENTS
++};
++
++struct tmta_comp_info {
++	const char *name;
++	const char *fw_name;
++	u32 types;		/* ROM directory types the component occupies */
++};
++
++static const struct tmta_comp_info tmta_comp_info[TMTA_COMPONENTS] = {
++	[TMTA_CMS]		= { "cms", "tmta-cms", BIT(0) },
++	[TMTA_RECOVERY_CMS]	= { "recovery-cms", "tmta-recovery-cms", BIT(1) },
++	[TMTA_OEM_CONFIG]	= { "oem-config", "tmta-oem-config", BIT(2) | BIT(3) },
++	[TMTA_BOOT_CODE]	= { "boot-code", "tmta-boot-code", BIT(4) },
++	[TMTA_WRITE_CYCLE]	= { "write-cycle", "tmta-write-cycle", BIT(5) },
++};
++
++/* SoftPatch "Upgrade failed (Error code = N)" table */
++static const char * const tmta_errors[] = {
++	[1]  = "internal inconsistency",
++	[2]  = "bad upgrade arguments",
++	[3]  = "bad upgrade envelope",
++	[4]  = "vendor ID or OEM configuration table incompatible",
++	[5]  = "signature verification failure",
++	[6]  = "ROM writing verification failure",
++	[7]  = "recovery CMS is corrupted",
++	[8]  = "did not boot from serial ROM",
++	[9]  = "unexpected ROM layout",
++	[10] = "bad upgrade image",
++	[11] = "image is not signed for this processor",
++	[12] = "buffer is not in normal linear memory",
++	[13] = "no information to program parallel ROM",
++	[14] = "image is not aligned to quantum",
++	[15] = "write cycle poll algorithm not available",
++	[16] = "ROM write/erase failure",
++	[17] = "cannot find the ROM to upgrade",
++	[18] = "upgrade during snoop for PM event",
++	[20] = "compatibility version check failed",
++};
++
++struct tmta_cms;
++
++struct tmta_comp {
++	struct tmta_cms *cms;
++	unsigned int idx;
++	u32 dwords;		/* size reported at probe, 0 = not present */
++	struct fw_upload *fwl;
++	void *upload;
++	u32 upload_dwords;
++	bool cancel;
++	void *cache;		/* read-back, valid while a reader walks the file */
++	u32 cache_dwords;
++};
++
++struct tmta_cms {
++	struct device *dev;
++	struct mutex lock;	/* serializes the CMS ROM service */
++	struct tmta_comp comp[TMTA_COMPONENTS];
++};
++
++static const char *tmta_strerror(u32 status)
++{
++	if (status < ARRAY_SIZE(tmta_errors) && tmta_errors[status])
++		return tmta_errors[status];
++	return "unknown error";
++}
++
++static int tmta_status(u32 *status)
++{
++	u32 lo, hi;
++
++	if (rdmsr_safe(MSR_TMTA_ROM_SERVICE, &lo, &hi))
++		return -EIO;
++	*status = lo;
++	return 0;
++}
++
++static int tmta_get_size(unsigned int k, u32 *dwords, u32 *status)
++{
++	u32 lo, hi;
++	int ret;
++
++	preempt_disable();
++	ret = rdmsr_safe(MSR_TMTA_ROM_COMPONENT(k), &lo, &hi);
++	if (!ret)
++		ret = tmta_status(status);
++	preempt_enable();
++	if (ret)
++		return -ENODEV;
++	*dwords = hi;
++	return 0;
++}
++
++/* wrmsr request followed by its status, both on the same CPU */
++static int tmta_request(u32 msr, void *buf, u32 arg, u32 *status)
++{
++	int ret;
++
++	preempt_disable();
++	ret = wrmsr_safe(msr, (u32)(unsigned long)buf, arg);
++	if (!ret)
++		ret = tmta_status(status);
++	preempt_enable();
++	return ret ? -EIO : 0;
++}
++
++static void tmta_drop_cache(struct tmta_comp *c)
++{
++	kvfree(c->cache);
++	c->cache = NULL;
++	c->cache_dwords = 0;
++}
++
++static int tmta_read_comp(struct tmta_comp *c)
++{
++	struct device *dev = c->cms->dev;
++	u32 dwords, status;
++	void *buf;
++	int ret;
++
++	tmta_drop_cache(c);
++
++	/* CMS takes the component size from the preceding size request */
++	ret = tmta_get_size(c->idx, &dwords, &status);
++	if (ret)
++		return ret;
++	if (status || !dwords) {
++		dev_err(dev, "%s: size request failed: %u (%s)\n",
++			tmta_comp_info[c->idx].name, status, tmta_strerror(status));
++		return -EIO;
++	}
++
++	buf = kvzalloc(array_size(dwords, 4), GFP_KERNEL);
++	if (!buf)
++		return -ENOMEM;
++
++	ret = tmta_request(MSR_TMTA_ROM_SERVICE, buf,
++			   MSR_TMTA_ROM_COMPONENT(c->idx), &status);
++	if (!ret && status) {
++		dev_err(dev, "%s: read failed: %u (%s)\n",
++			tmta_comp_info[c->idx].name, status, tmta_strerror(status));
++		ret = -EIO;
++	}
++	if (ret) {
++		kvfree(buf);
++		return ret;
++	}
++
++	c->cache = buf;
++	c->cache_dwords = dwords;
++	return 0;
++}
++
++static ssize_t tmta_rom_read(struct file *filp, struct kobject *kobj,
++			     const struct bin_attribute *attr, char *buf,
++			     loff_t off, size_t count)
++{
++	struct tmta_cms *cms = dev_get_drvdata(kobj_to_dev(kobj));
++	struct tmta_comp *c = &cms->comp[(unsigned long)attr->private];
++	size_t size;
++	ssize_t ret;
++
++	guard(mutex)(&cms->lock);
++
++	/* re-read the ROM at the start of the file, release it at the end */
++	if (!off || !c->cache) {
++		ret = tmta_read_comp(c);
++		if (ret)
++			return ret;
++	}
++
++	size = array_size(min(c->cache_dwords, c->dwords), 4);
++	ret = memory_read_from_buffer(buf, count, &off, c->cache, size);
++	if (off >= size)
++		tmta_drop_cache(c);
++	return ret;
++}
++
++#define TMTA_ROM_ATTR(_k, _name)					\
++	[_k] = {							\
++		.attr = { .name = _name, .mode = 0400 },		\
++		.read = tmta_rom_read,					\
++		.private = (void *)(_k),				\
++	}
++
++static const struct bin_attribute tmta_rom_attrs[TMTA_COMPONENTS] = {
++	TMTA_ROM_ATTR(TMTA_CMS, "cms"),
++	TMTA_ROM_ATTR(TMTA_RECOVERY_CMS, "recovery-cms"),
++	TMTA_ROM_ATTR(TMTA_OEM_CONFIG, "oem-config"),
++	TMTA_ROM_ATTR(TMTA_BOOT_CODE, "boot-code"),
++	TMTA_ROM_ATTR(TMTA_WRITE_CYCLE, "write-cycle"),
++};
++
++static const struct bin_attribute *const tmta_rom_bin_attrs[] = {
++	&tmta_rom_attrs[TMTA_CMS],
++	&tmta_rom_attrs[TMTA_RECOVERY_CMS],
++	&tmta_rom_attrs[TMTA_OEM_CONFIG],
++	&tmta_rom_attrs[TMTA_BOOT_CODE],
++	&tmta_rom_attrs[TMTA_WRITE_CYCLE],
++	NULL
++};
++
++static umode_t tmta_rom_visible(struct kobject *kobj,
++				const struct bin_attribute *attr, int n)
++{
++	struct tmta_cms *cms = dev_get_drvdata(kobj_to_dev(kobj));
++
++	return cms->comp[n].dwords ? attr->attr.mode : 0;
++}
++
++static size_t tmta_rom_size(struct kobject *kobj,
++			    const struct bin_attribute *attr, int n)
++{
++	struct tmta_cms *cms = dev_get_drvdata(kobj_to_dev(kobj));
++
++	return array_size(cms->comp[n].dwords, 4);
++}
++
++static const struct attribute_group tmta_rom_group = {
++	.name = "rom",
++	.bin_attrs = tmta_rom_bin_attrs,
++	.is_bin_visible = tmta_rom_visible,
++	.bin_size = tmta_rom_size,
++};
++
++static const struct attribute_group *tmta_groups[] = {
++	&tmta_rom_group,
++	NULL
++};
++
++static enum fw_upload_err tmta_fw_err(u32 status)
++{
++	switch (status) {
++	case 0:
++		return FW_UPLOAD_ERR_NONE;
++	case 2:
++		return FW_UPLOAD_ERR_INVALID_SIZE;
++	case 3: case 4: case 5: case 10: case 11: case 14: case 19: case 20:
++		return FW_UPLOAD_ERR_FW_INVALID;
++	case 6: case 16:
++		return FW_UPLOAD_ERR_RW_ERROR;
++	case 18:
++		return FW_UPLOAD_ERR_BUSY;
++	default:
++		return FW_UPLOAD_ERR_HW_ERROR;
++	}
++}
++
++static enum fw_upload_err tmta_fw_prepare(struct fw_upload *fwl,
++					  const u8 *data, u32 size)
++{
++	struct tmta_comp *c = fwl->dd_handle;
++	const struct tmta_comp_info *info = &tmta_comp_info[c->idx];
++	struct device *dev = c->cms->dev;
++	const __le32 *hdr = (const __le32 *)data;
++	u32 len, types;
++
++	if (size < TMTA_ENV_HDR_SIZE) {
++		dev_err(dev, "%s: image too small: %u bytes\n", info->name, size);
++		return FW_UPLOAD_ERR_INVALID_SIZE;
++	}
++	if (le32_to_cpu(hdr[0]) != TMTA_ENV_MAGIC) {
++		dev_err(dev, "%s: no upgrade envelope\n", info->name);
++		return FW_UPLOAD_ERR_FW_INVALID;
++	}
++
++	len = le32_to_cpu(hdr[TMTA_ENV_SIZE]);
++	if (len < TMTA_ENV_HDR_SIZE || len > size) {
++		dev_err(dev, "%s: envelope size %u, file size %u\n",
++			info->name, len, size);
++		return FW_UPLOAD_ERR_INVALID_SIZE;
++	}
++	if (len != size)
++		dev_warn(dev, "%s: ignoring %u bytes after the envelope\n",
++			 info->name, size - len);
++
++	types = le32_to_cpu(hdr[TMTA_ENV_TYPES]);
++	if (!(types & info->types)) {
++		dev_err(dev, "%s: image is for component types %#x\n",
++			info->name, types);
++		return FW_UPLOAD_ERR_FW_INVALID;
++	}
++
++	/* CMS reads whole dwords, pad the tail with zeros */
++	c->upload_dwords = DIV_ROUND_UP(len, 4);
++	c->upload = kvzalloc(array_size(c->upload_dwords, 4), GFP_KERNEL);
++	if (!c->upload)
++		return FW_UPLOAD_ERR_HW_ERROR;
++	memcpy(c->upload, data, len);
++	WRITE_ONCE(c->cancel, false);
++	return FW_UPLOAD_ERR_NONE;
++}
++
++static enum fw_upload_err tmta_fw_write(struct fw_upload *fwl, const u8 *data,
++					u32 offset, u32 size, u32 *written)
++{
++	struct tmta_comp *c = fwl->dd_handle;
++	struct tmta_cms *cms = c->cms;
++	const char *name = tmta_comp_info[c->idx].name;
++	u32 status;
++	int ret;
++
++	if (READ_ONCE(c->cancel))
++		return FW_UPLOAD_ERR_CANCELED;
++
++	guard(mutex)(&cms->lock);
++	tmta_drop_cache(c);
++
++	dev_info(cms->dev, "%s: programming %u bytes\n", name,
++		 c->upload_dwords * 4);
++	ret = tmta_request(MSR_TMTA_ROM_COMPONENT(c->idx), c->upload,
++			   c->upload_dwords, &status);
++	if (ret) {
++		dev_err(cms->dev, "%s: ROM service not available\n", name);
++		return FW_UPLOAD_ERR_HW_ERROR;
++	}
++	if (status) {
++		dev_err(cms->dev, "%s: upgrade failed: %u (%s)\n",
++			name, status, tmta_strerror(status));
++		return tmta_fw_err(status);
++	}
++
++	dev_info(cms->dev, "%s: upgrade complete\n", name);
++	*written = size;
++	return FW_UPLOAD_ERR_NONE;
++}
++
++static enum fw_upload_err tmta_fw_poll_complete(struct fw_upload *fwl)
++{
++	return FW_UPLOAD_ERR_NONE;
++}
++
++/* a running request cannot be stopped, only one not yet issued */
++static void tmta_fw_cancel(struct fw_upload *fwl)
++{
++	struct tmta_comp *c = fwl->dd_handle;
++
++	WRITE_ONCE(c->cancel, true);
++}
++
++static void tmta_fw_cleanup(struct fw_upload *fwl)
++{
++	struct tmta_comp *c = fwl->dd_handle;
++
++	kvfree(c->upload);
++	c->upload = NULL;
++	c->upload_dwords = 0;
++}
++
++static const struct fw_upload_ops tmta_fw_ops = {
++	.prepare = tmta_fw_prepare,
++	.write = tmta_fw_write,
++	.poll_complete = tmta_fw_poll_complete,
++	.cancel = tmta_fw_cancel,
++	.cleanup = tmta_fw_cleanup,
++};
++
++static void tmta_cms_unregister(void *data)
++{
++	struct tmta_cms *cms = data;
++	unsigned int k;
++
++	for (k = 0; k < TMTA_COMPONENTS; k++) {
++		if (cms->comp[k].fwl)
++			firmware_upload_unregister(cms->comp[k].fwl);
++		tmta_drop_cache(&cms->comp[k]);
++	}
++}
++
++static int tmta_cms_probe(struct faux_device *fdev)
++{
++	struct device *dev = &fdev->dev;
++	unsigned int k, found = 0;
++	struct tmta_cms *cms;
++	struct fw_upload *fwl;
++	int ret;
++
++	cms = devm_kzalloc(dev, sizeof(*cms), GFP_KERNEL);
++	if (!cms)
++		return -ENOMEM;
++	cms->dev = dev;
++	ret = devm_mutex_init(dev, &cms->lock);
++	if (ret)
++		return ret;
++
++	for (k = 0; k < TMTA_COMPONENTS; k++) {
++		struct tmta_comp *c = &cms->comp[k];
++		u32 dwords, status;
++
++		c->cms = cms;
++		c->idx = k;
++		if (tmta_get_size(k, &dwords, &status))
++			continue;
++		found++;
++		if (status) {
++			dev_info(dev, "%s: not available: %u (%s)\n",
++				 tmta_comp_info[k].name, status,
++				 tmta_strerror(status));
++			continue;
++		}
++		c->dwords = dwords;
++		dev_info(dev, "%s: %u bytes\n", tmta_comp_info[k].name,
++			 dwords * 4);
++	}
++	if (!found)
++		return -ENODEV;
++
++	faux_device_set_drvdata(fdev, cms);
++	ret = devm_add_action(dev, tmta_cms_unregister, cms);
++	if (ret)
++		return ret;
++
++	for (k = 0; k < TMTA_COMPONENTS; k++) {
++		struct tmta_comp *c = &cms->comp[k];
++
++		if (!c->dwords)
++			continue;
++		fwl = firmware_upload_register(THIS_MODULE, dev,
++					       tmta_comp_info[k].fw_name,
++					       &tmta_fw_ops, c);
++		if (IS_ERR(fwl))
++			return dev_err_probe(dev, PTR_ERR(fwl),
++					     "%s: firmware upload registration failed\n",
++					     tmta_comp_info[k].name);
++		c->fwl = fwl;
++	}
++	return 0;
++}
++
++static const struct faux_device_ops tmta_cms_ops = {
++	.probe = tmta_cms_probe,
++};
++
++static const struct x86_cpu_id tmta_cms_ids[] = {
++	X86_MATCH_VENDOR_FAM(TRANSMETA, X86_FAMILY_ANY, NULL),
++	{}
++};
++MODULE_DEVICE_TABLE(x86cpu, tmta_cms_ids);
++
++static struct faux_device *tmta_cms_fdev;
++
++static int __init tmta_cms_init(void)
++{
++	if (!x86_match_cpu(tmta_cms_ids))
++		return -ENODEV;
++
++	tmta_cms_fdev = faux_device_create_with_groups(KBUILD_MODNAME, NULL,
++							&tmta_cms_ops,
++							tmta_groups);
++	return tmta_cms_fdev ? 0 : -ENODEV;
++}
++module_init(tmta_cms_init);
++
++static void __exit tmta_cms_exit(void)
++{
++	faux_device_destroy(tmta_cms_fdev);
++}
++module_exit(tmta_cms_exit);
++
++MODULE_AUTHOR("René Rebe <rene@exactco.de>");
++MODULE_DESCRIPTION("Transmeta Code Morphing Software ROM update");
++MODULE_LICENSE("GPL");
