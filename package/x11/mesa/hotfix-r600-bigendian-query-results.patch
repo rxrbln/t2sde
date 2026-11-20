@@ -1,0 +1,55 @@
+# --- T2-COPYRIGHT-BEGIN ---
+# t2/package/*/mesa/hotfix-r600-bigendian-query-results.patch
+# Copyright (C) 2026 The T2 SDE Project
+# SPDX-License-Identifier: GPL-2.0 or patched project license
+# --- T2-COPYRIGHT-END ---
+
+Some Textures where invisible with HD4550 in Sauerbraten.
+In game tested and confirmed working.
+
+--- mesa-26.2.7/src/gallium/drivers/r600/r600_query.c
++++ mesa-26.2.7/src/gallium/drivers/r600/r600_query.c
+@@ -10,6 +10,7 @@
+ #include "util/u_memory.h"
+ #include "util/u_upload_mgr.h"
+ #include "util/os_time.h"
++#include "util/u_math.h"
+ #include "nir/nir_builder.h"
+ 
+ #define R600_MAX_STREAMS 4
+@@ -529,8 +530,8 @@
+ 		for (j = 0; j < num_results; j++) {
+ 			for (i = 0; i < max_rbs; i++) {
+ 				if (!(enabled_rb_mask & (1<<i))) {
+-					results[(i * 4)+1] = 0x80000000;
+-					results[(i * 4)+3] = 0x80000000;
++					results[(i * 4)+1] = util_cpu_to_le32(0x80000000);
++					results[(i * 4)+3] = util_cpu_to_le32(0x80000000);
+ 				}
+ 			}
+ 			results += 4 * max_rbs;
+@@ -1144,10 +1145,10 @@
+ 	uint32_t *current_result = (uint32_t*)map;
+ 	uint64_t start, end;
+ 
+-	start = (uint64_t)current_result[start_index] |
+-		(uint64_t)current_result[start_index+1] << 32;
+-	end = (uint64_t)current_result[end_index] |
+-	      (uint64_t)current_result[end_index+1] << 32;
++	start = (uint64_t)util_le32_to_cpu(current_result[start_index]) |
++		(uint64_t)util_le32_to_cpu(current_result[start_index+1]) << 32;
++	end = (uint64_t)util_le32_to_cpu(current_result[end_index]) |
++	      (uint64_t)util_le32_to_cpu(current_result[end_index+1]) << 32;
+ 
+ 	if (!test_status_bit ||
+ 	    ((start & 0x8000000000000000UL) && (end & 0x8000000000000000UL))) {
+@@ -1185,7 +1186,8 @@
+ 		result->u64 += r600_query_read_result(buffer, 0, 2, false);
+ 		break;
+ 	case PIPE_QUERY_TIMESTAMP:
+-		result->u64 = *(uint64_t*)buffer;
++		result->u64 = (uint64_t)util_le32_to_cpu(((uint32_t*)buffer)[0]) |
++			      (uint64_t)util_le32_to_cpu(((uint32_t*)buffer)[1]) << 32;
+ 		break;
+ 	case PIPE_QUERY_PRIMITIVES_EMITTED:
+ 		/* SAMPLE_STREAMOUTSTATS stores this structure:
