@@ -34,7 +34,7 @@ fwopt[e100.ko]=1	# popular vintage
 
 
 # TODO: defauls for vintage vs. latest, usb, pata, etc.
-filter="-e /loop -e ext2 -e ext4 -e /xfs -e isofs -e squashfs -e zram -e pata_legacy
+filter="-e /loop -e ext2 -e ext4 -e /xfs -e isofs -e squashfs -e overlayfs -e zram -e pata_legacy
 -e pata_.*platform -e pata_macio -e mac_esp -e sym53c8xx -e /aic7xxx -e qla1280
 -e s[rd]_mod -e /ahci.ko -e [uo]hci-[ph][c][id] -e usbhid -e /offb -e ps3fb"
 
@@ -64,7 +64,7 @@ done
 
 # -e ps3vram
 [ -z "$minimal" ] && filter="$filter -e reiserfs -e btrfs -e /jfs -e /zfs -e jffs2 -e fs/9p
--e /udf -e overlayfs -e ntfs -e /fat -e /exfat -e /hfs -e floppy -e efivarfs -e watchdog
+-e /udf -e ntfs -e /fat -e /exfat -e /hfs -e floppy -e efivarfs -e watchdog
 -e pci/controller -e /ata/ -e /scsi/ -e /fusion/ -e nvme/host -e mmc/host -e mmc_block
 -e virtio.\(blk\|scsi\|net\|console\|input\|gpu\|pci\|ring\) -e ps3disk -e drivers/pcmcia
 -e /nvme.ko -e pci-host-generic -e virtio_pci_.*_dev -e sunvdc -e 9pnet_virtio -e pci-stub
