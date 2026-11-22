@@ -1,0 +1,77 @@
+# --- T2-COPYRIGHT-BEGIN ---
+# t2/package/*/firefox/hotfix-swgl-upscale-row-check-hoist.patch
+# Copyright (C) 2026 The T2 SDE Project
+# SPDX-License-Identifier: GPL-2.0 or patched project license
+# --- T2-COPYRIGHT-END ---
+
+# Fixes a Firefox 159 regression in SWGL's bilinear upscale path.
+#
+# 159 added a bounds check inside blendTextureLinearUpscale()'s chunk loop:
+# if accumulated float rounding steps uv.x.x past the row, the rest of the
+# span is finished in blendTextureLinearFallback() and the function returns.
+# In practice the check does not fire, but the early return gives the inner
+# loop a second exit. GCC then no longer makes it a counted loop (br.cloop on
+# ia64), and -funroll-loops stops unrolling it. On Itanium 2 the blended
+# variant went from 31.2 to 45.8 cycles/pixel (+47%); the unblended one lost
+# about 4%.
+#
+# The check can be proven redundant before the loop. The dispatcher sizes the
+# span so that the exact last position is a full texel inside the row,
+# uv.x.x only grows (uv_step.x > 0), and each float add errs by at most half
+# an ulp of a value below limit + uv_step.x. So if
+#
+#     x0 + n * step + n * (limit + step) * 2^-23 < limit
+#
+# (computed in double, allowing a full ulp per add) the check cannot fire,
+# and the loop runs without it. Otherwise the checked loop from 159 runs
+# unchanged. Output and memory accesses are identical to unpatched 159 in
+# every case.
+#
+# Measured on Itanium 2 with the SWGL bench, cycles/pixel, 158 / 159 /
+# patched: bilinear 0.5 blend 31.21 / 45.85 / 29.18; unblended bilinear 0.5,
+# composite and scale blit ~19.9 / ~20.7 / ~21.2 (same instructions as 158,
+# scheduled differently by GCC). All checksums identical.
+
+--- firefox-159.0/gfx/wr/swgl/src/swgl_ext.h.vanilla
++++ firefox-159.0/gfx/wr/swgl/src/swgl_ext.h
+@@ -229,6 +229,18 @@
+       CONVERT(unaligned_load<packed_type>(&row1[i.x.x]), signed_unpacked_type);
+   auto src = castForShuffle(src0 + (((src1 - src0) * fracy) >> 7));
+ 
++  // The row check below can only fire if accumulated float rounding carries
++  // uv.x.x past the row; the caller leaves a texel of slack for that. When the
++  // worst case rounding provably stays inside, run the loop without the check,
++  // which keeps it a single-exit counted loop the compiler can unroll. uv.x.x
++  // only grows (uv_step.x > 0), and each add errs by at most half an ulp of a
++  // value below limit + uv_step.x; the bound below allows a full ulp per add.
++  int chunks = (span + 3) / 4;
++  double limit = double(maxX + 1) * 128.0;
++  double drift = double(chunks) * (limit + uv_step.x) * 0x1p-23;
++  double last = double(uv.x.x) + double(chunks) * uv_step.x;
++  bool rowSafe = uv.x.x > -1.0f && last + drift < limit;
++  auto run = [&](auto checkRow) {
+   // We attempt to sample ahead by one chunk and interpolate it with the current
+   // one. However, due to the complication of upscaling, we may not necessarily
+   // shift in all the next set of samples.
+@@ -239,7 +251,7 @@
+     I16 fracn = computeFracNoClamp(ixn);
+     ixn >>= 7;
+     // Accumulated UV rounding must not step outside the row.
+-    if (uint32_t(ixn.x) > uint32_t(maxX)) {
++    if (decltype(checkRow)::value && uint32_t(ixn.x) > uint32_t(maxX)) {
+       blendTextureLinearFallback<BLEND>(sampler, {prevX, uv.y}, int(end - buf),
+                                         uv_step, min_uv, max_uv, color, buf);
+       return;
+@@ -289,6 +301,12 @@
+     fracx = fracn;
+     src = srcn;
+   }
++  };
++  if (rowSafe) {
++    run(std::false_type());
++  } else {
++    run(std::true_type());
++  }
+ }
+ 
+ // This is the fastest variant of the linear filter that still provides
