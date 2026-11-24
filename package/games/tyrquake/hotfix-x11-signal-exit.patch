@@ -1,0 +1,60 @@
+Fix a crash at every signal exit (SIGTERM, SIGINT, or a fault): the GLX
+signal handler closes x_disp but leaves it set, then Sys_Quit() ->
+Host_Shutdown() -> VID_Shutdown() resets the gamma ramp on the freed Display.
+
+  Signal: 11 (SEGV) si_code: SEGV_MAPERR
+  #0  _XSend (libX11.so.6 + 0x3fe08)
+  #5  XF86VidModeSetGammaRamp (libXxf86vm.so.1 + 0x3184)
+
+Use VID_Shutdown() in the handlers, which also restores the video mode.
+The software renderer's TragicDeath() closed the display twice the same way.
+
+Signed-off-by: René Rebe <rene@exactco.de>
+
+diff -urp a/common/vid_glx.c b/common/vid_glx.c
+--- a/common/vid_glx.c
++++ b/common/vid_glx.c
+@@ -166,21 +166,7 @@ void
+ signal_handler(int sig)
+ {
+     printf("Received signal %d, exiting...\n", sig);
+-    if (ctx) {
+-        glXMakeCurrent(x_disp, None, NULL);
+-        glXDestroyContext(x_disp, ctx);
+-    }
+-    if (x_win) {
+-        IN_UngrabKeyboard();
+-        IN_UngrabMouse();
+-        XDestroyWindow(x_disp, x_win);
+-    }
+-    if (VID_SetGammaRamp)
+-        XF86VidModeSetGammaRamp(x_disp, scrnum, x11_gamma_size,
+-                                x11_gamma_ramp,
+-                                x11_gamma_ramp + x11_gamma_size,
+-                                x11_gamma_ramp + x11_gamma_size * 2);
+-    XCloseDisplay(x_disp);
++    VID_Shutdown();
+     Sys_Quit();
+ }
+ 
+diff -urp a/common/vid_x.c b/common/vid_x.c
+--- a/common/vid_x.c
++++ b/common/vid_x.c
+@@ -426,8 +426,7 @@ VID_ResolveFramebuffer(XImage *framebuf,
+ static void
+ TragicDeath(int signal_num)
+ {
+-    if (x_disp)
+-        XCloseDisplay(x_disp);
++    VID_Shutdown();
+     Sys_Error("This death brought to you by the number %d", signal_num);
+ }
+ 
+@@ -926,6 +925,7 @@ VID_Shutdown(void)
+     VID_restore_vidmode();
+     if (x_disp)
+         XCloseDisplay(x_disp);
++    x_disp = NULL;
+ }
+ 
+ static int config_notify = 0;
