@@ -1,0 +1,71 @@
+# --- T2-COPYRIGHT-BEGIN ---
+# t2/package/*/libopus/hotfix-arm-neon.patch
+# Copyright (C) 2026 The T2 SDE Project
+# SPDX-License-Identifier: GPL-2.0 or patched project license
+# --- T2-COPYRIGHT-END ---
+
+Fix the CMake ARM32 build with runtime NEON detection: the NEON intrinsic
+sources were compiled without -mfpu=neon, failing with "inlining failed in
+call to always_inline: target specific option mismatch". Detect the needed
+flags like ARM_NEON_INTR_CFLAGS in configure.ac and set them per source.
+
+Signed-off-by: René Rebe <rene@exactco.de>
+
+--- a/CMakeLists.txt	2025-11-07 23:12:41.000000000 +0100
++++ b/CMakeLists.txt	2026-11-25 20:10:14.655654252 +0100
+@@ -587,6 +587,18 @@ if(NOT OPUS_DISABLE_INTRINSICS)
+       add_sources_group(opus silk ${silk_sources_fixed_arm_neon_intr})
+     endif()
+ 
++    # ARM32 NEON intrinsic sources need the FPU enabled, like ARM_NEON_INTR_CFLAGS in configure
++    if(NOT OPUS_PRESUME_NEON AND NOT MSVC AND NOT CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64")
++      opus_detect_neon_intr_cflags(ARM_NEON_INTR_CFLAGS)
++      if(ARM_NEON_INTR_CFLAGS)
++        set_source_files_properties(${celt_sources_arm_neon_intr}
++                                    ${silk_sources_arm_neon_intr}
++                                    ${silk_sources_fixed_arm_neon_intr}
++                                    ${dnn_sources_arm_neon}
++                                    PROPERTIES COMPILE_OPTIONS "${ARM_NEON_INTR_CFLAGS}")
++      endif()
++    endif()
++
+     if(OPUS_PRESUME_NEON)
+       target_compile_definitions(opus
+                                  PRIVATE
+--- a/cmake/OpusFunctions.cmake	2025-11-07 23:12:41.000000000 +0100
++++ b/cmake/OpusFunctions.cmake	2026-11-25 20:10:14.656654261 +0100
+@@ -143,6 +143,34 @@ function(opus_detect_neon COMPILER_SUPPO
+   endif()
+ endfunction()
+ 
++# Find extra flags (if any) needed to compile NEON intrinsics, softfp for soft-float ABI
++function(opus_detect_neon_intr_cflags ARM_NEON_INTR_CFLAGS)
++  include(CheckCSourceCompiles)
++  set(_src "#include <arm_neon.h>
++int main(void) {
++  static int32_t buf[4] = {1, 2, 3, 4};
++  int32x4_t a = vld1q_s32(buf);
++  vst1q_s32(buf, vaddq_s32(a, a));
++  return buf[0] == 2 ? 0 : 1;
++}")
++  set(_candidates "NONE" "-mfpu=neon" "-mfpu=neon -mfloat-abi=softfp")
++  set(_idx 0)
++  foreach(CMAKE_REQUIRED_FLAGS IN LISTS _candidates)
++    if(CMAKE_REQUIRED_FLAGS STREQUAL "NONE")
++      set(CMAKE_REQUIRED_FLAGS "")
++    endif()
++    check_c_source_compiles("${_src}" ARM_NEON_INTR_CFLAGS_${_idx}_WORKS)
++    if(ARM_NEON_INTR_CFLAGS_${_idx}_WORKS)
++      message(STATUS "NEON intrinsics compile flags: ${CMAKE_REQUIRED_FLAGS}")
++      separate_arguments(_flags UNIX_COMMAND "${CMAKE_REQUIRED_FLAGS}")
++      set(${ARM_NEON_INTR_CFLAGS} "${_flags}" PARENT_SCOPE)
++      return()
++    endif()
++    math(EXPR _idx "${_idx} + 1")
++  endforeach()
++  message(STATUS "NEON intrinsics compile flags: not found")
++endfunction()
++
+ function(opus_supports_cpu_detection RUNTIME_CPU_CAPABILITY_DETECTION)
+   set(RUNTIME_CPU_CAPABILITY_DETECTION 0 PARENT_SCOPE)
+   if(OPUS_CPU_X86 OR OPUS_CPU_X64)
