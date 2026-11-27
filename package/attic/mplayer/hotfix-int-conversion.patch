@@ -1,0 +1,40 @@
+# --- T2-COPYRIGHT-BEGIN ---
+# t2/package/*/mplayer/hotfix-int-conversion.patch
+# Copyright (C) 2026 The T2 SDE Project
+# SPDX-License-Identifier: GPL-2.0
+# --- T2-COPYRIGHT-END ---
+
+Cast the VDPAU surface handle passed in planes[3], and pass the rc_override
+pointer to av_reallocp_array instead of assigning its int return value.
+
+diff -urp a/libmpcodecs/vd_ffmpeg.c b/libmpcodecs/vd_ffmpeg.c
+--- a/libmpcodecs/vd_ffmpeg.c	2026-11-24 22:03:41.462540670 +0000
++++ b/libmpcodecs/vd_ffmpeg.c	2026-11-24 22:03:41.763175231 +0000
+@@ -737,9 +737,9 @@ static int get_buffer(AVCodecContext *av
+         avctx->draw_horiz_band= NULL;
+ #if CONFIG_VDPAU
+     if (ctx->use_vdpau) {
+-        VdpVideoSurface surface = (VdpVideoSurface)mpi->priv;
++        VdpVideoSurface surface = (VdpVideoSurface)(uintptr_t)mpi->priv;
+         avctx->draw_horiz_band= NULL;
+-        mpi->planes[3] = surface;
++        mpi->planes[3] = (uint8_t *)(uintptr_t)surface;
+     }
+ #endif
+ #if CONFIG_XVMC
+diff -urp a/libmpcodecs/ve_lavc.c b/libmpcodecs/ve_lavc.c
+--- a/libmpcodecs/ve_lavc.c	2026-11-24 22:05:07.273779410 +0000
++++ b/libmpcodecs/ve_lavc.c	2026-11-24 22:05:07.636031145 +0000
+@@ -441,8 +441,10 @@ static int config(struct vf_instance *vf
+ 	    mp_msg(MSGT_MENCODER,MSGL_ERR,"error parsing vrc_q\n");
+             return 0;
+         }
+-        lavc_venc_context->rc_override=
+-            av_reallocp_array(lavc_venc_context->rc_override, i+1, sizeof(*lavc_venc_context->rc_override));
++        if (av_reallocp_array(&lavc_venc_context->rc_override, i+1, sizeof(*lavc_venc_context->rc_override)) < 0) {
++            mp_msg(MSGT_MENCODER,MSGL_ERR,"error allocating vrc_override\n");
++            return 0;
++        }
+         lavc_venc_context->rc_override[i].start_frame= start;
+         lavc_venc_context->rc_override[i].end_frame  = end;
+         if(q>0){
