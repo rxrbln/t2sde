@@ -33,12 +33,18 @@ cross-compilation, not just look plausible. Never:
 1. Do not simply disable features that do not build, correctly conditionalize
    optional dependencies to pkginstalled $pkg || ...disable feature... or
    atstage cross && ... if a feature does not cross compile for reasons.
-2. **Adding `[E] add pkg` / `[E] opt pkg` to a `.desc` without also adding the
-   matching `[DEP] pkg` / `[OPT] pkg` line to that package's `.cache`** (same
-   directory, `<pkg>.cache`). The `.cache` file is what the build *scheduler*
-   uses for dependency-graph/build-order decisions; a `.desc`-only edit does
-   not immediately take effect for a full/bulk target build until the `.cache`
-   also has it (or a full successful build regenerates the cache itself).
+2. **Adding `[E] add pkg` / `[E] opt pkg` for a dependency the build really
+   uses.** A successful build records every package whose files it used
+   (fl_wrapper) in its `.cache`, e.g. php for phppgadmin taking php's prefix,
+   so such an `[E]` line is redundant noise. Use `[E]` only for dependencies a
+   build cannot record itself, because fl_wrapper filters them or a program is
+   only probed for while still missing: then add `[E] add pkg` to the `.desc`
+   and the matching `[DEP] pkg` to the `.cache`, else the next cache refresh
+   drops it again. The `.cache` file (same directory,
+   `<pkg>.cache`) is what the build *scheduler* uses for build-order
+   decisions, and `[E]` lines are not read by it: when the order must be
+   fixed before the next successful build, add just the `[DEP] pkg` /
+   `[OPT] pkg` line to the `.cache`.
 3. **The opposite mistake, just as common: adding `[E] add pkg` when `pkg` is
    ALREADY listed in the `.cache`.** If it's already there, the dependency is
    already correctly tracked — adding a `.desc` line is a no-op that doesn't
@@ -100,6 +106,10 @@ cross-compilation, not just look plausible. Never:
     and SDL2 copies). Build against the system packages (`USE_INTERNAL_LIBS=0`,
     `--with-system-*`, `-DUSE_SYSTEM_*=ON`, ...) and conditionalize the
     features of optional ones with `pkginstalled`.
+15. For out-of-source builds (e.g. CMake "generation is not possible within
+    the source directory"), set `[F] OBJDIR` in the `.desc`. Do not hand-add
+    a `hook_add preconf ... "mkdir -p objs; cd objs"`; Build-Pkg already does
+    that (and sets `configscript=../configure`) for the flag.
 
 ## Generic fixes already in `scripts/functions.in`
 
