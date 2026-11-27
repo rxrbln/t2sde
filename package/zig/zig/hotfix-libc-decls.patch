@@ -1,0 +1,54 @@
+# --- T2-COPYRIGHT-BEGIN ---
+# t2/package/*/zig/hotfix-libc-decls.patch
+# Copyright (C) 2026 The T2 SDE Project
+# SPDX-License-Identifier: GPL-2.0 or patched project license
+# --- T2-COPYRIGHT-END ---
+
+std.posix uses std.c when linking libc, which lacks fanotify_init,
+fanotify_mark, name_to_handle_at and the pointer style tc[gs]etpgrp.
+
+--- zig-0.18.0-dev.1272+2ff397f75.orig/lib/std/c.zig
++++ zig-0.18.0-dev.1272+2ff397f75/lib/std/c.zig
+@@ -10631,6 +10631,33 @@ pub extern "c" fn inotify_init1(flags: c
+ pub extern "c" fn inotify_add_watch(fd: fd_t, pathname: [*:0]const u8, mask: u32) c_int;
+ pub extern "c" fn inotify_rm_watch(fd: fd_t, wd: c_int) c_int;
+ 
++pub extern "c" fn fanotify_init(flags: linux.fanotify.InitFlags, event_f_flags: c_uint) c_int;
++pub extern "c" fn fanotify_mark(
++    fd: fd_t,
++    flags: linux.fanotify.MarkFlags,
++    mask: linux.fanotify.MarkMask,
++    dirfd: fd_t,
++    pathname: ?[*:0]const u8,
++) c_int;
++pub extern "c" fn name_to_handle_at(
++    dirfd: fd_t,
++    pathname: [*:0]const u8,
++    handle: *linux.file_handle,
++    mount_id: *i32,
++    flags: u32,
++) c_int;
++
++// std.posix passes the process group by pointer, like the Linux ioctls
++pub fn tcgetpgrp(fd: fd_t, pgrp: *pid_t) c_int {
++    const rc = private.tcgetpgrp(fd);
++    if (rc == -1) return -1;
++    pgrp.* = rc;
++    return 0;
++}
++pub fn tcsetpgrp(fd: fd_t, pgrp: *const pid_t) c_int {
++    return private.tcsetpgrp(fd, pgrp.*);
++}
++
+ pub extern "c" fn fallocate64(fd: fd_t, mode: c_int, offset: off_t, len: off_t) c_int;
+ pub extern "c" fn fopen64(noalias filename: [*:0]const u8, noalias modes: [*:0]const u8) ?*FILE;
+ pub extern "c" fn ftruncate64(fd: c_int, length: off_t) c_int;
+@@ -12031,6 +12058,8 @@ pub const setkeymap = serenity.setkeymap
+ 
+ /// External definitions shared by two or more operating systems.
+ const private = struct {
++    extern "c" fn tcgetpgrp(fd: fd_t) pid_t;
++    extern "c" fn tcsetpgrp(fd: fd_t, pgrp: pid_t) c_int;
+     extern "c" fn srand48(seed: c_ulong) void;
+     extern "c" fn seed48(seed16v: *[3]c_ushort) *[3]c_ushort;
+     extern "c" fn lcong48(param: *[7]c_ushort) void;
