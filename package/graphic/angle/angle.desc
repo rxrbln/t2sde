@@ -1,0 +1,71 @@
+[COPY] --- T2-COPYRIGHT-BEGIN ---
+[COPY] t2/package/*/angle/angle.desc
+[COPY] Copyright (C) 2026 The T2 SDE Project
+[COPY] SPDX-License-Identifier: GPL-2.0
+[COPY] --- T2-COPYRIGHT-END ---
+
+[I] Almost Native Graphics Layer Engine, OpenGL ES on top of OpenGL
+
+[T] ANGLE is a conformant OpenGL ES and EGL implementation translating to the
+[T] platform graphics API, here desktop OpenGL. Built with the CMake build
+[T] system of the WebKit and ladybird ports, installed below /opt/angle as its
+[T] EGL and GLES headers and libraries would collide with libglvnd, used by
+[T] ladybird.
+
+[U] https://angleproject.org/
+
+[A] Google
+[M] The T2 Project <t2@t2-project.org>
+
+[C] extra/development
+[F] CROSS OBJDIR
+
+[L] BSD
+[V] 7258
+[P] X -----5---9 150.500
+
+[D] e0d9f032f9882530fd214bd66904cab234d9f4d64684662f0aee9e83 angle-d9fc4a3.tar.gz https://github.com/google/angle/archive/d9fc4a372074b1079c193c422fc4a180e79b6636/
+[D] 7bfb02b891b81ca79658e7b41b9c9537fc7014158f58bce2db504b53 chromium-zlib-4028ebf.tar.zst git+https://chromium.googlesource.com/chromium/src/third_party/zlib 4028ebf8710ee39d2286cb0f847f9b95c59f84d8
+[D] 58bb5cd6141d95283cdefda14b7dfea2841456d332ce8abeef536781 angle-gni-to-cmake-0742522.py !https://github.com/WebKit/WebKit/raw/0742522b24152262b04913242cb0b3c48de92ba0/Source/ThirdParty/ANGLE/gni-to-cmake.py
+[D] fb916e8425dee5e24debea6ef43b296085ff4d191fdb837a1560143f angle-include-CMakeLists-0742522.txt !https://github.com/WebKit/WebKit/raw/0742522b24152262b04913242cb0b3c48de92ba0/Source/ThirdParty/ANGLE/include/CMakeLists.txt
+[D] 4a633977f379c204f456d556e6a7a4aceae6bd1c6791a79095c7ae3e ladybird-2026.47.7.tar.zst git+https://github.com/LadybirdBrowser/ladybird 2026.47.7
+
+[ $prefix_auto = 1 ] && prefix=opt/angle && set_confopt
+
+[ "$arch_sizeof_char_p" = 4 ] && bitness=ANGLE_IS_32_BIT_CPU || bitness=ANGLE_IS_64_BIT_CPU
+var_append cmakeopt ' ' "-D$bitness=1 -DPORT=Linux -DUSE_METAL=OFF"
+var_append cmakeopt ' ' "-DANGLE_USE_D3D11_COMPOSITOR_NATIVE_WINDOW=OFF -DVCPKG_TARGET_IS_WINDOWS=OFF"
+
+# assemble the CMake build of the ladybird vcpkg port: its CMake files, the
+# chromium zlib wrapper, the generated version headers and the GN source lists
+angle_prepare() {
+	local port=ladybird/Meta/CMake/vcpkg/overlay-ports/angle x
+	tar $taropt $(match_source_file -p ladybird) $port
+	cp -v $port/cmake-buildsystem/CMakeLists.txt $port/cmake-buildsystem/*.cmake .
+	mkdir -p cmake; cp -v $port/cmake-buildsystem/cmake/*.cmake cmake/
+	cp -v $port/unofficial-angle-config.cmake .
+	sed -i 's/DESTINATION lib$/DESTINATION ${CMAKE_INSTALL_LIBDIR}/' CMakeLists.txt
+
+	mkdir -p third_party/zlib
+	tar $taropt $(match_source_file -p chromium-zlib) --strip-components=1 -C third_party/zlib
+
+	for x in . src/common; do
+		sed -e 's/#cmakedefine \([A-Z_]*\) /#define \1 /' -e 's/@ANGLE_COMMIT_HASH@/d9fc4a372074/' \
+		    -e 's/@ANGLE_COMMIT_HASH_SIZE@/12/' -e 's/@ANGLE_COMMIT_DATE@/invalid-date/' \
+		    -e 's/@ANGLE_REVISION@/7258/' $port/angle_commit.h.in > $x/angle_commit.h
+		sed -e 's/#cmakedefine \([A-Z_]*\) /#define \1 /' -e 's/@ANGLE_PROGRAM_VERSION@/d9fc4a372074/' \
+		    -e 's/@ANGLE_PROGRAM_VERSION_HASH_SIZE@/12/' \
+		    $port/ANGLEShaderProgramVersion.h.in > $x/ANGLEShaderProgramVersion.h
+	done
+
+	x=$(match_source_file -p angle-gni-to-cmake)
+	python3 $x src/compiler.gni Compiler.cmake
+	python3 $x src/libGLESv2.gni GLESv2.cmake
+	for x in d3d:D3D gl:GL metal:Metal; do
+		python3 $(match_source_file -p angle-gni-to-cmake) src/libANGLE/renderer/${x%:*}/BUILD.gn \
+			${x#*:}.cmake --prepend src/libANGLE/renderer/${x%:*}/
+	done
+	cp -v $(match_source_file -p angle-include-CMakeLists) include/CMakeLists.txt
+	rm -rf ladybird
+}
+hook_add prepatch 5 angle_prepare
