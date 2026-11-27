@@ -4,7 +4,6 @@
 # SPDX-License-Identifier: GPL-2.0 or patched project license
 # --- T2-COPYRIGHT-END ---
 
-Sparc only issue (was already in 52.x)
 Crash Annotation GraphicsCriticalError: |[0][GFX1]: Unknown image format 1 (t=6.67237) [GFX1]: Unknown image format 1
 Assertion failure: [GFX1]: Unknown image format 1, at /scratch/firefox/obj-sparc64-sun-solaris2.11/dist/include/mozilla/gfx/Logging.h:727
 Hit MOZ_CRASH(GFX: An assert from the graphics logger) at /scratch/firefox/obj-sparc64-sun-solaris2.11/dist/include/mozilla/gfx/Logging.h:728
@@ -53,8 +52,6 @@ Couldn't convert chrome URL: chrome://branding/locale/brand.properties
 
 https://bugzilla.mozilla.org/show_bug.cgi?id=1344659
 
-Sparc DEBUG build only issue:
-
 [GFX2-]: Failed to lock WindowSurface, falling back to XPutImage backend.
 Crash Annotation GraphicsCriticalError: |[0][GFX1]: RGBX corner pixel at (0,0) in 921x691 surface, bounded by (0,0,921,691) is not opaque: 255,162,162,162 (t=7.19982) [GFX1]: RGBX corner pixel at (0,0) in 921x691 surface, bounded by (0,0,921,691) is not opaque: 255,162,162,162
 Assertion failure: [GFX1]: RGBX corner pixel at (0,0) in 921x691 surface, bounded by (0,0,921,691) is not opaque: 255,162,162,162, at /scratch/firefox/gfx/2d/Logging.h:727
@@ -74,63 +71,9 @@ https://bugzilla.mozilla.org/show_bug.cgi?id=1325259
  
  static bool VerifyRGBXFormat(uint8_t* aData, const IntSize& aSize,
                               const int32_t aStride, SurfaceFormat aFormat) {
-# HG changeset patch
-# User Petr Sumbera <petr.sumbera@oracle.com>
-# Date 1648114576 25200
-#      Thu Mar 24 02:36:16 2022 -0700
-# Node ID 903e5f164c0ed424492eec6f388c03cbbcf99913
-# Parent  20d81e68da033746bf81acbb08490f16679853da
-Bug 1716707 [s390x] Software WebRender does not support big endian
-
---- firefox-140.1.0/gfx/webrender_bindings/RenderCompositorSWGL.cpp
-+++ firefox-140.1.0/gfx/webrender_bindings/RenderCompositorSWGL.cpp
-@@ -7,6 +7,7 @@ * file, You can obtain one at http://moz
- #include "RenderCompositorSWGL.h"
- 
- #include "mozilla/gfx/Logging.h"
-+#include "mozilla/gfx/Swizzle.h"
- #include "mozilla/widget/CompositorWidget.h"
- 
- #ifdef MOZ_WIDGET_GTK
-@@ -240,6 +241,17 @@ mDT->ReleaseBits(mMappedData);
-   }
-   mDT->Flush();
- 
-+  if (std::endian::native != std::endian::little) {
-+    // One swizzle to rule them all.
-+    // With exception to certain text boxes with 1 line (46 pixels) and 2 lines
-+    // (64 pixels) in Firefox 115. Per following bug:
-+    // https://bugzilla.mozilla.org/show_bug.cgi?id=1900574
-+    if ((int)mDT->GetSize().height != 46 && mDT->GetSize().height != 64)
-+      gfx::SwizzleData(mMappedData, mMappedStride, gfx::SurfaceFormat::B8G8R8A8,
-+                       mMappedData, mMappedStride, gfx::SurfaceFormat::A8R8G8B8,
-+                       mDT->GetSize());
-+  }
-+
-   // Done with the DT. Hand it back to the widget and clear out any trace of it.
-   mWidget->EndRemoteDrawingInRegion(mDT, mDirtyRegion);
-   mDirtyRegion.SetEmpty();
---- firefox-140.1.0/image/imgFrame.cpp
-+++ firefox-140.1.0/image/imgFrame.cpp
-@@ -382,6 +382,17 @@ mAborted = true;
-     return NS_ERROR_OUT_OF_MEMORY;
-   }
- 
-+  if (std::endian::native != std::endian::little) {
-+    if (aBackend == gfx::BackendType::SKIA && canUseDataSurface) {
-+        // SKIA is lying about what format it returns on big endian
-+        for (int ii=0; ii < mRawSurface->GetSize().Height()*mRawSurface->Stride() / 4; ++ii) {
-+          uint32_t *vals = (uint32_t*)(mRawSurface->GetData());
-+          uint32_t val = ((vals[ii] << 8) & 0xFF00FF00 ) | ((vals[ii] >> 8) & 0xFF00FF );
-+          vals[ii] = (val << 16) | (val >> 16);
-+        }
-+    }
-+  }
-+
-   if (!canUseDataSurface) {
-     // We used an offscreen surface, which is an "optimized" surface from
-     // imgFrame's perspective.
-https://bugzilla.mozilla.org/show_bug.cgi?id=1888396
+Skia legacy SkPMColor blitters store native-endian words; force little-endian
+BGRA byte order on big-endian so all raster output matches SWGL's convention.
+https://bugzilla.mozilla.org/show_bug.cgi?id=1737732
 
 --- firefox-140.1.0/gfx/skia/skia/src/core/SkBlitRow_D32.cpp
 +++ firefox-140.1.0/gfx/skia/skia/src/core/SkBlitRow_D32.cpp

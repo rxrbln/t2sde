@@ -4,24 +4,35 @@
 # SPDX-License-Identifier: GPL-2.0 or patched project license
 # --- T2-COPYRIGHT-END ---
 
---- firefox-81.0.2/xpcom/reflect/xptcall/md/unix/xptcinvoke_ppc_linux.cpp.vanilla	2020-10-16 17:40:11.138383612 +0200
-+++ firefox-81.0.2/xpcom/reflect/xptcall/md/unix/xptcinvoke_ppc_linux.cpp	2020-10-16 17:57:09.014378133 +0200
-@@ -45,11 +45,11 @@
+--- firefox-152.0.6/xpcom/reflect/xptcall/md/unix/xptcinvoke_ppc_linux.cpp.vanilla	2026-07-13 21:35:59.000000000 +0200
++++ firefox-152.0.6/xpcom/reflect/xptcall/md/unix/xptcinvoke_ppc_linux.cpp	2026-07-18 18:39:42.783546566 +0200
+@@ -44,11 +44,21 @@
      uint64_t tempu64;
  
      for(uint32_t i = 0; i < paramCount; i++, s++) {
 -        if(s->IsPtrData()) {
-+        if(s->IsIndirect()) {
-             if(s->type == nsXPTType::T_JSVAL)
+-            if(s->type == nsXPTType::T_JSVAL)
 -                tempu32 = (uint32_t) &s->ptr;
-+                tempu32 = (uint32_t) &s->val.p;
++        if(s->IsIndirect()) {
++            if(s->type == nsXPTType::T_JSVAL) {
++                // The SysV PPC ABI passes aggregates by reference, so the
++                // callee expects a JS::Handle*, i.e. a pointer to a slot
++                // holding the Value*. Store that slot in the unused tail
++                // of the 16-byte nsXPTCVariant union.
++                static_assert(sizeof(nsXPTCVariant::ExtendedVal) >=
++                              sizeof(JS::Value) + sizeof(void*),
++                              "no room for the JS::Value handle slot");
++                void** slot = (void**)((char*) &s->val + sizeof(JS::Value));
++                *slot = (void*) &s->val;
++                tempu32 = (uint32_t) slot;
++            }
              else
 -                tempu32 = (uint32_t) s->ptr;
 +                tempu32 = (uint32_t) &s->val.p;
          }
          else {
              switch(s->type) {
-@@ -70,7 +70,7 @@
+@@ -69,7 +79,7 @@
              }
          }
  
@@ -30,7 +41,7 @@
  #ifndef __NO_FPRS__
              if (fpr < FPR_COUNT)
                  fpregs[fpr++]    = s->val.d;
-@@ -88,7 +88,7 @@
+@@ -87,7 +97,7 @@
                  d += 2;
              }
          }
@@ -39,7 +50,7 @@
  #ifndef __NO_FPRS__
              if (fpr < FPR_COUNT)
                  fpregs[fpr++]   = s->val.f; // if passed in registers, floats are promoted to doubles
-@@ -99,7 +99,7 @@
+@@ -98,7 +108,7 @@
              else
                  *((float*) d++) = s->val.f;
          }
