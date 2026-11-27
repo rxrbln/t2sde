@@ -1,0 +1,55 @@
+# --- T2-COPYRIGHT-BEGIN ---
+# t2/package/*/python-sbom/build-requires-only.patch
+# Copyright (C) 2026 The T2 SDE Project
+# SPDX-License-Identifier: GPL-2.0 or patched project license
+# --- T2-COPYRIGHT-END ---
+
+T2 builds without an isolated environment: record only the build-system requires
+and their dependencies as build tools, not every installed distribution.
+
+--- python_sbom-0.5.0.orig/src/python_sbom/_collect/_facts.py
++++ python_sbom-0.5.0/src/python_sbom/_collect/_facts.py
+@@ -23,6 +23,7 @@ import os
+ import platform
+ import sys
+ import time
++import tomllib
+ import warnings
+ from functools import cache
+ from importlib.metadata import distributions
+@@ -74,7 +75,7 @@ def collect_facts(
+             version=platform.python_version(),
+             implementation=platform.python_implementation(),
+         ),
+-        distributions=_installed(path),
++        distributions=_installed(path) if path is not None else _build_requires(root, _installed(path)),
+     )
+ 
+ 
+@@ -97,6 +98,26 @@ def _installed(path: Sequence[str] | Non
+     ]
+ 
+ 
++def _build_requires(root: Path, installed: list[InstalledDistribution]) -> list[InstalledDistribution]:
++    # a build without an isolated environment sees every installed distribution, keep only what the
++    # build-system requires and their dependencies, like the isolated environment would hold
++    try:
++        with (root / "pyproject.toml").open("rb") as file:
++            requires = tomllib.load(file).get("build-system", {}).get("requires")
++    except (OSError, tomllib.TOMLDecodeError):
++        return installed
++    if not requires:
++        return installed
++    by_name: Final = {distribution.name: distribution for distribution in installed}
++    todo: Final = [name for line in requires if isinstance(name := _required(line), str)]
++    keep: Final[set[str]] = set()
++    while todo:
++        if (name := todo.pop()) in by_name and name not in keep:
++            keep.add(name)
++            todo.extend(by_name[name].depends_on)
++    return [distribution for distribution in installed if distribution.name in keep]
++
++
+ def _recorded_files(distribution: Distribution) -> list[RecordRow]:
+     # a platform wheel's files are built for this machine's OS and architecture, and an editable install's point at a
+     # checkout, so listing either would tie the document to one machine
