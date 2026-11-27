@@ -81,7 +81,10 @@ cross-compilation, not just look plausible. Never:
    the separator too when removing the last block).
 8. Update `<pkg>.cache` files from successful builds with relevant dependency
    changes. Only add verified real deps (fl_wrapper deps can be bogus), refresh
-   the header, and commit it together with the fix.
+   the header, and commit it together with the fix. New packages get their
+   `<pkg>.cache` from the successful build's `build/<cfg>/var/adm/cache/<pkg>`
+   in the commit adding the package (filter bogus deps, e.g. all of
+   site-packages).
 9. `[P]` lines added only for build stages omit the default priority:
    `[P] X ?----5---9`, not `... 800.000`.
 10. Disable test suites, benchmarks and examples unconditionally for build
