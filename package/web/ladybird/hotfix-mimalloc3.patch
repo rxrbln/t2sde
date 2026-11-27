@@ -1,0 +1,96 @@
+# --- T2-COPYRIGHT-BEGIN ---
+# t2/package/*/ladybird/hotfix-mimalloc3.patch
+# Copyright (C) 2026 The T2 SDE Project
+# SPDX-License-Identifier: GPL-2.0 or patched project license
+# --- T2-COPYRIGHT-END ---
+
+mimalloc 3 replaced the per thread default heap with theaps.
+
+--- ladybird.orig/AK/kmalloc.cpp
++++ ladybird/AK/kmalloc.cpp
+@@ -139,10 +139,18 @@ static constexpr size_t PARTITION_COUNT
+ AK_TLS_INITIAL_EXEC static thread_local constinit mi_heap_t* s_partition_heaps[PARTITION_COUNT] {};
+ static thread_local mi_heap_t* s_scratch_heap = nullptr;
+ 
++#if MI_MALLOC_VERSION >= 30000
++// mimalloc 3 moved the per thread default heap to theaps, the general partition allocates from it like plain malloc
++static mi_heap_t* heap_for_partition(HeapPartition partition)
++{
++    if (partition == HeapPartition::General)
++        return nullptr;
++#else
+ static mi_heap_t* heap_for_partition(HeapPartition partition)
+ {
+     if (partition == HeapPartition::General)
+         return mi_heap_get_default();
++#endif
+     auto*& heap = s_partition_heaps[to_underlying(partition)];
+     if (!heap) [[unlikely]]
+         heap = mi_heap_new();
+@@ -151,7 +159,8 @@ static mi_heap_t* heap_for_partition(Hea
+ 
+ void* ak_kmalloc(HeapPartition partition, size_t size)
+ {
+-    return mi_heap_malloc(heap_for_partition(partition), size);
++    auto* heap = heap_for_partition(partition);
++    return heap ? mi_heap_malloc(heap, size) : mi_malloc(size);
+ }
+ 
+ void* ak_kmalloc_aligned(size_t size, size_t alignment)
+@@ -161,7 +170,8 @@ void* ak_kmalloc_aligned(size_t size, si
+ 
+ void* ak_kmalloc_aligned(HeapPartition partition, size_t size, size_t alignment)
+ {
+-    return mi_heap_malloc_aligned(heap_for_partition(partition), size, alignment);
++    auto* heap = heap_for_partition(partition);
++    return heap ? mi_heap_malloc_aligned(heap, size, alignment) : mi_malloc_aligned(size, alignment);
+ }
+ 
+ void* ak_krealloc(void* ptr, size_t size)
+@@ -171,7 +181,8 @@ void* ak_krealloc(void* ptr, size_t size
+ 
+ void* ak_krealloc(HeapPartition partition, void* ptr, size_t size)
+ {
+-    return mi_heap_realloc(heap_for_partition(partition), ptr, size);
++    auto* heap = heap_for_partition(partition);
++    return heap ? mi_heap_realloc(heap, ptr, size) : mi_realloc(ptr, size);
+ }
+ 
+ size_t ak_kmalloc_usable_size(void const* ptr)
+@@ -187,7 +198,11 @@ void ak_kfree(void* ptr)
+ void ak_kmalloc_collect()
+ {
+     // NB: In a scratch heap, mi_collect() would collect that heap again instead of the thread's own.
++#if MI_MALLOC_VERSION >= 30000
++    VERIFY(!s_scratch_heap || mi_theap_get_default() != mi_heap_theap(s_scratch_heap));
++#else
+     VERIFY(!s_scratch_heap || mi_heap_get_default() != s_scratch_heap);
++#endif
+ 
+     // mi_collect() only visits the calling thread's default heap, so its partitions have to be collected separately.
+     for (auto* heap : s_partition_heaps) {
+@@ -205,14 +220,24 @@ void* ak_enter_scratch_heap()
+     if (!s_scratch_heap)
+         s_scratch_heap = mi_heap_new();
+     // NB: Without a heap of its own, the work allocates from the thread's heap as usual.
++#if MI_MALLOC_VERSION >= 30000
++    if (!s_scratch_heap)
++        return mi_theap_get_default();
++    return mi_theap_set_default(mi_heap_theap(s_scratch_heap));
++#else
+     if (!s_scratch_heap)
+         return mi_heap_get_default();
+     return mi_heap_set_default(s_scratch_heap);
++#endif
+ }
+ 
+ void ak_leave_scratch_heap(void* previous_heap)
+ {
++#if MI_MALLOC_VERSION >= 30000
++    mi_theap_set_default(static_cast<mi_theap_t*>(previous_heap));
++#else
+     mi_heap_set_default(static_cast<mi_heap_t*>(previous_heap));
++#endif
+ }
+ 
+ // MADV_FREE leaves the pages in this process until the system runs short of memory. That pays off when they get reused

@@ -1,0 +1,40 @@
+# --- T2-COPYRIGHT-BEGIN ---
+# t2/package/*/ladybird/system-ffmpeg-vulkan.patch
+# Copyright (C) 2026 The T2 SDE Project
+# SPDX-License-Identifier: GPL-2.0 or patched project license
+# --- T2-COPYRIGHT-END ---
+
+Build the Vulkan video decoder with the system FFmpeg: the AV1 reference frame
+flag only exists in the patched bundled copy, AVVkFrame.access is VkAccessFlagBits.
+
+--- ladybird.orig/Libraries/LibMediaCodecs/FFmpeg/FFmpegVulkanVideoDecoder.cpp
++++ ladybird/Libraries/LibMediaCodecs/FFmpeg/FFmpegVulkanVideoDecoder.cpp
+@@ -484,8 +484,10 @@ DecoderErrorOr<AVCodecContext*> FFmpegVu
+     codec_context->get_buffer2 = get_buffer;
+     codec_context->opaque = this;
+     // Only the bundled FFmpeg decodes AV1, and it is patched to know this flag.
++#ifdef AV_HWACCEL_FLAG_LADYBIRD_CLEAR_UNUSED_REF_FRAME_MVS
+     if (m_codec_id == CodecID::AV1 && !PlatformFeatures::ProcessFeatures::the().is_enabled(PlatformFeatures::Feature::VulkanVideoBundledFFmpegAV1KeepSequenceHeaderEnableRefMVsFlag))
+         codec_context->hwaccel_flags |= AV_HWACCEL_FLAG_LADYBIRD_CLEAR_UNUSED_REF_FRAME_MVS;
++#endif
+ 
+     if (m_functions.avcodec_open2(codec_context, codec, nullptr) < 0)
+         return DecoderError::format(DecoderErrorCategory::Unknown, "Unknown error occurred when opening FFmpeg codec {}", m_codec_id);
+@@ -928,7 +930,7 @@ DecoderErrorOr<AVFrame*> FFmpegVulkanVid
+     prepare_barriers[0].image = source->img[0];
+     prepare_barriers[0].subresourceRange = whole_image;
+     source->layout[0] = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+-    source->access[0] = VK_ACCESS_2_TRANSFER_READ_BIT;
++    source->access[0] = static_cast<VkAccessFlagBits>(VK_ACCESS_2_TRANSFER_READ_BIT);
+     source_vulkan_context.unlock_frame(&source_context, source);
+ 
+     // The image's previous contents are discarded, so whichever device last read it needs no handing back.
+@@ -985,7 +987,7 @@ DecoderErrorOr<AVFrame*> FFmpegVulkanVid
+     auto destination_semaphore = destination->sem[0];
+     auto copied_semaphore_value = ++destination->sem_value[0];
+     destination->layout[0] = VK_IMAGE_LAYOUT_GENERAL;
+-    destination->access[0] = VK_ACCESS_2_MEMORY_READ_BIT;
++    destination->access[0] = static_cast<VkAccessFlagBits>(VK_ACCESS_2_MEMORY_READ_BIT);
+     // Mapping the frame only releases it to the external family if it has not been released already.
+     destination->queue_family[0] = VK_QUEUE_FAMILY_EXTERNAL;
+     destination_vulkan_context.unlock_frame(&destination_context, destination);
