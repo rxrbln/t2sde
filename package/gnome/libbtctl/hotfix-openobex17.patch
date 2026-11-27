@@ -1,0 +1,50 @@
+# --- T2-COPYRIGHT-BEGIN ---
+# t2/package/*/libbtctl/hotfix-openobex17.patch
+# Copyright (C) 2026 The T2 SDE Project
+# SPDX-License-Identifier: GPL-2.0
+# --- T2-COPYRIGHT-END ---
+
+openobex 1.7 removed OBEX_CharToUnicode and OBEX_UnicodeToChar, convert the
+UTF-16BE OBEX names with g_convert.
+
+diff -urp a/src/btobex.c b/src/btobex.c
+--- a/src/btobex.c	2026-11-24 22:55:43.584562803 +0000
++++ b/src/btobex.c	2026-11-24 22:55:43.681443041 +0000
+@@ -307,10 +307,9 @@ put_done (BtctlObex *bo, BtctlObexserver
+ 					timestamp = hv.bq4;
+ 				break;
+ 			case OBEX_HDR_NAME:
+-				if ((namebuf = g_new0 (gchar, hlen/2))) {
+-					/* FIXME: figure out which encoding of unicode is
+-					 * being used and handle it properly */
+-					OBEX_UnicodeToChar (namebuf, hv.bs, hlen);
++				/* OBEX names are big endian UTF-16 */
++				if ((namebuf = g_convert ((const gchar *) hv.bs, hlen, "UTF-8",
++							  "UTF-16BE", NULL, NULL, NULL))) {
+ 					name = namebuf;
+ 				}
+ 				break;
+diff -urp a/src/obex-client-source.c b/src/obex-client-source.c
+--- a/src/obex-client-source.c	2026-11-24 22:55:43.643405345 +0000
++++ b/src/obex-client-source.c	2026-11-24 22:55:43.681554770 +0000
+@@ -305,6 +305,7 @@ btctl_obexclient_source_push (BtctlObexc
+ 	obex_object_t	*object;
+ 	obex_headerdata_t	hd;
+ 	guint uname_size;
++	gsize uname_bytes = 0;
+ 	gchar *uname;
+ 	gchar *bfname;
+ 
+@@ -325,9 +326,9 @@ btctl_obexclient_source_push (BtctlObexc
+ 	}
+ 
+ 	bfname = g_path_get_basename (fname);
+-	uname_size = (strlen (bfname)+1)*2;
+-	uname = g_malloc (uname_size);
+-	OBEX_CharToUnicode (uname, bfname, uname_size);
++	/* OBEX names are big endian UTF-16, including the terminator */
++	uname = g_convert (bfname, -1, "UTF-16BE", "UTF-8", NULL, &uname_bytes, NULL);
++	uname_size = uname_bytes + 2;
+ 
+ 	hd.bs = uname;
+ 	OBEX_ObjectAddHeader (bc->handle, object,
