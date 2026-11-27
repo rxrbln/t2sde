@@ -1,0 +1,48 @@
+# --- T2-COPYRIGHT-BEGIN ---
+# t2/package/*/dvdstyler/hotfix-ffmpeg8.patch
+# Copyright (C) 2026 The T2 SDE Project
+# SPDX-License-Identifier: GPL-2.0
+# --- T2-COPYRIGHT-END ---
+
+FFmpeg 8 removed av_stream_new_side_data and AVCodec.sample_fmts, use the
+codecpar coded side data and drop the unused hasSampleFmt.
+
+--- a/src/mediaenc_ffmpeg.cpp
++++ b/src/mediaenc_ffmpeg.cpp
+@@ -225,7 +225,17 @@ bool wxFfmpegMediaEncoder::addVideoStrea
+ 	m_videoOutbuf = (uint8_t*) av_malloc(VIDEO_BUF_SIZE);
+ 
+ 	AVCPBProperties *props;
++#if LIBAVCODEC_VERSION_INT >= AV_VERSION_INT(60, 31, 102)
++	AVPacketSideData *sd = av_packet_side_data_new(&m_videoStm->codecpar->coded_side_data,
++			&m_videoStm->codecpar->nb_coded_side_data, AV_PKT_DATA_CPB_PROPERTIES, sizeof(*props), 0);
++	props = sd ? (AVCPBProperties*) sd->data : NULL;
++#else
+ 	props = (AVCPBProperties*) av_stream_new_side_data(m_videoStm, AV_PKT_DATA_CPB_PROPERTIES, sizeof(*props));
++#endif
++	if (!props) {
++		wxLogError(wxT("Could not allocate CPB properties"));
++		return false;
++	}
+ 	props->buffer_size = VIDEO_BUF_SIZE;
+ 	props->max_bitrate = 0;
+ 	props->min_bitrate = 0;
+@@ -249,18 +259,6 @@ bool wxFfmpegMediaEncoder::addVideoStrea
+ 	return true;
+ }
+ 
+-bool hasSampleFmt(AVCodec* codec, AVSampleFormat sample_fmt) {
+-	if (codec != NULL && codec->sample_fmts != NULL) {
+-		int fIdx = 0;
+-		while (codec->sample_fmts[fIdx] >= 0) {
+-			if (codec->sample_fmts[fIdx] == sample_fmt)
+-				return true;
+-			fIdx++;
+-		}
+-	}
+-	return false;
+-}
+-
+ bool wxFfmpegMediaEncoder::addAudioStream(int codecId) {
+ 	if (codecId == AV_CODEC_ID_NONE) {
+ 		m_audioStm = NULL;
