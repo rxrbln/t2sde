@@ -1,0 +1,47 @@
+# --- T2-COPYRIGHT-BEGIN ---
+# t2/package/*/qt6webengine/hotfix-icu79.patch
+# Copyright (C) 2026 The T2 SDE Project
+# SPDX-License-Identifier: GPL-2.0 or patched project license
+# --- T2-COPYRIGHT-END ---
+
+ICU 79 case closures of BMP characters contain supplementary code points,
+drop them like upstream V8 before Canonicalize asserts a UTF-16 code unit.
+
+--- qtwebengine-everywhere-src-6.140.0.orig/src/3rdparty/chromium/v8/src/regexp/gen-regexp-special-case.cc
++++ qtwebengine-everywhere-src-6.140.0/src/3rdparty/chromium/v8/src/regexp/gen-regexp-special-case.cc
+@@ -17,6 +17,19 @@ static const base::uc32 kSurrogateStart
+ static const base::uc32 kSurrogateEnd = 0xdfff;
+ static const base::uc32 kNonBmpStart = 0x10000;
+ 
++// Removes supplementary code points from |set| and returns whether any were
++// present. Since Unicode 18, the case closure of a BMP character can contain
++// supplementary code points (U+1DF95 LATIN SMALL LIGATURE LONG S WITH
++// DESCENDER S case-folds to U+00DF LATIN SMALL LETTER SHARP S). Non-unicode
++// ignoreCase matching compares UTF-16 code units, so a supplementary code
++// point never matches a BMP character and does not take part in Canonicalize.
++static bool RemoveSupplementary(icu::UnicodeSet& set) {
++  constexpr UChar32 kFirstSupplementary = static_cast<UChar32>(kNonBmpStart);
++  if (!set.containsSome(kFirstSupplementary, UCHAR_MAX_VALUE)) return false;
++  set.remove(kFirstSupplementary, UCHAR_MAX_VALUE);
++  return true;
++}
++
+ // The following code generates "src/regexp/special-case.cc".
+ void PrintSet(std::ofstream& out, const char* name,
+               const icu::UnicodeSet& set) {
+@@ -63,6 +76,7 @@ void PrintSpecial(std::ofstream& out) {
+     }
+     current.set(i, i);
+     current.closeOver(USET_CASE_INSENSITIVE);
++    RemoveSupplementary(current);
+ 
+     // Check to see if all characters in the case-folding equivalence
+     // class as defined by UnicodeSet::closeOver all map to the same
+@@ -112,6 +126,7 @@ void PrintSpecial(std::ofstream& out) {
+       UChar32 canonical = RegExpCaseFolding::Canonicalize(c);
+       current.set(c, c);
+       current.closeOver(USET_CASE_INSENSITIVE);
++      RemoveSupplementary(current);
+       current.removeAll(ignore);
+       for (int32_t j = 0; j < current.getRangeCount(); j++) {
+         for (UChar32 c2 = current.getRangeStart(j);
