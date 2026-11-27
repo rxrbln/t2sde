@@ -1,0 +1,69 @@
+# --- T2-COPYRIGHT-BEGIN ---
+# t2/package/*/kicad/hotfix-nng2.patch
+# Copyright (C) 2026 The T2 SDE Project
+# SPDX-License-Identifier: GPL-2.0
+# --- T2-COPYRIGHT-END ---
+
+nng 2 declares the protocols in nng.h, removed NNG_FLAG_ALLOC and renamed
+nng_close to nng_socket_close, receive an nng_msg instead.
+
+--- a/libs/kinng/src/kinng.cpp
++++ b/libs/kinng/src/kinng.cpp
+@@ -20,7 +20,9 @@
+ 
+ #include <kinng.h>
+ #include <nng/nng.h>
++#if NNG_MAJOR_VERSION < 2
+ #include <nng/protocol/reqrep0/rep.h>
++#endif
+ #include <wx/log.h>
+ 
+ 
+@@ -117,24 +119,37 @@ void KINNG_REQUEST_SERVER::listenThread(
+ 
+     while( !m_shutdown.load() )
+     {
++#if NNG_MAJOR_VERSION >= 2
++        nng_msg* msg = nullptr;
++
++        retCode = nng_recvmsg( socket, &msg, 0 );
++#else
+         char*    buf = nullptr;
+         size_t   sz;
+         uint64_t val;
+ 
+         retCode = nng_recv( socket, &buf, &sz, NNG_FLAG_ALLOC );
++#endif
+ 
+         if( retCode == NNG_ETIMEDOUT )
+             continue;
+ 
+         if( retCode != 0 )
+         {
++#if NNG_MAJOR_VERSION < 2
+             nng_free( buf, sz );
++#endif
+             wxLogTrace( TraceNng,
+                         wxString::Format( wxS( "Got error code %d from nngc_recv!" ), retCode ) );
+             break;
+         }
+ 
++#if NNG_MAJOR_VERSION >= 2
++        m_sharedMessage.assign( static_cast<char*>( nng_msg_body( msg ) ), nng_msg_len( msg ) );
++        nng_msg_free( msg );
++#else
+         m_sharedMessage.assign( buf, sz );
++#endif
+ 
+         if( m_callback )
+             m_callback( &m_sharedMessage );
+@@ -156,5 +171,9 @@ void KINNG_REQUEST_SERVER::listenThread(
+ 
+     wxLogTrace( TraceNng, wxS( "KINNG_REQUEST_SERVER shutting down" ) );
+ 
++#if NNG_MAJOR_VERSION >= 2
++    nng_socket_close( socket );
++#else
+     nng_close( socket );
++#endif
+ }
