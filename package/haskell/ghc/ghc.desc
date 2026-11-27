@@ -40,6 +40,25 @@ runsetuphs=0
 
 var_append confopt ' ' --target=$arch_target
 atstage cross && var_remove_regex confopt ' ' '--host=.*'
+# bootstrap the native build with the stage 2 cross compiler: cabal needs plain
+# tool names, its settings call the target prefixed binutils
+ghc_boot() {
+	local x
+	mkdir -p $builddir/ghc-boot
+	for x in ghc ghc-pkg hsc2hs; do
+		ln -sf /$prefix/bin/$arch_target-$x $builddir/ghc-boot/$x
+	done
+	for x in ar ld ranlib; do
+		ln -sf $(type -p $x) $builddir/ghc-boot/$arch_target-$x
+	done
+}
+if ! atstage cross && [ -z "$GHC" ]; then
+	export GHC=$builddir/ghc-boot/ghc PATH=$builddir/ghc-boot:$PATH
+	hook_add preconf 3 ghc_boot
+	# hackage bounds of the hadrian deps do not allow the bootstrap ghc libraries yet
+	hook_add preconf 3 "echo 'allow-newer: all' > hadrian/cabal.project.local"
+fi
+[ -n "$CABAL" ] && hook_add preconf 5 "$CABAL update"
 var_append confopt ' ' --enable-ignore-build-platform-mismatch
 export CABFLAGS=$(eval echo $setuphsopt)
 
@@ -57,6 +76,6 @@ build_ghc() {
 hook_add inmake 5 build_ghc
 
 install_ghc() {
-	./hadrian/build install --docs=none --prefix=$root/$prefix
+	DESTDIR=$root ./hadrian/build install --docs=none --prefix=/$prefix
 }
 hook_add postmake 5 install_ghc
