@@ -113,6 +113,15 @@ cross-compilation, not just look plausible. Never:
     the source directory"), set `[F] OBJDIR` in the `.desc`. Do not hand-add
     a `hook_add preconf ... "mkdir -p objs; cd objs"`; Build-Pkg already does
     that (and sets `configscript=../configure`) for the flag.
+16. `[I]` is a one-line summary, the whole line shorter than 80 columns,
+    that should not repeat the package name, unless needed for a
+    grammatically correct title or other stylistic reasons. `[T]` is a real
+    description of one to a few sentences based on the upstream README,
+    AppStream summary or project page: not a copy of `[I]`, not a
+    placeholder ("Core Gnome foo package") and specific to the package, not
+    a blurb shared by all packages of its project or desktop. Do not reword
+    acceptable existing texts for minor style or length gains, that is just
+    noise in the history.
 
 ## Generic fixes already in `scripts/functions.in`
 
